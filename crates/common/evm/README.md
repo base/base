@@ -1,13 +1,14 @@
-# `base-alloy-evm`
+# `base-common-evm`
 
 EVM implementation.
 
 ## Overview
 
 Provides Base-specific EVM execution support. Maps hardfork activation timestamps to revm
-`SpecId` values, and exposes `OpEvm`, `OpEvmFactory`, `BaseBlockExecutor`, and
+`SpecId` values, and exposes `BaseEvm`, `BaseEvmFactory`, `BaseBlockExecutor`, and
 `BaseBlockExecutorFactory` for executing blocks with the correct gas rules and precompile sets for
-each hardfork. Also provides `OpAlloyReceiptBuilder` for constructing OP receipts and
+each hardfork. Also provides `AlloyReceiptBuilder` and `BaseReceiptBuilder` for constructing Base
+receipts and
 `ensure_create2_deployer` for Canyon hardfork compatibility.
 
 ## Usage
@@ -16,14 +17,14 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-alloy-evm = { workspace = true }
+base-common-evm = { workspace = true }
 ```
 
 ```rust,ignore
-use base_alloy_evm::{OpEvmFactory, spec_by_timestamp_after_bedrock};
+use base_common_evm::{BaseEvmFactory, BasePrecompiles, BaseSpecId, BaseUpgrade};
 
-let spec = spec_by_timestamp_after_bedrock(timestamp);
-let factory = OpEvmFactory::default();
+let factory = BaseEvmFactory::default();
+let precompiles = BasePrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus));
 ```
 
 ## License

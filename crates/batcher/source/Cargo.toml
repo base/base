@@ -15,13 +15,13 @@ workspace = true
 futures.workspace = true
 async-trait.workspace = true
 tracing = { workspace = true, features = ["std"] }
-thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros"] }
+thiserror = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
 base-runtime = { workspace = true, features = ["tokio"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-base-alloy-consensus = { workspace = true, features = ["std"] }
+base-common-consensus = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 alloy-consensus.workspace = true

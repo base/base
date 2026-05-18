@@ -87,7 +87,7 @@ denominated in seconds):
   - `prev_l2_timestamp` is the timestamp of the L2 block immediately preceding this one. If there
     is no preceding block, then this is the genesis block, and its timestamp is explicitly
     specified.
-  - `l2_block_time` is a configurable parameter of the time between L2 blocks (2s on Optimism).
+  - `l2_block_time` is a configurable parameter of the time between L2 blocks (2s on Base).
 
 - `l1_origin.timestamp <= block.timestamp <= max_l2_timestamp`, where
   - `max_l2_timestamp = max(l1_origin.timestamp + max_sequencer_drift, prev_l2_timestamp + l2_block_time)`

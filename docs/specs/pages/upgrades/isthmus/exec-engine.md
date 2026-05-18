@@ -65,15 +65,15 @@ If Isthmus is active at genesis block, the `withdrawalsRoot` in the genesis bloc
 
 #### State Processing
 
-At the time of state processing, the header for which transactions are being validated should not make it's `withdrawalsRoot`
+At the time of state processing, the header for which transactions are being validated should not make its `withdrawalsRoot`
 available to the EVM/application layer.
 
 #### P2P
 
-During sync, we expect the withdrawals list in the block body to be empty (OP stack does not make
+During sync, we expect the withdrawals list in the block body to be empty (Base does not make
 use of the withdrawals list) and hence the hash of the withdrawals list to be the MPT root of an empty list.
 When verifying the header chain using the final header that is synced, the header timestamp is used to
-determine whether Isthmus is active at the said block. If it is, we expect that the header `withdrawalsRoot`
+determine whether Isthmus is active at that block. If it is, we expect that the header `withdrawalsRoot`
 MPT hash can be any non-null value (since it is expected to contain the `L2ToL1MessagePasser`'s storage root).
 
 #### Backwards Compatibility Considerations
@@ -82,8 +82,8 @@ Beginning at Canyon (which includes Shanghai hardfork support) and prior to Isth
 the `withdrawalsRoot` field is set to the MPT root of an empty withdrawals list. This is the
 same root as an empty storage root. The withdrawals are captured in the L2 state, however
 they are not reflected in the `withdrawalsRoot`. Hence, prior to Isthmus activation,
-even if a `withdrawalsRoot` is present and a MPT root is present in the header, it should not be used.
-Any implementation that calculates output root should be careful not to use the header `withdrawalsRoot`.
+even if a `withdrawalsRoot` is present and an MPT root is present in the header, it should not be used.
+Any implementation that calculates an output root should be careful not to use the header `withdrawalsRoot`.
 
 Note that there is always nonzero storage in the [`L2ToL1MessagePasser`][l2-to-l1-mp],
 because it is a [proxied predeploy](../../protocol/execution/evm/predeploys.md) -- from genesis it
@@ -92,7 +92,7 @@ the `withdrawalsRoot` will always be non-nil and never be the MPT root of an emp
 
 #### Forwards Compatibility Considerations
 
-As it stands, the `withdrawalsRoot` field is unused within the Base's header consensus format, and will never be
+As it stands, the `withdrawalsRoot` field is unused within Base's header consensus format, and will never be
 used for other reasons that are currently planned. Setting this value to the account storage root of the withdrawal
 directly fits with Base, and makes use of the existing field in the L1 header consensus format.
 
@@ -113,7 +113,7 @@ is applicable for scenarios where the actual withdrawals root value is not readi
 ## Deposit Requests
 
 [EIP-6110] shifts deposit to the execution layer, introducing a new [EIP-7685] deposit request of type
-`DEPOSIT_REQUEST_TYPE`. Deposit requests then appear in the [EIP-7685] requests list. The Base needs to ignore these
+`DEPOSIT_REQUEST_TYPE`. Deposit requests then appear in the [EIP-7685] requests list. Base needs to ignore these
 requests. Requests generation must be modified to exclude [EIP-6110] deposit requests. Note that since the [EIP-6110]
 request type did _not_ exist prior to Pectra on L1 and the Isthmus hardfork on L2, no activation time is needed since these
 deposit type requests may always be excluded.
@@ -146,7 +146,7 @@ programs so they call out to the L1 instead of calculating the result inside the
 
 ## Block Sealing
 
-In the Base, `EIP-7685` is no-op'd, and the `requestsHash` is always set to `sha256('')` (as noted in
+In Base, `EIP-7685` is no-op'd, and the `requestsHash` is always set to `sha256('')` (as noted in
 [header validity rules](#header-validity-rules)). As such, [EIP-6110](https://eips.ethereum.org/EIPS/eip-6110),
 [EIP-7002](https://eips.ethereum.org/EIPS/eip-7002), and [EIP-7251](https://eips.ethereum.org/EIPS/eip-7251) are not
 enabled either. The Base execution layer must ensure that the post-block filtering of events in the deposit contract
@@ -170,14 +170,14 @@ The `executionRequests` parameter MUST be an empty array.
 
 ## Fees
 
-New OP stack variants have different resource consumption patterns, and thus require a more flexible
+New rollup variants have different resource consumption patterns, and thus require a more flexible
 pricing model. To enable more customizable fee structures, Isthmus adds a new component to the fee
 calculation: the `operatorFee`, which is parameterized by two scalars: the `operatorFeeScalar`
 and the `operatorFeeConstant`.
 
 ### Operator Fee
 
-The operator fee is integrated directly into the EVM, alongside the standard gas fee and the Base specific L1 data
+The operator fee is integrated directly into the EVM, alongside the standard gas fee and the Base-specific L1 data
 fee. This fee follows the same semantics of existing fees charged in the EVM[^1], just with a new fee beneficiary account.
 
 #### Fee Formula

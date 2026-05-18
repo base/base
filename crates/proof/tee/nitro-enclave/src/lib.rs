@@ -1,25 +1,13 @@
 #![doc = include_str!("../README.md")]
 
 mod error;
-pub use error::{AttestationError, CryptoError, NitroError, NsmError, ProposalError, Result};
+pub use error::{CryptoError, NitroError, NsmError, ProposalError, Result};
 
 mod oracle;
 pub use oracle::Oracle;
 
 mod transport;
 pub use transport::{Frame, TransportError, TransportResult};
-
-mod types;
-pub use types::{
-    BlockId, ECDSA_SIGNATURE_LENGTH, Genesis, GenesisSystemConfig, PROOF_JOURNAL_BASE_LENGTH,
-    PerChainConfig, ProofJournal, Proposal, TeeProofResult,
-};
-
-mod attestation;
-pub use attestation::{
-    AttestationDocument, AwsCaRoot, DEFAULT_CA_ROOTS, DEFAULT_CA_ROOTS_SHA256, VerificationResult,
-    get_default_ca_root, verify_attestation,
-};
 
 mod crypto;
 pub use crypto::{Ecdsa, Signing};

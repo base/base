@@ -12,12 +12,12 @@ extern crate alloc;
 /// Generates a `pub fn $name() -> B256` that constructs an [`UpgradeDepositSource`] from the
 /// given intent string and returns its source hash. Accepts optional doc attributes.
 ///
-/// [`UpgradeDepositSource`]: base_alloy_consensus::UpgradeDepositSource
+/// [`UpgradeDepositSource`]: base_common_consensus::UpgradeDepositSource
 macro_rules! upgrade_source_fn {
     ($(#[$attr:meta])* $name:ident, $intent:literal) => {
         $(#[$attr])*
         pub fn $name() -> ::alloy_primitives::B256 {
-            ::base_alloy_consensus::UpgradeDepositSource {
+            ::base_common_consensus::UpgradeDepositSource {
                 intent: ::alloc::string::String::from($intent),
             }
             .source_hash()
@@ -36,10 +36,10 @@ macro_rules! bytecode_from_hex {
 }
 
 mod traits;
-pub use traits::Hardfork;
+pub use traits::Upgrade;
 
 mod forks;
-pub use forks::Hardforks;
+pub use forks::Upgrades;
 
 mod fjord;
 pub use fjord::Fjord;
@@ -60,4 +60,4 @@ mod utils;
 pub use utils::UpgradeCalldata;
 
 #[cfg(test)]
-mod test_utils;
+pub mod test_utils;

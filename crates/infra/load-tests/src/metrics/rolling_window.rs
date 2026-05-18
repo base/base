@@ -3,9 +3,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-const WINDOW: Duration = Duration::from_secs(30);
+const WINDOW: Duration = Duration::from_secs(5);
 
-/// A rolling 30-second window for computing instantaneous TPS, GPS, and latency percentiles.
+/// A rolling 5-second window for computing instantaneous TPS, GPS, and latency percentiles.
 #[derive(Debug)]
 pub struct RollingWindow {
     gas_events: VecDeque<(Instant, u64)>,
@@ -19,10 +19,21 @@ impl RollingWindow {
     }
 
     /// Records a confirmed transaction with its gas used and latency.
-    pub fn push(&mut self, gas_used: u64, latency: Duration) {
-        let now = Instant::now();
-        self.gas_events.push_back((now, gas_used));
-        self.latency_events.push_back((now, latency));
+    pub fn push(&mut self, gas_used: u64, latency: Duration, at: Instant) {
+        self.gas_events.push_back((at, gas_used));
+        self.latency_events.push_back((at, latency));
+        self.prune();
+    }
+
+    /// Records a gas-only event (no latency tracking).
+    pub fn push_gas(&mut self, gas_used: u64, at: Instant) {
+        self.gas_events.push_back((at, gas_used));
+        self.prune();
+    }
+
+    /// Records a latency-only event (no gas tracking).
+    pub fn push_latency(&mut self, latency: Duration, at: Instant) {
+        self.latency_events.push_back((at, latency));
         self.prune();
     }
 

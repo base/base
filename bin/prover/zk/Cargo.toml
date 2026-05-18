@@ -22,6 +22,13 @@ base-zk-outbox.workspace = true
 base-zk-service.workspace = true
 base-zk-client = { workspace = true, features = ["server"] }
 
+# Workspace – Succinct / SP1
+base-proof-succinct-host-utils.workspace = true
+base-proof-succinct-proof-utils.workspace = true
+sp1-cluster-common.workspace = true
+sp1-cluster-artifact.workspace = true
+sp1-sdk.workspace = true
+
 # CLI
 eyre.workspace = true
 base-cli-utils.workspace = true
@@ -34,6 +41,15 @@ tokio = { workspace = true, features = ["full"] }
 
 # gRPC
 tonic.workspace = true
+tonic-web.workspace = true
+tonic-reflection.workspace = true
+
+# HTTP
+http.workspace = true
+tower-http = { workspace = true, features = ["cors"] }
+
+# URL parsing
+url.workspace = true
 
 # Tracing
 tracing.workspace = true

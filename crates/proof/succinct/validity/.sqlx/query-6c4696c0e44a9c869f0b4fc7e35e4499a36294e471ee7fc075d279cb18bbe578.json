@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE requests SET status = $1 WHERE status = ANY($2) AND l1_chain_id = $3 AND l2_chain_id = $4\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int2",
+        "Int2Array",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6c4696c0e44a9c869f0b4fc7e35e4499a36294e471ee7fc075d279cb18bbe578"
+}

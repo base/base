@@ -2,7 +2,7 @@
 
 use alloy_primitives::bytes;
 use alloy_rlp::{Buf, Decodable, Encodable};
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 
 use crate::{
     BatchDecodingError, BatchEncodingError, BatchType, RawSpanBatch, SingleBatch, SpanBatch,
@@ -43,7 +43,7 @@ impl Batch {
         }
 
         // Read the batch type
-        let batch_type = BatchType::from(r[0]);
+        let batch_type = BatchType::try_from(r[0])?;
         r.advance(1);
 
         match batch_type {

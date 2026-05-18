@@ -2,17 +2,12 @@
 
 use std::time::Duration;
 
-/// Maximum time to wait for a proposal to be included on-chain.
+/// Default maximum time for the transaction manager to wait for a proposal
+/// transaction to be included on-chain.
 pub const PROPOSAL_TIMEOUT: Duration = Duration::from_mins(10);
 
-/// Timeout for prover server RPC calls.
-pub const PROVER_TIMEOUT: Duration = Duration::from_mins(30);
+/// Default maximum number of concurrent RPC calls during the recovery scan.
+pub const RECOVERY_SCAN_CONCURRENCY: usize = 8;
 
-/// Sentinel value for the parent game index when creating the first game from
-/// the anchor state registry (i.e., no parent game exists).
-/// This is `uint32.max` per the `DisputeGameFactory` contract.
-pub const NO_PARENT_INDEX: u32 = 0xFFFF_FFFF;
-
-/// Maximum number of concurrent `game_at_index` RPC calls during the recovery
-/// scan.
-pub const RECOVERY_SCAN_CONCURRENCY: usize = 32;
+/// Maximum retries for a single proof range before a full pipeline reset.
+pub const MAX_PROOF_RETRIES: u32 = 3;

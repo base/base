@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
-use base_protocol::{DERIVATION_VERSION_0, Frame};
+use base_protocol::{
+    BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, DERIVATION_VERSION_0, Frame,
+};
 
 /// Errors returned by [`BlobEncoder::encode`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -33,7 +35,7 @@ impl BlobEncoder {
     /// bytes (4 x 31 payload bytes + 3 reassembled bytes). With 1024 rounds that
     /// gives `127 * 1024 = 130_048` bytes, minus 4 bytes for the version +
     /// 3-byte length header in field element 0.
-    pub const BLOB_MAX_DATA_SIZE: usize = (4 * 31 + 3) * 1024 - 4; // 130_044
+    pub const BLOB_MAX_DATA_SIZE: usize = PROTOCOL_BLOB_MAX_DATA_SIZE;
 
     /// Number of encoding rounds (one per group of 4 field elements).
     pub const BLOB_ENCODING_ROUNDS: usize = 1024;
@@ -57,25 +59,6 @@ impl BlobEncoder {
             data.extend_from_slice(&frame.encode());
         }
         Self::encode(&data)
-    }
-
-    /// Encode each [`Frame`] into its own EIP-4844 [`Blob`].
-    ///
-    /// Each frame is prefixed with [`DERIVATION_VERSION_0`] before encoding.
-    /// Returns a blob per frame in the same order.
-    ///
-    /// Kept for compatibility with the action-test harness
-    /// (`actions/harness/src/miner.rs`). New code should use [`encode_packed`](Self::encode_packed).
-    pub fn encode_frames(frames: &[Arc<Frame>]) -> Result<Vec<Box<Blob>>, BlobEncodeError> {
-        let mut blobs = Vec::with_capacity(frames.len());
-        for frame in frames {
-            let encoded = frame.encode();
-            let mut data = Vec::with_capacity(1 + encoded.len());
-            data.push(DERIVATION_VERSION_0);
-            data.extend_from_slice(&encoded);
-            blobs.push(Self::encode(&data)?);
-        }
-        Ok(blobs)
     }
 
     /// Encode `data` into a single EIP-4844 [`Blob`].

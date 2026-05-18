@@ -5,13 +5,14 @@ package prover;
 service ProverService {
   rpc ProveBlock(ProveBlockRequest) returns (ProveBlockResponse);
   rpc GetProof(GetProofRequest) returns (GetProofResponse);
+  rpc ListProofs(ListProofsRequest) returns (ListProofsResponse);
 }
 
 enum ProofType {
   PROOF_TYPE_UNSPECIFIED = 0;
   reserved 1, 2;
-  PROOF_TYPE_GENERIC_ZKVM_CLUSTER_COMPRESSED = 3;
-  PROOF_TYPE_GENERIC_ZKVM_CLUSTER_SNARK_GROTH16 = 4;
+  PROOF_TYPE_COMPRESSED = 3;
+  PROOF_TYPE_SNARK_GROTH16 = 4;
 }
 
 message ProveBlockRequest {
@@ -30,6 +31,7 @@ message ProveBlockRequest {
   // Optional: explicit L1 head hash (hex-encoded B256) to use for witness generation.
   // When provided, bypasses SafeDB and sequence_window L1 head calculation.
   optional string l1_head = 7;
+  optional uint64 intermediate_root_interval = 8;
 }
 
 message ProveBlockResponse {
@@ -63,4 +65,32 @@ message GetProofResponse {
   Status status = 1;
   bytes receipt = 2; // the actual zk proof, only populated if status is SUCCEEDED
   optional string error_message = 3; // populated when status is STATUS_FAILED
+}
+
+message ListProofsRequest {
+  // Pagination offset (0-based).
+  uint64 offset = 1;
+  // Maximum number of results to return. Capped server-side.
+  uint64 limit = 2;
+  // Optional status filter. If unspecified or STATUS_UNSPECIFIED, returns all statuses.
+  optional GetProofResponse.Status status_filter = 3;
+}
+
+// Summary of a proof request (excludes receipt bytes for efficiency).
+message ProofSummary {
+  string id = 1;
+  uint64 start_block_number = 2;
+  uint64 number_of_blocks_to_prove = 3;
+  ProofType proof_type = 4;
+  GetProofResponse.Status status = 5;
+  string created_at = 6;
+  string updated_at = 7;
+  optional string completed_at = 8;
+  optional string error_message = 9;
+}
+
+message ListProofsResponse {
+  repeated ProofSummary proofs = 1;
+  // Total number of proofs matching the filter (for pagination).
+  uint64 total_count = 2;
 }

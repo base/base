@@ -5,7 +5,7 @@ RPC extensions for the Base execution node.
 ## Overview
 
 Provides JSON-RPC API implementations for Base chains, including the full Ethereum API
-(`OpEthApi`), the Engine API (`OpEngineApi`), debug, miner, sequencer, and witness endpoints.
+(`BaseEthApi`), the Engine API (`BaseEngineApi`), debug, miner, sequencer, and witness endpoints.
 Also includes `SequencerClient` for forwarding transactions to the sequencer and error types for
 Base-specific RPC failures.
 
@@ -19,9 +19,9 @@ base-execution-rpc = { workspace = true }
 ```
 
 ```rust,ignore
-use base_execution_rpc::{OpEthApiBuilder, SequencerClient};
+use base_execution_rpc::{BaseEthApiBuilder, SequencerClient};
 
-let eth_api = OpEthApiBuilder::new()
+let eth_api = BaseEthApiBuilder::new()
     .with_sequencer(SequencerClient::new(sequencer_url))
     .build(ctx)?;
 ```

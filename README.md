@@ -2,7 +2,7 @@
 
 # Base
 
-Base is a rollup built on Ethereum. 
+Base is a rollup built on Ethereum.
 
 ## Why Base
 - **Cheap, fast, and open platform:** Base is a globally available platform that provides 1-second and <1-cent transactions to anyone in the world.
@@ -14,9 +14,9 @@ Base is a rollup built on Ethereum.
 
 - Visit the [docs](https://docs.base.org) for information on how to:
     - [Connect your wallet](https://docs.base.org/base-chain/quickstart/connecting-to-base)
-    - [Run a node](https://docs.base.org/base-chain/node-operators/run-a-base-node) 
+    - [Run a node](https://docs.base.org/base-chain/node-operators/run-a-base-node)
     - [Deploy an app](https://docs.base.org/base-chain/quickstart/deploy-on-base)
-- The [specs](https://specs.base.org) site, has an overview of the protocol, including past and upcoming upgrades.
+- The [specs](https://specs.base.org) site has an overview of the protocol, including past and upcoming upgrades.
 
 ## Install Binaries
 

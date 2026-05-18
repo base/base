@@ -44,7 +44,8 @@ impl AttestationVerifier {
         let chain = CertChain::from_der(&cert_chain_der)?;
 
         let trusted_prefix_len = input.trustedCertsPrefixLen as usize;
-        let certs = chain.verify_chain(trusted_prefix_len, report.doc.timestamp)?;
+        let (certs, cert_expiries) =
+            chain.verify_chain(trusted_prefix_len, report.doc.timestamp)?;
 
         // 4. Verify COSE signature against the leaf certificate's public key.
         let leaf_pk_bytes = chain.leaf_public_key()?;
@@ -64,6 +65,7 @@ impl AttestationVerifier {
             trustedCertsPrefixLen: input.trustedCertsPrefixLen,
             timestamp: report.doc.timestamp,
             certs,
+            certExpiries: cert_expiries,
             userData: Self::optional_bytes(&report.doc.user_data),
             nonce: Self::optional_bytes(&report.doc.nonce),
             publicKey: Self::optional_bytes(&report.doc.public_key),
@@ -226,16 +228,24 @@ mod tests {
         assert_eq!(journal.timestamp, 0x000001937de1c543);
         assert_eq!(journal.moduleId, "i-0de38b2b6853cc9e8-enc0193685e7fee7d85");
         assert_eq!(journal.certs.len(), 5);
+        assert_eq!(journal.certExpiries.len(), journal.certs.len());
+        // Spot-check first and last expiry against known cert validity periods.
+        // Root CA notAfter: 2049-10-28T14:28:05Z
+        assert_eq!(journal.certExpiries[0], 2519044085);
+        // Leaf notAfter: 2024-11-30T19:22:48Z
+        assert_eq!(journal.certExpiries[4], 1732994568);
         assert_eq!(journal.pcrs.len(), 16);
         assert!(journal.userData.is_empty());
         assert!(journal.nonce.is_empty());
         assert!(!journal.publicKey.is_empty());
 
-        // ABI round-trip.
+        // ABI round-trip: verify all fields survive encode/decode.
         let encoded = SolValue::abi_encode(&journal);
         let decoded = VerifierJournal::decode(&encoded).unwrap();
         assert_eq!(decoded.moduleId, journal.moduleId);
         assert_eq!(decoded.timestamp, journal.timestamp);
+        assert_eq!(decoded.certExpiries, journal.certExpiries);
+        assert_eq!(decoded.certs, journal.certs);
     }
 
     #[rstest]

@@ -1,7 +1,7 @@
-//! MDBX implementation of [`OpProofsStore`](crate::OpProofsStore).
+//! MDBX implementation of [`BaseProofsStore`](crate::BaseProofsStore).
 //!
 //! This module provides a complete MDBX implementation of the
-//! [`OpProofsStore`](crate::OpProofsStore) trait. It uses the [`reth_db`] crate for
+//! [`BaseProofsStore`](crate::BaseProofsStore) trait. It uses the [`reth_db`] crate for
 //! database interactions and defines the necessary tables and models for storing trie branches,
 //! accounts, and storage leaves.
 
@@ -12,7 +12,7 @@ pub use version::*;
 mod storage;
 pub use storage::*;
 mod change_set;
-pub(crate) mod kv;
+mod kv;
 use std::fmt;
 
 use alloy_primitives::B256;

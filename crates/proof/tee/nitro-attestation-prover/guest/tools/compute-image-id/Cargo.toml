@@ -1,0 +1,22 @@
+[workspace]
+
+[package]
+name = "compute-image-id"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# These versions MUST match what `risc0-zkvm` in ../Cargo.toml resolves to.
+# After bumping risc0-zkvm, run `cargo metadata` in the guest workspace to
+# find the resolved risc0-binfmt and risc0-zkos-v1compat versions and update here.
+risc0-binfmt = "=3.0.4"
+risc0-zkos-v1compat = "=2.2.2"
+
+[lints.rust]
+missing-docs = "warn"
+unused-must-use = "deny"
+rust-2018-idioms = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

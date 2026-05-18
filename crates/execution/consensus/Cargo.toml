@@ -14,25 +14,23 @@ workspace = true
 [dependencies]
 # reth
 reth-consensus.workspace = true
-reth-chainspec.workspace = true
 reth-storage-api.workspace = true
 reth-trie-common.workspace = true
-reth-execution-types.workspace = true
 reth-storage-errors.workspace = true
+reth-execution-types.workspace = true
 reth-consensus-common.workspace = true
 reth-primitives-traits.workspace = true
 
 # op-reth
-base-protocol.workspace = true
-base-alloy-chains.workspace = true
-base-alloy-consensus = { workspace = true, features = ["reth"] }
+base-common-chains.workspace = true
+base-common-consensus = { workspace = true, features = ["reth"] }
 
 # ethereum
 revm.workspace = true
 alloy-trie.workspace = true
 alloy-eips.workspace = true
-alloy-primitives.workspace = true
 alloy-consensus.workspace = true
+alloy-primitives.workspace = true
 
 # misc
 tracing.workspace = true
@@ -42,13 +40,12 @@ base-execution-chainspec.workspace = true
 [dev-dependencies]
 reth-trie.workspace = true
 reth-revm.workspace = true
+reth-chainspec.workspace = true
 base-node-core.workspace = true
 reth-db-common.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 
 alloy-chains.workspace = true
-
-base-execution-forks.workspace = true
 
 [features]
 default = [ "std" ]
@@ -58,10 +55,9 @@ std = [
 	"alloy-eips/std",
 	"alloy-primitives/std",
 	"alloy-trie/std",
-	"base-alloy-consensus/std",
+	"base-common-chains/std",
+	"base-common-consensus/std",
 	"base-execution-chainspec/std",
-	"base-protocol/std",
-	"reth-chainspec/std",
 	"reth-consensus-common/std",
 	"reth-consensus/std",
 	"reth-execution-types/std",

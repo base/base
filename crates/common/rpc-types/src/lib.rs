@@ -11,15 +11,13 @@
 extern crate alloc;
 
 mod genesis;
-pub use genesis::{OpBaseFeeInfo, OpBaseHardforkInfo, OpChainInfo, OpGenesisInfo};
+pub use genesis::{ChainInfo, FeeInfo, GenesisInfo, HardforkInfo};
 
 mod receipt;
-pub use receipt::{
-    Eip8130ReceiptFields, L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields,
-};
+pub use receipt::{BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields};
 
 mod transaction;
-pub use transaction::{OpTransactionFields, OpTransactionRequest, Transaction};
+pub use transaction::{BaseTransactionFields, BaseTransactionRequest, Transaction};
 
 #[cfg(feature = "reth")]
 mod reth;

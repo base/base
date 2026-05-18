@@ -1,0 +1,24 @@
+[package]
+name = "base-balance-monitor"
+description = "Periodic onchain balance monitoring for Base services"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tokio-util.workspace = true
+alloy-network.workspace = true
+alloy-provider.workspace = true
+alloy-primitives.workspace = true
+tracing = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["sync", "time"] }
+
+[dev-dependencies]
+alloy-node-bindings.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

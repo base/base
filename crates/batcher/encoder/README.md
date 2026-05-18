@@ -56,4 +56,4 @@ pipeline expects: `[DERIVATION_VERSION_0] ++ frame.encode()`. Both `BatchDriver`
 production async driver in `base-batcher-core`) and the action-test `Batcher` harness use
 this shared implementation so the framing logic is defined exactly once.
 
-For EIP-4844 blob submission, use `base_blobs::BlobEncoder::encode_frames(&frames)`.
+For EIP-4844 blob submission, use `base_blobs::BlobEncoder::encode_packed(&frames)`.

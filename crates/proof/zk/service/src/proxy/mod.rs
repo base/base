@@ -75,3 +75,60 @@ pub async fn start_all_proxies(configs: ProxyConfigs) -> anyhow::Result<Vec<Join
 
     Ok(handles)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::config::{ProxyConfig, RateLimitConfig};
+
+    fn default_rate_limit() -> RateLimitConfig {
+        RateLimitConfig {
+            requests_per_second: 100,
+            max_concurrent_requests: 10,
+            queue_timeout_secs: 5,
+        }
+    }
+
+    #[test]
+    fn test_proxy_config_basic() {
+        let rl = default_rate_limit();
+        let config = ProxyConfig::new(18545, "http://example.com".to_string(), &rl);
+        assert!(config.validate().is_ok());
+        assert_eq!(config.local_address(), "http://localhost:18545");
+    }
+
+    #[test]
+    fn test_config_validation_zero_rps() {
+        let rl = RateLimitConfig {
+            requests_per_second: 0,
+            max_concurrent_requests: 10,
+            queue_timeout_secs: 5,
+        };
+        let config = ProxyConfig::new(18546, "http://example.com".to_string(), &rl);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validation_zero_concurrency() {
+        let rl = RateLimitConfig {
+            requests_per_second: 100,
+            max_concurrent_requests: 0,
+            queue_timeout_secs: 5,
+        };
+        let config = ProxyConfig::new(18546, "http://example.com".to_string(), &rl);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validation_empty_backend() {
+        let rl = default_rate_limit();
+        let config = ProxyConfig::new(18546, String::new(), &rl);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validation_valid() {
+        let rl = default_rate_limit();
+        let config = ProxyConfig::new(18546, "http://example.com".to_string(), &rl);
+        assert!(config.validate().is_ok());
+    }
+}

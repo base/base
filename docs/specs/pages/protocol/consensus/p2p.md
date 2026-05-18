@@ -46,12 +46,12 @@ Common representations of network identity:
 
 #### Consensus Layer Structure
 
-The Ethereum Node Record (ENR) for an Optimism rollup node must contain the following values, identified by unique keys:
+The Ethereum Node Record (ENR) for a Base rollup node must contain the following values, identified by unique keys:
 
 - An IPv4 address (`ip` field) and/or IPv6 address (`ip6` field).
 - A TCP port (`tcp` field) representing the local libp2p listening port.
 - A UDP port (`udp` field) representing the local discv5 listening port.
-- An OpStack (`opstack` field) L2 network identifier
+- An `opstack` ENR field L2 network identifier.
 
 The `opstack` value is encoded as a single RLP `bytes` value, the concatenation of:
 
@@ -59,10 +59,11 @@ The `opstack` value is encoded as a single RLP `bytes` value, the concatenation 
 - fork ID (`unsigned varint`)
 
 Note that DiscV5 is a shared DHT (Distributed Hash Table): the L1 consensus and execution nodes,
-as well as testnet nodes, and even external IOT nodes, all communicate records in this large common DHT.
+as well as testnet nodes and even external IoT nodes, all communicate records in this large common
+DHT.
 This makes it more difficult to censor the discovery of node records.
 
-The discovery process in Optimism is a pipeline of node records:
+The discovery process in Base is a pipeline of node records:
 
 1. Fill the table with `FINDNODES` if necessary (Performed by Discv5 library)
 2. Pull additional records with searches to random Node IDs if necessary
@@ -157,14 +158,15 @@ The application contents are compressed with [snappy][snappy] single-block-compr
 
 ##### Message ID computation
 
-[Same as L1][l1-message-id], with recognition of compression:
+[Same as L1][l1-message-id], with recognition of compression and topic binding.
+Let `topic_len` be the 8-byte little-endian length of `message.topic`.
 
 - If `message.data` has a valid snappy decompression, set `message-id` to the first 20 bytes of the `SHA256` hash of
-  the concatenation of `MESSAGE_DOMAIN_VALID_SNAPPY` with the snappy decompressed message data,
-  i.e. `SHA256(MESSAGE_DOMAIN_VALID_SNAPPY + snappy_decompress(message.data))[:20]`.
+  the concatenation of `MESSAGE_DOMAIN_VALID_SNAPPY`, `topic_len`, `message.topic`, and the snappy decompressed message data,
+  i.e. `SHA256(MESSAGE_DOMAIN_VALID_SNAPPY + topic_len + message.topic + snappy_decompress(message.data))[:20]`.
 - Otherwise, set `message-id` to the first 20 bytes of the `SHA256` hash of
-  the concatenation of `MESSAGE_DOMAIN_INVALID_SNAPPY` with the raw message data,
-  i.e. `SHA256(MESSAGE_DOMAIN_INVALID_SNAPPY + message.data)[:20]`.
+  the concatenation of `MESSAGE_DOMAIN_INVALID_SNAPPY`, `topic_len`, `message.topic`, and the raw message data,
+  i.e. `SHA256(MESSAGE_DOMAIN_INVALID_SNAPPY + topic_len + message.topic + message.data)[:20]`.
 
 #### Heartbeat and parameters
 

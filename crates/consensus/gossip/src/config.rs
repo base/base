@@ -1,9 +1,12 @@
 //! Gossipsub Config
 
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
-use libp2p::gossipsub::{Config, ConfigBuilder, Message, MessageId};
-use openssl::sha::sha256;
+use libp2p::{
+    connection_limits::ConnectionLimits,
+    gossipsub::{Config, ConfigBuilder, Message, MessageId},
+};
+use openssl::sha::Sha256;
 use snap::raw::Decoder;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -39,6 +42,28 @@ pub const DEFAULT_MESH_DHI: usize = 12;
 /// The default mesh D lazy.
 pub const DEFAULT_MESH_DLAZY: usize = 6;
 
+/// The default maximum number of pending inbound connections.
+pub const DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS: u32 = 5;
+
+/// The default maximum number of pending outbound connections.
+pub const DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS: u32 = 16;
+
+/// The default maximum number of established libp2p connections.
+pub const DEFAULT_MAX_ESTABLISHED_CONNECTIONS: u32 = 30;
+
+/// The default maximum number of established libp2p connections per peer.
+pub const DEFAULT_MAX_ESTABLISHED_CONNECTIONS_PER_PEER: u32 = 1;
+
+/// Domain tag for malformed snappy messages in gossip message IDs.
+const DOMAIN_INVALID_SNAPPY: [u8; 4] = [0x0, 0x0, 0x0, 0x0];
+
+/// Domain tag for valid snappy messages in gossip message IDs.
+const DOMAIN_VALID_SNAPPY: [u8; 4] = [0x1, 0x0, 0x0, 0x0];
+
+/// The default maximum number of peers to retain identify metadata for.
+pub const DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS: NonZeroUsize =
+    NonZeroUsize::new(1024).expect("default identify peerstore limit must be non-zero");
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Duration Constants
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -55,9 +80,62 @@ pub const SEEN_MESSAGES_TTL: Duration =
 /// The frequency at which peer scores are inspected.
 pub const PEER_SCORE_INSPECT_FREQUENCY: Duration = Duration::from_secs(15);
 
+/// How often the network actor calls [`ConnectionGate::prune`] to drop expired bookkeeping.
+pub const GATER_PRUNE_INTERVAL: Duration = Duration::from_secs(60);
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Config Building
 ////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Connection limits for the libp2p swarm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConnectionLimitsConfig {
+    /// Maximum number of pending inbound connections.
+    pub max_pending_incoming: u32,
+    /// Maximum number of pending outbound connections.
+    pub max_pending_outgoing: u32,
+    /// Maximum number of established inbound connections.
+    pub max_established_incoming: u32,
+    /// Maximum number of established outbound connections.
+    pub max_established_outgoing: u32,
+    /// Maximum number of established connections across all peers and directions.
+    pub max_established: u32,
+    /// Maximum number of established connections to a single peer.
+    pub max_established_per_peer: u32,
+}
+
+impl ConnectionLimitsConfig {
+    /// Creates a connection limit config using the same cap for inbound, outbound, and total
+    /// established connections.
+    pub const fn new(max_established: u32) -> Self {
+        Self {
+            max_pending_incoming: DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            max_pending_outgoing: DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS,
+            max_established_incoming: max_established,
+            max_established_outgoing: max_established,
+            max_established,
+            max_established_per_peer: DEFAULT_MAX_ESTABLISHED_CONNECTIONS_PER_PEER,
+        }
+    }
+}
+
+impl Default for ConnectionLimitsConfig {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_ESTABLISHED_CONNECTIONS)
+    }
+}
+
+impl From<ConnectionLimitsConfig> for ConnectionLimits {
+    fn from(config: ConnectionLimitsConfig) -> Self {
+        Self::default()
+            .with_max_pending_incoming(Some(config.max_pending_incoming))
+            .with_max_pending_outgoing(Some(config.max_pending_outgoing))
+            .with_max_established_incoming(Some(config.max_established_incoming))
+            .with_max_established_outgoing(Some(config.max_established_outgoing))
+            .with_max_established(Some(config.max_established))
+            .with_max_established_per_peer(Some(config.max_established_per_peer))
+    }
+}
 
 /// Builds the default gossipsub configuration.
 ///
@@ -101,24 +179,58 @@ pub fn default_config() -> Config {
 }
 
 /// Computes the [`MessageId`] of a `gossipsub` message.
+///
+/// The message ID is bound to the gossip topic, matching the OP Stack
+/// implementation. This prevents the global gossipsub duplicate cache from
+/// treating byte-identical payloads on different block-version topics as the
+/// same message.
+///
+/// Reject oversized snappy frames before allocating: `snap::raw::decompress_len`
+/// parses only the varu32 preamble and never allocates. Frames whose declared
+/// decoded size exceeds [`MAX_GOSSIP_SIZE`] are hashed under the invalid-snappy
+/// domain, identical to malformed snappy input. This prevents an anonymous peer
+/// from forcing the gossipsub task to allocate hundreds of `MiB` per packet.
 fn compute_message_id(msg: &Message) -> MessageId {
-    let mut decoder = Decoder::new();
-    let id = decoder.decompress_vec(&msg.data).map_or_else(
-        |_| {
-            warn!(target: "cfg", "Failed to decompress message, using invalid snappy");
-            let domain_invalid_snappy: Vec<u8> = vec![0x0, 0x0, 0x0, 0x0];
-            sha256([domain_invalid_snappy.as_slice(), msg.data.as_slice()].concat().as_slice())
-                [..20]
-                .to_vec()
-        },
-        |data| {
-            let domain_valid_snappy: Vec<u8> = vec![0x1, 0x0, 0x0, 0x0];
-            sha256([domain_valid_snappy.as_slice(), data.as_slice()].concat().as_slice())[..20]
-                .to_vec()
-        },
-    );
+    let id = match snap::raw::decompress_len(&msg.data) {
+        Ok(declared) if declared > MAX_GOSSIP_SIZE => {
+            warn!(target: "cfg", declared, max = MAX_GOSSIP_SIZE, "Rejecting oversized snappy message");
+            invalid_snappy_id(msg)
+        }
+        Ok(_) => {
+            let mut decoder = Decoder::new();
+            decoder.decompress_vec(&msg.data).map_or_else(
+                |_| {
+                    warn!(target: "cfg", "Failed to decompress message, using invalid snappy");
+                    invalid_snappy_id(msg)
+                },
+                |data| message_id_hash(msg, &DOMAIN_VALID_SNAPPY, &data),
+            )
+        }
+        Err(_) => {
+            warn!(target: "cfg", "Failed to read snappy preamble, using invalid snappy");
+            invalid_snappy_id(msg)
+        }
+    };
 
     MessageId(id)
+}
+
+/// Hash `data` under the invalid-snappy domain tag.
+fn invalid_snappy_id(msg: &Message) -> Vec<u8> {
+    message_id_hash(msg, &DOMAIN_INVALID_SNAPPY, &msg.data)
+}
+
+/// Hashes a gossip message ID preimage.
+fn message_id_hash(msg: &Message, domain: &[u8; 4], data: &[u8]) -> Vec<u8> {
+    let topic = msg.topic.as_str().as_bytes();
+    let topic_len = (topic.len() as u64).to_le_bytes();
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(&topic_len);
+    hasher.update(topic);
+    hasher.update(data);
+
+    hasher.finish()[..20].to_vec()
 }
 
 #[cfg(test)]
@@ -134,6 +246,17 @@ mod tests {
     }
 
     #[test]
+    fn test_constructs_default_connection_limits_config() {
+        let cfg = ConnectionLimitsConfig::default();
+        assert_eq!(cfg.max_pending_incoming, DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS);
+        assert_eq!(cfg.max_pending_outgoing, DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS);
+        assert_eq!(cfg.max_established_incoming, DEFAULT_MAX_ESTABLISHED_CONNECTIONS);
+        assert_eq!(cfg.max_established_outgoing, DEFAULT_MAX_ESTABLISHED_CONNECTIONS);
+        assert_eq!(cfg.max_established, DEFAULT_MAX_ESTABLISHED_CONNECTIONS);
+        assert_eq!(cfg.max_established_per_peer, DEFAULT_MAX_ESTABLISHED_CONNECTIONS_PER_PEER);
+    }
+
+    #[test]
     fn test_compute_message_id_invalid_snappy() {
         let msg = Message {
             source: None,
@@ -143,8 +266,8 @@ mod tests {
         };
 
         let id = compute_message_id(&msg);
-        let hashed = sha256(&[&[0x0, 0x0, 0x0, 0x0], [1, 2, 3, 4, 5].as_slice()].concat());
-        assert_eq!(id.0, hashed[..20].to_vec());
+        let hashed = message_id_hash(&msg, &DOMAIN_INVALID_SNAPPY, &[1, 2, 3, 4, 5]);
+        assert_eq!(id.0, hashed);
     }
 
     #[test]
@@ -158,7 +281,64 @@ mod tests {
         };
 
         let id = compute_message_id(&msg);
-        let hashed = sha256(&[&[0x1, 0x0, 0x0, 0x0], [1, 2, 3, 4, 5].as_slice()].concat());
-        assert_eq!(id.0, hashed[..20].to_vec());
+        let hashed = message_id_hash(&msg, &DOMAIN_VALID_SNAPPY, &[1, 2, 3, 4, 5]);
+        assert_eq!(id.0, hashed);
+    }
+
+    #[test]
+    fn test_compute_message_id_matches_op_reference_golden() {
+        let compressed = snap::raw::Encoder::new().compress_vec(&[1, 2, 3, 4, 5]).unwrap();
+        let msg = Message {
+            source: None,
+            data: compressed,
+            sequence_number: None,
+            topic: libp2p::gossipsub::TopicHash::from_raw("test"),
+        };
+
+        // SHA256(valid-snappy-domain || topic-len-le || "test" || [1, 2, 3, 4, 5])[:20].
+        let expected = [
+            0xad, 0xbe, 0x54, 0x7b, 0x27, 0xf4, 0x12, 0x94, 0xa0, 0x8a, 0x09, 0x21, 0x0a, 0x5e,
+            0x85, 0x31, 0xe8, 0x3c, 0xdc, 0x16,
+        ];
+
+        assert_eq!(compute_message_id(&msg).0, expected);
+    }
+
+    #[test]
+    fn test_compute_message_id_includes_topic() {
+        let compressed = snap::raw::Encoder::new().compress_vec(&[1, 2, 3, 4, 5]).unwrap();
+        let msg_v3 = Message {
+            source: None,
+            data: compressed.clone(),
+            sequence_number: None,
+            topic: libp2p::gossipsub::TopicHash::from_raw("/optimism/8453/2/blocks"),
+        };
+        let msg_v4 = Message {
+            source: None,
+            data: compressed,
+            sequence_number: None,
+            topic: libp2p::gossipsub::TopicHash::from_raw("/optimism/8453/3/blocks"),
+        };
+
+        assert_ne!(compute_message_id(&msg_v3), compute_message_id(&msg_v4));
+    }
+
+    #[test]
+    fn test_compute_message_id_rejects_oversized_snappy_bomb() {
+        let huge = vec![0u8; MAX_GOSSIP_SIZE + 1];
+        let bomb = snap::raw::Encoder::new().compress_vec(&huge).unwrap();
+        assert!(bomb.len() < MAX_GOSSIP_SIZE, "wire size must pass max_transmit_size");
+        assert!(snap::raw::decompress_len(&bomb).unwrap() > MAX_GOSSIP_SIZE);
+
+        let msg = Message {
+            source: None,
+            data: bomb.clone(),
+            sequence_number: None,
+            topic: libp2p::gossipsub::TopicHash::from_raw("test"),
+        };
+
+        let id = compute_message_id(&msg);
+        let expected = message_id_hash(&msg, &DOMAIN_INVALID_SNAPPY, &bomb);
+        assert_eq!(id.0, expected, "oversized bomb must hash under the invalid-snappy domain");
     }
 }

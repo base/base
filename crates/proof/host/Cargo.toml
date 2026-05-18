@@ -13,16 +13,17 @@ workspace = true
 [dependencies]
 # base
 base-protocol.workspace = true
+base-common-consensus.workspace = true
 base-proof-mpt.workspace = true
-base-alloy-evm.workspace = true
-base-alloy-network.workspace = true
+base-common-evm.workspace = true
+base-common-network.workspace = true
 base-consensus-providers.workspace = true
 base-proof = { workspace = true, features = ["std"] }
 base-proof-client = { workspace = true, features = ["std"] }
 base-proof-preimage = { workspace = true, features = ["std"] }
 base-proof-primitives = { workspace = true, features = ["serde", "std"] }
-base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
-base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+base-common-genesis = { workspace = true, features = ["serde", "std"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 
 # alloy
 alloy-rlp.workspace = true
@@ -38,6 +39,7 @@ alloy-rpc-types = { workspace = true, features = ["debug"] }
 
 # async
 tokio.workspace = true
+futures.workspace = true
 
 # crypto
 ark-ff.workspace = true

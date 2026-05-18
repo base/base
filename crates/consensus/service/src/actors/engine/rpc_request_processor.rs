@@ -1,25 +1,12 @@
 use std::sync::Arc;
 
+use base_common_genesis::RollupConfig;
 use base_consensus_engine::{EngineClient, EngineState};
-use base_consensus_genesis::RollupConfig;
 use derive_more::Constructor;
-use tokio::{
-    sync::{mpsc, watch},
-    task::JoinHandle,
-};
+use tokio::sync::{Semaphore, mpsc, watch};
+use tokio_util::sync::CancellationToken;
 
-use crate::{EngineError, EngineRpcRequest};
-
-/// Requires that the implementor handles [`EngineRpcRequest`]s via the provided channel.
-/// Note: this exists to facilitate unit testing rather than consolidate multiple implementations
-/// under a well-thought-out interface.
-pub trait EngineRpcRequestReceiver: Send + Sync {
-    /// Starts a task to handle engine queries.
-    fn start(
-        self,
-        request_channel: mpsc::Receiver<EngineRpcRequest>,
-    ) -> JoinHandle<Result<(), EngineError>>;
-}
+use crate::{EngineError, EngineRpcRequest, NodeActor};
 
 /// Processor for [`EngineRpcRequest`] requests.
 #[derive(Constructor, Debug)]
@@ -38,6 +25,53 @@ impl<EngineClient_> EngineRpcProcessor<EngineClient_>
 where
     EngineClient_: EngineClient + 'static,
 {
+    async fn run(
+        self,
+        cancellation: CancellationToken,
+        mut request_channel: mpsc::Receiver<EngineRpcRequest>,
+    ) -> Result<(), EngineError> {
+        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_ENGINE_RPC_QUERIES));
+        let this = Arc::new(self);
+
+        loop {
+            let query = tokio::select! {
+                _ = cancellation.cancelled() => {
+                    warn!(target: "engine", "EngineRpcProcessor received shutdown signal");
+                    return Ok(());
+                }
+                query = request_channel.recv() => {
+                    let Some(query) = query else {
+                        error!(target: "engine", "Engine rpc request receiver closed unexpectedly");
+                        return Err(EngineError::ChannelClosed);
+                    };
+                    query
+                }
+            };
+
+            let permit = tokio::select! {
+                _ = cancellation.cancelled() => {
+                    warn!(target: "engine", "EngineRpcProcessor received shutdown signal");
+                    return Ok(());
+                }
+                permit = Arc::clone(&semaphore).acquire_owned() => {
+                    permit.expect("semaphore is never closed")
+                }
+            };
+
+            let handler = Arc::clone(&this);
+            // Spawned sub-tasks are intentionally detached. On shutdown, in-flight
+            // sub-tasks may still be running. This is acceptable because each
+            // request sends its response through a oneshot channel that the caller
+            // has likely already dropped, so the worst case is wasted work.
+            tokio::spawn(async move {
+                if let Err(e) = handler.handle_rpc_request(query).await {
+                    error!(target: "engine", error = %e, "engine rpc request failed");
+                }
+                drop(permit);
+            });
+        }
+    }
+
     async fn handle_rpc_request(&self, request: EngineRpcRequest) -> Result<(), EngineError> {
         match request {
             EngineRpcRequest::EngineQuery(req) => {
@@ -61,22 +95,22 @@ where
     }
 }
 
-impl<EngineClient_> EngineRpcRequestReceiver for EngineRpcProcessor<EngineClient_>
+/// Maximum number of engine RPC queries processed concurrently.
+/// Bounds concurrent requests to avoid overwhelming the execution engine.
+const MAX_CONCURRENT_ENGINE_RPC_QUERIES: usize = 16;
+
+#[async_trait::async_trait]
+impl<EngineClient_> NodeActor for EngineRpcProcessor<EngineClient_>
 where
     EngineClient_: EngineClient + 'static,
 {
-    fn start(
+    type Error = EngineError;
+    type StartData = (CancellationToken, mpsc::Receiver<EngineRpcRequest>);
+
+    async fn start(
         self,
-        mut request_channel: mpsc::Receiver<EngineRpcRequest>,
-    ) -> JoinHandle<Result<(), EngineError>> {
-        tokio::spawn(async move {
-            loop {
-                let Some(query) = request_channel.recv().await else {
-                    error!(target: "engine", "Engine rpc request receiver closed unexpectedly");
-                    return Err(EngineError::ChannelClosed);
-                };
-                self.handle_rpc_request(query).await?;
-            }
-        })
+        (cancellation, request_channel): Self::StartData,
+    ) -> Result<(), Self::Error> {
+        self.run(cancellation, request_channel).await
     }
 }

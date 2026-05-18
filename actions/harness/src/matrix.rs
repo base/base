@@ -1,9 +1,10 @@
 use std::{
     any::Any,
+    future::Future,
     panic::{self, AssertUnwindSafe},
 };
 
-use base_consensus_genesis::HardForkConfig;
+use base_common_genesis::HardForkConfig;
 
 /// A function that activates a single hardfork on a [`HardForkConfig`].
 pub type ForkSetter = fn(&mut HardForkConfig);
@@ -25,7 +26,8 @@ static FORK_PROGRESSION: &[(&str, ForkSetter)] = &[
     ("pectra-blob-schedule", |h| h.pectra_blob_schedule_time = Some(0)),
     ("isthmus", |h| h.isthmus_time = Some(0)),
     ("jovian", |h| h.jovian_time = Some(0)),
-    ("base-v1", |h| h.base.v1 = Some(0)),
+    ("azul", |h| h.base.azul = Some(0)),
+    ("beryl", |h| h.base.beryl = Some(0)),
 ];
 
 /// Named hardfork schedules for parametrizing harness tests across protocol upgrades.
@@ -51,18 +53,18 @@ impl ForkMatrix {
         Self::all().retain(|_, h| h.granite_time.is_some() && h.isthmus_time.is_none())
     }
 
-    /// Returns the cumulative OP hardforks from Isthmus onward.
+    /// Returns the cumulative inherited rollup hardforks from Isthmus onward.
     ///
-    /// Base-specific forks (e.g. `base-v1`) are excluded.
+    /// Base-specific forks (e.g. `azul` and `beryl`) are excluded.
     pub fn from_isthmus() -> Self {
         Self::all().retain(|_, h| h.isthmus_time.is_some() && h.base.is_empty())
     }
 
-    /// Returns the canonical OP fault-proof fork progression from Granite onward.
+    /// Returns the canonical fault-proof fork progression from Granite onward.
     ///
     /// The `pectra-blob-schedule` compatibility patch (a Base Sepolia-only quirk)
     /// and Base-specific forks are excluded; this matrix covers only the upstream
-    /// OP mainnet upgrade sequence.
+    /// Base mainnet upgrade sequence.
     pub fn from_granite() -> Self {
         static PROGRESSION: &[(&str, ForkSetter)] = &[
             ("granite", |h| h.granite_time = Some(0)),
@@ -109,6 +111,17 @@ impl ForkMatrix {
         }
     }
 
+    /// Async version of [`run`](ForkMatrix::run) for tests that call async sequencer methods.
+    pub async fn run_async<F, Fut>(&self, mut test: F)
+    where
+        F: FnMut(&'static str, HardForkConfig) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        for (name, config) in self.iter() {
+            test(name, config).await;
+        }
+    }
+
     fn build(progression: &[(&'static str, ForkSetter)], base: HardForkConfig) -> Self {
         let mut config = base;
         Self {
@@ -134,20 +147,26 @@ impl ForkMatrix {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_genesis::RollupConfig;
+    use std::any::Any;
 
-    use super::*;
+    use base_common_genesis::{HardForkConfig, RollupConfig};
 
-    fn rollup_config(hardforks: HardForkConfig) -> RollupConfig {
-        RollupConfig { block_time: 2, hardforks, ..Default::default() }
-    }
+    use super::ForkMatrix;
 
-    fn panic_message(payload: Box<dyn Any + Send>) -> String {
-        payload
-            .downcast_ref::<String>()
-            .cloned()
-            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
-            .unwrap_or_else(|| "non-string panic payload".to_owned())
+    struct MatrixFixture;
+
+    impl MatrixFixture {
+        fn rollup_config(hardforks: HardForkConfig) -> RollupConfig {
+            RollupConfig { block_time: 2, hardforks, ..Default::default() }
+        }
+
+        fn panic_message(payload: Box<dyn Any + Send>) -> String {
+            payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                .unwrap_or_else(|| "non-string panic payload".to_owned())
+        }
     }
 
     #[test]
@@ -166,7 +185,8 @@ mod tests {
                 "pectra-blob-schedule",
                 "isthmus",
                 "jovian",
-                "base-v1",
+                "azul",
+                "beryl",
             ]
         );
     }
@@ -184,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn from_isthmus_includes_only_op_forks_from_isthmus_onward() {
+    fn from_isthmus_includes_only_inherited_forks_from_isthmus_onward() {
         let names: Vec<_> = ForkMatrix::from_isthmus().iter().map(|(name, _)| name).collect();
         assert_eq!(names, vec!["isthmus", "jovian"]);
     }
@@ -192,7 +212,7 @@ mod tests {
     #[test]
     fn each_case_is_cumulative_without_enabling_the_next_fork() {
         for (fork_name, hardforks) in ForkMatrix::all().iter() {
-            let cfg = rollup_config(hardforks);
+            let cfg = MatrixFixture::rollup_config(hardforks);
             match fork_name {
                 "regolith" => {
                     assert!(cfg.is_regolith_active(0));
@@ -234,11 +254,17 @@ mod tests {
                 }
                 "jovian" => {
                     assert!(cfg.is_jovian_active(0));
-                    assert!(!cfg.is_base_v1_active(0));
+                    assert!(!cfg.is_base_azul_active(0));
                 }
-                "base-v1" => {
+                "azul" => {
                     assert!(cfg.is_jovian_active(0));
-                    assert!(cfg.is_base_v1_active(0));
+                    assert!(cfg.is_base_azul_active(0));
+                    assert!(!cfg.is_beryl_active(0));
+                }
+                "beryl" => {
+                    assert!(cfg.is_jovian_active(0));
+                    assert!(cfg.is_base_azul_active(0));
+                    assert!(cfg.is_beryl_active(0));
                 }
                 _ => unreachable!("unexpected fork {fork_name}"),
             }
@@ -254,7 +280,7 @@ mod tests {
         })
         .expect_err("granite case must panic");
 
-        let message = panic_message(panic);
+        let message = MatrixFixture::panic_message(panic);
         assert!(message.contains("granite"));
         assert!(message.contains("boom"));
     }

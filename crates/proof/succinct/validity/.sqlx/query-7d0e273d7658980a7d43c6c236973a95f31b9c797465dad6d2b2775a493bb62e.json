@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE chain_locks SET locked_at = NOW() WHERE l1_chain_id = $1 AND l2_chain_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7d0e273d7658980a7d43c6c236973a95f31b9c797465dad6d2b2775a493bb62e"
+}

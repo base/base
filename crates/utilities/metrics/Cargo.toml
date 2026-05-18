@@ -13,8 +13,8 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-metrics = { workspace = true, optional = true }
 ctor = { workspace = true, optional = true }
+metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
 metrics = { workspace = true }

@@ -6,7 +6,7 @@ use core::fmt::Display;
 use alloy_consensus::{Header, Receipt, TxEnvelope};
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BatchValidationProvider, BlockInfo};
 
 use crate::PipelineErrorKind;

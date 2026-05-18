@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_primitives::{Bytes, hex, map::HashMap};
 use async_trait::async_trait;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::{BlockInfo, Channel, ChannelId, Frame};
 
 use crate::{
@@ -14,10 +14,10 @@ use crate::{
 };
 
 /// The maximum size of a channel bank.
-pub(crate) const MAX_CHANNEL_BANK_SIZE: usize = 100_000_000;
+pub const MAX_CHANNEL_BANK_SIZE: usize = 100_000_000;
 
 /// The maximum size of a channel bank after the Fjord Hardfork.
-pub(crate) const FJORD_MAX_CHANNEL_BANK_SIZE: usize = 1_000_000_000;
+pub const FJORD_MAX_CHANNEL_BANK_SIZE: usize = 1_000_000_000;
 
 /// [`ChannelBank`] is a stateful stage that does the following:
 /// 1. Unmarshalls frames from L1 transaction data
@@ -233,17 +233,10 @@ where
 {
     /// Reset clears all buffered channel state. This represents a discontinuity in the L1 data
     /// stream (reorg, hardfork boundary, or explicit flush).
-    ///
-    /// `ProvideBlock` is intentionally **not** cleared here, diverging from kona's upstream
-    /// `ChannelBank` which clears unconditionally on all signals. Channels can span multiple
-    /// L1 blocks; clearing on every block advancement would destroy in-progress multi-block
-    /// channels before their frames have all arrived, breaking channel timeout detection.
-    /// This matches op-node's `channel_bank.go`, where only `Reset()` discards channel state
-    /// and normal L1 block advancement leaves channels intact.
     async fn reset(
         &mut self,
         l1_origin: alloy_eips::BlockNumHash,
-        system_config: base_consensus_genesis::SystemConfig,
+        system_config: base_common_genesis::SystemConfig,
     ) -> PipelineResult<()> {
         self.prev.reset(l1_origin, system_config).await?;
         self.channels.clear();
@@ -264,10 +257,6 @@ where
         self.channel_queue = VecDeque::with_capacity(10);
         Ok(())
     }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.prev.provide_block(block).await
-    }
 }
 
 #[cfg(test)]
@@ -275,12 +264,11 @@ mod tests {
     use alloc::{vec, vec::Vec};
 
     use alloy_eips::BlockNumHash;
-    use base_consensus_genesis::{HardForkConfig, SystemConfig};
+    use base_common_genesis::{HardForkConfig, SystemConfig};
     use tracing::Level;
-    use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
-    use crate::test_utils::{CollectingLayer, TestNextFrameProvider, TraceStorage};
+    use crate::test_utils::TestNextFrameProvider;
 
     #[test]
     fn test_try_read_channel_at_index_missing_channel() {
@@ -481,85 +469,9 @@ mod tests {
         assert!(channel_bank.prev.reset, "FlushChannel must propagate to prev stage");
     }
 
-    /// `ProvideBlock` advances the L1 origin and must NOT discard in-progress
-    /// channels — this is the intentional divergence from kona's upstream
-    /// `ChannelBank`, which clears unconditionally on all signals.  Channels
-    /// that span multiple L1 blocks must survive each `ProvideBlock` so that
-    /// the channel-timeout window can be measured correctly.
-    #[tokio::test]
-    async fn test_provide_block_preserves_channels() {
-        let mock = TestNextFrameProvider::new(vec![]);
-        let cfg = Arc::new(RollupConfig::default());
-        let mut channel_bank = ChannelBank::new(cfg, mock);
-        channel_bank.channels.insert([0xFF; 16], Channel::default());
-        channel_bank.channel_queue.push_back([0xFF; 16]);
-        assert!(!channel_bank.prev.reset);
-        channel_bank.provide_block(BlockInfo::default()).await.unwrap();
-        assert_eq!(channel_bank.channels.len(), 1, "ProvideBlock must not clear channels");
-        assert_eq!(
-            channel_bank.channel_queue.len(),
-            1,
-            "ProvideBlock must not clear channel queue"
-        );
-        assert!(channel_bank.prev.reset, "ProvideBlock must still propagate to prev stage");
-    }
-
-    /// Multiple successive `ProvideBlock` signals — one per simulated L1 block
-    /// — must all leave in-progress channels intact.
-    #[tokio::test]
-    async fn test_provide_block_preserves_channels_across_multiple_signals() {
-        let mock = TestNextFrameProvider::new(vec![]);
-        let cfg = Arc::new(RollupConfig::default());
-        let mut channel_bank = ChannelBank::new(cfg, mock);
-        channel_bank.channels.insert([0xAA; 16], Channel::default());
-        channel_bank.channel_queue.push_back([0xAA; 16]);
-        for i in 0u64..5 {
-            channel_bank
-                .provide_block(BlockInfo { number: i, ..Default::default() })
-                .await
-                .unwrap();
-            assert_eq!(channel_bank.channels.len(), 1, "channels must survive ProvideBlock #{i}");
-            assert_eq!(
-                channel_bank.channel_queue.len(),
-                1,
-                "channel queue must survive ProvideBlock #{i}"
-            );
-        }
-    }
-
-    /// After some `ProvideBlock` signals (which must preserve channel state), a
-    /// subsequent `Reset` must still clear everything.
-    #[tokio::test]
-    async fn test_reset_after_provide_block_clears_channels() {
-        let mock = TestNextFrameProvider::new(vec![]);
-        let cfg = Arc::new(RollupConfig::default());
-        let mut channel_bank = ChannelBank::new(cfg, mock);
-        channel_bank.channels.insert([0xBB; 16], Channel::default());
-        channel_bank.channel_queue.push_back([0xBB; 16]);
-        // Advance a few L1 blocks — channels must survive.
-        for i in 0u64..3 {
-            channel_bank
-                .provide_block(BlockInfo { number: i, ..Default::default() })
-                .await
-                .unwrap();
-        }
-        assert_eq!(channel_bank.channels.len(), 1, "channels must survive ProvideBlock signals");
-        // A Reset (e.g. reorg) must now clear everything.
-        channel_bank.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
-        assert_eq!(channel_bank.channels.len(), 0, "Reset must clear channels after ProvideBlock");
-        assert_eq!(
-            channel_bank.channel_queue.len(),
-            0,
-            "Reset must clear channel queue after ProvideBlock"
-        );
-    }
-
     #[test]
     fn test_ingest_invalid_frame() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let mock = TestNextFrameProvider::new(vec![]);
         let mut channel_bank = ChannelBank::new(Arc::new(RollupConfig::default()), mock);
@@ -644,14 +556,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_channel_timeout() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let configs: [RollupConfig; 2] = [
-            base_consensus_registry::Registry::rollup_config(8453).cloned().unwrap(),
-            base_consensus_registry::Registry::rollup_config(84532).cloned().unwrap(),
+            base_common_chains::rollup_config!(base_common_chains::ChainConfig::MAINNET),
+            base_common_chains::rollup_config!(base_common_chains::ChainConfig::SEPOLIA),
         ];
 
         for cfg in configs {

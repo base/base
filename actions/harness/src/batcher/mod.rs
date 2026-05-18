@@ -4,4 +4,4 @@ mod actor;
 pub use actor::{Batcher, BatcherConfig, BatcherError};
 
 mod tx_manager;
-pub use tx_manager::{Inner, L1MinerTxManager, Pending};
+pub use tx_manager::{Inner, L1MinerTxManager, L1SignedSubmission, Pending};

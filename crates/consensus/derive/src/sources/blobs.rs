@@ -113,11 +113,11 @@ where
             return Ok(());
         }
 
-        let info = self
-            .chain_provider
-            .block_info_and_transactions_by_hash(block_ref.hash)
-            .await
-            .map_err(Into::into)?;
+        let info = base_metrics::time!(
+            Metrics::pipeline_data_availability_l1_fetch_duration_seconds("blobs"),
+            { self.chain_provider.block_info_and_transactions_by_hash(block_ref.hash).await }
+        )
+        .map_err(Into::into)?;
 
         let (mut data, blob_hashes) = self.extract_blob_data(info.1, batcher_address);
 
@@ -132,32 +132,31 @@ where
         //   BlobNotFound  -> PipelineErrorKind::Reset   (missed/orphaned slot)
         //   Backend       -> PipelineErrorKind::Temporary (transient, retry)
         //   others        -> PipelineErrorKind::Critical
-        let blobs = self
-            .blob_fetcher
-            .get_and_validate_blobs(block_ref, &blob_hashes)
-            .await
-            .map_err(Into::<PipelineErrorKind>::into)
-            .inspect_err(|kind| match kind {
-                PipelineErrorKind::Reset(_) => {
-                    warn!(
-                        target: "blob_source",
-                        block_hash = %block_ref.hash,
-                        block_number = block_ref.number,
-                        timestamp = block_ref.timestamp,
-                        "Blobs permanently unavailable (missed/orphaned beacon slot); \
-                         triggering pipeline reset"
-                    );
-                }
-                _ => {
-                    warn!(
-                        target: "blob_source",
-                        block_hash = %block_ref.hash,
-                        block_number = block_ref.number,
-                        timestamp = block_ref.timestamp,
-                        "Failed to fetch blobs: {kind}"
-                    );
-                }
-            })?;
+        let blobs = base_metrics::time!(Metrics::pipeline_blob_fetch_duration_seconds(), {
+            self.blob_fetcher.get_and_validate_blobs(block_ref, &blob_hashes).await
+        })
+        .map_err(Into::<PipelineErrorKind>::into)
+        .inspect_err(|kind| match kind {
+            PipelineErrorKind::Reset(_) => {
+                warn!(
+                    target: "blob_source",
+                    block_hash = %block_ref.hash,
+                    block_number = block_ref.number,
+                    timestamp = block_ref.timestamp,
+                    "Blobs permanently unavailable (missed/orphaned beacon slot); \
+                     triggering pipeline reset"
+                );
+            }
+            _ => {
+                warn!(
+                    target: "blob_source",
+                    block_hash = %block_ref.hash,
+                    block_number = block_ref.number,
+                    timestamp = block_ref.timestamp,
+                    "Failed to fetch blobs: {kind}"
+                );
+            }
+        })?;
 
         // Fill the blob pointers.
         let mut blob_index = 0;
@@ -232,12 +231,12 @@ where
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+pub(super) mod tests {
     use alloc::vec;
 
     use alloy_consensus::{Blob, Signed, TxEip4844, TxEip4844Variant};
     use alloy_primitives::Signature;
-    use base_consensus_registry::Registry;
+    use base_common_chains::ChainConfig;
 
     use super::*;
     use crate::{
@@ -257,7 +256,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn valid_blob_txs() -> Vec<TxEnvelope> {
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         let sig = Signature::test_signature();
         vec![TxEnvelope::Eip4844(Signed::new_unchecked(
             TxEip4844Variant::TxEip4844(TxEip4844 {
@@ -318,7 +317,7 @@ pub(crate) mod tests {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.blob_fetcher.should_error = true;
@@ -334,7 +333,7 @@ pub(crate) mod tests {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.chain_provider.insert_block_with_transactions(1, block_info, txs);
@@ -404,7 +403,7 @@ pub(crate) mod tests {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.blob_fetcher.should_return_extra_blob = true;
@@ -491,7 +490,7 @@ pub(crate) mod tests {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         source.chain_provider.insert_block_with_transactions(1, block_info, valid_blob_txs());
         source.blob_fetcher.should_return_not_found = true;
@@ -510,7 +509,7 @@ pub(crate) mod tests {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         source.chain_provider.insert_block_with_transactions(1, block_info, valid_blob_txs());
         source.blob_fetcher.should_return_not_found = true;
@@ -552,7 +551,7 @@ pub(crate) mod tests {
     #[test]
     fn test_extract_blob_data_non_batcher_blobs_excluded() {
         // Case 1: source.batcher_address = Address::ZERO does not match the tx's batch inbox
-        // address from `Registry::rollup_config(8453)`, so the transaction is skipped and no
+        // address from `ChainConfig::MAINNET`, so the transaction is skipped and no
         // blobs are captured.
         let source = default_test_blob_source(); // batch_inbox_address = Address::ZERO
         let batcher_address = valid_blob_batcher_address();
@@ -562,7 +561,7 @@ pub(crate) mod tests {
 
         // Case 2: correct batch inbox address → all 5 blobs from the batcher transaction captured.
         let mut source2 = default_test_blob_source();
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         source2.batcher_address = batch_inbox_address;
         let batcher_address = valid_blob_batcher_address();
         let (data, hashes) = source2.extract_blob_data(valid_blob_txs(), batcher_address);

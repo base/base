@@ -14,3 +14,6 @@ pub use error::L1WatcherActorError;
 
 mod fetcher;
 pub use fetcher::{AlloyL1BlockFetcher, L1BlockFetcher};
+
+mod query_processor;
+pub use query_processor::{L1WatcherQueryExecutor, L1WatcherQueryProcessor};

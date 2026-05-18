@@ -35,4 +35,20 @@ pub trait Clock: Send + Sync + 'static {
     /// elapses (or after the deterministic executor skips idle time to cover
     /// that period in tests).
     fn interval(&self, period: Duration) -> BoxStream<'static, ()>;
+
+    /// Returns the current wall-clock time as seconds since the Unix epoch.
+    ///
+    /// Used when converting on-chain Unix timestamps to the monotonic
+    /// domain (e.g. recovering `resolved_at` after a restart).
+    ///
+    /// The default implementation calls [`std::time::SystemTime::now`].
+    /// The deterministic test runtime overrides this to return a value
+    /// derived from virtual time, making time-dependent code fully
+    /// testable.
+    fn wall_clock_unix_secs(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .expect("system clock before UNIX epoch")
+            .as_secs()
+    }
 }

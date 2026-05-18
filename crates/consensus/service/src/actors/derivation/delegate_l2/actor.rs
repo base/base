@@ -3,8 +3,8 @@ use std::sync::Arc;
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
-use base_alloy_network::Base;
-use base_consensus_engine::ConsolidateInput;
+use base_common_network::Base;
+use base_consensus_engine::DelegatedForkchoiceUpdate;
 use base_protocol::L2BlockInfo;
 use futures::future::OptionFuture;
 use serde::Deserialize;
@@ -31,7 +31,7 @@ struct ProofsSyncStatus {
 /// engine via `ProcessUnsafeL2BlockRequest` (`NewPayload` + FCU) rather than
 /// running the full derivation pipeline.
 ///
-/// Safe and finalized head updates are forwarded separately.
+/// Safe and finalized head updates are forwarded together as delegated labels.
 #[derive(Debug)]
 pub struct DelegateL2DerivationActor<DerivationEngineClient_, L2Source = super::DelegateL2Client>
 where
@@ -45,7 +45,6 @@ where
     local_l2_provider: RootProvider<Base>,
     l2_source: Arc<L2Source>,
     sent_head: u64,
-    engine_head: u64,
     proofs_enabled: bool,
     proofs_max_blocks_ahead: u64,
 }
@@ -83,7 +82,6 @@ where
             local_l2_provider,
             l2_source: Arc::new(l2_source),
             sent_head: 0,
-            engine_head: 0,
             proofs_enabled: false,
             proofs_max_blocks_ahead: DEFAULT_PROOFS_MAX_BLOCKS_AHEAD,
         }
@@ -135,7 +133,6 @@ where
                 .await
                 .map_err(|e| DerivationError::Sender(Box::new(e)))?;
             self.sent_head = head;
-            self.engine_head = head;
         }
 
         info!(target: "derivation", head = self.sent_head, "Starting L2 delegate derivation");
@@ -186,18 +183,22 @@ where
 
                     let target_block = match self.determine_target_block().await {
                         Ok(Some(target)) => target,
-                        Ok(None) => continue,
+                        Ok(None) => {
+                            warn!(target: "derivation", sent_head = self.sent_head, "Target is behind already sent head, skipping sync");
+                            continue;
+                        },
                         Err(e) => {
                             warn!(target: "derivation", error = %e, "Failed to determine target block");
                             continue;
                         }
                     };
+                    info!(target: "derivation", target_block, sent_head = self.sent_head, "Starting sync from L2 source");
 
                     let cancellation_token = self.cancellation_token.clone();
                     let l2_source = Arc::clone(&self.l2_source);
                     let engine_client = Arc::clone(&self.engine_client);
                     let engine_actor_request_tx = self.engine_actor_request_tx.clone();
-                    let engine_head = self.engine_head;
+                    let local_l2_provider = self.local_l2_provider.clone();
                     let sent_head = self.sent_head;
 
                     sync_task = Some(tokio::spawn(async move {
@@ -205,7 +206,7 @@ where
                             engine_client,
                             engine_actor_request_tx,
                             cancellation_token,
-                            engine_head,
+                            local_l2_provider,
                             sent_head,
                             target_block,
                             l2_source,
@@ -271,17 +272,23 @@ where
     }
 
     async fn handle_request(
-        &mut self,
+        &self,
         request_type: DerivationActorRequest,
     ) -> Result<(), DerivationError> {
         match request_type {
             DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(safe_head) => {
-                debug!(target: "derivation", safe_head = ?*safe_head, "Received safe head from engine.");
-                self.engine_head = safe_head.block_info.number;
+                debug!(
+                    target: "derivation",
+                    safe_head = ?*safe_head,
+                    "Ignoring engine safe head update in L2 delegate mode"
+                );
             }
             DerivationActorRequest::ProcessEngineSyncCompletionRequest(safe_head) => {
-                info!(target: "derivation", head = safe_head.block_info.number, "Engine sync completed.");
-                self.engine_head = safe_head.block_info.number;
+                info!(
+                    target: "derivation",
+                    head = safe_head.block_info.number,
+                    "Ignoring engine sync completion in L2 delegate mode"
+                );
             }
             DerivationActorRequest::ProcessEngineSignalRequest(_)
             | DerivationActorRequest::ProcessFinalizedL1Block(_)
@@ -297,7 +304,7 @@ pub(super) struct SyncFromSourceTask<DerivationEngineClient_, L2Source> {
     engine_client: Arc<DerivationEngineClient_>,
     engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
     cancellation_token: CancellationToken,
-    engine_head: u64,
+    local_l2_provider: RootProvider<Base>,
     sent_head: u64,
     target_block: u64,
     l2_source: Arc<L2Source>,
@@ -312,7 +319,7 @@ where
         engine_client: Arc<DerivationEngineClient_>,
         engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
         cancellation_token: CancellationToken,
-        engine_head: u64,
+        local_l2_provider: RootProvider<Base>,
         sent_head: u64,
         target_block: u64,
         l2_source: Arc<L2Source>,
@@ -321,7 +328,7 @@ where
             engine_client,
             engine_actor_request_tx,
             cancellation_token,
-            engine_head,
+            local_l2_provider,
             sent_head,
             target_block,
             l2_source,
@@ -373,31 +380,57 @@ where
     }
 
     async fn update_safe_and_finalized(&self) -> Result<(), DerivationError> {
-        if let Ok(safe_number) = self.l2_source.get_block_number(BlockNumberOrTag::Safe).await {
-            let clamped_safe = safe_number.min(self.engine_head);
-            if let Ok(safe_payload) = self.l2_source.get_payload_by_number(clamped_safe).await {
-                let safe_l2 = L2BlockInfo {
-                    block_info: base_protocol::BlockInfo {
-                        hash: safe_payload.execution_payload.block_hash(),
-                        number: clamped_safe,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
+        let Ok(safe_number) = self.l2_source.get_block_number(BlockNumberOrTag::Safe).await else {
+            return Ok(());
+        };
+        // Delegated labels must never point past blocks we have already forwarded to the local
+        // engine, but they must not be clamped to the engine's current safe head. On a fresh
+        // follow node the engine safe head starts at genesis, and clamping to it would pin both
+        // delegated safe and finalized labels at block 0 forever.
+        let local_tip = self.sent_head;
+        let clamped_safe = safe_number.min(local_tip);
+        let Ok(safe_payload) = self.l2_source.get_payload_by_number(clamped_safe).await else {
+            return Ok(());
+        };
 
-                let _ = self
-                    .engine_client
-                    .send_safe_l2_signal(ConsolidateInput::BlockInfo(safe_l2))
-                    .await;
-            }
-        }
+        let source_hash = safe_payload.execution_payload.block_hash();
 
-        if let Ok(finalized_number) =
-            self.l2_source.get_block_number(BlockNumberOrTag::Finalized).await
+        // Detect hash mismatch between source and local EL for the delegated safe block.
+        if let Ok(Some(local_block)) =
+            self.local_l2_provider.get_block_by_number(clamped_safe.into()).await
+            && local_block.header.hash != source_hash
         {
-            let clamped_finalized = finalized_number.min(self.engine_head);
-            let _ = self.engine_client.send_finalized_l2_block(clamped_finalized).await;
+            warn!(
+                target: "derivation",
+                block_number = clamped_safe,
+                local_hash = %local_block.header.hash,
+                source_hash = %source_hash,
+                "Delegated safe block hash mismatch between source and local EL"
+            );
         }
+
+        let safe_l2 = L2BlockInfo {
+            block_info: base_protocol::BlockInfo {
+                hash: source_hash,
+                number: clamped_safe,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let finalized_l2_number = self
+            .l2_source
+            .get_block_number(BlockNumberOrTag::Finalized)
+            .await
+            .ok()
+            .map(|number| number.min(local_tip));
+
+        let _ = self
+            .engine_client
+            .send_delegated_forkchoice_update(DelegatedForkchoiceUpdate {
+                safe_l2,
+                finalized_l2_number,
+            })
+            .await;
 
         Ok(())
     }
@@ -408,15 +441,16 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::B256;
     use alloy_rpc_types_engine::ExecutionPayloadV1;
-    use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadEnvelope};
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_protocol::{BlockInfo, L2BlockInfo};
-    use mockall::predicate::*;
+    use mockall::{Sequence, predicate::*};
     use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::actors::derivation::{
-        delegate_l2::client::MockL2SourceClient, engine_client::MockDerivationEngineClient,
+        delegate_l2::client::{DelegateL2ClientError, MockL2SourceClient},
+        engine_client::MockDerivationEngineClient,
     };
 
     fn dummy_l2_block_info(number: u64) -> L2BlockInfo {
@@ -430,7 +464,7 @@ mod tests {
         }
     }
 
-    fn dummy_payload_envelope(block_number: u64) -> OpExecutionPayloadEnvelope {
+    fn dummy_payload_envelope(block_number: u64) -> BaseExecutionPayloadEnvelope {
         let payload = ExecutionPayloadV1 {
             parent_hash: B256::ZERO,
             fee_recipient: alloy_primitives::Address::ZERO,
@@ -447,9 +481,9 @@ mod tests {
             block_hash: B256::from([block_number as u8; 32]),
             transactions: vec![],
         };
-        OpExecutionPayloadEnvelope {
+        BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
-            execution_payload: OpExecutionPayload::V1(payload),
+            execution_payload: BaseExecutionPayload::V1(payload),
         }
     }
 
@@ -484,7 +518,6 @@ mod tests {
     fn make_sync_task(
         engine_client: MockDerivationEngineClient,
         l2_source: MockL2SourceClient,
-        engine_head: u64,
         sent_head: u64,
         target_block: u64,
     ) -> (
@@ -495,11 +528,14 @@ mod tests {
         let cancel = CancellationToken::new();
         let (engine_tx, engine_rx) = mpsc::channel(16);
 
+        let local_l2_provider =
+            RootProvider::<Base>::new_http("http://localhost:1234".parse().unwrap());
+
         let task = SyncFromSourceTask::new(
             Arc::new(engine_client),
             engine_tx,
             cancel.clone(),
-            engine_head,
+            local_l2_provider,
             sent_head,
             target_block,
             Arc::new(l2_source),
@@ -512,9 +548,7 @@ mod tests {
     async fn handle_sync_completion_enables_sync() {
         let engine_client = MockDerivationEngineClient::new();
         let l2_source = MockL2SourceClient::new();
-        let (mut actor, _, _, _) = make_actor(engine_client, l2_source);
-
-        assert_eq!(actor.engine_head, 0);
+        let (actor, _, _, _) = make_actor(engine_client, l2_source);
 
         let safe_head = dummy_l2_block_info(42);
         actor
@@ -523,15 +557,13 @@ mod tests {
             )))
             .await
             .unwrap();
-
-        assert_eq!(actor.engine_head, 42);
     }
 
     #[tokio::test]
     async fn handle_safe_head_update_sets_local_head() {
         let engine_client = MockDerivationEngineClient::new();
         let l2_source = MockL2SourceClient::new();
-        let (mut actor, _, _, _) = make_actor(engine_client, l2_source);
+        let (actor, _, _, _) = make_actor(engine_client, l2_source);
 
         let safe_head = dummy_l2_block_info(100);
         actor
@@ -540,15 +572,13 @@ mod tests {
             )))
             .await
             .unwrap();
-
-        assert_eq!(actor.engine_head, 100);
     }
 
     #[tokio::test]
     async fn handle_irrelevant_requests_noop() {
         let engine_client = MockDerivationEngineClient::new();
         let l2_source = MockL2SourceClient::new();
-        let (mut actor, _, _, _) = make_actor(engine_client, l2_source);
+        let (actor, _, _, _) = make_actor(engine_client, l2_source);
 
         actor
             .handle_request(DerivationActorRequest::ProcessL1HeadUpdateRequest(Box::default()))
@@ -559,8 +589,6 @@ mod tests {
             .handle_request(DerivationActorRequest::ProcessFinalizedL1Block(Box::default()))
             .await
             .unwrap();
-
-        assert_eq!(actor.engine_head, 0);
     }
 
     #[tokio::test]
@@ -568,7 +596,7 @@ mod tests {
         let engine_client = MockDerivationEngineClient::new();
         let l2_source = MockL2SourceClient::new();
 
-        let (mut task, _, _) = make_sync_task(engine_client, l2_source, 0, 10, 5);
+        let (mut task, _, _) = make_sync_task(engine_client, l2_source, 10, 5);
 
         let new_head = task.sync_from_source().await.unwrap();
         assert_eq!(new_head, 10);
@@ -602,10 +630,13 @@ mod tests {
             .with(eq(BlockNumberOrTag::Finalized))
             .returning(|_| Ok(1));
 
-        engine_client.expect_send_safe_l2_signal().returning(|_| Ok(()));
-        engine_client.expect_send_finalized_l2_block().returning(|_| Ok(()));
+        engine_client.expect_send_delegated_forkchoice_update().returning(|update| {
+            assert_eq!(update.safe_l2.block_info.number, 2);
+            assert_eq!(update.finalized_l2_number, Some(1));
+            Ok(())
+        });
 
-        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 2, 0, 3);
+        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 3);
 
         let new_head = task.sync_from_source().await.unwrap();
         assert_eq!(new_head, 3);
@@ -622,11 +653,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delegated_forkchoice_uses_inserted_head_when_engine_safe_head_is_zero() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(2))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(3))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+
+        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Safe)).returning(|_| Ok(2));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(2))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(1));
+
+        engine_client.expect_send_delegated_forkchoice_update().returning(|update| {
+            assert_eq!(update.safe_l2.block_info.number, 2);
+            assert_eq!(update.finalized_l2_number, Some(1));
+            Ok(())
+        });
+
+        let (mut task, _engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 3);
+
+        let new_head = task.sync_from_source().await.unwrap();
+        assert_eq!(new_head, 3);
+    }
+
+    #[tokio::test]
+    async fn delegated_forkchoice_not_sent_when_safe_payload_unavailable() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+        let mut sequence = Sequence::new();
+
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1))
+            .times(1)
+            .in_sequence(&mut sequence)
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+
+        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Safe)).returning(|_| Ok(1));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1))
+            .times(1)
+            .in_sequence(&mut sequence)
+            .returning(|n| Err(DelegateL2ClientError::BlockNotFound(format!("{n}"))));
+
+        engine_client.expect_send_delegated_forkchoice_update().times(0);
+        engine_client.expect_send_safe_l2_signal().times(0);
+        engine_client.expect_send_finalized_l2_block().times(0);
+
+        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 1);
+
+        let new_head = task.sync_from_source().await.unwrap();
+        assert_eq!(new_head, 1);
+
+        let req = engine_rx.try_recv().unwrap();
+        assert!(
+            matches!(req, EngineActorRequest::ProcessUnsafeL2BlockRequest(_)),
+            "expected ProcessUnsafeL2BlockRequest, got {req:?}"
+        );
+        assert!(engine_rx.is_empty(), "unexpected extra engine requests");
+    }
+
+    #[tokio::test]
     async fn sync_aborts_on_cancellation() {
         let engine_client = MockDerivationEngineClient::new();
         let l2_source = MockL2SourceClient::new();
 
-        let (mut task, engine_rx, cancel) = make_sync_task(engine_client, l2_source, 0, 0, 100);
+        let (mut task, engine_rx, cancel) = make_sync_task(engine_client, l2_source, 0, 100);
 
         cancel.cancel();
         let new_head = task.sync_from_source().await.unwrap();

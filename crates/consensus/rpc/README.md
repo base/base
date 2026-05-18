@@ -43,7 +43,7 @@ struct MyRpcHandler;
 
 #[async_trait::async_trait]
 impl SyncStatusApiServer for MyRpcHandler {
-    async fn op_sync_status(&self) -> RpcResult<SyncStatus> {
+    async fn sync_status(&self) -> RpcResult<SyncStatus> {
         // Return current sync status
         Ok(SyncStatus::default())
     }
@@ -66,7 +66,7 @@ use jsonrpsee::http_client::HttpClientBuilder;
 let client = HttpClientBuilder::default()
     .build("http://localhost:8545")?;
 
-let status = client.op_sync_status().await?;
+let status = client.sync_status().await?;
 ```
 
 ## License

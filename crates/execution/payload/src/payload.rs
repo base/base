@@ -9,18 +9,18 @@ use alloy_eips::{
 use alloy_primitives::{Address, B64, B256, Bytes, U256, keccak256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::{
-    BlobsBundleV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2, ExecutionPayloadV1,
-    ExecutionPayloadV3, PayloadId,
+    BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2,
+    ExecutionPayloadV1, ExecutionPayloadV3, PayloadId,
 };
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData, OpPrimitives};
-/// Re-export for use in downstream arguments.
-pub use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_alloy_rpc_types_engine::{
-    BlobsBundleV2, OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4,
-    OpExecutionPayloadEnvelopeV5, OpExecutionPayloadV4,
+use base_common_chains::Upgrades;
+use base_common_consensus::{
+    BasePrimitives, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
 };
-use base_execution_evm::OpNextBlockEnvAttributes;
+use base_common_rpc_types_engine::{
+    BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
+    BaseExecutionPayloadV4, BasePayloadAttributes,
+};
+use base_execution_evm::BaseNextBlockEnvAttributes;
 use reth_chainspec::EthChainSpec;
 use reth_payload_builder::{EthPayloadBuilderAttributes, PayloadBuilderError};
 use reth_payload_primitives::{
@@ -32,7 +32,7 @@ use reth_primitives_traits::{
 
 /// Base Payload Builder Attributes
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpPayloadBuilderAttributes<T> {
+pub struct BasePayloadBuilderAttributes<T> {
     /// Inner ethereum payload builder attributes
     pub payload_attributes: EthPayloadBuilderAttributes,
     /// `NoTxPool` option for the generated payload
@@ -48,7 +48,7 @@ pub struct OpPayloadBuilderAttributes<T> {
     pub min_base_fee: Option<u64>,
 }
 
-impl<T> Default for OpPayloadBuilderAttributes<T> {
+impl<T> Default for BasePayloadBuilderAttributes<T> {
     fn default() -> Self {
         Self {
             payload_attributes: Default::default(),
@@ -61,7 +61,7 @@ impl<T> Default for OpPayloadBuilderAttributes<T> {
     }
 }
 
-impl<T> OpPayloadBuilderAttributes<T> {
+impl<T> BasePayloadBuilderAttributes<T> {
     /// Extracts the extra data parameters post-Holocene hardfork.
     /// In Holocene, those parameters are the EIP-1559 base fee parameters.
     pub fn get_holocene_extra_data(
@@ -87,9 +87,9 @@ impl<T> OpPayloadBuilderAttributes<T> {
 }
 
 impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> PayloadBuilderAttributes
-    for OpPayloadBuilderAttributes<T>
+    for BasePayloadBuilderAttributes<T>
 {
-    type RpcPayloadAttributes = OpPayloadAttributes;
+    type RpcPayloadAttributes = BasePayloadAttributes;
     type Error = alloy_rlp::Error;
 
     /// Creates a new payload builder for the given parent block and the attributes.
@@ -97,10 +97,10 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> PayloadBuilderAtt
     /// Derives the unique [`PayloadId`] for the given parent and attributes
     fn try_new(
         parent: B256,
-        attributes: OpPayloadAttributes,
+        attributes: BasePayloadAttributes,
         version: u8,
     ) -> Result<Self, Self::Error> {
-        let id = payload_id_optimism(&parent, &attributes, version);
+        let id = payload_id(&parent, &attributes, version);
 
         let transactions = attributes
             .transactions
@@ -160,8 +160,8 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> PayloadBuilderAtt
     }
 }
 
-impl<OpTransactionSigned> From<EthPayloadBuilderAttributes>
-    for OpPayloadBuilderAttributes<OpTransactionSigned>
+impl<BaseTransactionSigned> From<EthPayloadBuilderAttributes>
+    for BasePayloadBuilderAttributes<BaseTransactionSigned>
 {
     fn from(value: EthPayloadBuilderAttributes) -> Self {
         Self { payload_attributes: value, ..Default::default() }
@@ -170,20 +170,20 @@ impl<OpTransactionSigned> From<EthPayloadBuilderAttributes>
 
 /// Contains the built payload.
 #[derive(Debug, Clone)]
-pub struct OpBuiltPayload<N: NodePrimitives = OpPrimitives> {
+pub struct BaseBuiltPayload<N: NodePrimitives = BasePrimitives> {
     /// Identifier of the payload
-    pub(crate) id: PayloadId,
+    pub id: PayloadId,
     /// Sealed block
-    pub(crate) block: Arc<SealedBlock<N::Block>>,
+    pub block: Arc<SealedBlock<N::Block>>,
     /// Block execution data for the payload, if any.
-    pub(crate) executed_block: Option<BuiltPayloadExecutedBlock<N>>,
+    pub executed_block: Option<BuiltPayloadExecutedBlock<N>>,
     /// The fees of the block
-    pub(crate) fees: U256,
+    pub fees: U256,
 }
 
 // === impl BuiltPayload ===
 
-impl<N: NodePrimitives> OpBuiltPayload<N> {
+impl<N: NodePrimitives> BaseBuiltPayload<N> {
     /// Initializes the payload with the given initial block.
     pub const fn new(
         id: PayloadId,
@@ -215,7 +215,7 @@ impl<N: NodePrimitives> OpBuiltPayload<N> {
     }
 }
 
-impl<N: NodePrimitives> BuiltPayload for OpBuiltPayload<N> {
+impl<N: NodePrimitives> BuiltPayload for BaseBuiltPayload<N> {
     type Primitives = N;
 
     fn block(&self) -> &SealedBlock<N::Block> {
@@ -236,12 +236,12 @@ impl<N: NodePrimitives> BuiltPayload for OpBuiltPayload<N> {
 }
 
 // V1 engine_getPayloadV1 response
-impl<T, N> From<OpBuiltPayload<N>> for ExecutionPayloadV1
+impl<T, N> From<BaseBuiltPayload<N>> for ExecutionPayloadV1
 where
     T: SignedTransaction,
     N: NodePrimitives<Block = Block<T>>,
 {
-    fn from(value: OpBuiltPayload<N>) -> Self {
+    fn from(value: BaseBuiltPayload<N>) -> Self {
         Self::from_block_unchecked(
             value.block().hash(),
             &Arc::unwrap_or_clone(value.block).into_block(),
@@ -250,13 +250,13 @@ where
 }
 
 // V2 engine_getPayloadV2 response
-impl<T, N> From<OpBuiltPayload<N>> for ExecutionPayloadEnvelopeV2
+impl<T, N> From<BaseBuiltPayload<N>> for ExecutionPayloadEnvelopeV2
 where
     T: SignedTransaction,
     N: NodePrimitives<Block = Block<T>>,
 {
-    fn from(value: OpBuiltPayload<N>) -> Self {
-        let OpBuiltPayload { block, fees, .. } = value;
+    fn from(value: BaseBuiltPayload<N>) -> Self {
+        let BaseBuiltPayload { block, fees, .. } = value;
 
         Self {
             block_value: fees,
@@ -268,13 +268,13 @@ where
     }
 }
 
-impl<T, N> From<OpBuiltPayload<N>> for OpExecutionPayloadEnvelopeV3
+impl<T, N> From<BaseBuiltPayload<N>> for BaseExecutionPayloadEnvelopeV3
 where
     T: SignedTransaction,
     N: NodePrimitives<Block = Block<T>>,
 {
-    fn from(value: OpBuiltPayload<N>) -> Self {
-        let OpBuiltPayload { block, fees, .. } = value;
+    fn from(value: BaseBuiltPayload<N>) -> Self {
+        let BaseBuiltPayload { block, fees, .. } = value;
 
         let parent_beacon_block_root = block.parent_beacon_block_root.unwrap_or_default();
 
@@ -293,20 +293,20 @@ where
             // Spec:
             // <https://github.com/ethereum/execution-apis/blob/fe8e13c288c592ec154ce25c534e26cb7ce0530d/src/engine/cancun.md#specification-2>
             should_override_builder: false,
-            // No blobs for OP.
+            // No blobs for Base execution payloads.
             blobs_bundle: BlobsBundleV1 { blobs: vec![], commitments: vec![], proofs: vec![] },
             parent_beacon_block_root,
         }
     }
 }
 
-impl<T, N> From<OpBuiltPayload<N>> for OpExecutionPayloadEnvelopeV4
+impl<T, N> From<BaseBuiltPayload<N>> for BaseExecutionPayloadEnvelopeV4
 where
     T: SignedTransaction,
     N: NodePrimitives<Block = Block<T>>,
 {
-    fn from(value: OpBuiltPayload<N>) -> Self {
-        let OpBuiltPayload { block, fees, .. } = value;
+    fn from(value: BaseBuiltPayload<N>) -> Self {
+        let BaseBuiltPayload { block, fees, .. } = value;
 
         let parent_beacon_block_root = block.parent_beacon_block_root.unwrap_or_default();
 
@@ -317,7 +317,7 @@ where
         );
 
         Self {
-            execution_payload: OpExecutionPayloadV4::from_v3_with_withdrawals_root(
+            execution_payload: BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
                 payload_v3,
                 l2_withdrawals_root,
             ),
@@ -331,7 +331,7 @@ where
             // Spec:
             // <https://github.com/ethereum/execution-apis/blob/fe8e13c288c592ec154ce25c534e26cb7ce0530d/src/engine/cancun.md#specification-2>
             should_override_builder: false,
-            // No blobs for OP.
+            // No blobs for Base execution payloads.
             blobs_bundle: BlobsBundleV1 { blobs: vec![], commitments: vec![], proofs: vec![] },
             parent_beacon_block_root,
             execution_requests: vec![],
@@ -339,13 +339,13 @@ where
     }
 }
 
-impl<T, N> From<OpBuiltPayload<N>> for OpExecutionPayloadEnvelopeV5
+impl<T, N> From<BaseBuiltPayload<N>> for BaseExecutionPayloadEnvelopeV5
 where
     T: SignedTransaction,
     N: NodePrimitives<Block = Block<T>>,
 {
-    fn from(value: OpBuiltPayload<N>) -> Self {
-        let OpBuiltPayload { block, fees, .. } = value;
+    fn from(value: BaseBuiltPayload<N>) -> Self {
+        let BaseBuiltPayload { block, fees, .. } = value;
 
         let l2_withdrawals_root = block.withdrawals_root.unwrap_or_default();
         let payload_v3 = ExecutionPayloadV3::from_block_unchecked(
@@ -354,7 +354,7 @@ where
         );
 
         Self {
-            execution_payload: OpExecutionPayloadV4::from_v3_with_withdrawals_root(
+            execution_payload: BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
                 payload_v3,
                 l2_withdrawals_root,
             ),
@@ -375,15 +375,15 @@ where
     }
 }
 
-/// Generates the payload id for the configured payload from the [`OpPayloadAttributes`].
+/// Generates the payload id for the configured payload from the [`BasePayloadAttributes`].
 ///
 /// Returns an 8-byte identifier by hashing the payload components with sha256 hash.
 ///
-/// Note: This must be updated whenever the [`OpPayloadAttributes`] changes for a hardfork.
+/// Note: This must be updated whenever the [`BasePayloadAttributes`] changes for a hardfork.
 /// See also <https://github.com/ethereum-optimism/op-geth/blob/d401af16f2dd94b010a72eaef10e07ac10b31931/miner/payload_building.go#L59-L59>
-pub fn payload_id_optimism(
+pub fn payload_id(
     parent: &B256,
-    attributes: &OpPayloadAttributes,
+    attributes: &BasePayloadAttributes,
     payload_version: u8,
 ) -> PayloadId {
     use sha2::Digest;
@@ -437,15 +437,15 @@ pub fn payload_id_optimism(
     PayloadId::new(out.as_slice()[..8].try_into().expect("sufficient length"))
 }
 
-impl<H, T, ChainSpec> BuildNextEnv<OpPayloadBuilderAttributes<T>, H, ChainSpec>
-    for OpNextBlockEnvAttributes
+impl<H, T, ChainSpec> BuildNextEnv<BasePayloadBuilderAttributes<T>, H, ChainSpec>
+    for BaseNextBlockEnvAttributes
 where
     H: BlockHeader,
     T: SignedTransaction,
-    ChainSpec: EthChainSpec + BaseUpgrades,
+    ChainSpec: EthChainSpec + Upgrades,
 {
     fn build_next_env(
-        attributes: &OpPayloadBuilderAttributes<T>,
+        attributes: &BasePayloadBuilderAttributes<T>,
         parent: &SealedHeader<H>,
         chain_spec: &ChainSpec,
     ) -> Result<Self, PayloadBuilderError> {
@@ -482,11 +482,11 @@ mod tests {
 
     use alloy_primitives::{FixedBytes, address, b256, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
-    use base_alloy_consensus::OpTransactionSigned;
+    use base_common_consensus::BaseTransactionSigned;
+    use base_common_rpc_types_engine::BasePayloadAttributes;
     use reth_payload_primitives::EngineApiMessageVersion;
 
     use super::*;
-    use crate::OpPayloadAttributes;
 
     #[test]
     fn test_payload_id_parity_op_geth() {
@@ -494,7 +494,7 @@ mod tests {
         // payload_id_builder="0x6ef26ca02318dcf9" payload_id_l2="0x03d2dae446d2a86a"
         let expected =
             PayloadId::new(FixedBytes::<8>::from_str("0x03d2dae446d2a86a").unwrap().into());
-        let attrs = OpPayloadAttributes {
+        let attrs = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: 1728933301,
                 prev_randao: b256!("0x9158595abbdab2c90635087619aa7042bbebe47642dfab3c9bfb934f6b082765"),
@@ -512,7 +512,7 @@ mod tests {
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
         assert_eq!(
             expected,
-            payload_id_optimism(
+            payload_id(
                 &b256!("0x3533bf30edaf9505d0810bf475cbe4e5f4b9889904b9845e83efdeab4e92eb1e"),
                 &attrs,
                 EngineApiMessageVersion::V3 as u8
@@ -525,7 +525,7 @@ mod tests {
         // <https://github.com/ethereum-optimism/op-geth/compare/optimism...mattsse:op-geth:matt/check-payload-id-equality>
         let expected =
             PayloadId::new(FixedBytes::<8>::from_str("0x046c65ffc4d659ec").unwrap().into());
-        let attrs = OpPayloadAttributes {
+        let attrs = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: 1728933301,
                 prev_randao: b256!("0x9158595abbdab2c90635087619aa7042bbebe47642dfab3c9bfb934f6b082765"),
@@ -543,7 +543,7 @@ mod tests {
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
         assert_eq!(
             expected,
-            payload_id_optimism(
+            payload_id(
                 &b256!("0x3533bf30edaf9505d0810bf475cbe4e5f4b9889904b9845e83efdeab4e92eb1e"),
                 &attrs,
                 EngineApiMessageVersion::V4 as u8
@@ -553,8 +553,8 @@ mod tests {
 
     #[test]
     fn test_get_extra_data_post_holocene() {
-        let attributes: OpPayloadBuilderAttributes<OpTransactionSigned> =
-            OpPayloadBuilderAttributes {
+        let attributes: BasePayloadBuilderAttributes<BaseTransactionSigned> =
+            BasePayloadBuilderAttributes {
                 eip_1559_params: Some(B64::from_str("0x0000000800000008").unwrap()),
                 ..Default::default()
             };
@@ -564,16 +564,16 @@ mod tests {
 
     #[test]
     fn test_get_extra_data_post_holocene_default() {
-        let attributes: OpPayloadBuilderAttributes<OpTransactionSigned> =
-            OpPayloadBuilderAttributes { eip_1559_params: Some(B64::ZERO), ..Default::default() };
+        let attributes: BasePayloadBuilderAttributes<BaseTransactionSigned> =
+            BasePayloadBuilderAttributes { eip_1559_params: Some(B64::ZERO), ..Default::default() };
         let extra_data = attributes.get_holocene_extra_data(BaseFeeParams::new(80, 60));
         assert_eq!(extra_data.unwrap(), Bytes::copy_from_slice(&[0, 0, 0, 0, 80, 0, 0, 0, 60]));
     }
 
     #[test]
     fn test_get_extra_data_post_jovian() {
-        let attributes: OpPayloadBuilderAttributes<OpTransactionSigned> =
-            OpPayloadBuilderAttributes {
+        let attributes: BasePayloadBuilderAttributes<BaseTransactionSigned> =
+            BasePayloadBuilderAttributes {
                 eip_1559_params: Some(B64::from_str("0x0000000800000008").unwrap()),
                 min_base_fee: Some(10),
                 ..Default::default()
@@ -589,8 +589,8 @@ mod tests {
 
     #[test]
     fn test_get_extra_data_post_jovian_default() {
-        let attributes: OpPayloadBuilderAttributes<OpTransactionSigned> =
-            OpPayloadBuilderAttributes {
+        let attributes: BasePayloadBuilderAttributes<BaseTransactionSigned> =
+            BasePayloadBuilderAttributes {
                 eip_1559_params: Some(B64::ZERO),
                 min_base_fee: Some(10),
                 ..Default::default()
@@ -606,8 +606,8 @@ mod tests {
 
     #[test]
     fn test_get_extra_data_post_jovian_no_base_fee() {
-        let attributes: OpPayloadBuilderAttributes<OpTransactionSigned> =
-            OpPayloadBuilderAttributes {
+        let attributes: BasePayloadBuilderAttributes<BaseTransactionSigned> =
+            BasePayloadBuilderAttributes {
                 eip_1559_params: Some(B64::ZERO),
                 min_base_fee: None,
                 ..Default::default()

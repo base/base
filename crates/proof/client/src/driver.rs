@@ -3,7 +3,7 @@ use core::fmt::Debug;
 
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::BlockEnv};
 use alloy_primitives::B256;
-use base_alloy_evm::OpTxEnv;
+use base_common_evm::{BaseSpecId, BaseTxEnv};
 use base_consensus_derive::EthereumDataSource;
 use base_proof::{
     BaseExecutor, CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
@@ -11,7 +11,6 @@ use base_proof::{
 };
 use base_proof_driver::Driver;
 use base_proof_preimage::{HintWriterClient, PreimageOracleClient};
-use base_revm::OpSpecId;
 use spin::RwLock;
 
 use crate::{Epilogue, FaultProofProgramError};
@@ -33,9 +32,9 @@ pub struct FaultProofDriver<P, H, F>
 where
     P: PreimageOracleClient + Send + Sync + Clone + Debug + 'static,
     H: HintWriterClient + Send + Sync + Clone + Debug + 'static,
-    F: EvmFactory<Spec = OpSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + 'static,
+    F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + 'static,
 {
-    rollup_config: Arc<base_consensus_genesis::RollupConfig>,
+    rollup_config: Arc<base_common_genesis::RollupConfig>,
     claimed_l2_block_number: u64,
     claimed_l2_output_root: B256,
     cursor: Arc<RwLock<base_proof_driver::PipelineCursor>>,
@@ -48,14 +47,14 @@ impl<P, H, F> FaultProofDriver<P, H, F>
 where
     P: PreimageOracleClient + Send + Sync + Clone + Debug + 'static,
     H: HintWriterClient + Send + Sync + Clone + Debug + 'static,
-    F: EvmFactory<Spec = OpSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + Debug + 'static,
-    F::Tx: FromTxWithEncoded<base_alloy_consensus::OpTxEnvelope>
-        + FromRecoveredTx<base_alloy_consensus::OpTxEnvelope>
-        + OpTxEnv,
+    F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + Debug + 'static,
+    F::Tx: FromTxWithEncoded<base_common_consensus::BaseTxEnvelope>
+        + FromRecoveredTx<base_common_consensus::BaseTxEnvelope>
+        + BaseTxEnv,
 {
     /// Creates a new driver.
     pub const fn new(
-        rollup_config: Arc<base_consensus_genesis::RollupConfig>,
+        rollup_config: Arc<base_common_genesis::RollupConfig>,
         claimed_l2_block_number: u64,
         claimed_l2_output_root: B256,
         cursor: Arc<RwLock<base_proof_driver::PipelineCursor>>,

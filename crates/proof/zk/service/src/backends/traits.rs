@@ -1,3 +1,5 @@
+//! Proving backend traits and shared types.
+
 use std::fmt;
 
 use async_trait::async_trait;
@@ -5,42 +7,140 @@ use base_zk_client::ProveBlockRequest;
 use base_zk_db::{ProofRequest, ProofRequestRepo, ProofSession, ProofStatus, ProofType};
 use serde::{Deserialize, Serialize};
 
-/// Artifact storage destinations used by proving backends.
+/// Wrapper enum for different artifact client implementations.
+#[derive(Clone)]
+pub enum ArtifactClientWrapper {
+    /// Redis-backed artifact storage.
+    Redis(sp1_cluster_artifact::redis::RedisArtifactClient),
+    /// S3-backed artifact storage.
+    S3(sp1_cluster_artifact::s3::S3ArtifactClient),
+}
+
+impl fmt::Debug for ArtifactClientWrapper {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ArtifactClientWrapper").finish_non_exhaustive()
+    }
+}
+
+impl sp1_prover_types::ArtifactClient for ArtifactClientWrapper {
+    async fn upload_raw(
+        &self,
+        artifact: &impl sp1_prover_types::ArtifactId,
+        artifact_type: sp1_prover_types::ArtifactType,
+        data: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        let data_len = data.len();
+        tracing::info!(
+            artifact_type = %artifact_type,
+            artifact_id = %artifact.id(),
+            data_bytes = data_len,
+            "uploading artifact"
+        );
+        let result = match self {
+            Self::Redis(c) => c.upload_raw(artifact, artifact_type, data).await,
+            Self::S3(c) => c.upload_raw(artifact, artifact_type, data).await,
+        };
+        if let Err(ref e) = result {
+            tracing::error!(
+                artifact_type = %artifact_type,
+                artifact_id = %artifact.id(),
+                data_bytes = data_len,
+                error = ?e,
+                "artifact upload failed"
+            );
+        }
+        result
+    }
+
+    async fn download_raw(
+        &self,
+        artifact: &impl sp1_prover_types::ArtifactId,
+        artifact_type: sp1_prover_types::ArtifactType,
+    ) -> anyhow::Result<Vec<u8>> {
+        match self {
+            Self::Redis(c) => c.download_raw(artifact, artifact_type).await,
+            Self::S3(c) => c.download_raw(artifact, artifact_type).await,
+        }
+    }
+
+    async fn exists(
+        &self,
+        artifact: &impl sp1_prover_types::ArtifactId,
+        artifact_type: sp1_prover_types::ArtifactType,
+    ) -> anyhow::Result<bool> {
+        match self {
+            Self::Redis(c) => c.exists(artifact, artifact_type).await,
+            Self::S3(c) => c.exists(artifact, artifact_type).await,
+        }
+    }
+
+    async fn delete(
+        &self,
+        artifact: &impl sp1_prover_types::ArtifactId,
+        artifact_type: sp1_prover_types::ArtifactType,
+    ) -> anyhow::Result<()> {
+        match self {
+            Self::Redis(c) => c.delete(artifact, artifact_type).await,
+            Self::S3(c) => c.delete(artifact, artifact_type).await,
+        }
+    }
+
+    async fn delete_batch(
+        &self,
+        artifacts: &[impl sp1_prover_types::ArtifactId],
+        artifact_type: sp1_prover_types::ArtifactType,
+    ) -> anyhow::Result<()> {
+        match self {
+            Self::Redis(c) => c.delete_batch(artifacts, artifact_type).await,
+            Self::S3(c) => c.delete_batch(artifacts, artifact_type).await,
+        }
+    }
+}
+
+/// Artifact storage configuration (cloneable descriptor).
 #[derive(Debug, Clone)]
 pub enum ArtifactStorageConfig {
-    /// Store artifacts in a Redis cluster (`nodes=<redis_urls>`).
+    /// Redis cluster nodes.
     Redis {
-        /// Redis node URLs used by the cluster (`nodes=<redis_urls>`).
+        /// Redis node URLs.
         nodes: Vec<String>,
     },
-    /// Store artifacts in S3 (`bucket=<name>`, `region=<aws_region>`).
+    /// S3 bucket.
     S3 {
         /// S3 bucket name.
         bucket: String,
-        /// AWS region where the bucket is hosted.
+        /// AWS region.
         region: String,
     },
-    /// Store artifacts in Google Cloud Storage (`bucket=<name>`, `concurrency=<workers>`).
-    Gcs {
-        /// GCS bucket name.
-        bucket: String,
-        /// Concurrent upload worker count.
-        concurrency: usize,
-    },
+}
+
+impl ArtifactStorageConfig {
+    /// Convert to the cluster SDK config type.
+    pub fn to_cluster_config(&self) -> sp1_cluster_utils::ArtifactStoreConfig {
+        match self {
+            Self::Redis { nodes } => {
+                sp1_cluster_utils::ArtifactStoreConfig::Redis { nodes: nodes.clone() }
+            }
+            Self::S3 { bucket, region } => sp1_cluster_utils::ArtifactStoreConfig::S3 {
+                bucket: bucket.clone(),
+                region: region.clone(),
+            },
+        }
+    }
 }
 
 /// Supported backend implementations used to execute proving work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BackendType {
-    /// Generic zkVM backend integrated with the cluster prover.
-    GenericZkvm,
+    /// SP1 proving through the Succinct backend.
+    OpSuccinct,
 }
 
 impl fmt::Display for BackendType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::GenericZkvm => write!(f, "generic_zkvm"),
+            Self::OpSuccinct => write!(f, "op_succinct"),
         }
     }
 }
@@ -50,7 +150,7 @@ impl std::str::FromStr for BackendType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "generic_zkvm" => Ok(Self::GenericZkvm),
+            "op_succinct" | "op-succinct" => Ok(Self::OpSuccinct),
             _ => Err(format!("Unknown backend type: {s}")),
         }
     }
@@ -59,44 +159,84 @@ impl std::str::FromStr for BackendType {
 impl From<ProofType> for BackendType {
     fn from(proof_type: ProofType) -> Self {
         match proof_type {
-            ProofType::GenericZkvmClusterCompressed | ProofType::GenericZkvmClusterSnarkGroth16 => {
-                Self::GenericZkvm
-            }
+            ProofType::OpSuccinctSp1ClusterCompressed
+            | ProofType::OpSuccinctSp1ClusterSnarkGroth16 => Self::OpSuccinct,
         }
     }
 }
 
 /// Configuration for initializing a proving backend.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum BackendConfig {
-    /// Generic zkVM backend settings (`base_consensus_url=<url>`, `cluster_rpc=<url>`).
-    GenericZkvm {
-        /// Base consensus node RPC URL used for rollup-specific chain state.
+    /// Succinct backend settings.
+    OpSuccinct {
+        /// Base consensus node RPC URL.
         base_consensus_url: String,
-        /// L1 execution node RPC URL used for L1 state queries.
+        /// L1 execution node RPC URL.
         l1_node_url: String,
-        /// L1 beacon node URL used for beacon chain data.
+        /// L1 beacon node URL.
         l1_beacon_url: String,
-        /// L2 execution node RPC URL used for L2 state queries.
+        /// L2 execution node RPC URL.
         l2_node_url: String,
-        /// Default sequence window used for L1 head calculations.
+        /// Default sequence window for L1 head calculations.
         default_sequence_window: u64,
-        /// Cluster RPC endpoint used to submit proving jobs.
+        /// Cluster RPC endpoint for submitting proving jobs.
         cluster_rpc: String,
-        /// Artifact storage target for generated proof outputs.
-        artifact_storage: ArtifactStorageConfig,
+        /// Pre-created SP1 cluster gRPC client (reused for status checks).
+        cluster_client: sp1_cluster_common::client::ClusterServiceClient,
+        /// Pre-created artifact client (reused for uploads / downloads).
+        artifact_client: ArtifactClientWrapper,
+        /// Artifact storage descriptor (for `ProofRequestConfig`).
+        artifact_storage_config: ArtifactStorageConfig,
         /// Proof timeout threshold in hours.
         timeout_hours: u64,
+        /// Range program verifying key (computed once at startup via `CpuProver`).
+        range_vk: sp1_sdk::SP1VerifyingKey,
     },
+    /// SP1 Network backend settings.
+    Network {
+        /// Base consensus node RPC URL.
+        base_consensus_url: String,
+        /// L1 execution node RPC URL.
+        l1_node_url: String,
+        /// L1 beacon node URL.
+        l1_beacon_url: String,
+        /// L2 execution node RPC URL.
+        l2_node_url: String,
+        /// Default sequence window for L1 head calculations.
+        default_sequence_window: u64,
+        /// Pre-built SP1 network prover (handles submission and status polling).
+        network_prover: std::sync::Arc<sp1_sdk::NetworkProver>,
+        /// Range program proving key (for proof submission).
+        range_pk: sp1_sdk::SP1ProvingKey,
+        /// Range program verifying key.
+        range_vk: sp1_sdk::SP1VerifyingKey,
+        /// Aggregation program proving key.
+        agg_pk: sp1_sdk::SP1ProvingKey,
+        /// Aggregation program verifying key.
+        agg_vk: sp1_sdk::SP1VerifyingKey,
+        /// Fulfillment strategy for proof requests.
+        fulfillment_strategy: sp1_sdk::network::FulfillmentStrategy,
+        /// Proof timeout in hours.
+        timeout_hours: u64,
+    },
+}
+
+impl fmt::Debug for BackendConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BackendConfig").finish_non_exhaustive()
+    }
 }
 
 /// Result returned when a prove request is accepted by a backend.
 #[derive(Debug, Clone)]
 pub struct ProveResult {
-    /// Backend session identifier (`session_id=<id>`) if asynchronous processing was started.
+    /// Backend session identifier if asynchronous processing was started.
     pub session_id: Option<String>,
-    /// Optional backend-specific metadata (`metadata=<json>`).
+    /// Optional backend-specific metadata.
     pub metadata: Option<serde_json::Value>,
+    /// Duration of witness generation in milliseconds (if available).
+    pub witness_gen_duration_ms: Option<f64>,
 }
 
 /// Runtime status of a backend proof session.
@@ -117,7 +257,7 @@ pub enum SessionStatus {
 pub struct ProofProcessingResult {
     /// Proof status to persist after backend processing.
     pub status: ProofStatus,
-    /// Optional error details (`error=<message>`) when processing fails.
+    /// Optional error details when processing fails.
     pub error_message: Option<String>,
 }
 
@@ -140,7 +280,7 @@ pub trait ProvingBackend: Send + Sync {
     /// Fetches latest backend session status for a stored session reference.
     async fn get_session_status(&self, session: &ProofSession) -> anyhow::Result<SessionStatus>;
 
-    /// Returns a stable backend name for logs and metrics (`backend=<name>`).
+    /// Returns a stable backend name for logs and metrics.
     fn name(&self) -> &'static str;
 }
 
@@ -191,32 +331,72 @@ mod tests {
 
     #[test]
     fn test_backend_type_display() {
-        assert_eq!(BackendType::GenericZkvm.to_string(), "generic_zkvm");
+        assert_eq!(BackendType::OpSuccinct.to_string(), "op_succinct");
     }
 
     #[test]
     fn test_backend_type_from_str() {
-        assert_eq!(BackendType::from_str("generic_zkvm").unwrap(), BackendType::GenericZkvm);
+        assert_eq!(BackendType::from_str("op_succinct").unwrap(), BackendType::OpSuccinct);
+        assert_eq!(BackendType::from_str("op-succinct").unwrap(), BackendType::OpSuccinct);
         assert!(BackendType::from_str("unknown").is_err());
     }
 
     #[test]
-    fn test_backend_registry() {
+    fn test_backend_registry_empty() {
         let registry = BackendRegistry::new();
         assert_eq!(registry.all().len(), 0);
+        assert!(registry.get(BackendType::OpSuccinct).is_none());
+    }
+
+    struct StubBackend;
+
+    #[async_trait]
+    impl ProvingBackend for StubBackend {
+        fn backend_type(&self) -> BackendType {
+            BackendType::OpSuccinct
+        }
+        async fn prove(&self, _request: &ProveBlockRequest) -> anyhow::Result<ProveResult> {
+            unimplemented!()
+        }
+        async fn process_proof_request(
+            &self,
+            _proof_request: &ProofRequest,
+            _repo: &ProofRequestRepo,
+        ) -> anyhow::Result<ProofProcessingResult> {
+            unimplemented!()
+        }
+        async fn get_session_status(
+            &self,
+            _session: &ProofSession,
+        ) -> anyhow::Result<SessionStatus> {
+            unimplemented!()
+        }
+        fn name(&self) -> &'static str {
+            "stub"
+        }
+    }
+
+    #[test]
+    fn test_backend_registry_register_and_get() {
+        let mut registry = BackendRegistry::new();
+        registry.register(std::sync::Arc::new(StubBackend));
+
+        assert_eq!(registry.all().len(), 1);
+
+        let backend = registry.get(BackendType::OpSuccinct);
+        assert!(backend.is_some());
+        assert_eq!(backend.unwrap().name(), "stub");
     }
 
     #[test]
     fn test_backend_type_from_proof_type() {
-        use base_zk_db::ProofType;
-
         assert_eq!(
-            BackendType::from(ProofType::GenericZkvmClusterCompressed),
-            BackendType::GenericZkvm
+            BackendType::from(ProofType::OpSuccinctSp1ClusterCompressed),
+            BackendType::OpSuccinct
         );
         assert_eq!(
-            BackendType::from(ProofType::GenericZkvmClusterSnarkGroth16),
-            BackendType::GenericZkvm
+            BackendType::from(ProofType::OpSuccinctSp1ClusterSnarkGroth16),
+            BackendType::OpSuccinct
         );
     }
 }

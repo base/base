@@ -39,7 +39,7 @@ type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 ///
 /// This enables AWS load balancers and similar infrastructure to check node
 /// liveness using a plain `GET /` without requiring a JSON-RPC POST request,
-/// maintaining backwards compatibility with systems built against op-node.
+/// maintaining backwards compatibility with existing health check clients.
 ///
 /// [`rpc/http.go`]: https://github.com/ethereum/go-ethereum/blob/master/rpc/http.go
 #[derive(Clone, Debug, Default)]

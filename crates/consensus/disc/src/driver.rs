@@ -7,11 +7,28 @@ use base_consensus_peers::{
 use derive_more::Debug;
 use discv5::{Config, Discv5, Enr, enr::NodeId};
 use tokio::{
-    sync::mpsc::channel,
+    sync::mpsc::{Sender, channel, error::TrySendError},
     time::{Duration, sleep},
 };
 
 use crate::{Discv5Builder, Discv5Handler, HandlerRequest, LocalNode, Metrics};
+
+/// Attempts to forward an ENR to the gossip service without spawning or parking on backpressure.
+fn try_forward_enr(enr_sender: &Sender<Enr>, enr: Enr) -> bool {
+    match enr_sender.try_send(enr) {
+        Ok(()) => true,
+        Err(TrySendError::Full(_)) => {
+            Metrics::discovery_dropped("backpressure").increment(1.0);
+            debug!(target: "discovery", "dropping enr because receiver is full");
+            false
+        }
+        Err(TrySendError::Closed(_)) => {
+            Metrics::discovery_dropped("closed").increment(1.0);
+            debug!(target: "discovery", "dropping enr because receiver is closed");
+            false
+        }
+    }
+}
 
 /// The [`Discv5Driver`] drives the discovery service.
 ///
@@ -179,9 +196,7 @@ impl Discv5Driver {
             // Step 3: Forward ENRs in the bootstore to the enr receiver.
             if self.forward {
                 for enr in store.valid_peers_with_chain_id(self.chain_id) {
-                    if let Err(e) = enr_sender.send(enr.clone()).await {
-                        debug!(target: "discovery", error = ?e, "Failed to forward enr");
-                    }
+                    try_forward_enr(&enr_sender, enr.clone());
                 }
             }
 
@@ -281,39 +296,27 @@ impl Discv5Driver {
                                 if EnrValidation::validate(&enr, chain_id).is_valid() {
                                     debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
                                     Metrics::discovery_event("discovered").increment(1.0);
-                                    store.add_enr(enr.clone());
-                                    let sender = enr_sender.clone();
-                                    tokio::spawn(async move {
-                                        if let Err(e) = sender.send(enr).await {
-                                            debug!(target: "discovery", error = ?e, "Failed to send enr");
-                                        }
-                                    });
+                                    if try_forward_enr(&enr_sender, enr.clone()) {
+                                        store.add_enr(enr);
+                                    }
                                 }
                             }
                             discv5::Event::SessionEstablished(enr, addr) => {
                                 if EnrValidation::validate(&enr, chain_id).is_valid() {
                                     debug!(target: "discovery", addr = ?addr, enr = ?enr, "Session established with valid ENR, forwarding to swarm");
                                     Metrics::discovery_event("session_established").increment(1.0);
-                                    store.add_enr(enr.clone());
-                                    let sender = enr_sender.clone();
-                                    tokio::spawn(async move {
-                                        if let Err(e) = sender.send(enr).await {
-                                            debug!(target: "discovery", error = ?e, "Failed to send enr");
-                                        }
-                                    });
+                                    if try_forward_enr(&enr_sender, enr.clone()) {
+                                        store.add_enr(enr);
+                                    }
                                 }
                             }
                             discv5::Event::UnverifiableEnr { enr, .. } => {
                                 if EnrValidation::validate(&enr, chain_id).is_valid() {
                                     debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
                                     Metrics::discovery_event("unverifiable_enr").increment(1.0);
-                                    store.add_enr(enr.clone());
-                                    let sender = enr_sender.clone();
-                                    tokio::spawn(async move {
-                                        if let Err(e) = sender.send(enr).await {
-                                            debug!(target: "discovery", error = ?e, "Failed to send enr");
-                                        }
-                                    });
+                                    if try_forward_enr(&enr_sender, enr.clone()) {
+                                        store.add_enr(enr);
+                                    }
                                 }
 
                             }
@@ -331,7 +334,7 @@ impl Discv5Driver {
                                 Ok(nodes) => {
                                     let enrs = nodes.into_iter().filter(|node| EnrValidation::validate(node, chain_id).is_valid());
                                     for enr in enrs {
-                                        _ = enr_sender.send(enr).await;
+                                        try_forward_enr(&enr_sender, enr);
                                     }
                                 }
                                 Err(err) => {
@@ -378,16 +381,48 @@ impl Discv5Driver {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    use base_alloy_chains::BaseChainConfig;
+    use base_common_chains::ChainConfig;
     use discv5::{
         ConfigBuilder,
         enr::{CombinedKey, CombinedPublicKey},
         handler::NodeContact,
     };
     use tempfile::tempdir;
+    use tokio::sync::mpsc;
 
     use super::*;
     use crate::LocalNode;
+
+    fn test_enr() -> Enr {
+        let key = CombinedKey::generate_secp256k1();
+        Enr::builder().build(&key).expect("test enr should build")
+    }
+
+    #[test]
+    fn try_forward_enr_succeeds_when_channel_has_capacity() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let enr = test_enr();
+
+        assert!(try_forward_enr(&tx, enr.clone()));
+
+        assert_eq!(rx.try_recv().expect("enr should be forwarded"), enr);
+    }
+
+    #[test]
+    fn try_forward_enr_drops_when_channel_is_full() {
+        let (tx, _rx) = mpsc::channel(1);
+
+        assert!(try_forward_enr(&tx, test_enr()));
+        assert!(!try_forward_enr(&tx, test_enr()));
+    }
+
+    #[test]
+    fn try_forward_enr_drops_when_channel_is_closed() {
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+
+        assert!(!try_forward_enr(&tx, test_enr()));
+    }
 
     #[tokio::test]
     async fn test_online_discv5_driver() {
@@ -398,13 +433,13 @@ mod tests {
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
         let discovery = Discv5Driver::builder(
             LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, 0),
-            BaseChainConfig::sepolia().chain_id,
+            ChainConfig::sepolia().chain_id,
             ConfigBuilder::new(socket.into()).build(),
         )
         .build()
         .expect("Failed to build discovery service");
         let (handle, _) = discovery.start();
-        assert_eq!(handle.chain_id, BaseChainConfig::sepolia().chain_id);
+        assert_eq!(handle.chain_id, ChainConfig::sepolia().chain_id);
     }
 
     #[tokio::test]
@@ -420,7 +455,7 @@ mod tests {
         };
         let mut discovery = Discv5Driver::builder(
             LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, 0),
-            BaseChainConfig::sepolia().chain_id,
+            ChainConfig::sepolia().chain_id,
             ConfigBuilder::new(socket.into()).build(),
         )
         .with_bootnodes(BootNodes::testnet())
@@ -435,14 +470,12 @@ mod tests {
         Discv5Driver::bootstrap_peers(
             discovery.bootstore,
             discovery.bootnodes,
-            BaseChainConfig::sepolia().chain_id,
+            ChainConfig::sepolia().chain_id,
             &discovery.disc,
         )
         .await;
-        assert!(
-            discovery.disc.table_entries_enr().len() >= 2,
-            "Discovery table should have at least 2 ENRs"
-        );
+        let enrs = discovery.disc.table_entries_enr();
+        assert!(enrs.len() >= 2, "Discovery table should have at least 2 ENRs");
 
         // Filter out testnet ENRs that are not valid.
         let testnet = BootNodes::testnet();
@@ -450,9 +483,7 @@ mod tests {
             .iter()
             .filter_map(|node| match node {
                 BootNode::Enr(enr) => {
-                    if EnrValidation::validate(enr, BaseChainConfig::sepolia().chain_id)
-                        .is_invalid()
-                    {
+                    if EnrValidation::validate(enr, ChainConfig::sepolia().chain_id).is_invalid() {
                         return None;
                     }
                     Some(enr.public_key())
@@ -465,12 +496,11 @@ mod tests {
             })
             .collect();
 
-        // There should be 2 valid boot nodes for the testnet (all enodes).
+        // `BootNodes::testnet()` returns CL bootnodes only — 2 raw ENRs.
         assert_eq!(testnet.len(), 2);
 
         // Those ENRs should be in the testnet bootnodes.
-        let disc_enrs = discovery.disc.table_entries_enr();
-        for enr in disc_enrs {
+        for enr in &enrs {
             assert!(
                 testnet.iter().any(|pub_key| pub_key == &enr.public_key()),
                 "Discovery table does not contain testnet ENR: {enr:?}"
@@ -493,9 +523,7 @@ mod tests {
             .iter()
             .filter_map(|node| match node {
                 BootNode::Enr(enr) => {
-                    if EnrValidation::validate(enr, BaseChainConfig::mainnet().chain_id)
-                        .is_invalid()
-                    {
+                    if EnrValidation::validate(enr, ChainConfig::mainnet().chain_id).is_invalid() {
                         return None;
                     }
                     Some(enr.public_key())
@@ -508,9 +536,8 @@ mod tests {
             })
             .collect();
 
-        // There should be 10 valid boot nodes for the mainnet:
-        // 5 Base Mainnet ENRs + 5 Base enodes.
-        assert_eq!(mainnet.len(), 10);
+        // `BootNodes::mainnet()` returns CL bootnodes only — 5 raw ENRs.
+        assert_eq!(mainnet.len(), 5);
 
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
@@ -520,7 +547,7 @@ mod tests {
 
         let mut discovery = Discv5Driver::builder(
             LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, 0),
-            BaseChainConfig::mainnet().chain_id,
+            ChainConfig::mainnet().chain_id,
             ConfigBuilder::new(socket.into()).build(),
         )
         .with_bootnodes(BootNodes::mainnet())
@@ -530,18 +557,19 @@ mod tests {
 
         discovery = discovery.init().await.expect("Failed to initialize discovery service");
 
-        // There are no ENRs for op mainnet in the bootstore.
+        // There are no Base mainnet ENRs in the bootstore.
         // If an ENR is added, this check will fail.
         Discv5Driver::bootstrap_peers(
             discovery.bootstore,
             discovery.bootnodes,
-            BaseChainConfig::mainnet().chain_id,
+            ChainConfig::mainnet().chain_id,
             &discovery.disc,
         )
         .await;
+        // All 5 CL ENRs are added directly without I/O — no liveness check needed.
         assert!(
-            discovery.disc.table_entries_enr().len() >= 10,
-            "Discovery table should have at least 10 ENRs"
+            discovery.disc.table_entries_enr().len() >= 5,
+            "Discovery table should have at least 5 ENRs"
         );
 
         // Those ENRs should be in the mainnet bootnodes.

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE requests SET witnessgen_duration = $1, updated_at = NOW() WHERE id = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "566d8d2f9beed6640f2603f9b9db1131d5b63a404f1010ca8475afece2a5a908"
+}

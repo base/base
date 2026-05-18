@@ -24,19 +24,22 @@ pub use errors::{
 mod pipeline;
 pub use pipeline::{
     AttributesQueueStage, BatchProviderStage, BatchStreamStage, ChannelProviderStage,
-    ChannelReaderStage, DerivationPipeline, FrameQueueStage, IndexedAttributesQueueStage,
-    L1RetrievalStage, PipelineBuilder, PolledAttributesQueueStage,
+    ChannelReaderStage, DerivationPipeline, FrameQueueStage, L1RetrievalStage, PipelineBuilder,
+    PolledAttributesQueueStage,
 };
 
 mod sources;
-pub use sources::{BlobData, BlobSource, CalldataSource, EthereumDataSource};
+pub use sources::{
+    BLOB_ENCODING_ROUNDS, BLOB_ENCODING_VERSION, BLOB_MAX_DATA_SIZE, BlobData, BlobSource,
+    CalldataSource, EthereumDataSource,
+};
 
 mod stages;
 pub use stages::{
     AttributesQueue, BatchProvider, BatchQueue, BatchStream, BatchStreamProvider, BatchValidator,
     ChannelAssembler, ChannelBank, ChannelProvider, ChannelReader, ChannelReaderProvider,
-    FrameQueue, FrameQueueProvider, IndexedTraversal, L1Retrieval, L1RetrievalProvider,
-    NextBatchProvider, NextFrameProvider, PollingTraversal, TraversalStage,
+    FJORD_MAX_CHANNEL_BANK_SIZE, FrameQueue, FrameQueueProvider, L1Retrieval, L1RetrievalProvider,
+    MAX_CHANNEL_BANK_SIZE, NextBatchProvider, NextFrameProvider, PollingTraversal,
 };
 
 mod traits;

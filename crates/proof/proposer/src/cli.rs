@@ -7,12 +7,14 @@ use base_cli_utils::CliStyles;
 use clap::Parser;
 use url::Url;
 
+use crate::constants::RECOVERY_SCAN_CONCURRENCY;
+
 base_cli_utils::define_cli_env!("BASE_PROPOSER");
 base_cli_utils::define_log_args!("BASE_PROPOSER");
 base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
 base_cli_utils::define_health_args!("BASE_PROPOSER", 8080);
 base_tx_manager::define_signer_cli!("BASE_PROPOSER");
-base_tx_manager::define_tx_manager_cli!("BASE_PROPOSER");
+base_tx_manager::define_tx_manager_cli!("BASE_PROPOSER", tx_send_timeout_default = "10m");
 
 /// Proposer - TEE-based output proposal generation for Base.
 #[derive(Debug, Clone, Parser)]
@@ -60,6 +62,15 @@ pub struct ProposerArgs {
     /// URL of the prover RPC endpoint.
     #[arg(long = "prover-rpc", env = cli_env!("PROVER_RPC"))]
     pub prover_rpc: Url,
+
+    /// Prover RPC request timeout (e.g., "70m", "4200s").
+    #[arg(
+        long = "prover-timeout",
+        env = cli_env!("PROVER_TIMEOUT"),
+        default_value = "70m",
+        value_parser = humantime::parse_duration
+    )]
+    pub prover_timeout: Duration,
 
     /// URL of the L1 Ethereum RPC endpoint.
     #[arg(long = "l1-eth-rpc", env = cli_env!("L1_ETH_RPC"))]
@@ -115,10 +126,6 @@ pub struct ProposerArgs {
     )]
     pub skip_tls_verify: bool,
 
-    /// Wait for node sync before starting.
-    #[arg(long = "wait-node-sync", env = cli_env!("WAIT_NODE_SYNC"), default_value = "false")]
-    pub wait_node_sync: bool,
-
     /// Maximum number of retry attempts for RPC operations.
     #[arg(long = "rpc-max-retries", env = cli_env!("RPC_MAX_RETRIES"), default_value = "5")]
     pub rpc_max_retries: u32,
@@ -154,17 +161,13 @@ pub struct ProposerArgs {
     )]
     pub max_parallel_proofs: usize,
 
-    /// Maximum number of games to scan backwards when recovering state on startup.
-    /// Must be greater than the maximum number of pending (unresolved) dispute games
-    /// that could exist at any given time. For production deployments with high game
-    /// volume, increase this beyond the default to ensure the proposer can always
-    /// find and resume from its most recent game after a restart.
+    /// Maximum number of concurrent RPC calls during the recovery scan.
     #[arg(
-        long = "max-game-recovery-lookback",
-        env = cli_env!("MAX_GAME_RECOVERY_LOOKBACK"),
-        default_value = "5000"
+        long = "recovery-scan-concurrency",
+        env = cli_env!("RECOVERY_SCAN_CONCURRENCY"),
+        default_value_t = RECOVERY_SCAN_CONCURRENCY
     )]
-    pub max_game_recovery_lookback: u64,
+    pub recovery_scan_concurrency: usize,
 
     /// Address of the `TEEProverRegistry` contract on L1.
     /// When set, the proposer validates signers before on-chain submission.
@@ -235,6 +238,7 @@ mod tests {
     use base_cli_utils::LogFormat;
 
     use super::*;
+    use crate::constants::PROPOSAL_TIMEOUT;
 
     #[test]
     fn test_cli_defaults() {
@@ -263,14 +267,13 @@ mod tests {
         // Check defaults
         assert!(!cli.proposer.dry_run);
         assert!(!cli.proposer.allow_non_finalized);
+        assert_eq!(cli.proposer.prover_timeout, Duration::from_secs(70 * 60));
         assert_eq!(cli.proposer.poll_interval, Duration::from_secs(12));
         assert_eq!(cli.proposer.rpc_timeout, Duration::from_secs(30));
         assert_eq!(cli.proposer.rollup_rpc.as_str(), "http://localhost:7545/");
         assert!(!cli.proposer.skip_tls_verify);
-        assert!(!cli.proposer.wait_node_sync);
         assert_eq!(cli.proposer.game_type, 1);
         assert_eq!(cli.proposer.max_parallel_proofs, 1);
-        assert_eq!(cli.proposer.max_game_recovery_lookback, 5000);
 
         assert_eq!(cli.logging.level, 3);
         assert_eq!(cli.logging.stdout_format, LogFormat::Full);
@@ -290,6 +293,7 @@ mod tests {
         assert_eq!(cli.proposer.rpc_max_retries, 5);
         assert_eq!(cli.proposer.rpc_retry_initial_delay, Duration::from_millis(100));
         assert_eq!(cli.proposer.rpc_retry_max_delay, Duration::from_secs(10));
+        assert_eq!(cli.proposer.tx_manager.tx_send_timeout, PROPOSAL_TIMEOUT);
 
         // Check signing defaults (all None)
         assert!(cli.proposer.signer.private_key.is_none());
@@ -302,6 +306,34 @@ mod tests {
         // Test that missing required fields cause an error
         let args = vec!["proposer"];
         assert!(Cli::try_parse_from(args).is_err());
+    }
+
+    #[test]
+    fn test_cli_preserves_explicit_zero_tx_send_timeout() {
+        let args = vec![
+            "proposer",
+            "--prover-rpc",
+            "http://localhost:8080",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l2-eth-rpc",
+            "http://localhost:9545",
+            "--anchor-state-registry-addr",
+            "0x1234567890123456789012345678901234567890",
+            "--dispute-game-factory-addr",
+            "0x2234567890123456789012345678901234567890",
+            "--game-type",
+            "1",
+            "--tee-image-hash",
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "--rollup-rpc",
+            "http://localhost:7545",
+            "--tx-manager.tx-send-timeout",
+            "0s",
+        ];
+        let cli = Cli::try_parse_from(args).unwrap();
+
+        assert!(cli.proposer.tx_manager.tx_send_timeout.is_zero());
     }
 
     #[test]

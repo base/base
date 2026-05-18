@@ -25,7 +25,7 @@ mod metrics;
 pub use metrics::ChallengerMetrics;
 
 mod scanner;
-pub use scanner::{CandidateGame, GameCategory, GameScanner, ScannerConfig};
+pub use scanner::{CandidateGame, GameCategory, GameEvaluation, GameScanner};
 
 mod service;
 pub use service::ChallengerService;
@@ -34,7 +34,7 @@ mod submitter;
 pub use submitter::ChallengeSubmitter;
 
 mod tee;
-pub use tee::{L1HeadProvider, RpcL1HeadProvider};
+pub use tee::L1HeadProvider;
 
 mod validator;
 pub use validator::{
@@ -42,12 +42,10 @@ pub use validator::{
 };
 
 mod verify;
-pub use verify::{AccountProofError, verify_account_proof};
+pub use verify::{AccountProofError, AccountProofVerifier};
 
 mod bond;
-pub use bond::{
-    BondManager, BondPhase, BondTransactionSubmitter, ClockFn, RemovalReason, TrackedGame,
-};
+pub use bond::{BondManager, BondPhase, BondTransactionSubmitter, RemovalReason, TrackedGame};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

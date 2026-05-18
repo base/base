@@ -10,8 +10,6 @@ base_metrics::define_metrics! {
     successful_simulations: counter,
     #[describe("Number of bundles that failed simulation")]
     failed_simulations: counter,
-    #[describe("Number of bundles sent to kafka")]
-    sent_to_kafka: counter,
     #[describe("Number of transactions sent to mempool")]
     sent_to_mempool: counter,
     #[describe("Duration of validate_tx")]
@@ -28,6 +26,8 @@ base_metrics::define_metrics! {
     bundles_exceeded_metering_time: counter,
     #[describe("Size of buffered meter bundle responses")]
     buffered_meter_bundle_responses_size: gauge,
+    #[describe("Number of audit events dropped because the channel was full")]
+    audit_channel_full: counter,
     #[describe("RPC call latency")]
     #[label(rpc)]
     rpc_latency: histogram,

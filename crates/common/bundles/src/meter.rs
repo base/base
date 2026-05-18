@@ -3,6 +3,18 @@
 use alloy_primitives::{Address, B256, TxHash, U256};
 use serde::{Deserialize, Serialize};
 
+/// Per-opcode or precompile gas usage for a single item.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OpcodeGas {
+    /// Opcode or precompile name (e.g., "SSTORE", "BLAKE2F").
+    pub opcode: String,
+    /// Number of times this opcode/precompile was executed in the transaction.
+    pub count: u64,
+    /// Total gas consumed by all executions of this opcode/precompile.
+    pub gas_used: u64,
+}
+
 /// Result of simulating a single transaction within a bundle.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +39,10 @@ pub struct TransactionResult {
     pub value: U256,
     /// Time spent executing this transaction in microseconds.
     pub execution_time_us: u128,
+    /// Per-opcode and precompile gas usage for this transaction.
+    /// Only populated when opcode metering is enabled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub opcode_gas: Vec<OpcodeGas>,
 }
 
 /// Response from simulating a bundle.
@@ -61,24 +77,22 @@ pub struct MeterBundleResponse {
     /// Time spent calculating state root in microseconds.
     #[serde(default)]
     pub state_root_time_us: u128,
-    /// Best-effort count of account trie nodes attributed to bundle state changes during state
-    /// root calculation.
-    ///
-    /// This combines surviving/inserted account leaves from the bundle delta with account trie
-    /// branch updates/removals emitted by `reth`. Deleted account leaves are represented through
-    /// the branch-side trie updates, not counted again as leaves. Empty-path roots are excluded.
+    /// Count of account leaves from the bundle's hashed post-state: one per modified surviving
+    /// account. Proportional to gas and does not reflect trie depth.
     #[serde(default)]
-    pub state_root_account_node_count: u64,
-    /// Best-effort count of storage trie nodes attributed to bundle state changes during state
-    /// root calculation.
-    ///
-    /// This combines surviving/inserted storage slot leaves from the bundle delta with
-    /// storage-trie branch updates/removals/deletes emitted by `reth`, excluding known non-bundle
-    /// artifacts such as empty-storage deletion markers from untouched tries. Zero-valued slot
-    /// removals and pure storage wipes are represented through the trie updates, not counted again
-    /// as leaves. Empty-path roots are excluded.
+    pub state_root_account_leaf_count: u64,
+    /// Count of account branch/removal nodes emitted during state root calculation. These
+    /// intermediate trie nodes scale with trie depth — the structural cost gas does not price.
     #[serde(default)]
-    pub state_root_storage_node_count: u64,
+    pub state_root_account_branch_count: u64,
+    /// Count of storage slot leaves from the bundle's hashed post-state: one per modified
+    /// non-zero slot. Proportional to gas and does not reflect trie depth.
+    #[serde(default)]
+    pub state_root_storage_leaf_count: u64,
+    /// Count of storage branch/removal nodes emitted during state root calculation, restricted
+    /// to tries the bundle actually modified. Like account branches, these scale with trie depth.
+    #[serde(default)]
+    pub state_root_storage_branch_count: u64,
 }
 
 #[cfg(test)]
@@ -100,6 +114,7 @@ mod tests {
             tx_hash: B256::default(),
             value: U256::from(1_000_000_000_000_000_000u64),
             execution_time_us: 500,
+            opcode_gas: vec![],
         };
 
         let json = serde_json::to_string(&result).unwrap();
@@ -124,6 +139,7 @@ mod tests {
             tx_hash: B256::default(),
             value: U256::ZERO,
             execution_time_us: 1000,
+            opcode_gas: vec![],
         };
 
         let json = serde_json::to_string(&result).unwrap();
@@ -158,22 +174,28 @@ mod tests {
             total_gas_used: 21000,
             total_execution_time_us: 1000,
             state_root_time_us: 500,
-            state_root_account_node_count: 12,
-            state_root_storage_node_count: 34,
+            state_root_account_leaf_count: 5,
+            state_root_account_branch_count: 7,
+            state_root_storage_leaf_count: 20,
+            state_root_storage_branch_count: 14,
         };
 
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"stateFlashblockIndex\":42"));
         assert!(json.contains("\"stateBlockNumber\":12345"));
         assert!(json.contains("\"stateRootTimeUs\":500"));
-        assert!(json.contains("\"stateRootAccountNodeCount\":12"));
-        assert!(json.contains("\"stateRootStorageNodeCount\":34"));
+        assert!(json.contains("\"stateRootAccountLeafCount\":5"));
+        assert!(json.contains("\"stateRootAccountBranchCount\":7"));
+        assert!(json.contains("\"stateRootStorageLeafCount\":20"));
+        assert!(json.contains("\"stateRootStorageBranchCount\":14"));
 
         let deserialized: MeterBundleResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.state_flashblock_index, Some(42));
         assert_eq!(deserialized.state_block_number, 12345);
-        assert_eq!(deserialized.state_root_account_node_count, 12);
-        assert_eq!(deserialized.state_root_storage_node_count, 34);
+        assert_eq!(deserialized.state_root_account_leaf_count, 5);
+        assert_eq!(deserialized.state_root_account_branch_count, 7);
+        assert_eq!(deserialized.state_root_storage_leaf_count, 20);
+        assert_eq!(deserialized.state_root_storage_branch_count, 14);
     }
 
     #[test]
@@ -190,8 +212,10 @@ mod tests {
             total_gas_used: 21000,
             total_execution_time_us: 1000,
             state_root_time_us: 0,
-            state_root_account_node_count: 0,
-            state_root_storage_node_count: 0,
+            state_root_account_leaf_count: 0,
+            state_root_account_branch_count: 0,
+            state_root_storage_leaf_count: 0,
+            state_root_storage_branch_count: 0,
         };
 
         let json = serde_json::to_string(&response).unwrap();
@@ -225,7 +249,9 @@ mod tests {
         assert_eq!(deserialized.state_flashblock_index, None);
         assert_eq!(deserialized.state_block_number, 12345);
         assert_eq!(deserialized.total_gas_used, 21000);
-        assert_eq!(deserialized.state_root_account_node_count, 0);
-        assert_eq!(deserialized.state_root_storage_node_count, 0);
+        assert_eq!(deserialized.state_root_account_leaf_count, 0);
+        assert_eq!(deserialized.state_root_account_branch_count, 0);
+        assert_eq!(deserialized.state_root_storage_leaf_count, 0);
+        assert_eq!(deserialized.state_root_storage_branch_count, 0);
     }
 }

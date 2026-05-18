@@ -3,41 +3,25 @@
 use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_rpc_types_eth::Log;
 use alloy_serde::OtherFields;
-use base_alloy_consensus::{
-    OpDepositReceipt, OpDepositReceiptWithBloom, OpReceipt, OpReceiptEnvelope,
+use base_common_consensus::{
+    BaseReceipt, BaseReceiptEnvelope, DepositReceipt, DepositReceiptWithBloom,
 };
 use serde::{Deserialize, Serialize};
 
-/// OP Transaction Receipt type
+/// Base transaction receipt type
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[doc(alias = "OpTxReceipt")]
-pub struct OpTransactionReceipt {
+#[doc(alias = "BaseTxReceipt")]
+pub struct BaseTransactionReceipt {
     /// Regular eth transaction receipt including deposit receipts
     #[serde(flatten)]
-    pub inner: alloy_rpc_types_eth::TransactionReceipt<ReceiptWithBloom<OpReceipt<Log>>>,
+    pub inner: alloy_rpc_types_eth::TransactionReceipt<ReceiptWithBloom<BaseReceipt<Log>>>,
     /// L1 block info of the transaction.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
-    /// EIP-8130 Account Abstraction fields. Only present for AA (type 0x7B) receipts.
-    #[serde(default, flatten, skip_serializing_if = "Option::is_none")]
-    pub eip8130_fields: Option<Eip8130ReceiptFields>,
 }
 
-/// EIP-8130 Account Abstraction receipt fields.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Eip8130ReceiptFields {
-    /// The address that paid for gas (may differ from `from` in sponsored txs).
-    pub payer: alloy_primitives::Address,
-    /// Per-phase execution status. `true` = success, `false` = revert.
-    /// `None` for legacy receipts where individual phase outcomes could not
-    /// be determined (the system log was missing and the tx had mixed results).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phase_statuses: Option<alloc::vec::Vec<bool>>,
-}
-
-impl alloy_network_primitives::ReceiptResponse for OpTransactionReceipt {
+impl alloy_network_primitives::ReceiptResponse for BaseTransactionReceipt {
     fn contract_address(&self) -> Option<alloy_primitives::Address> {
         self.inner.contract_address
     }
@@ -98,7 +82,7 @@ impl alloy_network_primitives::ReceiptResponse for OpTransactionReceipt {
 /// Additional fields for Base chain transaction receipts: <https://github.com/ethereum-optimism/op-geth/blob/f2e69450c6eec9c35d56af91389a1c47737206ca/core/types/receipt.go#L87-L87>
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpTransactionReceiptFields {
+pub struct TransactionReceiptFields {
     /// L1 block info.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
@@ -145,17 +129,17 @@ mod l1_fee_scalar_serde {
     }
 }
 
-impl TryFrom<OpTransactionReceiptFields> for OtherFields {
+impl TryFrom<TransactionReceiptFields> for OtherFields {
     type Error = serde_json::Error;
 
-    fn try_from(value: OpTransactionReceiptFields) -> Result<Self, Self::Error> {
+    fn try_from(value: TransactionReceiptFields) -> Result<Self, Self::Error> {
         serde_json::to_value(value)?.try_into()
     }
 }
 
 /// L1 block info extracted from input of first transaction in every block.
 ///
-/// The subset of [`OpTransactionReceiptFields`], that encompasses L1 block
+/// The subset of [`TransactionReceiptFields`], that encompasses L1 block
 /// info:
 /// <https://github.com/ethereum-optimism/op-geth/blob/f2e69450c6eec9c35d56af91389a1c47737206ca/core/types/receipt.go#L87-L87>
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -218,18 +202,17 @@ pub struct L1BlockInfo {
 
 impl Eq for L1BlockInfo {}
 
-impl From<OpTransactionReceipt> for OpReceiptEnvelope<alloy_primitives::Log> {
-    fn from(value: OpTransactionReceipt) -> Self {
-        let inner_envelope = value.inner.inner.into();
+impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
+    fn from(value: BaseTransactionReceipt) -> Self {
+        let ReceiptWithBloom { logs_bloom, receipt } = value.inner.inner;
 
         /// Helper function to convert the inner logs within a [`ReceiptWithBloom`] from RPC to
         /// consensus types.
         #[inline(always)]
         fn convert_standard_receipt(
-            receipt: ReceiptWithBloom<Receipt<alloy_rpc_types_eth::Log>>,
+            receipt: Receipt<alloy_rpc_types_eth::Log>,
+            logs_bloom: alloy_primitives::Bloom,
         ) -> ReceiptWithBloom<Receipt<alloy_primitives::Log>> {
-            let ReceiptWithBloom { logs_bloom, receipt } = receipt;
-
             let consensus_logs = receipt.logs.into_iter().map(|log| log.inner).collect();
             ReceiptWithBloom {
                 receipt: Receipt {
@@ -241,16 +224,23 @@ impl From<OpTransactionReceipt> for OpReceiptEnvelope<alloy_primitives::Log> {
             }
         }
 
-        match inner_envelope {
-            OpReceiptEnvelope::Legacy(receipt) => Self::Legacy(convert_standard_receipt(receipt)),
-            OpReceiptEnvelope::Eip2930(receipt) => Self::Eip2930(convert_standard_receipt(receipt)),
-            OpReceiptEnvelope::Eip1559(receipt) => Self::Eip1559(convert_standard_receipt(receipt)),
-            OpReceiptEnvelope::Eip7702(receipt) => Self::Eip7702(convert_standard_receipt(receipt)),
-            OpReceiptEnvelope::Eip8130(receipt) => Self::Eip8130(convert_standard_receipt(receipt)),
-            OpReceiptEnvelope::Deposit(OpDepositReceiptWithBloom { logs_bloom, receipt }) => {
+        match receipt {
+            BaseReceipt::Legacy(receipt) => {
+                Self::Legacy(convert_standard_receipt(receipt, logs_bloom))
+            }
+            BaseReceipt::Eip2930(receipt) => {
+                Self::Eip2930(convert_standard_receipt(receipt, logs_bloom))
+            }
+            BaseReceipt::Eip1559(receipt) => {
+                Self::Eip1559(convert_standard_receipt(receipt, logs_bloom))
+            }
+            BaseReceipt::Eip7702(receipt) => {
+                Self::Eip7702(convert_standard_receipt(receipt, logs_bloom))
+            }
+            BaseReceipt::Deposit(receipt) => {
                 let consensus_logs = receipt.inner.logs.into_iter().map(|log| log.inner).collect();
-                let consensus_receipt = OpDepositReceiptWithBloom {
-                    receipt: OpDepositReceipt {
+                let consensus_receipt = DepositReceiptWithBloom {
+                    receipt: DepositReceipt {
                         inner: Receipt {
                             status: receipt.inner.status,
                             cumulative_gas_used: receipt.inner.cumulative_gas_used,
@@ -305,28 +295,28 @@ mod tests {
         "daFootprintGasScalar": "0x1"
     }"#;
 
-        let receipt: OpTransactionReceipt = serde_json::from_str(s).unwrap();
+        let receipt: BaseTransactionReceipt = serde_json::from_str(s).unwrap();
         let value = serde_json::to_value(&receipt).unwrap();
         let expected_value = serde_json::from_str::<serde_json::Value>(s).unwrap();
         assert_eq!(value, expected_value);
     }
 
     #[test]
-    fn serialize_empty_op_chain_transaction_receipt_fields_struct() {
-        let op_fields = OpTransactionReceiptFields::default();
+    fn serialize_empty_base_chain_transaction_receipt_fields_struct() {
+        let base_fields = TransactionReceiptFields::default();
 
-        let json = serde_json::to_value(op_fields).unwrap();
+        let json = serde_json::to_value(base_fields).unwrap();
         assert_eq!(json, json!({}));
     }
 
     #[test]
     fn serialize_l1_fee_scalar() {
-        let op_fields = OpTransactionReceiptFields {
+        let base_fields = TransactionReceiptFields {
             l1_block_info: L1BlockInfo { l1_fee_scalar: Some(0.678), ..Default::default() },
             ..Default::default()
         };
 
-        let json = serde_json::to_value(op_fields).unwrap();
+        let json = serde_json::to_value(base_fields).unwrap();
 
         assert_eq!(json["l1FeeScalar"], serde_json::Value::String("0.678".to_string()));
     }
@@ -337,19 +327,19 @@ mod tests {
             "l1FeeScalar": "0.678"
         });
 
-        let op_fields: OpTransactionReceiptFields = serde_json::from_value(json).unwrap();
-        assert_eq!(op_fields.l1_block_info.l1_fee_scalar, Some(0.678f64));
+        let base_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
+        assert_eq!(base_fields.l1_block_info.l1_fee_scalar, Some(0.678f64));
 
         let json = json!({
             "l1FeeScalar": Value::Null
         });
 
-        let op_fields: OpTransactionReceiptFields = serde_json::from_value(json).unwrap();
-        assert_eq!(op_fields.l1_block_info.l1_fee_scalar, None);
+        let base_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
+        assert_eq!(base_fields.l1_block_info.l1_fee_scalar, None);
 
         let json = json!({});
 
-        let op_fields: OpTransactionReceiptFields = serde_json::from_value(json).unwrap();
-        assert_eq!(op_fields.l1_block_info.l1_fee_scalar, None);
+        let base_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
+        assert_eq!(base_fields.l1_block_info.l1_fee_scalar, None);
     }
 }

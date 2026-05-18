@@ -4,9 +4,9 @@ use alloy_consensus::Block;
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
-use base_alloy_consensus::OpTxEnvelope;
-use base_alloy_network::Base;
-use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadEnvelope};
+use base_common_consensus::BaseTxEnvelope;
+use base_common_network::Base;
+use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use thiserror::Error;
 use url::Url;
 
@@ -34,15 +34,15 @@ pub trait L2SourceClient: Debug + Send + Sync {
     /// Fetches the block number at the given tag.
     async fn get_block_number(&self, tag: BlockNumberOrTag) -> Result<u64, DelegateL2ClientError>;
 
-    /// Fetches a block by number and converts it to an [`OpExecutionPayloadEnvelope`].
+    /// Fetches a block by number and converts it to an [`BaseExecutionPayloadEnvelope`].
     async fn get_payload_by_number(
         &self,
         number: u64,
-    ) -> Result<OpExecutionPayloadEnvelope, DelegateL2ClientError>;
+    ) -> Result<BaseExecutionPayloadEnvelope, DelegateL2ClientError>;
 }
 
 /// Client that polls a source L2 execution layer node for block data and
-/// converts blocks into [`OpExecutionPayloadEnvelope`] for engine insertion.
+/// converts blocks into [`BaseExecutionPayloadEnvelope`] for engine insertion.
 #[derive(Debug, Clone)]
 pub struct DelegateL2Client {
     provider: RootProvider<Base>,
@@ -72,7 +72,7 @@ impl L2SourceClient for DelegateL2Client {
     async fn get_payload_by_number(
         &self,
         number: u64,
-    ) -> Result<OpExecutionPayloadEnvelope, DelegateL2ClientError> {
+    ) -> Result<BaseExecutionPayloadEnvelope, DelegateL2ClientError> {
         let rpc_block = self
             .provider
             .get_block_by_number(number.into())
@@ -84,13 +84,13 @@ impl L2SourceClient for DelegateL2Client {
         let block_hash = rpc_block.header.hash;
         let parent_beacon_block_root = rpc_block.header.parent_beacon_block_root;
 
-        let txs: Vec<OpTxEnvelope> = rpc_block
+        let txs: Vec<BaseTxEnvelope> = rpc_block
             .transactions
             .into_transactions()
             .map(|tx| tx.inner.inner.into_inner())
             .collect();
 
-        let consensus_block: Block<OpTxEnvelope> = Block {
+        let consensus_block: Block<BaseTxEnvelope> = Block {
             header: rpc_block.header.inner,
             body: alloy_consensus::BlockBody {
                 transactions: txs,
@@ -100,8 +100,8 @@ impl L2SourceClient for DelegateL2Client {
         };
 
         let (execution_payload, _sidecar) =
-            OpExecutionPayload::from_block_unchecked(block_hash, &consensus_block);
+            BaseExecutionPayload::from_block_unchecked(block_hash, &consensus_block);
 
-        Ok(OpExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload })
+        Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload })
     }
 }

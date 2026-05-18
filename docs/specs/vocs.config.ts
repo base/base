@@ -107,6 +107,14 @@ function sectionItem(section: string, text: string): SidebarItem {
   }
 }
 
+const bcpsSection: SidebarItem = {
+  text: 'Base Change Proposals',
+  items: [
+    { text: 'BCP List', link: '/bcps' },
+    { text: 'BCP Process', link: '/bcps/bcp-0000' },
+  ],
+}
+
 const bridgingSection: SidebarItem = {
   text: 'Bridging',
   items: [
@@ -141,6 +149,20 @@ const executionSection: SidebarItem = {
   collapsed: true,
 }
 
+const proofsSection: SidebarItem = {
+  text: 'Proofs',
+  link: '/protocol/proofs',
+  items: [
+    { text: 'Challenger', link: '/protocol/proofs/challenger' },
+    { text: 'Proposer', link: '/protocol/proofs/proposer' },
+    { text: 'Registrar', link: '/protocol/proofs/registrar' },
+    { text: 'TEE Provers', link: '/protocol/proofs/tee-provers' },
+    { text: 'ZK Provers', link: '/protocol/proofs/zk-provers' },
+    { text: 'Contracts', link: '/protocol/proofs/contracts' },
+  ],
+  collapsed: true,
+}
+
 const sidebar: SidebarItem[] = [
   { text: 'Home', link: '/' },
   {
@@ -151,15 +173,17 @@ const sidebar: SidebarItem[] = [
       executionSection,
       bridgingSection,
       { text: 'Batcher', link: '/protocol/batcher' },
-      { ...sectionItem('protocol/fault-proof', 'Proofs'), collapsed: true },
+      proofsSection,
+      { ...sectionItem('protocol/fault-proof', 'Fault Proofs'), collapsed: true },
     ],
   },
+  bcpsSection,
   {
     text: 'Upgrades',
     items: [
-      { text: 'V1', link: '/upgrades/v1/overview' },
+      { text: 'Azul', link: '/upgrades/azul/overview' },
       {
-        text: 'Optimism',
+        text: 'Inherited Upgrades',
         collapsed: true,
         items: [
           { text: 'Jovian', link: '/upgrades/jovian/overview' },
@@ -182,7 +206,10 @@ export default defineConfig({
   banner: '⚠️ This specification is under active development and subject to change.',
   title: 'Base Chain Specification',
   description: 'Base Chain protocol specification, upgrades, and reference documentation.',
-  logoUrl: '/assets/base/logo.svg',
+  logoUrl: {
+    light: '/assets/base/logo.svg',
+    dark: '/assets/base/logo-white.svg',
+  },
   iconUrl: '/assets/base/favicon.png',
   topNav: [
     { text: 'Docs', link: 'https://docs.base.org/base-chain/' },

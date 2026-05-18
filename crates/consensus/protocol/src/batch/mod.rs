@@ -10,7 +10,7 @@
 //! Traditional batch format containing transactions for a single L2 block.
 //! Simple, straightforward format used before span batch optimization.
 //!
-//! ## Span Batches  
+//! ## Span Batches
 //! Advanced batch format that can contain transactions for multiple L2 blocks,
 //! providing significant compression and efficiency improvements. Introduced
 //! to reduce L1 data costs for high-throughput L2 chains.
@@ -30,7 +30,7 @@
 //! - **Error Handling**: Comprehensive error types for batch processing failures
 
 mod r#type;
-pub use r#type::*;
+pub use r#type::BatchType;
 
 mod reader;
 pub use reader::{BatchReader, DecompressionError};
@@ -66,7 +66,7 @@ mod transactions;
 pub use transactions::SpanBatchTransactions;
 
 mod element;
-pub use element::{MAX_SPAN_BATCH_ELEMENTS, SpanBatchElement};
+pub use element::SpanBatchElement;
 
 mod validity;
 pub use validity::{BatchDropReason, BatchValidity};

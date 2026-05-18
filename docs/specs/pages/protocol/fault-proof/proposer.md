@@ -12,9 +12,7 @@ After processing one or more blocks the outputs will need to be synchronized wit
 for trustless execution of L2-to-L1 messaging, such as withdrawals.
 These output proposals act as the bridge's view into the L2 state.
 Actors called "Proposers" submit the output roots to the settlement layer (L1) and can be contested with a proof,
-with a bond at stake if the proof is wrong. The [op-proposer][op-proposer] in one such implementation of a proposer.
-
-[op-proposer]: https://github.com/ethereum-optimism/optimism/tree/d48b45954c381f75a13e61312da68d84e9b41418/op-proposer
+with a bond at stake if the proof is wrong. The proposer service is one such implementation.
 
 [cannon]: https://github.com/ethereum-optimism/cannon
 
@@ -31,24 +29,24 @@ submits it to the `L2OutputOracle` contract on the settlement layer (L1).
 The submission of output proposals is permissioned to a single account. It is expected that this
 account will continue to submit output proposals over time to ensure that user withdrawals do not halt.
 
-The [L2 output proposer][op-proposer] is expected to submit output roots on a deterministic
-interval based on the configured `SUBMISSION_INTERVAL` in the `L2OutputOracle`. The larger
-the `SUBMISSION_INTERVAL`, the less often L1 transactions need to be sent to the `L2OutputOracle`
-contract, but L2 users will need to wait a bit longer for an output root to be included in L1 (the settlement layer)
-that includes their intention to withdraw from the system.
+The L2 output proposer is expected to submit output roots on a deterministic interval based on the
+configured `SUBMISSION_INTERVAL` in the `L2OutputOracle`. The larger the `SUBMISSION_INTERVAL`, the
+less often L1 transactions need to be sent to the `L2OutputOracle` contract, but L2 users will need
+to wait a bit longer for an output root to be included in L1 (the settlement layer) that includes
+their intention to withdraw from the system.
 
-The honest `op-proposer` algorithm assumes a connection to the `L2OutputOracle` contract to know
+The honest proposer algorithm assumes a connection to the `L2OutputOracle` contract to know
 the L2 block number that corresponds to the next output proposal that must be submitted. It also
-assumes a connection to an `op-node` to be able to query the `optimism_syncStatus` RPC endpoint.
+assumes a connection to a Base consensus node to query sync status.
 
 ```python
 import time
 
 while True:
     next_checkpoint_block = L2OutputOracle.nextBlockNumber()
-    rollup_status = op_node_client.sync_status()
+    rollup_status = consensus_node_client.sync_status()
     if rollup_status.finalized_l2.number >= next_checkpoint_block:
-        output = op_node_client.output_at_block(next_checkpoint_block)
+        output = consensus_node_client.output_at_block(next_checkpoint_block)
         tx = send_transaction(output)
     time.sleep(poll_interval)
 ```

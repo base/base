@@ -51,6 +51,9 @@ sol! {
         uint64 timestamp;
         /// Array of certificate hashes in the chain (root to leaf).
         bytes32[] certs;
+        /// Array of certificate expiry timestamps (notAfter, seconds since epoch).
+        /// One entry per cert, matching the `certs` array ordering.
+        uint64[] certExpiries;
         /// User-defined data embedded in the attestation.
         bytes userData;
         /// Cryptographic nonce used for replay protection.
@@ -88,7 +91,13 @@ sol! {
     }
 
     /// Possible attestation verification results.
+    ///
+    /// `Unknown` is intentionally placed at index 0 so that uninitialized enum
+    /// variables default to a failure state rather than `Success` (fail-closed).
+    /// This ordering **must** match `INitroEnclaveVerifier.sol`.
     enum VerificationResult {
+        /// Default / uninitialized — treated as a verification failure.
+        Unknown,
         /// Attestation successfully verified.
         Success,
         /// Root certificate is not in the trusted set.

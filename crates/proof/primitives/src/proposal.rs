@@ -2,6 +2,8 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Address, B256, Bytes};
 
+use crate::{CryptoError, ProofEncoder};
+
 /// ECDSA signature length in bytes (r: 32 + s: 32 + v: 1).
 pub const ECDSA_SIGNATURE_LENGTH: usize = 65;
 
@@ -81,6 +83,24 @@ pub struct Proposal {
     pub prev_output_root: B256,
     /// The config hash.
     pub config_hash: B256,
+}
+
+impl Proposal {
+    /// Builds the proof data for `AggregateVerifier.initialize()`.
+    ///
+    /// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32) + signature(65)` = 130
+    /// bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature is not exactly 65 bytes or has an invalid v-value.
+    pub fn build_proof_data(&self) -> Result<Bytes, CryptoError> {
+        ProofEncoder::encode_proof_bytes(
+            &self.signature,
+            self.l1_origin_hash,
+            self.l1_origin_number,
+        )
+    }
 }
 
 #[cfg(test)]

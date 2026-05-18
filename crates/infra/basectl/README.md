@@ -19,9 +19,9 @@ basectl-cli = { workspace = true }
 ```
 
 ```rust,ignore
-use basectl_cli::{run_app, ChainConfig};
+use basectl_cli::{run_app, MonitoringConfig};
 
-let config = ChainConfig::from_cli(args);
+let config = MonitoringConfig::from_cli(args);
 run_app(config).await?;
 ```
 

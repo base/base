@@ -14,19 +14,18 @@ workspace = true
 spin.workspace = true
 tracing.workspace = true
 alloy-evm.workspace = true
-base-proof.workspace = true
 thiserror.workspace = true
-base-revm.workspace = true
+base-proof.workspace = true
 base-protocol.workspace = true
+base-common-evm.workspace = true
 alloy-consensus.workspace = true
-base-alloy-evm.workspace = true
 alloy-primitives.workspace = true
 base-proof-driver.workspace = true
 base-proof-executor.workspace = true
 base-proof-preimage.workspace = true
-base-alloy-consensus.workspace = true
+base-common-consensus.workspace = true
 base-consensus-derive.workspace = true
-base-consensus-genesis.workspace = true
+base-common-genesis.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
@@ -37,15 +36,14 @@ std = [
 	"alloy-consensus/std",
 	"alloy-evm/std",
 	"alloy-primitives/std",
-	"base-alloy-consensus/std",
-	"base-alloy-evm/std",
-	"base-consensus-genesis/std",
+	"base-common-consensus/std",
+	"base-common-evm/std",
+	"base-common-genesis/std",
 	"base-proof-driver/std",
 	"base-proof-executor/std",
 	"base-proof-preimage/std",
 	"base-proof/std",
 	"base-protocol/std",
-	"base-revm/std",
 	"spin/std",
 	"thiserror/std",
 	"tracing/std",

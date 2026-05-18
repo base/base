@@ -1,12 +1,12 @@
 //! Proof storage pruner for removing stale trie data.
 
 mod error;
-pub use error::{OpProofStoragePrunerResult, PrunerError, PrunerOutput};
+pub use error::{BaseProofStoragePrunerResult, PrunerError, PrunerOutput};
 
 mod pruner;
-pub use pruner::OpProofStoragePruner;
+pub use pruner::BaseProofStoragePruner;
 
 mod metrics;
 
 mod task;
-pub use task::OpProofStoragePrunerTask;
+pub use task::BaseProofStoragePrunerTask;

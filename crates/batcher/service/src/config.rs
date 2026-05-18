@@ -14,25 +14,37 @@ use url::Url;
 /// via `optimism_rollupConfig`, so it is not stored here.
 #[derive(Debug, Clone)]
 pub struct BatcherConfig {
-    /// L1 RPC endpoint.
-    pub l1_rpc_url: Url,
-    /// L2 HTTP RPC endpoint. Used for all JSON-RPC calls including throttle
-    /// control (`miner_setMaxDASize`). Must be an HTTP or HTTPS URL.
-    pub l2_rpc_url: Url,
+    /// L1 RPC endpoint(s).
+    ///
+    /// One or more HTTP/HTTPS URLs. The service connects to each in order at
+    /// startup and uses the first one that responds; later endpoints serve as
+    /// startup-time fallbacks only (no per-call rotation). Must be non-empty.
+    pub l1_rpc_url: Vec<Url>,
+    /// L2 HTTP RPC endpoint(s). Used for all JSON-RPC calls including throttle
+    /// control (`miner_setMaxDASize`). Must be HTTP/HTTPS URLs.
+    ///
+    /// Same connection-time failover semantics as [`l1_rpc_url`](Self::l1_rpc_url):
+    /// the service tries each in order and uses the first that connects.
+    /// Must be non-empty.
+    pub l2_rpc_url: Vec<Url>,
     /// Optional L1 WebSocket endpoint for new-block subscriptions.
     ///
     /// When set, the batcher subscribes to new L1 block headers over this
     /// connection to advance the pipeline's L1 head, falling back to polling
-    /// [`l1_rpc_url`] only on failure. When absent, polling is used exclusively.
+    /// [`l1_rpc_url`](Self::l1_rpc_url) only on failure. When absent, polling
+    /// is used exclusively.
     pub l1_ws_url: Option<Url>,
     /// Optional L2 WebSocket endpoint for new-block subscriptions.
     ///
     /// When set, the batcher subscribes to new block headers over this
-    /// connection and falls back to polling [`l2_rpc_url`] only on failure.
-    /// When absent, the batcher uses polling exclusively.
+    /// connection and falls back to polling [`l2_rpc_url`](Self::l2_rpc_url)
+    /// only on failure. When absent, the batcher uses polling exclusively.
     pub l2_ws_url: Option<Url>,
-    /// Rollup node RPC endpoint.
-    pub rollup_rpc_url: Url,
+    /// Rollup node RPC endpoint(s).
+    ///
+    /// Same connection-time failover semantics as [`l1_rpc_url`](Self::l1_rpc_url).
+    /// Must be non-empty.
+    pub rollup_rpc_url: Vec<Url>,
     /// Private key for signing L1 transactions.
     ///
     /// Must be `Some` before the batcher is started; a `None` value will cause
@@ -68,18 +80,37 @@ pub struct BatcherConfig {
     /// If `true`, start in a stopped state and defer batch submission until
     /// `admin_startBatcher` is called via the admin API.
     ///
-    /// Matches op-batcher's `--stopped` / `OP_BATCHER_STOPPED` behaviour (env: `BATCHER_STOPPED`).
+    /// Matches the reference batcher's `--stopped` behavior (env: `BATCHER_STOPPED`).
     pub stopped: bool,
+    /// If `true`, block startup until the rollup node reports a non-zero
+    /// `unsafe_l2` and `current_l1` head via `optimism_syncStatus`.
+    ///
+    /// Useful when the batcher is started before the node has finished its
+    /// initial sync — without this gate the initial backfill would race the
+    /// node's derivation pipeline and could submit redundant data.
+    /// Matches the reference batcher's `--wait-node-sync` flag.
+    pub wait_node_sync: bool,
+    /// Maximum time to wait for the rollup node to report sync when
+    /// [`wait_node_sync`](Self::wait_node_sync) is set.
+    ///
+    /// On expiry the service exits with an error rather than hanging
+    /// indefinitely, giving operators a clear signal that the upstream node is
+    /// misconfigured or unreachable. Default: 10 minutes.
+    pub wait_node_sync_timeout: Duration,
+    /// When `true` and DA-backlog throttling is active, force the encoder to
+    /// emit blob-typed submissions even when its configured `da_type` is
+    /// calldata. No-op for blob-configured batchers. Default: `true`.
+    pub force_blobs_when_throttling: bool,
 }
 
 impl Default for BatcherConfig {
     fn default() -> Self {
         Self {
-            l1_rpc_url: "http://localhost:8545".parse().expect("valid default URL"),
+            l1_rpc_url: vec!["http://localhost:8545".parse().expect("valid default URL")],
             l1_ws_url: None,
-            l2_rpc_url: "http://localhost:9545".parse().expect("valid default URL"),
+            l2_rpc_url: vec!["http://localhost:9545".parse().expect("valid default URL")],
             l2_ws_url: None,
-            rollup_rpc_url: "http://localhost:7545".parse().expect("valid default URL"),
+            rollup_rpc_url: vec!["http://localhost:7545".parse().expect("valid default URL")],
             batcher_private_key: None,
             poll_interval: Duration::from_secs(1),
             encoder_config: EncoderConfig::default(),
@@ -90,6 +121,9 @@ impl Default for BatcherConfig {
             check_recent_txs_depth: 0,
             admin_addr: None,
             stopped: false,
+            wait_node_sync: false,
+            wait_node_sync_timeout: Duration::from_secs(600),
+            force_blobs_when_throttling: true,
         }
     }
 }

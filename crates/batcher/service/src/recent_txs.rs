@@ -5,14 +5,14 @@ use std::collections::HashMap;
 use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionTrait};
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::{Batch, BatchReader, BlockInfo, Channel, ChannelId, Frame};
 use futures::StreamExt;
 use tracing::{debug, info};
 
 /// Maximum depth allowed for the recent-transaction startup scan.
 ///
-/// Matches the limit used by op-batcher's `--check-recent-txs-depth` flag.
+/// Matches the limit used by the reference batcher's `--check-recent-txs-depth` flag.
 pub const MAX_CHECK_RECENT_TXS_DEPTH: u64 = 128;
 
 /// Maximum number of L1 block fetches in flight during the startup scan.
@@ -160,7 +160,8 @@ impl RecentTxScanner {
     ) {
         let Some(data) = channel.frame_data() else { return };
         let max_rlp = rollup_config.max_rlp_bytes_per_channel(inclusion_timestamp) as usize;
-        let mut reader = BatchReader::new(data.to_vec(), max_rlp);
+        let brotli_supported = rollup_config.is_fjord_active(inclusion_timestamp);
+        let mut reader = BatchReader::new(data.to_vec(), max_rlp, brotli_supported);
         while let Some(batch) = reader.next_batch(rollup_config) {
             let last_timestamp = match &batch {
                 Batch::Single(sb) => sb.timestamp,
@@ -178,7 +179,7 @@ mod tests {
     use alloy_eips::eip1898::BlockNumHash;
     use alloy_primitives::B256;
     use alloy_rlp::Encodable;
-    use base_consensus_genesis::{ChainGenesis, RollupConfig};
+    use base_common_genesis::{ChainGenesis, RollupConfig};
     use base_protocol::{Batch, BlockInfo, Channel, ChannelId, Frame, SingleBatch};
 
     use super::RecentTxScanner;

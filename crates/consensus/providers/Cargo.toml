@@ -1,0 +1,66 @@
+[package]
+name = "base-consensus-providers"
+version.workspace = true
+description = "Alloy Backed Providers"
+
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# consensus
+base-metrics.workspace = true
+base-protocol.workspace = true
+base-consensus-derive.workspace = true
+base-common-genesis.workspace = true
+
+# Alloy
+alloy-genesis.workspace = true
+alloy-transport.workspace = true
+alloy-rpc-client.workspace = true
+alloy-rpc-types-beacon.workspace = true
+alloy-serde = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["map"] }
+alloy-eips = { workspace = true, features = ["kzg", "std"] }
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
+alloy-provider = { workspace = true, features = ["ipc", "ws", "reqwest"] }
+alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
+
+# Base Alloy
+base-common-network.workspace = true
+base-common-consensus.workspace = true
+
+# Misc
+lru.workspace = true
+url.workspace = true
+tower.workspace = true
+reqwest.workspace = true
+async-trait.workspace = true
+http-body-util.workspace = true
+serde = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+
+c-kzg.workspace = true
+tracing.workspace = true
+
+# `metrics` feature
+metrics = { workspace = true, optional = true }
+
+[features]
+default = []
+metrics = [
+	"base-consensus-derive/metrics",
+	"base-metrics/metrics",
+	"dep:metrics",
+]
+
+[dev-dependencies]
+tokio.workspace = true
+httpmock.workspace = true
+serde_json = { workspace = true, features = ["std"] }

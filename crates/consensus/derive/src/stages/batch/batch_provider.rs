@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
 
 use super::NextBatchProvider;
@@ -60,7 +60,7 @@ where
     }
 
     /// Attempts to update the active stage of the mux.
-    pub(crate) fn attempt_update(&mut self) -> PipelineResult<()> {
+    pub fn attempt_update(&mut self) -> PipelineResult<()> {
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
         if let Some(prev) = self.prev.take() {
             // On the first call to `attempt_update`, we need to determine the active stage to
@@ -175,18 +175,6 @@ where
             Err(PipelineError::NotEnoughData.temp())
         }
     }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.attempt_update()?;
-
-        if let Some(batch_validator) = self.batch_validator.as_mut() {
-            batch_validator.provide_block(block).await
-        } else if let Some(batch_queue) = self.batch_queue.as_mut() {
-            batch_queue.provide_block(block).await
-        } else {
-            Err(PipelineError::NotEnoughData.temp())
-        }
-    }
 }
 
 #[async_trait]
@@ -220,7 +208,7 @@ mod tests {
     use alloc::{sync::Arc, vec};
 
     use alloy_eips::BlockNumHash;
-    use base_consensus_genesis::{HardForkConfig, RollupConfig, SystemConfig};
+    use base_common_genesis::{HardForkConfig, RollupConfig, SystemConfig};
     use base_protocol::BlockInfo;
 
     use super::BatchProvider;

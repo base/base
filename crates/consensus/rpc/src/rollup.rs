@@ -1,25 +1,35 @@
 //! Implements the rollup client rpc endpoints. These endpoints serve data about the rollup state.
 //!
-//! Implemented in the op-node in <https://github.com/ethereum-optimism/optimism/blob/174e55f0a1e73b49b80a561fd3fedd4fea5770c6/op-service/sources/rollupclient.go#L16>
+//! The method names remain compatible with the legacy rollup RPC namespace.
 
-use std::{fmt::Debug, sync::Arc};
+use std::{
+    fmt::Debug,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Instant,
+};
 
 use alloy_eips::BlockNumberOrTag;
 use async_trait::async_trait;
+use base_common_genesis::RollupConfig;
 use base_consensus_engine::EngineState;
-use base_consensus_genesis::RollupConfig;
 use base_consensus_gossip::Metrics;
-use base_consensus_safedb::{SafeDBError, SafeDBReader};
+use base_consensus_safedb::{SafeDBError, SafeDBReader, SafeHeadResponse};
 use base_protocol::SyncStatus;
 use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
 };
+use tracing::Instrument;
 
 use crate::{
     EngineRpcClient, L1State, L1WatcherQueries, OutputResponse, RollupNodeApiServer,
-    SafeHeadResponse, l1_watcher::L1WatcherQuerySender,
+    l1_watcher::L1WatcherQuerySender,
 };
+
+static RPC_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 /// `RollupRpc`
 ///
@@ -44,7 +54,7 @@ impl<EngineRpcClient_: EngineRpcClient> RollupRpc<EngineRpcClient_> {
         Self { engine_client, l1_watcher_sender, safe_db_reader }
     }
 
-    // Important note: we zero-out the fields that can't be derived yet to follow op-node's
+    // Important note: we zero-out the fields that can't be derived yet to follow the reference node's
     // behaviour.
     fn sync_status_from_actor_queries(
         l1_sync_status: L1State,
@@ -57,6 +67,7 @@ impl<EngineRpcClient_: EngineRpcClient> RollupRpc<EngineRpcClient_> {
             safe_l1: l1_sync_status.safe_l1.unwrap_or_default(),
             finalized_l1: l1_sync_status.finalized_l1.unwrap_or_default(),
             unsafe_l2: l2_sync_status.sync_state.unsafe_head(),
+            local_safe_l2: l2_sync_status.sync_state.local_safe_head(),
             safe_l2: l2_sync_status.sync_state.safe_head(),
             finalized_l2: l2_sync_status.sync_state.finalized_head(),
         }
@@ -67,31 +78,68 @@ impl<EngineRpcClient_: EngineRpcClient> RollupRpc<EngineRpcClient_> {
 impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
     for RollupRpc<EngineRpcClient_>
 {
-    async fn op_output_at_block(&self, block_num: BlockNumberOrTag) -> RpcResult<OutputResponse> {
-        Metrics::rpc_calls("op_outputAtBlock").increment(1.0);
+    async fn output_at_block(&self, block_num: BlockNumberOrTag) -> RpcResult<OutputResponse> {
+        const RPC_METHOD: &str = "optimism_outputAtBlock";
 
+        Metrics::rpc_calls("base_outputAtBlock").increment(1.0);
+
+        let request_id = RPC_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
         let (l1_sync_status_send, l1_sync_status_recv) = tokio::sync::oneshot::channel();
+        let request_started_at = Instant::now();
+        let span = info_span!(
+            target: "rpc",
+            "rpc_request",
+            request_id,
+            rpc_method = RPC_METHOD,
+            block = ?block_num,
+        );
 
-        let ((l2_block_info, output_root, l2_sync_status), l1_sync_status) =
-            tokio::try_join!(self.engine_client.output_at_block(block_num), async {
+        info!(target: "rpc", request_id, rpc_method = RPC_METHOD, block = ?block_num, "Started rollup RPC request");
+
+        let ((l2_block_info, output_root, l2_sync_status), l1_sync_status) = tokio::try_join!(
+            self.engine_client.output_at_block(block_num).instrument(span.clone()),
+            async {
                 self.l1_watcher_sender
                     .send(L1WatcherQueries::L1State(l1_sync_status_send))
                     .await
                     .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
 
                 l1_sync_status_recv.await.map_err(|_| ErrorObject::from(ErrorCode::InternalError))
-            })?;
+            }
+            .instrument(span.clone())
+        )
+        .map_err(|error| {
+            warn!(
+                target: "rpc",
+                request_id,
+                rpc_method = RPC_METHOD,
+                block = ?block_num,
+                elapsed_ms = request_started_at.elapsed().as_millis() as u64,
+                error = ?error,
+                "Rollup RPC request failed"
+            );
+            error
+        })?;
 
         let sync_status = Self::sync_status_from_actor_queries(l1_sync_status, l2_sync_status);
+
+        info!(
+            target: "rpc",
+            request_id,
+            rpc_method = RPC_METHOD,
+            block = ?block_num,
+            elapsed_ms = request_started_at.elapsed().as_millis() as u64,
+            "Completed rollup RPC request"
+        );
 
         Ok(OutputResponse::from_v0(output_root, sync_status, l2_block_info))
     }
 
-    async fn op_safe_head_at_l1_block(
+    async fn safe_head_at_l1_block(
         &self,
         block_num: BlockNumberOrTag,
     ) -> RpcResult<SafeHeadResponse> {
-        Metrics::rpc_calls("op_safeHeadAtL1Block").increment(1.0);
+        Metrics::rpc_calls("base_safeHeadAtL1Block").increment(1.0);
 
         let number = match block_num {
             BlockNumberOrTag::Number(n) => n,
@@ -118,10 +166,22 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
         })
     }
 
-    async fn op_sync_status(&self) -> RpcResult<SyncStatus> {
-        Metrics::rpc_calls("op_syncStatus").increment(1.0);
+    async fn sync_status(&self) -> RpcResult<SyncStatus> {
+        const RPC_METHOD: &str = "optimism_syncStatus";
 
+        Metrics::rpc_calls("base_syncStatus").increment(1.0);
+
+        let request_id = RPC_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
         let (l1_sync_status_send, l1_sync_status_recv) = tokio::sync::oneshot::channel();
+        let request_started_at = Instant::now();
+        let span = info_span!(
+            target: "rpc",
+            "rpc_request",
+            request_id,
+            rpc_method = RPC_METHOD,
+        );
+
+        info!(target: "rpc", request_id, rpc_method = RPC_METHOD, "Started rollup RPC request");
 
         let (l1_sync_status, l2_sync_status) = tokio::try_join!(
             async {
@@ -130,22 +190,41 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
                     .await
                     .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
                 l1_sync_status_recv.await.map_err(|_| ErrorObject::from(ErrorCode::InternalError))
-            },
-            self.engine_client.get_state()
+            }
+            .instrument(span.clone()),
+            self.engine_client.get_state().instrument(span.clone())
         )
-        .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
+        .map_err(|error| {
+            warn!(
+                target: "rpc",
+                request_id,
+                rpc_method = RPC_METHOD,
+                elapsed_ms = request_started_at.elapsed().as_millis() as u64,
+                error = ?error,
+                "Rollup RPC request failed"
+            );
+            ErrorObject::from(ErrorCode::InternalError)
+        })?;
 
-        return Ok(Self::sync_status_from_actor_queries(l1_sync_status, l2_sync_status));
+        info!(
+            target: "rpc",
+            request_id,
+            rpc_method = RPC_METHOD,
+            elapsed_ms = request_started_at.elapsed().as_millis() as u64,
+            "Completed rollup RPC request"
+        );
+
+        Ok(Self::sync_status_from_actor_queries(l1_sync_status, l2_sync_status))
     }
 
-    async fn op_rollup_config(&self) -> RpcResult<RollupConfig> {
-        Metrics::rpc_calls("op_rollupConfig").increment(1.0);
+    async fn rollup_config(&self) -> RpcResult<RollupConfig> {
+        Metrics::rpc_calls("base_rollupConfig").increment(1.0);
 
         self.engine_client.get_config().await
     }
 
-    async fn op_version(&self) -> RpcResult<String> {
-        Metrics::rpc_calls("op_version").increment(1.0);
+    async fn version(&self) -> RpcResult<String> {
+        Metrics::rpc_calls("base_version").increment(1.0);
 
         const RPC_VERSION: &str = env!("CARGO_PKG_VERSION");
 

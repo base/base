@@ -1,0 +1,74 @@
+[package]
+name = "base-common-genesis"
+version.workspace = true
+description = "Base genesis types"
+
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Alloy
+alloy-eips.workspace = true
+alloy-chains.workspace = true
+alloy-sol-types.workspace = true
+alloy-consensus.workspace = true
+alloy-hardforks.workspace = true
+alloy-primitives.workspace = true
+
+# Misc
+tracing.workspace = true
+thiserror.workspace = true
+derive_more = { workspace = true, features = ["display", "from", "try_from"] }
+
+# `arbitrary` feature
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+
+# `serde` feature
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+rstest.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+rand = { workspace = true, features = ["thread_rng"] }
+arbitrary = { workspace = true, features = ["derive"] }
+toml = { workspace = true, features = ["parse", "serde"] }
+alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
+
+[features]
+default = []
+std = [
+	"alloy-chains/std",
+	"alloy-consensus/std",
+	"alloy-eips/std",
+	"alloy-primitives/std",
+	"alloy-sol-types/std",
+	"derive_more/std",
+	"serde?/std",
+	"thiserror/std",
+	"tracing/std",
+]
+arbitrary = [
+	"alloy-chains/arbitrary",
+	"alloy-consensus/arbitrary",
+	"alloy-eips/arbitrary",
+	"alloy-primitives/arbitrary",
+	"alloy-primitives/rand",
+	"alloy-sol-types/arbitrary",
+	"dep:arbitrary",
+	"std",
+]
+serde = [
+	"alloy-chains/serde",
+	"alloy-consensus/serde",
+	"alloy-eips/serde",
+	"alloy-hardforks/serde",
+	"alloy-primitives/serde",
+	"dep:serde",
+]

@@ -7,10 +7,10 @@ use alloy_consensus::private::alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
-use base_alloy_network::Base;
 use base_bundles::Bundle;
+use base_common_evm::L1BlockInfo;
+use base_common_network::Base;
 use base_execution_evm::extract_l1_info_from_tx;
-use base_revm::L1BlockInfo;
 use jsonrpsee::core::RpcResult;
 use reth_rpc_eth_types::{EthApiError, SignError};
 use tokio::time::Instant;
@@ -159,7 +159,7 @@ mod tests {
     use alloy_network::TxSignerSync;
     use alloy_primitives::{Bytes, bytes};
     use alloy_signer_local::PrivateKeySigner;
-    use base_alloy_consensus::OpTxEnvelope;
+    use base_common_consensus::BaseTxEnvelope;
 
     use super::*;
 
@@ -206,7 +206,7 @@ mod tests {
             total_gas = total_gas.saturating_add(gas);
 
             let signature = signer.sign_transaction_sync(&mut tx).unwrap();
-            let envelope = OpTxEnvelope::Eip1559(tx.into_signed(signature));
+            let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
             let tx_hash = envelope.clone().try_into_recovered().unwrap().tx_hash();
             tx_hashes.push(tx_hash);
 
@@ -257,7 +257,7 @@ mod tests {
             total_gas = total_gas.saturating_add(gas);
 
             let signature = signer.sign_transaction_sync(&mut tx).unwrap();
-            let envelope = OpTxEnvelope::Eip1559(tx.into_signed(signature));
+            let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
             let tx_hash = envelope.clone().try_into_recovered().unwrap().tx_hash();
             tx_hashes.push(tx_hash);
 
@@ -319,7 +319,7 @@ mod tests {
             total_gas = total_gas.saturating_add(gas);
 
             let signature = signer.sign_transaction_sync(&mut tx).unwrap();
-            let envelope = OpTxEnvelope::Eip1559(tx.into_signed(signature));
+            let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
             let tx_hash = envelope.clone().try_into_recovered().unwrap().tx_hash();
             tx_hashes.push(tx_hash);
 
@@ -351,7 +351,7 @@ mod tests {
     async fn test_decode_tx_rejects_empty_bytes() {
         // Test that empty bytes fail to decode
         let empty_bytes = Bytes::new();
-        let result = OpTxEnvelope::decode_2718(&mut empty_bytes.as_ref());
+        let result = BaseTxEnvelope::decode_2718(&mut empty_bytes.as_ref());
         assert!(result.is_err(), "Empty bytes should fail decoding");
     }
 
@@ -359,7 +359,7 @@ mod tests {
     async fn test_decode_tx_rejects_invalid_bytes() {
         // Test that malformed bytes fail to decode
         let invalid_bytes = Bytes::from(vec![0x01, 0x02, 0x03]);
-        let result = OpTxEnvelope::decode_2718(&mut invalid_bytes.as_ref());
+        let result = BaseTxEnvelope::decode_2718(&mut invalid_bytes.as_ref());
         assert!(result.is_err(), "Invalid bytes should fail decoding");
     }
 }

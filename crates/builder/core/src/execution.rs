@@ -8,12 +8,12 @@ use ExecutionMeteringLimitExceeded::{
     BlockStateRootGas, FlashblockExecutionTime, TransactionExecutionTime,
 };
 use alloy_primitives::{Address, U256};
-use base_alloy_consensus::{OpReceipt, OpTransactionSigned};
-use base_revm::OpTransactionError;
+use base_access_lists::FlashblockAccessListBuilder;
+use base_bundles::RejectedTransaction;
+use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
+use base_common_evm::BaseTransactionError;
 use derive_more::Display;
 use thiserror::Error;
-
-use crate::flashblocks::FlashblocksExecutionInfo;
 
 /// Resource limits configuration for transaction and block constraints.
 ///
@@ -161,7 +161,7 @@ pub enum TxnExecutionError {
 
     /// Internal EVM error during transaction execution.
     #[error("internal error: {0}")]
-    InternalError(OpTransactionError),
+    InternalError(BaseTransactionError),
 
     /// EVM execution error.
     #[error("EVM error")]
@@ -174,6 +174,25 @@ pub enum TxnExecutionError {
     /// Metering data has not yet arrived for this transaction.
     #[error("metering data pending")]
     MeteringDataPending,
+}
+
+impl TxnExecutionError {
+    /// Returns `true` if this rejection is permanent — the transaction will never be includable
+    /// regardless of block/flashblock cumulative state. Permanent rejections are intrinsic to
+    /// the transaction itself (e.g. its size or predicted execution time exceeds the per-tx limit).
+    ///
+    /// Transient rejections depend on cumulative block state (gas used, DA used, etc.) and may
+    /// succeed in a future block or flashblock with different cumulative values.
+    pub const fn is_permanent(&self) -> bool {
+        matches!(
+            self,
+            Self::TransactionDASizeExceeded(_, _)
+                | Self::ExecutionMeteringLimitExceeded(
+                    ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _),
+                )
+                | Self::MaxGasUsageExceeded
+        )
+    }
 }
 
 impl From<ExecutionMeteringLimitExceeded> for TxnExecutionError {
@@ -193,15 +212,28 @@ pub enum TxnOutcome {
     RevertedAndExcluded,
 }
 
+/// Execution information specific to flashblocks.
+///
+/// Tracks the last consumed flashblock index and manages the
+/// flashblock-level access list builder for progressive block construction.
+#[derive(Debug, Default, Clone)]
+pub struct FlashblocksExecutionInfo {
+    /// Index of the last consumed flashblock
+    pub(crate) last_flashblock_index: usize,
+
+    /// Flashblock-level access list builder
+    pub(crate) access_list_builder: FlashblockAccessListBuilder,
+}
+
 /// Accumulated execution state for the current block being built.
 #[derive(Default, Debug)]
 pub struct ExecutionInfo {
     /// All executed transactions (unrecovered).
-    pub executed_transactions: Vec<OpTransactionSigned>,
+    pub executed_transactions: Vec<BaseTransactionSigned>,
     /// The recovered senders for the executed transactions.
     pub executed_senders: Vec<Address>,
     /// The transaction receipts
-    pub receipts: Vec<OpReceipt>,
+    pub receipts: Vec<BaseReceipt>,
     /// All gas used so far
     pub cumulative_gas_used: u64,
     /// Estimated DA size
@@ -220,6 +252,8 @@ pub struct ExecutionInfo {
     pub extra: FlashblocksExecutionInfo,
     /// DA Footprint Scalar for Jovian
     pub da_footprint_scalar: Option<u16>,
+    /// Rejected transactions accumulated during block building, flushed after finalization.
+    pub rejected_txs: Vec<RejectedTransaction>,
 }
 
 impl ExecutionInfo {
@@ -237,6 +271,7 @@ impl ExecutionInfo {
             total_fees: U256::ZERO,
             extra: Default::default(),
             da_footprint_scalar: None,
+            rejected_txs: Vec::new(),
         }
     }
 

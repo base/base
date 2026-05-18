@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{Batch, BatchValidity, BlockInfo, L2BlockInfo, SingleBatch};
 
 use super::NextBatchProvider;
@@ -69,7 +69,7 @@ where
     /// ## Returns
     /// - `Ok(())` if the update was successful.
     /// - `Err(PipelineError)` if the update failed.
-    pub(crate) fn update_origins(&mut self, parent: &L2BlockInfo) -> PipelineResult<()> {
+    pub fn update_origins(&mut self, parent: &L2BlockInfo) -> PipelineResult<()> {
         // NOTE: The origin is used to determine if it's behind.
         // It is the future origin that gets saved into the l1 blocks array.
         // We always update the origin of this stage if it's not the same so
@@ -132,10 +132,7 @@ where
     /// ## Returns
     /// - `Ok(SingleBatch)` if an empty batch was derived.
     /// - `Err(PipelineError)` if an empty batch could not be derived.
-    pub(crate) fn try_derive_empty_batch(
-        &mut self,
-        parent: &L2BlockInfo,
-    ) -> PipelineResult<SingleBatch> {
+    pub fn try_derive_empty_batch(&mut self, parent: &L2BlockInfo) -> PipelineResult<SingleBatch> {
         let epoch = self.l1_blocks[0];
 
         // If the current epoch is too old compared to the L1 block we are at,
@@ -321,10 +318,6 @@ where
     async fn flush_channel(&mut self) -> PipelineResult<()> {
         self.prev.flush_channel().await
     }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.prev.provide_block(block).await
-    }
 }
 
 #[cfg(test)]
@@ -333,15 +326,14 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::B256;
-    use base_consensus_genesis::{HardForkConfig, RollupConfig, SystemConfig};
+    use base_common_genesis::{HardForkConfig, RollupConfig, SystemConfig};
     use base_protocol::{Batch, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch};
     use tracing::Level;
-    use tracing_subscriber::layer::SubscriberExt;
 
     use crate::{
         AttributesProvider, BatchValidator, NextBatchProvider, OriginAdvancer, PipelineError,
         PipelineErrorKind, PipelineResult, ResetError, StageReset,
-        test_utils::{CollectingLayer, TestNextBatchProvider, TraceStorage},
+        test_utils::TestNextBatchProvider,
     };
 
     #[tokio::test]
@@ -533,10 +525,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_validator_next_batch_sequence_window_expired() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let cfg = Arc::new(RollupConfig { seq_window_size: 5, ..Default::default() });
         let mut mock = TestNextBatchProvider::new(vec![]);
@@ -569,10 +558,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_validator_next_batch_sequence_window_expired_advance_epoch() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let cfg = Arc::new(RollupConfig { seq_window_size: 5, ..Default::default() });
         let mut mock = TestNextBatchProvider::new(vec![]);

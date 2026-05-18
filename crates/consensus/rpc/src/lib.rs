@@ -27,10 +27,11 @@ pub use health::{HealthzResponse, HealthzRpc};
 
 mod jsonrpsee;
 #[cfg(feature = "client")]
-pub use jsonrpsee::{AdminApiClient, ConductorApiClient, OpP2PApiClient, RollupNodeApiClient};
+pub use jsonrpsee::{AdminApiClient, BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient};
 pub use jsonrpsee::{
-    AdminApiServer, ConductorApiServer, DevEngineApiServer, HealthzApiServer, MinerApiExtServer,
-    OpAdminApiServer, OpP2PApiServer, RollupNodeApiServer, WsServer,
+    AdminApiServer, BaseP2PApiServer, ClusterMembership, ConductorApiServer, DevEngineApiServer,
+    HealthzApiServer, RollupNodeApiServer, ServerInfo, ServerSuffrage, UnknownServerSuffrage,
+    WsServer,
 };
 
 mod l1_watcher;
@@ -45,7 +46,6 @@ pub use output::OutputResponse;
 mod p2p;
 
 mod response;
-pub use response::SafeHeadResponse;
 
 mod rollup;
 pub use rollup::RollupRpc;

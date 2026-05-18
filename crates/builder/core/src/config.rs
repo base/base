@@ -6,9 +6,9 @@ use core::{
 };
 use std::sync::Arc;
 
-use base_execution_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
+use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 
-use crate::{ExecutionMeteringMode, NoopMeteringProvider, SharedMeteringProvider};
+use crate::{ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
 
 /// Configuration values for the flashblocks builder.
 #[derive(Clone)]
@@ -18,12 +18,12 @@ pub struct BuilderConfig {
     /// sequencer.
     pub block_time: Duration,
 
-    /// Data Availability configuration for the OP builder
+    /// Data Availability configuration for the payload builder.
     /// Defines constraints for the maximum size of data availability transactions.
-    pub da_config: OpDAConfig,
+    pub da_config: BaseDAConfig,
 
     /// Gas limit configuration for the payload builder
-    pub gas_limit_config: OpGasLimitConfig,
+    pub gas_limit_config: GasLimitConfig,
 
     /// Extra time allowed for payload building before garbage collection.
     pub block_time_leeway: Duration,
@@ -79,6 +79,22 @@ pub struct BuilderConfig {
 
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
+
+    /// Cache of permanently rejected transaction hashes, shared across blocks.
+    /// Transactions in this cache are skipped by the iterator without re-evaluation.
+    pub rejection_cache: RejectionCache,
+
+    /// URL of the audit-archiver RPC endpoint for rejected transaction forwarding.
+    /// When set, rejected transactions will be forwarded to this endpoint.
+    pub audit_archiver_url: Option<String>,
+
+    /// Bounded channel capacity for rejected transaction forwarding.
+    /// When the channel is full, new rejected transactions are dropped.
+    pub rejected_tx_channel_size: usize,
+
+    /// Maximum number of rejected transactions accumulated per block before
+    /// further rejections are dropped. Prevents unbounded `ExecutionInfo` growth.
+    pub max_rejected_txs_per_block: usize,
 }
 
 impl BuilderConfig {
@@ -112,6 +128,10 @@ impl core::fmt::Debug for BuilderConfig {
             .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
             .field("metering_wait_duration", &self.metering_wait_duration)
             .field("metering_provider", &self.metering_provider)
+            .field("rejection_cache_size", &self.rejection_cache.entry_count())
+            .field("audit_archiver_url", &self.audit_archiver_url)
+            .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
+            .field("max_rejected_txs_per_block", &self.max_rejected_txs_per_block)
             .finish()
     }
 }
@@ -121,8 +141,8 @@ impl Default for BuilderConfig {
         Self {
             block_time: Duration::from_secs(2),
             block_time_leeway: Duration::from_millis(500),
-            da_config: OpDAConfig::default(),
-            gas_limit_config: OpGasLimitConfig::default(),
+            da_config: BaseDAConfig::default(),
+            gas_limit_config: GasLimitConfig::default(),
             flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
             flashblocks_interval: Duration::from_millis(250),
             flashblocks_leeway_time: Duration::from_millis(50),
@@ -137,6 +157,10 @@ impl Default for BuilderConfig {
             max_uncompressed_block_size: None,
             metering_wait_duration: None,
             metering_provider: Arc::new(NoopMeteringProvider),
+            rejection_cache: RejectionCache::new(100_000, Duration::from_secs(1800)),
+            audit_archiver_url: None,
+            rejected_tx_channel_size: 500,
+            max_rejected_txs_per_block: 500,
         }
     }
 }

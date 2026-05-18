@@ -6,18 +6,18 @@ use alloy_consensus::{SignableTransaction, Transaction, TxEip1559, transaction::
 use alloy_genesis::Genesis;
 use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, ChainId, TxKind};
-use base_execution_chainspec::OpChainSpecBuilder;
-use base_execution_payload_builder::builder::OpPayloadTransactions;
+use base_execution_chainspec::BaseChainSpecBuilder;
+use base_execution_payload_builder::builder::BasePayloadTransactions;
+use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{
-    OpNode,
+    BaseNode,
     args::RollupArgs,
     node::{
-        OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder, OpNodeComponentBuilder,
-        OpNodeTypes, OpPayloadBuilder, OpPoolBuilder,
+        BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder,
+        BaseNodeTypes, BasePayloadBuilder, BasePoolBuilder,
     },
-    utils::optimism_payload_attributes,
+    utils::payload_attributes,
 };
-use base_txpool::BasePooledTransaction;
 use reth_chainspec::EthChainSpec;
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{
@@ -43,7 +43,7 @@ struct CustomTxPriority {
     chain_id: ChainId,
 }
 
-impl OpPayloadTransactions<BasePooledTransaction> for CustomTxPriority {
+impl BasePayloadTransactions<BasePooledTransaction> for CustomTxPriority {
     fn best_transactions<Pool>(
         &self,
         pool: Pool,
@@ -69,7 +69,7 @@ impl OpPayloadTransactions<BasePooledTransaction> for CustomTxPriority {
         };
         let signature = sender.sign_transaction_sync(&mut end_of_block_tx).unwrap();
         let end_of_block_tx = BasePooledTransaction::from_pooled(Recovered::new_unchecked(
-            base_alloy_consensus::OpPooledTransaction::Eip1559(
+            base_common_consensus::BasePooledTransaction::Eip1559(
                 end_of_block_tx.into_signed(signature),
             ),
             sender.address(),
@@ -89,31 +89,36 @@ impl OpPayloadTransactions<BasePooledTransaction> for CustomTxPriority {
 /// Builds the node with custom transaction priority service within default payload builder.
 fn build_components<Node>(
     chain_id: ChainId,
-) -> OpNodeComponentBuilder<Node, OpPayloadBuilder<CustomTxPriority>>
+) -> BaseNodeComponentBuilder<Node, BasePayloadBuilder<CustomTxPriority>>
 where
-    Node: FullNodeTypes<Types: OpNodeTypes>,
+    Node: FullNodeTypes<Types: BaseNodeTypes>,
 {
-    let RollupArgs { disable_txpool_gossip, compute_pending_block, discovery_v4, .. } =
-        RollupArgs::default();
+    let RollupArgs {
+        disable_txpool_gossip,
+        compute_pending_block,
+        discovery_v4,
+        base_protocol,
+        ..
+    } = RollupArgs::default();
     ComponentsBuilder::default()
         .node_types::<Node>()
-        .pool(OpPoolBuilder::default())
-        .executor(OpExecutorBuilder::default())
+        .pool(BasePoolBuilder::default())
+        .executor(BaseExecutorBuilder::default())
         .payload(BasicPayloadServiceBuilder::new(
-            OpPayloadBuilder::new(compute_pending_block)
+            BasePayloadBuilder::new(compute_pending_block)
                 .with_transactions(CustomTxPriority { chain_id }),
         ))
-        .network(OpNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
-        .consensus(OpConsensusBuilder::default())
+        .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4, base_protocol))
+        .consensus(BaseConsensusBuilder::default())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_custom_block_priority_config() {
     reth_tracing::init_test_tracing();
 
     let genesis: Genesis = serde_json::from_str(include_str!("../assets/genesis.json")).unwrap();
     let chain_spec =
-        Arc::new(OpChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build());
+        Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build());
 
     // This wallet is going to send:
     // 1. L1 block info tx
@@ -138,9 +143,9 @@ async fn test_custom_block_priority_config() {
     let runtime = Runtime::test();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
-        .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
+        .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
         .with_components(build_components(config.chain.chain_id()))
-        .with_add_ons(OpNode::new(Default::default()).add_ons())
+        .with_add_ons(BaseNode::new(Default::default()).add_ons())
         .launch_with_fn(|builder| {
             let launcher = EngineNodeLauncher::new(
                 runtime.clone(),
@@ -153,7 +158,7 @@ async fn test_custom_block_priority_config() {
         .expect("Failed to launch node");
 
     // Advance the chain with a single block.
-    let block_payloads = NodeTestContext::new(node_handle.node, optimism_payload_attributes)
+    let block_payloads = NodeTestContext::new(node_handle.node, payload_attributes)
         .await
         .unwrap()
         .advance(1, |_| {

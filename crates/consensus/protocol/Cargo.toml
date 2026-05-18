@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
-base-consensus-genesis.workspace = true
+base-common-genesis.workspace = true
 
 # alloy
 alloy-rlp.workspace = true
@@ -25,14 +25,14 @@ alloy-rpc-types-engine.workspace = true
 alloy-primitives = { workspace = true, features = ["map"] }
 
 # base-alloy
-base-alloy-consensus.workspace = true
-base-alloy-rpc-types-engine.workspace = true
+base-common-consensus.workspace = true
+base-common-rpc-types-engine.workspace = true
 
 # misc
 tracing.workspace = true
+thiserror.workspace = true
 ambassador.workspace = true
 async-trait.workspace = true
-thiserror.workspace = true
 unsigned-varint.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 
@@ -52,14 +52,14 @@ spin.workspace = true
 rstest.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
-base-alloy-rpc-types.workspace = true
-base-consensus-registry.workspace = true
+base-common-chains.workspace = true
+base-common-rpc-types.workspace = true
 brotli = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["full"] }
 arbitrary = { workspace = true, features = ["derive"] }
 rand = { workspace = true, features = ["std", "std_rng"] }
-alloy-primitives = { workspace = true, features = ["arbitrary"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
+alloy-primitives = { workspace = true, features = ["arbitrary"] }
 
 [features]
 default = [ "std" ]
@@ -67,13 +67,14 @@ test-utils = [ "dep:spin", "dep:tracing-subscriber" ]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
+	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"alloy-rlp/std",
 	"alloy-rpc-types-engine/std",
 	"alloy-rpc-types-eth/std",
-	"base-alloy-consensus/std",
-	"base-alloy-rpc-types-engine/std",
-	"base-consensus-genesis/std",
+	"base-common-consensus/std",
+	"base-common-genesis/std",
+	"base-common-rpc-types-engine/std",
 	"brotli/std",
 	"derive_more/std",
 	"miniz_oxide/std",
@@ -89,9 +90,9 @@ serde = [
 	"alloy-primitives/serde",
 	"alloy-rpc-types-engine/serde",
 	"alloy-rpc-types-eth/serde",
-	"base-alloy-consensus/serde",
-	"base-alloy-rpc-types-engine/serde",
-	"base-consensus-genesis/serde",
+	"base-common-consensus/serde",
+	"base-common-genesis/serde",
+	"base-common-rpc-types-engine/serde",
 	"dep:serde",
 	"miniz_oxide/serde",
 	"tracing-subscriber?/serde",
@@ -103,9 +104,9 @@ arbitrary = [
 	"alloy-primitives/rand",
 	"alloy-rpc-types-engine/arbitrary",
 	"alloy-rpc-types-eth/arbitrary",
-	"base-alloy-consensus/arbitrary",
-	"base-alloy-rpc-types-engine/arbitrary",
-	"base-consensus-genesis/arbitrary",
+	"base-common-consensus/arbitrary",
+	"base-common-genesis/arbitrary",
+	"base-common-rpc-types-engine/arbitrary",
 	"dep:arbitrary",
 	"std",
 ]

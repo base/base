@@ -1,24 +1,23 @@
 //! Tests for ensuring the access list is built properly
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
-use alloy_consensus::Header;
-pub use alloy_primitives::{Address, B256, TxKind, U256};
-pub use alloy_sol_types::SolCall;
-use base_access_lists::FBALBuilderDb;
-pub use base_access_lists::FlashblockAccessList;
-use base_execution_chainspec::OpChainSpec;
-use base_execution_evm::OpEvmConfig;
-pub use base_revm::OpTransaction;
-pub use base_test_utils::{
-    AccessListContract, ContractFactory, DEVNET_CHAIN_ID, Logic, Logic2, Proxy, SimpleStorage,
-    build_test_genesis,
+use alloy_primitives::{Address, B256, TxKind, U256};
+use alloy_sol_types::SolCall;
+use base_access_lists::{FBALBuilderDb, FlashblockAccessList};
+use base_common_evm::{
+    BaseContext, BaseSpecId, BaseTransaction, BaseUpgrade, Builder, DefaultBase,
 };
-pub use eyre::Result;
-use reth_evm::{ConfigureEvm, Evm};
-use revm::{DatabaseCommit, context::result::ResultAndState, database::InMemoryDB};
-pub use revm::{
-    context::TxEnv,
+use base_test_utils::{
+    AccessListContract, ContractFactory, DEVNET_CHAIN_ID, GENESIS_GAS_LIMIT, Logic, Logic2, Proxy,
+    SimpleStorage,
+};
+use eyre::Result;
+use revm::{
+    DatabaseCommit, ExecuteEvm,
+    context::{BlockEnv, CfgEnv, TxEnv, result::ResultAndState},
+    context_interface::block::BlobExcessGasAndPrice,
+    database::InMemoryDB,
     interpreter::instructions::utility::IntoAddress,
     primitives::ONE_ETHER,
     state::{AccountInfo, Bytecode},
@@ -29,9 +28,28 @@ mod deployment;
 mod storage;
 mod transfers;
 
-/// Loads the test chain spec from the genesis configuration.
-fn load_chain_spec() -> Arc<OpChainSpec> {
-    Arc::new(OpChainSpec::from_genesis(build_test_genesis()))
+/// Builds the static block environment used for access-list tests.
+fn block_env() -> BlockEnv {
+    BlockEnv {
+        number: U256::ZERO,
+        beneficiary: Address::ZERO,
+        timestamp: U256::from(1),
+        difficulty: U256::ZERO,
+        prevrandao: Some(B256::ZERO),
+        gas_limit: GENESIS_GAS_LIMIT,
+        basefee: 0,
+        blob_excess_gas_and_price: Some(BlobExcessGasAndPrice {
+            excess_blob_gas: 0,
+            blob_gasprice: 1,
+        }),
+    }
+}
+
+/// Builds the static cfg environment used for access-list tests.
+fn cfg_env() -> CfgEnv<BaseSpecId> {
+    let mut cfg_env = CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::LATEST));
+    cfg_env.chain_id = DEVNET_CHAIN_ID;
+    cfg_env
 }
 
 /// Executes a list of transactions and builds a `FlashblockAccessList` tracking all
@@ -40,14 +58,10 @@ fn load_chain_spec() -> Arc<OpChainSpec> {
 /// Uses a single `FBALBuilderDb` instance that wraps the underlying `InMemoryDB`,
 /// calling `set_index()` before each transaction to track which txn caused which change.
 pub fn execute_txns_build_access_list(
-    txs: Vec<OpTransaction<TxEnv>>,
+    txs: Vec<BaseTransaction<TxEnv>>,
     acc_overrides: Option<HashMap<Address, AccountInfo>>,
     storage_overrides: Option<HashMap<Address, HashMap<U256, B256>>>,
 ) -> Result<FlashblockAccessList> {
-    let chain_spec = load_chain_spec();
-    let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
-    let header = Header { base_fee_per_gas: Some(0), ..chain_spec.genesis_header().clone() };
-
     // Set up the underlying InMemoryDB with any overrides
     let mut db = InMemoryDB::default();
     if let Some(overrides) = acc_overrides {
@@ -71,9 +85,11 @@ pub fn execute_txns_build_access_list(
         // Set the transaction index before executing each transaction
         fbal_db.set_index(i as u64);
 
-        let evm_env = evm_config.evm_env(&header).unwrap();
-        let mut evm = evm_config.evm_with_env(&mut fbal_db, evm_env);
+        let ctx =
+            BaseContext::base().with_db(&mut fbal_db).with_block(block_env()).with_cfg(cfg_env());
+        let mut evm = ctx.build_base();
         let ResultAndState { state, .. } = evm.transact(tx).unwrap();
+        drop(evm);
 
         // Commit the state changes to our FBALBuilderDb
         fbal_db.commit(state);

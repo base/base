@@ -3,15 +3,15 @@
 use alloy_consensus::{Transaction, transaction::Recovered};
 use alloy_primitives::{Address, B256, TxHash, keccak256};
 use alloy_provider::network::eip2718::Encodable2718;
-use base_alloy_consensus::OpTxEnvelope;
-use base_alloy_flz::tx_estimated_size_fjord_bytes;
+use base_common_consensus::BaseTxEnvelope;
+use base_common_flz::tx_estimated_size_fjord_bytes;
 
 use crate::{AcceptedBundle, ParsedBundle};
 
 /// Trait for types that contain bundle transactions.
 pub trait BundleTxs {
     /// Returns a reference to the transactions in the bundle.
-    fn transactions(&self) -> &Vec<Recovered<OpTxEnvelope>>;
+    fn transactions(&self) -> &Vec<Recovered<BaseTxEnvelope>>;
 }
 
 /// Extension trait providing utility methods for bundle types.
@@ -56,13 +56,13 @@ impl<T: BundleTxs> BundleExtensions for T {
 }
 
 impl BundleTxs for ParsedBundle {
-    fn transactions(&self) -> &Vec<Recovered<OpTxEnvelope>> {
+    fn transactions(&self) -> &Vec<Recovered<BaseTxEnvelope>> {
         &self.txs
     }
 }
 
 impl BundleTxs for AcceptedBundle {
-    fn transactions(&self) -> &Vec<Recovered<OpTxEnvelope>> {
+    fn transactions(&self) -> &Vec<Recovered<BaseTxEnvelope>> {
         &self.txs
     }
 }

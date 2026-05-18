@@ -3,8 +3,14 @@
 
 mod config;
 pub use config::{
-    AwsDiscoveryConfig, BoundlessConfig, DEFAULT_MAX_RECOVERY_ATTEMPTS, ProvingConfig,
-    RegistrarConfig,
+    AwsDiscoveryConfig, BoundlessConfig, CrlConfig, DEFAULT_MAX_ATTESTATION_AGE_SECS,
+    DEFAULT_MAX_RECOVERY_ATTEMPTS, ProvingConfig, RegistrarConfig,
+};
+
+mod crl;
+pub use crl::{
+    CertCrlInfo, CrlError, DEFAULT_CRL_FETCH_TIMEOUT_SECS, RevokedCertInfo, build_crl_http_client,
+    check_chain_against_crls,
 };
 
 mod discovery;
@@ -13,7 +19,8 @@ pub use discovery::AwsTargetGroupDiscovery;
 mod driver;
 pub use driver::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, RegistrationDriver,
+    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, OnchainRevocationCheck,
+    RegistrationDriver,
 };
 
 mod error;
@@ -33,3 +40,9 @@ pub use traits::{InstanceDiscovery, SignerClient};
 
 mod types;
 pub use types::{InstanceHealthStatus, ProverInstance, RegisteredSigner};
+
+mod verifier;
+pub use verifier::{NitroVerifierClient, NitroVerifierContractClient};
+
+#[cfg(test)]
+pub mod test_utils;

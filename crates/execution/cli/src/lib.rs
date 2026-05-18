@@ -7,23 +7,26 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-/// A configurable App on top of the cli parser.
+/// A configurable app on top of the CLI parser.
 pub mod app;
 /// Base chain specification parser.
 pub mod chainspec;
 /// Base CLI commands.
 pub mod commands;
+mod node;
+pub use node::{ExecutionNodeArgs, ExecutionNodeLaunchConfig};
+/// Standard Base execution-node runner wiring.
+pub mod standard_node;
 
 use std::{ffi::OsString, fmt, marker::PhantomData};
 
 pub use app::CliApp;
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use base_node_core::args::RollupArgs;
-use chainspec::OpChainSpecParser;
+use chainspec::BaseChainSpecParser;
 use clap::Parser;
 use commands::Commands;
 use futures::Future;
-use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::launcher::FnLauncher;
 use reth_cli_runner::CliRunner;
 use reth_db::DatabaseEnv;
@@ -36,20 +39,20 @@ use reth_node_core::{
 // reporting
 use reth_node_metrics as _;
 use reth_rpc_server_types::{DefaultRpcModuleValidator, RpcModuleValidator};
+pub use standard_node::{RpcStandardNodeArgs, StandardBaseRethNode, StandardNodeArgs};
 
 /// The main base-reth cli interface.
 ///
-/// This is the entrypoint to the executable.
+/// This is the entry point to the executable.
 #[derive(Debug, Parser)]
 #[command(author, name = version_metadata().name_client.as_ref(), version = version_metadata().short_version.as_ref(), long_version = version_metadata().long_version.as_ref(), about = "Reth", long_about = None)]
 pub struct Cli<
-    Spec: ChainSpecParser = OpChainSpecParser,
     Ext: clap::Args + fmt::Debug = RollupArgs,
     Rpc: RpcModuleValidator = DefaultRpcModuleValidator,
 > {
     /// The command to run
     #[command(subcommand)]
-    pub command: Commands<Spec, Ext>,
+    pub command: Commands<Ext>,
 
     /// The logging configuration for the CLI.
     #[command(flatten)]
@@ -65,12 +68,12 @@ pub struct Cli<
 }
 
 impl Cli {
-    /// Parsers only the default CLI arguments
+    /// Parses only the default CLI arguments.
     pub fn parse_args() -> Self {
         Self::parse()
     }
 
-    /// Parsers only the default CLI arguments from the given iterator
+    /// Parses only the default CLI arguments from the given iterator.
     pub fn try_parse_args_from<I, T>(itr: I) -> Result<Self, clap::error::Error>
     where
         I: IntoIterator<Item = T>,
@@ -80,9 +83,8 @@ impl Cli {
     }
 }
 
-impl<C, Ext, Rpc> Cli<C, Ext, Rpc>
+impl<Ext, Rpc> Cli<Ext, Rpc>
 where
-    C: ChainSpecParser<ChainSpec = OpChainSpec>,
     Ext: clap::Args + fmt::Debug,
     Rpc: RpcModuleValidator,
 {
@@ -90,7 +92,7 @@ where
     ///
     /// This method is used to prepare the CLI for execution by wrapping it in a
     /// [`CliApp`] that can be further configured before running.
-    pub fn configure(self) -> CliApp<C, Ext, Rpc> {
+    pub fn configure(self) -> CliApp<Ext, Rpc> {
         CliApp::new(self)
     }
 
@@ -100,7 +102,7 @@ where
     /// [`NodeCommand`](reth_cli_commands::node::NodeCommand).
     pub fn run<L, Fut>(self, launcher: L) -> eyre::Result<()>
     where
-        L: FnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv, C::ChainSpec>>, Ext) -> Fut,
+        L: FnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv, BaseChainSpec>>, Ext) -> Fut,
         Fut: Future<Output = eyre::Result<()>>,
     {
         self.with_runner(CliRunner::try_default_runtime()?, launcher)
@@ -109,12 +111,12 @@ where
     /// Execute the configured cli command with the provided [`CliRunner`].
     pub fn with_runner<L, Fut>(self, runner: CliRunner, launcher: L) -> eyre::Result<()>
     where
-        L: FnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv, C::ChainSpec>>, Ext) -> Fut,
+        L: FnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv, BaseChainSpec>>, Ext) -> Fut,
         Fut: Future<Output = eyre::Result<()>>,
     {
         let mut this = self.configure();
         this.set_runner(runner);
-        this.run(FnLauncher::new::<C, Ext>(async move |builder, chain_spec| {
+        this.run(FnLauncher::new::<BaseChainSpecParser, Ext>(async move |builder, chain_spec| {
             launcher(builder, chain_spec).await
         }))
     }
@@ -122,17 +124,17 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_execution_chainspec::{BASE_DEV, BASE_MAINNET};
+    use base_execution_chainspec::BaseChainSpec;
     use base_node_core::args::RollupArgs;
     use clap::Parser;
     use reth_cli_commands::{NodeCommand, node::NoArgs};
 
-    use crate::{Cli, chainspec::OpChainSpecParser, commands::Commands};
+    use crate::{Cli, chainspec::BaseChainSpecParser, commands::Commands};
 
     #[test]
     fn parse_dev() {
-        let cmd = NodeCommand::<OpChainSpecParser, NoArgs>::parse_from(["base-reth", "--dev"]);
-        let chain = BASE_DEV.clone();
+        let cmd = NodeCommand::<BaseChainSpecParser, NoArgs>::parse_from(["base-reth", "--dev"]);
+        let chain = BaseChainSpec::devnet();
         assert_eq!(cmd.chain.chain, chain.chain);
         assert_eq!(cmd.chain.genesis_hash(), chain.genesis_hash());
         assert_eq!(
@@ -154,7 +156,7 @@ mod tests {
         // to a value accepted by reth's OtlpProtocol enum.
         // SAFETY: this is a single-test context; no other thread concurrently reads this var.
         unsafe { std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "http") };
-        let cmd = Cli::<OpChainSpecParser, RollupArgs>::parse_from([
+        let cmd = Cli::<RollupArgs>::parse_from([
             "base-reth",
             "node",
             "--chain",
@@ -192,7 +194,7 @@ mod tests {
 
         match cmd.command {
             Commands::Node(command) => {
-                assert_eq!(command.chain.as_ref(), BASE_MAINNET.as_ref());
+                assert_eq!(command.chain.as_ref(), &BaseChainSpec::mainnet());
             }
             _ => panic!("unexpected command"),
         }

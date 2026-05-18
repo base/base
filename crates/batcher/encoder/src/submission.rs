@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use alloy_primitives::Bytes;
-pub use base_protocol::BatchType;
 use base_protocol::{ChannelId, DERIVATION_VERSION_0, Frame};
 
 /// Identifies a batch submission for receipt tracking.

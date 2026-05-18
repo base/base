@@ -9,7 +9,6 @@ workspace = true
 
 [dependencies]
 dirs = { workspace = true }
-tokio = { workspace = true, features = ["process"] }
 chrono = { workspace = true }
 anyhow = { workspace = true }
 ratatui = { workspace = true }
@@ -18,23 +17,24 @@ futures = { workspace = true }
 crossterm = { workspace = true }
 serde_yaml = { workspace = true }
 alloy-contract = { workspace = true }
-base-alloy-network = { workspace = true }
+base-common-chains = { workspace = true }
+base-common-network = { workspace = true }
 base-consensus-gossip = { workspace = true }
-base-alloy-flashblocks = { workspace = true }
+base-common-flashblocks = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["process"] }
 alloy-eips = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
-jsonrpsee = { workspace = true, features = ["http-client"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
+jsonrpsee = { workspace = true, features = ["http-client"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
-base-alloy-consensus = { workspace = true, features = ["k256"] }
+base-common-consensus = { workspace = true, features = ["k256"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 alloy-consensus = { workspace = true, features = ["std", "k256"] }
-base-consensus-registry = { workspace = true, features = ["std"] }
-base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
+base-common-genesis = { workspace = true, features = ["serde", "std"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }

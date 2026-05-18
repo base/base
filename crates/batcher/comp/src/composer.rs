@@ -1,7 +1,7 @@
 //! Contains the [`BatchComposer`] type.
 
 use alloy_eips::eip2718::Encodable2718;
-use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_protocol::{L1BlockInfoTx, SingleBatch};
 
 /// Errors returned by [`BatchComposer::block_to_single_batch`].
@@ -20,7 +20,7 @@ pub enum BatchComposeError {
 
 /// Converts L2 blocks into [`SingleBatch`]es.
 ///
-/// This is the Rust equivalent of `BlockToSingularBatch` from op-batcher's
+/// This is the Rust equivalent of `BlockToSingularBatch` from the reference batcher's
 /// `channel_out.go`.
 #[derive(Debug)]
 pub struct BatchComposer;
@@ -29,7 +29,7 @@ impl BatchComposer {
     /// Convert an L2 [`BaseBlock`] into a [`SingleBatch`] and the decoded
     /// [`L1BlockInfoTx`].
     ///
-    /// Mirrors op-batcher's `BlockToSingularBatch`:
+    /// Mirrors the reference batcher's `BlockToSingularBatch`:
     /// 1. The first transaction must be a deposit carrying L1 block info calldata.
     /// 2. All deposit transactions are filtered out; remaining user transactions
     ///    are EIP-2718-encoded.
@@ -58,7 +58,7 @@ impl BatchComposer {
             .body
             .transactions
             .iter()
-            .filter(|tx| !matches!(tx, OpTxEnvelope::Deposit(_)))
+            .filter(|tx| !matches!(tx, BaseTxEnvelope::Deposit(_)))
             .map(|tx| tx.encoded_2718().into())
             .collect();
 
@@ -79,50 +79,34 @@ impl BatchComposer {
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use alloy_consensus::{BlockBody, Header, Sealable, SignableTransaction, TxLegacy};
+    use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, B256, Bytes, Sealed, Signature};
-    use base_alloy_consensus::{BaseBlock, OpTxEnvelope, TxDeposit, TxEip8130};
+    use alloy_primitives::{B256, Bytes, Sealed, Signature};
+    use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
     use base_protocol::{L1BlockInfoBedrock, L1BlockInfoTx};
     use rstest::rstest;
 
     use super::{BatchComposeError, BatchComposer};
 
-    fn make_block(transactions: Vec<OpTxEnvelope>) -> BaseBlock {
+    fn make_block(transactions: Vec<BaseTxEnvelope>) -> BaseBlock {
         BaseBlock {
             header: Header::default(),
             body: BlockBody { transactions, ..Default::default() },
         }
     }
 
-    fn deposit_tx(calldata: Bytes) -> OpTxEnvelope {
-        OpTxEnvelope::Deposit(Sealed::new(TxDeposit { input: calldata, ..Default::default() }))
+    fn deposit_tx(calldata: Bytes) -> BaseTxEnvelope {
+        BaseTxEnvelope::Deposit(Sealed::new(TxDeposit { input: calldata, ..Default::default() }))
     }
 
-    fn valid_deposit_tx() -> OpTxEnvelope {
+    fn valid_deposit_tx() -> BaseTxEnvelope {
         let calldata = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default()).encode_calldata();
         deposit_tx(calldata)
     }
 
-    fn non_deposit_tx() -> OpTxEnvelope {
+    fn non_deposit_tx() -> BaseTxEnvelope {
         let signed = TxLegacy::default().into_signed(Signature::test_signature());
-        OpTxEnvelope::Legacy(signed)
-    }
-
-    fn eip8130_tx() -> OpTxEnvelope {
-        OpTxEnvelope::Eip8130(
-            TxEip8130 {
-                chain_id: 8453,
-                from: Some(Address::repeat_byte(0x11)),
-                nonce_sequence: 2,
-                max_fee_per_gas: 3,
-                max_priority_fee_per_gas: 4,
-                gas_limit: 55_000,
-                calls: vec![vec![]],
-                ..Default::default()
-            }
-            .seal_slow(),
-        )
+        BaseTxEnvelope::Legacy(signed)
     }
 
     #[rstest]
@@ -146,15 +130,6 @@ mod tests {
         let user_tx = non_deposit_tx();
         let expected: Bytes = user_tx.encoded_2718().into();
         let block = make_block(vec![valid_deposit_tx(), user_tx]);
-        let (batch, _) = BatchComposer::block_to_single_batch(&block).unwrap();
-        assert_eq!(batch.transactions, vec![expected]);
-    }
-
-    #[test]
-    fn test_eip8130_tx_bytes_preserved() {
-        let aa_tx = eip8130_tx();
-        let expected: Bytes = aa_tx.encoded_2718().into();
-        let block = make_block(vec![valid_deposit_tx(), aa_tx, deposit_tx(Bytes::new())]);
         let (batch, _) = BatchComposer::block_to_single_batch(&block).unwrap();
         assert_eq!(batch.transactions, vec![expected]);
     }

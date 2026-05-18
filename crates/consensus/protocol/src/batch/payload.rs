@@ -4,8 +4,9 @@ use alloc::vec::Vec;
 
 use alloy_primitives::bytes;
 
-use super::MAX_SPAN_BATCH_ELEMENTS;
-use crate::{SpanBatchBits, SpanBatchError, SpanBatchTransactions, SpanDecodingError};
+use crate::{
+    SpanBatchBits, SpanBatchElement, SpanBatchError, SpanBatchTransactions, SpanDecodingError,
+};
 
 /// Span Batch Payload
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -42,7 +43,7 @@ impl SpanBatchPayload {
 
     /// Decodes the origin bits from a reader.
     pub fn decode_origin_bits(&mut self, r: &mut &[u8]) -> Result<(), SpanBatchError> {
-        if self.block_count > MAX_SPAN_BATCH_ELEMENTS {
+        if self.block_count > SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS {
             return Err(SpanBatchError::TooBigSpanBatchSize);
         }
 
@@ -55,8 +56,8 @@ impl SpanBatchPayload {
         let (block_count, remaining) = unsigned_varint::decode::u64(r)
             .map_err(|_| SpanBatchError::Decoding(SpanDecodingError::BlockCount))?;
         // The number of transactions in a single L2 block cannot be greater than
-        // [MAX_SPAN_BATCH_ELEMENTS].
-        if block_count > MAX_SPAN_BATCH_ELEMENTS {
+        // [SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS].
+        if block_count > SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS {
             return Err(SpanBatchError::TooBigSpanBatchSize);
         }
         if block_count == 0 {
@@ -78,8 +79,8 @@ impl SpanBatchPayload {
                 .map_err(|_| SpanBatchError::Decoding(SpanDecodingError::BlockTxCounts))?;
 
             // The number of transactions in a single L2 block cannot be greater than
-            // [MAX_SPAN_BATCH_ELEMENTS].
-            if block_tx_count > MAX_SPAN_BATCH_ELEMENTS {
+            // [SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS].
+            if block_tx_count > SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS {
                 return Err(SpanBatchError::TooBigSpanBatchSize);
             }
             block_tx_counts.push(block_tx_count);
@@ -101,8 +102,8 @@ impl SpanBatchPayload {
             })?;
 
         // The total number of transactions in a span batch cannot be greater than
-        // [MAX_SPAN_BATCH_ELEMENTS].
-        if total_block_tx_count > MAX_SPAN_BATCH_ELEMENTS {
+        // [SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS].
+        if total_block_tx_count > SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS {
             return Err(SpanBatchError::TooBigSpanBatchSize);
         }
         self.txs.total_block_tx_count = total_block_tx_count;
@@ -163,7 +164,7 @@ mod tests {
 
     #[test]
     fn test_decode_block_count() {
-        let block_count = MAX_SPAN_BATCH_ELEMENTS;
+        let block_count = SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS;
         let mut u64_varint_buf = [0; 10];
         let mut encoded = unsigned_varint::encode::u64(block_count, &mut u64_varint_buf);
         let mut payload = SpanBatchPayload::default();
@@ -173,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_decode_block_count_errors() {
-        let block_count = MAX_SPAN_BATCH_ELEMENTS + 1;
+        let block_count = SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS + 1;
         let mut u64_varint_buf = [0; 10];
         let mut encoded = unsigned_varint::encode::u64(block_count, &mut u64_varint_buf);
         let mut payload = SpanBatchPayload::default();

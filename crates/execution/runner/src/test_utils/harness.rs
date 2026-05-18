@@ -8,14 +8,15 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
-use base_alloy_consensus::BaseBlock;
-use base_alloy_network::Base;
-use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_execution_chainspec::OpChainSpec;
+use base_common_consensus::BaseBlock;
+use base_common_network::Base;
+use base_common_rpc_types::GenesisInfo;
+use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_execution_chainspec::BaseChainSpec;
+use base_test_utils::build_test_genesis;
 use eyre::{Result, eyre};
-use reth_chainspec::ChainSpecProvider;
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
-use reth_provider::{BlockNumReader, BlockReader};
+use reth_provider::{BlockNumReader, BlockReader, ChainSpecProvider};
 use tokio::time::sleep;
 
 use crate::{
@@ -29,11 +30,21 @@ use crate::{
     },
 };
 
+/// A block that has been built and accepted via `engine_newPayload` but not yet
+/// promoted to the canonical head via a forkchoice update.
+#[derive(Debug, Clone, Copy)]
+pub struct PreparedBlock {
+    /// Hash of the parent the new block was built on.
+    pub parent_hash: B256,
+    /// Hash of the newly-built block.
+    pub new_block_hash: B256,
+}
+
 /// Builder for configuring and launching a test harness.
 #[derive(Debug, Default)]
 pub struct TestHarnessBuilder {
     extensions: Vec<Box<dyn BaseNodeExtension>>,
-    chain_spec: Option<Arc<OpChainSpec>>,
+    chain_spec: Option<Arc<BaseChainSpec>>,
 }
 
 impl TestHarnessBuilder {
@@ -59,7 +70,7 @@ impl TestHarnessBuilder {
     /// Set a custom chain spec for the test harness.
     ///
     /// If not provided, the default genesis is built programmatically.
-    pub fn with_chain_spec(mut self, chain_spec: Arc<OpChainSpec>) -> Self {
+    pub fn with_chain_spec(mut self, chain_spec: Arc<BaseChainSpec>) -> Self {
         self.chain_spec = Some(chain_spec);
         self
     }
@@ -69,8 +80,8 @@ impl TestHarnessBuilder {
         init_silenced_tracing();
 
         let chain_spec = self.chain_spec.unwrap_or_else(|| {
-            let genesis = crate::test_utils::build_test_genesis();
-            Arc::new(OpChainSpec::from_genesis(genesis))
+            let genesis = build_test_genesis();
+            Arc::new(BaseChainSpec::from_genesis(genesis))
         });
 
         let node = LocalNode::new(self.extensions, chain_spec).await?;
@@ -133,9 +144,21 @@ impl TestHarness {
         Ok(RpcClient::new_http(url))
     }
 
-    /// Build a block using the provided transactions and push it through the engine.
-    pub async fn build_block_from_transactions(&self, mut transactions: Vec<Bytes>) -> Result<()> {
-        // Ensure the block always starts with the required L1 block info deposit.
+    /// Direct access to the IPC-backed Engine API client.
+    pub const fn engine(&self) -> &EngineApi<IpcEngine> {
+        &self.engine
+    }
+
+    /// Build a block using the provided transactions and push it through the engine
+    /// up to (but not including) the final canonical forkchoice update.
+    ///
+    /// Returns the parent hash and the new block hash so callers can issue the
+    /// final FCU themselves — useful for benchmarks that want to time only the
+    /// canonical FCU step.
+    pub async fn prepare_unsafe_block(
+        &self,
+        mut transactions: Vec<Bytes>,
+    ) -> Result<PreparedBlock> {
         if transactions.first().is_none_or(|tx| tx != &L1_BLOCK_INFO_DEPOSIT_TX) {
             transactions.insert(0, L1_BLOCK_INFO_DEPOSIT_TX);
         }
@@ -157,7 +180,7 @@ impl TestHarness {
         let eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32)
             | (base_fee_params.elasticity_multiplier as u64);
 
-        let payload_attributes = OpPayloadAttributes {
+        let payload_attributes = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_timestamp,
                 parent_beacon_block_root: Some(parent_beacon_block_root),
@@ -182,22 +205,27 @@ impl TestHarness {
 
         sleep(Duration::from_millis(BLOCK_BUILD_DELAY_MS)).await;
 
-        let payload_envelope = self.engine.get_payload(payload_id).await?;
+        let azul_active = GenesisInfo::extract_from(&chain_spec.genesis.config.extra_fields)
+            .and_then(|genesis_info| genesis_info.base.azul)
+            .is_some_and(|activation_time| next_timestamp >= activation_time);
 
-        let execution_requests = if payload_envelope.execution_requests.is_empty() {
+        let (execution_payload, execution_requests): (_, Vec<Bytes>) = if azul_active {
+            let payload_envelope = self.engine.get_payload_v5(payload_id).await?;
+            (payload_envelope.execution_payload, payload_envelope.execution_requests)
+        } else {
+            let payload_envelope = self.engine.get_payload_v4(payload_id).await?;
+            (payload_envelope.execution_payload, payload_envelope.execution_requests)
+        };
+
+        let execution_requests = if execution_requests.is_empty() {
             Requests::default()
         } else {
-            Requests::new(payload_envelope.execution_requests)
+            Requests::new(execution_requests)
         };
 
         let payload_status = self
             .engine
-            .new_payload(
-                payload_envelope.execution_payload,
-                vec![],
-                payload_envelope.parent_beacon_block_root,
-                execution_requests,
-            )
+            .new_payload(execution_payload, vec![], parent_beacon_block_root, execution_requests)
             .await?;
 
         if payload_status.status.is_invalid() {
@@ -207,6 +235,14 @@ impl TestHarness {
         let new_block_hash = payload_status
             .latest_valid_hash
             .ok_or_else(|| eyre!("Payload status missing latest_valid_hash"))?;
+
+        Ok(PreparedBlock { parent_hash, new_block_hash })
+    }
+
+    /// Build a block using the provided transactions and push it through the engine.
+    pub async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
+        let PreparedBlock { parent_hash, new_block_hash } =
+            self.prepare_unsafe_block(transactions).await?;
 
         self.engine.update_forkchoice(parent_hash, new_block_hash, None).await?;
 
@@ -233,7 +269,7 @@ impl TestHarness {
     }
 
     /// Return the chain specification used by the harness.
-    pub fn chain_spec(&self) -> Arc<OpChainSpec> {
+    pub fn chain_spec(&self) -> Arc<BaseChainSpec> {
         self.node.blockchain_provider().chain_spec()
     }
 
@@ -247,9 +283,9 @@ impl TestHarness {
 mod tests {
     use alloy_primitives::U256;
     use alloy_provider::Provider;
+    use base_test_utils::{Account, DEVNET_CHAIN_ID};
 
     use super::*;
-    use crate::test_utils::Account;
 
     #[tokio::test]
     async fn test_harness_setup() -> Result<()> {
@@ -257,7 +293,7 @@ mod tests {
 
         let provider = harness.provider();
         let chain_id = provider.get_chain_id().await?;
-        assert_eq!(chain_id, crate::test_utils::DEVNET_CHAIN_ID);
+        assert_eq!(chain_id, DEVNET_CHAIN_ID);
 
         let alice_balance = provider.get_balance(Account::Alice.address()).await?;
         assert!(alice_balance > U256::ZERO);

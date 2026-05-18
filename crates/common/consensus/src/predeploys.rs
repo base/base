@@ -1,0 +1,210 @@
+//! Addresses of Base pre-deploys.
+//!
+//! This module contains predeploy contract addresses and system addresses for Base.
+//! See the complete set of predeploys at <https://specs.base.org/protocol/execution/evm/predeploys#predeploys>
+
+use alloy_primitives::{Address, address};
+
+/// Container for all predeploy contract addresses
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Predeploys;
+
+impl Predeploys {
+    /// List of all predeploys.
+    pub const ALL: [Address; 24] = [
+        Self::LEGACY_MESSAGE_PASSER,
+        Self::DEPLOYER_WHITELIST,
+        Self::LEGACY_ERC20_ETH,
+        Self::WETH9,
+        Self::L2_CROSS_DOMAIN_MESSENGER,
+        Self::L2_STANDARD_BRIDGE,
+        Self::SEQUENCER_FEE_VAULT,
+        Self::BASE_MINTABLE_ERC20_FACTORY,
+        Self::L1_BLOCK_NUMBER,
+        Self::GAS_PRICE_ORACLE,
+        Self::GOVERNANCE_TOKEN,
+        Self::L1_BLOCK_INFO,
+        Self::L2_TO_L1_MESSAGE_PASSER,
+        Self::L2_ERC721_BRIDGE,
+        Self::BASE_MINTABLE_ERC721_FACTORY,
+        Self::PROXY_ADMIN,
+        Self::BASE_FEE_VAULT,
+        Self::L1_FEE_VAULT,
+        Self::SCHEMA_REGISTRY,
+        Self::EAS,
+        Self::BEACON_BLOCK_ROOT,
+        Self::OPERATOR_FEE_VAULT,
+        Self::CROSS_L2_INBOX,
+        Self::L2_TO_L2_XDM,
+    ];
+
+    /// The `LegacyMessagePasser` contract stores commitments to withdrawal transactions before the
+    /// Bedrock upgrade.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#legacymessagepasser>
+    pub const LEGACY_MESSAGE_PASSER: Address =
+        address!("0x4200000000000000000000000000000000000000");
+
+    /// The `DeployerWhitelist` was used to provide additional safety during initial phases of
+    /// Base.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#deployerwhitelist>
+    pub const DEPLOYER_WHITELIST: Address = address!("0x4200000000000000000000000000000000000002");
+
+    /// The `LegacyERC20ETH` predeploy represented all ether in the system before the Bedrock upgrade.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#legacyerc20eth>
+    pub const LEGACY_ERC20_ETH: Address = address!("0xDeadDeAddeAddEAddeadDEaDDEAdDeaDDeAD0000");
+
+    /// The WETH9 predeploy address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#weth9>
+    pub const WETH9: Address = address!("0x4200000000000000000000000000000000000006");
+
+    /// Higher level API for sending cross domain messages.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#l2crossdomainmessenger>
+    pub const L2_CROSS_DOMAIN_MESSENGER: Address =
+        address!("0x4200000000000000000000000000000000000007");
+
+    /// The L2 cross-domain messenger proxy address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#l2standardbridge>
+    pub const L2_STANDARD_BRIDGE: Address = address!("0x4200000000000000000000000000000000000010");
+
+    /// The sequencer fee vault proxy address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#sequencerfeevault>
+    pub const SEQUENCER_FEE_VAULT: Address = address!("0x4200000000000000000000000000000000000011");
+
+    /// The mintable ERC20 factory proxy address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#optimismmintableerc20factory>
+    pub const BASE_MINTABLE_ERC20_FACTORY: Address =
+        address!("0x4200000000000000000000000000000000000012");
+
+    /// Returns the last known L1 block number (legacy system).
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#l1blocknumber>
+    pub const L1_BLOCK_NUMBER: Address = address!("0x4200000000000000000000000000000000000013");
+
+    /// The gas price oracle proxy address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#gaspriceoracle>
+    pub const GAS_PRICE_ORACLE: Address = address!("0x420000000000000000000000000000000000000F");
+
+    /// The governance token proxy address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#governancetoken>
+    pub const GOVERNANCE_TOKEN: Address = address!("0x4200000000000000000000000000000000000042");
+
+    /// The L1 block information proxy address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#l1block>
+    pub const L1_BLOCK_INFO: Address = address!("0x4200000000000000000000000000000000000015");
+
+    /// The L2 contract `L2ToL1MessagePasser`, stores commitments to withdrawal transactions.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#l2tol1messagepasser>
+    pub const L2_TO_L1_MESSAGE_PASSER: Address =
+        address!("0x4200000000000000000000000000000000000016");
+
+    /// The L2 ERC721 bridge proxy address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys>
+    pub const L2_ERC721_BRIDGE: Address = address!("0x4200000000000000000000000000000000000014");
+
+    /// The mintable ERC721 proxy address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#optimismmintableerc721factory>
+    pub const BASE_MINTABLE_ERC721_FACTORY: Address =
+        address!("0x4200000000000000000000000000000000000017");
+
+    /// The L2 proxy admin address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#proxyadmin>
+    pub const PROXY_ADMIN: Address = address!("0x4200000000000000000000000000000000000018");
+
+    /// The base fee vault address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#basefeevault>
+    pub const BASE_FEE_VAULT: Address = address!("0x4200000000000000000000000000000000000019");
+
+    /// The L1 fee vault address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#l1feevault>
+    pub const L1_FEE_VAULT: Address = address!("0x420000000000000000000000000000000000001a");
+
+    /// The schema registry proxy address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#schemaregistry>
+    pub const SCHEMA_REGISTRY: Address = address!("0x4200000000000000000000000000000000000020");
+
+    /// The EAS proxy address.
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#eas>
+    pub const EAS: Address = address!("0x4200000000000000000000000000000000000021");
+
+    /// Provides access to L1 beacon block roots (EIP-4788).
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#beacon-block-root>
+    pub const BEACON_BLOCK_ROOT: Address = address!("0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02");
+
+    /// The Operator Fee Vault proxy address.
+    pub const OPERATOR_FEE_VAULT: Address = address!("0x420000000000000000000000000000000000001B");
+
+    /// The `CrossL2Inbox` proxy address.
+    pub const CROSS_L2_INBOX: Address = address!("0x4200000000000000000000000000000000000022");
+
+    /// The `L2ToL2CrossDomainMessenger` proxy address.
+    pub const L2_TO_L2_XDM: Address = address!("0x4200000000000000000000000000000000000023");
+}
+
+/// Container for system addresses that are not predeploy contracts.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SystemAddresses;
+
+impl SystemAddresses {
+    /// The depositor address of the L1 attributes transaction (`L1Block` contract depositor).
+    /// <https://specs.base.org/protocol/bridging/deposits#l1-attributes-deposited-transaction>
+    pub const DEPOSITOR_ACCOUNT: Address = address!("0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
+}
+
+/// Container for system deployer addresses used during protocol upgrades.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Deployers;
+
+impl Deployers {
+    /// Ecotone L1 Block deployer address.
+    pub const ECOTONE_L1_BLOCK: Address = address!("4210000000000000000000000000000000000000");
+
+    /// Ecotone Gas Price Oracle deployer address.
+    pub const ECOTONE_GAS_PRICE_ORACLE: Address =
+        address!("4210000000000000000000000000000000000001");
+
+    /// Fjord Gas Price Oracle deployer address.
+    pub const FJORD_GAS_PRICE_ORACLE: Address =
+        address!("4210000000000000000000000000000000000002");
+
+    /// Isthmus L1 Block deployer address.
+    pub const ISTHMUS_L1_BLOCK: Address = address!("4210000000000000000000000000000000000003");
+
+    /// Isthmus Gas Price Oracle deployer address.
+    pub const ISTHMUS_GAS_PRICE_ORACLE: Address =
+        address!("4210000000000000000000000000000000000004");
+
+    /// Isthmus Operator Fee Vault deployer address.
+    pub const ISTHMUS_OPERATOR_FEE_VAULT: Address =
+        address!("4210000000000000000000000000000000000005");
+
+    /// Jovian L1 Block deployer address.
+    pub const JOVIAN_L1_BLOCK: Address = address!("4210000000000000000000000000000000000006");
+
+    /// Jovian Gas Price Oracle deployer address.
+    pub const JOVIAN_GAS_PRICE_ORACLE: Address =
+        address!("4210000000000000000000000000000000000007");
+
+    /// Base V1 K1 Verifier deployer address.
+    pub const BASE_V1_K1_VERIFIER: Address = address!("4210000000000000000000000000000000000008");
+
+    /// Base V1 P256 Verifier deployer address.
+    pub const BASE_V1_P256_VERIFIER: Address = address!("4210000000000000000000000000000000000009");
+
+    /// Base V1 WebAuthn Verifier deployer address.
+    pub const BASE_V1_WEBAUTHN_VERIFIER: Address =
+        address!("421000000000000000000000000000000000000a");
+
+    /// Base V1 Account Configuration deployer address.
+    pub const BASE_V1_ACCOUNT_CONFIGURATION: Address =
+        address!("421000000000000000000000000000000000000b");
+
+    /// Base V1 Delegate Verifier deployer address.
+    pub const BASE_V1_DELEGATE_VERIFIER: Address =
+        address!("421000000000000000000000000000000000000c");
+
+    /// Base V1 Default Account deployer address.
+    pub const BASE_V1_DEFAULT_ACCOUNT: Address =
+        address!("421000000000000000000000000000000000000d");
+}

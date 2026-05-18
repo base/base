@@ -6,7 +6,7 @@ use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadInputV2, ExecutionPayloadV3,
     ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
-use base_alloy_rpc_types_engine::{OpExecutionData, OpExecutionPayloadV4};
+use base_common_rpc_types_engine::{BaseExecutionPayloadV4, ExecutionData};
 use derive_more::Constructor;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
@@ -20,8 +20,8 @@ use tracing::{debug, instrument, trace};
 
 /// The list of all supported Engine capabilities available over the engine endpoint.
 ///
-/// Spec: <https://specs.optimism.io/protocol/exec-engine.html>
-pub const OP_ENGINE_CAPABILITIES: &[&str] = &[
+/// Spec: <https://specs.base.org/protocol/execution>
+pub const ENGINE_CAPABILITIES: &[&str] = &[
     "engine_forkchoiceUpdatedV1",
     "engine_forkchoiceUpdatedV2",
     "engine_forkchoiceUpdatedV3",
@@ -43,15 +43,15 @@ pub const OP_ENGINE_CAPABILITIES: &[&str] = &[
 /// > The provider should use a JWT authentication layer.
 ///
 /// This follows the Base specs that can be found at:
-/// <https://specs.optimism.io/protocol/exec-engine.html#engine-api>
+/// <https://specs.base.org/protocol/execution#engine-api>
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "engine"), server_bounds(Engine::PayloadAttributes: jsonrpsee::core::DeserializeOwned))]
 #[cfg_attr(feature = "client", rpc(server, client, namespace = "engine", client_bounds(Engine::PayloadAttributes: jsonrpsee::core::Serialize + Clone), server_bounds(Engine::PayloadAttributes: jsonrpsee::core::DeserializeOwned)))]
-pub trait OpEngineApi<Engine: EngineTypes> {
+pub trait BaseEngineApi<Engine: EngineTypes> {
     /// Sends the given payload to the execution layer client, as specified for the Shanghai fork.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#engine_newpayloadv2>
     ///
-    /// No modifications needed for OP compatibility.
+    /// No modifications needed for rollup compatibility.
     #[method(name = "newPayloadV2")]
     async fn new_payload_v2(&self, payload: ExecutionPayloadInputV2) -> RpcResult<PayloadStatus>;
 
@@ -59,7 +59,7 @@ pub trait OpEngineApi<Engine: EngineTypes> {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#engine_newpayloadv3>
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - expected versioned hashes MUST be an empty array: therefore the `versioned_hashes`
     ///   parameter is removed.
     /// - parent beacon block root MUST be the parent beacon block root from the L1 origin block of
@@ -82,7 +82,7 @@ pub trait OpEngineApi<Engine: EngineTypes> {
     #[method(name = "newPayloadV4")]
     async fn new_payload_v4(
         &self,
-        payload: OpExecutionPayloadV4,
+        payload: BaseExecutionPayloadV4,
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
         execution_requests: Requests,
@@ -90,7 +90,7 @@ pub trait OpEngineApi<Engine: EngineTypes> {
 
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/paris.md#engine_forkchoiceupdatedv1>
     ///
-    /// This exists because it is used by op-node: <https://github.com/ethereum-optimism/optimism/blob/0bc5fe8d16155dc68bcdf1fa5733abc58689a618/op-node/rollup/types.go#L615-L617>
+    /// This exists for compatibility with consensus nodes: <https://github.com/ethereum-optimism/optimism/blob/0bc5fe8d16155dc68bcdf1fa5733abc58689a618/op-node/rollup/types.go#L615-L617>
     ///
     /// Caution: This should not accept the `withdrawals` field in the payload attributes.
     #[method(name = "forkchoiceUpdatedV1")]
@@ -107,8 +107,8 @@ pub trait OpEngineApi<Engine: EngineTypes> {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/shanghai.md#engine_forkchoiceupdatedv2>
     ///
-    /// OP modifications:
-    /// - The `payload_attributes` parameter is extended with the [`EngineTypes::PayloadAttributes`](EngineTypes) type as described in <https://specs.optimism.io/protocol/exec-engine.html#extended-payloadattributesv2>
+    /// Rollup modifications:
+    /// - The `payload_attributes` parameter is extended with the [`EngineTypes::PayloadAttributes`](EngineTypes) type as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
     #[method(name = "forkchoiceUpdatedV2")]
     async fn fork_choice_updated_v2(
         &self,
@@ -121,10 +121,10 @@ pub trait OpEngineApi<Engine: EngineTypes> {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#engine_forkchoiceupdatedv3>
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - Must be called with an Ecotone payload
     /// - Attributes must contain the parent beacon block root field
-    /// - The `payload_attributes` parameter is extended with the [`EngineTypes::PayloadAttributes`](EngineTypes) type as described in <https://specs.optimism.io/protocol/exec-engine.html#extended-payloadattributesv2>
+    /// - The `payload_attributes` parameter is extended with the [`EngineTypes::PayloadAttributes`](EngineTypes) type as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
     #[method(name = "forkchoiceUpdatedV3")]
     async fn fork_choice_updated_v3(
         &self,
@@ -140,7 +140,7 @@ pub trait OpEngineApi<Engine: EngineTypes> {
     /// Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
-    /// No modifications needed for OP compatibility.
+    /// No modifications needed for rollup compatibility.
     #[method(name = "getPayloadV2")]
     async fn get_payload_v2(
         &self,
@@ -155,7 +155,7 @@ pub trait OpEngineApi<Engine: EngineTypes> {
     /// Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - the response type is extended to [`EngineTypes::ExecutionPayloadEnvelopeV3`].
     #[method(name = "getPayloadV3")]
     async fn get_payload_v3(
@@ -171,7 +171,7 @@ pub trait OpEngineApi<Engine: EngineTypes> {
     /// Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - the response type is extended to [`EngineTypes::ExecutionPayloadEnvelopeV4`].
     #[method(name = "getPayloadV4")]
     async fn get_payload_v4(
@@ -187,8 +187,8 @@ pub trait OpEngineApi<Engine: EngineTypes> {
     /// Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
-    /// Returns the [`OpExecutionPayloadEnvelopeV5`], which uses
-    /// [`OpExecutionPayloadV4`](base_alloy_rpc_types_engine::OpExecutionPayloadV4) for the
+    /// Returns the [`BaseExecutionPayloadEnvelopeV5`], which uses
+    /// [`BaseExecutionPayloadV4`](base_common_rpc_types_engine::BaseExecutionPayloadV4) for the
     /// execution payload and otherwise follows the V5 envelope shape.
     #[method(name = "getPayloadV5")]
     async fn get_payload_v5(
@@ -246,12 +246,12 @@ pub trait OpEngineApi<Engine: EngineTypes> {
 /// The Engine API implementation that grants the Consensus layer access to data and
 /// functions in the Execution layer that are crucial for the consensus process.
 #[derive(Debug, Constructor)]
-pub struct OpEngineApi<Provider, EngineT: EngineTypes, Pool, Validator, ChainSpec> {
+pub struct BaseEngineApi<Provider, EngineT: EngineTypes, Pool, Validator, ChainSpec> {
     inner: EngineApi<Provider, EngineT, Pool, Validator, ChainSpec>,
 }
 
 impl<Provider, PayloadT, Pool, Validator, ChainSpec> Clone
-    for OpEngineApi<Provider, PayloadT, Pool, Validator, ChainSpec>
+    for BaseEngineApi<Provider, PayloadT, Pool, Validator, ChainSpec>
 where
     PayloadT: EngineTypes,
 {
@@ -261,18 +261,18 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Provider, EngineT, Pool, Validator, ChainSpec> OpEngineApiServer<EngineT>
-    for OpEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
+impl<Provider, EngineT, Pool, Validator, ChainSpec> BaseEngineApiServer<EngineT>
+    for BaseEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + 'static,
-    EngineT: EngineTypes<ExecutionData = OpExecutionData>,
+    EngineT: EngineTypes<ExecutionData = ExecutionData>,
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator<EngineT>,
     ChainSpec: EthereumHardforks + Send + Sync + 'static,
 {
     async fn new_payload_v2(&self, payload: ExecutionPayloadInputV2) -> RpcResult<PayloadStatus> {
         trace!(target: "rpc::engine", "Serving engine_newPayloadV2");
-        let payload = OpExecutionData::v2(payload);
+        let payload = ExecutionData::v2(payload);
         Ok(self.inner.new_payload_v2_metered(payload).await?)
     }
 
@@ -283,20 +283,20 @@ where
         parent_beacon_block_root: B256,
     ) -> RpcResult<PayloadStatus> {
         trace!(target: "rpc::engine", "Serving engine_newPayloadV3");
-        let payload = OpExecutionData::v3(payload, versioned_hashes, parent_beacon_block_root);
+        let payload = ExecutionData::v3(payload, versioned_hashes, parent_beacon_block_root);
 
         Ok(self.inner.new_payload_v3_metered(payload).await?)
     }
 
     async fn new_payload_v4(
         &self,
-        payload: OpExecutionPayloadV4,
+        payload: BaseExecutionPayloadV4,
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
         execution_requests: Requests,
     ) -> RpcResult<PayloadStatus> {
         trace!(target: "rpc::engine", "Serving engine_newPayloadV4");
-        let payload = OpExecutionData::v4(
+        let payload = ExecutionData::v4(
             payload,
             versioned_hashes,
             parent_beacon_block_root,
@@ -433,10 +433,10 @@ where
 }
 
 impl<Provider, EngineT, Pool, Validator, ChainSpec> IntoEngineApiRpcModule
-    for OpEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
+    for BaseEngineApi<Provider, EngineT, Pool, Validator, ChainSpec>
 where
     EngineT: EngineTypes,
-    Self: OpEngineApiServer<EngineT>,
+    Self: BaseEngineApiServer<EngineT>,
 {
     fn into_rpc_module(self) -> RpcModule<()> {
         self.into_rpc().remove_context()

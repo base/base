@@ -14,7 +14,7 @@ The following table gives an overview of the changes in parameters.
 
 Fjord, like other network upgrades, is activated at a timestamp.
 Changes to the L2 Block execution rules are applied when the `L2 Timestamp >= activation time`.
-Changes to derivation are applied when it is considering data from a L1 Block whose timestamp
+Changes to derivation are applied when it is considering data from an L1 block whose timestamp
 is greater than or equal to the activation timestamp.
 The change of the `max_sequencer_drift` parameter activates with the L1 origin block timestamp.
 

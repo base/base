@@ -7,10 +7,12 @@ use alloy_provider::{Provider, ProviderBuilder, network::TransactionResponse};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_sol_types::sol;
 use anyhow::Result;
-use base_alloy_consensus::OpTxEnvelope;
-use base_alloy_flashblocks::Flashblock;
-use base_alloy_network::Base;
-use base_consensus_rpc::{ConductorApiClient, OpP2PApiClient, RollupNodeApiClient};
+use base_common_consensus::BaseTxEnvelope;
+use base_common_flashblocks::Flashblock;
+use base_common_network::Base;
+use base_consensus_rpc::{
+    AdminApiClient, BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient,
+};
 use futures::{StreamExt, stream};
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::{mpsc, watch};
@@ -28,7 +30,7 @@ const WS_RECONNECT_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const WS_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
 
 /// Fetches the safe and latest L2 block numbers.
-pub(crate) async fn fetch_safe_and_latest(l2_rpc: &str) -> Result<(u64, u64)> {
+pub async fn fetch_safe_and_latest(l2_rpc: &str) -> Result<(u64, u64)> {
     let provider = ProviderBuilder::new().connect(l2_rpc).await?;
 
     let safe_block = provider
@@ -63,7 +65,7 @@ async fn fetch_raw_block_info<P: Provider<Base>>(
 }
 
 /// Polls the L2 safe head block number at regular intervals.
-pub(crate) async fn run_safe_head_poller(
+pub async fn run_safe_head_poller(
     l2_rpc: String,
     tx: mpsc::Sender<u64>,
     toast_tx: mpsc::Sender<Toast>,
@@ -187,7 +189,7 @@ async fn run_flashblock_ws_inner<T: Send + 'static>(
 }
 
 /// Subscribes to flashblocks via WebSocket and forwards raw flashblocks.
-pub(crate) async fn run_flashblock_ws(
+pub async fn run_flashblock_ws(
     mut url_rx: watch::Receiver<String>,
     tx: mpsc::Sender<Flashblock>,
     toast_tx: mpsc::Sender<Toast>,
@@ -197,7 +199,7 @@ pub(crate) async fn run_flashblock_ws(
 
 /// A flashblock paired with its local receive timestamp.
 #[derive(Debug)]
-pub(crate) struct TimestampedFlashblock {
+pub struct TimestampedFlashblock {
     /// The decoded flashblock.
     pub flashblock: Flashblock,
     /// Local time when this flashblock was received.
@@ -205,7 +207,7 @@ pub(crate) struct TimestampedFlashblock {
 }
 
 /// Subscribes to flashblocks via WebSocket and forwards timestamped flashblocks.
-pub(crate) async fn run_flashblock_ws_timestamped(
+pub async fn run_flashblock_ws_timestamped(
     mut url_rx: watch::Receiver<String>,
     tx: mpsc::Sender<TimestampedFlashblock>,
     toast_tx: mpsc::Sender<Toast>,
@@ -224,7 +226,7 @@ pub(crate) async fn run_flashblock_ws_timestamped(
 /// The task exits immediately if no such nodes exist.
 /// Summary of the initial DA backlog between safe and latest blocks.
 #[derive(Debug, Clone)]
-pub(crate) struct InitialBacklog {
+pub struct InitialBacklog {
     /// Safe L2 block number.
     pub safe_block: u64,
     /// Total DA bytes across all backlog blocks.
@@ -233,7 +235,7 @@ pub(crate) struct InitialBacklog {
 
 /// Progress update during initial backlog fetch.
 #[derive(Debug, Clone)]
-pub(crate) struct BacklogProgress {
+pub struct BacklogProgress {
     /// Number of blocks fetched so far.
     pub current_block: u64,
     /// Total number of blocks to fetch.
@@ -242,7 +244,7 @@ pub(crate) struct BacklogProgress {
 
 /// Individual block data from backlog fetch.
 #[derive(Debug, Clone)]
-pub(crate) struct BacklogBlock {
+pub struct BacklogBlock {
     /// L2 block number.
     pub block_number: u64,
     /// DA bytes contributed by this block.
@@ -253,7 +255,7 @@ pub(crate) struct BacklogBlock {
 
 /// Result of initial backlog fetch - either progress or complete.
 #[derive(Debug, Clone)]
-pub(crate) enum BacklogFetchResult {
+pub enum BacklogFetchResult {
     /// Incremental progress update.
     Progress(BacklogProgress),
     /// A single fetched block.
@@ -265,7 +267,7 @@ pub(crate) enum BacklogFetchResult {
 }
 
 /// Fetches the initial DA backlog, sending progress updates and block data.
-pub(crate) async fn fetch_initial_backlog_with_progress(
+pub async fn fetch_initial_backlog_with_progress(
     l2_rpc: String,
     progress_tx: tokio::sync::mpsc::Sender<BacklogFetchResult>,
 ) {
@@ -342,7 +344,7 @@ pub(crate) async fn fetch_initial_backlog_with_progress(
 
 /// DA and gas information for a single L2 block.
 #[derive(Debug, Clone)]
-pub(crate) struct BlockDaInfo {
+pub struct BlockDaInfo {
     /// L2 block number.
     pub block_number: u64,
     /// Total DA bytes from all transactions.
@@ -352,7 +354,7 @@ pub(crate) struct BlockDaInfo {
 }
 
 /// Fetches DA info for requested block numbers and sends results back.
-pub(crate) async fn run_block_fetcher(
+pub async fn run_block_fetcher(
     l2_rpc: String,
     mut request_rx: mpsc::Receiver<u64>,
     result_tx: mpsc::Sender<BlockDaInfo>,
@@ -389,7 +391,7 @@ pub(crate) async fn run_block_fetcher(
 
 /// Information about an L1 block and its blob counts.
 #[derive(Debug, Clone)]
-pub(crate) struct L1BlockInfo {
+pub struct L1BlockInfo {
     /// L1 block number.
     pub block_number: u64,
     /// Unix timestamp of the L1 block.
@@ -402,7 +404,7 @@ pub(crate) struct L1BlockInfo {
 
 /// How the L1 watcher connects to the L1 node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum L1ConnectionMode {
+pub enum L1ConnectionMode {
     /// Connected via WebSocket subscription.
     WebSocket,
     /// Connected via HTTP polling.
@@ -414,7 +416,7 @@ fn http_to_ws(url: &str) -> String {
 }
 
 /// Watches L1 blocks for blob transactions, preferring WebSocket with polling fallback.
-pub(crate) async fn run_l1_blob_watcher(
+pub async fn run_l1_blob_watcher(
     l1_rpc: String,
     batcher_address: Address,
     result_tx: mpsc::Sender<L1BlockInfo>,
@@ -564,7 +566,7 @@ fn extract_l1_block_info(
 
 /// Summary of a single transaction within a block.
 #[derive(Debug, Clone)]
-pub(crate) struct TxSummary {
+pub struct TxSummary {
     /// Transaction hash.
     pub hash: B256,
     /// Sender address.
@@ -590,14 +592,14 @@ fn effective_priority_fee_per_gas(
 /// Decodes raw EIP-2718 encoded transaction bytes into summaries.
 ///
 /// Used to extract transaction details from flashblock stream data without RPC calls.
-pub(crate) fn decode_flashblock_transactions(
+pub fn decode_flashblock_transactions(
     raw_txs: &[Bytes],
     base_fee_per_gas: Option<u64>,
 ) -> Vec<TxSummary> {
     raw_txs
         .iter()
         .filter_map(|tx_bytes| {
-            let envelope = OpTxEnvelope::decode_2718(&mut tx_bytes.as_ref())
+            let envelope = BaseTxEnvelope::decode_2718_exact(tx_bytes.as_ref())
                 .inspect_err(|e| warn!(error = %e, "failed to decode transaction"))
                 .ok()?;
             let hash = envelope.tx_hash();
@@ -623,7 +625,7 @@ pub(crate) fn decode_flashblock_transactions(
 }
 
 /// Fetches all transactions for a given block and sends summaries through the channel.
-pub(crate) async fn fetch_block_transactions(
+pub async fn fetch_block_transactions(
     l2_rpc: String,
     block_number: u64,
     tx: mpsc::Sender<Result<Vec<TxSummary>, String>>,
@@ -678,7 +680,7 @@ pub(crate) async fn fetch_block_transactions(
 
 /// Live status snapshot for a single node in an HA conductor cluster.
 #[derive(Debug, Clone)]
-pub(crate) struct ConductorNodeStatus {
+pub struct ConductorNodeStatus {
     /// Human-readable name for this node.
     pub name: String,
 
@@ -688,6 +690,20 @@ pub(crate) struct ConductorNodeStatus {
     /// Whether the conductor's sequencer is actively sequencing (`conductor_active`).
     /// Expected to be `false` for followers. `None` means unreachable.
     pub conductor_active: Option<bool>,
+    /// Whether op-conductor's control loop is paused (`conductor_paused`). When paused,
+    /// the conductor stops driving leader election and health checks. `None` means
+    /// unreachable.
+    pub conductor_paused: Option<bool>,
+    /// Whether op-conductor has been fully stopped (`conductor_stopped`). `None` means
+    /// unreachable.
+    pub conductor_stopped: Option<bool>,
+    /// Whether the sequencer is reporting healthy via `conductor_sequencerHealthy`.
+    /// `None` means unreachable.
+    pub sequencer_healthy: Option<bool>,
+    /// Whether the sequencer is currently producing blocks (`admin_sequencerActive`).
+    /// Sourced from the consensus node's admin namespace on `cl_rpc`. `None` means
+    /// unreachable.
+    pub sequencer_active: Option<bool>,
 
     // ── CL (consensus layer) ─────────────────────────────────────────────
     /// Unsafe L2 block number from `optimism_syncStatus`.
@@ -724,7 +740,7 @@ pub(crate) struct ConductorNodeStatus {
 /// is transferred to the named node via `conductor_transferLeaderToServer`.
 ///
 /// The result — `Ok(description)` or `Err(message)` — is sent to `result_tx`.
-pub(crate) async fn transfer_conductor_leader(
+pub async fn transfer_conductor_leader(
     nodes: Vec<ConductorNodeConfig>,
     target_name: Option<String>,
     result_tx: mpsc::Sender<Result<String, String>>,
@@ -777,13 +793,112 @@ pub(crate) async fn transfer_conductor_leader(
     let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
 }
 
+/// Pauses op-conductor's control loop on a single node via `conductor_pause`.
+///
+/// While paused, the conductor stops driving leader election and sequencer
+/// health checks, but the underlying Raft membership is preserved. Paired with
+/// [`conductor_resume_node`].
+pub async fn conductor_pause_node(
+    node: ConductorNodeConfig,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let outcome: anyhow::Result<String> = async {
+        let client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(node.conductor_rpc.as_str())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        ConductorApiClient::conductor_pause(&client).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(format!("conductor paused on {}", node.name))
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
+/// Resumes op-conductor's control loop on a single node via `conductor_resume`.
+pub async fn conductor_resume_node(
+    node: ConductorNodeConfig,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let outcome: anyhow::Result<String> = async {
+        let client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(node.conductor_rpc.as_str())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        ConductorApiClient::conductor_resume(&client).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(format!("conductor resumed on {}", node.name))
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
+/// Starts the sequencer on a single node via `admin_startSequencer`.
+///
+/// The `unsafe_head` hash must match the node's current engine unsafe head; the
+/// server rejects mismatches and `B256::ZERO`. When op-conductor is enabled,
+/// this only succeeds if the target node is the Raft leader.
+pub async fn start_sequencer_node(
+    node: ConductorNodeConfig,
+    unsafe_head: B256,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let outcome: anyhow::Result<String> = async {
+        if unsafe_head == B256::ZERO {
+            return Err(anyhow::anyhow!("unsafe_head must not be zero"));
+        }
+        let client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(node.cl_rpc.as_str())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        AdminApiClient::admin_start_sequencer(&client, unsafe_head)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(format!("sequencer started on {} at {unsafe_head}", node.name))
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
+/// Stops the sequencer on a single node via `admin_stopSequencer`.
+///
+/// Returns the unsafe head hash captured at the moment the sequencer was
+/// stopped, suitable for passing back into [`start_sequencer_node`] later.
+pub async fn stop_sequencer_node(
+    node: ConductorNodeConfig,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let outcome: anyhow::Result<String> = async {
+        let client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(node.cl_rpc.as_str())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let head = AdminApiClient::admin_stop_sequencer(&client)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(format!("sequencer stopped on {} at {head}", node.name))
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
 /// Restarts the docker containers for a single conductor cluster node.
 ///
 /// Containers are restarted in dependency order — EL → CL → conductor —
 /// waiting for each to become healthy before starting the next. This prevents
 /// op-conductor from crashing on startup because it tries to connect to the EL
 /// before the EL has bound its port.
-pub(crate) async fn restart_conductor_node(
+pub async fn restart_conductor_node(
     node: ConductorNodeConfig,
     result_tx: mpsc::Sender<Result<String, String>>,
 ) {
@@ -850,7 +965,7 @@ pub(crate) async fn restart_conductor_node(
 
 /// Peers saved when a sequencer node is paused, used to restore connectivity on unpause.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct PausedPeers {
+pub struct PausedPeers {
     /// Multiaddrs of the CL peers that were connected before pausing.
     /// Used to reconnect them on unpause via `opp2p_connectPeer`.
     pub cl_addrs: Vec<String>,
@@ -862,7 +977,7 @@ pub(crate) struct PausedPeers {
 /// Disconnects all p2p peers from the CL and EL of a node so that neither layer
 /// can advance.  Returns the saved peer addresses so they can be restored later
 /// via [`unpause_sequencer_node`].
-pub(crate) async fn pause_sequencer_node(
+pub async fn pause_sequencer_node(
     node: ConductorNodeConfig,
     result_tx: mpsc::Sender<Result<(String, PausedPeers), String>>,
 ) {
@@ -875,13 +990,13 @@ pub(crate) async fn pause_sequencer_node(
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         // Snapshot connected CL peers before disconnecting so we can restore them.
-        let dump = OpP2PApiClient::opp2p_peers(&cl_client, true)
+        let dump = BaseP2PApiClient::opp2p_peers(&cl_client, true)
             .await
             .map_err(|e| anyhow::anyhow!("opp2p_peers: {e}"))?;
 
         let mut cl_addrs = Vec::new();
         for (peer_id, info) in dump.peers {
-            let _ = OpP2PApiClient::opp2p_disconnect_peer(&cl_client, peer_id).await;
+            let _ = BaseP2PApiClient::opp2p_disconnect_peer(&cl_client, peer_id).await;
             if let Some(addr) = info.addresses.into_iter().next() {
                 cl_addrs.push(addr);
             }
@@ -924,7 +1039,7 @@ pub(crate) async fn pause_sequencer_node(
 
 /// Reconnects the CL and EL peers that were saved by [`pause_sequencer_node`],
 /// allowing the node to resume syncing to tip.
-pub(crate) async fn unpause_sequencer_node(
+pub async fn unpause_sequencer_node(
     node: ConductorNodeConfig,
     peers: PausedPeers,
     result_tx: mpsc::Sender<Result<String, String>>,
@@ -939,7 +1054,7 @@ pub(crate) async fn unpause_sequencer_node(
 
         let mut cl_ok = 0usize;
         for addr in &peers.cl_addrs {
-            if OpP2PApiClient::opp2p_connect_peer(&cl_client, addr.clone()).await.is_ok() {
+            if BaseP2PApiClient::opp2p_connect_peer(&cl_client, addr.clone()).await.is_ok() {
                 cl_ok += 1;
             }
         }
@@ -954,10 +1069,19 @@ pub(crate) async fn unpause_sequencer_node(
             for enode in &peers.el_enodes {
                 let r: Result<bool, _> =
                     ClientT::request(&el_client, "admin_addPeer", rpc_params![enode]).await;
-                if r.is_ok() {
+                if matches!(r, Ok(true)) {
                     el_ok += 1;
                 }
             }
+        }
+
+        if cl_ok != peers.cl_addrs.len() || el_ok != peers.el_enodes.len() {
+            anyhow::bail!(
+                "unpaused {} — reconnected {cl_ok}/{} CL peer(s), {el_ok}/{} EL peer(s); saved peers kept for retry",
+                node.name,
+                peers.cl_addrs.len(),
+                peers.el_enodes.len()
+            );
         }
 
         Ok(format!(
@@ -979,7 +1103,7 @@ pub(crate) async fn unpause_sequencer_node(
 /// fires all per-node requests concurrently via [`futures::future::join_all`].
 /// Any individual RPC that times out or errors yields `None` for that field —
 /// the node is shown as offline when `is_leader` is `None`.
-pub(crate) async fn run_conductor_poller(
+pub async fn run_conductor_poller(
     nodes: Vec<ConductorNodeConfig>,
     tx: mpsc::Sender<Vec<ConductorNodeStatus>>,
 ) {
@@ -1025,10 +1149,14 @@ pub(crate) async fn run_conductor_poller(
         let statuses = futures::future::join_all(clients.iter().map(
             |(name, conductor_client, cl_client, el_client)| async move {
                 // Fire all RPCs concurrently so a single timed-out node does not
-                // stall the poll for the full sum of all call timeouts (7 × 500 ms).
+                // stall the poll for the full sum of all call timeouts (11 × 500 ms).
                 let (
                     is_leader,
                     conductor_active,
+                    conductor_paused,
+                    conductor_stopped,
+                    sequencer_healthy,
+                    sequencer_active,
                     sync,
                     cl_peer_stats,
                     el_block_r,
@@ -1037,8 +1165,12 @@ pub(crate) async fn run_conductor_poller(
                 ) = tokio::join!(
                     ConductorApiClient::conductor_leader(conductor_client),
                     ConductorApiClient::conductor_active(conductor_client),
-                    RollupNodeApiClient::op_sync_status(cl_client),
-                    OpP2PApiClient::opp2p_peer_stats(cl_client),
+                    ConductorApiClient::conductor_paused(conductor_client),
+                    ConductorApiClient::conductor_stopped(conductor_client),
+                    ConductorApiClient::conductor_sequencer_healthy(conductor_client),
+                    AdminApiClient::admin_sequencer_active(cl_client),
+                    RollupNodeApiClient::sync_status(cl_client),
+                    BaseP2PApiClient::opp2p_peer_stats(cl_client),
                     async {
                         if let Some(el) = el_client {
                             let r: Result<alloy_primitives::U64, _> =
@@ -1073,6 +1205,10 @@ pub(crate) async fn run_conductor_poller(
                     name: name.clone(),
                     is_leader: is_leader.ok(),
                     conductor_active: conductor_active.ok(),
+                    conductor_paused: conductor_paused.ok(),
+                    conductor_stopped: conductor_stopped.ok(),
+                    sequencer_healthy: sequencer_healthy.ok(),
+                    sequencer_active: sequencer_active.ok(),
                     unsafe_l2_block: sync.as_ref().map(|s| s.unsafe_l2.block_info.number),
                     unsafe_l2_hash: sync.as_ref().map(|s| s.unsafe_l2.block_info.hash),
                     safe_l2_block: sync.as_ref().map(|s| s.safe_l2.block_info.number),
@@ -1097,9 +1233,11 @@ pub(crate) async fn run_conductor_poller(
 
 /// Live status snapshot for a single validator (non-sequencing) node.
 #[derive(Debug, Clone)]
-pub(crate) struct ValidatorNodeStatus {
+pub struct ValidatorNodeStatus {
     /// Human-readable name for this node.
     pub name: String,
+    /// Human-readable binary/process description shown in the TUI.
+    pub binary: Option<String>,
 
     // ── CL (consensus layer) ─────────────────────────────────────────────
     /// Unsafe L2 block number from `optimism_syncStatus`.
@@ -1129,14 +1267,14 @@ pub(crate) struct ValidatorNodeStatus {
 }
 
 /// Polls all validator nodes every 200 ms and forwards status snapshots.
-pub(crate) async fn run_validator_poller(
+pub async fn run_validator_poller(
     nodes: Vec<ValidatorNodeConfig>,
     tx: mpsc::Sender<Vec<ValidatorNodeStatus>>,
 ) {
     const POLL_INTERVAL: Duration = Duration::from_millis(200);
     const RPC_TIMEOUT: Duration = Duration::from_millis(500);
 
-    let clients: Vec<(String, _, _)> = nodes
+    let clients: Vec<(String, Option<String>, _, _)> = nodes
         .into_iter()
         .filter_map(|node| {
             let cl_client = HttpClientBuilder::default()
@@ -1155,7 +1293,7 @@ pub(crate) async fn run_validator_poller(
                     })
                     .ok()
             });
-            Some((node.name, cl_client, el_client))
+            Some((node.name, node.binary, cl_client, el_client))
         })
         .collect();
 
@@ -1166,10 +1304,10 @@ pub(crate) async fn run_validator_poller(
         interval.tick().await;
 
         let statuses = futures::future::join_all(clients.iter().map(
-            |(name, cl_client, el_client)| async move {
+            |(name, binary, cl_client, el_client)| async move {
                 let (sync, cl_peer_stats, el_block_r, el_syncing_r, el_peers_r) = tokio::join!(
-                    RollupNodeApiClient::op_sync_status(cl_client),
-                    OpP2PApiClient::opp2p_peer_stats(cl_client),
+                    RollupNodeApiClient::sync_status(cl_client),
+                    BaseP2PApiClient::opp2p_peer_stats(cl_client),
                     async {
                         if let Some(el) = el_client {
                             let r: Result<alloy_primitives::U64, _> =
@@ -1202,6 +1340,7 @@ pub(crate) async fn run_validator_poller(
                 let sync = sync.ok();
                 ValidatorNodeStatus {
                     name: name.clone(),
+                    binary: binary.clone(),
                     unsafe_l2_block: sync.as_ref().map(|s| s.unsafe_l2.block_info.number),
                     unsafe_l2_hash: sync.as_ref().map(|s| s.unsafe_l2.block_info.hash),
                     safe_l2_block: sync.as_ref().map(|s| s.safe_l2.block_info.number),
@@ -1254,7 +1393,7 @@ sol! {
 
 /// Snapshot of proof system state, fetched periodically.
 #[derive(Debug, Clone)]
-pub(crate) struct ProofsSnapshot {
+pub struct ProofsSnapshot {
     /// Current L1 block number.
     pub l1_block: Option<u64>,
     /// Current L2 latest (unsafe) block number.
@@ -1279,7 +1418,7 @@ pub(crate) struct ProofsSnapshot {
 
 /// Information about the most recent dispute game proposal.
 #[derive(Debug, Clone)]
-pub(crate) struct LatestProposal {
+pub struct LatestProposal {
     /// Address of the dispute game proxy contract.
     pub game_address: Address,
     /// L2 block number proposed.
@@ -1294,7 +1433,7 @@ pub(crate) struct LatestProposal {
 
 /// Polls proof system state (anchor state, dispute games, chain heads) at regular
 /// intervals and sends snapshots to the TUI.
-pub(crate) async fn run_proofs_poller(
+pub async fn run_proofs_poller(
     proofs_config: ProofsConfig,
     l1_rpc: Url,
     l2_rpc: Url,

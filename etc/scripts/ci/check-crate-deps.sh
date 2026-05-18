@@ -5,19 +5,36 @@ set -euo pipefail
 # Crates in crates/<source>/ must not depend on crates in crates/<target>/
 DISALLOWED_DEPS=(
   "utilities:client"
+  "utilities:batcher"
   "utilities:builder"
   "utilities:consensus"
+  "utilities:execution"
   "client:infra"
   "utilities:infra"
+  "utilities:proof"
+  "utilities:succinct"
+  "common:client"
+  "common:batcher"
+  "common:builder"
+  "common:consensus"
+  "common:execution"
+  "common:infra"
+  "common:proof"
+  "common:succinct"
   "builder:infra"
+  "builder:proof"
   "consensus:infra"
+  "batcher:infra"
+  "batcher:proof"
+  "execution:infra"
+  "consensus:proof"
+  "execution:proof"
+  "proof:infra"
 )
 
 # Allowed exceptions: "dep_name" entries here are excluded from all rules.
 # These are foundational consensus protocol crates that are local path deps under crates/consensus/.
 ALLOWED_DEPS=(
-  "base-consensus-genesis"
-  "base-consensus-registry"
   "base-consensus-engine"
 )
 

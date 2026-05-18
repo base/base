@@ -52,6 +52,6 @@ impl DerivationDelegateClient {
     ///
     /// Calls `optimism_syncStatus` RPC method.
     pub async fn fetch_sync_status(&self) -> Result<SyncStatus, DerivationDelegateClientError> {
-        Ok(self.derivation_client.op_sync_status().await?)
+        Ok(self.derivation_client.sync_status().await?)
     }
 }

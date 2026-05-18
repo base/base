@@ -19,8 +19,9 @@ workspace = true
 # Internal
 base-cli-utils.workspace = true
 base-tx-manager.workspace = true
-base-proof-tee-registrar = { workspace = true, features = ["metrics"] }
+base-balance-monitor.workspace = true
 base-health = { workspace = true, features = ["axum-server"] }
+base-proof-tee-registrar = { workspace = true, features = ["metrics"] }
 base-proof-tee-nitro-attestation-prover = { workspace = true, features = ["prove"] }
 
 # Alloy

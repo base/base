@@ -11,16 +11,15 @@
 extern crate alloc;
 
 use alloc::{format, sync::Arc};
-use core::fmt::Debug;
 
 use alloy_consensus::{
-    BlockHeader as _, EMPTY_OMMER_ROOT_HASH, constants::MAXIMUM_EXTRA_DATA_SIZE,
+    BlockHeader as _, EMPTY_OMMER_ROOT_HASH, Header, constants::MAXIMUM_EXTRA_DATA_SIZE,
 };
-use alloy_eips::eip2718::Typed2718;
+use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::B64;
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::DepositReceipt;
-use reth_chainspec::EthChainSpec;
+use base_common_chains::Upgrades;
+use base_common_consensus::DepositReceiptExt;
+use base_execution_chainspec::BaseChainSpec;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_consensus_common::validation::{
     validate_against_parent_eip1559_base_fee, validate_against_parent_hash_number,
@@ -29,33 +28,32 @@ use reth_consensus_common::validation::{
 };
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
-    Block, BlockBody, BlockHeader, GotExpected, NodePrimitives, RecoveredBlock, SealedBlock,
-    SealedHeader,
+    Block, BlockBody, GotExpected, NodePrimitives, RecoveredBlock, SealedBlock, SealedHeader,
 };
 
 mod proof;
-pub use proof::calculate_receipt_root_no_memo_optimism;
+pub use proof::{calculate_receipt_root, calculate_receipt_root_no_memo};
 
 pub mod validation;
 pub use validation::{canyon, isthmus, validate_block_post_execution};
 
 pub mod error;
-pub use error::OpConsensusError;
+pub use error::BaseConsensusError;
 
 /// Base consensus implementation.
 ///
 /// Provides basic checks as outlined in the execution specs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpBeaconConsensus<ChainSpec> {
+pub struct BaseBeaconConsensus {
     /// Configuration
-    chain_spec: Arc<ChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     /// Maximum allowed extra data size in bytes
     max_extra_data_size: usize,
 }
 
-impl<ChainSpec> OpBeaconConsensus<ChainSpec> {
-    /// Create a new instance of [`OpBeaconConsensus`]
-    pub const fn new(chain_spec: Arc<ChainSpec>) -> Self {
+impl BaseBeaconConsensus {
+    /// Create a new instance of [`BaseBeaconConsensus`]
+    pub const fn new(chain_spec: Arc<BaseChainSpec>) -> Self {
         Self { chain_spec, max_extra_data_size: MAXIMUM_EXTRA_DATA_SIZE }
     }
 
@@ -71,10 +69,9 @@ impl<ChainSpec> OpBeaconConsensus<ChainSpec> {
     }
 }
 
-impl<N, ChainSpec> FullConsensus<N> for OpBeaconConsensus<ChainSpec>
+impl<N> FullConsensus<N> for BaseBeaconConsensus
 where
-    N: NodePrimitives<Receipt: DepositReceipt>,
-    ChainSpec: EthChainSpec<Header = N::BlockHeader> + BaseUpgrades + Debug + Send + Sync,
+    N: NodePrimitives<BlockHeader = Header, Receipt: DepositReceiptExt>,
 {
     fn validate_block_post_execution(
         &self,
@@ -86,17 +83,16 @@ where
     }
 }
 
-impl<B, ChainSpec> Consensus<B> for OpBeaconConsensus<ChainSpec>
+impl<B> Consensus<B> for BaseBeaconConsensus
 where
-    B: Block,
-    ChainSpec: EthChainSpec<Header = B::Header> + BaseUpgrades + Debug + Send + Sync,
+    B: Block<Header = Header>,
 {
     fn validate_body_against_header(
         &self,
         body: &B::Body,
         header: &SealedHeader<B::Header>,
     ) -> Result<(), ConsensusError> {
-        validation::validate_body_against_header_op(&self.chain_spec, body, header.header())
+        validation::validate_body_against_header_base(&self.chain_spec, body, header.header())
     }
 
     fn validate_block_pre_execution(&self, block: &SealedBlock<B>) -> Result<(), ConsensusError> {
@@ -115,17 +111,6 @@ where
         // Check transaction root
         if let Err(error) = block.ensure_transaction_root_valid() {
             return Err(ConsensusError::BodyTransactionRootDiff(error.into()));
-        }
-
-        // Reject blocks containing EIP-8130 AA transactions before BASE_V1.
-        if !self.chain_spec.is_base_v1_active_at_timestamp(block.timestamp()) {
-            const EIP8130_TX_TYPE: u8 = 0x7B;
-            if block.body().transactions().iter().any(|tx| tx.ty() == EIP8130_TX_TYPE) {
-                return Err(ConsensusError::Other(format!(
-                    "block {} contains EIP-8130 transaction before BASE_V1 activation",
-                    block.number(),
-                )));
-            }
         }
 
         // Check empty shanghai-withdrawals
@@ -162,12 +147,8 @@ where
     }
 }
 
-impl<H, ChainSpec> HeaderValidator<H> for OpBeaconConsensus<ChainSpec>
-where
-    H: BlockHeader,
-    ChainSpec: EthChainSpec<Header = H> + BaseUpgrades + Debug + Send + Sync,
-{
-    fn validate_header(&self, header: &SealedHeader<H>) -> Result<(), ConsensusError> {
+impl HeaderValidator<Header> for BaseBeaconConsensus {
+    fn validate_header(&self, header: &SealedHeader<Header>) -> Result<(), ConsensusError> {
         let header = header.header();
 
         if header.nonce() != Some(B64::ZERO) {
@@ -189,13 +170,41 @@ where
         // validate header extra data for all networks post merge
         validate_header_extra_data(header, self.max_extra_data_size)?;
         validate_header_gas(header)?;
-        validate_header_base_fee(header, &self.chain_spec)
+        validate_header_base_fee(header, &self.chain_spec)?;
+
+        // After Isthmus, every block header must carry `requests_hash = sha256("")`
+        // (i.e. `EMPTY_REQUESTS_HASH`) because Base does not support EL-triggered execution
+        // requests (EIP-7685). Before Isthmus, the field must be omitted entirely.
+        //
+        // The Engine API path (`BaseExecutionPayload::into_block_with_sidecar*`) already
+        // enforces this rule, but raw header/block import paths (e.g. `import_blocks_from_file`,
+        // historical/range sync) only flow through `HeaderValidator::validate_header`. Without
+        // the check here, a malformed post-Isthmus header with an arbitrary `requests_hash`
+        // would be accepted and persisted by the import path while being rejected by the
+        // Engine path — a block-validity differential that could lead to a chain split.
+        //
+        // See `docs/specs/pages/upgrades/isthmus/exec-engine.md`.
+        if self.chain_spec.is_isthmus_active_at_timestamp(header.timestamp()) {
+            match header.requests_hash() {
+                None => return Err(ConsensusError::RequestsHashMissing),
+                Some(hash) if hash != EMPTY_REQUESTS_HASH => {
+                    return Err(ConsensusError::BodyRequestsHashDiff(
+                        GotExpected { got: hash, expected: EMPTY_REQUESTS_HASH }.into(),
+                    ));
+                }
+                Some(_) => {}
+            }
+        } else if header.requests_hash().is_some() {
+            return Err(ConsensusError::RequestsHashUnexpected);
+        }
+
+        Ok(())
     }
 
     fn validate_header_against_parent(
         &self,
-        header: &SealedHeader<H>,
-        parent: &SealedHeader<H>,
+        header: &SealedHeader<Header>,
+        parent: &SealedHeader<Header>,
     ) -> Result<(), ConsensusError> {
         validate_against_parent_hash_number(header.header(), parent)?;
 
@@ -246,21 +255,24 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_consensus::{BlockBody, Eip658Value, Header, Receipt, TxEip7702, TxReceipt};
-    use alloy_eips::{eip4895::Withdrawals, eip7685::Requests};
-    use alloy_primitives::{Address, Bytes, Log, Signature, U256};
-    use base_alloy_consensus::{
-        HoloceneExtraData, JovianExtraData, OpPrimitives, OpReceipt, OpTransactionSigned,
-        OpTypedTransaction,
+    use alloy_eips::{
+        eip4895::Withdrawals,
+        eip7685::{EMPTY_REQUESTS_HASH, Requests},
     };
-    use base_execution_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
+    use alloy_primitives::{Address, B256, Bytes, Log, Signature, U256};
+    use base_common_consensus::{
+        BasePrimitives, BaseReceipt, BaseTransactionSigned, BaseTypedTransaction,
+        HoloceneExtraData, JovianExtraData,
+    };
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_chainspec::BaseFeeParams;
     use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
     use reth_provider::BlockExecutionResult;
 
-    use crate::OpBeaconConsensus;
+    use crate::BaseBeaconConsensus;
 
-    fn mock_tx(nonce: u64) -> OpTransactionSigned {
+    fn mock_tx(nonce: u64) -> BaseTransactionSigned {
         let tx = TxEip7702 {
             chain_id: 1u64,
             nonce,
@@ -276,21 +288,24 @@ mod tests {
 
         let signature = Signature::new(U256::default(), U256::default(), true);
 
-        OpTransactionSigned::new_unhashed(OpTypedTransaction::Eip7702(tx), signature)
+        BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature)
+    }
+
+    fn base_mainnet_builder() -> BaseChainSpecBuilder {
+        let base_mainnet = BaseChainSpec::mainnet();
+        BaseChainSpecBuilder::default()
+            .genesis(base_mainnet.genesis.clone())
+            .chain(base_mainnet.chain)
     }
 
     #[test]
     fn test_block_blob_gas_used_validation_isthmus() {
-        let chain_spec = OpChainSpecBuilder::default()
-            .isthmus_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().isthmus_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
         let header = Header {
             base_fee_per_gas: Some(1337),
@@ -318,16 +333,12 @@ mod tests {
 
     #[test]
     fn test_block_blob_gas_used_validation_failure_isthmus() {
-        let chain_spec = OpChainSpecBuilder::default()
-            .isthmus_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().isthmus_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
         let header = Header {
             base_fee_per_gas: Some(1337),
@@ -361,18 +372,14 @@ mod tests {
         const BLOB_GAS_USED: u64 = 1000;
         const GAS_USED: u64 = 10;
 
-        let chain_spec = OpChainSpecBuilder::default()
-            .jovian_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().jovian_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
-        let receipt = OpReceipt::Eip7702(Receipt::<Log> {
+        let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
             cumulative_gas_used: GAS_USED,
             logs: vec![],
@@ -401,7 +408,7 @@ mod tests {
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
 
-        let result = BlockExecutionResult::<OpReceipt> {
+        let result = BlockExecutionResult::<BaseReceipt> {
             blob_gas_used: BLOB_GAS_USED,
             receipts: vec![receipt],
             requests: Requests::default(),
@@ -415,12 +422,13 @@ mod tests {
 
         let block = RecoveredBlock::new_sealed(block, vec![Address::default()]);
 
-        let post_execution = <OpBeaconConsensus<OpChainSpec> as FullConsensus<OpPrimitives>>::validate_block_post_execution(
-            &beacon_consensus,
-            &block,
-            &result,
-            None,
-        );
+        let post_execution =
+            <BaseBeaconConsensus as FullConsensus<BasePrimitives>>::validate_block_post_execution(
+                &beacon_consensus,
+                &block,
+                &result,
+                None,
+            );
 
         // validate blob, it should pass blob gas used validation
         assert!(post_execution.is_ok());
@@ -431,18 +439,14 @@ mod tests {
         const BLOB_GAS_USED: u64 = 1000;
         const GAS_USED: u64 = 10;
 
-        let chain_spec = OpChainSpecBuilder::default()
-            .jovian_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().jovian_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
-        let receipt = OpReceipt::Eip7702(Receipt::<Log> {
+        let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
             cumulative_gas_used: GAS_USED,
             logs: vec![],
@@ -471,7 +475,7 @@ mod tests {
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
 
-        let result = BlockExecutionResult::<OpReceipt> {
+        let result = BlockExecutionResult::<BaseReceipt> {
             blob_gas_used: BLOB_GAS_USED + 1,
             receipts: vec![receipt],
             requests: Requests::default(),
@@ -485,12 +489,13 @@ mod tests {
 
         let block = RecoveredBlock::new_sealed(block, vec![Address::default()]);
 
-        let post_execution = <OpBeaconConsensus<OpChainSpec> as FullConsensus<OpPrimitives>>::validate_block_post_execution(
-            &beacon_consensus,
-            &block,
-            &result,
-            None,
-        );
+        let post_execution =
+            <BaseBeaconConsensus as FullConsensus<BasePrimitives>>::validate_block_post_execution(
+                &beacon_consensus,
+                &block,
+                &result,
+                None,
+            );
 
         // validate blob, it should fail blob gas used validation post execution.
         assert!(matches!(
@@ -504,18 +509,14 @@ mod tests {
     fn test_header_min_base_fee_validation() {
         const MIN_BASE_FEE: u64 = 1000;
 
-        let chain_spec = OpChainSpecBuilder::default()
-            .jovian_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().jovian_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
-        let receipt = OpReceipt::Eip7702(Receipt::<Log> {
+        let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
             cumulative_gas_used: 0,
             logs: vec![],
@@ -575,18 +576,14 @@ mod tests {
     fn test_header_min_base_fee_validation_failure() {
         const MIN_BASE_FEE: u64 = 1000;
 
-        let chain_spec = OpChainSpecBuilder::default()
-            .jovian_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().jovian_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
-        let receipt = OpReceipt::Eip7702(Receipt::<Log> {
+        let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
             cumulative_gas_used: 0,
             logs: vec![],
@@ -652,18 +649,14 @@ mod tests {
         const DA_FOOTPRINT: u64 = GAS_LIMIT - 1;
         const GAS_LIMIT: u64 = 100_000_000;
 
-        let chain_spec = OpChainSpecBuilder::default()
-            .jovian_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().jovian_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
-        let receipt = OpReceipt::Eip7702(Receipt::<Log> {
+        let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
             cumulative_gas_used: 0,
             logs: vec![],
@@ -726,18 +719,14 @@ mod tests {
         const DA_FOOTPRINT: u64 = GAS_LIMIT - 1;
         const GAS_LIMIT: u64 = 100_000_000;
 
-        let chain_spec = OpChainSpecBuilder::default()
-            .isthmus_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().isthmus_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
-        let receipt = OpReceipt::Eip7702(Receipt::<Log> {
+        let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
             cumulative_gas_used: 0,
             logs: vec![],
@@ -791,6 +780,85 @@ mod tests {
             result.unwrap_err(),
             ConsensusError::BlobGasUsedDiff(diff)
                 if diff.got == DA_FOOTPRINT && diff.expected == 0
+        ));
+    }
+
+    /// Builds a minimal post-Isthmus header that satisfies all of `validate_header`'s checks
+    /// other than the `requests_hash` rule under test.
+    fn isthmus_header_with_requests_hash(requests_hash: Option<B256>) -> SealedHeader<Header> {
+        SealedHeader::seal_slow(Header {
+            base_fee_per_gas: Some(1337),
+            withdrawals_root: Some(B256::ZERO),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            timestamp: u64::MAX,
+            requests_hash,
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn test_isthmus_validate_header_accepts_empty_requests_hash() {
+        let chain_spec = base_mainnet_builder().isthmus_activated().build();
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+
+        let header = isthmus_header_with_requests_hash(Some(EMPTY_REQUESTS_HASH));
+        beacon_consensus
+            .validate_header(&header)
+            .expect("post-Isthmus header with EMPTY_REQUESTS_HASH must pass validate_header");
+    }
+
+    /// Regression: post-Isthmus headers carrying a non-empty `requests_hash` (Base does not
+    /// support EL execution requests) must be rejected by the raw header import path, matching
+    /// the Engine API's `BasePayloadError::NonEmptyELRequests` enforcement. Without the check,
+    /// `import_blocks_from_file` and range-sync would persist a malformed header that the
+    /// Engine path rejects, producing a block-validity differential inside the EL.
+    #[test]
+    fn test_isthmus_validate_header_rejects_non_empty_requests_hash() {
+        let chain_spec = base_mainnet_builder().isthmus_activated().build();
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+
+        let bogus = B256::repeat_byte(0x11);
+        let header = isthmus_header_with_requests_hash(Some(bogus));
+
+        assert!(matches!(
+            beacon_consensus.validate_header(&header).unwrap_err(),
+            ConsensusError::BodyRequestsHashDiff(diff)
+                if diff.got == bogus && diff.expected == EMPTY_REQUESTS_HASH
+        ));
+    }
+
+    #[test]
+    fn test_isthmus_validate_header_rejects_missing_requests_hash() {
+        let chain_spec = base_mainnet_builder().isthmus_activated().build();
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+
+        let header = isthmus_header_with_requests_hash(None);
+
+        assert!(matches!(
+            beacon_consensus.validate_header(&header).unwrap_err(),
+            ConsensusError::RequestsHashMissing,
+        ));
+    }
+
+    #[test]
+    fn test_pre_isthmus_validate_header_rejects_unexpected_requests_hash() {
+        // Holocene activates strictly before Isthmus; this exercises the pre-Isthmus branch.
+        let chain_spec = base_mainnet_builder().holocene_activated().build();
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+
+        let header = SealedHeader::seal_slow(Header {
+            base_fee_per_gas: Some(1337),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            timestamp: u64::MAX,
+            requests_hash: Some(EMPTY_REQUESTS_HASH),
+            ..Default::default()
+        });
+
+        assert!(matches!(
+            beacon_consensus.validate_header(&header).unwrap_err(),
+            ConsensusError::RequestsHashUnexpected,
         ));
     }
 }

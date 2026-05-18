@@ -8,8 +8,9 @@ use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_transport::{RpcError, TransportErrorKind};
-use base_consensus_genesis::RollupConfig;
-use base_protocol::{L2BlockInfo, OutputRoot, Predeploys};
+use base_common_consensus::Predeploys;
+use base_common_genesis::RollupConfig;
+use base_protocol::{L2BlockInfo, OutputRoot};
 use tokio::sync::oneshot::Sender;
 
 use crate::{EngineClient, EngineClientError, EngineState};
@@ -81,9 +82,11 @@ impl EngineQueries {
                 .send((**rollup_config).clone())
                 .map_err(|_| EngineQueriesError::OutputChannelClosed),
             Self::State(sender) => {
+                trace!(target: "engine", "Preparing engine state RPC response");
                 sender.send(state).map_err(|_| EngineQueriesError::OutputChannelClosed)
             }
             Self::OutputAtBlock { block, sender } => {
+                trace!(target: "engine", block = ?block, "Querying engine output at block");
                 let output_block = client.l2_block_by_label(block).await?;
                 let output_block = output_block.ok_or(EngineQueriesError::NoL2BlockFound(block))?;
                 // Cloning the l2 block below is cheaper than sending a network request to get the
@@ -105,6 +108,11 @@ impl EngineQueries {
                             .withdrawals_root
                             .ok_or(EngineQueriesError::NoWithdrawalsRoot)?
                     } else {
+                        trace!(
+                            target: "engine",
+                            block = ?block,
+                            "Querying message passer storage proof"
+                        );
                         // Fetch the storage root for the L2 head block.
                         let l2_to_l1_message_passer = client
                             .get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, Default::default())
@@ -120,6 +128,7 @@ impl EngineQueries {
                     output_block.header.hash,
                 );
 
+                trace!(target: "engine", block = ?block, "Sending engine output response");
                 sender
                     .send((output_block_info, output_response_v0, state))
                     .map_err(|_| EngineQueriesError::OutputChannelClosed)

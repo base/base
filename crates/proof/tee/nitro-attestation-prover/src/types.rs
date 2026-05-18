@@ -39,6 +39,17 @@ pub trait AttestationProofProvider: Send + Sync {
     ) -> Result<AttestationProof> {
         self.generate_proof(attestation_bytes).await
     }
+
+    /// Marks a signer's recovered proof as failed on-chain.
+    ///
+    /// Called by the driver when a recovered proof for `signer` is rejected
+    /// by the on-chain contract (e.g. `ExecutionReverted`). Implementations
+    /// that support proof recovery should skip recovery for this signer on
+    /// subsequent calls and instead generate a fresh proof.
+    ///
+    /// The default implementation is a no-op for backends that do not
+    /// support recovery (e.g. `DirectProver`).
+    fn block_recovery_for_signer(&self, _signer: Address) {}
 }
 
 #[async_trait]
@@ -53,6 +64,10 @@ impl AttestationProofProvider for Box<dyn AttestationProofProvider> {
         signer_address: Address,
     ) -> Result<AttestationProof> {
         (**self).generate_proof_for_signer(attestation_bytes, signer_address).await
+    }
+
+    fn block_recovery_for_signer(&self, signer: Address) {
+        (**self).block_recovery_for_signer(signer);
     }
 }
 

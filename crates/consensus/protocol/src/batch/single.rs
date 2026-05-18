@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{BlockHash, Bytes};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
-use base_alloy_consensus::OpTxType;
-use base_consensus_genesis::RollupConfig;
+use base_common_consensus::OpTxType;
+use base_common_genesis::RollupConfig;
 use tracing::warn;
 
 use crate::{BatchDropReason, BatchValidity, BlockInfo, L2BlockInfo};
@@ -60,7 +60,7 @@ impl SingleBatch {
     ///
     /// The batch format type is defined in the [Base Specs][specs].
     ///
-    /// [specs]: https://specs.optimism.io/protocol/derivation.html#batch-format
+    /// [specs]: https://specs.base.org/protocol/consensus/derivation#batch-format
     pub fn check_batch(
         &self,
         cfg: &RollupConfig,
@@ -173,11 +173,6 @@ impl SingleBatch {
             if tx.as_ref().first() == Some(&(OpTxType::Deposit as u8)) {
                 return BatchValidity::Drop(BatchDropReason::DepositTransaction);
             }
-            if !cfg.is_base_v1_active(self.timestamp)
-                && tx.as_ref().first() == Some(&(OpTxType::Eip8130 as u8))
-            {
-                return BatchValidity::Drop(BatchDropReason::Eip8130PreBaseV1);
-            }
             // If isthmus is not active yet and the transaction is a 7702, drop the batch.
             if !cfg.is_isthmus_active(self.timestamp)
                 && tx.as_ref().first() == Some(&(OpTxType::Eip7702 as u8))
@@ -198,13 +193,11 @@ mod tests {
     use alloy_eips::eip2718::{Decodable2718, Encodable2718};
     use alloy_primitives::{Address, Sealed, Signature, TxKind, U256};
     use alloy_rlp::{Decodable, Encodable};
-    use base_alloy_consensus::{OpTxEnvelope, TxDeposit, TxEip8130};
-    use base_consensus_genesis::{BaseHardforkConfig, HardForkConfig};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_genesis::HardForkConfig;
     use tracing::Level;
-    use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
-    use crate::test_utils::{CollectingLayer, TraceStorage};
 
     #[test]
     fn test_empty_l1_blocks() {
@@ -453,19 +446,6 @@ mod tests {
         }
     }
 
-    fn eip_8130_tx() -> TxEip8130 {
-        TxEip8130 {
-            chain_id: 8453u64,
-            from: Some(Address::repeat_byte(0x11)),
-            nonce_sequence: 2,
-            max_fee_per_gas: 3,
-            max_priority_fee_per_gas: 4,
-            gas_limit: 5,
-            calls: vec![vec![]],
-            ..Default::default()
-        }
-    }
-
     #[test]
     fn test_check_batch_drop_7702_pre_isthmus() {
         // Use the example transaction
@@ -543,65 +523,6 @@ mod tests {
     }
 
     #[test]
-    fn test_check_batch_drop_8130_pre_base_v1() {
-        let mut transactions = example_transactions();
-        transactions.push(eip_8130_tx().encoded_2718().into());
-
-        let single_batch = SingleBatch {
-            parent_hash: BlockHash::ZERO,
-            epoch_num: 1,
-            epoch_hash: BlockHash::ZERO,
-            timestamp: 1,
-            transactions,
-        };
-
-        let cfg = RollupConfig { max_sequencer_drift: 1, ..Default::default() };
-        let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { timestamp: 1, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo::default();
-        assert_eq!(
-            single_batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
-            BatchValidity::Drop(BatchDropReason::Eip8130PreBaseV1)
-        );
-    }
-
-    #[test]
-    fn test_check_batch_accept_8130_post_base_v1() {
-        let mut transactions = example_transactions();
-        transactions.push(eip_8130_tx().encoded_2718().into());
-
-        let single_batch = SingleBatch {
-            parent_hash: BlockHash::ZERO,
-            epoch_num: 1,
-            epoch_hash: BlockHash::ZERO,
-            timestamp: 1,
-            transactions,
-        };
-
-        let cfg = RollupConfig {
-            max_sequencer_drift: 1,
-            hardforks: HardForkConfig {
-                base: BaseHardforkConfig { v1: Some(0) },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];
-        let l2_safe_head = L2BlockInfo {
-            block_info: BlockInfo { timestamp: 1, ..Default::default() },
-            ..Default::default()
-        };
-        let inclusion_block = BlockInfo::default();
-        assert_eq!(
-            single_batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
-            BatchValidity::Accept
-        );
-    }
-
-    #[test]
     fn test_check_batch_drop_empty_tx() {
         // An empty tx is not valid 2718 encoding.
         // The batch must be dropped.
@@ -646,7 +567,7 @@ mod tests {
             is_system_transaction: false,
             input: Default::default(),
         };
-        let envelope = OpTxEnvelope::Deposit(Sealed::new(tx));
+        let envelope = BaseTxEnvelope::Deposit(Sealed::new(tx));
         let encoded = envelope.encoded_2718();
         transactions.push(encoded.into());
 
@@ -676,10 +597,7 @@ mod tests {
     #[test]
     #[cfg(feature = "std")]
     fn test_check_batch_drop_non_empty_jovian_transition() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         // Gather a few test transactions for the batch.
         let transactions = example_transactions();

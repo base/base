@@ -16,6 +16,13 @@
 /// - `#[label(name)]` — optional per-field (may be repeated up to 2x).
 /// - `#[label(name = "...")]` — optional per-field string label name.
 /// - `#[label(name = "...", default = ["..."])]` — optional per-field labeled zero values.
+/// - `#[no_zero]` — optional per-field; opts the metric out of the auto-generated
+///   `Metrics::zero()` initialization. Use this for gauges that track external
+///   state (e.g. account balances, chain heads) where `0` is a meaningful
+///   alerting value and would generate false alerts during the warmup window
+///   between process start and the first real read. The metric series will be
+///   absent from scrapes until the first observation is recorded. The metric
+///   is still registered with `describe()`.
 ///
 /// # Example
 ///
@@ -207,6 +214,9 @@ macro_rules! __metric_label_keys {
     (@collect ($scope:tt, $field:ident, $kind:ident) [$($labels:expr,)*] #[describe($desc:expr)] $($rest:tt)*) => {
         $crate::__metric_label_keys!(@collect ($scope, $field, $kind) [$($labels,)*] $($rest)*);
     };
+    (@collect ($scope:tt, $field:ident, $kind:ident) [$($labels:expr,)*] #[no_zero] $($rest:tt)*) => {
+        $crate::__metric_label_keys!(@collect ($scope, $field, $kind) [$($labels,)*] $($rest)*);
+    };
     (@collect ($scope:tt, $field:ident, $kind:ident) [$($labels:expr,)*] #[label($label:ident)] $($rest:tt)*) => {
         $crate::__metric_label_keys!(@collect ($scope, $field, $kind) [$($labels,)* stringify!($label),] $($rest)*);
     };
@@ -291,6 +301,9 @@ macro_rules! __define_metric_zero {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __metric_zero_defaults {
+    // `#[no_zero]` short-circuits the entire chain: consume any remaining
+    // attributes and emit no zeroing code for this field.
+    (@collect ($field:ident, $kind:ident) [$($labels:tt)*] #[no_zero] $($rest:tt)*) => {};
     (@collect ($field:ident, $kind:ident) [$($labels:tt)*] #[describe($desc:expr)] $($rest:tt)*) => {
         $crate::__metric_zero_defaults!(@collect ($field, $kind) [$($labels)*] $($rest)*);
     };

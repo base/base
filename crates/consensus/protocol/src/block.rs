@@ -2,14 +2,16 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{Block, Transaction, Typed2718};
+use alloy_consensus::{Block, Transaction};
 use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_rpc_types_eth::Block as RpcBlock;
-use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
-use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadSidecar, OpPayloadError};
-use base_consensus_genesis::ChainGenesis;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_genesis::ChainGenesis;
+use base_common_rpc_types_engine::{
+    BaseExecutionPayload, BaseExecutionPayloadSidecar, BasePayloadError,
+};
 use derive_more::Display;
 
 use crate::{DecodeError, L1BlockInfoTx};
@@ -126,7 +128,7 @@ impl arbitrary::Arbitrary<'_> for L2BlockInfo {
     }
 }
 
-/// An error that can occur when converting an OP [`Block`] to [`L2BlockInfo`].
+/// An error that can occur when converting a [`Block`] to [`L2BlockInfo`].
 #[derive(Debug, thiserror::Error)]
 pub enum FromBlockError {
     /// The genesis block hash does not match the expected value.
@@ -138,8 +140,8 @@ pub enum FromBlockError {
     /// The first payload transaction has an unexpected type.
     #[error("First payload transaction has unexpected type: {0}")]
     UnexpectedTxType(u8),
-    /// Failed to decode the first transaction into an OP transaction.
-    #[error("Failed to decode the first transaction into an OP transaction: {0}")]
+    /// Failed to decode the first transaction into a Base transaction.
+    #[error("Failed to decode the first transaction into a Base transaction: {0}")]
     TxEnvelopeDecodeError(Eip2718Error),
     /// The first payload transaction is not a deposit transaction.
     #[error("First payload transaction is not a deposit transaction, type: {0}")]
@@ -147,9 +149,9 @@ pub enum FromBlockError {
     /// Failed to decode the [`L1BlockInfoTx`] from the deposit transaction.
     #[error("Failed to decode the L1BlockInfoTx from the deposit transaction: {0}")]
     BlockInfoDecodeError(#[from] DecodeError),
-    /// Failed to convert [`OpExecutionPayload`] to [`BaseBlock`].
+    /// Failed to convert [`BaseExecutionPayload`] to [`BaseBlock`].
     #[error(transparent)]
-    OpPayload(#[from] OpPayloadError),
+    BasePayload(#[from] BasePayloadError),
 }
 
 impl PartialEq<Self> for FromBlockError {
@@ -178,8 +180,8 @@ impl L2BlockInfo {
         Self { block_info, l1_origin, seq_num }
     }
 
-    /// Constructs an [`L2BlockInfo`] from a given OP [`Block`] and [`ChainGenesis`].
-    pub fn from_block_and_genesis<T: Typed2718 + AsRef<OpTxEnvelope>>(
+    /// Constructs an [`L2BlockInfo`] from a given Base [`Block`] and [`ChainGenesis`].
+    pub fn from_block_and_genesis<T: AsRef<BaseTxEnvelope>>(
         block: &Block<T>,
         genesis: &ChainGenesis,
     ) -> Result<Self, FromBlockError> {
@@ -197,7 +199,7 @@ impl L2BlockInfo {
 
             let tx = block.body.transactions[0].as_ref();
             let Some(tx) = tx.as_deposit() else {
-                return Err(FromBlockError::FirstTxNonDeposit(tx.ty()));
+                return Err(FromBlockError::FirstTxNonDeposit(tx.tx_type() as u8));
             };
 
             let l1_info = L1BlockInfoTx::decode_calldata(tx.input().as_ref())
@@ -208,15 +210,15 @@ impl L2BlockInfo {
         Ok(Self { block_info, l1_origin, seq_num: sequence_number })
     }
 
-    /// Constructs an [`L2BlockInfo`] From a given [`OpExecutionPayload`] and [`ChainGenesis`].
+    /// Constructs an [`L2BlockInfo`] From a given [`BaseExecutionPayload`] and [`ChainGenesis`].
     pub fn from_payload_and_genesis(
-        payload: OpExecutionPayload,
+        payload: BaseExecutionPayload,
         parent_beacon_block_root: Option<B256>,
         genesis: &ChainGenesis,
     ) -> Result<Self, FromBlockError> {
         let block: BaseBlock = match payload {
-            OpExecutionPayload::V4(_) => {
-                let sidecar = OpExecutionPayloadSidecar::v4(
+            BaseExecutionPayload::V4(_) => {
+                let sidecar = BaseExecutionPayloadSidecar::v4(
                     CancunPayloadFields::new(
                         parent_beacon_block_root.unwrap_or_default(),
                         Vec::new(),
@@ -225,8 +227,8 @@ impl L2BlockInfo {
                 );
                 payload.try_into_block_with_sidecar(&sidecar)?
             }
-            OpExecutionPayload::V3(_) => {
-                let sidecar = OpExecutionPayloadSidecar::v3(CancunPayloadFields::new(
+            BaseExecutionPayload::V3(_) => {
+                let sidecar = BaseExecutionPayloadSidecar::v3(CancunPayloadFields::new(
                     parent_beacon_block_root.unwrap_or_default(),
                     Vec::new(),
                 ));
@@ -244,14 +246,14 @@ mod tests {
 
     use alloy_consensus::{Header, TxEnvelope};
     use alloy_primitives::b256;
-    use base_alloy_consensus::BaseBlock;
+    use base_common_consensus::BaseBlock;
 
     use super::*;
     use crate::test_utils::RAW_BEDROCK_INFO_TX;
 
     #[test]
     fn test_rpc_block_into_info() {
-        let block: alloy_rpc_types_eth::Block<OpTxEnvelope> = alloy_rpc_types_eth::Block {
+        let block: alloy_rpc_types_eth::Block<BaseTxEnvelope> = alloy_rpc_types_eth::Block {
             header: alloy_rpc_types_eth::Header {
                 hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
                 inner: alloy_consensus::Header {
@@ -285,8 +287,8 @@ mod tests {
         };
         let tx_env = alloy_rpc_types_eth::Transaction {
             inner: alloy_consensus::transaction::Recovered::new_unchecked(
-                base_alloy_consensus::OpTxEnvelope::Deposit(alloy_primitives::Sealed::new(
-                    base_alloy_consensus::TxDeposit {
+                base_common_consensus::BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new(
+                    base_common_consensus::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_BEDROCK_INFO_TX),
                         ..Default::default()
                     },
@@ -298,7 +300,7 @@ mod tests {
             effective_gas_price: Some(1),
             transaction_index: Some(0),
         };
-        let block: alloy_rpc_types_eth::Block<base_alloy_rpc_types::Transaction> =
+        let block: alloy_rpc_types_eth::Block<base_common_rpc_types::Transaction> =
             alloy_rpc_types_eth::Block {
                 header: alloy_rpc_types_eth::Header {
                     hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
@@ -313,7 +315,7 @@ mod tests {
                     ..Default::default()
                 },
                 transactions: alloy_rpc_types_eth::BlockTransactions::Full(vec![
-                    base_alloy_rpc_types::Transaction {
+                    base_common_rpc_types::Transaction {
                         inner: tx_env,
                         deposit_nonce: None,
                         deposit_receipt_version: None,
@@ -371,7 +373,7 @@ mod tests {
             l2: BlockNumHash { hash: B256::from([5; 32]), number: 1 },
             ..Default::default()
         };
-        let op_block = BaseBlock {
+        let base_block = BaseBlock {
             header: Header {
                 number: 1,
                 parent_hash: B256::from([2; 32]),
@@ -380,7 +382,7 @@ mod tests {
             },
             body: Default::default(),
         };
-        let err = L2BlockInfo::from_block_and_genesis(&op_block, &genesis).unwrap_err();
+        let err = L2BlockInfo::from_block_and_genesis(&base_block, &genesis).unwrap_err();
         assert_eq!(err, FromBlockError::InvalidGenesisHash);
     }
 

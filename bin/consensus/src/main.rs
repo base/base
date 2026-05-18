@@ -3,16 +3,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-pub mod cli;
-pub mod metrics;
-
 fn main() {
-    use clap::Parser;
-
-    base_cli_utils::init_common!();
-
-    if let Err(err) = cli::Cli::parse().run() {
-        eprintln!("Error: {err:?}");
-        std::process::exit(1);
-    }
+    base_cli_utils::run_cli_main!(base_consensus_cli::ConsensusCli);
 }

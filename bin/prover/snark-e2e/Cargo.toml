@@ -1,0 +1,24 @@
+[package]
+name = "base-snark-e2e"
+description = "Standalone SNARK Groth16 E2E test binary for K8s CronJob execution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-snark-e2e"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+base-zk-service.workspace = true
+
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter"] }
+
+tokio = { workspace = true, features = ["full"] }

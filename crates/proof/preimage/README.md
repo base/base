@@ -27,7 +27,7 @@ let data = oracle.get(preimage_key)?;
 hint_writer.write(&hint)?;
 ```
 
-[preimage-abi-spec]: https://specs.optimism.io/experimental/fault-proof/index.html#pre-image-oracle
+[preimage-abi-spec]: https://specs.base.org/protocol/fault-proof#pre-image-oracle
 
 ## License
 

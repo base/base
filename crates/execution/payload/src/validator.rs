@@ -4,23 +4,23 @@ use alloc::sync::Arc;
 
 use alloy_consensus::Block;
 use alloy_rpc_types_engine::PayloadError;
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_rpc_types_engine::{OpExecutionData, OpPayloadError};
+use base_common_chains::Upgrades;
+use base_common_rpc_types_engine::{BasePayloadError, ExecutionData};
 use derive_more::{Constructor, Deref};
 use reth_payload_validator::{cancun, prague, shanghai};
 use reth_primitives_traits::{Block as _, SealedBlock, SignedTransaction};
 
 /// Execution payload validator.
 #[derive(Clone, Debug, Deref, Constructor)]
-pub struct OpExecutionPayloadValidator<ChainSpec> {
+pub struct BaseExecutionPayloadValidator<ChainSpec> {
     /// Chain spec to validate against.
     #[deref]
     inner: Arc<ChainSpec>,
 }
 
-impl<ChainSpec> OpExecutionPayloadValidator<ChainSpec>
+impl<ChainSpec> BaseExecutionPayloadValidator<ChainSpec>
 where
-    ChainSpec: BaseUpgrades,
+    ChainSpec: Upgrades,
 {
     /// Returns reference to chain spec.
     pub fn chain_spec(&self) -> &ChainSpec {
@@ -33,8 +33,8 @@ where
     /// See also [`ensure_well_formed_payload`].
     pub fn ensure_well_formed_payload<T: SignedTransaction>(
         &self,
-        payload: OpExecutionData,
-    ) -> Result<SealedBlock<Block<T>>, OpPayloadError> {
+        payload: ExecutionData,
+    ) -> Result<SealedBlock<Block<T>>, BasePayloadError> {
         ensure_well_formed_payload(self.chain_spec(), payload)
     }
 }
@@ -51,21 +51,21 @@ where
 /// The checks are done in the order that conforms with the engine-API specification.
 ///
 /// This is intended to be invoked after receiving the payload from the CLI.
-/// The additional fields, starting with [`MaybeCancunPayloadFields`](alloy_rpc_types_engine::MaybeCancunPayloadFields), are not part of the payload, but are additional fields starting in the `engine_newPayloadV3` RPC call, See also <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv3>
+/// The additional fields, starting with [`MaybeCancunPayloadFields`](alloy_rpc_types_engine::MaybeCancunPayloadFields), are not part of the payload, but are additional fields starting in the `engine_newPayloadV3` RPC call, See also <https://specs.base.org/protocol/execution#engine_newpayloadv3>
 ///
 /// If the cancun fields are provided this also validates that the versioned hashes in the block
 /// are empty as well as those passed in the sidecar. If the payload fields are not provided.
 ///
-/// Validation according to specs <https://specs.optimism.io/protocol/exec-engine.html#engine-api>.
+/// Validation according to specs <https://specs.base.org/protocol/execution#engine-api>.
 pub fn ensure_well_formed_payload<ChainSpec, T>(
     chain_spec: ChainSpec,
-    payload: OpExecutionData,
-) -> Result<SealedBlock<Block<T>>, OpPayloadError>
+    payload: ExecutionData,
+) -> Result<SealedBlock<Block<T>>, BasePayloadError>
 where
-    ChainSpec: BaseUpgrades,
+    ChainSpec: Upgrades,
     T: SignedTransaction,
 {
-    let OpExecutionData { payload, sidecar } = payload;
+    let ExecutionData { payload, sidecar } = payload;
 
     let expected_hash = payload.block_hash();
 

@@ -1,7 +1,7 @@
 [package]
 name = "base-consensus-upgrades"
 version.workspace = true
-description = "Consensus hardfork types for Base"
+description = "Consensus upgrade types for Base"
 
 edition.workspace = true
 rust-version.workspace = true
@@ -14,29 +14,21 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# Workspace
-base-protocol.workspace = true
-
 # Alloy
 alloy-eips.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
 # Base Alloy
-base-alloy-consensus.workspace = true
+base-common-consensus.workspace = true
 
 [dev-dependencies]
 revm.workspace = true
-base-revm.workspace = true
 rstest.workspace = true
+base-common-evm.workspace = true
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 
 [features]
 default = []
-std = [
-	"alloy-eips/std",
-	"alloy-primitives/std",
-	"base-alloy-consensus/std",
-	"base-protocol/std",
-]
-k256 = [ "alloy-primitives/k256", "base-alloy-consensus/k256" ]
-kzg = [ "alloy-eips/kzg", "base-alloy-consensus/kzg", "std" ]
+std = [ "alloy-eips/std", "alloy-primitives/std", "base-common-consensus/std" ]
+k256 = [ "alloy-primitives/k256", "base-common-consensus/k256" ]
+kzg = [ "alloy-eips/kzg", "base-common-consensus/kzg", "std" ]

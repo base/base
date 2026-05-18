@@ -1,20 +1,17 @@
 use std::{fmt, sync::Arc};
 
 use base_zk_client::ProveBlockRequest;
-use base_zk_db::{
-    CreateProofSession, MarkOutboxProcessed, ProofRequestRepo, ProofStatus, SessionType,
-};
+use base_zk_db::{CreateProofSession, ProofRequestRepo, ProofType, SessionType};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::backends::ProvingBackend;
+use crate::{backends::ProvingBackend, metrics};
 
 /// Individual worker that processes a single proving task
 pub struct ProverWorker {
     repo: ProofRequestRepo,
     backend: Arc<dyn ProvingBackend>,
     proof_request_id: Uuid,
-    sequence_id: i64,
     params: ProveBlockRequest,
 }
 
@@ -33,10 +30,9 @@ impl ProverWorker {
         repo: ProofRequestRepo,
         backend: Arc<dyn ProvingBackend>,
         proof_request_id: Uuid,
-        sequence_id: i64,
         params: ProveBlockRequest,
     ) -> Self {
-        Self { repo, backend, proof_request_id, sequence_id, params }
+        Self { repo, backend, proof_request_id, params }
     }
 
     /// Run the proving task
@@ -62,14 +58,6 @@ impl ProverWorker {
             return Ok(());
         }
 
-        // Mark outbox entry as processed now that we've claimed the task.
-        // This is done after atomic_claim_task succeeds to ensure we never
-        // mark an outbox entry as processed without claiming the work.
-        self.repo
-            .mark_outbox_processed(MarkOutboxProcessed { sequence_id: self.sequence_id })
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to mark outbox entry as processed: {e}"))?;
-
         info!(
             proof_request_id = %self.proof_request_id,
             backend = %self.backend.name(),
@@ -82,11 +70,19 @@ impl ProverWorker {
             "Calling backend to prove block"
         );
 
+        let pt_label = ProofType::try_from(self.params.proof_type)
+            .map_or("unknown", metrics::proof_type_label);
+
         // Call backend prove (backend handles temp dir creation and config)
         let result = self.backend.prove(&self.params).await;
 
         match result {
             Ok(prove_result) => {
+                // Record witness generation duration on success
+                if let Some(wg_ms) = prove_result.witness_gen_duration_ms {
+                    metrics::record_witness_generation_duration(pt_label, true, wg_ms);
+                }
+
                 // Success path
                 if let Some(session_id) = prove_result.session_id {
                     info!(
@@ -104,28 +100,37 @@ impl ProverWorker {
                         metadata: prove_result.metadata,
                     };
 
-                    if let Err(e) = self
-                        .repo
-                        .create_session_and_update_status(session, ProofStatus::Running)
-                        .await
-                    {
-                        error!(
-                            proof_request_id = %self.proof_request_id,
-                            backend_session_id = %session_id,
-                            backend = %self.backend.name(),
-                            error = %e,
-                            "Failed to persist session after successful prove — backend session may be orphaned"
-                        );
-                        return Err(anyhow::anyhow!(
-                            "Failed to persist session {session_id} for request {}: {e}",
-                            self.proof_request_id
-                        ));
+                    match self.repo.transition_pending_to_running(session).await {
+                        Ok(Some(db_session_id)) => {
+                            info!(
+                                proof_request_id = %self.proof_request_id,
+                                backend_session_id = %session_id,
+                                db_session_id,
+                                "Created STARK proof session and transitioned request to RUNNING"
+                            );
+                        }
+                        Ok(None) => {
+                            warn!(
+                                proof_request_id = %self.proof_request_id,
+                                backend_session_id = %session_id,
+                                "Could not transition to RUNNING — request no longer PENDING (race with stuck detector?)"
+                            );
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            error!(
+                                proof_request_id = %self.proof_request_id,
+                                backend_session_id = %session_id,
+                                backend = %self.backend.name(),
+                                error = %e,
+                                "Failed to persist session after successful prove — backend session may be orphaned"
+                            );
+                            return Err(anyhow::anyhow!(
+                                "Failed to persist session {session_id} for request {}: {e}",
+                                self.proof_request_id
+                            ));
+                        }
                     }
-
-                    info!(
-                        proof_request_id = %self.proof_request_id,
-                        "Atomically created STARK proof session and updated status to RUNNING"
-                    );
                 } else {
                     info!(
                         proof_request_id = %self.proof_request_id,
@@ -145,19 +150,27 @@ impl ProverWorker {
                     "Backend proving failed"
                 );
 
-                // Update database status to failed
-                self.repo
-                    .update_status(
-                        self.proof_request_id,
-                        ProofStatus::Failed,
-                        Some(error_msg.clone()),
-                    )
+                let was_failed = self
+                    .repo
+                    .transition_pending_to_failed(self.proof_request_id, error_msg.clone())
                     .await?;
 
-                info!(
-                    proof_request_id = %self.proof_request_id,
-                    "Updated proof request as FAILED"
-                );
+                if was_failed {
+                    // Emit proof_requests_completed for early failures (PENDING → FAILED).
+                    // These are never seen by the StatusPoller (which only queries RUNNING),
+                    // so we emit directly here.
+                    metrics::inc_proof_requests_completed("failed", pt_label);
+
+                    info!(
+                        proof_request_id = %self.proof_request_id,
+                        "Updated proof request as FAILED"
+                    );
+                } else {
+                    warn!(
+                        proof_request_id = %self.proof_request_id,
+                        "Could not transition to FAILED — request no longer PENDING"
+                    );
+                }
 
                 Err(anyhow::anyhow!(error_msg))
             }

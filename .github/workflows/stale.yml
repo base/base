@@ -8,57 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  label-maintainer-issues:
-    runs-on: ubuntu-latest
-    permissions:
-      issues: write
-      pull-requests: write
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
-        with:
-          egress-policy: audit
-
-      - name: Exempt core maintainer issues from stale
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          MAINTAINERS="refcell danyalprout cody-wang-cb haardikk21 meyer9 wlawt niran mw2000 kmchicoine jackchuma BrianBland 0x00101010 jowparks leopoldjoy"
-          for maintainer in $MAINTAINERS; do
-            gh issue list \
-              --repo "$REPO" \
-              --author "$maintainer" \
-              --state open \
-              --json number \
-              --jq '.[].number' | while read -r issue_num; do
-                gh issue edit "$issue_num" \
-                  --repo "$REPO" \
-                  --add-label "M-prevent-stale" 2>/dev/null || true
-            done
-          done
-
-      - name: Exempt core maintainer PRs from stale
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          MAINTAINERS="refcell danyalprout cody-wang-cb haardikk21 meyer9 wlawt niran mw2000 kmchicoine jackchuma BrianBland 0x00101010 jowparks leopoldjoy"
-          for maintainer in $MAINTAINERS; do
-            gh pr list \
-              --repo "$REPO" \
-              --author "$maintainer" \
-              --state open \
-              --json number \
-              --jq '.[].number' | while read -r pr_num; do
-                gh pr edit "$pr_num" \
-                  --repo "$REPO" \
-                  --add-label "M-prevent-stale" 2>/dev/null || true
-            done
-          done
-
   stale:
-    needs: label-maintainer-issues
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -72,13 +22,14 @@ jobs:
 
       - uses: actions/stale@5f858e3efba33a5ca4407a664cc011ad407f2008 # v10.1.0
         with:
-          days-before-stale: 2
+          days-before-stale: 7
+          days-before-pr-stale: 21
           days-before-close: 1
           stale-issue-message: 'This issue has been automatically marked as stale because it has not had recent activity. It will be closed if no further activity occurs. Thank you for your contributions.'
           stale-pr-message: 'This pull request has been automatically marked as stale because it has not had recent activity. It will be closed if no further activity occurs. Thank you for your contributions.'
-          close-issue-message: 'This issue was closed because it has been inactive for 5 days since being marked as stale.'
-          close-pr-message: 'This pull request was closed because it has been inactive for 5 days since being marked as stale.'
-          stale-issue-label: F-stale
-          stale-pr-label: F-stale
-          exempt-issue-labels: 'M-keep-open,M-prevent-stale'
-          exempt-pr-labels: 'M-keep-open,M-prevent-stale'
+          close-issue-message: 'This issue was closed because it has been inactive for 1 day since being marked as stale.'
+          close-pr-message: 'This pull request was closed because it has been inactive for 1 day since being marked as stale.'
+          stale-issue-label: stale
+          stale-pr-label: stale
+          exempt-issue-labels: 'active'
+          exempt-pr-labels: 'active'

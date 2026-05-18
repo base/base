@@ -5,12 +5,12 @@ use alloc::boxed::Box;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_consensus_genesis::SystemConfig;
+use base_common_genesis::SystemConfig;
 use base_protocol::BlockInfo;
 
 use crate::{
-    DataAvailabilityProvider, FrameQueueProvider, OriginAdvancer, OriginProvider, PipelineError,
-    PipelineErrorKind, PipelineResult, StageReset,
+    DataAvailabilityProvider, FrameQueueProvider, Metrics, OriginAdvancer, OriginProvider,
+    PipelineError, PipelineErrorKind, PipelineResult, StageReset,
 };
 
 /// Provides L1 blocks for the [`L1Retrieval`] stage.
@@ -26,7 +26,7 @@ pub trait L1RetrievalProvider {
     /// [`PollingTraversal`]: crate::PollingTraversal
     async fn next_l1_block(&mut self) -> PipelineResult<Option<BlockInfo>>;
 
-    /// Returns the batcher [`Address`] from the [`base_consensus_genesis::SystemConfig`].
+    /// Returns the batcher [`Address`] from the [`base_common_genesis::SystemConfig`].
     fn batcher_addr(&self) -> Address;
 }
 
@@ -95,7 +95,11 @@ where
         // SAFETY: The above check ensures that `next` is not None.
         let next = self.next.as_ref().expect("infallible");
 
-        match self.provider.next(next, self.prev.batcher_addr()).await {
+        let provider_result =
+            base_metrics::time!(Metrics::pipeline_l1_retrieval_provider_next_duration_seconds(), {
+                self.provider.next(next, self.prev.batcher_addr()).await
+            });
+        match provider_result {
             Ok(data) => Ok(data),
             Err(e) => {
                 if let PipelineErrorKind::Temporary(PipelineError::Eof) = e {
@@ -145,10 +149,6 @@ where
     async fn flush_channel(&mut self) -> PipelineResult<()> {
         self.prev.flush_channel().await
     }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.prev.provide_block(block).await
-    }
 }
 
 #[cfg(test)]
@@ -157,7 +157,7 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::Bytes;
-    use base_consensus_genesis::SystemConfig;
+    use base_common_genesis::SystemConfig;
 
     use super::*;
     use crate::test_utils::{TestDAP, TraversalTestHelper};

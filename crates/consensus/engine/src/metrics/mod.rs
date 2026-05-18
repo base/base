@@ -8,16 +8,35 @@ base_metrics::define_metrics! {
     #[describe("Blockchain head labels")]
     #[label(label)]
     block_labels: gauge,
+    #[describe("Seconds behind wall clock for each blockchain head ref")]
+    #[label(label)]
+    block_refs_latency: gauge,
     #[describe("Engine tasks successfully executed")]
     #[label(
         name = "task",
-        default = ["insert", "consolidate", "build", "finalize", "seal", "get-payload"]
+        default = [
+            "insert",
+            "consolidate",
+            "delegated-forkchoice",
+            "build",
+            "finalize",
+            "seal",
+            "get-payload"
+        ]
     )]
     engine_task_count: counter,
     #[describe("Engine tasks failed")]
     #[label(
         name = "task",
-        default = ["insert", "consolidate", "build", "finalize", "seal", "get-payload"]
+        default = [
+            "insert",
+            "consolidate",
+            "delegated-forkchoice",
+            "build",
+            "finalize",
+            "seal",
+            "get-payload"
+        ]
     )]
     #[label(name = "severity", default = ["temporary", "critical", "reset", "flush"])]
     engine_task_failure: counter,
@@ -28,11 +47,41 @@ base_metrics::define_metrics! {
     engine_reset_count: counter,
     #[describe("Payloads dropped because unsafe head changed between build and seal")]
     sequencer_unsafe_head_changed_total: counter,
+    #[describe("Total duration of the finalize task in seconds")]
+    engine_finalize_duration_seconds: histogram,
+    #[describe("Number of tasks currently pending in the engine task queue")]
+    engine_task_queue_depth: gauge,
+    #[describe(
+        "Per-task wall-clock duration including CL-side retry/yield overhead (broader than engine_method_request_duration which only covers the reth round-trip)"
+    )]
+    #[label(
+        name = "task",
+        default = [
+            "insert",
+            "consolidate",
+            "delegated-forkchoice",
+            "build",
+            "finalize",
+            "seal",
+            "get-payload"
+        ]
+    )]
+    engine_task_duration: histogram,
+    #[describe(
+        "Wall-clock duration of one EngineProcessor loop iteration: drain + recv wait + request handling. Upper bound on per-request wait time in the EngineActor->EngineProcessor mpsc channel — a request arriving anywhere in the previous iteration waits at most this long before recv picks it up."
+    )]
+    engine_processor_iteration_duration: histogram,
+    #[describe("Wall-clock duration of EngineProcessor task queue draining before receiving a new request")]
+    engine_processor_drain_duration_seconds: histogram,
+    #[describe("Wall-clock duration the EngineProcessor waits for a new processing request")]
+    engine_processor_recv_wait_duration_seconds: histogram,
 }
 
 impl Metrics {
     /// Unsafe block label.
     pub const UNSAFE_BLOCK_LABEL: &str = "unsafe";
+    /// Local-safe block label.
+    pub const LOCAL_SAFE_BLOCK_LABEL: &str = "local-safe";
     /// Safe block label.
     pub const SAFE_BLOCK_LABEL: &str = "safe";
     /// Finalized block label.
@@ -42,6 +91,8 @@ impl Metrics {
     pub const INSERT_TASK_LABEL: &str = "insert";
     /// Consolidate task label.
     pub const CONSOLIDATE_TASK_LABEL: &str = "consolidate";
+    /// Delegated forkchoice task label.
+    pub const DELEGATED_FORKCHOICE_TASK_LABEL: &str = "delegated-forkchoice";
     /// Forkchoice task label.
     pub const FORKCHOICE_TASK_LABEL: &str = "forkchoice-update";
     /// Build task label.

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use base_common_genesis::RollupConfig;
 use base_consensus_derive::test_utils::TestAttributesBuilder;
-use base_consensus_genesis::RollupConfig;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -15,7 +15,7 @@ use crate::{
 };
 
 // Returns a test SequencerActor with mocks that can be used or overridden.
-pub(crate) fn test_actor() -> SequencerActor<
+pub(super) fn test_actor() -> SequencerActor<
     TestAttributesBuilder,
     MockConductor,
     MockOriginSelector,
@@ -46,6 +46,5 @@ pub(crate) fn test_actor() -> SequencerActor<
         unsafe_payload_gossip_client: MockUnsafePayloadGossipClient::new(),
         sealer: None,
         pending_stop: None,
-        next_build_parent: None,
     }
 }

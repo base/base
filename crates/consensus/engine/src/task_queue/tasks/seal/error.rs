@@ -1,7 +1,7 @@
 //! Contains error types for the [`crate::SynchronizeTask`].
 
 use alloy_transport::{RpcError, TransportErrorKind};
-use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::FromBlockError;
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -30,15 +30,15 @@ pub enum SealTaskError {
     /// be flushed post-holocene.
     #[error("Invalid payload, must flush post-holocene")]
     HoloceneInvalidFlush,
-    /// Failed to convert a [`OpExecutionPayload`] to a [`L2BlockInfo`].
+    /// Failed to convert a [`BaseExecutionPayload`] to a [`L2BlockInfo`].
     ///
-    /// [`OpExecutionPayload`]: base_alloy_rpc_types_engine::OpExecutionPayload
+    /// [`BaseExecutionPayload`]: base_common_rpc_types_engine::BaseExecutionPayload
     /// [`L2BlockInfo`]: base_protocol::L2BlockInfo
     #[error(transparent)]
     FromBlock(#[from] FromBlockError),
     /// Error sending the built payload envelope.
     #[error(transparent)]
-    MpscSend(#[from] Box<mpsc::error::SendError<Result<OpExecutionPayloadEnvelope, Self>>>),
+    MpscSend(#[from] Box<mpsc::error::SendError<Result<BaseExecutionPayloadEnvelope, Self>>>),
     /// The clock went backwards.
     #[error("The clock went backwards")]
     ClockWentBackwards,
@@ -50,6 +50,10 @@ pub enum SealTaskError {
     /// this should not happen and is a critical error.
     #[error("Unsafe head changed between build and seal")]
     UnsafeHeadChangedSinceBuild,
+    /// The execution layer returned a payload version that does not match the requested
+    /// get-payload method.
+    #[error("Unexpected payload version from get_payload: {0}")]
+    UnexpectedPayloadVersion(String),
 }
 
 impl SealTaskError {
@@ -71,13 +75,14 @@ impl SealTaskError {
                 }
                 InsertTaskError::FromBlockError(_)
                 | InsertTaskError::L2BlockInfoConstruction(_) => true,
-                InsertTaskError::InsertFailed(_) | InsertTaskError::UnexpectedPayloadStatus(_) => {
-                    false
-                }
+                InsertTaskError::InsertFailed(_)
+                | InsertTaskError::UnexpectedPayloadStatus(_)
+                | InsertTaskError::ForkchoiceUpdateDidNotAdvance => false,
             },
             Self::GetPayloadFailed(_)
             | Self::HoloceneInvalidFlush
-            | Self::UnsafeHeadChangedSinceBuild => false,
+            | Self::UnsafeHeadChangedSinceBuild
+            | Self::UnexpectedPayloadVersion(_) => false,
             Self::DepositOnlyPayloadFailed
             | Self::DepositOnlyPayloadReattemptFailed
             | Self::FromBlock(_)
@@ -91,7 +96,9 @@ impl EngineTaskError for SealTaskError {
     fn severity(&self) -> EngineTaskErrorSeverity {
         match self {
             Self::PayloadInsertionFailed(inner) => inner.severity(),
-            Self::GetPayloadFailed(_) => EngineTaskErrorSeverity::Temporary,
+            Self::GetPayloadFailed(_) | Self::UnexpectedPayloadVersion(_) => {
+                EngineTaskErrorSeverity::Temporary
+            }
             Self::HoloceneInvalidFlush => EngineTaskErrorSeverity::Flush,
             Self::UnsafeHeadChangedSinceBuild => EngineTaskErrorSeverity::Reset,
             Self::DepositOnlyPayloadReattemptFailed
@@ -118,6 +125,10 @@ mod tests {
 
     #[rstest]
     #[case::get_payload_failed(SealTaskError::GetPayloadFailed(rpc_error()), false)]
+    #[case::unexpected_payload_version(
+        SealTaskError::UnexpectedPayloadVersion("V3".to_string()),
+        false
+    )]
     #[case::holocene_invalid_flush(SealTaskError::HoloceneInvalidFlush, false)]
     #[case::unsafe_head_changed(SealTaskError::UnsafeHeadChangedSinceBuild, false)]
     #[case::deposit_only_failed(SealTaskError::DepositOnlyPayloadFailed, true)]

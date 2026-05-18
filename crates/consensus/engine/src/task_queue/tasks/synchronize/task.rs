@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_rpc_types_engine::{INVALID_FORK_CHOICE_STATE_ERROR, PayloadStatusEnum};
 use async_trait::async_trait;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use derive_more::Constructor;
 use tokio::time::Instant;
 
@@ -29,13 +29,12 @@ use crate::{
 /// ## Automatic Integration
 ///
 /// Unlike the legacy `ForkchoiceTask`, forkchoice updates during block building are now
-/// explicitly handled within [`BuildTask`], eliminating the need for explicit
+/// explicitly handled within direct build processing, eliminating the need for explicit
 /// forkchoice management in most user scenarios.
 ///
 /// [`InsertTask`]: crate::InsertTask
 /// [`ConsolidateTask`]: crate::ConsolidateTask  
 /// [`FinalizeTask`]: crate::FinalizeTask
-/// [`BuildTask`]: crate::BuildTask
 #[derive(Debug, Clone, Constructor)]
 pub struct SynchronizeTask<EngineClient_: EngineClient> {
     /// The engine client.

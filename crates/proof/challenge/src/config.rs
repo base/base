@@ -74,7 +74,7 @@ pub enum ConfigError {
     Metrics(&'static str),
     /// Invalid signing configuration.
     #[error("invalid signing config: {0}")]
-    Signer(#[from] base_tx_manager::ConfigError),
+    Signer(base_tx_manager::ConfigError),
     /// Invalid transaction manager configuration.
     #[error("invalid tx manager config: {0}")]
     TxManager(base_tx_manager::ConfigError),
@@ -89,6 +89,8 @@ pub struct ChallengerConfig {
     pub l2_eth_rpc: Validated<Url>,
     /// Address of the `DisputeGameFactory` contract on L1.
     pub dispute_game_factory_addr: Address,
+    /// Address of the `AnchorStateRegistry` contract on L1.
+    pub anchor_state_registry_addr: Address,
     /// Polling interval for new dispute games.
     pub poll_interval: Duration,
     /// URL of the ZK RPC endpoint.
@@ -97,6 +99,8 @@ pub struct ChallengerConfig {
     pub zk_connect_timeout: Duration,
     /// Timeout for individual gRPC requests to the ZK proof service.
     pub zk_request_timeout: Duration,
+    /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
+    pub max_proof_duration: Duration,
     /// URL of the TEE enclave RPC endpoint (optional).
     pub tee_rpc_url: Option<Validated<Url>>,
     /// Timeout for individual TEE proof requests (only `Some` when TEE is enabled).
@@ -105,8 +109,13 @@ pub struct ChallengerConfig {
     pub signing: SignerConfig,
     /// Transaction manager configuration (fee limits, confirmations, timeouts).
     pub tx_manager: TxManagerConfig,
-    /// Number of past games to scan on startup.
-    pub lookback_games: u64,
+    /// Number of recent factory games scanned by bond discovery.
+    pub bond_discovery_lookback_games: u64,
+    /// How often a full rescan of the bond lookback window is performed.
+    pub bond_discovery_interval: Duration,
+    /// Maximum time to keep a completed bond game tracked while waiting for
+    /// its anchor update to complete.
+    pub anchor_update_retention: Duration,
     /// Addresses to claim bonds on behalf of.
     pub bond_claim_addresses: Vec<Address>,
     /// Health server socket address.
@@ -166,9 +175,18 @@ impl ChallengerConfig {
         let tee_rpc_url =
             cli.challenger.tee_rpc_url.map(|url| validate_url(url, "tee-rpc-url")).transpose()?;
 
+        if cli.challenger.anchor_state_registry_addr == Address::ZERO {
+            return Err(ConfigError::OutOfRange {
+                field: "anchor-state-registry-addr",
+                constraint: "non-zero",
+                value: "0x0000000000000000000000000000000000000000",
+            });
+        }
+
         require_nonzero_duration(cli.challenger.poll_interval, "poll-interval")?;
         require_nonzero_duration(cli.challenger.zk_connect_timeout, "zk-connect-timeout")?;
         require_nonzero_duration(cli.challenger.zk_request_timeout, "zk-request-timeout")?;
+        require_nonzero_duration(cli.challenger.max_proof_duration, "max-proof-duration")?;
 
         let tee_request_timeout = if tee_rpc_url.is_some() {
             require_nonzero_duration(cli.challenger.tee_request_timeout, "tee-request-timeout")?;
@@ -177,7 +195,18 @@ impl ChallengerConfig {
             None
         };
 
-        require_nonzero(cli.challenger.lookback_games, "lookback-games")?;
+        require_nonzero(
+            cli.challenger.bond_discovery_lookback_games,
+            "bond-discovery-lookback-games",
+        )?;
+        require_nonzero_duration(
+            cli.challenger.bond_discovery_interval,
+            "bond-discovery-interval",
+        )?;
+        require_nonzero_duration(
+            cli.challenger.anchor_update_retention,
+            "anchor-update-retention",
+        )?;
 
         // Health server is always started, so the port must be valid.
         require_nonzero(cli.health.port.into(), "health.port")?;
@@ -188,7 +217,7 @@ impl ChallengerConfig {
             ));
         }
 
-        let signing = SignerConfig::try_from(cli.challenger.signer)?;
+        let signing = SignerConfig::try_from(cli.challenger.signer).map_err(ConfigError::Signer)?;
 
         let tx_manager =
             TxManagerConfig::try_from(cli.challenger.tx_manager).map_err(ConfigError::TxManager)?;
@@ -199,15 +228,19 @@ impl ChallengerConfig {
             l1_eth_rpc,
             l2_eth_rpc,
             dispute_game_factory_addr: cli.challenger.dispute_game_factory_addr,
+            anchor_state_registry_addr: cli.challenger.anchor_state_registry_addr,
             poll_interval: cli.challenger.poll_interval,
             zk_rpc_url,
             zk_connect_timeout: cli.challenger.zk_connect_timeout,
             zk_request_timeout: cli.challenger.zk_request_timeout,
+            max_proof_duration: cli.challenger.max_proof_duration,
             tee_rpc_url,
             tee_request_timeout,
             signing,
             tx_manager,
-            lookback_games: cli.challenger.lookback_games,
+            bond_discovery_lookback_games: cli.challenger.bond_discovery_lookback_games,
+            bond_discovery_interval: cli.challenger.bond_discovery_interval,
+            anchor_update_retention: cli.challenger.anchor_update_retention,
             bond_claim_addresses: cli.challenger.bond_claim_addresses,
             health_addr,
             log: LogConfig::from(cli.logging),
@@ -238,6 +271,7 @@ mod tests {
             ("--l1-eth-rpc", "http://localhost:8545"),
             ("--l2-eth-rpc", "http://localhost:9545"),
             ("--dispute-game-factory-addr", "0x1234567890123456789012345678901234567890"),
+            ("--anchor-state-registry-addr", "0x2234567890123456789012345678901234567890"),
             ("--zk-rpc-url", "http://localhost:5000"),
         ];
 
@@ -271,7 +305,13 @@ mod tests {
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.zk_connect_timeout, Duration::from_secs(10));
         assert_eq!(config.zk_request_timeout, Duration::from_secs(30));
-        assert_eq!(config.lookback_games, 1000);
+        assert_eq!(
+            config.anchor_state_registry_addr,
+            "0x2234567890123456789012345678901234567890".parse::<Address>().unwrap()
+        );
+        assert_eq!(config.bond_discovery_lookback_games, 1000);
+        assert_eq!(config.bond_discovery_interval, Duration::from_secs(300));
+        assert_eq!(config.anchor_update_retention, Duration::from_secs(24 * 60 * 60));
         assert_eq!(config.health_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
         assert!(matches!(config.signing, SignerConfig::Remote { .. }));
         assert_eq!(config.tx_manager.num_confirmations, 10);
@@ -279,11 +319,26 @@ mod tests {
         assert_eq!(config.tx_manager.fee_limit_multiplier, 5);
     }
 
+    #[test]
+    fn test_bond_discovery_lookback_games_configurable() {
+        let all_args = [&SIGNER_ARGS[..], &["--bond-discovery-lookback-games", "2048"]].concat();
+        let cli = cli_from_args(&all_args);
+        let config = ChallengerConfig::from_cli(cli).unwrap();
+        assert_eq!(config.bond_discovery_lookback_games, 2048);
+    }
+
     #[rstest]
     #[case::poll_interval("--poll-interval", "0s", "poll-interval")]
     #[case::zk_connect_timeout("--zk-connect-timeout", "0s", "zk-connect-timeout")]
     #[case::zk_request_timeout("--zk-request-timeout", "0s", "zk-request-timeout")]
-    #[case::lookback_games("--lookback-games", "0", "lookback-games")]
+    #[case::bond_discovery_lookback_games(
+        "--bond-discovery-lookback-games",
+        "0",
+        "bond-discovery-lookback-games"
+    )]
+    #[case::bond_discovery_interval("--bond-discovery-interval", "0s", "bond-discovery-interval")]
+    #[case::anchor_update_retention("--anchor-update-retention", "0s", "anchor-update-retention")]
+    #[case::max_proof_duration("--max-proof-duration", "0s", "max-proof-duration")]
     fn test_zero_value_rejected(#[case] flag: &str, #[case] value: &str, #[case] field: &str) {
         let all_args = [&LOCAL_SIGNER_ARGS[..], &[flag, value]].concat();
         let cli = cli_from_args(&all_args);
@@ -297,6 +352,21 @@ mod tests {
         let cli = cli_from_args(&all_args);
         let result = ChallengerConfig::from_cli(cli);
         assert!(matches!(result, Err(ConfigError::OutOfRange { field: "health.port", .. })));
+    }
+
+    #[test]
+    fn test_anchor_state_registry_zero_rejected() {
+        let all_args = [
+            &SIGNER_ARGS[..],
+            &["--anchor-state-registry-addr", "0x0000000000000000000000000000000000000000"],
+        ]
+        .concat();
+        let cli = cli_from_args(&all_args);
+        let result = ChallengerConfig::from_cli(cli);
+        assert!(matches!(
+            result,
+            Err(ConfigError::OutOfRange { field: "anchor-state-registry-addr", .. })
+        ));
     }
 
     #[rstest]
@@ -408,6 +478,8 @@ mod tests {
             "http://localhost:9545",
             "--dispute-game-factory-addr",
             "0x1234567890123456789012345678901234567890",
+            "--anchor-state-registry-addr",
+            "0x2234567890123456789012345678901234567890",
             "--zk-rpc-url",
             "http://localhost:5000",
             "--private-key",
@@ -430,6 +502,8 @@ mod tests {
             "http://localhost:9545",
             "--dispute-game-factory-addr",
             "0x1234567890123456789012345678901234567890",
+            "--anchor-state-registry-addr",
+            "0x2234567890123456789012345678901234567890",
             "--zk-rpc-url",
             "http://localhost:5000",
             "--signer-endpoint",

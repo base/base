@@ -39,11 +39,20 @@ sol! {
 
         /// Returns the implementation address for the given game type.
         function gameImpls(uint32 gameType) external view returns (address);
+
+        /// Looks up a game by its unique `(gameType, rootClaim, extraData)` tuple.
+        ///
+        /// Returns `address(0)` when no matching game exists.
+        function games(
+            uint32 gameType,
+            bytes32 rootClaim,
+            bytes calldata extraData
+        ) external view returns (address proxy, uint64 timestamp);
     }
 }
 
 /// Information about a game at a factory index.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct GameAtIndex {
     /// The game type ID.
     pub game_type: u32,
@@ -67,6 +76,16 @@ pub trait DisputeGameFactoryClient: Send + Sync {
 
     /// Returns the implementation address for the given game type.
     async fn game_impls(&self, game_type: u32) -> Result<Address, ContractError>;
+
+    /// Looks up a game by its unique `(gameType, rootClaim, extraData)` tuple.
+    ///
+    /// Returns `Address::ZERO` when no matching game exists.
+    async fn games(
+        &self,
+        game_type: u32,
+        root_claim: B256,
+        extra_data: Bytes,
+    ) -> Result<Address, ContractError>;
 }
 
 /// The 4-byte selector for `GameAlreadyExists(bytes32)`.
@@ -92,19 +111,16 @@ impl DisputeGameFactoryContractClient {
 #[async_trait]
 impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
     async fn game_count(&self) -> Result<u64, ContractError> {
-        let result =
-            self.contract.gameCount().call().await.map_err(|e| ContractError::Call {
-                context: "gameCount failed".into(),
-                source: e,
-            })?;
+        let result = contract_call!(self.contract.gameCount().call(), "gameCount failed")?;
 
-        result.try_into().map_err(|_| ContractError::Validation("gameCount overflows u64".into()))
+        result.try_into().map_err(|_| ContractError::validation("gameCount overflows u64"))
     }
 
     async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
-        let result = self.contract.gameAtIndex(U256::from(index)).call().await.map_err(|e| {
-            ContractError::Call { context: format!("gameAtIndex({index}) failed"), source: e }
-        })?;
+        let result = contract_call!(
+            self.contract.gameAtIndex(U256::from(index)).call(),
+            format!("gameAtIndex({index}) failed")
+        )?;
 
         Ok(GameAtIndex {
             game_type: result.gameType,
@@ -114,39 +130,49 @@ impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
     }
 
     async fn init_bonds(&self, game_type: u32) -> Result<U256, ContractError> {
-        let result =
-            self.contract.initBonds(game_type).call().await.map_err(|e| ContractError::Call {
-                context: "initBonds failed".into(),
-                source: e,
-            })?;
+        let result = contract_call!(self.contract.initBonds(game_type).call(), "initBonds failed")?;
 
         Ok(result)
     }
 
     async fn game_impls(&self, game_type: u32) -> Result<Address, ContractError> {
-        let result =
-            self.contract.gameImpls(game_type).call().await.map_err(|e| ContractError::Call {
-                context: "gameImpls failed".into(),
-                source: e,
-            })?;
+        let result = contract_call!(self.contract.gameImpls(game_type).call(), "gameImpls failed")?;
 
         Ok(result)
+    }
+
+    async fn games(
+        &self,
+        game_type: u32,
+        root_claim: B256,
+        extra_data: Bytes,
+    ) -> Result<Address, ContractError> {
+        let result = contract_call!(
+            self.contract.games(game_type, root_claim, extra_data).call(),
+            "games lookup failed"
+        )?;
+
+        Ok(result.proxy)
     }
 }
 
 /// Encodes the `extraData` for `DisputeGameFactory.createWithInitData()`.
 ///
-/// Format: `l2BlockNumber(32) + parentIndex(4) + intermediateRoots(32 * N)`.
+/// Format: `l2BlockNumber(32) + parentAddress(20) + intermediateRoots(32 * N)`.
+///
+/// This is **packed encoding** (not ABI-encoded). The Solidity contract
+/// reads these fields at fixed byte offsets via clone-with-immutable-args
+/// (CWIA).
 pub fn encode_extra_data(
     l2_block_number: u64,
-    parent_index: u32,
+    parent_address: Address,
     intermediate_roots: &[B256],
 ) -> Bytes {
-    let mut data = vec![0u8; 36 + 32 * intermediate_roots.len()];
+    let mut data = vec![0u8; 52 + 32 * intermediate_roots.len()];
     data[..32].copy_from_slice(&U256::from(l2_block_number).to_be_bytes::<32>());
-    data[32..36].copy_from_slice(&parent_index.to_be_bytes());
+    data[32..52].copy_from_slice(parent_address.as_slice());
     for (i, root) in intermediate_roots.iter().enumerate() {
-        data[36 + i * 32..36 + (i + 1) * 32].copy_from_slice(root.as_slice());
+        data[52 + i * 32..52 + (i + 1) * 32].copy_from_slice(root.as_slice());
     }
     Bytes::from(data)
 }
@@ -173,29 +199,32 @@ mod tests {
 
     #[test]
     fn test_encode_extra_data() {
-        let data = encode_extra_data(1000, 42, &[]);
-        assert_eq!(data.len(), 36);
+        let parent = Address::repeat_byte(0x42);
+        let data = encode_extra_data(1000, parent, &[]);
+        assert_eq!(data.len(), 52);
 
         assert_eq!(&data[24..32], &1000u64.to_be_bytes());
-        assert_eq!(&data[32..36], &42u32.to_be_bytes());
+        assert_eq!(&data[32..52], parent.as_slice());
     }
 
     #[test]
     fn test_encode_extra_data_no_parent() {
-        let data = encode_extra_data(500, 0xFFFFFFFF, &[]);
-        assert_eq!(&data[32..36], &[0xFF, 0xFF, 0xFF, 0xFF]);
+        let registry = Address::repeat_byte(0xAA);
+        let data = encode_extra_data(500, registry, &[]);
+        assert_eq!(&data[32..52], registry.as_slice());
     }
 
     #[test]
     fn test_encode_extra_data_with_intermediate_roots() {
+        let parent = Address::repeat_byte(0x42);
         let roots = vec![B256::repeat_byte(0xAA), B256::repeat_byte(0xBB)];
-        let data = encode_extra_data(1000, 42, &roots);
-        assert_eq!(data.len(), 36 + 64);
+        let data = encode_extra_data(1000, parent, &roots);
+        assert_eq!(data.len(), 52 + 64);
 
         assert_eq!(&data[24..32], &1000u64.to_be_bytes());
-        assert_eq!(&data[32..36], &42u32.to_be_bytes());
-        assert_eq!(&data[36..68], roots[0].as_slice());
-        assert_eq!(&data[68..100], roots[1].as_slice());
+        assert_eq!(&data[32..52], parent.as_slice());
+        assert_eq!(&data[52..84], roots[0].as_slice());
+        assert_eq!(&data[84..116], roots[1].as_slice());
     }
 
     #[test]

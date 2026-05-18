@@ -5,12 +5,13 @@ use alloy_consensus::Header;
 use alloy_eips::{BlockNumHash, eip7840::BlobParams};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256};
-use base_alloy_consensus::{DepositSourceDomain, L1InfoDepositSource, TxDeposit};
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_consensus::{
+    DepositSourceDomain, L1InfoDepositSource, Predeploys, SystemAddresses, TxDeposit,
+};
+use base_common_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoIsthmus,
-    Predeploys, SystemAddresses,
     info::{
         L1BlockInfoBedrockBaseFields, L1BlockInfoEcotoneBaseFields as _, L1BlockInfoJovian,
         bedrock::L1BlockInfoBedrockOnlyFields as _, ecotone::L1BlockInfoEcotoneOnlyFields as _,
@@ -390,8 +391,8 @@ mod tests {
     use alloc::{string::ToString, vec::Vec};
 
     use alloy_primitives::{address, b256};
-    use base_consensus_genesis::HardForkConfig;
-    use base_consensus_registry::Sepolia;
+    use base_common_chains::Sepolia;
+    use base_common_genesis::HardForkConfig;
     use rstest::rstest;
 
     use super::*;

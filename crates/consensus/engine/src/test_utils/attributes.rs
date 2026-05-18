@@ -1,6 +1,6 @@
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, b256};
-use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 /// Builder for creating test `AttributesWithParent` instances with sensible defaults
@@ -80,7 +80,7 @@ impl TestAttributesBuilder {
 
     /// Builds the `AttributesWithParent`
     pub fn build(self) -> AttributesWithParent {
-        let attributes = OpPayloadAttributes {
+        let attributes = BasePayloadAttributes {
             payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
                 timestamp: self.timestamp,
                 prev_randao: self.prev_randao,

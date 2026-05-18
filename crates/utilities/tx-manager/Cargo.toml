@@ -24,15 +24,16 @@ alloy-eips = { workspace = true, features = ["std", "kzg"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # base
-base-alloy-signer.workspace = true
+base-metrics.workspace = true
+base-common-signer.workspace = true
+base-runtime = { workspace = true, features = ["tokio"] }
 
 # misc
 url.workspace = true
 backon.workspace = true
 thiserror.workspace = true
-tracing = { workspace = true, features = ["std"] }
-base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
+tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "time"] }
 
 [dev-dependencies]
@@ -46,6 +47,7 @@ alloy-signer.workspace = true
 alloy-json-rpc.workspace = true
 alloy-node-bindings.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
+base-runtime = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread"] }
 
 [features]

@@ -6,16 +6,17 @@
 //! [`OutputRoot`](base_protocol::OutputRoot), and compares them against the
 //! onchain claims.
 
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
 use alloy_primitives::{Address, B256};
+use base_common_consensus::Predeploys;
 use base_proof_rpc::{L2Provider, RpcError};
-use base_protocol::{OutputRoot, Predeploys};
+use base_protocol::OutputRoot;
 use futures::stream::{self, StreamExt};
 use thiserror::Error;
 use tracing::{info, warn};
 
-use crate::{ChallengerMetrics, verify_account_proof};
+use crate::{AccountProofVerifier, ChallengerMetrics};
 
 /// Errors that can occur during output root validation.
 #[derive(Debug, Error)]
@@ -132,15 +133,6 @@ struct Checkpoint {
     claimed_root: B256,
 }
 
-/// RAII guard that records the validation latency histogram on drop.
-struct RecordOnDrop(Instant);
-
-impl Drop for RecordOnDrop {
-    fn drop(&mut self) {
-        ChallengerMetrics::validation_latency_seconds().record(self.0.elapsed().as_secs_f64());
-    }
-}
-
 /// Validates output roots for candidate dispute games.
 ///
 /// Fetches L2 block headers and `L2ToL1MessagePasser` storage proofs to
@@ -210,9 +202,12 @@ impl<L2: L2Provider> OutputValidator<L2> {
         let account_result =
             self.l2_provider.get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, rpc_hash).await?;
 
-        verify_account_proof(&account_result, consensus_header.state_root).map_err(|e| {
-            ValidatorError::AccountProofFailed { block_number, reason: e.to_string() }
-        })?;
+        AccountProofVerifier::verify(
+            &account_result,
+            consensus_header.state_root,
+            Predeploys::L2_TO_L1_MESSAGE_PASSER,
+        )
+        .map_err(|e| ValidatorError::AccountProofFailed { block_number, reason: e.to_string() })?;
 
         let storage_root = account_result.storage_hash;
         let output_root =
@@ -231,7 +226,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
         game_address: Address,
         checkpoints: &[Checkpoint],
     ) -> Result<Option<(usize, B256)>, ValidatorError> {
-        let _latency = RecordOnDrop(Instant::now());
+        let _latency = base_metrics::timed!(ChallengerMetrics::validation_latency_seconds());
 
         let mut stream = stream::iter(checkpoints.iter().enumerate())
             .map(|(idx, cp)| async move { (idx, cp, self.compute_output_root(cp.block).await) })
@@ -405,7 +400,9 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::test_utils::{MockL2Provider, build_test_header_and_account};
+    use crate::test_utils::{
+        MockL2Provider, build_test_header_and_account, build_test_header_and_account_for_address,
+    };
 
     /// Creates a mock L2 provider with multiple blocks and returns a vec of
     /// expected output roots (one per block).
@@ -819,5 +816,37 @@ mod tests {
             matches!(err, ValidatorError::AccountProofFailed { block_number: 100, .. }),
             "expected AccountProofFailed, got: {err:?}"
         );
+    }
+
+    /// Regression: a valid proof for a different account must not be accepted
+    /// as the `L2ToL1MessagePasser` storage root.
+    #[tokio::test]
+    async fn test_account_proof_address_mismatch_rejected() {
+        let storage_hash = B256::repeat_byte(0xBB);
+        let substituted_address = Address::repeat_byte(0x99);
+        let (header, account) =
+            build_test_header_and_account_for_address(100, storage_hash, substituted_address);
+        let substituted_root =
+            OutputRoot::from_parts(header.state_root, storage_hash, header.hash_slow()).hash();
+
+        let mut provider = MockL2Provider::new();
+        provider.insert_block(100, header, account);
+
+        let validator = OutputValidator::new(Arc::new(provider));
+        let game_address = Address::repeat_byte(0x10);
+
+        let result = validator.validate_final_root(game_address, 100, substituted_root).await;
+
+        let err = result.expect_err("substituted account proof should be rejected");
+        match err {
+            ValidatorError::AccountProofFailed { block_number, reason } => {
+                assert_eq!(block_number, 100);
+                assert!(
+                    reason.contains("account proof address mismatch"),
+                    "expected address mismatch reason, got: {reason}"
+                );
+            }
+            other => panic!("expected AccountProofFailed, got: {other:?}"),
+        }
     }
 }

@@ -6,13 +6,22 @@
 extern crate alloc;
 
 mod config;
-pub use config::BaseChainConfig;
+pub use config::{Bootnodes, ChainConfig};
 
-mod hardfork;
-pub use hardfork::BaseUpgrade;
+mod upgrade;
+pub use upgrade::BaseUpgrade;
 
-mod hardforks;
-pub use hardforks::BaseUpgrades;
+mod upgrades;
+pub use upgrades::Upgrades;
 
 mod chain;
-pub use chain::BaseChainUpgrades;
+pub use chain::ChainUpgrades;
+
+mod macros;
+pub use macros::RollupConfigSource;
+
+mod ethereum;
+pub use ethereum::{Holesky, Hoodi, L1_CONFIGS, Mainnet, Sepolia};
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;

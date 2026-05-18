@@ -12,6 +12,7 @@
 #[allow(
     unreachable_pub,
     clippy::clone_on_ref_ptr,
+    clippy::derive_partial_eq_without_eq,
     clippy::doc_markdown,
     clippy::missing_const_for_fn
 )]
@@ -20,9 +21,16 @@ mod proto {
 }
 #[cfg(feature = "server")]
 pub use proto::prover_service_server;
+
+/// Serialized protobuf `FileDescriptorSet` for the prover service, used by `tonic-reflection`.
+#[cfg(feature = "server")]
+pub const PROVER_FILE_DESCRIPTOR_SET: &[u8] =
+    tonic::include_file_descriptor_set!("prover_descriptor");
+
 pub use proto::{
-    GetProofRequest, GetProofResponse, ProofType, ProveBlockRequest, ProveBlockResponse,
-    ReceiptType, get_proof_response::Status as ProofJobStatus,
+    GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofSummary,
+    ProofType, ProveBlockRequest, ProveBlockResponse, ReceiptType, get_proof_response,
+    get_proof_response::Status as ProofJobStatus, prover_service_client,
 };
 
 mod client;

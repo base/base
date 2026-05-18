@@ -3,12 +3,12 @@
 use std::{sync::Arc, time::Instant};
 
 use async_trait::async_trait;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
 use derive_more::Constructor;
 
 use crate::{
-    EngineClient, EngineState, EngineTaskExt, FinalizeTaskError, SynchronizeTask,
+    EngineClient, EngineState, EngineTaskExt, FinalizeTaskError, Metrics, SynchronizeTask,
     state::EngineSyncStateUpdate,
 };
 
@@ -31,6 +31,20 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
     type Error = FinalizeTaskError;
 
     async fn execute(&self, state: &mut EngineState) -> Result<(), FinalizeTaskError> {
+        // Monotonicity guard: BinaryHeap does not define ordering between same-variant tasks,
+        // so a stale FinalizeTask with a lower block number may be popped after a higher one
+        // has already been executed. Skip it to prevent finalized_head from regressing.
+        let finalized_head = state.sync_state.finalized_head().block_info.number;
+        if self.block_number < finalized_head {
+            debug!(
+                target: "engine",
+                block_number = self.block_number,
+                finalized_head,
+                "skipping stale finalize task"
+            );
+            return Ok(());
+        }
+
         // Sanity check that the block that is being finalized is at least safe.
         if state.sync_state.safe_head().block_info.number < self.block_number {
             return Err(FinalizeTaskError::BlockNotSafe);
@@ -62,6 +76,8 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
         .execute(state)
         .await?;
         let fcu_duration = fcu_start.elapsed();
+        let total_duration = block_fetch_start.elapsed();
+        Metrics::engine_finalize_duration_seconds().record(total_duration.as_secs_f64());
 
         info!(
             target: "engine",

@@ -13,12 +13,13 @@ workspace = true
 
 [dependencies]
 # base
-base-alloy-evm.workspace = true
-base-alloy-chains.workspace = true
+base-common-evm.workspace = true
+base-common-chains.workspace = true
+base-proof = { workspace = true, features = ["std"] }
 base-proof-client = { workspace = true, features = ["std"] }
 base-proof-preimage = { workspace = true, features = ["serde"] }
 base-proof-primitives = { workspace = true, features = ["serde"] }
-base-consensus-genesis = { workspace = true, features = ["serde"] }
+base-common-genesis = { workspace = true, features = ["serde"] }
 
 # alloy
 alloy-chains.workspace = true
@@ -31,17 +32,10 @@ alloy-eips = { workspace = true, features = ["serde"] }
 sha2.workspace = true
 k256 = { workspace = true, features = ["ecdsa", "arithmetic"] }
 
-# nsm / attestation
-openssl.workspace = true
-x509-cert.workspace = true
-aws-nitro-enclaves-cose.workspace = true
+# nsm
 aws-nitro-enclaves-nsm-api.workspace = true
 
 # encoding
-base64.workspace = true
-ciborium.workspace = true
-serde_bytes.workspace = true
-zip = { workspace = true, features = ["deflate"] }
 serde = { workspace = true, features = ["derive"] }
 bincode = { workspace = true, features = ["serde"] }
 
@@ -50,20 +44,19 @@ async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "io-util"] }
 
 # misc
-eyre.workspace = true
 tracing.workspace = true
 rand_08.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+eyre.workspace = true
 tokio-vsock.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
 hex.workspace = true
 serde_json.workspace = true
-base-consensus-registry.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [package.metadata.cargo-udeps.ignore]

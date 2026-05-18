@@ -6,7 +6,7 @@ use alloc::{boxed::Box, vec::Vec};
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_consensus_genesis::SystemConfig;
+use base_common_genesis::SystemConfig;
 use base_protocol::{BlockInfo, Frame};
 
 use crate::{
@@ -73,11 +73,6 @@ impl StageReset for TestNextFrameProvider {
     }
 
     async fn flush_channel(&mut self) -> PipelineResult<()> {
-        self.reset = true;
-        Ok(())
-    }
-
-    async fn provide_block(&mut self, _: BlockInfo) -> PipelineResult<()> {
         self.reset = true;
         Ok(())
     }

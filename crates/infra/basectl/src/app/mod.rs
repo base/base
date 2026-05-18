@@ -1,23 +1,27 @@
 //! Core application logic, actions, resources, and routing for basectl.
 
 mod action;
-pub(crate) use action::Action;
+pub use action::Action;
 
 mod core;
-pub(crate) use core::App;
+pub use core::App;
 
 mod resources;
-pub(crate) use resources::Resources;
+pub use resources::{ConductorState, DaState, FlashState, ProofsState, Resources, ValidatorState};
 
 mod router;
-pub(crate) use router::Router;
-pub use router::ViewId;
+pub use router::{Router, ViewId};
 
 mod runner;
-pub use runner::{run_app, run_app_with_view, run_flashblocks_json};
+pub use runner::{run_app, run_flashblocks_json, start_background_services};
 
 mod view;
-pub(crate) use view::View;
+pub use view::View;
 
 /// TUI view implementations.
 mod views;
+pub use views::{
+    ActionMenuItem, CommandCenterView, ConductorView, ConfigView, ConfirmButton, DaMonitorView,
+    FlashblocksView, HomeView, Overlay, PendingAction, ProofsView, TransactionPane, UpgradesView,
+    create_view,
+};

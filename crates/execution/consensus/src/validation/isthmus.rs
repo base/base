@@ -3,20 +3,20 @@
 use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_protocol::Predeploys;
+use base_common_consensus::Predeploys;
 use reth_storage_api::{StorageRootProvider, errors::ProviderResult};
 use reth_trie_common::HashedStorage;
 use revm::database::BundleState;
 use tracing::warn;
 
-use crate::OpConsensusError;
+use crate::BaseConsensusError;
 
 /// Verifies that `withdrawals_root` (i.e. `l2tol1-msg-passer` storage root since Isthmus) field is
 /// set in block header.
 pub fn ensure_withdrawals_storage_root_is_some<H: BlockHeader>(
     header: H,
-) -> Result<(), OpConsensusError> {
-    header.withdrawals_root().ok_or(OpConsensusError::L2WithdrawalsRootMissing)?;
+) -> Result<(), BaseConsensusError> {
+    header.withdrawals_root().ok_or(BaseConsensusError::L2WithdrawalsRootMissing)?;
 
     Ok(())
 }
@@ -61,21 +61,21 @@ pub fn withdrawals_root_prehashed<DB: StorageRootProvider>(
 ///
 /// Takes state updates resulting from execution of block.
 ///
-/// See <https://specs.optimism.io/protocol/isthmus/exec-engine.html#l2tol1messagepasser-storage-root-in-header>.
+/// See <https://specs.base.org/upgrades/isthmus/exec-engine#l2tol1messagepasser-storage-root-in-header>.
 pub fn verify_withdrawals_root<DB, H>(
     state_updates: &BundleState,
     state: DB,
     header: H,
-) -> Result<(), OpConsensusError>
+) -> Result<(), BaseConsensusError>
 where
     DB: StorageRootProvider,
     H: BlockHeader,
 {
     let header_storage_root =
-        header.withdrawals_root().ok_or(OpConsensusError::L2WithdrawalsRootMissing)?;
+        header.withdrawals_root().ok_or(BaseConsensusError::L2WithdrawalsRootMissing)?;
 
     let storage_root = withdrawals_root(state_updates, state)
-        .map_err(OpConsensusError::L2WithdrawalsRootCalculationFail)?;
+        .map_err(BaseConsensusError::L2WithdrawalsRootCalculationFail)?;
 
     if storage_root == EMPTY_ROOT_HASH {
         // if there was no MessagePasser contract storage, something is wrong
@@ -84,7 +84,7 @@ where
     }
 
     if header_storage_root != storage_root {
-        return Err(OpConsensusError::L2WithdrawalsRootMismatch {
+        return Err(BaseConsensusError::L2WithdrawalsRootMismatch {
             header: header_storage_root,
             exec_res: storage_root,
         });
@@ -99,24 +99,24 @@ where
 /// Takes pre-hashed storage updates of `L2ToL1MessagePasser.sol` predeploy, resulting from
 /// execution of block, if any. Otherwise takes empty [`HashedStorage::default`].
 ///
-/// See <https://specs.optimism.io/protocol/isthmus/exec-engine.html#l2tol1messagepasser-storage-root-in-header>.
+/// See <https://specs.base.org/upgrades/isthmus/exec-engine#l2tol1messagepasser-storage-root-in-header>.
 pub fn verify_withdrawals_root_prehashed<DB, H>(
     hashed_storage_updates: HashedStorage,
     state: DB,
     header: H,
-) -> Result<(), OpConsensusError>
+) -> Result<(), BaseConsensusError>
 where
     DB: StorageRootProvider,
     H: BlockHeader,
 {
     let header_storage_root =
-        header.withdrawals_root().ok_or(OpConsensusError::L2WithdrawalsRootMissing)?;
+        header.withdrawals_root().ok_or(BaseConsensusError::L2WithdrawalsRootMissing)?;
 
     let storage_root = withdrawals_root_prehashed(hashed_storage_updates, state)
-        .map_err(OpConsensusError::L2WithdrawalsRootCalculationFail)?;
+        .map_err(BaseConsensusError::L2WithdrawalsRootCalculationFail)?;
 
     if header_storage_root != storage_root {
-        return Err(OpConsensusError::L2WithdrawalsRootMismatch {
+        return Err(BaseConsensusError::L2WithdrawalsRootMismatch {
             header: header_storage_root,
             exec_res: storage_root,
         });
@@ -133,8 +133,8 @@ mod tests {
     use alloy_chains::Chain;
     use alloy_consensus::Header;
     use alloy_primitives::{B256, U256, keccak256};
-    use base_execution_chainspec::OpChainSpecBuilder;
-    use base_node_core::OpNode;
+    use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_node_core::BaseNode;
     use reth_db_common::init::init_genesis;
     use reth_provider::{
         StateWriter, providers::BlockchainProvider,
@@ -168,8 +168,8 @@ mod tests {
         // init test db
         // note: must be empty (default) chain spec to ensure storage is empty after init genesis,
         // otherwise can't use `storage_root_prehashed` to determine storage root later
-        let provider_factory = create_test_provider_factory_with_node_types::<OpNode>(Arc::new(
-            OpChainSpecBuilder::default().chain(Chain::dev()).genesis(Default::default()).build(),
+        let provider_factory = create_test_provider_factory_with_node_types::<BaseNode>(Arc::new(
+            BaseChainSpecBuilder::default().chain(Chain::dev()).genesis(Default::default()).build(),
         ));
         let _ = init_genesis(&provider_factory).unwrap();
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-[Predeployed smart contracts](../../../reference/glossary.md#predeployed-contract-predeploy) exist on Optimism
+[Predeployed smart contracts](../../../reference/glossary.md#predeployed-contract-predeploy) exist on Base
 at predetermined addresses in the genesis state. They are similar to precompiles but instead run
 directly in the EVM instead of running native code outside of the EVM.
 
@@ -107,7 +107,7 @@ permissionlessly removed from the L2 supply by calling the `burn()` function.
 Address: `0x4200000000000000000000000000000000000002`
 
 The `DeployerWhitelist` is a predeploy that was used to provide additional safety
-during the initial phases of Optimism.
+during the initial phases of the legacy rollup.
 It previously defined the accounts that are allowed to deploy contracts to the network.
 
 Arbitrary contract deployment was subsequently enabled and it is not possible to turn
@@ -141,9 +141,9 @@ This contract is deprecated and its usage should be avoided.
 
 Address: `0x4200000000000000000000000000000000000006`
 
-`WETH9` is the standard implementation of Wrapped Ether on Optimism. It is a
+`WETH9` is the standard implementation of Wrapped Ether on Base. It is a
 commonly used contract and is placed as a predeploy so that it is at a
-deterministic address across Optimism based networks.
+deterministic address across Base networks.
 
 ## L2CrossDomainMessenger
 
@@ -352,4 +352,4 @@ Ecotone network upgrade and is specified in [EIP-4788](https://eips.ethereum.org
 
 Address: `0x420000000000000000000000000000000000001B`
 
-See [Operator Fee Vault](https://specs.optimism.io/protocol/isthmus/predeploys.html#operatorfeevault) spec.
+See [Operator Fee Vault](https://specs.base.org/upgrades/isthmus/predeploys#operatorfeevault) spec.

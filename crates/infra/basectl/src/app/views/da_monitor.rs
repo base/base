@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::{
     app::{Action, Resources, View, views::TransactionPane},
-    commands::common::{
+    commands::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1_BLOCK_WINDOW, L1BlockFilter,
         L1BlocksTableParams, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S, format_duration,
         format_rate, render_da_backlog_bar, render_l1_blocks_table, target_usage_color,
@@ -40,7 +40,7 @@ enum Panel {
 
 /// View for monitoring data availability backlog and L1 blob submissions.
 #[derive(Debug)]
-pub(crate) struct DaMonitorView {
+pub struct DaMonitorView {
     selected_panel: Panel,
     l2_table_state: TableState,
     l1_table_state: TableState,
@@ -56,7 +56,7 @@ impl Default for DaMonitorView {
 
 impl DaMonitorView {
     /// Creates a new DA monitor view with default panel selection.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let mut l2_table_state = TableState::default();
         l2_table_state.select(Some(0));
         let mut l1_table_state = TableState::default();
@@ -404,7 +404,7 @@ fn render_blocks_panel(
 ) {
     use ratatui::widgets::{Cell, Row, Table};
 
-    use crate::commands::common::{
+    use crate::commands::{
         COLOR_ROW_SELECTED, block_color, format_bytes as fmt_bytes, format_duration as fmt_dur,
     };
 

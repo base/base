@@ -16,11 +16,11 @@ pub const GENESIS_GAS_LIMIT: u64 = 100_000_000;
 /// Builds a test genesis configuration programmatically.
 ///
 /// Creates a Base Sepolia-like genesis with:
-/// - All EVM and OP hardforks enabled from genesis
+/// - All EVM and inherited rollup hardforks enabled from genesis
 /// - Base EIP-1559 settings (elasticity=6, denominator=50)
 /// - Pre-funded test accounts from the `Account` enum
 pub fn build_test_genesis() -> Genesis {
-    // OP EIP-1559 base fee parameters
+    // Base EIP-1559 base fee parameters.
     const EIP1559_ELASTICITY: u64 = 6;
     const EIP1559_DENOMINATOR: u64 = 50;
 
@@ -52,7 +52,7 @@ pub fn build_test_genesis() -> Genesis {
         // Post-merge settings
         terminal_total_difficulty: Some(U256::ZERO),
         terminal_total_difficulty_passed: true,
-        // OP-specific hardforks and settings via extra_fields
+        // Rollup hardforks and settings via extra_fields
         extra_fields: [
             ("bedrockBlock", serde_json::json!(0)),
             ("regolithTime", serde_json::json!(0)),
@@ -100,14 +100,14 @@ pub fn build_test_genesis() -> Genesis {
     }
 }
 
-/// Builds a test genesis with Base V1 (Osaka) enabled at timestamp 0.
+/// Builds a test genesis with Base Azul (Osaka) enabled at timestamp 0.
 ///
 /// Extends [`build_test_genesis`] with:
 /// - `osaka_time` set to 0
-/// - Base V1 activation at timestamp 0
-pub fn build_test_genesis_v1() -> Genesis {
+/// - Base Azul activation at timestamp 0
+pub fn build_test_genesis_azul() -> Genesis {
     let mut genesis = build_test_genesis();
     genesis.config.osaka_time = Some(0);
-    genesis.config.extra_fields.insert("base".to_string(), serde_json::json!({ "v1": 0 }));
+    genesis.config.extra_fields.insert("base".to_string(), serde_json::json!({ "azul": 0 }));
     genesis
 }

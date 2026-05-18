@@ -222,6 +222,15 @@ impl Clock for Context {
             }))
             .boxed()
     }
+
+    fn wall_clock_unix_secs(&self) -> u64 {
+        // Anchor virtual time at a fixed epoch so that tests get
+        // deterministic Unix timestamps. The specific epoch value
+        // is arbitrary; 1_700_000_000 (≈ 2023-11-14) is a convenient
+        // recent timestamp.
+        const EPOCH: u64 = 1_700_000_000;
+        EPOCH + self.now().as_secs()
+    }
 }
 
 impl Spawner for Context {

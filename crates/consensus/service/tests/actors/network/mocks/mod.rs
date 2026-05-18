@@ -3,7 +3,7 @@
 use std::{str::FromStr, time::Duration};
 
 use backon::{ExponentialBuilder, Retryable};
-use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_gossip::{P2pRpcRequest, PeerDump, PeerInfo};
 use base_consensus_node::{NetworkActorError, NetworkInboundData};
 use discv5::Enr;
@@ -17,7 +17,7 @@ pub(crate) mod builder;
 
 pub(crate) struct TestNetwork {
     pub(super) inbound_data: NetworkInboundData,
-    pub(super) blocks_rx: mpsc::Receiver<OpExecutionPayloadEnvelope>,
+    pub(super) blocks_rx: mpsc::Receiver<BaseExecutionPayloadEnvelope>,
     #[allow(dead_code)]
     handle: JoinHandle<Result<(), NetworkActorError>>,
 }

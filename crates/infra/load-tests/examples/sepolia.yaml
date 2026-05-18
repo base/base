@@ -2,22 +2,36 @@
 #
 # Requires FUNDER_KEY environment variable with a funded private key
 
-rpc: https://sepolia.base.org
+transaction_submission_rpcs:
+  - "https://sepolia.base.org/"
+# Must point at an RPC that supports eth_getBlockReceipts for confirmation tracking.
+query_rpc: "https://base-sepolia-rpc.publicnode.com"
+txpool_nodes: []
+flashblocks_ws: "wss://sepolia.flashblocks.base.org/ws"
 
-sender_count: 10
-target_gps: 2100000
-duration: "30s"
-seed: 12345
+sender_count: 200
+target_gps: 60000000
+in_flight_per_sender: 128
+batch_size: 50
+batch_timeout: "10ms"
+duration: "60s"
+seed: 123456
 
 # 0.01 ETH per account (covers gas for 30s at 2.1M GPS; drained after test)
 funding_amount: "10000000000000000"
 
 transactions:
-  - weight: 70
+  - weight: 100
     type: transfer
-  - weight: 20
-    type: calldata
-    max_size: 256
-  - weight: 10
-    type: precompile
-    target: sha256
+  # - weight: 50
+  #   type: uniswap_v3
+  #   router: "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4"
+  #   token_in: "0x15948C3043A980A8d980d4D615A5E4c9514B0D64"
+  #   token_out: "0x4dc9ccF2C5A346c4032B648006B4774Ad2a021c4"
+  #   fee: 3000
+  # - weight: 50
+  #   type: aerodrome_cl
+  #   router: "0xD75e6a0C801F24ebb3125E360a5A064f6b9FEFaC"
+  #   token_in: "0x15948C3043A980A8d980d4D615A5E4c9514B0D64"
+  #   token_out: "0x4dc9ccF2C5A346c4032B648006B4774Ad2a021c4"
+  #   tick_spacing: 100

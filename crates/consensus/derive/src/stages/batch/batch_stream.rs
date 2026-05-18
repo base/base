@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{
     Batch, BatchValidity, BatchWithInclusionBlock, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch,
     SpanBatchError,
@@ -32,7 +32,7 @@ pub trait BatchStreamProvider {
 /// It slots in between the [`ChannelReader`] and [`BatchQueue`]
 /// stages, buffering span batches until they are validated.
 ///
-/// [`Holocene`]: https://specs.optimism.io/protocol/holocene/overview.html
+/// [`Holocene`]: https://specs.base.org/upgrades/holocene/overview
 /// [`ChannelReader`]: crate::stages::ChannelReader
 /// [`BatchQueue`]: crate::stages::BatchQueue
 #[derive(Debug)]
@@ -248,13 +248,6 @@ where
         self.span = None;
         Ok(())
     }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.prev.provide_block(block).await?;
-        self.buffer.clear();
-        self.span = None;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -264,15 +257,14 @@ mod tests {
     use alloy_consensus::{BlockBody, Header};
     use alloy_eips::{BlockNumHash, NumHash};
     use alloy_primitives::{FixedBytes, b256};
-    use base_alloy_consensus::BaseBlock;
-    use base_consensus_genesis::{ChainGenesis, HardForkConfig, SystemConfig};
+    use base_common_consensus::BaseBlock;
+    use base_common_genesis::{ChainGenesis, HardForkConfig, SystemConfig};
     use base_protocol::{SingleBatch, SpanBatchElement};
-    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     use super::*;
     use crate::{
         StageReset,
-        test_utils::{CollectingLayer, TestBatchStreamProvider, TestL2ChainProvider, TraceStorage},
+        test_utils::{TestBatchStreamProvider, TestL2ChainProvider},
     };
 
     #[tokio::test]
@@ -330,9 +322,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_stream_inactive() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        tracing_subscriber::Registry::default().with(layer).init();
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let data = vec![Ok(Batch::Single(SingleBatch::default()))];
         let config = Arc::new(RollupConfig {
@@ -433,9 +423,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_span_batch_extraction_error_flushes_stage() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        tracing_subscriber::Registry::default().with(layer).init();
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
         let l1_block_hash =
@@ -473,7 +461,7 @@ mod tests {
             l1_origin: BlockNumHash { number: 9, ..Default::default() },
             ..Default::default()
         };
-        let op_block = BaseBlock {
+        let base_block = BaseBlock {
             header: Header { number: 41, ..Default::default() },
             body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None },
         };
@@ -494,7 +482,7 @@ mod tests {
 
         let mut provider = TestL2ChainProvider::default();
         provider.blocks.push(l2_parent);
-        provider.op_blocks.push(op_block);
+        provider.base_blocks.push(base_block);
 
         let mut stream = BatchStream::new(prev, config, provider);
         let err = stream.next_batch(l2_safe_head, &l1_blocks).await.unwrap_err();

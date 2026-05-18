@@ -1,6 +1,8 @@
 //! Contains the [`BaseNodeRunner`], which is responsible for configuring and launching a Base node.
 
-use base_execution_payload_builder::config::OpDAConfig;
+use std::fmt;
+
+use base_execution_payload_builder::config::BaseDAConfig;
 use base_node_core::args::RollupArgs;
 use eyre::Result;
 use reth_node_builder::{Node, NodeHandle, NodeHandleFor};
@@ -13,8 +15,16 @@ use crate::{
     service::{DefaultPayloadServiceBuilder, PayloadServiceBuilder},
 };
 
-/// Wraps the Base node configuration and orchestrates builder wiring.
+type StartedCallback = Box<dyn FnOnce() -> Result<()> + Send + 'static>;
+
+/// Handle to a launched Base execution node.
 #[derive(Debug)]
+pub struct LaunchedBaseNode {
+    /// The underlying reth node handle.
+    pub handle: NodeHandleFor<BaseNode>,
+}
+
+/// Wraps the Base node configuration and orchestrates builder wiring.
 pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuilder> {
     /// Rollup-specific arguments forwarded to the Base node implementation.
     rollup_args: RollupArgs,
@@ -23,7 +33,9 @@ pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuild
     /// Payload service builder.
     service_builder: SB,
     /// Shared DA configuration for the node and metering extension.
-    da_config: Option<OpDAConfig>,
+    da_config: Option<BaseDAConfig>,
+    /// Binary-owned callbacks to run after the node has started.
+    started_callbacks: Vec<StartedCallback>,
 }
 
 impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
@@ -34,13 +46,25 @@ impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
             extensions: Vec::new(),
             service_builder: DefaultPayloadServiceBuilder,
             da_config: None,
+            started_callbacks: Vec::new(),
         }
+    }
+}
+
+impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BaseNodeRunner")
+            .field("rollup_args", &self.rollup_args)
+            .field("extensions", &self.extensions.len())
+            .field("da_config", &self.da_config)
+            .field("started_callbacks", &self.started_callbacks.len())
+            .finish()
     }
 }
 
 impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     /// Sets the shared DA configuration.
-    pub fn with_da_config(mut self, da_config: OpDAConfig) -> Self {
+    pub fn with_da_config(mut self, da_config: BaseDAConfig) -> Self {
         self.da_config = Some(da_config);
         self
     }
@@ -52,6 +76,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             extensions: self.extensions,
             service_builder: sb,
             da_config: self.da_config,
+            started_callbacks: self.started_callbacks,
         }
     }
 
@@ -60,21 +85,45 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         self.extensions.push(Box::new(T::from_config(config)));
     }
 
+    /// Registers a callback to run after the node has started.
+    pub fn add_started_callback<F>(&mut self, callback: F)
+    where
+        F: FnOnce() -> Result<()> + Send + 'static,
+    {
+        self.started_callbacks.push(Box::new(callback));
+    }
+
     /// Applies all Base-specific wiring to the supplied builder, launches the node, and waits for
     /// shutdown.
     pub async fn run(self, builder: BaseNodeBuilder) -> Result<()> {
-        let Self { rollup_args, extensions, service_builder, da_config } = self;
-        let NodeHandle { node: _node, node_exit_future } =
-            Self::launch_node(rollup_args, extensions, service_builder, da_config, builder).await?;
+        let LaunchedBaseNode { handle: NodeHandle { node: _node, node_exit_future } } =
+            self.launch(builder).await?;
         node_exit_future.await?;
         Ok(())
+    }
+
+    /// Applies all Base-specific wiring to the supplied builder and returns a launched node
+    /// handle without waiting for shutdown.
+    pub async fn launch(self, builder: BaseNodeBuilder) -> Result<LaunchedBaseNode> {
+        let Self { rollup_args, extensions, service_builder, da_config, started_callbacks } = self;
+        let handle = Self::launch_node(
+            rollup_args,
+            extensions,
+            service_builder,
+            da_config,
+            started_callbacks,
+            builder,
+        )
+        .await?;
+        Ok(LaunchedBaseNode { handle })
     }
 
     async fn launch_node(
         rollup_args: RollupArgs,
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         service_builder: SB,
-        da_config: Option<OpDAConfig>,
+        da_config: Option<BaseDAConfig>,
+        started_callbacks: Vec<StartedCallback>,
         builder: BaseNodeBuilder,
     ) -> Result<NodeHandleFor<BaseNode>> {
         info!(target: "base-runner", "starting custom Base node");
@@ -91,15 +140,11 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             .with_add_ons(base_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        extensions
+        let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
+        let hooks = started_callbacks
             .into_iter()
-            .fold(NodeHooks::new(), |b, ext| ext.apply(b))
-            .add_node_started_hook(|_| {
-                base_cli_utils::register_version_metrics!();
-                Ok(())
-            })
-            .apply_to(builder)
-            .launch()
-            .await
+            .fold(hooks, |hooks, callback| hooks.add_node_started_hook(move |_| callback()));
+
+        hooks.apply_to(builder).launch().await
     }
 }

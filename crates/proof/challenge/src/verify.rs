@@ -1,48 +1,72 @@
 //! Account proof verification utilities.
 //!
-//! Provides [`verify_account_proof`] for verifying `eth_getProof` responses
+//! Provides [`AccountProofVerifier`] for verifying `eth_getProof` responses
 //! against a state root using Merkle Patricia Trie proofs.
 
-use alloy_primitives::{B256, keccak256};
+use alloy_primitives::{Address, B256, keccak256};
+use alloy_rlp::Encodable;
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
-use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
+use alloy_trie::{
+    Nibbles, TrieAccount,
+    proof::{ProofVerificationError, verify_proof},
+};
 use thiserror::Error;
 
 /// Errors from account proof verification.
-#[derive(Debug, Clone, Eq, PartialEq, Error)]
+#[derive(Debug, Eq, PartialEq, Error)]
 pub enum AccountProofError {
+    /// The RPC response is for a different account than the caller requested.
+    #[error("account proof address mismatch: expected {expected}, got {actual}")]
+    AddressMismatch {
+        /// The address the caller expected to verify.
+        expected: Address,
+        /// The address returned in the proof response.
+        actual: Address,
+    },
+
     /// The Merkle proof does not match the expected account state.
     #[error("account proof verification failed: {0}")]
-    VerificationFailed(String),
+    VerificationFailed(#[from] ProofVerificationError),
 }
 
-/// Verifies an `eth_getProof` response against a state root.
-///
-/// Checks that the account proof is valid against the given `state_root`
-/// by RLP-encoding the account fields (nonce, balance, storage root, code
-/// hash) and verifying the Merkle Patricia Trie proof.
-///
-/// # Errors
-///
-/// Returns [`AccountProofError::VerificationFailed`] if:
-/// - The proof is invalid against the state root
-/// - The account data doesn't match the proof
-pub fn verify_account_proof(
-    response: &EIP1186AccountProofResponse,
-    state_root: B256,
-) -> Result<(), AccountProofError> {
-    let key = Nibbles::unpack(keccak256(response.address));
+/// Verifies `eth_getProof` responses against state roots.
+#[derive(Debug)]
+pub struct AccountProofVerifier;
 
-    let account = TrieAccount {
-        nonce: response.nonce,
-        balance: response.balance,
-        storage_root: response.storage_hash,
-        code_hash: response.code_hash,
-    };
+impl AccountProofVerifier {
+    /// Verifies an `eth_getProof` response against a state root.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AccountProofError::AddressMismatch`] if the response is for a
+    /// different account than `expected_address`, or
+    /// [`AccountProofError::VerificationFailed`] if the proof is invalid or the
+    /// account data doesn't match.
+    pub fn verify(
+        response: &EIP1186AccountProofResponse,
+        state_root: B256,
+        expected_address: Address,
+    ) -> Result<(), AccountProofError> {
+        if response.address != expected_address {
+            return Err(AccountProofError::AddressMismatch {
+                expected: expected_address,
+                actual: response.address,
+            });
+        }
 
-    let mut expected_value = Vec::new();
-    alloy_rlp::Encodable::encode(&account, &mut expected_value);
+        let key = Nibbles::unpack(keccak256(expected_address));
 
-    verify_proof(state_root, key, Some(expected_value), &response.account_proof)
-        .map_err(|e| AccountProofError::VerificationFailed(e.to_string()))
+        let account = TrieAccount {
+            nonce: response.nonce,
+            balance: response.balance,
+            storage_root: response.storage_hash,
+            code_hash: response.code_hash,
+        };
+
+        let mut encoded = Vec::with_capacity(account.length());
+        account.encode(&mut encoded);
+
+        verify_proof(state_root, key, Some(encoded), &response.account_proof)?;
+        Ok(())
+    }
 }

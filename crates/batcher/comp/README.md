@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use alloy_primitives::BlockHash;
 use base_comp::{ChannelOut, CompressionAlgo, VariantCompressor};
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::{Batch, ChannelId, SingleBatch};
 
 // Use the example transaction

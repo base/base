@@ -1,4 +1,4 @@
-//! Loads OP pending block for a RPC response.
+//! Loads Base pending block for a RPC response.
 
 use alloy_eips::BlockNumberOrTag;
 use reth_rpc_eth_api::{
@@ -11,13 +11,13 @@ use reth_rpc_eth_types::{
 };
 use reth_storage_api::{BlockReaderIdExt, StateProviderBox};
 
-use crate::{OpEthApi, OpEthApiError};
+use crate::{BaseEthApi, BaseEthApiError};
 
-impl<N, Rpc> LoadPendingBlock for OpEthApi<N, Rpc>
+impl<N, Rpc> LoadPendingBlock for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    OpEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError>,
+    BaseEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
     #[inline]
     fn pending_block(&self) -> &tokio::sync::Mutex<Option<PendingBlock<N::Primitives>>> {

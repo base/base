@@ -2,13 +2,13 @@
 
 use std::time::Duration;
 
-use alloy_provider::{Provider, RootProvider};
+use alloy_eips::BlockNumberOrTag;
+use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
-use base_consensus_genesis::RollupConfig;
-use serde_json::Value;
+use base_common_genesis::RollupConfig;
 use url::Url;
 
 use super::{
@@ -16,6 +16,7 @@ use super::{
     cache::MeteredCache,
     config::{DEFAULT_CACHE_SIZE, RetryConfig},
     error::{RpcError, RpcResult},
+    provider_ext::OptimismRollupProviderExt,
     traits::RollupProvider,
     types::{OutputAtBlock, SyncStatus},
 };
@@ -121,6 +122,25 @@ impl RollupClient {
     pub const fn output_cache(&self) -> &MeteredCache<u64, OutputAtBlock> {
         &self.output_cache
     }
+
+    async fn request_output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
+        let backoff = self.retry_config.to_backoff_builder();
+
+        (|| async {
+            self.provider
+                .optimism_output_at_block(BlockNumberOrTag::Number(block_number))
+                .await
+                .map_err(|e| {
+                    RpcError::InvalidResponse(format!("Failed to get output at block: {e}"))
+                })
+        })
+        .retry(backoff)
+        .when(|e| e.is_retryable())
+        .notify(|err, dur| {
+            tracing::debug!(error = %err, delay = ?dur, "Retrying RollupClient::output_at_block");
+        })
+        .await
+    }
 }
 
 #[async_trait]
@@ -131,7 +151,7 @@ impl RollupProvider for RollupClient {
         (|| async {
             let raw_response = self
                 .provider
-                .raw_request::<_, Value>("optimism_rollupConfig".into(), ())
+                .optimism_rollup_config()
                 .await
                 .map_err(|e| RpcError::InvalidResponse(format!("Failed to get rollup config: {e}")))?;
 
@@ -154,7 +174,7 @@ impl RollupProvider for RollupClient {
 
         (|| async {
             self.provider
-                .raw_request::<_, SyncStatus>("optimism_syncStatus".into(), ())
+                .optimism_sync_status()
                 .await
                 .map_err(|e| RpcError::InvalidResponse(format!("Failed to get sync status: {e}")))
         })
@@ -171,27 +191,15 @@ impl RollupProvider for RollupClient {
             return Ok(cached);
         }
 
-        let backoff = self.retry_config.to_backoff_builder();
+        let output = self.request_output_at_block(block_number).await?;
+        self.output_cache.insert(block_number, output).await;
 
-        let output = (|| async {
-            self.provider
-                .raw_request::<_, OutputAtBlock>(
-                    "optimism_outputAtBlock".into(),
-                    (format!("0x{block_number:x}"),),
-                )
-                .await
-                .map_err(|e| {
-                    RpcError::InvalidResponse(format!("Failed to get output at block: {e}"))
-                })
-        })
-        .retry(backoff)
-        .when(|e| e.is_retryable())
-        .notify(|err, dur| {
-            tracing::debug!(error = %err, delay = ?dur, "Retrying RollupClient::output_at_block");
-        })
-        .await?;
+        Ok(output)
+    }
 
-        self.output_cache.insert(block_number, output.clone()).await;
+    async fn fresh_output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
+        let output = self.request_output_at_block(block_number).await?;
+        self.output_cache.insert(block_number, output).await;
 
         Ok(output)
     }

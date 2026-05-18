@@ -1,0 +1,45 @@
+[package]
+name = "base"
+description = "Unified Base node binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-cli-utils.workspace = true
+base-common-chains.workspace = true
+base-consensus-cli.workspace = true
+base-execution-cli.workspace = true
+base-execution-chainspec.workspace = true
+
+# alloy
+alloy-chains = { workspace = true, features = ["std"] }
+
+# reth
+reth-cli-runner.workspace = true
+
+# cli
+clap = { workspace = true, features = ["env"] }
+
+# misc
+url.workspace = true
+eyre.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tokio-util.workspace = true
+serde = { workspace = true, features = ["derive"] }
+figment = { workspace = true, features = ["env", "toml"] }
+
+[dev-dependencies]
+figment = { workspace = true, features = ["test"] }

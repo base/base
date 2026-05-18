@@ -21,6 +21,7 @@ base-proof-tee-nitro-enclave.workspace = true
 base-proof-primitives = { workspace = true, features = ["std", "serde", "rpc-server"] }
 
 # crypto
+alloy-signer.workspace = true
 alloy-primitives.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 
@@ -40,7 +41,6 @@ jsonrpsee = { workspace = true, features = ["server", "macros"] }
 tokio-vsock.workspace = true
 
 [dev-dependencies]
-hex-literal.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]

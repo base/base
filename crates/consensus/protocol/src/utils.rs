@@ -2,15 +2,15 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{Transaction, Typed2718};
+use alloy_consensus::{Transaction, TxType, Typed2718};
 use alloy_primitives::{B256, U256};
 use alloy_rlp::{Buf, Header};
-use base_alloy_consensus::{BaseBlock, HoloceneExtraData, JovianExtraData, OpTxType};
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_consensus::{BaseBlock, HoloceneExtraData, JovianExtraData};
+use base_common_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
     BaseBlockConversionError, L1BlockInfoBedrockOnlyFields as _, L1BlockInfoEcotoneBaseFields as _,
-    L1BlockInfoTx, SpanBatchError, SpanDecodingError,
+    L1BlockInfoTx, SpanBatchElement, SpanBatchError, SpanDecodingError,
 };
 
 /// Converts the [`BaseBlock`] to a partial [`SystemConfig`].
@@ -97,7 +97,7 @@ fn encode_scalar(blob_base_fee_scalar: u32, base_fee_scalar: u32) -> U256 {
 }
 
 /// Reads transaction data from a reader.
-pub fn read_tx_data(r: &mut &[u8]) -> Result<(Vec<u8>, OpTxType), SpanBatchError> {
+pub fn read_tx_data(r: &mut &[u8]) -> Result<(Vec<u8>, TxType), SpanBatchError> {
     let mut tx_data = Vec::new();
     let first_byte =
         *r.first().ok_or(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))?;
@@ -117,6 +117,12 @@ pub fn read_tx_data(r: &mut &[u8]) -> Result<(Vec<u8>, OpTxType), SpanBatchError
     let tx_payload = if rlp_header.list {
         // Grab the raw RLP for the transaction data from `r`. It was unaffected since we copied it.
         let payload_length_with_header = rlp_header.payload_length + rlp_header.length();
+        if payload_length_with_header > SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS as usize {
+            return Err(SpanBatchError::TooBigSpanBatchSize);
+        }
+        if payload_length_with_header > r.len() {
+            return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
+        }
         let payload = r[0..payload_length_with_header].to_vec();
         r.advance(payload_length_with_header);
         Ok(payload)
@@ -139,10 +145,40 @@ mod tests {
 
     use alloy_eips::eip1898::BlockNumHash;
     use alloy_primitives::{U256, address, bytes, uint};
-    use base_consensus_genesis::{ChainGenesis, HardForkConfig};
+    use base_common_genesis::{ChainGenesis, HardForkConfig};
 
     use super::*;
-    use crate::test_utils::{RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX};
+    use crate::{
+        SpanBatchElement,
+        test_utils::{RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX},
+    };
+
+    #[test]
+    fn test_read_tx_data_truncated_payload() {
+        // An RLP list header claiming 3 bytes of payload, but the buffer only contains 3 bytes
+        // total (header + 2), so the slice would be out-of-bounds without the length guard.
+        let mut buf: &[u8] = &[0xc3, 0x01, 0x02];
+        let err = read_tx_data(&mut buf).unwrap_err();
+        assert_eq!(err, SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
+    }
+
+    #[test]
+    fn test_read_tx_data_exceeds_max_span_batch_elements() {
+        // alloy_rlp's Header::decode validates that the buffer contains at least payload_length
+        // bytes before returning Ok, so the buffer must be fully sized for Header::decode to
+        // succeed and then our TooBigSpanBatchSize check fires.
+        // payload_length = MAX_SPAN_BATCH_ELEMENTS = 10_000_000 (0x98_96_80, 3-byte encoding).
+        // Total buffer: 4-byte header + 10_000_000 payload bytes = 10_000_004 bytes.
+        let payload_len = SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS as usize;
+        let mut buf = vec![0u8; 4 + payload_len];
+        buf[0] = 0xfa; // 0xf7 + 3: long list, 3-byte length field follows
+        buf[1] = (payload_len >> 16) as u8;
+        buf[2] = (payload_len >> 8) as u8;
+        buf[3] = payload_len as u8;
+        let mut buf: &[u8] = &buf;
+        let err = read_tx_data(&mut buf).unwrap_err();
+        assert_eq!(err, SpanBatchError::TooBigSpanBatchSize);
+    }
 
     #[test]
     fn test_to_system_config_invalid_genesis_hash() {
@@ -212,7 +248,7 @@ mod tests {
         let block = BaseBlock {
             header: alloy_consensus::Header { number: 1, ..Default::default() },
             body: alloy_consensus::BlockBody {
-                transactions: vec![base_alloy_consensus::OpTxEnvelope::Legacy(
+                transactions: vec![base_common_consensus::BaseTxEnvelope::Legacy(
                     alloy_consensus::Signed::new_unchecked(
                         alloy_consensus::TxLegacy {
                             chain_id: Some(1),
@@ -247,8 +283,8 @@ mod tests {
         let block = BaseBlock {
             header: alloy_consensus::Header { number: 1, ..Default::default() },
             body: alloy_consensus::BlockBody {
-                transactions: vec![base_alloy_consensus::OpTxEnvelope::Deposit(
-                    alloy_primitives::Sealed::new(base_alloy_consensus::TxDeposit {
+                transactions: vec![base_common_consensus::BaseTxEnvelope::Deposit(
+                    alloy_primitives::Sealed::new(base_common_consensus::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_BEDROCK_INFO_TX),
                         ..Default::default()
                     }),
@@ -292,8 +328,8 @@ mod tests {
                 ..Default::default()
             },
             body: alloy_consensus::BlockBody {
-                transactions: vec![base_alloy_consensus::OpTxEnvelope::Deposit(
-                    alloy_primitives::Sealed::new(base_alloy_consensus::TxDeposit {
+                transactions: vec![base_common_consensus::BaseTxEnvelope::Deposit(
+                    alloy_primitives::Sealed::new(base_common_consensus::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_ECOTONE_INFO_TX),
                         ..Default::default()
                     }),
@@ -341,8 +377,8 @@ mod tests {
                 ..Default::default()
             },
             body: alloy_consensus::BlockBody {
-                transactions: vec![base_alloy_consensus::OpTxEnvelope::Deposit(
-                    alloy_primitives::Sealed::new(base_alloy_consensus::TxDeposit {
+                transactions: vec![base_common_consensus::BaseTxEnvelope::Deposit(
+                    alloy_primitives::Sealed::new(base_common_consensus::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_ISTHMUS_INFO_TX),
                         ..Default::default()
                     }),

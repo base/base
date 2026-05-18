@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod metrics;
-pub use metrics::PublishingMetrics;
+pub use metrics::{NoopPublisherMetrics, PublisherMetrics, PublishingMetrics};
 
 mod broadcast;
 pub use broadcast::BroadcastLoop;
@@ -17,4 +17,4 @@ mod listener;
 pub use listener::Listener;
 
 mod publisher;
-pub use publisher::WebSocketPublisher;
+pub use publisher::{FlashblockPosition, PositionedPayload, WebSocketPublisher};

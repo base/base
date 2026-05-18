@@ -1,10 +1,13 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, atomic::AtomicU64},
+    time::Duration,
+};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
-use base_alloy_network::Base;
+use base_common_genesis::RollupConfig;
+use base_common_network::Base;
 use base_consensus_engine::{Engine, EngineClient, EngineState};
-use base_consensus_genesis::RollupConfig;
 use base_consensus_rpc::RpcBuilder;
 use base_consensus_safedb::{DisabledSafeDB, SafeDBReader};
 use tokio::sync::{mpsc, watch};
@@ -12,9 +15,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     AlloyL1BlockFetcher, BlockStream, DelegateL2Client, DelegateL2DerivationActor, EngineActor,
-    EngineActorRequest, EngineConfig, EngineProcessor, EngineRpcProcessor, L1Config,
-    L1WatcherActor, NodeActor, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
-    QueuedEngineRpcClient, QueuedL1WatcherDerivationClient, RpcActor, RpcContext,
+    EngineActorRequest, EngineConfig, EngineProcessor, EngineProcessorOptions, EngineRpcProcessor,
+    L1Config, L1WatcherActor, L1WatcherQueryProcessor, NodeActor, NodeMode,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    QueuedL1WatcherDerivationClient, RpcActor, RpcContext,
     service::node::HEAD_STREAM_POLL_INTERVAL,
 };
 
@@ -76,7 +80,8 @@ impl FollowNode {
         cancellation_token: CancellationToken,
         engine_request_rx: mpsc::Receiver<EngineActorRequest>,
         derivation_client: QueuedEngineDerivationClient,
-    ) -> EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>, EngineRpcProcessor<E>> {
+    ) -> (EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>>, EngineRpcProcessor<E>)
+    {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);
@@ -87,9 +92,12 @@ impl FollowNode {
             Arc::clone(&self.config),
             derivation_client,
             engine,
-            None,
-            None,  // no conductor in follow mode
-            false, // sequencer_stopped irrelevant for validator/follow mode
+            EngineProcessorOptions {
+                node_mode: NodeMode::Validator,
+                unsafe_head_tx: None,
+                conductor: None,
+                sequencer_stopped: false,
+            },
         );
 
         let engine_rpc_processor = EngineRpcProcessor::new(
@@ -99,17 +107,17 @@ impl FollowNode {
             engine_queue_length_rx,
         );
 
-        EngineActor::new(
-            cancellation_token,
-            engine_request_rx,
-            engine_processor,
-            engine_rpc_processor,
-        )
+        let engine_actor =
+            EngineActor::new(cancellation_token, engine_request_rx, engine_processor);
+
+        (engine_actor, engine_rpc_processor)
     }
 
     /// Starts the follow node.
     pub async fn start(&self) -> Result<(), String> {
-        let engine_client = Arc::new(self.engine_config.clone().build_engine_client());
+        let engine_client = Arc::new(
+            self.engine_config.clone().build_engine_client().await.map_err(|e| e.to_string())?,
+        );
         self.start_inner(engine_client).await
     }
 
@@ -131,8 +139,9 @@ impl FollowNode {
 
         let (derivation_actor_request_tx, derivation_actor_request_rx) = mpsc::channel(1024);
         let (engine_actor_request_tx, engine_actor_request_rx) = mpsc::channel(1024);
+        let (engine_rpc_request_tx, engine_rpc_request_rx) = mpsc::channel(1024);
 
-        let engine_actor = self.create_engine_actor(
+        let (engine_actor, engine_rpc_processor) = self.create_engine_actor(
             engine_client,
             cancellation.clone(),
             engine_actor_request_rx,
@@ -153,13 +162,17 @@ impl FollowNode {
         .with_proofs_max_blocks_ahead(self.proofs_max_blocks_ahead);
 
         // Create the RPC server actor if configured.
-        let rpc = self.rpc_builder.clone().map(|b| {
+        let rpc_builder = self.rpc_builder.clone();
+        let engine_rpc_actor = rpc_builder
+            .as_ref()
+            .map(|_| (engine_rpc_processor, (cancellation.clone(), engine_rpc_request_rx)));
+        let rpc = rpc_builder.map(|b| {
             // Follow nodes do not run derivation, so they never produce confirmed safe
             // heads to record. Safe head tracking is disabled; the RPC endpoint returns
             // an error if queried.
             RpcActor::new(
                 b,
-                QueuedEngineRpcClient::new(engine_actor_request_tx.clone()),
+                QueuedEngineRpcClient::new(engine_rpc_request_tx),
                 None::<crate::QueuedSequencerAdminAPIClient>,
                 Arc::new(DisabledSafeDB) as Arc<dyn SafeDBReader>,
             )
@@ -183,13 +196,21 @@ impl FollowNode {
         let l1_watcher = L1WatcherActor::new(
             Arc::clone(&self.config),
             AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
-            l1_query_rx,
-            l1_head_updates_tx,
+            l1_head_updates_tx.clone(),
             QueuedL1WatcherDerivationClient { derivation_actor_request_tx },
             None,
             cancellation.clone(),
             head_stream,
             finalized_stream,
+            self.l1_config.verifier_l1_confs,
+            Arc::new(AtomicU64::new(0)),
+        );
+        let l1_query_processor = L1WatcherQueryProcessor::new(
+            Arc::clone(&self.config),
+            AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
+            l1_query_rx,
+            l1_head_updates_tx.subscribe(),
+            cancellation.clone(),
         );
 
         crate::service::spawn_and_wait!(
@@ -206,7 +227,9 @@ impl FollowNode {
                 )),
                 Some((derivation, ())),
                 Some((engine_actor, ())),
+                engine_rpc_actor,
                 Some((l1_watcher, ())),
+                Some((l1_query_processor, ())),
             ]
         );
         Ok(())

@@ -7,8 +7,8 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_rpc_types_engine::PayloadId;
+use base_common_genesis::RollupConfig;
 use base_consensus_derive::{AttributesBuilder, PipelineErrorKind};
-use base_consensus_genesis::RollupConfig;
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 use crate::{
@@ -16,7 +16,8 @@ use crate::{
     actors::{
         SequencerEngineClient,
         sequencer::{
-            error::SequencerActorError, origin_selector::OriginSelector,
+            error::SequencerActorError,
+            origin_selector::{L1OriginSelectorError, OriginSelector},
             recovery::RecoveryModeGuard,
         },
     },
@@ -65,9 +66,8 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     /// Starts building the next L2 block on top of an explicit `parent`, returning a handle to
     /// the in-flight payload.
     ///
-    /// Unlike [`Self::build`], this bypasses the watch channel and uses the provided
-    /// `parent` directly. Call this when the correct parent is already known (e.g., the
-    /// block just sealed) to avoid racing against the engine's internal state update.
+    /// Use this when the caller already knows the correct parent, such as after an acknowledged
+    /// local insert. That avoids racing the unsafe-head watch channel publication path.
     ///
     /// Returns `Ok(None)` for temporary or reset conditions that should be retried on the
     /// next tick.
@@ -92,14 +92,15 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
             return Ok(None);
         };
 
-        Metrics::sequencer_attributes_build_duration().set(attributes_build_start.elapsed());
+        Metrics::sequencer_attributes_build_duration().record(attributes_build_start.elapsed());
 
         let build_request_start = Instant::now();
 
         let payload_id =
             self.engine_client.start_build_block(attributes_with_parent.clone()).await?;
 
-        Metrics::sequencer_block_building_start_task_duration().set(build_request_start.elapsed());
+        Metrics::sequencer_block_building_start_task_duration()
+            .record(build_request_start.elapsed());
 
         Ok(Some(UnsealedPayloadHandle { payload_id, attributes_with_parent }))
     }
@@ -107,7 +108,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     /// Determines and validates the L1 origin block for the provided L2 unsafe head.
     ///
     /// Returns `Ok(None)` for temporary errors that should be retried on the next tick.
-    async fn get_next_payload_l1_origin(
+    pub async fn get_next_payload_l1_origin(
         &mut self,
         unsafe_head: L2BlockInfo,
     ) -> Result<Option<BlockInfo>, SequencerActorError> {
@@ -117,6 +118,15 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
             .await
         {
             Ok(l1_origin) => l1_origin,
+            Err(L1OriginSelectorError::OriginNotFound(hash)) => {
+                warn!(
+                    target: "sequencer",
+                    hash = %hash,
+                    "L1 origin block not found (reorg or sync lag), triggering engine reset"
+                );
+                self.engine_client.reset_engine_forkchoice().await?;
+                return Ok(None);
+            }
             Err(err) => {
                 warn!(
                     target: "sequencer",
@@ -148,7 +158,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     ///
     /// Returns `Ok(None)` if no attributes could be built at this time but future
     /// attempts may succeed.
-    async fn build_attributes(
+    pub async fn build_attributes(
         &mut self,
         unsafe_head: L2BlockInfo,
         l1_origin: BlockInfo,

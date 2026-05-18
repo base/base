@@ -59,6 +59,14 @@ pub struct GweiParser;
 impl GweiParser {
     /// Parses a gwei decimal string to wei (`u128`).
     ///
+    /// Suitable for use as a clap `value_parser`. Error context (which
+    /// flag failed) is provided by clap automatically.
+    pub fn parse_value(gwei: &str) -> Result<u128, ConfigError> {
+        Self::parse(gwei, "value")
+    }
+
+    /// Parses a gwei decimal string to wei (`u128`).
+    ///
     /// # Errors
     ///
     /// Returns [`ConfigError::InvalidGwei`] if the string is not a valid
@@ -152,62 +160,38 @@ impl TxManagerConfig {
     /// - `receipt_query_interval` must be > 0
     /// - `confirmation_timeout` must be > 0
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.num_confirmations == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "num_confirmations",
-                constraint: ">= 1",
-                value: "0".to_string(),
-            });
+        macro_rules! reject_zero {
+            ($($field:ident),+ $(,)?) => {$(
+                if self.$field == 0 {
+                    return Err(ConfigError::OutOfRange {
+                        field: stringify!($field),
+                        constraint: ">= 1",
+                        value: "0".to_string(),
+                    });
+                }
+            )+};
         }
-        if self.safe_abort_nonce_too_low_count == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "safe_abort_nonce_too_low_count",
-                constraint: ">= 1",
-                value: "0".to_string(),
-            });
+
+        macro_rules! reject_zero_duration {
+            ($($field:ident),+ $(,)?) => {$(
+                if self.$field.is_zero() {
+                    return Err(ConfigError::OutOfRange {
+                        field: stringify!($field),
+                        constraint: "> 0",
+                        value: "0s".to_string(),
+                    });
+                }
+            )+};
         }
-        if self.fee_limit_multiplier == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "fee_limit_multiplier",
-                constraint: ">= 1",
-                value: "0".to_string(),
-            });
-        }
-        if self.network_timeout.is_zero() {
-            return Err(ConfigError::OutOfRange {
-                field: "network_timeout",
-                constraint: "> 0",
-                value: "0s".to_string(),
-            });
-        }
-        if self.resubmission_timeout.is_zero() {
-            return Err(ConfigError::OutOfRange {
-                field: "resubmission_timeout",
-                constraint: "> 0",
-                value: "0s".to_string(),
-            });
-        }
-        if self.receipt_query_interval.is_zero() {
-            return Err(ConfigError::OutOfRange {
-                field: "receipt_query_interval",
-                constraint: "> 0",
-                value: "0s".to_string(),
-            });
-        }
-        if self.confirmation_timeout.is_zero() {
-            return Err(ConfigError::OutOfRange {
-                field: "confirmation_timeout",
-                constraint: "> 0",
-                value: "0s".to_string(),
-            });
-        }
-        if self.min_blob_fee == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "min_blob_fee",
-                constraint: ">= 1",
-                value: "0".to_string(),
-            });
-        }
+
+        reject_zero!(num_confirmations, safe_abort_nonce_too_low_count, fee_limit_multiplier);
+        reject_zero_duration!(
+            network_timeout,
+            resubmission_timeout,
+            receipt_query_interval,
+            confirmation_timeout,
+        );
+        reject_zero!(min_blob_fee);
         Ok(())
     }
 }

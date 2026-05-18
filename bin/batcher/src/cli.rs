@@ -45,13 +45,20 @@ impl Cli {
 /// CLI arguments for the batcher.
 #[derive(Args, Clone, Debug)]
 pub(crate) struct BatcherArgs {
-    /// L1 RPC endpoint.
-    #[arg(long = "l1-rpc-url", env = "BATCHER_L1_RPC_URL")]
-    pub l1_rpc_url: Url,
+    /// L1 RPC endpoint(s).
+    ///
+    /// Accepts a comma-separated list. The service connects to each in order at
+    /// startup and uses the first that responds; later endpoints serve as
+    /// startup-time fallbacks only (no per-call rotation).
+    #[arg(long = "l1-rpc-url", env = "BATCHER_L1_RPC_URL", value_delimiter = ',', num_args = 1..)]
+    pub l1_rpc_url: Vec<Url>,
 
-    /// L2 HTTP RPC endpoint (used for all JSON-RPC calls including throttle control).
-    #[arg(long = "l2-rpc-url", env = "BATCHER_L2_RPC_URL")]
-    pub l2_rpc_url: Url,
+    /// L2 HTTP RPC endpoint(s) (used for all JSON-RPC calls including throttle control).
+    ///
+    /// Accepts a comma-separated list with the same connection-time failover
+    /// semantics as `--l1-rpc-url`.
+    #[arg(long = "l2-rpc-url", env = "BATCHER_L2_RPC_URL", value_delimiter = ',', num_args = 1..)]
+    pub l2_rpc_url: Vec<Url>,
 
     /// Optional L1 WebSocket endpoint for new-block subscriptions.
     ///
@@ -68,9 +75,17 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "l2-ws-url", env = "BATCHER_L2_WS_URL")]
     pub l2_ws_url: Option<Url>,
 
-    /// Rollup node RPC endpoint.
-    #[arg(long = "rollup-rpc-url", env = "BATCHER_ROLLUP_RPC_URL")]
-    pub rollup_rpc_url: Url,
+    /// Rollup node RPC endpoint(s).
+    ///
+    /// Accepts a comma-separated list with the same connection-time failover
+    /// semantics as `--l1-rpc-url`.
+    #[arg(
+        long = "rollup-rpc-url",
+        env = "BATCHER_ROLLUP_RPC_URL",
+        value_delimiter = ',',
+        num_args = 1..
+    )]
+    pub rollup_rpc_url: Vec<Url>,
 
     /// Batcher private key (hex-encoded 32-byte secret).
     #[arg(long = "private-key", env = "BATCHER_PRIVATE_KEY")]
@@ -120,7 +135,7 @@ pub(crate) struct BatcherArgs {
     ///
     /// Only relevant when `--batch-type=span`. Should be slightly below the
     /// typical observed ratio to avoid creating a small leftover frame.
-    /// Matches op-batcher's `--approx-compr-ratio` default.
+    /// Matches the reference batcher's `--approx-compr-ratio` default.
     #[arg(long = "approx-compr-ratio", default_value = "0.6", env = "BATCHER_APPROX_COMPR_RATIO")]
     pub approx_compr_ratio: f64,
 
@@ -147,7 +162,7 @@ pub(crate) struct BatcherArgs {
     /// DA backlog threshold in bytes at which throttling activates.
     ///
     /// When the estimated unsubmitted DA backlog exceeds this value, the batcher
-    /// signals the sequencer to reduce block throughput. Matches op-batcher's
+    /// signals the sequencer to reduce block throughput. Matches the reference batcher's
     /// `--throttle-threshold` default of 1 MB.
     #[arg(
         long = "throttle-threshold",
@@ -158,7 +173,7 @@ pub(crate) struct BatcherArgs {
 
     /// Disable DA throttling.
     ///
-    /// By default throttling is enabled (matching op-batcher behaviour). Pass
+    /// By default throttling is enabled (matching reference batcher behavior). Pass
     /// this flag to submit batches at full rate regardless of DA backlog.
     #[arg(long = "no-throttle", env = "BATCHER_NO_THROTTLE")]
     pub no_throttle: bool,
@@ -170,7 +185,7 @@ pub(crate) struct BatcherArgs {
     /// advances the L2 block cursor past data already pending on L1. This avoids
     /// re-submitting frames after an unclean shutdown. Maximum value is 128.
     ///
-    /// A value of 0 (default) disables the scan. Matches op-batcher's
+    /// A value of 0 (default) disables the scan. Matches the reference batcher's
     /// `--check-recent-txs-depth` flag.
     #[arg(
         long = "check-recent-txs-depth",
@@ -179,6 +194,14 @@ pub(crate) struct BatcherArgs {
         env = "BATCHER_CHECK_RECENT_TXS_DEPTH"
     )]
     pub check_recent_txs_depth: u64,
+
+    /// Maximum serialized size of a single L1 calldata transaction in bytes.
+    ///
+    /// Safety cap that prevents oversized calldata transactions from being rejected
+    /// by the mempool. No-op for blob DA. Equivalent to the reference batcher's
+    /// `--max-l1-tx-size-bytes` (default 120,000 bytes). Omit to disable the cap.
+    #[arg(long = "max-l1-tx-size-bytes", env = "BATCHER_MAX_L1_TX_SIZE_BYTES")]
+    pub max_l1_tx_size_bytes: Option<usize>,
 
     /// Bind address for the admin JSON-RPC API (default: 127.0.0.1).
     ///
@@ -202,6 +225,36 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "stopped", env = "BATCHER_STOPPED")]
     pub stopped: bool,
 
+    /// Block startup until the rollup node reports a non-zero sync status.
+    ///
+    /// Polls `optimism_syncStatus` on the poll interval until both `current_l1`
+    /// and `unsafe_l2` heads are non-zero. Useful when the batcher is started
+    /// alongside a fresh node so it does not race the node's initial sync.
+    /// Matches the reference batcher's `--wait-node-sync`.
+    #[arg(long = "wait-node-sync", env = "BATCHER_WAIT_NODE_SYNC")]
+    pub wait_node_sync: bool,
+
+    /// Maximum seconds to wait for the rollup node to report sync when
+    /// `--wait-node-sync` is set. On expiry the service exits with an error
+    /// rather than hanging indefinitely. Default: 600 seconds (10 minutes).
+    #[arg(
+        long = "wait-node-sync-timeout",
+        default_value = "600",
+        env = "BATCHER_WAIT_NODE_SYNC_TIMEOUT"
+    )]
+    pub wait_node_sync_timeout_secs: u64,
+
+    /// Disable the throttle-driven blob-DA override.
+    ///
+    /// By default, when DA-backlog throttling activates, the encoder is forced
+    /// to emit blob-typed submissions even if `--data-availability-type=calldata`
+    /// is configured (matching reference batcher behavior, since blobs amortise DA
+    /// cost more efficiently under congestion). Pass this flag to keep the
+    /// configured DA type regardless of throttle state. No-op for blob-configured
+    /// batchers.
+    #[arg(long = "no-force-blobs-when-throttling", env = "BATCHER_NO_FORCE_BLOBS_WHEN_THROTTLING")]
+    pub no_force_blobs_when_throttling: bool,
+
     /// Logging configuration.
     #[command(flatten)]
     pub logging: LogArgs,
@@ -214,15 +267,22 @@ pub(crate) struct BatcherArgs {
 impl BatcherArgs {
     /// Convert CLI arguments into a [`BatcherConfig`].
     fn into_config(self) -> eyre::Result<BatcherConfig> {
+        let frame_size = match self.da_type {
+            base_batcher_encoder::DaType::Blob => self
+                .target_frame_size
+                .saturating_sub(base_batcher_encoder::EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE),
+            base_batcher_encoder::DaType::Calldata => self.target_frame_size,
+        };
         let encoder_config = base_batcher_encoder::EncoderConfig {
-            target_frame_size: self.target_frame_size,
-            max_frame_size: self.target_frame_size,
+            target_frame_size: frame_size,
+            max_frame_size: frame_size,
             max_channel_duration: self.max_channel_duration,
             sub_safety_margin: self.sub_safety_margin,
             target_num_frames: self.target_num_frames,
             batch_type: self.batch_type.into(),
             da_type: self.da_type,
             approx_compr_ratio: self.approx_compr_ratio,
+            max_l1_tx_size_bytes: self.max_l1_tx_size_bytes,
         };
         encoder_config.validate()?;
         Ok(BatcherConfig {
@@ -249,6 +309,9 @@ impl BatcherArgs {
             check_recent_txs_depth: self.check_recent_txs_depth,
             admin_addr: self.admin_port.map(|port| SocketAddr::new(self.admin_addr, port)),
             stopped: self.stopped,
+            wait_node_sync: self.wait_node_sync,
+            wait_node_sync_timeout: Duration::from_secs(self.wait_node_sync_timeout_secs),
+            force_blobs_when_throttling: !self.no_force_blobs_when_throttling,
         })
     }
 
@@ -256,8 +319,9 @@ impl BatcherArgs {
     async fn exec(self) -> eyre::Result<()> {
         let config = self.into_config()?;
         info!(
-            l1_rpc = %config.l1_rpc_url,
-            l2_rpc = %config.l2_rpc_url,
+            l1_rpc_count = config.l1_rpc_url.len(),
+            l2_rpc_count = config.l2_rpc_url.len(),
+            rollup_rpc_count = config.rollup_rpc_url.len(),
             "batcher configured"
         );
 
@@ -277,7 +341,7 @@ enum BatchTypeArg {
     Span,
 }
 
-impl From<BatchTypeArg> for base_batcher_encoder::BatchType {
+impl From<BatchTypeArg> for base_protocol::BatchType {
     fn from(value: BatchTypeArg) -> Self {
         match value {
             BatchTypeArg::Single => Self::Single,
@@ -316,7 +380,7 @@ mod tests {
         let cli = parse_cli(&[]);
         let config = cli.args.into_config().expect("config should build");
 
-        assert_eq!(config.encoder_config.batch_type, base_batcher_encoder::BatchType::Single);
+        assert_eq!(config.encoder_config.batch_type, base_protocol::BatchType::Single);
     }
 
     #[test]
@@ -324,7 +388,7 @@ mod tests {
         let cli = parse_cli(&["--batch-type", "1"]);
         let config = cli.args.into_config().expect("config should build");
 
-        assert_eq!(config.encoder_config.batch_type, base_batcher_encoder::BatchType::Span);
+        assert_eq!(config.encoder_config.batch_type, base_protocol::BatchType::Span);
     }
 
     #[test]
@@ -336,11 +400,42 @@ mod tests {
     }
 
     #[test]
+    fn into_config_reserves_blob_derivation_prefix_from_target_frame_size() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(
+            config.encoder_config.target_frame_size,
+            base_batcher_encoder::EncoderConfig::MAX_BLOB_FRAME_SIZE
+        );
+        assert_eq!(config.encoder_config.max_frame_size, config.encoder_config.target_frame_size);
+    }
+
+    #[test]
+    fn into_config_reserves_blob_prefix_for_explicit_target_frame_size() {
+        let cli = parse_cli(&["--target-frame-size", "130000"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.encoder_config.target_frame_size, 129_999);
+        assert_eq!(config.encoder_config.max_frame_size, 129_999);
+    }
+
+    #[test]
     fn into_config_accepts_calldata_da_mode() {
         let cli = parse_cli(&["--data-availability-type", "calldata"]);
         let config = cli.args.into_config().expect("config should build");
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Calldata);
+    }
+
+    #[test]
+    fn into_config_does_not_reserve_blob_prefix_for_calldata_da_mode() {
+        let cli =
+            parse_cli(&["--data-availability-type", "calldata", "--target-frame-size", "130000"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.encoder_config.target_frame_size, 130_000);
+        assert_eq!(config.encoder_config.max_frame_size, 130_000);
     }
 
     #[test]
@@ -365,5 +460,56 @@ mod tests {
         let config = cli.args.into_config().expect("config should build");
 
         assert!(config.stopped);
+    }
+
+    #[test]
+    fn rpc_urls_default_to_single_endpoint() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+        assert_eq!(config.l1_rpc_url.len(), 1);
+        assert_eq!(config.l2_rpc_url.len(), 1);
+        assert_eq!(config.rollup_rpc_url.len(), 1);
+    }
+
+    #[test]
+    fn rpc_urls_accept_comma_separated_list() {
+        // base_args() already sets `--l1-rpc-url http://localhost:8545`, so
+        // appending a second `--l1-rpc-url` with three comma-separated values
+        // accumulates: clap appends rather than overrides for `Vec` args.
+        let cli =
+            parse_cli(&["--l1-rpc-url", "http://l1-a:8545,http://l1-b:8545,http://l1-c:8545"]);
+        let config = cli.args.into_config().expect("config should build");
+        assert_eq!(config.l1_rpc_url.len(), 4);
+        assert_eq!(config.l1_rpc_url[0].as_str(), "http://localhost:8545/");
+        assert_eq!(config.l1_rpc_url[1].as_str(), "http://l1-a:8545/");
+        assert_eq!(config.l1_rpc_url[3].as_str(), "http://l1-c:8545/");
+    }
+
+    #[test]
+    fn wait_node_sync_defaults_to_false() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+        assert!(!config.wait_node_sync);
+    }
+
+    #[test]
+    fn wait_node_sync_flag_sets_config() {
+        let cli = parse_cli(&["--wait-node-sync"]);
+        let config = cli.args.into_config().expect("config should build");
+        assert!(config.wait_node_sync);
+    }
+
+    #[test]
+    fn force_blobs_when_throttling_defaults_to_true() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+        assert!(config.force_blobs_when_throttling);
+    }
+
+    #[test]
+    fn no_force_blobs_when_throttling_flag_inverts_default() {
+        let cli = parse_cli(&["--no-force-blobs-when-throttling"]);
+        let config = cli.args.into_config().expect("config should build");
+        assert!(!config.force_blobs_when_throttling);
     }
 }

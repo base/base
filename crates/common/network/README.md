@@ -1,4 +1,4 @@
-# `base-alloy-network`
+# `base-common-network`
 
 Base chain network types and RPC behavior abstraction.
 
@@ -6,9 +6,8 @@ Base chain network types and RPC behavior abstraction.
 
 Defines the `Base` network type that implements the `alloy_network::Network` trait with Base
 transaction and receipt types. This provides a consistent interface to alloy providers and signers
-regardless of Base-specific RPC changes. Also re-exports alloy response types (`BlockResponse`,
-`ReceiptResponse`, `TransactionResponse`) and OP transaction types (`OpTxType`, `OpTxEnvelope`,
-`OpTypedTransaction`).
+regardless of Base-specific RPC changes.
+It also provides the `BaseEngineApi` extension trait for Base-specific Engine API RPC methods.
 
 ## Usage
 
@@ -16,14 +15,15 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-alloy-network = { workspace = true }
+base-common-network = { workspace = true }
 ```
 
 ```rust,ignore
-use base_alloy_network::Base;
+use base_common_network::{Base, BaseEngineApi};
 use alloy_provider::ProviderBuilder;
 
 let provider = ProviderBuilder::new().network::<Base>().on_http(url);
+let _ = provider.exchange_capabilities(vec![]).await?;
 ```
 
 ## License

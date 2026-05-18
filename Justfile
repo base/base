@@ -12,25 +12,29 @@ mod actions 'actions'
 mod devnet 'etc/docker'
 # Load testing for networks
 mod load-test 'crates/infra/load-tests'
+# Formatting, clippy, udeps, and deny checks
+mod check 'etc/just/check.just'
+# Cargo build targets and contract compilation
+mod build 'etc/just/build.just'
+# SP1 / succinct ELF builds and proving helpers
+mod succinct 'etc/just/succinct.just'
 
 alias t := test
 alias f := fix
-alias b := build
 alias be := benches
 alias c := clean
 alias h := hack
-alias u := check-udeps
 alias wt := watch-test
 alias wc := watch-check
-alias ldc := load-test-devnet-continuous
+alias ldc := load-test-continuous
 
 # Default to display help menu
 default:
     @just --list
 
-# Load test devnet in continuous mode (Ctrl-C to stop)
-load-test-devnet-continuous:
-    just load-test devnet-continuous
+# Load test a network in continuous mode (Ctrl-C to stop)
+load-test-continuous network='devnet':
+    just load-test continuous {{network}}
 
 # Runs the specs docs locally
 specs:
@@ -73,30 +77,22 @@ setup:
         echo "Found mold at $(command -v mold)"
     fi
 
-    just build-contracts
+    just build contracts
     echo "Setup complete!"
 
 # Runs all ci checks
-ci: fix check lychee zepter check-no-std check-no-std-proof
+ci: fix check::all test lychee zepter check::no-std check::no-std-proof
 
 # Runs ci checks with tests scoped to crates affected by changes
-pr: fix check-format check-udeps check-clippy check-deny lychee zepter check-no-std check-no-std-proof test-affected
+pr: fix check::format check::udeps check::clippy check::deny lychee zepter check::no-std check::no-std-proof test-affected
 
 # Performs lychee checks, installing the lychee command if necessary
 lychee:
     @command -v lychee >/dev/null 2>&1 || cargo install lychee
     lychee --config ./lychee.toml .
 
-# Checks formatting, udeps, clippy, and tests
-check: check-format check-udeps check-clippy test check-deny
-
-# Runs cargo deny to check dependencies
-check-deny:
-    @command -v cargo-deny >/dev/null 2>&1 || cargo install cargo-deny
-    cargo deny check bans --hide-inclusion-graph
-
 # Fixes formatting and clippy issues
-fix: build-contracts format-fix clippy-fix zepter-fix
+fix: build::contracts format-fix clippy-fix zepter-fix
 
 # Runs zepter feature checks, installing zepter if necessary
 zepter:
@@ -115,44 +111,44 @@ install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest --locked
 
 # Runs tests across workspace with all features enabled (excludes devnet)
-test: install-nextest build-contracts
+test: install-nextest build::contracts build::elfs
     cargo nextest run --workspace --all-features --exclude devnet --no-fail-fast
 
 # Runs tests only for crates affected by changes vs main (excludes devnet)
-test-affected base="main": install-nextest build-contracts
+test-affected base="main": install-nextest build::contracts build::elfs
     #!/usr/bin/env bash
     set -euo pipefail
-    affected=$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet)
-    if [ -z "$affected" ]; then
+    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet --cargo-args)"
+    pkg_args=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && pkg_args+=("$line")
+    done <<< "$pkg_args_output"
+    if [ "${#pkg_args[@]}" -eq 0 ]; then
         echo "No affected crates to test."
         exit 0
     fi
-    pkg_args=""
-    while IFS= read -r crate; do
-        pkg_args="$pkg_args -p $crate"
-    done <<< "$affected"
-    echo "Testing affected crates:$pkg_args"
-    cargo nextest run --all-features $pkg_args
+    echo "Testing affected crates:${pkg_args[*]}"
+    cargo nextest run --all-features "${pkg_args[@]}"
 
 # Runs tests with ci profile for minimal disk usage
-test-ci: install-nextest build-contracts
-    cargo nextest run --locked --workspace --all-features --exclude devnet --cargo-profile ci
+test-ci: install-nextest build::contracts build::elfs
+    cargo nextest run -P ci --locked --workspace --all-features --exclude devnet --cargo-profile ci
 
 # Runs tests only for affected crates with ci profile (for PRs)
-test-affected-ci base="main": install-nextest build-contracts
+test-affected-ci base="main": install-nextest build::contracts build::elfs
     #!/usr/bin/env bash
     set -euo pipefail
-    affected=$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet)
-    if [ -z "$affected" ]; then
+    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet --cargo-args)"
+    pkg_args=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && pkg_args+=("$line")
+    done <<< "$pkg_args_output"
+    if [ "${#pkg_args[@]}" -eq 0 ]; then
         echo "No affected crates to test."
         exit 0
     fi
-    pkg_args=""
-    while IFS= read -r crate; do
-        pkg_args="$pkg_args -p $crate"
-    done <<< "$affected"
-    echo "Testing affected crates:$pkg_args"
-    cargo nextest run --locked --all-features --cargo-profile ci $pkg_args || {
+    echo "Testing affected crates:${pkg_args[*]}"
+    cargo nextest run -P ci --locked --all-features --cargo-profile ci "${pkg_args[@]}" || {
         code=$?
         if [ $code -eq 4 ]; then
             echo "No tests to run."
@@ -161,85 +157,30 @@ test-affected-ci base="main": install-nextest build-contracts
         exit $code
     }
 
-# Checks that no_std crates compile without std
-check-no-std:
-    ./etc/scripts/ci/check-no-std.sh
-
-# Checks that proof crates compile for a bare-metal FPVM target using nightly
-# -Zbuild-std=core,alloc. Requires: rustup toolchain install nightly &&
-# rustup component add rust-src --toolchain nightly
-check-no-std-proof:
-    ./etc/scripts/ci/check-no-std-proof.sh
-
 # Runs cargo hack against the workspace
 hack:
     cargo hack check --feature-powerset --no-dev-deps
 
-# Checks formatting
-check-format:
-    cargo +nightly fmt --all -- --check
-
 # Fixes any formatting issues
 format-fix:
-    {{_skip_kernels}} cargo fix --allow-dirty --allow-staged --workspace
+    {{_skip_kernels}} BASE_SUCCINCT_ELF_STUB=1 cargo fix --allow-dirty --allow-staged --workspace
     cargo +nightly fmt --all
-
-# Checks clippy
-check-clippy: build-contracts
-    {{_skip_kernels}} cargo clippy --workspace --all-targets -- -D warnings
-
-# Checks clippy with ci profile for minimal disk usage
-check-clippy-ci: build-contracts
-    {{_skip_kernels}} cargo clippy --locked --workspace --all-targets --profile ci -- -D warnings
 
 # Fixes any clippy issues
 clippy-fix:
-    {{_skip_kernels}} cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
-
-# Builds the workspace with release
-build:
-    cargo build --workspace --release
-
-# Builds all targets in debug mode
-build-all-targets: build-contracts
-    cargo build --workspace --all-targets
-
-# Builds all targets with ci profile (minimal disk usage for CI)
-build-ci: build-contracts
-    cargo build --locked --workspace --all-targets --profile ci
-
-# Builds the workspace with maxperf
-build-maxperf:
-    cargo build --workspace --profile maxperf --features jemalloc
-
-# Builds the base node binary
-build-node:
-    cargo build --bin base-reth-node
-
-# Build the contracts used for tests
-build-contracts:
-    cd crates/utilities/test-utils/contracts && forge soldeer install && forge build
+    {{_skip_kernels}} BASE_SUCCINCT_ELF_STUB=1 cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged
 
 # Cleans the workspace
 clean:
     cargo clean
 
-# Checks if there are any unused dependencies
-check-udeps: build-contracts
-    @command -v cargo-udeps >/dev/null 2>&1 || cargo install cargo-udeps
-    {{_skip_kernels}} cargo +nightly udeps --locked --workspace --all-features --all-targets
-
-# Checks crate dependency boundary rules
-check-crate-deps:
-    ./etc/scripts/ci/check-crate-deps.sh
-
 # Watches tests
-watch-test: build-contracts
+watch-test: build::contracts
     cargo watch -x test
 
 # Watches checks
 watch-check:
-    cargo watch -x "fmt --all -- --check" -x "clippy --all-targets -- -D warnings" -x test
+    cargo watch -x "fmt --all -- --check" -x "clippy --all-features --all-targets -- -D warnings" -x test
 
 # Runs all benchmarks
 benches:
@@ -254,6 +195,6 @@ bench-flashblocks:
 bench-proof-mpt:
     cargo bench -p base-proof-mpt --bench trie_node
 
-# Run basectl with specified config (mainnet, sepolia, devnet, or path)
-basectl config="mainnet":
-    cargo run -p basectl --release -- -c {{config}}
+# Run basectl TUI dashboard
+basectl:
+    cargo run -p basectl --release

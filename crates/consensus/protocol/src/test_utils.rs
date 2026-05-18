@@ -4,7 +4,7 @@ use alloc::{boxed::Box, format, string::String, sync::Arc, vec::Vec};
 
 use alloy_primitives::hex;
 use async_trait::async_trait;
-use base_alloy_consensus::BaseBlock;
+use base_common_consensus::BaseBlock;
 use spin::Mutex;
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::{Layer, layer::Context};
@@ -48,13 +48,13 @@ pub struct TestBatchValidator {
     /// Short circuit the block return to be the first block.
     pub short_circuit: bool,
     /// Blocks
-    pub op_blocks: Vec<BaseBlock>,
+    pub base_blocks: Vec<BaseBlock>,
 }
 
 impl TestBatchValidator {
     /// Creates a new [`TestBatchValidator`] with the given origin and batches.
-    pub const fn new(blocks: Vec<L2BlockInfo>, op_blocks: Vec<BaseBlock>) -> Self {
-        Self { blocks, short_circuit: false, op_blocks }
+    pub const fn new(blocks: Vec<L2BlockInfo>, base_blocks: Vec<BaseBlock>) -> Self {
+        Self { blocks, short_circuit: false, base_blocks }
     }
 }
 
@@ -78,7 +78,7 @@ impl BatchValidationProvider for TestBatchValidator {
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
-        self.op_blocks
+        self.base_blocks
             .iter()
             .find(|p| p.header.number == number)
             .cloned()
@@ -98,6 +98,11 @@ impl TraceStorage {
             .iter()
             .filter_map(|(l, message)| if *l == level { Some(message.clone()) } else { None })
             .collect()
+    }
+
+    /// Locks the storage and returns the collected traces.
+    pub fn lock(&self) -> spin::MutexGuard<'_, Vec<(Level, String)>> {
+        self.0.lock()
     }
 
     /// Returns if the storage is empty.
@@ -129,4 +134,19 @@ impl<S: Subscriber> Layer<S> for CollectingLayer {
         let mut storage = self.storage.0.lock();
         storage.push((level, message));
     }
+}
+
+/// Installs a temporary tracing subscriber that captures events into [`TraceStorage`].
+#[macro_export]
+macro_rules! capture_traces {
+    () => {{
+        let trace_store = $crate::test_utils::TraceStorage::default();
+        let layer = $crate::test_utils::CollectingLayer::new(trace_store.clone());
+        let subscriber = ::tracing_subscriber::layer::SubscriberExt::with(
+            ::tracing_subscriber::Registry::default(),
+            layer,
+        );
+        let guard = ::tracing::subscriber::set_default(subscriber);
+        (trace_store, guard)
+    }};
 }

@@ -85,7 +85,6 @@ fn workload_deterministic_generation() {
 #[test]
 fn metrics_collector_counts() {
     let mut collector = MetricsCollector::new();
-    collector.start();
 
     collector.record_submitted(TxHash::ZERO);
     collector.record_submitted(TxHash::repeat_byte(1));
@@ -93,10 +92,11 @@ fn metrics_collector_counts() {
 
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::ZERO,
-        Duration::from_millis(100),
+        None,
+        None,
         21000,
         1_000_000_000,
-        1,
+        Some(1),
     ));
 
     collector.record_failed(TxHash::repeat_byte(1), "timeout");
@@ -109,51 +109,68 @@ fn metrics_collector_counts() {
 #[test]
 fn metrics_summary_latency() {
     let mut collector = MetricsCollector::new();
-    collector.start();
 
-    let latencies_ms = [50, 60, 70, 80, 90];
-    for (i, latency) in latencies_ms.iter().enumerate() {
+    let latencies_ms = [100, 200, 300, 400, 500];
+    for (i, ms) in latencies_ms.iter().enumerate() {
         collector.record_confirmed(TransactionMetrics::new(
             TxHash::repeat_byte(i as u8),
-            Duration::from_millis(*latency),
+            Some(Duration::from_millis(*ms)),
+            Some(Duration::from_millis(*ms / 2)),
             21000,
             1_000_000_000,
-            i as u64,
+            Some(i as u64),
         ));
     }
 
-    let summary = collector.summarize();
+    let summary = collector.summarize(Duration::from_secs(10), None);
 
     assert_eq!(summary.throughput.total_confirmed, 5);
-    assert_eq!(summary.latency.min, Duration::from_millis(50));
-    assert_eq!(summary.latency.max, Duration::from_millis(90));
-    // p50 of [50, 60, 70, 80, 90] - implementation uses floor((len * pct / 100) - 1)
-    assert!(summary.latency.p50 >= Duration::from_millis(50));
-    assert!(summary.latency.p50 <= Duration::from_millis(70));
+
+    let block_latency = &summary.block_latency;
+    assert_eq!(block_latency.min, Duration::from_millis(100));
+    assert_eq!(block_latency.max, Duration::from_millis(500));
+    assert_eq!(block_latency.p50, Duration::from_millis(300));
+
+    let fb_latency = &summary.flashblocks_latency;
+    assert_eq!(fb_latency.p50, Duration::from_millis(150));
+
+    let mut metrics = TransactionMetrics::new(
+        TxHash::repeat_byte(99),
+        Some(Duration::from_millis(600)),
+        None,
+        21000,
+        1_000_000_000,
+        Some(99),
+    );
+    metrics.block_receipt_delay = Some(Duration::from_millis(75));
+    collector.record_confirmed(metrics);
+    let summary = collector.summarize(Duration::from_secs(10), None);
+    assert_eq!(summary.block_receipt_delay.p50, Duration::from_millis(75));
 }
 
 #[test]
 fn metrics_summary_gas() {
     let mut collector = MetricsCollector::new();
-    collector.start();
 
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::ZERO,
-        Duration::from_millis(100),
+        None,
+        None,
         21000,
         1_000_000_000,
-        1,
+        Some(1),
     ));
 
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::repeat_byte(1),
-        Duration::from_millis(100),
+        None,
+        None,
         42000,
         2_000_000_000,
-        2,
+        Some(2),
     ));
 
-    let summary = collector.summarize();
+    let summary = collector.summarize(Duration::from_secs(10), None);
 
     assert_eq!(summary.gas.total_gas, 63000);
     assert_eq!(summary.gas.avg_gas, 31500);
@@ -162,20 +179,21 @@ fn metrics_summary_gas() {
 #[test]
 fn metrics_summary_json_serialization() {
     let mut collector = MetricsCollector::new();
-    collector.start();
 
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::ZERO,
-        Duration::from_millis(100),
+        None,
+        None,
         21000,
         1_000_000_000,
-        1,
+        Some(1),
     ));
 
-    let summary = collector.summarize();
+    let summary = collector.summarize(Duration::from_secs(10), None);
     let json = summary.to_json().unwrap();
 
-    assert!(json.contains("latency"));
+    assert!(json.contains("block_latency"));
+    assert!(json.contains("block_receipt_delay"));
     assert!(json.contains("throughput"));
     assert!(json.contains("gas"));
 }

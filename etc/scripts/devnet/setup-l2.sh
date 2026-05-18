@@ -7,10 +7,20 @@ L2_CHAIN_ID="${L2_CHAIN_ID:-84538453}"
 L1_CHAIN_ID="${L1_CHAIN_ID:-1337}"
 L2_DATA_DIR="${L2_DATA_DIR:-/data}"
 TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
-L2_BASE_V1_BLOCK="${L2_BASE_V1_BLOCK:-}"
+L2_BASE_AZUL_BLOCK="${L2_BASE_AZUL_BLOCK:-}"
+L2_BASE_BERYL_BLOCK="${L2_BASE_BERYL_BLOCK:-}"
+L2_EL_BOOTNODE_P2P_KEY="${L2_EL_BOOTNODE_P2P_KEY:-1111111111111111111111111111111111111111111111111111111111111111}"
+L2_EL_BOOTNODE_ENODE_ID="${L2_EL_BOOTNODE_ENODE_ID:-4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1}"
+L2_EL_BOOTNODE_ENODE="${L2_EL_BOOTNODE_ENODE:-enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303}"
+L2_CL_BOOTNODE_P2P_KEY="${L2_CL_BOOTNODE_P2P_KEY:-2222222222222222222222222222222222222222222222222222222222222222}"
+L2_CL_BOOTNODE_ENR_PATH="${L2_CL_BOOTNODE_ENR_PATH:-/bootnodes/cl-bootnode.enr}"
 
-if [ -n "$L2_BASE_V1_BLOCK" ] && ! [[ "$L2_BASE_V1_BLOCK" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: L2_BASE_V1_BLOCK must be a non-negative integer when set, got: $L2_BASE_V1_BLOCK"
+if [ -n "$L2_BASE_AZUL_BLOCK" ] && ! [[ "$L2_BASE_AZUL_BLOCK" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: L2_BASE_AZUL_BLOCK must be a non-negative integer when set, got: $L2_BASE_AZUL_BLOCK"
+  exit 1
+fi
+if [ -n "$L2_BASE_BERYL_BLOCK" ] && ! [[ "$L2_BASE_BERYL_BLOCK" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: L2_BASE_BERYL_BLOCK must be a non-negative integer when set, got: $L2_BASE_BERYL_BLOCK"
   exit 1
 fi
 
@@ -18,10 +28,15 @@ echo "=== L2 Genesis Generator (Live Deployment) ==="
 echo "L1 RPC URL: $L1_RPC_URL"
 echo "L1 Chain ID: $L1_CHAIN_ID"
 echo "L2 Chain ID: $L2_CHAIN_ID"
-if [ -n "$L2_BASE_V1_BLOCK" ]; then
-  echo "Base V1 activation block: $L2_BASE_V1_BLOCK"
+if [ -n "$L2_BASE_AZUL_BLOCK" ]; then
+  echo "Base Azul activation block: $L2_BASE_AZUL_BLOCK"
 else
-  echo "Base V1 activation block: <unset>"
+  echo "Base Azul activation block: <unset>"
+fi
+if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
+  echo "Base Beryl activation block: $L2_BASE_BERYL_BLOCK"
+else
+  echo "Base Beryl activation block: <unset>"
 fi
 echo "Output directory: $OUTPUT_DIR"
 
@@ -141,40 +156,75 @@ echo "Rollup config written to $OUTPUT_DIR/rollup.json"
 
 L2_BLOCK_TIME=$(jq -re '.block_time' "$OUTPUT_DIR/rollup.json")
 L2_GENESIS_TIME=$(jq -re '.genesis.l2_time' "$OUTPUT_DIR/rollup.json")
-if [ -n "$L2_BASE_V1_BLOCK" ]; then
-  L2_BASE_V1_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_V1_BLOCK))
+if [ -n "$L2_BASE_AZUL_BLOCK" ]; then
+  L2_BASE_AZUL_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_AZUL_BLOCK))
 
   echo ""
-  echo "=== Configuring Base V1 Activation ==="
+  echo "=== Configuring Base Azul Activation ==="
   echo "L2 genesis time: $L2_GENESIS_TIME"
   echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base V1 activation block: $L2_BASE_V1_BLOCK"
-  echo "Derived Base V1 activation timestamp: $L2_BASE_V1_TIME"
+  echo "Base Azul activation block: $L2_BASE_AZUL_BLOCK"
+  echo "Derived Base Azul activation timestamp: $L2_BASE_AZUL_TIME"
 
   TMP_ROLLUP=$(mktemp)
   jq \
-    --argjson base_v1_time "$L2_BASE_V1_TIME" \
-    '.base = ((.base // {}) + {v1: $base_v1_time})' \
+    --argjson azul_time "$L2_BASE_AZUL_TIME" \
+    '.base = ((.base // {}) + {azul: $azul_time})' \
     "$OUTPUT_DIR/rollup.json" \
     >"$TMP_ROLLUP"
   mv "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
 
   TMP_GENESIS=$(mktemp)
   jq \
-    --argjson base_v1_time "$L2_BASE_V1_TIME" \
-    '.config.osakaTime = $base_v1_time
-    | .config.base = ((.config.base // {}) + {v1: $base_v1_time})' \
+    --argjson azul_time "$L2_BASE_AZUL_TIME" \
+    '.config.osakaTime = $azul_time
+    | .config.base = ((.config.base // {}) + {azul: $azul_time})' \
     "$OUTPUT_DIR/genesis.json" \
     >"$TMP_GENESIS"
   mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
 
-  echo "Patched Base V1 activation into rollup and genesis configs"
+  echo "Patched Base Azul activation into rollup and genesis configs"
 else
   echo ""
-  echo "=== Configuring Base V1 Activation ==="
+  echo "=== Configuring Base Azul Activation ==="
   echo "L2 genesis time: $L2_GENESIS_TIME"
   echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base V1 activation block is unset; leaving base.v1 and osakaTime unchanged"
+  echo "Base Azul activation block is unset; leaving base.azul and osakaTime unchanged"
+fi
+
+if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
+  L2_BASE_BERYL_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_BERYL_BLOCK))
+
+  echo ""
+  echo "=== Configuring Base Beryl Activation ==="
+  echo "L2 genesis time: $L2_GENESIS_TIME"
+  echo "L2 block time: $L2_BLOCK_TIME"
+  echo "Base Beryl activation block: $L2_BASE_BERYL_BLOCK"
+  echo "Derived Base Beryl activation timestamp: $L2_BASE_BERYL_TIME"
+
+  TMP_ROLLUP=$(mktemp)
+  jq \
+    --argjson beryl_time "$L2_BASE_BERYL_TIME" \
+    '.base = ((.base // {}) + {beryl: $beryl_time})' \
+    "$OUTPUT_DIR/rollup.json" \
+    >"$TMP_ROLLUP"
+  mv "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
+
+  TMP_GENESIS=$(mktemp)
+  jq \
+    --argjson beryl_time "$L2_BASE_BERYL_TIME" \
+    '.config.base = ((.config.base // {}) + {beryl: $beryl_time})' \
+    "$OUTPUT_DIR/genesis.json" \
+    >"$TMP_GENESIS"
+  mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
+
+  echo "Patched Base Beryl activation into rollup and genesis configs"
+else
+  echo ""
+  echo "=== Configuring Base Beryl Activation ==="
+  echo "L2 genesis time: $L2_GENESIS_TIME"
+  echo "L2 block time: $L2_BLOCK_TIME"
+  echo "Base Beryl activation block is unset; leaving base.beryl unchanged"
 fi
 
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."
@@ -216,11 +266,20 @@ echo "=== Generating P2P Keys ==="
 
 echo "$BUILDER_P2P_KEY" >"$OUTPUT_DIR/builder-p2p-key.txt"
 echo "$BUILDER_ENODE_ID" >"$OUTPUT_DIR/builder-enode-id.txt"
+printf "%s" "$L2_EL_BOOTNODE_P2P_KEY" >"$OUTPUT_DIR/el-bootnode-p2p-key.txt"
+echo "$L2_EL_BOOTNODE_ENODE_ID" >"$OUTPUT_DIR/el-bootnode-enode-id.txt"
+echo "$L2_EL_BOOTNODE_ENODE" >"$OUTPUT_DIR/el-bootnode-enode.txt"
+printf "%s" "$L2_CL_BOOTNODE_P2P_KEY" >"$OUTPUT_DIR/cl-bootnode-p2p-key.txt"
+echo "$L2_CL_BOOTNODE_ENR_PATH" >"$OUTPUT_DIR/cl-bootnode-enr-path.txt"
 echo "$SEQ1_P2P_KEY" >"$OUTPUT_DIR/sequencer-1-p2p-key.txt"
 echo "$SEQ2_P2P_KEY" >"$OUTPUT_DIR/sequencer-2-p2p-key.txt"
 
 echo "Builder P2P key written to $OUTPUT_DIR/builder-p2p-key.txt"
 echo "Builder enode ID: $BUILDER_ENODE_ID"
+echo "EL bootnode P2P key written to $OUTPUT_DIR/el-bootnode-p2p-key.txt"
+echo "EL bootnode enode: $L2_EL_BOOTNODE_ENODE"
+echo "CL bootnode P2P key written to $OUTPUT_DIR/cl-bootnode-p2p-key.txt"
+echo "CL bootnode ENR path: $L2_CL_BOOTNODE_ENR_PATH"
 echo "Sequencer-1 P2P key written to $OUTPUT_DIR/sequencer-1-p2p-key.txt"
 echo "Sequencer-2 P2P key written to $OUTPUT_DIR/sequencer-2-p2p-key.txt"
 
@@ -236,6 +295,8 @@ echo "  Rollup config: $OUTPUT_DIR/rollup.json"
 echo "  Rollup config (conductor): $OUTPUT_DIR/rollup-conductor.json"
 echo "  L1 addresses: $OUTPUT_DIR/l1-addresses.json"
 echo "  Builder P2P key: $OUTPUT_DIR/builder-p2p-key.txt"
+echo "  EL bootnode P2P key: $OUTPUT_DIR/el-bootnode-p2p-key.txt"
+echo "  CL bootnode P2P key: $OUTPUT_DIR/cl-bootnode-p2p-key.txt"
 echo ""
 echo "L2 Role assignments:"
 echo "  Deployer:   $DEPLOYER_ADDR"

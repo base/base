@@ -5,7 +5,7 @@ use std::fmt;
 use alloy_network::EthereumWallet;
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
-use base_alloy_signer::RemoteSigner;
+use base_common_signer::RemoteSigner;
 use url::Url;
 
 use crate::TxManagerError;
@@ -46,6 +46,14 @@ impl SignerConfig {
     /// Creates a [`Local`](Self::Local) signer config from a [`PrivateKeySigner`].
     pub const fn local(signer: PrivateKeySigner) -> Self {
         Self::Local(signer)
+    }
+
+    /// Returns the sender address for this signer configuration.
+    pub const fn address(&self) -> Address {
+        match self {
+            Self::Local(signer) => signer.address(),
+            Self::Remote { address, .. } => *address,
+        }
     }
 
     /// Builds an [`EthereumWallet`] from this configuration.

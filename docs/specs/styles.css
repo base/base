@@ -1,3 +1,69 @@
+.bcps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.bcps-list__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--vocs-color_border);
+  border-radius: 8px;
+  background: var(--vocs-color_background2);
+  text-decoration: none !important;
+  color: inherit;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.bcps-list__item:hover {
+  background: var(--vocs-color_background4);
+  border-color: var(--vocs-color_border2);
+}
+
+.bcps-list__icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  color: var(--vocs-color_textAccent);
+}
+
+.bcps-list__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.bcps-list__name {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--vocs-color_heading);
+}
+
+.bcps-list__desc {
+  font-size: 13px;
+  line-height: 1.2;
+  color: var(--vocs-color_text2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bcps-list__badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
 .mermaid-diagram {
   margin: 1.5rem 0;
   overflow-x: auto;

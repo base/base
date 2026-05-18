@@ -1,4 +1,4 @@
-//! OP types for genesis data.
+//! Base types for genesis data.
 
 use alloy_serde::OtherFields;
 use serde::de::Error;
@@ -6,14 +6,14 @@ use serde::de::Error;
 /// Container type for all Base chain-specific fields in a genesis file.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpChainInfo {
+pub struct ChainInfo {
     /// Genesis information
-    pub genesis_info: Option<OpGenesisInfo>,
+    pub genesis_info: Option<GenesisInfo>,
     /// Base fee information
-    pub base_fee_info: Option<OpBaseFeeInfo>,
+    pub base_fee_info: Option<FeeInfo>,
 }
 
-impl OpChainInfo {
+impl ChainInfo {
     /// Extracts the Base chain-specific fields from a genesis file. These fields are expected to be
     /// contained in the `genesis.config` under `extra_fields` property.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
@@ -21,12 +21,12 @@ impl OpChainInfo {
     }
 }
 
-impl TryFrom<&OtherFields> for OpChainInfo {
+impl TryFrom<&OtherFields> for ChainInfo {
     type Error = serde_json::Error;
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
-        let genesis_info = OpGenesisInfo::try_from(others).ok();
-        let base_fee_info = OpBaseFeeInfo::try_from(others).ok();
+        let genesis_info = GenesisInfo::try_from(others).ok();
+        let base_fee_info = FeeInfo::try_from(others).ok();
 
         Ok(Self { genesis_info, base_fee_info })
     }
@@ -35,15 +35,19 @@ impl TryFrom<&OtherFields> for OpChainInfo {
 /// Base-specific hardfork configuration in a genesis file.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpBaseHardforkInfo {
-    /// Base V1 hardfork timestamp.
-    pub v1: Option<u64>,
+pub struct HardforkInfo {
+    /// Base Azul hardfork timestamp.
+    #[serde(alias = "v1")]
+    pub azul: Option<u64>,
+    /// Beryl hardfork timestamp.
+    #[serde(alias = "v2")]
+    pub beryl: Option<u64>,
 }
 
 /// The Base chain-specific genesis block specification.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpGenesisInfo {
+pub struct GenesisInfo {
     /// bedrock block number
     pub bedrock_block: Option<u64>,
     /// regolith hardfork timestamp
@@ -64,17 +68,17 @@ pub struct OpGenesisInfo {
     pub jovian_time: Option<u64>,
     /// Base-specific hardfork activation times.
     #[serde(default)]
-    pub base: OpBaseHardforkInfo,
+    pub base: HardforkInfo,
 }
 
-impl OpGenesisInfo {
+impl GenesisInfo {
     /// Extract the Base chain-specific genesis info from a genesis file.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
         Self::try_from(others).ok()
     }
 }
 
-impl TryFrom<&OtherFields> for OpGenesisInfo {
+impl TryFrom<&OtherFields> for GenesisInfo {
     type Error = serde_json::Error;
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
@@ -85,7 +89,7 @@ impl TryFrom<&OtherFields> for OpGenesisInfo {
 /// The Base chain-specific base fee specification.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpBaseFeeInfo {
+pub struct FeeInfo {
     /// EIP-1559 elasticity
     pub eip1559_elasticity: Option<u64>,
     /// EIP-1559 denominator
@@ -94,20 +98,19 @@ pub struct OpBaseFeeInfo {
     pub eip1559_denominator_canyon: Option<u64>,
 }
 
-impl OpBaseFeeInfo {
-    /// Extracts the Base chain base fee info by looking for the `optimism` key. It is intended to be
-    /// parsed from a genesis file.
+impl FeeInfo {
+    /// Extracts the Base chain base fee info from the legacy `optimism` genesis key.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
         Self::try_from(others).ok()
     }
 }
 
-impl TryFrom<&OtherFields> for OpBaseFeeInfo {
+impl TryFrom<&OtherFields> for FeeInfo {
     type Error = serde_json::Error;
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
-        if let Some(Ok(op_chain_base_fee_info)) = others.get_deserialized::<Self>("optimism") {
-            Ok(op_chain_base_fee_info)
+        if let Some(Ok(base_chain_base_fee_info)) = others.get_deserialized::<Self>("optimism") {
+            Ok(base_chain_base_fee_info)
         } else {
             Err(serde_json::Error::missing_field("optimism"))
         }
@@ -119,7 +122,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_op_chain_genesis_info() {
+    fn test_extract_base_chain_genesis_info() {
         let genesis_info = r#"
         {
           "bedrockBlock": 10,
@@ -127,17 +130,18 @@ mod tests {
           "canyonTime": 0,
           "ecotoneTime": 0,
           "base": {
-            "v1": 14
+            "v1": 14,
+            "v2": 16
           }
         }
         "#;
 
         let others: OtherFields = serde_json::from_str(genesis_info).unwrap();
-        let genesis_info = OpGenesisInfo::extract_from(&others).unwrap();
+        let genesis_info = GenesisInfo::extract_from(&others).unwrap();
 
         assert_eq!(
             genesis_info,
-            OpGenesisInfo {
+            GenesisInfo {
                 bedrock_block: Some(10),
                 regolith_time: Some(12),
                 canyon_time: Some(0),
@@ -147,13 +151,13 @@ mod tests {
                 holocene_time: None,
                 isthmus_time: None,
                 jovian_time: None,
-                base: OpBaseHardforkInfo { v1: Some(14) },
+                base: HardforkInfo { azul: Some(14), beryl: Some(16) },
             }
         );
     }
 
     #[test]
-    fn test_extract_op_chain_base_fee_info() {
+    fn test_extract_base_chain_base_fee_info() {
         let base_fee_info = r#"
         {
           "optimism": {
@@ -165,11 +169,11 @@ mod tests {
         "#;
 
         let others: OtherFields = serde_json::from_str(base_fee_info).unwrap();
-        let base_fee_info = OpBaseFeeInfo::extract_from(&others).unwrap();
+        let base_fee_info = FeeInfo::extract_from(&others).unwrap();
 
         assert_eq!(
             base_fee_info,
-            OpBaseFeeInfo {
+            FeeInfo {
                 eip1559_elasticity: Some(0),
                 eip1559_denominator: Some(8),
                 eip1559_denominator_canyon: Some(8),
@@ -178,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_op_chain_info() {
+    fn test_extract_base_chain_info() {
         let chain_info = r#"
         {
           "bedrockBlock": 10,
@@ -186,7 +190,8 @@ mod tests {
           "canyonTime": 0,
           "ecotoneTime": 0,
           "base": {
-            "v1": 14
+            "v1": 14,
+            "v2": 16
           },
           "optimism": {
             "eip1559Denominator": 8,
@@ -196,12 +201,12 @@ mod tests {
         "#;
 
         let others: OtherFields = serde_json::from_str(chain_info).unwrap();
-        let chain_info = OpChainInfo::extract_from(&others).unwrap();
+        let chain_info = ChainInfo::extract_from(&others).unwrap();
 
         assert_eq!(
             chain_info,
-            OpChainInfo {
-                genesis_info: Some(OpGenesisInfo {
+            ChainInfo {
+                genesis_info: Some(GenesisInfo {
                     bedrock_block: Some(10),
                     regolith_time: Some(12),
                     canyon_time: Some(0),
@@ -211,9 +216,9 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: OpBaseHardforkInfo { v1: Some(14) },
+                    base: HardforkInfo { azul: Some(14), beryl: Some(16) },
                 }),
-                base_fee_info: Some(OpBaseFeeInfo {
+                base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,
                     eip1559_denominator: Some(8),
                     eip1559_denominator_canyon: Some(8),
@@ -221,12 +226,12 @@ mod tests {
             }
         );
 
-        let chain_info = OpChainInfo::try_from(&others).unwrap();
+        let chain_info = ChainInfo::try_from(&others).unwrap();
 
         assert_eq!(
             chain_info,
-            OpChainInfo {
-                genesis_info: Some(OpGenesisInfo {
+            ChainInfo {
+                genesis_info: Some(GenesisInfo {
                     bedrock_block: Some(10),
                     regolith_time: Some(12),
                     canyon_time: Some(0),
@@ -236,9 +241,9 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: OpBaseHardforkInfo { v1: Some(14) },
+                    base: HardforkInfo { azul: Some(14), beryl: Some(16) },
                 }),
-                base_fee_info: Some(OpBaseFeeInfo {
+                base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,
                     eip1559_denominator: Some(8),
                     eip1559_denominator_canyon: Some(8),
@@ -248,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_op_chain_info_no_base_fee() {
+    fn test_extract_base_chain_info_no_base_fee() {
         let chain_info = r#"
         {
           "bedrockBlock": 10,
@@ -264,12 +269,12 @@ mod tests {
         "#;
 
         let others: OtherFields = serde_json::from_str(chain_info).unwrap();
-        let chain_info = OpChainInfo::extract_from(&others).unwrap();
+        let chain_info = ChainInfo::extract_from(&others).unwrap();
 
         assert_eq!(
             chain_info,
-            OpChainInfo {
-                genesis_info: Some(OpGenesisInfo {
+            ChainInfo {
+                genesis_info: Some(GenesisInfo {
                     bedrock_block: Some(10),
                     regolith_time: Some(12),
                     canyon_time: Some(0),
@@ -279,7 +284,7 @@ mod tests {
                     holocene_time: Some(0),
                     isthmus_time: Some(0),
                     jovian_time: Some(0),
-                    base: OpBaseHardforkInfo::default(),
+                    base: HardforkInfo::default(),
                 }),
                 base_fee_info: None,
             }

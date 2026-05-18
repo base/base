@@ -2,72 +2,67 @@
 
 use std::{fmt, sync::Arc};
 
+use base_execution_chainspec::BaseChainSpec;
 use clap::Subcommand;
-use reth_chainspec::{EthChainSpec, EthereumHardforks, Hardforks};
-use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::{
     config_cmd, db, dump_genesis, init_cmd,
     node::{self, NoArgs},
-    p2p, prune, re_execute, stage,
+    prune, re_execute, stage,
 };
 
-use crate::chainspec::OpChainSpecParser;
+use crate::chainspec::BaseChainSpecParser;
 
+pub mod base_proofs;
 pub mod init_state;
-pub mod op_proofs;
+pub mod p2p;
 
 #[cfg(feature = "dev")]
 pub mod test_vectors;
 
 /// Commands to be executed
 #[derive(Debug, Subcommand)]
-pub enum Commands<Spec: ChainSpecParser = OpChainSpecParser, Ext: clap::Args + fmt::Debug = NoArgs>
-{
+pub enum Commands<Ext: clap::Args + fmt::Debug = NoArgs> {
     /// Start the node
     #[command(name = "node")]
-    Node(Box<node::NodeCommand<Spec, Ext>>),
+    Node(Box<node::NodeCommand<BaseChainSpecParser, Ext>>),
     /// Initialize the database from a genesis file.
     #[command(name = "init")]
-    Init(init_cmd::InitCommand<Spec>),
+    Init(init_cmd::InitCommand<BaseChainSpecParser>),
     /// Initialize the database from a state dump file.
     #[command(name = "init-state")]
-    InitState(init_state::InitStateCommandOp<Spec>),
+    InitState(init_state::BaseInitStateCommand<BaseChainSpecParser>),
     /// Dumps genesis block JSON configuration to stdout.
-    DumpGenesis(dump_genesis::DumpGenesisCommand<Spec>),
+    DumpGenesis(dump_genesis::DumpGenesisCommand<BaseChainSpecParser>),
     /// Database debugging utilities
     #[command(name = "db")]
-    Db(db::Command<Spec>),
+    Db(db::Command<BaseChainSpecParser>),
     /// Manipulate individual stages.
     #[command(name = "stage")]
-    Stage(Box<stage::Command<Spec>>),
+    Stage(Box<stage::Command<BaseChainSpecParser>>),
     /// P2P Debugging utilities
     #[command(name = "p2p")]
-    P2P(Box<p2p::Command<Spec>>),
+    P2P(Box<p2p::Command>),
     /// Write config to stdout
     #[command(name = "config")]
     Config(config_cmd::Command),
     /// Prune according to the configuration without any limits
     #[command(name = "prune")]
-    Prune(prune::PruneCommand<Spec>),
+    Prune(prune::PruneCommand<BaseChainSpecParser>),
     /// Generate Test Vectors
     #[cfg(feature = "dev")]
     #[command(name = "test-vectors")]
     TestVectors(test_vectors::Command),
     /// Re-execute blocks in parallel to verify historical sync correctness.
     #[command(name = "re-execute")]
-    ReExecute(re_execute::Command<Spec>),
+    ReExecute(re_execute::Command<BaseChainSpecParser>),
     /// Manage storage of historical proofs in expanded trie db in fault proof window.
     #[command(name = "proofs")]
-    OpProofs(op_proofs::Command<Spec>),
+    BaseProofs(base_proofs::Command<BaseChainSpecParser>),
 }
 
-impl<
-    C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>,
-    Ext: clap::Args + fmt::Debug,
-> Commands<C, Ext>
-{
+impl<Ext: clap::Args + fmt::Debug> Commands<Ext> {
     /// Returns the underlying chain being used for commands
-    pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         match self {
             Self::Node(cmd) => cmd.chain_spec(),
             Self::Init(cmd) => cmd.chain_spec(),
@@ -81,7 +76,7 @@ impl<
             #[cfg(feature = "dev")]
             Self::TestVectors(_) => None,
             Self::ReExecute(cmd) => cmd.chain_spec(),
-            Self::OpProofs(cmd) => cmd.chain_spec(),
+            Self::BaseProofs(cmd) => cmd.chain_spec(),
         }
     }
 }

@@ -1,13 +1,13 @@
 use std::io::Write;
 
 use anyhow::Result;
-use base_alloy_flashblocks::Flashblock;
-use base_consensus_genesis::SystemConfig;
+use base_common_flashblocks::Flashblock;
+use base_common_genesis::SystemConfig;
 use tokio::sync::{mpsc, watch};
 
 use super::{App, Resources, ViewId, views::create_view};
 use crate::{
-    config::ChainConfig,
+    config::MonitoringConfig,
     l1_client::fetch_full_system_config,
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, L1BlockInfo, L1ConnectionMode,
@@ -19,27 +19,22 @@ use crate::{
     tui::Toast,
 };
 
-/// Launches the TUI application starting from the home view.
-pub async fn run_app(config: ChainConfig) -> Result<()> {
+/// Launches the TUI application starting from the specified view and network.
+pub async fn run_app(initial_view: ViewId, network: &str) -> Result<()> {
+    let config = MonitoringConfig::load(network).await?;
     let mut resources = Resources::new(config.clone());
-
     start_background_services(&config, &mut resources);
-
-    let app = App::new(resources, ViewId::Home);
-    app.run(create_view).await
-}
-
-/// Launches the TUI application starting from the specified view.
-pub async fn run_app_with_view(config: ChainConfig, initial_view: ViewId) -> Result<()> {
-    let mut resources = Resources::new(config.clone());
-
-    start_background_services(&config, &mut resources);
-
     let app = App::new(resources, initial_view);
     app.run(create_view).await
 }
 
-fn start_background_services(config: &ChainConfig, resources: &mut Resources) {
+/// Starts all background data-fetching services, wiring their channels into `resources`.
+///
+/// Spawns tokio tasks for flashblock streams, L1 blob watching, DA backlog loading,
+/// safe-head polling, system config fetching, conductor polling, validator polling,
+/// and proof monitoring. All tasks communicate back through channels stored in
+/// `resources`.
+pub fn start_background_services(config: &MonitoringConfig, resources: &mut Resources) {
     let (fb_tx, fb_rx) = mpsc::channel::<TimestampedFlashblock>(100);
     let (da_fb_tx, da_fb_rx) = mpsc::channel::<Flashblock>(100);
     let (sync_tx, sync_rx) = mpsc::channel::<u64>(10);
@@ -144,7 +139,7 @@ fn start_background_services(config: &ChainConfig, resources: &mut Resources) {
 }
 
 /// Streams flashblocks as JSON lines to stdout.
-pub async fn run_flashblocks_json(config: ChainConfig) -> Result<()> {
+pub async fn run_flashblocks_json(config: MonitoringConfig) -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<Flashblock>(100);
     let (toast_tx, mut toast_rx) = mpsc::channel::<Toast>(50);
 

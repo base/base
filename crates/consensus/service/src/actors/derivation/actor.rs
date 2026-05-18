@@ -137,8 +137,13 @@ where
         // first attributes are produced. All batches at and before the safe head will be
         // dropped, so the first payload will always be the disputed one.
         loop {
-            match self.pipeline.step(self.derivation_state_machine.last_confirmed_safe_head()).await
-            {
+            let step_result =
+                base_metrics::time!(Metrics::derivation_pipeline_step_duration_seconds(), {
+                    self.pipeline
+                        .step(self.derivation_state_machine.last_confirmed_safe_head())
+                        .await
+                });
+            match step_result {
                 StepResult::PreparedAttributes => { /* continue; attributes will be sent off. */ }
                 StepResult::AdvancedOrigin => {
                     let origin =
@@ -351,10 +356,14 @@ where
     async fn start(mut self, _: Self::StartData) -> Result<(), Self::Error> {
         info!(target: "derivation", "Starting derivation");
         loop {
+            let mut recv_timer = base_metrics::timed!(
+                Metrics::derivation_actor_inbound_recv_wait_duration_seconds()
+            );
             select! {
                 biased;
 
                 _ = self.cancellation_token.cancelled() => {
+                    recv_timer.disarm();
                     info!(
                         target: "derivation",
                         "Received shutdown signal. Exiting derivation task."
@@ -362,6 +371,7 @@ where
                     return Ok(());
                 }
                 req = self.inbound_request_rx.recv() => {
+                    recv_timer.stop();
                     let Some(request_type) = req else {
                         error!(target: "derivation", "DerivationActor inbound request receiver closed unexpectedly");
                         self.cancellation_token.cancel();

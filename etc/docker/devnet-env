@@ -35,13 +35,24 @@ CHALLENGER_ADDR=0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f
 CHALLENGER_KEY=0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97
 FEE_RECIPIENT=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 
-# Faucet Account — address only
-FAUCET_ADDR=${FAUCET_ADDR:-}
-
 # P2P Keys (derived from Anvil Account 9)
 BUILDER_P2P_KEY=2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6
 BUILDER_ENODE_ID=3255458e24278e31d5940f304b16300fdff3f6efd3e2a030b5818310ac67af45e28d057e6a332d07e0c5ab09d6947fd4eed1a646edbf224e2d2fec6f49f90abc
 BUILDER_LIBP2P_PEER_ID=16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12
+
+# L2 Bootnode identities
+L2_BOOTNODE_DOCKER_SUBNET=172.30.0.0/24
+L2_EL_BOOTNODE_ADVERTISE_IP=172.30.0.10
+L2_CL_BOOTNODE_ADVERTISE_IP=172.30.0.11
+L2_BUILDER_ADVERTISE_IP=172.30.0.20
+L2_CLIENT_ADVERTISE_IP=172.30.0.21
+L2_SEQ1_ADVERTISE_IP=172.30.0.22
+L2_SEQ2_ADVERTISE_IP=172.30.0.23
+L2_EL_BOOTNODE_P2P_KEY=1111111111111111111111111111111111111111111111111111111111111111
+L2_EL_BOOTNODE_ENODE_ID=4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1
+L2_EL_BOOTNODE_ENODE=enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303
+L2_CL_BOOTNODE_P2P_KEY=2222222222222222222222222222222222222222222222222222222222222222
+L2_CL_BOOTNODE_ENR_PATH=/bootnodes/cl-bootnode.enr
 
 # Sequencer EL enode IDs (deterministic from SEQ1_P2P_KEY / SEQ2_P2P_KEY)
 SEQ1_ENODE_ID=20b871f3ced029e14472ec4ebc3c0448164942b123aa6af91a3386c1c403e0ebd3b4a5752a2b6c49e574619e6aa0549eb9ccd036b9bbc507e1f7f9712a236092
@@ -56,6 +67,8 @@ L1_CL_HTTP_PORT=4052
 L1_CL_P2P_PORT=4900
 
 # L2 Builder Ports
+L2_EL_BOOTNODE_P2P_PORT=9303
+L2_CL_BOOTNODE_P2P_PORT=9003
 L2_BUILDER_HTTP_PORT=7545
 L2_BUILDER_WS_PORT=7546
 L2_BUILDER_AUTH_PORT=7551
@@ -75,6 +88,16 @@ L2_CLIENT_METRICS_PORT=8090
 L2_CLIENT_CL_RPC_PORT=8549
 L2_CLIENT_CL_P2P_PORT=8003
 L2_CLIENT_CL_METRICS_PORT=8300
+
+# L2 Base RPC Ports
+L2_BASE_RPC_ADVERTISE_IP=172.30.0.24
+L2_BASE_RPC_HTTP_PORT=8645
+L2_BASE_RPC_WS_PORT=8646
+L2_BASE_RPC_AUTH_PORT=8651
+L2_BASE_RPC_P2P_PORT=8403
+L2_BASE_RPC_METRICS_PORT=8190
+L2_BASE_RPC_CL_RPC_PORT=8649
+L2_BASE_RPC_CL_P2P_PORT=8103
 
 # Batcher Ports
 BATCHER_METRICS_PORT=6060
@@ -126,6 +149,9 @@ L2_BUILDER_OP_RPC_URL=http://localhost:7549
 L2_CLIENT_RPC_URL=http://localhost:8545
 L2_CLIENT_WS_URL=ws://localhost:8546
 L2_CLIENT_OP_RPC_URL=http://localhost:8549
+L2_BASE_RPC_URL=http://localhost:8645
+L2_BASE_RPC_WS_URL=ws://localhost:8646
+L2_BASE_RPC_OP_RPC_URL=http://localhost:8649
 L2_INGRESS_RPC_URL=http://localhost:8080
 CONDUCTOR0_RPC_URL=http://localhost:6545
 CONDUCTOR1_RPC_URL=http://localhost:6546
@@ -140,28 +166,33 @@ L2_INGRESS_METRICS_PORT=9002
 AUDIT_METRICS_PORT=9003
 
 # Ingress Infrastructure Ports
-KAFKA_PORT=9092
 MINIO_API_PORT=7000
 MINIO_CONSOLE_PORT=7001
+
+# Verifier L1 confirmation depth for the client (validator) consensus node.
+# When non-zero, the client's derivation pipeline stays this many L1 blocks
+# behind the L1 head before deriving L2 safe blocks.
+# Set to 0 to disable (default). Try 4 to test delayed safe head.
+BASE_NODE_VERIFIER_L1_CONFS=15
 
 # Chain Configuration
 L1_CHAIN_ID=1337
 L2_CHAIN_ID=84538453
-# Set to 1 to activate Base V1 (EIP-8130 AA) at the first derived block.
-# Block 0 (genesis) is created by op-deployer before derivation, so block=0
-# would miss the transition boundary and skip the upgrade TxDeposit injection.
-L2_BASE_V1_BLOCK=1
+# Optional: set to a non-negative block number to schedule Base Azul in devnet.
+# Leave unset to avoid setting base.azul/osakaTime during genesis generation.
+L2_BASE_AZUL_BLOCK=20
+# Optional: set to a non-negative block number to schedule Base Beryl in devnet.
+# Leave unset to avoid setting base.beryl during genesis generation.
+L2_BASE_BERYL_BLOCK=
 
 # Metering Resource Limits
 # Whole-block budgets for gas/state-root/DA, plus a per-flashblock execution budget.
-# These preserve the builder's current 10-flashblock targets: 30M gas / block,
-# ~786KB DA / block, ~200ms state root / block, and 2s execution / flashblock.
-METERING_GAS_LIMIT=30000000
-METERING_EXECUTION_TIME_US=2000000
-METERING_STATE_ROOT_TIME_US=200000
-METERING_DA_BYTES=786430
+# These preserve the builder's current 10-flashblock targets: 60M gas / block,
+# ~1.5MB DA / block, ~1s state root / block, and 5s execution / flashblock.
+METERING_GAS_LIMIT=60000000
+METERING_EXECUTION_TIME_US=5000000
+METERING_STATE_ROOT_TIME_US=1000000
+METERING_DA_BYTES=1572860
 METERING_TARGET_FLASHBLOCKS_PER_BLOCK=10
-
-# Contender
-CONTENDER_MIN_BALANCE="3010699257314954000"
-CONTENDER_GEN_REPORT=true
+BUILDER_BLOCK_STATE_ROOT_GAS_LIMIT=600000000
+BUILDER_MAX_REJECTED_TXS_PER_BLOCK=20000

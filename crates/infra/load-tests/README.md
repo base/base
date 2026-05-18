@@ -7,6 +7,7 @@ Load testing and benchmarking framework for Base infrastructure.
 | Crate | Description |
 |-------|-------------|
 | `base-load-tests` | Core library with workload generation, transaction submission, and metrics collection |
+| `base-load-tester-bin` | Binary crate for running load tests and rescue/drain commands |
 
 ## Goals
 
@@ -18,51 +19,81 @@ Load testing and benchmarking framework for Base infrastructure.
 
 ```bash
 # Run load test against local devnet (uses Anvil Account #1)
-just load-test devnet
-
-# Run load test against sepolia-alpha (requires funded key)
-FUNDER_KEY=0x... just load-test sepolia-alpha
+just load-test run
 
 # Run load test against sepolia (requires funded key)
-FUNDER_KEY=0x... just load-test sepolia
+FUNDER_KEY=0x... just load-test run sepolia
 ```
 
 Or run directly with cargo:
 
 ```bash
-# Build the crate
-cargo build -p base-load-tests
+# Build the crates
+cargo build -p base-load-tests -p base-load-tester-bin
 
 # Run tests
 cargo test -p base-load-tests
 
-# Run the load test example with a config file
-cargo run -p base-load-tests --example load_test -- path/to/config.yaml
-
-# Or use the default devnet config
-cargo run -p base-load-tests --example load_test
+# Run the load test binary with a config file
+cargo run -p base-load-tester-bin --bin base-load-tester -- path/to/config.yaml
 ```
 
 ## Configuration
 
 All configuration is done via YAML files. See `src/config/test_config.rs` for comprehensive field documentation, or `examples/devnet.yaml` for a working example.
-
 Example minimal config:
 
 ```yaml
-rpc: http://localhost:8545
+transaction_submission_rpcs:
+  - "http://localhost:8545"
+# Add more URLs to shard submit batches across multiple HTTP endpoints.
+query_rpc: "http://localhost:8545"
+# Optional: clear pending transactions from these admin RPC nodes for all sender addresses.
+txpool_nodes: []
+flashblocks_ws: "ws://localhost:7111"
 sender_count: 10
 target_gps: 2100000
 duration: "30s"
 ```
+
+`flashblocks_ws` is required for builder flashblocks broadcast latency data.
+`transaction_submission_rpcs` accepts either a single URL string or a list; submit batches are
+distributed across the configured HTTP endpoints.
+`txpool_nodes` is optional and defaults to an empty list; when present, the load tester calls
+`admin_dropSenderTransactions` for every sender address on every configured node before funding.
+Canonical confirmation and gas metrics are collected by polling `query_rpc` for new blocks and
+fetching `eth_getBlockReceipts` for each observed block, so `query_rpc` must support
+`eth_getBlockReceipts`.
 
 ### Available Configs
 
 | Config | Target | Notes |
 |--------|--------|-------|
 | `devnet.yaml` | Local devnet | Uses Anvil Account #1 |
-| `sepolia-alpha.yaml` | Sepolia Alpha | Requires `FUNDER_KEY` |
-| `sepolia.yaml` | Sepolia | Requires `FUNDER_KEY` |
+| `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
+
+### Contract Addresses
+
+Contract addresses for swap testing and related tokens.
+
+#### Base Sepolia (Chain ID: 84532)
+
+| Contract | Address |
+|----------|---------|
+| Uniswap V3 Router | `0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4` |
+| Aerodrome CL `SwapRouter` | `0xD75e6a0C801F24ebb3125E360a5A064f6b9FEFaC` |
+| Load Test Token A (LTTA) | `0x15948C3043A980A8d980d4D615A5E4c9514B0D64` |
+| Load Test Token B (LTTB) | `0x4dc9ccF2C5A346c4032B648006B4774Ad2a021c4` |
+
+#### Base Zeronet (Chain ID: 763360)
+
+| Contract | Address |
+|----------|---------|
+| Uniswap V3 Router | `0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4` |
+| Load Test Token A (LTTA) | `0x27589a9836dd2150036829120f092ad38a0b3740` |
+| Load Test Token B (LTTB) | `0xc411b5f78fadab5880a287f21bb7997a192975f3` |
+
+These tokens are deployed via `DeployTestTokenPair.s.sol` and use `FreeTransferERC20` which allows permissionless minting for load testing.
 
 ### Environment Variables
 

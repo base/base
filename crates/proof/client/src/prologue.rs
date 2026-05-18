@@ -4,16 +4,14 @@ use core::fmt::Debug;
 use alloy_consensus::Sealed;
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::BlockEnv};
 use alloy_primitives::B256;
-use base_alloy_evm::OpTxEnv;
+use base_common_evm::{BaseSpecId, BaseTxEnv};
 use base_consensus_derive::EthereumDataSource;
-pub use base_proof::{BootInfo, HintType, OracleProviderError};
 use base_proof::{
-    CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
-    OraclePipeline, new_oracle_pipeline_cursor,
+    BootInfo, CachingOracle, HintType, OracleBlobProvider, OracleL1ChainProvider,
+    OracleL2ChainProvider, OraclePipeline, new_oracle_pipeline_cursor,
 };
 use base_proof_executor::TrieDBProvider;
 use base_proof_preimage::{CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient};
-use base_revm::OpSpecId;
 
 use crate::{FaultProofDriver, FaultProofProgramError};
 
@@ -29,10 +27,10 @@ impl<P, H, F> Prologue<P, H, F>
 where
     P: PreimageOracleClient + Send + Sync + Clone + Debug + 'static,
     H: HintWriterClient + Send + Sync + Clone + Debug + 'static,
-    F: EvmFactory<Spec = OpSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + Debug + 'static,
-    F::Tx: FromTxWithEncoded<base_alloy_consensus::OpTxEnvelope>
-        + FromRecoveredTx<base_alloy_consensus::OpTxEnvelope>
-        + OpTxEnv,
+    F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + Debug + 'static,
+    F::Tx: FromTxWithEncoded<base_common_consensus::BaseTxEnvelope>
+        + FromRecoveredTx<base_common_consensus::BaseTxEnvelope>
+        + BaseTxEnv,
 {
     /// Creates a new prologue.
     pub const fn new(oracle_client: P, hint_writer: H, evm_factory: F) -> Self {

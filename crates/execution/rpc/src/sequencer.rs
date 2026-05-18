@@ -47,7 +47,7 @@ pub struct SequencerClient {
 
 impl SequencerClientInner {
     /// Creates a new instance with the given endpoint and client.
-    pub(crate) const fn new(sequencer_endpoint: String, client: Client) -> Self {
+    pub const fn new(sequencer_endpoint: String, client: Client) -> Self {
         Self { sequencer_endpoint, client }
     }
 }
@@ -165,12 +165,13 @@ impl SequencerClient {
     }
 }
 
+/// Inner state of a [`SequencerClient`].
 #[derive(Debug)]
-struct SequencerClientInner {
+pub struct SequencerClientInner {
     /// The endpoint of the sequencer
-    sequencer_endpoint: String,
-    /// The client
-    client: Client,
+    pub sequencer_endpoint: String,
+    /// The RPC client
+    pub client: Client,
 }
 
 #[cfg(test)]

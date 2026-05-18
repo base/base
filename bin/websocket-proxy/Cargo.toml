@@ -20,12 +20,12 @@ futures.workspace = true
 dotenvy.workspace = true
 hostname.workspace = true
 tokio-util.workspace = true
-base-metrics = { workspace = true, features = ["metrics"] }
 base-cli-utils.workspace = true
 websocket-proxy.workspace = true
-tracing = { workspace = true, features = ["std"] }
 axum = { workspace = true, features = ["ws"] }
 brotli = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["derive", "env"] }
+base-metrics = { workspace = true, features = ["metrics"] }
 metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }

@@ -1,6 +1,6 @@
 //! The batcher pipeline trait.
 
-use base_alloy_consensus::BaseBlock;
+use base_common_consensus::BaseBlock;
 
 use crate::{BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
 
@@ -81,7 +81,17 @@ pub trait BatchPipeline: Send {
 
     /// Returns the estimated DA backlog in bytes.
     ///
-    /// Sum of estimated byte lengths for blocks in the input queue that have not yet been
-    /// submitted to L1 (excluding deposit transactions).
+    /// Sum of unsafe DA bytes that have not yet been submitted to L1, including
+    /// pending block estimates, open channel estimates, and closed channel frame bytes.
+    /// Deposit transactions are excluded from block estimates.
     fn da_backlog_bytes(&self) -> u64;
+
+    /// Force the next [`next_submission`](Self::next_submission) calls to emit
+    /// blob-typed submissions even when the configured `da_type` is calldata.
+    ///
+    /// Wired by the driver from DA-throttle state: when throttle is active and
+    /// `force_blobs_when_throttling` is set, the override is enabled. When the
+    /// throttle deactivates the override is cleared. Default no-op for
+    /// pipelines that do not support DA-type overrides.
+    fn set_blob_override(&mut self, _active: bool) {}
 }

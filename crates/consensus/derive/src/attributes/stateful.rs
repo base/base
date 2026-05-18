@@ -9,14 +9,16 @@ use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
-use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_consensus_genesis::RollupConfig;
-use base_protocol::{Deposits, L1BlockInfoTx, L2BlockInfo, Predeploys};
+use base_common_consensus::Predeploys;
+use base_common_genesis::RollupConfig;
+use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_consensus_upgrades::{Upgrade, Upgrades};
+use base_protocol::{Deposits, L1BlockInfoTx, L2BlockInfo};
 use tracing::warn;
 
 use crate::{
     AttributesBuilder, BuilderError, ChainProvider, L2ChainProvider, PipelineEncodingError,
-    PipelineError, PipelineErrorKind, PipelineResult, UpgradeTransactions,
+    PipelineError, PipelineErrorKind, PipelineResult,
 };
 
 /// A stateful implementation of the [`AttributesBuilder`].
@@ -67,7 +69,7 @@ where
         &mut self,
         l2_parent: L2BlockInfo,
         epoch: BlockNumHash,
-    ) -> PipelineResult<OpPayloadAttributes> {
+    ) -> PipelineResult<BasePayloadAttributes> {
         let l1_header;
         let deposit_transactions: Vec<Bytes>;
 
@@ -140,11 +142,27 @@ where
             ));
         }
 
-        let upgrade_transactions = UpgradeTransactions::for_transition(
-            &self.rollup_cfg,
-            l2_parent.block_info.timestamp,
-            next_l2_time,
-        );
+        let mut upgrade_transactions: Vec<Bytes> = vec![];
+        if self.rollup_cfg.is_ecotone_active(next_l2_time)
+            && !self.rollup_cfg.is_ecotone_active(l2_parent.block_info.timestamp)
+        {
+            upgrade_transactions = Upgrades::ECOTONE.txs().collect();
+        }
+        if self.rollup_cfg.is_fjord_active(next_l2_time)
+            && !self.rollup_cfg.is_fjord_active(l2_parent.block_info.timestamp)
+        {
+            upgrade_transactions.append(&mut Upgrades::FJORD.txs().collect());
+        }
+        if self.rollup_cfg.is_isthmus_active(next_l2_time)
+            && !self.rollup_cfg.is_isthmus_active(l2_parent.block_info.timestamp)
+        {
+            upgrade_transactions.append(&mut Upgrades::ISTHMUS.txs().collect());
+        }
+        if self.rollup_cfg.is_jovian_active(next_l2_time)
+            && !self.rollup_cfg.is_jovian_active(l2_parent.block_info.timestamp)
+        {
+            upgrade_transactions.append(&mut Upgrades::JOVIAN.txs().collect());
+        }
 
         // Build and encode the L1 info transaction for the current payload.
         let (_, l1_info_tx_envelope) = L1BlockInfoTx::try_new_with_deposit_tx(
@@ -178,7 +196,7 @@ where
             parent_beacon_root = Some(l1_header.parent_beacon_block_root.unwrap_or_default());
         }
 
-        Ok(OpPayloadAttributes {
+        Ok(BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_l2_time,
                 prev_randao: l1_header.mix_hash,
@@ -243,8 +261,8 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
-    use base_consensus_genesis::{CONFIG_UPDATE_TOPIC, HardForkConfig, SystemConfig};
-    use base_consensus_registry::Sepolia;
+    use base_common_chains::Sepolia;
+    use base_common_genesis::{HardForkConfig, SystemConfig, SystemConfigUpdate};
     use base_protocol::{BlockInfo, DepositDecodeError};
 
     use super::*;
@@ -462,7 +480,7 @@ mod tests {
         };
         let next_l2_time = l2_parent.block_info.timestamp + block_time;
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        let expected = OpPayloadAttributes {
+        let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_l2_time,
                 prev_randao,
@@ -514,7 +532,7 @@ mod tests {
         };
         let next_l2_time = l2_parent.block_info.timestamp + block_time;
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        let expected = OpPayloadAttributes {
+        let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_l2_time,
                 prev_randao,
@@ -567,7 +585,7 @@ mod tests {
         };
         let next_l2_time = l2_parent.block_info.timestamp + block_time;
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        let expected = OpPayloadAttributes {
+        let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_l2_time,
                 prev_randao,
@@ -619,7 +637,7 @@ mod tests {
         };
         let next_l2_time = l2_parent.block_info.timestamp + block_time;
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        let expected = OpPayloadAttributes {
+        let expected = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_l2_time,
                 prev_randao,
@@ -663,7 +681,7 @@ mod tests {
         // causing update_with_receipts to return an error.
         let bad_log = Log {
             address: sys_config_addr,
-            data: LogData::new_unchecked(vec![CONFIG_UPDATE_TOPIC], Bytes::default()),
+            data: LogData::new_unchecked(vec![SystemConfigUpdate::TOPIC], Bytes::default()),
         };
         let bad_receipt = Receipt {
             status: Eip658Value::Eip658(true),

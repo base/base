@@ -11,13 +11,13 @@ use std::sync::{Arc, LazyLock};
 use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use async_trait::async_trait;
-use base_alloy_flashblocks::FlashblocksPayloadV1;
-use base_alloy_network::Base;
-use base_execution_chainspec::OpChainSpec;
-use base_execution_rpc::OpEthApiBuilder;
-use base_node_core::{OpEngineValidatorBuilder, args::RollupArgs, node::OpPoolBuilder};
+use base_common_flashblocks::FlashblocksPayloadV1;
+use base_common_network::Base;
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_rpc::BaseEthApiBuilder;
+use base_execution_txpool::BasePooledTransaction;
+use base_node_core::{BasePayloadValidatorBuilder, args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, test_utils::init_silenced_tracing};
-use base_txpool::BasePooledTransaction;
 use futures::{FutureExt, StreamExt};
 use nanoid::nanoid;
 use parking_lot::Mutex;
@@ -57,11 +57,11 @@ pub fn clear_otel_env_vars() {
     }
 }
 
-/// Represents a type that emulates a local in-process instance of the OP builder node.
+/// Represents a type that emulates a local in-process instance of the builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
 #[derive(Debug)]
 pub struct LocalInstance {
-    node_config: NodeConfig<OpChainSpec>,
+    node_config: NodeConfig<BaseChainSpec>,
     builder_config: BuilderConfig,
     runtime: Option<Runtime>,
     exit_future: NodeExitFuture,
@@ -102,7 +102,7 @@ where
 }
 
 impl LocalInstance {
-    /// Creates a new local instance of the OP builder node with the given builder configuration,
+    /// Creates a new local instance of the builder node with the given builder configuration,
     /// with the default Reth node configuration.
     ///
     /// This method does not prefund any accounts, so before sending any transactions
@@ -111,14 +111,14 @@ impl LocalInstance {
         Box::pin(Self::new_with_node_config(builder_config, default_node_config())).await
     }
 
-    /// Creates a new local instance of the OP builder node with the given builder configuration,
+    /// Creates a new local instance of the builder node with the given builder configuration,
     /// with a given Reth node configuration.
     ///
     /// This method does not prefund any accounts, so before sending any transactions
     /// make sure that sender accounts are funded.
     pub async fn new_with_node_config(
         builder_config: BuilderConfig,
-        node_config: NodeConfig<OpChainSpec>,
+        node_config: NodeConfig<BaseChainSpec>,
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
         init_silenced_tracing();
@@ -135,14 +135,17 @@ impl LocalInstance {
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let metering_provider = Arc::clone(&builder_config.metering_provider);
 
-        let addons: base_node_runner::BaseAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
-            base_node
-                .add_ons_builder()
-                .with_da_config(da_config.clone())
-                .with_gas_limit_config(gas_limit_config.clone())
-                .build();
+        let addons: base_node_runner::BaseAddOns<
+            _,
+            BaseEthApiBuilder,
+            BasePayloadValidatorBuilder,
+        > = base_node
+            .add_ons_builder()
+            .with_da_config(da_config.clone())
+            .with_gas_limit_config(gas_limit_config.clone())
+            .build();
 
-        let node_builder = NodeBuilder::<_, OpChainSpec>::new(node_config.clone())
+        let node_builder = NodeBuilder::<_, BaseChainSpec>::new(node_config.clone())
             .with_database(create_test_db(node_config.clone()))
             .with_launch_context(runtime.clone())
             .with_types::<BaseNode>()
@@ -191,7 +194,7 @@ impl LocalInstance {
         })
     }
 
-    /// Creates new local instance of the OP builder node with the flashblocks builder configuration.
+    /// Creates a new local instance of the builder node with the flashblocks builder configuration.
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn flashblocks() -> eyre::Result<Self> {
         clear_otel_env_vars();
@@ -199,7 +202,7 @@ impl LocalInstance {
     }
 
     /// Returns the Reth node configuration.
-    pub const fn node_config(&self) -> &NodeConfig<OpChainSpec> {
+    pub const fn node_config(&self) -> &NodeConfig<BaseChainSpec> {
         &self.node_config
     }
 
@@ -292,17 +295,17 @@ impl Future for LocalInstance {
 }
 
 /// Returns the default Reth node configuration used in tests.
-pub fn default_node_config() -> NodeConfig<OpChainSpec> {
+pub fn default_node_config() -> NodeConfig<BaseChainSpec> {
     node_config_with_chain_spec(chain_spec())
 }
 
 /// Returns the default test chain spec, lazily initialized from the embedded
 /// genesis template.
-pub fn chain_spec() -> Arc<OpChainSpec> {
-    static CHAIN_SPEC: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
+pub fn chain_spec() -> Arc<BaseChainSpec> {
+    static CHAIN_SPEC: LazyLock<Arc<BaseChainSpec>> = LazyLock::new(|| {
         let genesis = include_str!("./artifacts/genesis.json.tmpl");
         let genesis = serde_json::from_str(genesis).expect("invalid genesis JSON");
-        let chain_spec = OpChainSpec::from_genesis(genesis);
+        let chain_spec = BaseChainSpec::from_genesis(genesis);
         Arc::new(chain_spec)
     });
 
@@ -310,25 +313,25 @@ pub fn chain_spec() -> Arc<OpChainSpec> {
 }
 
 /// Returns a chain spec identical to the default test chain spec but with
-/// `BaseUpgrade::V1` activated at genesis (timestamp 0).
-pub fn chain_spec_with_base_v1() -> Arc<OpChainSpec> {
-    use base_alloy_chains::BaseUpgrade;
+/// `BaseUpgrade::Azul` activated at genesis (timestamp 0).
+pub fn chain_spec_with_azul() -> Arc<BaseChainSpec> {
+    use base_common_chains::BaseUpgrade;
     use reth_chainspec::ForkCondition;
 
     let genesis = include_str!("./artifacts/genesis.json.tmpl");
     let genesis = serde_json::from_str(genesis).expect("invalid genesis JSON");
-    let mut spec = OpChainSpec::from_genesis(genesis);
-    spec.inner.hardforks.insert(BaseUpgrade::V1, ForkCondition::Timestamp(0));
+    let mut spec = BaseChainSpec::from_genesis(genesis);
+    spec.inner.hardforks.insert(BaseUpgrade::Azul, ForkCondition::Timestamp(0));
     Arc::new(spec)
 }
 
-/// Returns a node config using a chain spec with `BaseUpgrade::V1` activated
+/// Returns a node config using a chain spec with `BaseUpgrade::Azul` activated
 /// at genesis.
-pub fn default_node_config_with_base_v1() -> NodeConfig<OpChainSpec> {
-    node_config_with_chain_spec(chain_spec_with_base_v1())
+pub fn default_node_config_with_azul() -> NodeConfig<BaseChainSpec> {
+    node_config_with_chain_spec(chain_spec_with_azul())
 }
 
-fn node_config_with_chain_spec(spec: Arc<OpChainSpec>) -> NodeConfig<OpChainSpec> {
+fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseChainSpec> {
     let tempdir = std::env::temp_dir();
     let random_id = nanoid!();
 
@@ -361,14 +364,14 @@ fn node_config_with_chain_spec(spec: Arc<OpChainSpec>) -> NodeConfig<OpChainSpec
         pprof_dumps_path: Some(pprof_dumps_path),
     };
 
-    NodeConfig::<OpChainSpec>::new(spec)
+    NodeConfig::<BaseChainSpec>::new(spec)
         .with_datadir_args(datadir)
         .with_rpc(rpc)
         .with_network(network)
 }
 
-fn pool_component() -> OpPoolBuilder<BasePooledTransaction> {
-    OpPoolBuilder::<BasePooledTransaction>::default()
+fn pool_component() -> BasePoolBuilder<BasePooledTransaction> {
+    BasePoolBuilder::<BasePooledTransaction>::default()
 }
 
 /// A utility for listening to flashblocks WebSocket messages during tests.

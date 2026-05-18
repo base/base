@@ -4,7 +4,7 @@
 use alloc::{boxed::Box, sync::Arc};
 
 use alloy_eips::BlockNumHash;
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 // Re-export these types used internally to the test pipeline.
@@ -37,10 +37,6 @@ impl StageReset for TestNextAttributes {
     }
 
     async fn flush_channel(&mut self) -> PipelineResult<()> {
-        Ok(())
-    }
-
-    async fn provide_block(&mut self, _: BlockInfo) -> PipelineResult<()> {
         Ok(())
     }
 }

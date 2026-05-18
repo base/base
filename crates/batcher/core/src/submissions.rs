@@ -113,7 +113,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                         tx_data: Bytes::new(),
                         value: U256::ZERO,
                         gas_limit: 0,
-                        blobs: Arc::new(vec![blob]),
+                        blobs: Arc::from(vec![blob]),
                     },
                     Err(e) => {
                         warn!(error = %e, "failed to encode frames to blob, requeueing");
@@ -121,7 +121,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                             pipeline.requeue(id);
                         }
                         drop(permit);
-                        continue;
+                        break;
                     }
                 },
                 DaType::Calldata => TxCandidate {
@@ -142,6 +142,10 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                 .increment(ids.len() as u64);
             BatcherMetrics::da_bytes_submitted_total(da_type_label).increment(frame_bytes as u64);
             BatcherMetrics::in_flight_submissions().increment(1.0);
+            // Capture for the post-confirm metric: blob_used_bytes_total counts
+            // payload bytes that actually landed on L1, not bytes attempted, so
+            // we only increment after the tx confirms.
+            let blob_payload_bytes = matches!(da_type, DaType::Blob).then_some(payload_size as u64);
             let handle = self.tx_manager.send_async(candidate).await;
             let fut: Pin<Box<dyn Future<Output = (Vec<SubmissionId>, TxOutcome)> + Send>> =
                 Box::pin(async move {
@@ -151,6 +155,9 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                                 warn!("confirmed receipt missing block number; l1_head will not advance");
                                 0
                             });
+                            if let Some(bytes) = blob_payload_bytes {
+                                BatcherMetrics::blob_used_bytes_total().increment(bytes);
+                            }
                             TxOutcome::Confirmed { l1_block }
                         }
                         Err(TxManagerError::AlreadyReserved) => {

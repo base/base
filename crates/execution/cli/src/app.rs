@@ -1,11 +1,10 @@
 use std::{fmt, sync::Arc};
 
-use base_execution_chainspec::OpChainSpec;
-use base_execution_consensus::OpBeaconConsensus;
-use base_execution_evm::OpExecutorProvider;
-use base_node_core::OpNode;
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_consensus::BaseBeaconConsensus;
+use base_execution_evm::BaseExecutorProvider;
+use base_node_core::BaseNode;
 use eyre::{Result, eyre};
-use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::launcher::Launcher;
 use reth_cli_runner::CliRunner;
 use reth_node_core::args::{OtlpInitStatus, OtlpLogsStatus};
@@ -18,20 +17,20 @@ use crate::{Cli, Commands};
 
 /// A wrapper around a parsed CLI that handles command execution.
 #[derive(Debug)]
-pub struct CliApp<Spec: ChainSpecParser, Ext: clap::Args + fmt::Debug, Rpc: RpcModuleValidator> {
-    cli: Cli<Spec, Ext, Rpc>,
+pub struct CliApp<Ext: clap::Args + fmt::Debug, Rpc: RpcModuleValidator> {
+    cli: Cli<Ext, Rpc>,
     runner: Option<CliRunner>,
     layers: Option<Layers>,
     guard: Option<FileWorkerGuard>,
 }
 
-impl<C, Ext, Rpc> CliApp<C, Ext, Rpc>
+impl<Ext, Rpc> CliApp<Ext, Rpc>
 where
-    C: ChainSpecParser<ChainSpec = OpChainSpec>,
     Ext: clap::Args + fmt::Debug,
     Rpc: RpcModuleValidator,
 {
-    pub(crate) fn new(cli: Cli<C, Ext, Rpc>) -> Self {
+    /// Creates a new [`CliApp`] wrapping the given parsed CLI.
+    pub fn new(cli: Cli<Ext, Rpc>) -> Self {
         Self { cli, runner: None, layers: Some(Layers::new()), guard: None }
     }
 
@@ -54,7 +53,10 @@ where
     ///
     /// This accepts a closure that is used to launch the node via the
     /// [`NodeCommand`](reth_cli_commands::node::NodeCommand).
-    pub fn run(mut self, launcher: impl Launcher<C, Ext>) -> Result<()> {
+    pub fn run(
+        mut self,
+        launcher: impl Launcher<crate::chainspec::BaseChainSpecParser, Ext>,
+    ) -> Result<()> {
         let runner = match self.runner.take() {
             Some(runner) => runner,
             None => CliRunner::try_default_runtime()?,
@@ -72,10 +74,10 @@ where
         // Install the prometheus recorder to be sure to record all metrics
         install_prometheus_recorder();
 
-        let components = |spec: Arc<OpChainSpec>| {
+        let components = |spec: Arc<BaseChainSpec>| {
             (
-                OpExecutorProvider::optimism(Arc::clone(&spec)),
-                Arc::new(OpBeaconConsensus::new(spec)),
+                BaseExecutorProvider::base(Arc::clone(&spec)),
+                Arc::new(BaseBeaconConsensus::new(spec)),
             )
         };
 
@@ -92,30 +94,30 @@ where
                 runner.run_command_until_exit(|ctx| command.execute(ctx, launcher))
             }
             Commands::Init(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<OpNode>())
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>())
             }
             Commands::InitState(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<OpNode>())
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>())
             }
             Commands::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
             Commands::Db(command) => {
-                runner.run_blocking_command_until_exit(|ctx| command.execute::<OpNode>(ctx))
+                runner.run_blocking_command_until_exit(|ctx| command.execute::<BaseNode>(ctx))
             }
             Commands::Stage(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<OpNode, _>(ctx, components))
+                runner.run_command_until_exit(|ctx| command.execute::<BaseNode, _>(ctx, components))
             }
-            Commands::P2P(command) => runner.run_until_ctrl_c(command.execute::<OpNode>()),
+            Commands::P2P(command) => runner.run_until_ctrl_c(command.execute::<BaseNode>()),
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::Prune(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<OpNode>(ctx))
+                runner.run_command_until_exit(|ctx| command.execute::<BaseNode>(ctx))
             }
             #[cfg(feature = "dev")]
             Commands::TestVectors(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::ReExecute(command) => {
-                runner.run_until_ctrl_c(command.execute::<OpNode>(components))
+                runner.run_until_ctrl_c(command.execute::<BaseNode>(components))
             }
-            Commands::OpProofs(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<OpNode>())
+            Commands::BaseProofs(command) => {
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>())
             }
         }
     }

@@ -65,16 +65,29 @@ impl<R: OutboxReader, Q: TaskQueue> OutboxProcessor<R, Q> {
 
     async fn process_task(&self, task: OutboxTask) {
         let sequence_id = task.sequence_id;
+        let proof_request_id = task.proof_request_id;
 
         match self.queue.submit(task).await {
             Ok(()) => {
-                // Task successfully submitted to the queue.
-                // The worker is responsible for marking the outbox entry
-                // as processed after it claims the task.
+                // Task successfully submitted to queue — mark as processed in outbox.
+                if let Err(e) = self.reader.mark_processed(sequence_id).await {
+                    error!(
+                        sequence_id = sequence_id,
+                        error = %e,
+                        "failed to mark task as processed in outbox"
+                    );
+                } else {
+                    info!(
+                        sequence_id = sequence_id,
+                        proof_request_id = %proof_request_id,
+                        "marked outbox entry as processed"
+                    );
+                }
             }
             Err(e) => {
                 error!(
                     sequence_id = sequence_id,
+                    proof_request_id = %proof_request_id,
                     error = %e,
                     "failed to submit task to queue"
                 );

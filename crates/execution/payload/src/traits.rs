@@ -1,31 +1,31 @@
 use alloy_consensus::BlockBody;
-use base_alloy_consensus::{DepositReceipt, OpTransaction};
+use base_common_consensus::{BaseTransaction, DepositReceiptExt};
 use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_primitives_traits::{FullBlockHeader, NodePrimitives, SignedTransaction, WithEncoded};
 
-use crate::OpPayloadBuilderAttributes;
+use crate::BasePayloadBuilderAttributes;
 
-/// Helper trait to encapsulate common bounds on [`NodePrimitives`] for OP payload builder.
-pub trait OpPayloadPrimitives:
+/// Helper trait to encapsulate common bounds on [`NodePrimitives`] for the payload builder.
+pub trait PayloadPrimitives:
     NodePrimitives<
-        Receipt: DepositReceipt,
+        Receipt: DepositReceiptExt,
         SignedTx = Self::_TX,
         BlockBody = BlockBody<Self::_TX, Self::_Header>,
         BlockHeader = Self::_Header,
     >
 {
     /// Helper AT to bound [`NodePrimitives::Block`] type without causing bound cycle.
-    type _TX: SignedTransaction + OpTransaction;
+    type _TX: SignedTransaction + BaseTransaction;
     /// Helper AT to bound [`NodePrimitives::Block`] type without causing bound cycle.
     type _Header: FullBlockHeader;
 }
 
-impl<Tx, T, Header> OpPayloadPrimitives for T
+impl<Tx, T, Header> PayloadPrimitives for T
 where
-    Tx: SignedTransaction + OpTransaction,
+    Tx: SignedTransaction + BaseTransaction,
     T: NodePrimitives<
             SignedTx = Tx,
-            Receipt: DepositReceipt,
+            Receipt: DepositReceiptExt,
             BlockBody = BlockBody<Tx, Header>,
             BlockHeader = Header,
         >,
@@ -35,8 +35,8 @@ where
     type _Header = Header;
 }
 
-/// Attributes for the OP payload builder.
-pub trait OpAttributes: PayloadBuilderAttributes {
+/// Attributes for the payload builder.
+pub trait Attributes: PayloadBuilderAttributes {
     /// Primitive transaction type.
     type Transaction: SignedTransaction;
 
@@ -47,7 +47,7 @@ pub trait OpAttributes: PayloadBuilderAttributes {
     fn sequencer_transactions(&self) -> &[WithEncoded<Self::Transaction>];
 }
 
-impl<T: SignedTransaction> OpAttributes for OpPayloadBuilderAttributes<T> {
+impl<T: SignedTransaction> Attributes for BasePayloadBuilderAttributes<T> {
     type Transaction = T;
 
     fn no_tx_pool(&self) -> bool {

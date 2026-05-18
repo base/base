@@ -5,21 +5,22 @@
 //! to L1 via the [`TxManager`]. Also detects orphaned on-chain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
-use std::{collections::HashSet, error::Error, fmt, time::Duration};
+use std::{collections::HashSet, error::Error, fmt, sync::Arc, time::Duration};
 
-use alloy_primitives::{Address, Bytes, hex};
+use alloy_primitives::{Address, Bytes, FixedBytes, hex};
 use alloy_sol_types::SolCall;
-use base_proof_contracts::ITEEProverRegistry;
+use base_proof_contracts::{INitroEnclaveVerifier, ITEEProverRegistry};
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
-use base_tx_manager::{TxCandidate, TxManager};
+use base_proof_tee_nitro_verifier::AttestationReport;
+use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::StreamExt;
 use rand::random;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use crate::{
-    InstanceDiscovery, InstanceHealthStatus, ProverClient, ProverInstance, RegistrarError,
-    RegistrarMetrics, RegistryClient, Result, SignerClient,
+    CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient, ProverClient,
+    ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient, Result, SignerClient, crl,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -44,7 +45,10 @@ pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
 /// still initializing. This window allows the registrar to attempt
 /// registration during that warm-up period rather than waiting for the
 /// instance to become healthy. Set to 0 to disable.
-pub const DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS: u64 = 3600;
+///
+/// 85 minutes gives a slight buffer ahead of the prove provision timeout
+/// of 90 minutes.
+pub const DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS: u64 = 5100;
 
 /// Runtime parameters for the [`RegistrationDriver`] that are not
 /// trait-based dependencies.
@@ -71,6 +75,9 @@ pub struct DriverConfig {
     /// while the application is still initializing. Set to zero to disable.
     /// Defaults to [`DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS`] seconds.
     pub unhealthy_registration_window: Duration,
+    /// CRL checking configuration. When enabled, intermediate certificates
+    /// are checked against CRL distribution points before registration.
+    pub crl: CrlConfig,
 }
 
 /// Core registration loop tying together discovery, attestation polling,
@@ -86,6 +93,14 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     tx_manager: T,
     signer_client: S,
     config: DriverConfig,
+    /// Pre-built HTTP client for CRL fetches. Built once at construction
+    /// time when CRL checking is enabled. `None` when CRL is disabled.
+    crl_http_client: Option<reqwest::Client>,
+    /// Optional on-chain `NitroEnclaveVerifier` revocation client. Consulted
+    /// before submitting a registration so that intermediates already revoked
+    /// on-chain (`revokedCerts` sentinel set) cannot be re-trusted via the
+    /// `_cacheNewCert` rewrite path.
+    nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
 }
 
 impl<D, P, R, T, S> fmt::Debug for RegistrationDriver<D, P, R, T, S> {
@@ -103,15 +118,55 @@ where
     S: SignerClient,
 {
     /// Creates a new registration driver.
-    pub const fn new(
+    ///
+    /// When CRL checking is enabled, pre-builds the HTTP client used for
+    /// CRL fetches so it can be reused across registration cycles. The
+    /// optional `nitro_verifier` client consults the on-chain durable
+    /// revocation sentinel before each registration; pass `None` to disable
+    /// the on-chain pre-check (useful for tests and unit deployments).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrarError::Config`] when `config.crl.enabled` is `true`
+    /// and either the `nitro_verifier` client is missing or the CRL HTTP
+    /// client fails to build. Failing fast prevents a misconfigured driver
+    /// from silently bypassing CRL protection at runtime.
+    pub fn new(
         discovery: D,
         proof_provider: P,
         registry: R,
         tx_manager: T,
         signer_client: S,
         config: DriverConfig,
-    ) -> Self {
-        Self { discovery, proof_provider, registry, tx_manager, signer_client, config }
+        nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
+    ) -> Result<Self> {
+        if config.crl.enabled && nitro_verifier.is_none() {
+            return Err(RegistrarError::Config(
+                "CRL checking enabled but nitro_verifier client not configured; \
+                 a NitroEnclaveVerifier client is required as both the revokeCert \
+                 destination and the on-chain revokedCerts sentinel source"
+                    .into(),
+            ));
+        }
+        let crl_http_client = if config.crl.enabled {
+            Some(crl::build_crl_http_client(config.crl.fetch_timeout).map_err(|e| {
+                RegistrarError::Config(format!(
+                    "failed to build CRL HTTP client (Layer 2 / AWS CRL fetch): {e}"
+                ))
+            })?)
+        } else {
+            None
+        };
+        Ok(Self {
+            discovery,
+            proof_provider,
+            registry,
+            tx_manager,
+            signer_client,
+            config,
+            crl_http_client,
+            nitro_verifier,
+        })
     }
 
     /// Runs the registration loop until cancelled.
@@ -309,6 +364,13 @@ where
             addresses.push(ProverClient::derive_address(public_key)?);
         }
 
+        // Early return when no signers are found. This avoids panicking on
+        // `all_attestations[0]` below and is a no-op for both registration
+        // and the active signer set.
+        if addresses.is_empty() {
+            return Ok(addresses);
+        }
+
         // Only attempt registration for instances that pass should_register().
         // Non-registerable instances (Draining, Unhealthy) still contribute
         // their addresses to the active signer set to prevent premature
@@ -360,6 +422,39 @@ where
                 )
                 .into(),
             });
+        }
+
+        // CRL check: parse the first attestation's cabundle, fetch CRLs,
+        // and revoke any intermediate certs found on a CRL. This check
+        // runs once per instance (all enclaves share the same cert chain).
+        //
+        // NOTE: This check runs even when all signers are already registered
+        // on-chain. This is a known inefficiency — the CRL check could be
+        // skipped in that case, but would add complexity for minimal benefit
+        // since CRL fetches are fast relative to proof generation.
+        if self.config.crl.enabled {
+            match self.check_and_revoke_crls(&all_attestations[0], instance).await {
+                Ok(true) => {
+                    // Confirmed revocation — block registration for this instance.
+                    // The revokeCert transaction was already submitted above.
+                    warn!(
+                        instance = %instance.instance_id,
+                        "certificate revoked, skipping registration for this instance"
+                    );
+                    return Ok(addresses);
+                }
+                Ok(false) => {
+                    // All certs clean, proceed with registration.
+                }
+                Err(e) => {
+                    // Fail-open: CRL check errors don't block registration.
+                    warn!(
+                        error = %e,
+                        instance = %instance.instance_id,
+                        "CRL check failed (fail-open, proceeding with registration)"
+                    );
+                }
+            }
         }
 
         for (idx, &signer_address) in addresses.iter().enumerate() {
@@ -510,6 +605,18 @@ where
                     // funds, config errors, fee limits, etc.) cannot be
                     // resolved by retrying with the same calldata.
                     if !e.is_retryable() {
+                        // If the contract reverted execution, the proof
+                        // itself is likely invalid (wrong image ID, stale
+                        // attestation, etc.). Block recovery for this
+                        // signer so the next cycle generates a fresh
+                        // proof instead of re-recovering the same one.
+                        if matches!(e, TxManagerError::ExecutionReverted { .. }) {
+                            warn!(
+                                signer = %signer_address,
+                                "execution reverted, blocking proof recovery for signer"
+                            );
+                            self.proof_provider.block_recovery_for_signer(signer_address);
+                        }
                         return Err(RegistrarError::from(e));
                     }
 
@@ -558,6 +665,148 @@ where
         RegistrarMetrics::registrations_total().increment(1);
 
         Ok(())
+    }
+
+    /// Checks the attestation's intermediate certificates against the
+    /// on-chain durable revocation sentinel and AWS CRL distribution points,
+    /// and submits `revokeCert` transactions for any newly-revoked
+    /// certificates.
+    ///
+    /// Two layered checks are performed:
+    ///
+    /// 1. **On-chain pre-check** (CHAIN-4194 / Immunefi #75608): each
+    ///    intermediate's accumulated path digest is queried against
+    ///    [`NitroVerifierClient::is_revoked`]. The contract's `revokedCerts`
+    ///    sentinel is persistent across `_cacheNewCert` overwrites, so a hash
+    ///    that an operator previously revoked must continue to fail
+    ///    registration even if the AWS CRL has since been pruned. A hit here
+    ///    short-circuits the AWS fetch — no `revokeCert` tx is submitted
+    ///    because the on-chain state already reflects the revocation.
+    /// 2. **AWS CRL check**: any intermediate found on its CRL distribution
+    ///    point triggers a `revokeCert` transaction to the
+    ///    `NitroEnclaveVerifier` contract.
+    ///
+    /// Returns `Ok(true)` if any certificate is revoked (on-chain or via
+    /// AWS CRL), `Ok(false)` if all certificates are clean.
+    ///
+    /// Layer 1 fails open internally: an on-chain RPC/decode error (for
+    /// example, when this binary is deployed against a verifier contract
+    /// that predates the `revokedCerts` selector) is logged, counted, and
+    /// the call falls through to Layer 2 — never silently disabling AWS CRL
+    /// enforcement. The shared cert chain parse happens once up front; if
+    /// it fails, the error propagates and the caller fail-opens uniformly.
+    /// Confirmed revocations at either layer block registration for the
+    /// instance.
+    async fn check_and_revoke_crls(
+        &self,
+        attestation_bytes: &[u8],
+        instance: &ProverInstance,
+    ) -> Result<bool> {
+        // Invariants enforced by `RegistrationDriver::new` when `crl.enabled`.
+        let verifier =
+            self.nitro_verifier.as_deref().expect("nitro_verifier required when CRL enabled");
+        let verifier_address = verifier.address();
+
+        // Parse the attestation document to get the cert chain.
+        let report = AttestationReport::parse(attestation_bytes).map_err(|e| {
+            RegistrarError::ProverClient {
+                instance: instance.endpoint.to_string(),
+                source: format!("failed to parse attestation for CRL check: {e}").into(),
+            }
+        })?;
+
+        let cert_chain_der = report.cert_chain_der();
+        // Parse the chain once and share the result across both layers.
+        let cert_infos = crl::CertCrlInfo::from_chain(&cert_chain_der)?;
+
+        // ── Layer 1: on-chain durable revocation sentinel ───────────────
+        RegistrarMetrics::onchain_revocation_checks_total().increment(1);
+        match OnchainRevocationCheck::run(verifier, &cert_infos, &instance.instance_id).await {
+            Ok(true) => return Ok(true),
+            Ok(false) => {}
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    instance = %instance.instance_id,
+                    "on-chain revocation pre-check failed; falling through to AWS CRL layer"
+                );
+                RegistrarMetrics::onchain_revocation_check_errors().increment(1);
+            }
+        }
+
+        // ── Layer 2: AWS CRL distribution point check ───────────────────
+        let http_client =
+            self.crl_http_client.as_ref().expect("crl_http_client required when CRL enabled");
+
+        RegistrarMetrics::crl_checks_total().increment(1);
+
+        let revoked_certs = crl::check_chain_against_crls(&cert_infos, http_client).await;
+
+        if revoked_certs.is_empty() {
+            debug!(instance = %instance.instance_id, "CRL check passed, all certs clean");
+            return Ok(false);
+        }
+
+        RegistrarMetrics::crl_revocations_detected().increment(revoked_certs.len() as u64);
+
+        for revoked in &revoked_certs {
+            warn!(
+                cert = %revoked.label,
+                path_digest = %revoked.path_digest,
+                instance = %instance.instance_id,
+                "submitting revokeCert transaction"
+            );
+
+            self.submit_revoke_cert(verifier_address, revoked.path_digest).await;
+        }
+
+        Ok(true)
+    }
+
+    /// Submits a `revokeCert` transaction to the `NitroEnclaveVerifier`.
+    ///
+    /// Errors are logged but not propagated — a failed revocation should not
+    /// block the registration cycle.
+    async fn submit_revoke_cert(&self, verifier_address: Address, cert_hash: FixedBytes<32>) {
+        let calldata =
+            Bytes::from(INitroEnclaveVerifier::revokeCertCall { certHash: cert_hash }.abi_encode());
+
+        info!(
+            verifier = %verifier_address,
+            cert_hash = %cert_hash,
+            calldata_len = calldata.len(),
+            "Revoking certificate"
+        );
+
+        let candidate =
+            TxCandidate { tx_data: calldata, to: Some(verifier_address), ..Default::default() };
+
+        match self.tx_manager.send(candidate).await {
+            Ok(receipt) => {
+                if !receipt.inner.status() {
+                    warn!(
+                        cert_hash = %cert_hash,
+                        tx_hash = %receipt.transaction_hash,
+                        "revokeCert transaction reverted (cert may already be revoked)"
+                    );
+                } else {
+                    info!(
+                        cert_hash = %cert_hash,
+                        tx_hash = %receipt.transaction_hash,
+                        "certificate revoked successfully"
+                    );
+                    RegistrarMetrics::revoke_cert_success_total().increment(1);
+                }
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    cert_hash = %cert_hash,
+                    "failed to submit revokeCert transaction"
+                );
+                RegistrarMetrics::revoke_cert_tx_failures().increment(1);
+            }
+        }
     }
 
     /// Submits a `deregisterSigner` transaction and returns whether it succeeded.
@@ -693,6 +942,47 @@ where
     }
 }
 
+/// On-chain durable revocation check.
+///
+/// Consults the `revokedCerts` mapping for every intermediate in a pre-parsed
+/// Nitro cert chain (root and leaf are skipped — see
+/// [`crl::CertCrlInfo::intermediates`]).
+#[derive(Debug)]
+pub struct OnchainRevocationCheck;
+
+impl OnchainRevocationCheck {
+    /// Returns `Ok(true)` as soon as any intermediate's accumulated path
+    /// digest is found revoked on-chain, `Ok(false)` if every intermediate
+    /// is clean.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying RPC error verbatim; the caller decides whether
+    /// to fail-open or propagate.
+    pub async fn run(
+        verifier: &dyn NitroVerifierClient,
+        cert_infos: &[crl::CertCrlInfo],
+        instance_id: &str,
+    ) -> Result<bool> {
+        for info in crl::CertCrlInfo::intermediates(cert_infos) {
+            if verifier.is_revoked(info.path_digest).await? {
+                warn!(
+                    cert = %info.label,
+                    path_digest = %info.path_digest,
+                    instance = %instance_id,
+                    "intermediate is revoked on-chain (durable sentinel set), \
+                     skipping registration"
+                );
+                RegistrarMetrics::onchain_revocations_detected().increment(1);
+                return Ok(true);
+            }
+        }
+
+        debug!(instance = %instance_id, "on-chain revocation pre-check passed");
+        Ok(false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -718,7 +1008,10 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::{InstanceHealthStatus, RegistryClient, Result, SignerClient};
+    use crate::{
+        InstanceHealthStatus, RegistryClient, Result, SignerClient,
+        test_utils::{CertFixtures, INTER1_HEX, INTER2_HEX, LEAF_HEX, ROOT_HEX},
+    };
 
     // ── Shared constants ────────────────────────────────────────────────
 
@@ -1055,6 +1348,11 @@ mod tests {
             unhealthy_registration_window: Duration::from_secs(
                 DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS,
             ),
+            crl: CrlConfig {
+                enabled: false,
+                nitro_verifier_address: None,
+                fetch_timeout: Duration::from_secs(crate::DEFAULT_CRL_FETCH_TIMEOUT_SECS),
+            },
         }
     }
 
@@ -1077,7 +1375,9 @@ mod tests {
             tx,
             StubSignerClient,
             default_config(CancellationToken::new()),
+            None,
         )
+        .expect("test driver construction succeeds")
     }
 
     /// Builds a fully-configured driver for `step()` / `process_instance()` tests.
@@ -1101,7 +1401,9 @@ mod tests {
             tx,
             signer_client,
             default_config(cancel),
+            None,
         )
+        .expect("test driver construction succeeds")
     }
 
     // ── Configurable mock types for retry tests ────────────────────────
@@ -1253,7 +1555,9 @@ mod tests {
             tx,
             signer_client,
             default_config(cancel),
+            None,
         )
+        .expect("test driver construction succeeds")
     }
 
     // ── Calldata encoding tests ─────────────────────────────────────────
@@ -1320,7 +1624,9 @@ mod tests {
             tx.clone(),
             StubSignerClient,
             default_config(cancel.clone()),
-        );
+            None,
+        )
+        .expect("test driver construction succeeds");
 
         let registered = vec![ORPHAN_A];
         cancel.cancel();
@@ -1381,7 +1687,9 @@ mod tests {
             tx.clone(),
             StubSignerClient,
             default_config(CancellationToken::new()),
-        );
+            None,
+        )
+        .expect("test driver construction succeeds");
 
         // Both ORPHAN_A and ORPHAN_B are "registered" (in values()),
         // neither is in active_signers.
@@ -1408,7 +1716,9 @@ mod tests {
             tx.clone(),
             StubSignerClient,
             default_config(CancellationToken::new()),
-        );
+            None,
+        )
+        .expect("test driver construction succeeds");
 
         let registered = vec![ORPHAN_A, ORPHAN_B, ORPHAN_C];
         driver.deregister_orphans(&HashSet::new(), &registered).await.unwrap();
@@ -1555,7 +1865,9 @@ mod tests {
             tx.clone(),
             signer_client,
             config,
-        );
+            None,
+        )
+        .expect("test driver construction succeeds");
 
         let inst = instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time);
         let addrs = driver.process_instance(&inst).await.unwrap();
@@ -1858,7 +2170,9 @@ mod tests {
             tx.clone(),
             signer_client,
             default_config(CancellationToken::new()),
-        );
+            None,
+        )
+        .expect("test driver construction succeeds");
 
         driver.step().await.unwrap();
 
@@ -1932,7 +2246,9 @@ mod tests {
             tx.clone(),
             signer_client,
             default_config(cancel),
-        );
+            None,
+        )
+        .expect("test driver construction succeeds");
 
         driver.step().await.unwrap();
 
@@ -2138,7 +2454,9 @@ mod tests {
             tx.clone(),
             signer_client,
             default_config(CancellationToken::new()),
-        );
+            None,
+        )
+        .expect("test driver construction succeeds");
 
         driver.step().await.unwrap();
 
@@ -2277,7 +2595,9 @@ mod tests {
             tx.clone(),
             signer_client,
             default_config(cancel.clone()),
-        );
+            None,
+        )
+        .expect("test driver construction succeeds");
 
         // Schedule cancellation after 1 second (paused time).
         let cancel_clone = cancel.clone();
@@ -2374,7 +2694,9 @@ mod tests {
             tx.clone(),
             signer_client,
             config,
-        );
+            None,
+        )
+        .expect("test driver construction succeeds");
 
         driver.step().await.unwrap();
 
@@ -2640,5 +2962,204 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(tx.send_count(), 1, "should succeed on first attempt");
         assert_eq!(driver.proof_provider.call_count(), 1, "proof should be generated once");
+    }
+
+    // ── OnchainRevocationCheck tests ────────────────────────────────────
+    //
+    // Covers the durable on-chain revocation pre-check (CHAIN-4194 /
+    // Immunefi #75608). Uses the canonical 4-cert chain
+    // (root → inter1 → inter2 → leaf) from [`crate::test_utils`].
+
+    const ONCHAIN_TEST_INSTANCE_ID: &str = "i-onchain-revocation-test";
+
+    /// Mock [`NitroVerifierClient`] for unit-testing the on-chain pre-check.
+    /// `error`, when set, is returned once and then cleared.
+    #[derive(Default)]
+    struct MockNitroVerifier {
+        revoked: HashSet<FixedBytes<32>>,
+        error: Mutex<Option<RegistrarError>>,
+        call_count: AtomicU32,
+    }
+
+    impl MockNitroVerifier {
+        fn revoking(hashes: impl IntoIterator<Item = FixedBytes<32>>) -> Self {
+            Self {
+                revoked: hashes.into_iter().collect(),
+                error: Mutex::new(None),
+                call_count: AtomicU32::new(0),
+            }
+        }
+
+        fn failing(error: RegistrarError) -> Self {
+            Self {
+                revoked: HashSet::new(),
+                error: Mutex::new(Some(error)),
+                call_count: AtomicU32::new(0),
+            }
+        }
+    }
+
+    const TEST_VERIFIER_ADDRESS: Address = Address::repeat_byte(0xAB);
+
+    #[async_trait::async_trait]
+    impl crate::NitroVerifierClient for MockNitroVerifier {
+        fn address(&self) -> Address {
+            TEST_VERIFIER_ADDRESS
+        }
+
+        async fn is_revoked(&self, cert_hash: FixedBytes<32>) -> Result<bool> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            if let Some(err) = self.error.lock().unwrap().take() {
+                return Err(err);
+            }
+            Ok(self.revoked.contains(&cert_hash))
+        }
+    }
+
+    // Cert indices in the canonical chain.
+    const ROOT_INDEX: usize = 0;
+    const INTER1_INDEX: usize = 1;
+    const INTER2_INDEX: usize = 2;
+    const LEAF_INDEX: usize = 3;
+
+    fn full_chain_der() -> Vec<Vec<u8>> {
+        CertFixtures::decode_chain(&[ROOT_HEX, INTER1_HEX, INTER2_HEX, LEAF_HEX])
+    }
+
+    fn chain_subset(indices: &[usize]) -> Vec<Vec<u8>> {
+        let full = full_chain_der();
+        indices.iter().map(|&i| full[i].clone()).collect()
+    }
+
+    fn path_digest_for(index: usize) -> FixedBytes<32> {
+        let der = full_chain_der();
+        let refs: Vec<&[u8]> = der.iter().map(Vec::as_slice).collect();
+        crl::CertCrlInfo::from_chain(&refs)
+            .expect("static fixtures parse")
+            .remove(index)
+            .path_digest
+    }
+
+    fn full_chain_cert_infos() -> Vec<crl::CertCrlInfo> {
+        let der = full_chain_der();
+        let refs: Vec<&[u8]> = der.iter().map(Vec::as_slice).collect();
+        crl::CertCrlInfo::from_chain(&refs).expect("static fixtures parse")
+    }
+
+    fn full_chain_intermediate_count() -> u32 {
+        u32::try_from(full_chain_der().len().saturating_sub(2)).unwrap()
+    }
+
+    async fn run_pre_check(verifier: &MockNitroVerifier) -> (Result<bool>, u32) {
+        let cert_infos = full_chain_cert_infos();
+        let result =
+            OnchainRevocationCheck::run(verifier, &cert_infos, ONCHAIN_TEST_INSTANCE_ID).await;
+        (result, verifier.call_count.load(Ordering::SeqCst))
+    }
+
+    #[tokio::test]
+    async fn onchain_revocation_check_returns_false_when_no_intermediates_revoked() {
+        let verifier = MockNitroVerifier::default();
+        let (result, calls) = run_pre_check(&verifier).await;
+
+        assert!(
+            !result.expect("clean chain must succeed"),
+            "no intermediates flagged as revoked → registration must proceed"
+        );
+        assert_eq!(
+            calls,
+            full_chain_intermediate_count(),
+            "every intermediate must be queried when none are revoked"
+        );
+    }
+
+    #[rstest]
+    #[case::inter1_revoked(INTER1_INDEX, 1)]
+    #[case::inter2_revoked(INTER2_INDEX, 2)]
+    #[tokio::test]
+    async fn onchain_revocation_check_blocks_when_any_intermediate_revoked(
+        #[case] revoked_index: usize,
+        #[case] expected_calls_at_short_circuit: u32,
+    ) {
+        let verifier = MockNitroVerifier::revoking([path_digest_for(revoked_index)]);
+        let (result, calls) = run_pre_check(&verifier).await;
+
+        assert!(
+            result.expect("revoked-intermediate query must succeed"),
+            "revoked intermediate must block registration",
+        );
+        assert_eq!(
+            calls, expected_calls_at_short_circuit,
+            "pre-check must short-circuit at the first revoked intermediate",
+        );
+    }
+
+    #[tokio::test]
+    async fn onchain_revocation_check_short_circuits_when_all_intermediates_revoked() {
+        let verifier = MockNitroVerifier::revoking([
+            path_digest_for(INTER1_INDEX),
+            path_digest_for(INTER2_INDEX),
+        ]);
+        let (result, calls) = run_pre_check(&verifier).await;
+
+        assert!(result.expect("query must succeed"), "any revoked intermediate must block");
+        assert_eq!(calls, 1, "first intermediate triggers short-circuit");
+    }
+
+    #[tokio::test]
+    async fn onchain_revocation_check_skips_root_and_leaf() {
+        let verifier =
+            MockNitroVerifier::revoking([path_digest_for(ROOT_INDEX), path_digest_for(LEAF_INDEX)]);
+        let (result, calls) = run_pre_check(&verifier).await;
+
+        assert!(
+            !result.expect("query must succeed"),
+            "root/leaf revocation flags must not block registration",
+        );
+        assert_eq!(
+            calls,
+            full_chain_intermediate_count(),
+            "only intermediates are queried; root and leaf are skipped",
+        );
+    }
+
+    #[tokio::test]
+    async fn onchain_revocation_check_propagates_rpc_errors() {
+        let verifier = MockNitroVerifier::failing(RegistrarError::NitroVerifierCall {
+            context: "revokedCerts(0xdeadbeef)".into(),
+            source: "boom".into(),
+        });
+        let (result, _calls) = run_pre_check(&verifier).await;
+
+        let err = result.expect_err("RPC errors must surface to the caller");
+        assert!(
+            matches!(err, RegistrarError::NitroVerifierCall { .. }),
+            "expected NitroVerifierCall, got: {err:?}"
+        );
+    }
+
+    #[rstest]
+    #[case::root_only(&[ROOT_INDEX], 0)]
+    #[case::root_and_leaf(&[ROOT_INDEX, LEAF_INDEX], 0)]
+    #[case::three_cert(&[ROOT_INDEX, INTER1_INDEX, LEAF_INDEX], 1)]
+    #[tokio::test]
+    async fn onchain_revocation_check_queries_intermediates_only(
+        #[case] indices: &[usize],
+        #[case] expected_calls: u32,
+    ) {
+        let owned = chain_subset(indices);
+        let refs: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
+        let cert_infos = crl::CertCrlInfo::from_chain(&refs).expect("static fixtures parse");
+        let verifier = MockNitroVerifier::default();
+
+        let result =
+            OnchainRevocationCheck::run(&verifier, &cert_infos, ONCHAIN_TEST_INSTANCE_ID).await;
+
+        assert!(!result.expect("query must succeed"), "clean chain not revoked");
+        assert_eq!(
+            verifier.call_count.load(Ordering::SeqCst),
+            expected_calls,
+            "only intermediates (root and leaf skipped) should produce RPC calls",
+        );
     }
 }

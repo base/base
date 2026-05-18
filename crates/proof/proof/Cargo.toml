@@ -17,26 +17,25 @@ base-proof-mpt.workspace = true
 base-proof-driver.workspace = true
 base-proof-executor.workspace = true
 base-proof-preimage.workspace = true
+base-common-chains.workspace = true
 base-consensus-derive.workspace = true
-base-consensus-registry.workspace = true
-base-consensus-genesis = { workspace = true, features = ["serde"] }
+base-common-genesis = { workspace = true, features = ["serde"] }
 
 # Alloy
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
-alloy-genesis.workspace = true
 alloy-trie.workspace = true
+alloy-genesis.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
 # Base Alloy
-base-alloy-consensus.workspace = true
-base-alloy-rpc-types-engine.workspace = true
+base-common-consensus.workspace = true
+base-common-rpc-types-engine.workspace = true
 
 # Execution
 alloy-evm.workspace = true
-base-revm.workspace = true
-base-alloy-evm.workspace = true
+base-common-evm.workspace = true
 
 # General
 lru.workspace = true
@@ -59,8 +58,8 @@ tokio = { workspace = true, features = ["full"], optional = true }
 rand.workspace = true
 rayon.workspace = true
 rstest.workspace = true
-tokio = { workspace = true, features = ["full"] }
 c-kzg = { workspace = true, features = [] }
+tokio = { workspace = true, features = ["full"] }
 alloy-eips = { workspace = true, features = ["kzg"] }
 
 [features]
@@ -69,22 +68,22 @@ std = [
 	"alloy-eips/kzg",
 	"alloy-eips/std",
 	"alloy-evm/std",
+	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"alloy-rlp/std",
 	"alloy-trie/std",
 	"ark-bls12-381/std",
 	"ark-ff/std",
-	"base-alloy-consensus/std",
-	"base-alloy-evm/std",
-	"base-alloy-rpc-types-engine/std",
-	"base-consensus-genesis/std",
-	"base-consensus-registry/std",
+	"base-common-chains/std",
+	"base-common-consensus/std",
+	"base-common-evm/std",
+	"base-common-genesis/std",
+	"base-common-rpc-types-engine/std",
 	"base-proof-driver/std",
 	"base-proof-executor/std",
 	"base-proof-mpt/std",
 	"base-proof-preimage/std",
 	"base-protocol/std",
-	"base-revm/std",
 	"c-kzg?/std",
 	"dep:c-kzg",
 	"dep:tokio",

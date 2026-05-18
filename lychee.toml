@@ -20,6 +20,9 @@ exclude = [
     'https://img.shields.io/github/commit-activity/w/base/base',
     'https://img.shields.io/github/issues-pr-raw/base/base',
 
+    # Cantina code/overview pages redirect (302) through an auth gate
+    'https://cantina\.xyz/code/',
+
     # Sites that block automated HTTP clients / scrapers
     'https://.*etherscan\.io',         # Block explorer; returns 403/429 for bots
     'https://medium\.com',             # Medium blocks crawlers
@@ -30,6 +33,12 @@ exclude = [
     'https://patreon\.com',
     'https://www\.patreon\.com',
     'https://tidelift\.com',
+    'https://www\.coinbase\.com',      # Fails in GitHub Actions with HTTP/2 protocol errors
+
+    # Moved/deleted source files (links in docs that predate refactors)
+    'https://github\.com/base/base/blob/main/crates/execution/upgrades/src/chain\.rs',
+    'https://github\.com/base/base/blob/main/crates/common/genesis/src/rollup\.rs',
+    'https://github\.com/base/base/blob/main/crates/common/genesis/src/chain/hardfork\.rs',
 
     # Internal / staging sites not meant for link checking
     'https://rustup\.rs/',

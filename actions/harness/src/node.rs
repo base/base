@@ -1,34 +1,31 @@
 use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::BlockNumHash;
-use alloy_primitives::{B256, Bloom, Bytes, U256};
+use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
-use alloy_rpc_types_engine::{
-    ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
-    ForkchoiceState,
-};
-use base_alloy_consensus::{BaseBlock, OpTxEnvelope, TxDeposit};
-use base_alloy_provider::OpEngineApi;
-use base_alloy_rpc_types_engine::OpExecutionPayloadV4;
+use alloy_rpc_types_engine::ForkchoiceState;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
+use base_common_genesis::RollupConfig;
+use base_common_network::BaseEngineApi;
 use base_consensus_derive::{
-    ActivationSignal, DerivationPipeline, IndexedAttributesQueueStage, Pipeline, PipelineError,
-    PipelineErrorKind, ResetSignal, Signal, SignalReceiver, StatefulAttributesBuilder, StepResult,
+    ActivationSignal, DerivationPipeline, EthereumDataSource, Pipeline, PipelineError,
+    PipelineErrorKind, PolledAttributesQueueStage, ResetError, ResetSignal, SignalReceiver,
+    StatefulAttributesBuilder, StepResult,
 };
-use base_consensus_engine::{EngineForkchoiceVersion, EngineNewPayloadVersion};
-use base_consensus_genesis::RollupConfig;
+use base_consensus_engine::EngineForkchoiceVersion;
 use base_consensus_safedb::{
     SafeDB, SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse,
 };
 use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
-    ActionBlobDataSource, ActionDataSource, ActionEngineClient, ActionL1ChainProvider,
-    ActionL2ChainProvider, TestGossipTransport,
+    ActionBlobProvider, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,
+    TestGossipTransport,
 };
 
 /// The generic pipeline type used by [`TestRollupNode`] for any DA source `D`.
 pub type ActionPipeline<D> = DerivationPipeline<
-    IndexedAttributesQueueStage<
+    PolledAttributesQueueStage<
         D,
         ActionL1ChainProvider,
         ActionL2ChainProvider,
@@ -37,21 +34,13 @@ pub type ActionPipeline<D> = DerivationPipeline<
     ActionL2ChainProvider,
 >;
 
-/// The concrete pipeline type used by [`TestRollupNode`] with calldata DA.
-pub type VerifierPipeline = DerivationPipeline<
-    IndexedAttributesQueueStage<
-        ActionDataSource,
-        ActionL1ChainProvider,
-        ActionL2ChainProvider,
-        StatefulAttributesBuilder<ActionL1ChainProvider, ActionL2ChainProvider>,
-    >,
-    ActionL2ChainProvider,
->;
+/// The production-mode DA provider used by [`VerifierPipeline`].
+pub type ProductionDaProvider = EthereumDataSource<ActionL1ChainProvider, ActionBlobProvider>;
 
-/// The concrete pipeline type used by [`TestRollupNode`] with blob DA.
-pub type BlobVerifierPipeline = DerivationPipeline<
-    IndexedAttributesQueueStage<
-        ActionBlobDataSource,
+/// The concrete pipeline type used by [`TestRollupNode`] with production calldata/blob DA sources.
+pub type VerifierPipeline = DerivationPipeline<
+    PolledAttributesQueueStage<
+        ProductionDaProvider,
         ActionL1ChainProvider,
         ActionL2ChainProvider,
         StatefulAttributesBuilder<ActionL1ChainProvider, ActionL2ChainProvider>,
@@ -123,9 +112,8 @@ pub enum NodeStepResult {
 /// catch encoding bugs and real read/write behaviour.
 ///
 /// 1. Mine and push an L1 block: `h.mine_and_push(&chain)`.
-/// 2. Signal the new head: `node.act_l1_head_signal(block_info).await`.
-/// 3. Step the node: `node.step().await`.
-/// 4. Assert safe head advanced: `node.l2_safe().block_info.number`.
+/// 2. Step the node: `node.step().await`.
+/// 3. Assert safe head advanced: `node.l2_safe().block_info.number`.
 ///
 /// Each call to [`step`] first drains any gossiped unsafe blocks from the P2P
 /// transport, then performs one pipeline step. When the pipeline produces
@@ -177,6 +165,8 @@ pub struct TestRollupNode<P: Pipeline + SignalReceiver + Debug + Send = Verifier
     rollup_config: Arc<RollupConfig>,
     /// redb-backed safe head database for assertion-level testing.
     safe_db: Arc<SafeDB>,
+    /// Shared L2 chain provider backing reset walkback and batch validation.
+    l2_provider: ActionL2ChainProvider,
 }
 
 impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
@@ -197,6 +187,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         p2p: TestGossipTransport,
         safe_head: L2BlockInfo,
         rollup_config: Arc<RollupConfig>,
+        l2_provider: ActionL2ChainProvider,
     ) -> Self {
         let safedb_dir =
             tempfile::TempDir::new().expect("TestRollupNode: failed to create safedb temp dir");
@@ -219,11 +210,11 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             derived_l1_info_txs: Vec::new(),
             rollup_config,
             safe_db,
+            l2_provider,
         }
     }
 
-    /// Initialize the pipeline by sending the genesis activation signal and
-    /// draining the genesis L1 block.
+    /// Initialize the pipeline by sending the genesis activation signal.
     ///
     /// Must be called once before any [`step`] or [`run_until_idle`] calls.
     ///
@@ -234,7 +225,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             .signal(ActivationSignal { l2_safe_head: self.safe_head }.signal())
             .await
             .expect("TestRollupNode: initialize signal failed");
-        self.run_until_idle().await;
     }
 
     /// Return the current L2 safe head.
@@ -344,14 +334,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         self.engine.block_hash_registry().insert(number, hash, None);
     }
 
-    /// Signal the pipeline that a new L1 block is available.
-    pub async fn act_l1_head_signal(&mut self, head: BlockInfo) {
-        self.pipeline
-            .signal(Signal::ProvideBlock(head))
-            .await
-            .expect("TestRollupNode: act_l1_head_signal failed");
-    }
-
     /// Record the L1 safe head number. Does not drive additional pipeline steps.
     pub async fn act_l1_safe_signal(&mut self, head: BlockInfo) -> Result<(), VerifierError> {
         self.safe_l1_number = head.number;
@@ -400,14 +382,17 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             .safe_head_reset(l2_safe_head)
             .await
             .expect("TestRollupNode: safe_db reset failed");
-        // Replace the engine with a fresh instance: the stateful EVM must restart
-        // from genesis to correctly re-execute the new fork's blocks.
-        self.engine = ActionEngineClient::new(
-            Arc::clone(&self.rollup_config),
-            l2_safe_head,
-            self.engine.block_hash_registry(),
-            self.engine.l1_chain(),
-        );
+        if l2_safe_head.block_info.number == 0 {
+            // Replace the engine with a fresh instance when resetting all the way
+            // to genesis: the stateful EVM must restart from genesis to correctly
+            // re-execute the new fork's blocks.
+            self.engine = ActionEngineClient::new(
+                Arc::clone(&self.rollup_config),
+                l2_safe_head,
+                self.engine.block_hash_registry(),
+                self.engine.l1_chain(),
+            );
+        }
     }
 
     /// Inject an unsafe L2 block directly, as if received via P2P gossip.
@@ -460,7 +445,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     pub async fn step(&mut self) -> NodeStepResult {
         self.drain_gossip();
 
-        match self.pipeline.step(self.safe_head).await {
+        let result = self.pipeline.step(self.safe_head).await;
+        match result {
             StepResult::PreparedAttributes => {
                 let Some(attrs) = self.pipeline.next() else {
                     return NodeStepResult::AdvancedOrigin;
@@ -477,7 +463,16 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
                 err => panic!("TestRollupNode: pipeline error: {err}"),
             },
             StepResult::OriginAdvanceErr(err) => match err {
-                PipelineErrorKind::Temporary(PipelineError::Eof) => NodeStepResult::Idle,
+                PipelineErrorKind::Temporary(PipelineError::Eof | PipelineError::Provider(_)) => {
+                    NodeStepResult::Idle
+                }
+                PipelineErrorKind::Reset(ResetError::HoloceneActivation) => {
+                    self.pipeline
+                        .signal(ActivationSignal { l2_safe_head: self.safe_head }.signal())
+                        .await
+                        .expect("TestRollupNode: Holocene activation signal failed");
+                    NodeStepResult::AdvancedOrigin
+                }
                 err => panic!("TestRollupNode: origin advance error: {err}"),
             },
         }
@@ -573,8 +568,17 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
                     err => return Err(VerifierError::Pipeline(Box::new(err))),
                 },
                 StepResult::OriginAdvanceErr(err) => match err {
-                    PipelineErrorKind::Temporary(PipelineError::Eof) => {
+                    PipelineErrorKind::Temporary(
+                        PipelineError::Eof | PipelineError::Provider(_),
+                    ) => {
                         return Ok((steps, false));
+                    }
+                    PipelineErrorKind::Reset(ResetError::HoloceneActivation) => {
+                        self.pipeline
+                            .signal(ActivationSignal { l2_safe_head: self.safe_head }.signal())
+                            .await
+                            .expect("TestRollupNode: Holocene activation signal failed");
+                        no_progress = 0;
                     }
                     err => return Err(VerifierError::Pipeline(Box::new(err))),
                 },
@@ -600,11 +604,11 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
 
     /// Drain any pending gossip blocks from the P2P transport without blocking.
     ///
-    /// For each received [`OpNetworkPayloadEnvelope`], the unsafe head is
+    /// For each received [`NetworkPayloadEnvelope`], the unsafe head is
     /// advanced if the block is the next sequential block. Gaps and duplicates
     /// are silently ignored.
     ///
-    /// [`OpNetworkPayloadEnvelope`]: base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope
+    /// [`NetworkPayloadEnvelope`]: base_common_rpc_types_engine::NetworkPayloadEnvelope
     fn drain_gossip(&mut self) {
         while let Some(envelope) = self.p2p.try_next_unsafe_block() {
             let payload = &envelope.payload;
@@ -647,7 +651,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         let block_number = attrs.block_number();
         let parent_hash = self.safe_head.block_info.hash;
         let timestamp = attrs.attributes.payload_attributes.timestamp;
-        let gas_limit = attrs.attributes.gas_limit.unwrap_or(30_000_000);
         let raw_txs: Vec<Bytes> = attrs.attributes.transactions.as_deref().unwrap_or(&[]).to_vec();
 
         // Record per-block metadata before submitting to the engine.
@@ -659,74 +662,13 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             self.derived_l1_info_txs.push((block_number, l1_info));
         }
 
-        // Construct a payload shell. The engine fills in state_root, gas_used,
-        // and the real block_hash during execution.
-        let payload_v1 = ExecutionPayloadV1 {
-            parent_hash,
-            fee_recipient: attrs.attributes.payload_attributes.suggested_fee_recipient,
-            state_root: B256::ZERO,
-            receipts_root: B256::ZERO,
-            logs_bloom: Bloom::default(),
-            prev_randao: attrs.attributes.payload_attributes.prev_randao,
-            block_number,
-            gas_limit,
-            gas_used: 0,
-            timestamp,
-            extra_data: Bytes::default(),
-            base_fee_per_gas: U256::from(1_000_000_000u64),
-            block_hash: B256::ZERO,
-            transactions: raw_txs,
-        };
-
-        let pbr = attrs.attributes.payload_attributes.parent_beacon_block_root.unwrap_or_default();
-
-        let block_hash = match EngineNewPayloadVersion::from_cfg(&self.rollup_config, timestamp) {
-            EngineNewPayloadVersion::V2 => {
-                let payload =
-                    ExecutionPayloadInputV2 { execution_payload: payload_v1, withdrawals: None };
-                self.engine
-                    .new_payload_v2(payload)
-                    .await
-                    .expect("TestRollupNode: new_payload_v2 failed")
-                    .latest_valid_hash
-                    .unwrap_or_default()
-            }
-            EngineNewPayloadVersion::V3 => {
-                let payload = ExecutionPayloadV3 {
-                    payload_inner: ExecutionPayloadV2 {
-                        payload_inner: payload_v1,
-                        withdrawals: vec![],
-                    },
-                    blob_gas_used: 0,
-                    excess_blob_gas: 0,
-                };
-                self.engine
-                    .new_payload_v3(payload, pbr)
-                    .await
-                    .expect("TestRollupNode: new_payload_v3 failed")
-                    .latest_valid_hash
-                    .unwrap_or_default()
-            }
-            EngineNewPayloadVersion::V4 => {
-                let payload = OpExecutionPayloadV4 {
-                    payload_inner: ExecutionPayloadV3 {
-                        payload_inner: ExecutionPayloadV2 {
-                            payload_inner: payload_v1,
-                            withdrawals: vec![],
-                        },
-                        blob_gas_used: 0,
-                        excess_blob_gas: 0,
-                    },
-                    withdrawals_root: B256::ZERO,
-                };
-                self.engine
-                    .new_payload_v4(payload, pbr)
-                    .await
-                    .expect("TestRollupNode: new_payload_v4 failed")
-                    .latest_valid_hash
-                    .unwrap_or_default()
-            }
-        };
+        // Execute via the engine, passing the full attributes to preserve
+        // Holocene/Jovian-specific parameters (eip_1559_params, min_base_fee)
+        // that would be lost in the ExecutionPayloadV1 round-trip.
+        let block_hash = self
+            .engine
+            .execute_from_attrs(parent_hash, block_number, attrs.attributes.clone())
+            .expect("TestRollupNode: execute_from_attrs failed");
 
         // Advance the safe head using the block hash returned by the engine.
         let derived_from = attrs.derived_from;
@@ -746,6 +688,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             l1_origin,
             seq_num,
         };
+        self.l2_provider.insert_block(self.safe_head);
         self.safe_head_history.push((self.safe_head, l1_origin.number));
         // `attrs.derived_from` carries the full L1 BlockInfo set by the pipeline's
         // AttributesQueueStage. It is always `Some` for attributes produced by the
@@ -807,7 +750,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     fn l1_origin_from_block(&self, block: &BaseBlock) -> Option<BlockNumHash> {
         let first = block.body.transactions.first()?;
         let deposit = match first {
-            OpTxEnvelope::Deposit(d) => d,
+            BaseTxEnvelope::Deposit(d) => d,
             _ => return None,
         };
         let l1_info = L1BlockInfoTx::decode_calldata(deposit.inner().input.as_ref()).ok()?;

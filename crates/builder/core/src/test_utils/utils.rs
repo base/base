@@ -5,9 +5,9 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
 use alloy_sol_types::SolCall;
-use base_alloy_consensus::{OpTypedTransaction, TxDeposit};
-use base_alloy_rpc_types::Transaction;
-use base_execution_chainspec::OpChainSpec;
+use base_common_consensus::{BaseTypedTransaction, TxDeposit};
+use base_common_rpc_types::Transaction;
+use base_execution_chainspec::BaseChainSpec;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
@@ -18,7 +18,7 @@ use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConf
 use super::{
     BUILDER_PRIVATE_KEY, FLASHBLOCKS_DEPLOY_KEY, FUNDED_PRIVATE_KEY, PrivateKeySigner, Protocol,
     TransactionBuilder, driver::ChainDriver, flashblocks_number_contract::FlashblocksNumber,
-    sign_op_tx,
+    sign_base_tx,
 };
 
 /// Extension methods on [`TransactionBuilder`] for common test transaction patterns.
@@ -139,7 +139,7 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
             };
 
             let signer = PrivateKeySigner::random();
-            let signed_tx = sign_op_tx(&signer, OpTypedTransaction::Deposit(deposit))?;
+            let signed_tx = sign_base_tx(&signer, BaseTypedTransaction::Deposit(deposit))?;
             let signed_tx_rlp = signed_tx.encoded_2718();
             txs.push(signed_tx_rlp.into());
         }
@@ -160,7 +160,7 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
         };
 
         let signer = PrivateKeySigner::random();
-        let signed_tx = sign_op_tx(&signer, OpTypedTransaction::Deposit(deposit))?;
+        let signed_tx = sign_base_tx(&signer, BaseTypedTransaction::Deposit(deposit))?;
         let signed_tx_rlp = signed_tx.encoded_2718();
         Ok(self.build_new_block_with_txs(vec![signed_tx_rlp.into()]).await?.header.hash)
     }
@@ -219,7 +219,7 @@ impl AsTxs for Vec<TxHash> {
 }
 
 /// Creates a temporary MDBX database suitable for tests.
-pub fn create_test_db(config: NodeConfig<OpChainSpec>) -> Arc<TempDatabase<DatabaseEnv>> {
+pub fn create_test_db(config: NodeConfig<BaseChainSpec>) -> Arc<TempDatabase<DatabaseEnv>> {
     let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(
         reth_db::test_utils::tempdir_path(),
     );

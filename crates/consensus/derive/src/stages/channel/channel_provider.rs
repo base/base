@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::BlockInfo;
 
 use super::{ChannelAssembler, ChannelBank, ChannelReaderProvider, NextFrameProvider};
@@ -56,7 +56,7 @@ where
     }
 
     /// Attempts to update the active stage of the mux.
-    pub(crate) fn attempt_update(&mut self) -> PipelineResult<()> {
+    pub fn attempt_update(&mut self) -> PipelineResult<()> {
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
         if let Some(prev) = self.prev.take() {
             // On the first call to `attempt_update`, we need to determine the active stage to
@@ -165,18 +165,6 @@ where
             Err(PipelineError::NotEnoughData.temp())
         }
     }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.attempt_update()?;
-
-        if let Some(channel_assembler) = self.channel_assembler.as_mut() {
-            channel_assembler.provide_block(block).await
-        } else if let Some(channel_bank) = self.channel_bank.as_mut() {
-            channel_bank.provide_block(block).await
-        } else {
-            Err(PipelineError::NotEnoughData.temp())
-        }
-    }
 }
 
 #[async_trait]
@@ -202,7 +190,7 @@ mod tests {
     use alloc::{sync::Arc, vec};
 
     use alloy_eips::BlockNumHash;
-    use base_consensus_genesis::{HardForkConfig, RollupConfig, SystemConfig};
+    use base_common_genesis::{HardForkConfig, RollupConfig, SystemConfig};
     use base_protocol::BlockInfo;
 
     use crate::{

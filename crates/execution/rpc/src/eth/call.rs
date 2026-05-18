@@ -3,29 +3,29 @@ use reth_rpc_eth_api::{
     helpers::{Call, EthCall, estimate::EstimateCall},
 };
 
-use crate::{OpEthApi, OpEthApiError, eth::RpcNodeCore};
+use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 
-impl<N, Rpc> EthCall for OpEthApi<N, Rpc>
+impl<N, Rpc> EthCall for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    OpEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError, Evm = N::Evm>,
+    BaseEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = N::Evm>,
 {
 }
 
-impl<N, Rpc> EstimateCall for OpEthApi<N, Rpc>
+impl<N, Rpc> EstimateCall for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    OpEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError, Evm = N::Evm>,
+    BaseEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = N::Evm>,
 {
 }
 
-impl<N, Rpc> Call for OpEthApi<N, Rpc>
+impl<N, Rpc> Call for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    OpEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError, Evm = N::Evm>,
+    BaseEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = N::Evm>,
 {
     #[inline]
     fn call_gas_limit(&self) -> u64 {

@@ -1,5 +1,5 @@
 //! Implementation of [`HashedCursor`] and [`TrieCursor`] for
-//! [`OpProofsStorage`](crate::OpProofsStorage).
+//! [`BaseProofsStorage`](crate::BaseProofsStorage).
 
 use alloy_primitives::{B256, U256};
 use derive_more::Constructor;
@@ -13,9 +13,9 @@ use reth_trie_common::{BranchNodeCompact, Nibbles};
 
 /// Manages reading storage or account trie nodes from [`TrieCursor`].
 #[derive(Debug, Clone, Constructor)]
-pub struct OpProofsTrieCursor<C>(pub C);
+pub struct BaseProofsTrieCursor<C>(pub C);
 
-impl<C> TrieCursor for OpProofsTrieCursor<C>
+impl<C> TrieCursor for BaseProofsTrieCursor<C>
 where
     C: TrieCursor,
 {
@@ -51,7 +51,7 @@ where
     }
 }
 
-impl<C> TrieStorageCursor for OpProofsTrieCursor<C>
+impl<C> TrieStorageCursor for BaseProofsTrieCursor<C>
 where
     C: TrieStorageCursor,
 {
@@ -63,9 +63,9 @@ where
 
 /// Manages reading hashed account nodes from external storage.
 #[derive(Debug, Clone, Constructor)]
-pub struct OpProofsHashedAccountCursor<C>(pub C);
+pub struct BaseProofsHashedAccountCursor<C>(pub C);
 
-impl<C> HashedCursor for OpProofsHashedAccountCursor<C>
+impl<C> HashedCursor for BaseProofsHashedAccountCursor<C>
 where
     C: HashedCursor<Value = Account> + Send + Sync,
 {
@@ -89,9 +89,9 @@ where
 
 /// Manages reading hashed storage nodes from external storage.
 #[derive(Debug, Clone, Constructor)]
-pub struct OpProofsHashedStorageCursor<C>(pub C);
+pub struct BaseProofsHashedStorageCursor<C>(pub C);
 
-impl<C> HashedCursor for OpProofsHashedStorageCursor<C>
+impl<C> HashedCursor for BaseProofsHashedStorageCursor<C>
 where
     C: HashedCursor<Value = U256> + Send + Sync,
 {
@@ -113,7 +113,7 @@ where
     }
 }
 
-impl<C> HashedStorageCursor for OpProofsHashedStorageCursor<C>
+impl<C> HashedStorageCursor for BaseProofsHashedStorageCursor<C>
 where
     C: HashedStorageCursor<Value = U256> + Send + Sync,
 {

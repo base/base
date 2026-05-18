@@ -15,8 +15,8 @@ pub use metrics::BuilderMetrics;
 
 mod execution;
 pub use execution::{
-    ExecutionInfo, ExecutionMeteringLimitExceeded, ResourceLimits, TxResources, TxnExecutionError,
-    TxnOutcome,
+    ExecutionInfo, ExecutionMeteringLimitExceeded, FlashblocksExecutionInfo, ResourceLimits,
+    TxResources, TxnExecutionError, TxnOutcome,
 };
 
 mod execution_metering_mode;
@@ -28,12 +28,18 @@ pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
 mod metering;
 pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};
 
+mod rejected_tx_forwarder;
+pub use rejected_tx_forwarder::RejectedTxForwarder;
+
+mod rejection_cache;
+pub use rejection_cache::RejectionCache;
+
 mod flashblocks;
 pub use flashblocks::{
-    BestFlashblocksTxs, BlockCell, BlockPayloadJob, BlockPayloadJobGenerator, BuildArguments,
-    FlashblockDiagnostics, FlashblockSelectionOutcome, FlashblocksExecutionInfo,
-    FlashblocksExtraCtx, FlashblocksServiceBuilder, OpPayloadBuilderCtx, PayloadBuilder,
-    PayloadHandler, ResolvePayload, WaitForValue,
+    BasePayloadBuilderCtx, BestFlashblocksTxs, BlockCell, BlockPayloadJob,
+    BlockPayloadJobGenerator, BuildArguments, FlashblockDiagnostics, FlashblockSelectionOutcome,
+    FlashblocksExtraCtx, FlashblocksServiceBuilder, PayloadBuilder, PayloadHandler, ResolvePayload,
+    WaitForValue,
 };
 
 mod extension;

@@ -1,36 +1,44 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::TxHash;
 use tracing::debug;
 
-use super::{MetricsAggregator, MetricsSummary, RollingWindow, TransactionMetrics};
+use super::{
+    ConfigSummary, MetricsAggregator, MetricsSummary, RollingWindow, ThroughputSample,
+    TransactionMetrics,
+};
 
 /// Collects transaction metrics during test execution.
 #[derive(Debug)]
 pub struct MetricsCollector {
-    start_time: Option<Instant>,
     transactions: Vec<TransactionMetrics>,
     submitted_count: u64,
     failed_count: u64,
+    reverted_count: u64,
+    failure_reasons: HashMap<String, u64>,
     rolling: RollingWindow,
+    block_receipt_delay_rolling: RollingWindow,
+    flashblocks_rolling: RollingWindow,
+    throughput_samples: Vec<ThroughputSample>,
 }
 
 impl MetricsCollector {
     /// Creates a new metrics collector.
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            start_time: None,
             transactions: Vec::new(),
             submitted_count: 0,
             failed_count: 0,
+            reverted_count: 0,
+            failure_reasons: HashMap::new(),
             rolling: RollingWindow::new(),
+            block_receipt_delay_rolling: RollingWindow::new(),
+            flashblocks_rolling: RollingWindow::new(),
+            throughput_samples: Vec::new(),
         }
-    }
-
-    /// Starts the metrics collection timer.
-    pub fn start(&mut self) {
-        self.start_time = Some(Instant::now());
-        debug!("metrics collection started");
     }
 
     /// Records a submitted transaction.
@@ -40,19 +48,40 @@ impl MetricsCollector {
 
     /// Records a confirmed transaction with metrics.
     pub fn record_confirmed(&mut self, metrics: TransactionMetrics) {
-        debug!(tx_hash = %metrics.tx_hash, latency_ms = metrics.latency.as_millis(), "tx confirmed");
-        self.rolling.push(metrics.gas_used, metrics.latency);
+        debug!(
+            tx_hash = %metrics.tx_hash,
+            block_latency_ms = ?metrics.block_latency.map(|d| d.as_millis()),
+            reverted = metrics.reverted,
+            "tx confirmed"
+        );
+        if metrics.reverted {
+            self.reverted_count += 1;
+        }
+        let at = metrics.confirmed_at.unwrap_or_else(Instant::now);
+        if let Some(latency) = metrics.block_latency {
+            self.rolling.push(metrics.gas_used, latency, at);
+        } else {
+            self.rolling.push_gas(metrics.gas_used, at);
+        }
+        if let Some(flashblocks_latency) = metrics.flashblocks_latency {
+            self.flashblocks_rolling.push_latency(flashblocks_latency, at);
+        }
+        if let Some(block_receipt_delay) = metrics.block_receipt_delay {
+            self.block_receipt_delay_rolling.push_latency(block_receipt_delay, at);
+        }
         self.transactions.push(metrics);
     }
 
-    /// Records a failed transaction.
-    pub const fn record_failed(&mut self, _tx_hash: TxHash, _reason: &str) {
+    /// Records a failed transaction with a categorized reason.
+    pub fn record_failed(&mut self, _tx_hash: TxHash, reason: &str) {
         self.failed_count += 1;
+        *self.failure_reasons.entry(reason.to_string()).or_insert(0) += 1;
     }
 
-    /// Returns the elapsed time since start.
-    pub fn elapsed(&self) -> Duration {
-        self.start_time.map(|t| t.elapsed()).unwrap_or_default()
+    /// Records multiple failures with the same reason.
+    pub fn record_failures(&mut self, reason: &str, count: u64) {
+        self.failed_count += count;
+        *self.failure_reasons.entry(reason.to_string()).or_insert(0) += count;
     }
 
     /// Returns the number of confirmed transactions.
@@ -70,19 +99,51 @@ impl MetricsCollector {
         self.failed_count
     }
 
+    /// Returns the number of confirmed transactions that reverted.
+    pub const fn reverted_count(&self) -> u64 {
+        self.reverted_count
+    }
+
     /// Generates a summary of collected metrics.
-    pub fn summarize(&self) -> MetricsSummary {
+    ///
+    /// `duration` should span from first submission to last confirmation
+    /// so that the reported TPS reflects end-to-end throughput.
+    pub fn summarize(&self, duration: Duration, config: Option<ConfigSummary>) -> MetricsSummary {
         let aggregator = MetricsAggregator::new(&self.transactions);
-        aggregator.summarize(self.elapsed(), self.submitted_count, self.failed_count)
+        aggregator.summarize(
+            duration,
+            self.submitted_count,
+            self.failed_count,
+            &self.failure_reasons,
+            &self.throughput_samples,
+            config,
+        )
     }
 
     /// Resets the collector for reuse.
     pub fn reset(&mut self) {
-        self.start_time = None;
         self.transactions.clear();
         self.submitted_count = 0;
         self.failed_count = 0;
+        self.reverted_count = 0;
+        self.failure_reasons.clear();
         self.rolling = RollingWindow::new();
+        self.block_receipt_delay_rolling = RollingWindow::new();
+        self.flashblocks_rolling = RollingWindow::new();
+        self.throughput_samples.clear();
+    }
+
+    /// Snapshots the current rolling TPS and GPS with elapsed time for timeseries output.
+    pub fn sample_throughput(&mut self, elapsed: Duration) {
+        let tps = self.rolling.tps();
+        let gps = self.rolling.gps();
+        if tps > 0.0 {
+            self.throughput_samples.push(ThroughputSample {
+                elapsed_secs: elapsed.as_secs_f64(),
+                tps,
+                gps,
+            });
+        }
     }
 
     /// Returns the rolling 30s TPS.
@@ -98,6 +159,18 @@ impl MetricsCollector {
     /// Returns the rolling 30s (p50, p99) latency percentiles.
     pub fn rolling_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
         self.rolling.p50_p99()
+    }
+
+    /// Rolling 30s flashblocks (p50, p99).
+    pub fn rolling_flashblocks_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
+        self.flashblocks_rolling.p50_p99()
+    }
+
+    /// Rolling 30s block receipt delay (p50, p99).
+    pub fn rolling_block_receipt_delay_p50_p99(
+        &mut self,
+    ) -> (std::time::Duration, std::time::Duration) {
+        self.block_receipt_delay_rolling.p50_p99()
     }
 
     /// Returns the average gas used per confirmed transaction.

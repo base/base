@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
-use base_consensus_genesis::{HardForkConfig, RollupConfig};
-use base_consensus_registry::Registry;
+use base_common_chains::{ChainConfig, rollup_config};
+use base_common_genesis::{HardForkConfig, RollupConfig};
 
 use crate::BatcherConfig;
 
@@ -11,9 +11,9 @@ pub struct TestRollupConfigBuilder {
 }
 
 impl TestRollupConfigBuilder {
-    /// Returns the Base mainnet [`RollupConfig`] from the chain registry.
-    pub fn mainnet() -> &'static RollupConfig {
-        Registry::rollup_config(8453).expect("Base mainnet config must exist in the registry")
+    /// Returns the Base mainnet [`RollupConfig`] from [`ChainConfig::MAINNET`].
+    pub fn mainnet() -> RollupConfig {
+        rollup_config!(ChainConfig::MAINNET)
     }
 
     /// Starts from the Base mainnet config and applies the common harness overrides.
@@ -22,9 +22,7 @@ impl TestRollupConfigBuilder {
     /// addresses, zeroing genesis for the in-memory L1 miner, and activating the
     /// Canyon-through-Fjord path from genesis.
     pub fn base_mainnet(batcher: &BatcherConfig) -> Self {
-        let mut config = Registry::rollup_config(8453)
-            .expect("Base mainnet config must exist in the registry")
-            .clone();
+        let mut config = rollup_config!(ChainConfig::MAINNET);
 
         config.batch_inbox_address = batcher.inbox_address;
         config
@@ -90,6 +88,23 @@ impl TestRollupConfigBuilder {
         self
     }
 
+    /// Activates all forks from Canyon through Granite at genesis, leaving Holocene
+    /// and later as `None`.
+    ///
+    /// Replaces the entire hardfork schedule. Use when a test needs the last
+    /// pre-Holocene cumulative schedule.
+    pub fn through_granite(mut self) -> Self {
+        self.config.hardforks = HardForkConfig {
+            canyon_time: Some(0),
+            delta_time: Some(0),
+            ecotone_time: Some(0),
+            fjord_time: Some(0),
+            granite_time: Some(0),
+            ..Default::default()
+        };
+        self
+    }
+
     /// Activates all forks from Canyon through Holocene at genesis, leaving Isthmus
     /// and later as `None`.
     ///
@@ -137,12 +152,20 @@ impl TestRollupConfigBuilder {
         self
     }
 
-    /// Sets the Base V1 activation timestamp.
+    /// Sets the Base Azul activation timestamp.
     ///
-    /// Base V1 is a standalone Base-specific fork, independent of the OP
-    /// cascade chain. Chaining after any `through_*` method is fine.
-    pub const fn with_base_v1_at(mut self, t: u64) -> Self {
-        self.config.hardforks.base.v1 = Some(t);
+    /// Base Azul is a standalone Base-specific fork, independent of the
+    /// inherited fork cascade. Chaining after any `through_*` method is fine.
+    pub const fn with_azul_at(mut self, t: u64) -> Self {
+        self.config.hardforks.base.azul = Some(t);
+        self
+    }
+
+    /// Sets the Beryl activation timestamp.
+    ///
+    /// Beryl is a standalone Base-specific fork, independent of the inherited fork cascade.
+    pub const fn with_beryl_at(mut self, t: u64) -> Self {
+        self.config.hardforks.base.beryl = Some(t);
         self
     }
 
@@ -161,7 +184,8 @@ impl TestRollupConfigBuilder {
         self.config.hardforks.pectra_blob_schedule_time = Some(0);
         self.config.hardforks.isthmus_time = Some(0);
         self.config.hardforks.jovian_time = Some(0);
-        self.config.hardforks.base.v1 = Some(0);
+        self.config.hardforks.base.azul = Some(0);
+        self.config.hardforks.base.beryl = Some(0);
         self
     }
 

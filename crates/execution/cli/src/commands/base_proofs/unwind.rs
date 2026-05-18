@@ -1,0 +1,107 @@
+//! Command that unwinds the Base Proofs storage to a specific block number.
+
+use std::{path::PathBuf, sync::Arc};
+
+use base_common_consensus::BasePrimitives;
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_trie::{BaseProofsStorage, BaseProofsStore, db::MdbxProofsStorage};
+use clap::Parser;
+use reth_cli::chainspec::ChainSpecParser;
+use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
+use reth_node_core::version::version_metadata;
+use reth_provider::{BlockReader, TransactionVariant};
+use tracing::{info, warn};
+
+/// Unwinds the proofs storage to a specific block number.
+///
+/// This command removes all proof history and state updates after the target block number.
+#[derive(Debug, Parser)]
+pub struct UnwindCommand<C: ChainSpecParser> {
+    #[command(flatten)]
+    env: EnvironmentArgs<C>,
+
+    /// The path to the storage DB for proofs history.
+    #[arg(
+        long = "proofs-history.storage-path",
+        value_name = "PROOFS_HISTORY_STORAGE_PATH",
+        required = true
+    )]
+    pub storage_path: PathBuf,
+
+    /// The target block number to unwind to.
+    ///
+    /// All history *after* this block will be removed.
+    #[arg(long, value_name = "TARGET_BLOCK")]
+    pub target: u64,
+}
+
+impl<C: ChainSpecParser> UnwindCommand<C> {
+    /// Validates that the target block number is within a valid range for unwinding.
+    fn validate_unwind_range<Store: BaseProofsStore>(
+        &self,
+        storage: &BaseProofsStorage<Store>,
+    ) -> eyre::Result<bool> {
+        let (Some((earliest, _)), Some((latest, _))) =
+            (storage.get_earliest_block_number()?, storage.get_latest_block_number()?)
+        else {
+            warn!(target: "reth::cli", "No blocks found in proofs storage. Nothing to unwind.");
+            return Ok(false);
+        };
+
+        if self.target <= earliest {
+            warn!(target: "reth::cli", unwind_target = ?self.target, ?earliest, "Target block is less than the earliest block in proofs storage. Nothing to unwind.");
+            return Ok(false);
+        }
+
+        if self.target > latest {
+            warn!(target: "reth::cli", unwind_target = ?self.target, ?latest, "Target block is not less than the latest block in proofs storage. Nothing to unwind.");
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+}
+
+impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> UnwindCommand<C> {
+    /// Execute [`UnwindCommand`].
+    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = BasePrimitives>>(
+        self,
+    ) -> eyre::Result<()> {
+        info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
+        info!(target: "reth::cli", path = ?self.storage_path, "Unwinding Base proofs storage");
+
+        // Initialize the environment with read-only access
+        let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RO)?;
+
+        // Create the proofs storage
+        let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
+            MdbxProofsStorage::new(&self.storage_path)
+                .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
+        )
+        .into();
+
+        // Validate that the target block is within a valid range for unwinding
+        if !self.validate_unwind_range(&storage)? {
+            return Ok(());
+        }
+
+        // Get the target block from the main database
+        let block = provider_factory
+            .recovered_block(self.target.into(), TransactionVariant::NoHash)?
+            .ok_or_else(|| {
+                eyre::eyre!("Target block {} not found in the main database", self.target)
+            })?;
+
+        info!(target: "reth::cli", block_number = block.number, block_hash = %block.hash(), "Unwinding to target block");
+        storage.unwind_history(block.block_with_parent())?;
+
+        Ok(())
+    }
+}
+
+impl<C: ChainSpecParser> UnwindCommand<C> {
+    /// Returns the underlying chain being used to run this command
+    pub const fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
+        Some(&self.env.chain)
+    }
+}

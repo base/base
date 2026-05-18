@@ -1,0 +1,54 @@
+[package]
+name = "base-proof-succinct-client-utils"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+# ethereum
+base-common-consensus.workspace = true
+alloy-consensus.workspace = true
+alloy-rlp.workspace = true
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+
+# Execution
+alloy-evm.workspace = true
+base-common-evm.workspace = true
+revm.workspace = true
+revm-precompile.workspace = true
+
+# base-consensus / base-proof
+alloy-genesis = { workspace = true }
+base-proof-preimage = { workspace = true, features = ["rkyv", "serde"] }
+base-proof-primitives.workspace = true
+base-consensus-derive.workspace = true
+base-proof.workspace = true
+base-proof-executor.workspace = true
+base-proof-driver.workspace = true
+base-protocol.workspace = true
+base-common-genesis.workspace = true
+
+# general
+anyhow.workspace = true
+async-trait.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+rkyv.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+spin.workspace = true
+
+# kzg
+kzg-rs = { workspace = true, features = ["serde", "rkyv"] }
+cfg-if.workspace = true
+
+[dev-dependencies]
+base-common-chains.workspace = true
+
+[lints]
+workspace = true

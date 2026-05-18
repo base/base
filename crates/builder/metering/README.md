@@ -24,8 +24,9 @@ Create a store and wire it into the builder config:
 ```rust,ignore
 use std::sync::Arc;
 use base_builder_metering::{MeteringStore, MeteringStoreExt};
+use std::time::Duration;
 
-let store = Arc::new(MeteringStore::new(true, 10_000));
+let store = Arc::new(MeteringStore::new(true, 10_000, Duration::from_secs(30)));
 // Pass `store.clone()` as `SharedMeteringProvider` into `BuilderConfig`
 // Pass `store` into `MeteringStoreExt::new()` for the RPC extension
 ```

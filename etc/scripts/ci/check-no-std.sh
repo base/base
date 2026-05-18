@@ -5,18 +5,16 @@ set -eo pipefail
 # If a crate is added with `#![cfg_attr(not(feature = "std"), no_std)]` or `#![no_std]`,
 # add it here to ensure it stays no_std-compatible.
 no_std_packages=(
-  # alloy crates (ported from op-alloy)
-  base-alloy-consensus
-  base-alloy-evm
-  base-alloy-chains
-  base-alloy-rpc-types
-  base-alloy-rpc-types-engine
+  # common crates (ported from op-alloy)
+  base-common-consensus
+  base-common-evm
+  base-common-chains
+  base-common-rpc-types
+  base-common-rpc-types-engine
 
   # consensus protocol crates
   base-metrics
-  base-consensus-genesis
-  base-consensus-upgrades
-  base-consensus-registry
+  base-common-genesis
   base-consensus-derive
   base-protocol
 

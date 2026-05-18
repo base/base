@@ -2,19 +2,17 @@
 
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
-use base_alloy_consensus::{OpReceipt, OpTxEnvelope, OpTxType};
-use base_alloy_evm::{BaseBlockExecutor, OpTxResult};
-use base_execution_chainspec::OpChainSpec;
-use base_execution_evm::OpRethReceiptBuilder;
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope, OpTxType};
+use base_common_evm::{BaseBlockExecutor, BaseHaltReason, BaseTransaction, BaseTxResult};
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::BaseRethReceiptBuilder;
 use base_flashblocks::{FlashblocksAPI, FlashblocksState};
-use base_revm::{OpHaltReason, OpTransaction};
 use reth_errors::BlockExecutionError;
 use reth_evm::{
     Evm, RecoveredTx,
     block::{BlockExecutor, ExecutableTx, InternalBlockExecutionError, TxResult},
 };
 use reth_primitives_traits::Recovered;
-use reth_provider::BlockNumReader;
 use reth_revm::State;
 use revm::{Database, context::TxEnv};
 use revm_primitives::B256;
@@ -22,23 +20,19 @@ use tracing::{instrument, trace, warn};
 
 /// Provider that fetches cached execution results for transactions.
 #[derive(Debug, Clone)]
-pub struct FlashblocksCachedExecutionProvider<P> {
+pub struct FlashblocksCachedExecutionProvider {
     flashblocks_state: Option<Arc<FlashblocksState>>,
-
-    provider: P,
 }
 
-impl<P> FlashblocksCachedExecutionProvider<P> {
+impl FlashblocksCachedExecutionProvider {
     /// Creates a new [`FlashblocksCachedExecutionProvider`].
-    pub const fn new(provider: P, flashblocks_state: Option<Arc<FlashblocksState>>) -> Self {
-        Self { provider, flashblocks_state }
+    pub const fn new(flashblocks_state: Option<Arc<FlashblocksState>>) -> Self {
+        Self { flashblocks_state }
     }
 }
 
-impl<P> CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>>
-    for FlashblocksCachedExecutionProvider<P>
-where
-    P: BlockNumReader,
+impl CachedExecutionProvider<BaseTxResult<BaseHaltReason, OpTxType>>
+    for FlashblocksCachedExecutionProvider
 {
     #[instrument(level = "debug", skip_all, fields(tx_hash = ?tx_hash))]
     fn get_cached_execution_for_tx(
@@ -46,47 +40,62 @@ where
         parent_block_hash: &B256,
         prev_cached_hash: Option<&B256>,
         tx_hash: &B256,
-    ) -> Option<OpTxResult<OpHaltReason, OpTxType>> {
+    ) -> Option<BaseTxResult<BaseHaltReason, OpTxType>> {
         let flashblocks_state = self.flashblocks_state.as_ref()?;
-
-        // if block_number is not found, we can't use cached execution
-        let parent_block_number = self.provider.block_number(*parent_block_hash).ok().flatten()?;
-
-        let this_block_number = parent_block_number.checked_add(1).unwrap();
-
         let pending_blocks = flashblocks_state.get_pending_blocks().clone()?;
 
-        if let Some(prev_cached_hash) = prev_cached_hash {
-            // all previous transactions from start of block to prev_cached_hash are cached, so only check if the previous transaction is cached
-            if !pending_blocks.has_transaction_hash(prev_cached_hash) {
-                warn!(
-                    prev_cached_hash = ?prev_cached_hash,
-                    "Not using cached results - previous transaction not cached",
-                );
-                return None;
-            }
-        } else {
-            // must be the first tx in the block
-            if pending_blocks
-                .get_transactions_for_block(this_block_number)
-                .next()
-                .map(|tx| tx.inner.inner.tx_hash())
-                != Some(*tx_hash)
-            {
-                warn!(tx_hash = ?tx_hash, "Not using cached results - first transaction not cached");
-                return None;
-            }
+        // The cached results were computed on top of a specific parent block.
+        // During a reorg or sequencer failover, two different parent hashes can
+        // share the same block number, so verifying block-number equivalence
+        // (e.g. via a separate `BlockNumReader` lookup) is insufficient — we
+        // must compare the parent hash itself.
+        if pending_blocks.parent_hash() != *parent_block_hash {
+            warn!(
+                expected_parent = ?pending_blocks.parent_hash(),
+                received_parent = ?parent_block_hash,
+                "Not using cached results - parent hash mismatch (possible reorg or sequencer failover)",
+            );
+            return None;
+        }
+
+        let this_block_number = pending_blocks.earliest_block_number();
+
+        // The cached `ResultAndState` is only valid when applied atop the exact
+        // prefix it was computed under, so require `tx_hash` to occupy the
+        // immediate successor position to `prev_cached_hash` in the cached order.
+        let Some(this_pos) = pending_blocks.transaction_position(this_block_number, tx_hash) else {
+            warn!(
+                tx_hash = ?tx_hash,
+                "Not using cached results - transaction not cached for this block",
+            );
+            return None;
+        };
+        let positions_align = prev_cached_hash.map_or(this_pos == 0, |prev| {
+            pending_blocks
+                .transaction_position(this_block_number, prev)
+                .is_some_and(|prev_pos| prev_pos + 1 == this_pos)
+        });
+        if !positions_align {
+            warn!(
+                tx_hash = ?tx_hash,
+                prev_cached_hash = ?prev_cached_hash,
+                this_pos = this_pos,
+                "Not using cached results - transaction is not the expected successor in cached order",
+            );
+            return None;
         }
 
         trace!(tx_hash = ?tx_hash, "cache hit for transaction");
-        pending_blocks.get_op_tx_result(tx_hash)
+        pending_blocks.get_tx_result(tx_hash)
     }
 }
 
 /// Trait for providers that fetch cached execution results for transactions.
+///
+/// Callers must invoke in payload order and stop on the first `None`, so that any
+/// returned cached result is applied atop the same prefix it was computed under.
 pub trait CachedExecutionProvider<TxResult> {
-    /// Gets the cached execution result for a transaction. This method is expected to be called in the order of the transactions in the block.
-    /// This allows only checking if the previous transaction matches the expected hash.
+    /// Gets the cached execution result for a transaction.
     fn get_cached_execution_for_tx(
         &self,
         parent_block_hash: &B256,
@@ -113,7 +122,7 @@ impl<TxResult> CachedExecutionProvider<TxResult> for NoopCachedExecutionProvider
 /// Executor that fetches cached execution results for transactions.
 #[derive(Debug)]
 pub struct CachedExecutor<E, C> {
-    executor: BaseBlockExecutor<E, OpRethReceiptBuilder, Arc<OpChainSpec>>,
+    executor: BaseBlockExecutor<E, BaseRethReceiptBuilder, Arc<BaseChainSpec>>,
     cached_execution_provider: C,
     txs: Vec<B256>,
     position_by_hash: HashMap<B256, usize>,
@@ -124,7 +133,7 @@ pub struct CachedExecutor<E, C> {
 impl<E, C> CachedExecutor<E, C> {
     /// Creates a new [`CachedExecutor`].
     pub fn new(
-        executor: BaseBlockExecutor<E, OpRethReceiptBuilder, Arc<OpChainSpec>>,
+        executor: BaseBlockExecutor<E, BaseRethReceiptBuilder, Arc<BaseChainSpec>>,
         cached_execution_provider: C,
         txs: Vec<B256>,
         parent_block_hash: B256,
@@ -145,13 +154,13 @@ impl<E, C> CachedExecutor<E, C> {
 impl<'a, DB, E, C> BlockExecutor for CachedExecutor<E, C>
 where
     DB: Database + alloy_evm::Database + 'a,
-    E: Evm<DB = &'a mut State<DB>, Tx = OpTransaction<TxEnv>>,
-    C: CachedExecutionProvider<OpTxResult<E::HaltReason, OpTxType>>,
+    E: Evm<DB = &'a mut State<DB>, Tx = BaseTransaction<TxEnv>>,
+    C: CachedExecutionProvider<BaseTxResult<E::HaltReason, OpTxType>>,
 {
-    type Transaction = OpTxEnvelope;
-    type Receipt = OpReceipt;
+    type Transaction = BaseTxEnvelope;
+    type Receipt = BaseReceipt;
     type Evm = E;
-    type Result = OpTxResult<E::HaltReason, OpTxType>;
+    type Result = BaseTxResult<E::HaltReason, OpTxType>;
 
     fn receipts(&self) -> &[Self::Receipt] {
         self.executor.receipts()
@@ -230,5 +239,244 @@ where
 
     fn evm(&self) -> &Self::Evm {
         self.executor.evm()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use alloy_consensus::{
+        Header, Receipt, ReceiptWithBloom, Sealed, Signed, TxLegacy, transaction::Recovered,
+    };
+    use alloy_primitives::{Address, B256, BlockNumber, Bloom, Bytes, Signature, TxKind, U256};
+    use alloy_rpc_types_engine::PayloadId;
+    use alloy_rpc_types_eth::TransactionReceipt;
+    use base_common_flashblocks::{
+        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+    };
+    use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, Transaction};
+    use base_flashblocks::{FlashblocksState, PendingBlocks, PendingBlocksBuilder};
+    use revm::context::result::ExecutionResult;
+
+    use super::{
+        BaseHaltReason, BaseReceipt, BaseTxEnvelope, CachedExecutionProvider,
+        FlashblocksCachedExecutionProvider,
+    };
+
+    fn provider_with_cache(
+        parent_hash: B256,
+        parent_number: BlockNumber,
+        cached_hashes: &[B256],
+    ) -> FlashblocksCachedExecutionProvider {
+        let state = Arc::new(FlashblocksState::default());
+        state.set_pending_blocks_for_testing(Some(build_pending_blocks(
+            parent_hash,
+            parent_number + 1,
+            cached_hashes,
+        )));
+        FlashblocksCachedExecutionProvider::new(Some(state))
+    }
+
+    fn h(byte: u8) -> B256 {
+        B256::repeat_byte(byte)
+    }
+
+    fn build_pending_blocks(
+        parent_hash: B256,
+        block_number: BlockNumber,
+        tx_hashes: &[B256],
+    ) -> PendingBlocks {
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([stub_flashblock(parent_hash, block_number)]);
+        builder.with_header(Sealed::new_unchecked(
+            Header { number: block_number, parent_hash, ..Default::default() },
+            B256::ZERO,
+        ));
+        for &hash in tx_hashes {
+            builder.with_transaction(stub_transaction(hash, block_number));
+            builder.with_receipt(hash, stub_receipt(hash, block_number));
+            builder.with_transaction_state(hash, Default::default());
+            builder.with_transaction_sender(hash, Address::ZERO);
+            builder.with_transaction_result(hash, stub_execution_result());
+        }
+        builder.build().expect("test pending blocks should build")
+    }
+
+    const fn stub_execution_result() -> ExecutionResult<BaseHaltReason> {
+        ExecutionResult::Success {
+            reason: revm::context::result::SuccessReason::Stop,
+            gas_used: 21_000,
+            gas_refunded: 0,
+            logs: Vec::new(),
+            output: revm::context::result::Output::Call(Bytes::new()),
+        }
+    }
+
+    fn stub_flashblock(parent_hash: B256, block_number: BlockNumber) -> Flashblock {
+        Flashblock {
+            payload_id: PayloadId::default(),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::ZERO,
+                parent_hash,
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::ZERO,
+                block_number,
+                gas_limit: 30_000_000,
+                timestamp: 1_700_000_000,
+                extra_data: Bytes::default(),
+                base_fee_per_gas: U256::from(1_000_000_000u64),
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Bloom::default(),
+                gas_used: 0,
+                block_hash: B256::ZERO,
+                transactions: vec![],
+                withdrawals: vec![],
+                withdrawals_root: B256::ZERO,
+                blob_gas_used: None,
+            },
+            metadata: Metadata { block_number },
+        }
+    }
+
+    fn stub_transaction(hash: B256, block_number: BlockNumber) -> Transaction {
+        let legacy = TxLegacy {
+            chain_id: Some(1),
+            nonce: 0,
+            gas_price: 1_000_000_000,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        };
+        let envelope = BaseTxEnvelope::Legacy(Signed::new_unchecked(
+            legacy,
+            Signature::test_signature(),
+            hash,
+        ));
+        Transaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: Recovered::new_unchecked(envelope, Address::ZERO),
+                block_hash: Some(B256::ZERO),
+                block_number: Some(block_number),
+                transaction_index: Some(0),
+                effective_gas_price: Some(1_000_000_000),
+            },
+            deposit_nonce: None,
+            deposit_receipt_version: None,
+        }
+    }
+
+    fn stub_receipt(tx_hash: B256, block_number: BlockNumber) -> BaseTransactionReceipt {
+        BaseTransactionReceipt {
+            inner: TransactionReceipt {
+                inner: ReceiptWithBloom {
+                    receipt: BaseReceipt::Legacy(Receipt {
+                        status: alloy_consensus::Eip658Value::Eip658(true),
+                        cumulative_gas_used: 21_000,
+                        logs: vec![],
+                    }),
+                    logs_bloom: Bloom::default(),
+                },
+                transaction_hash: tx_hash,
+                transaction_index: Some(0),
+                block_hash: Some(B256::ZERO),
+                block_number: Some(block_number),
+                gas_used: 21_000,
+                effective_gas_price: 1_000_000_000,
+                blob_gas_used: None,
+                blob_gas_price: None,
+                from: Address::ZERO,
+                to: None,
+                contract_address: None,
+            },
+            l1_block_info: L1BlockInfo::default(),
+        }
+    }
+
+    #[test]
+    fn honest_path_hits_at_every_position() {
+        let parent = h(0xff);
+        let (a, b, c) = (h(0x01), h(0x02), h(0x03));
+        let provider = provider_with_cache(parent, 1, &[a, b, c]);
+
+        assert!(provider.get_cached_execution_for_tx(&parent, None, &a).is_some());
+        assert!(provider.get_cached_execution_for_tx(&parent, Some(&a), &b).is_some());
+        assert!(provider.get_cached_execution_for_tx(&parent, Some(&b), &c).is_some());
+    }
+
+    /// Models the original report's payload `[deposit, nonce1]` against cache
+    /// `[deposit, nonce0, nonce1]` as `[a, c]` against `[a, b, c]`.
+    #[test]
+    fn skip_middle_returns_none_for_unrelated_successor() {
+        let parent = h(0xff);
+        let (a, b, c) = (h(0x01), h(0x02), h(0x03));
+        let provider = provider_with_cache(parent, 1, &[a, b, c]);
+
+        assert!(provider.get_cached_execution_for_tx(&parent, Some(&a), &c).is_none());
+    }
+
+    #[test]
+    fn out_of_order_successor_returns_none() {
+        let parent = h(0xff);
+        let (a, b, c) = (h(0x01), h(0x02), h(0x03));
+        let provider = provider_with_cache(parent, 1, &[a, b, c]);
+
+        assert!(provider.get_cached_execution_for_tx(&parent, Some(&b), &a).is_none());
+    }
+
+    #[test]
+    fn first_tx_must_match_first_cached() {
+        let parent = h(0xff);
+        let (a, b) = (h(0x01), h(0x02));
+        let provider = provider_with_cache(parent, 1, &[a, b]);
+
+        assert!(provider.get_cached_execution_for_tx(&parent, None, &a).is_some());
+        assert!(provider.get_cached_execution_for_tx(&parent, None, &b).is_none());
+    }
+
+    #[test]
+    fn prev_not_in_cache_returns_none() {
+        let parent = h(0xff);
+        let (a, b, z) = (h(0x01), h(0x02), h(0x09));
+        let provider = provider_with_cache(parent, 1, &[a, b]);
+
+        assert!(provider.get_cached_execution_for_tx(&parent, Some(&z), &b).is_none());
+    }
+
+    #[test]
+    fn prev_is_last_cached_returns_none() {
+        let parent = h(0xff);
+        let (a, b, c) = (h(0x01), h(0x02), h(0x03));
+        let provider = provider_with_cache(parent, 1, &[a, b]);
+
+        assert!(provider.get_cached_execution_for_tx(&parent, Some(&b), &c).is_none());
+    }
+
+    #[test]
+    fn missing_flashblocks_state_returns_none() {
+        let parent = h(0xff);
+        let provider = FlashblocksCachedExecutionProvider::new(None);
+        assert!(provider.get_cached_execution_for_tx(&parent, None, &h(0x01)).is_none());
+    }
+
+    /// Models a reorg or sequencer failover: the cache was built on top of `h1`,
+    /// but the engine asks for a payload at the same height built on top of a
+    /// different parent `h2`. The cached results were computed against `h1`'s
+    /// state and would corrupt the post-state if reused, so the provider must
+    /// refuse the cache regardless of block-number agreement.
+    #[test]
+    fn parent_hash_mismatch_returns_none_after_reorg() {
+        let h1 = h(0x11);
+        let h2 = h(0x22);
+        let a = h(0x01);
+        let provider = provider_with_cache(h1, 1, &[a]);
+
+        assert!(provider.get_cached_execution_for_tx(&h1, None, &a).is_some());
+        assert!(provider.get_cached_execution_for_tx(&h2, None, &a).is_none());
     }
 }

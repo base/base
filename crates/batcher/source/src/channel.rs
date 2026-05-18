@@ -40,7 +40,7 @@ impl UnsafeBlockSource for ChannelBlockSource {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use base_alloy_consensus::BaseBlock;
+    use base_common_consensus::BaseBlock;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
     use super::*;

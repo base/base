@@ -1,10 +1,8 @@
 //! Response to safe head request
 
-pub use base_consensus_safedb::SafeHeadResponse;
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use base_consensus_safedb::SafeHeadResponse;
 
     // <https://github.com/alloy-rs/op-alloy/issues/155>
     #[test]

@@ -14,8 +14,8 @@ workspace = true
 # Reth
 reth-evm.workspace = true
 reth-chainspec.workspace = true
-reth-execution-types.workspace = true
 reth-storage-errors.workspace = true
+reth-execution-types.workspace = true
 reth-execution-errors.workspace = true
 reth-primitives-traits.workspace = true
 
@@ -24,19 +24,18 @@ reth-rpc-eth-api = { workspace = true, optional = true }
 # ethereum
 alloy-evm.workspace = true
 alloy-eips.workspace = true
-alloy-primitives.workspace = true
 alloy-consensus.workspace = true
-base-alloy-chains.workspace = true
-base-alloy-evm = { workspace = true, features = ["std", "reth"] }
-base-alloy-consensus = { workspace = true, features = ["evm", "reth"] }
-base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
+alloy-primitives.workspace = true
+base-common-chains.workspace = true
+base-common-evm = { workspace = true, features = ["std", "reth"] }
+base-common-consensus = { workspace = true, features = ["evm", "reth"] }
+base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
 
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 
 # revm
 revm.workspace = true
-base-revm = { workspace = true, features = ["reth"] }
 
 # misc
 thiserror.workspace = true
@@ -45,7 +44,7 @@ thiserror.workspace = true
 alloy-genesis.workspace = true
 reth-evm = { workspace = true, features = ["test-utils"] }
 reth-revm = { workspace = true, features = ["test-utils"] }
-base-alloy-consensus = { workspace = true, features = ["arbitrary"] }
+base-common-consensus = { workspace = true, features = ["arbitrary"] }
 
 [features]
 default = [ "std" ]
@@ -55,12 +54,12 @@ std = [
 	"alloy-evm/std",
 	"alloy-genesis/std",
 	"alloy-primitives/std",
-	"base-alloy-consensus/std",
-	"base-alloy-evm/std",
-	"base-alloy-rpc-types-engine/std",
+	"base-common-chains/std",
+	"base-common-consensus/std",
+	"base-common-evm/std",
+	"base-common-rpc-types-engine/std",
 	"base-execution-chainspec/std",
 	"base-execution-consensus/std",
-	"base-revm/std",
 	"reth-chainspec/std",
 	"reth-evm/std",
 	"reth-execution-errors/std",
@@ -71,5 +70,5 @@ std = [
 	"revm/std",
 	"thiserror/std",
 ]
-portable = [ "base-revm/portable", "reth-revm/portable", "revm/portable" ]
+portable = [ "base-common-evm/portable", "reth-revm/portable", "revm/portable" ]
 rpc = [ "alloy-evm/rpc", "reth-rpc-eth-api" ]

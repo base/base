@@ -3,18 +3,23 @@
 use std::sync::Arc;
 
 use base_cli_utils::{LogConfig, RuntimeManager};
+use base_proof_succinct_host_utils::fetcher::RPCConfig;
 use base_zk_client::prover_service_server::ProverServiceServer as ProtoProverServiceServer;
 use base_zk_db::{DatabaseConfig, ProofRequestRepo};
 use base_zk_outbox::{DatabaseOutboxReader, OutboxProcessor};
 use base_zk_service::{
-    ArtifactStorageConfig, BackendConfig, BackendRegistry, ProofRequestManager,
-    ProverServiceServer, ProverWorkerPool, ProxyConfigs, RateLimitConfig, StatusPoller,
-    build_backend, start_all_proxies,
+    ArtifactClientWrapper, ArtifactStorageConfig, BackendConfig, BackendRegistry,
+    OpSuccinctClusterBackend, OpSuccinctMockBackend, OpSuccinctNetworkBackend, OpSuccinctProvider,
+    ProofRequestManager, ProverServiceServer, ProverWorkerPool, ProxyConfigs, RateLimitConfig,
+    StatusPoller, start_all_proxies,
 };
 use clap::Parser;
 use eyre::eyre;
+use http::header;
 use tonic::transport::Server;
+use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tracing::info;
+use url::Url;
 
 base_cli_utils::define_log_args!("BASE_PROVER_ZK");
 base_cli_utils::define_metrics_args!("BASE_PROVER_ZK", 7301);
@@ -89,29 +94,40 @@ struct ZkArgs {
     #[arg(long, env = "STUCK_REQUEST_TIMEOUT_MINS", default_value_t = 10)]
     stuck_request_timeout_mins: i32,
 
-    #[arg(long, env = "PROVER_MODE", default_value = "cluster")]
+    #[arg(
+        long,
+        env = "MAX_PROOF_RETRIES",
+        default_value_t = 3,
+        value_parser = clap::value_parser!(i32).range(0..)
+    )]
+    max_proof_retries: i32,
+
+    #[arg(long, env = "SP1_PROVER", default_value = "cluster")]
     prover_mode: String,
 
-    #[arg(long, env = "CLUSTER_API_ENDPOINT")]
-    cluster_api_endpoint: Option<String>,
+    #[arg(long, env = "SP1_CLUSTER_API_ENDPOINT")]
+    sp1_cluster_api_endpoint: Option<String>,
 
-    #[arg(long, env = "CLUSTER_TIMEOUT_HOURS", default_value_t = 24)]
-    cluster_timeout_hours: u64,
+    #[arg(long, env = "SP1_CLUSTER_TIMEOUT_HOURS", default_value_t = 24)]
+    sp1_cluster_timeout_hours: u64,
 
-    #[arg(long, env = "ARTIFACT_REDIS_NODES")]
-    artifact_redis_nodes: Option<String>,
+    #[arg(long, env = "CLI_REDIS_NODES")]
+    cli_redis_nodes: Option<String>,
 
-    #[arg(long, env = "ARTIFACT_S3_BUCKET")]
-    artifact_s3_bucket: Option<String>,
+    #[arg(long, env = "CLI_S3_BUCKET")]
+    cli_s3_bucket: Option<String>,
 
-    #[arg(long, env = "ARTIFACT_S3_REGION")]
-    artifact_s3_region: Option<String>,
+    #[arg(long, env = "CLI_S3_REGION")]
+    cli_s3_region: Option<String>,
 
-    #[arg(long, env = "ARTIFACT_GCS_BUCKET")]
-    artifact_gcs_bucket: Option<String>,
+    #[arg(long, env = "SP1_NETWORK_PRIVATE_KEY")]
+    sp1_network_private_key: Option<String>,
 
-    #[arg(long, env = "ARTIFACT_GCS_CONCURRENCY", default_value_t = 32)]
-    artifact_gcs_concurrency: usize,
+    #[arg(long, env = "SP1_FULFILLMENT_STRATEGY", default_value = "reserved")]
+    sp1_fulfillment_strategy: String,
+
+    #[arg(long, env = "USE_KMS_REQUESTER", default_value_t = false)]
+    use_kms_requester: bool,
 
     #[arg(long, env = "GRPC_LISTEN_ADDR", default_value = "0.0.0.0:9000")]
     grpc_listen_addr: String,
@@ -124,6 +140,7 @@ impl Cli {
         LogConfig::from(logging).init_tracing_subscriber()?;
         base_cli_utils::MetricsConfig::from(metrics).init_with(|| {
             base_cli_utils::register_version_metrics!();
+            base_zk_service::ProverMetrics::init();
         })?;
         RuntimeManager::new().run_until_ctrl_c(async move { args.run().await })
     }
@@ -179,26 +196,133 @@ impl ZkArgs {
 
         info!(l1_url = %l1_url, l2_url = %l2_url, beacon_url = %beacon_url, "using RPC URLs");
 
-        let artifact_storage = self.resolve_artifact_storage()?;
-
-        let config = BackendConfig::GenericZkvm {
-            base_consensus_url: self.base_consensus_address.clone(),
-            l1_node_url: l1_url.clone(),
-            l1_beacon_url: beacon_url.clone(),
-            l2_node_url: l2_url.clone(),
-            default_sequence_window: self.default_sequence_window,
-            cluster_rpc: self
-                .cluster_api_endpoint
-                .clone()
-                .ok_or_else(|| eyre!("CLUSTER_API_ENDPOINT is required"))?,
-            artifact_storage,
-            timeout_hours: self.cluster_timeout_hours,
+        let rpc_config = RPCConfig {
+            l1_rpc: Url::parse(&l1_url).map_err(|e| eyre!("invalid L1 RPC URL: {e}"))?,
+            l1_beacon_rpc: Some(
+                Url::parse(&beacon_url).map_err(|e| eyre!("invalid beacon RPC URL: {e}"))?,
+            ),
+            l2_rpc: Url::parse(&l2_url).map_err(|e| eyre!("invalid L2 RPC URL: {e}"))?,
+            l2_node_rpc: Url::parse(&self.base_consensus_address)
+                .map_err(|e| eyre!("invalid L2 node RPC URL: {e}"))?,
         };
 
-        let backend = build_backend(config).await.map_err(|e| eyre!(e))?;
+        info!("computing range and aggregation verifying keys");
+        let (range_pk, range_vk, agg_pk, agg_vk) =
+            base_proof_succinct_proof_utils::cluster_setup_keys()
+                .await
+                .map_err(|e| eyre!("failed to compute verifying keys: {e}"))?;
+        info!("verifying keys computed successfully");
 
         let mut backend_registry = BackendRegistry::new();
-        backend_registry.register(backend);
+
+        if self.prover_mode == "mock" {
+            info!("SP1_PROVER=mock: using MockBackend (instant fake proofs, no cluster)");
+            let mock_backend = OpSuccinctMockBackend::new(range_vk, agg_vk);
+            backend_registry.register(Arc::new(mock_backend));
+        } else if self.prover_mode == "network" {
+            info!("SP1_PROVER=network: using Succinct SP1 Network backend");
+
+            let fetcher = Arc::new(
+                base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher::from_rpc_config_with_rollup_config(rpc_config)
+                    .await
+                    .map_err(|e| eyre!("failed to create OPSuccinctDataFetcher: {e}"))?,
+            );
+            let provider = OpSuccinctProvider::new(fetcher);
+
+            let fulfillment_strategy =
+                base_proof_succinct_host_utils::network::parse_fulfillment_strategy(
+                    self.sp1_fulfillment_strategy.clone(),
+                )
+                .map_err(|e| eyre!("invalid fulfillment strategy: {e}"))?;
+
+            let network_signer =
+                base_proof_succinct_host_utils::network::get_network_signer(self.use_kms_requester)
+                    .await
+                    .map_err(|e| eyre!("failed to create network signer: {e}"))?;
+
+            let network_mode = match fulfillment_strategy {
+                sp1_sdk::network::FulfillmentStrategy::Auction => {
+                    sp1_sdk::network::NetworkMode::Mainnet
+                }
+                _ => sp1_sdk::network::NetworkMode::Reserved,
+            };
+
+            info!(
+                network_mode = ?network_mode,
+                fulfillment_strategy = ?fulfillment_strategy,
+                "creating SP1 Network prover"
+            );
+
+            let network_prover = Arc::new(
+                sp1_sdk::ProverClient::builder()
+                    .network_for(network_mode)
+                    .signer(network_signer)
+                    .build()
+                    .await,
+            );
+
+            let config = BackendConfig::Network {
+                base_consensus_url: self.base_consensus_address.clone(),
+                l1_node_url: l1_url.clone(),
+                l1_beacon_url: beacon_url.clone(),
+                l2_node_url: l2_url.clone(),
+                default_sequence_window: self.default_sequence_window,
+                network_prover,
+                range_pk,
+                range_vk,
+                agg_pk,
+                agg_vk,
+                fulfillment_strategy,
+                timeout_hours: self.sp1_cluster_timeout_hours,
+            };
+
+            let backend = Arc::new(OpSuccinctNetworkBackend::new(provider, config));
+            backend_registry.register(backend);
+        } else {
+            info!("SP1_PROVER=cluster: using Succinct cluster backend");
+
+            info!("creating Succinct data fetcher");
+            let fetcher = Arc::new(
+                base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher::from_rpc_config_with_rollup_config(rpc_config)
+                    .await
+                    .map_err(|e| eyre!("failed to create OPSuccinctDataFetcher: {e}"))?,
+            );
+            let provider = OpSuccinctProvider::new(fetcher);
+
+            // Create SP1 cluster gRPC client.
+            let cluster_rpc = self
+                .sp1_cluster_api_endpoint
+                .clone()
+                .ok_or_else(|| eyre!("SP1_CLUSTER_API_ENDPOINT is required"))?;
+            info!(cluster_rpc = %cluster_rpc, "creating SP1 cluster client");
+            let cluster_client =
+                sp1_cluster_common::client::ClusterServiceClient::new(cluster_rpc.clone())
+                    .await
+                    .map_err(|e| eyre!("failed to create SP1 cluster client: {e}"))?;
+
+            // Create artifact client and storage config.
+            let (artifact_client, artifact_storage_config) = self.create_artifact_client().await?;
+
+            info!("created SP1 cluster client and artifact client");
+
+            let config = BackendConfig::OpSuccinct {
+                base_consensus_url: self.base_consensus_address.clone(),
+                l1_node_url: l1_url.clone(),
+                l1_beacon_url: beacon_url.clone(),
+                l2_node_url: l2_url.clone(),
+                default_sequence_window: self.default_sequence_window,
+                cluster_rpc,
+                cluster_client,
+                artifact_client,
+                artifact_storage_config,
+                timeout_hours: self.sp1_cluster_timeout_hours,
+                range_vk,
+            };
+
+            let backend = Arc::new(OpSuccinctClusterBackend::new(provider, config));
+            backend_registry.register(backend);
+        }
+
         let backend_registry = Arc::new(backend_registry);
 
         info!("starting outbox processor");
@@ -225,20 +349,47 @@ impl ZkArgs {
             manager.clone(),
             self.status_poller_interval_secs,
             self.stuck_request_timeout_mins,
+            self.max_proof_retries,
         );
         let status_handle = tokio::spawn(async move {
             status_poller.run().await;
         });
 
-        let prover_server = ProverServiceServer::new(repo.clone());
+        let prover_server =
+            ProverServiceServer::new(repo.clone(), manager.clone(), self.max_proof_retries);
 
         let addr = self.grpc_listen_addr.parse()?;
 
         info!(addr = %addr, "starting ZK prover gRPC service");
 
+        let reflection_service = tonic_reflection::server::Builder::configure()
+            .register_encoded_file_descriptor_set(base_zk_client::PROVER_FILE_DESCRIPTOR_SET)
+            .build_v1()
+            .map_err(|e| eyre!("failed to build gRPC reflection service: {e}"))?;
+
+        let cors = CorsLayer::new()
+            .allow_origin(AllowOrigin::any())
+            .allow_headers(AllowHeaders::list([
+                header::CONTENT_TYPE,
+                "x-grpc-web".parse().expect("valid header name"),
+                "x-user-agent".parse().expect("valid header name"),
+            ]))
+            .allow_methods(AllowMethods::list([http::Method::POST, http::Method::OPTIONS]));
+
         let grpc_handle = async {
             Server::builder()
-                .add_service(ProtoProverServiceServer::new(prover_server))
+                .accept_http1(true)
+                .layer(cors)
+                .layer(tonic_web::GrpcWebLayer::new())
+                .initial_connection_window_size(Some(1024 * 1024))
+                .initial_stream_window_size(Some(1024 * 1024))
+                .max_frame_size(Some(1024 * 1024))
+                .add_service(
+                    ProtoProverServiceServer::new(prover_server)
+                        .max_decoding_message_size(256 * 1024 * 1024)
+                        .max_encoding_message_size(256 * 1024 * 1024),
+                )
+                .add_service(reflection_service)
                 .serve(addr)
                 .await
         };
@@ -283,80 +434,104 @@ impl ZkArgs {
     }
 
     fn validate_config(&self) -> eyre::Result<()> {
-        if self.prover_mode != "cluster" {
-            eyre::bail!("PROVER_MODE must be set to 'cluster', got '{}'", self.prover_mode);
+        if !matches!(self.prover_mode.as_str(), "cluster" | "mock" | "network") {
+            eyre::bail!(
+                "SP1_PROVER must be set to 'cluster', 'mock', or 'network', got '{}'",
+                self.prover_mode
+            );
         }
 
-        if !non_empty(&self.cluster_api_endpoint) {
-            eyre::bail!("CLUSTER_API_ENDPOINT must be set");
+        if self.prover_mode == "mock" {
+            info!(prover_mode = "mock", "configuration validated");
+            return Ok(());
         }
 
-        let has_redis = non_empty(&self.artifact_redis_nodes);
-        let has_s3 = non_empty(&self.artifact_s3_bucket);
-        let has_gcs = non_empty(&self.artifact_gcs_bucket);
-        let artifact_store_count = [has_redis, has_s3, has_gcs].iter().filter(|&&x| x).count();
+        if self.prover_mode == "network" {
+            if !self.use_kms_requester && !Self::non_empty(&self.sp1_network_private_key) {
+                eyre::bail!(
+                    "SP1_NETWORK_PRIVATE_KEY must be set (or USE_KMS_REQUESTER=true) for network mode"
+                );
+            }
+            info!(prover_mode = "network", "configuration validated");
+            return Ok(());
+        }
+
+        if !Self::non_empty(&self.sp1_cluster_api_endpoint) {
+            eyre::bail!("SP1_CLUSTER_API_ENDPOINT must be set");
+        }
+
+        let has_redis = Self::non_empty(&self.cli_redis_nodes);
+        let has_s3 = Self::non_empty(&self.cli_s3_bucket);
+        let artifact_store_count = [has_redis, has_s3].iter().filter(|&&x| x).count();
 
         if artifact_store_count == 0 {
             eyre::bail!(
                 "exactly one artifact storage backend must be configured: \
-                 ARTIFACT_REDIS_NODES, ARTIFACT_S3_BUCKET, or ARTIFACT_GCS_BUCKET"
+                 CLI_REDIS_NODES or CLI_S3_BUCKET"
             );
         }
         if artifact_store_count > 1 {
             eyre::bail!("only one artifact storage backend can be configured at a time");
         }
 
-        if has_s3 && !non_empty(&self.artifact_s3_region) {
-            eyre::bail!("ARTIFACT_S3_REGION must be set when using S3 artifact storage");
+        if has_s3 && !Self::non_empty(&self.cli_s3_region) {
+            eyre::bail!("CLI_S3_REGION must be set when using S3 artifact storage");
         }
 
-        info!("configuration validated");
+        info!(prover_mode = "cluster", "configuration validated");
 
         Ok(())
     }
 
-    fn resolve_artifact_storage(&self) -> eyre::Result<ArtifactStorageConfig> {
-        if non_empty(&self.artifact_redis_nodes) {
+    /// Creates the artifact client and its corresponding storage config descriptor.
+    async fn create_artifact_client(
+        &self,
+    ) -> eyre::Result<(ArtifactClientWrapper, ArtifactStorageConfig)> {
+        if Self::non_empty(&self.cli_redis_nodes) {
             let nodes: Vec<String> = self
-                .artifact_redis_nodes
+                .cli_redis_nodes
                 .as_ref()
-                .ok_or_else(|| eyre!("ARTIFACT_REDIS_NODES is set but empty"))?
+                .ok_or_else(|| eyre!("CLI_REDIS_NODES is set but empty"))?
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
             info!("using Redis artifact storage");
-            Ok(ArtifactStorageConfig::Redis { nodes })
-        } else if non_empty(&self.artifact_s3_bucket) {
+            let client = sp1_cluster_artifact::redis::RedisArtifactClient::new(nodes.clone(), 16);
+            Ok((ArtifactClientWrapper::Redis(client), ArtifactStorageConfig::Redis { nodes }))
+        } else if Self::non_empty(&self.cli_s3_bucket) {
             let bucket = self
-                .artifact_s3_bucket
+                .cli_s3_bucket
                 .as_ref()
-                .ok_or_else(|| eyre!("ARTIFACT_S3_BUCKET is set but empty"))?
+                .ok_or_else(|| eyre!("CLI_S3_BUCKET is set but empty"))?
                 .clone();
             let region = self
-                .artifact_s3_region
+                .cli_s3_region
                 .as_ref()
-                .ok_or_else(|| eyre!("ARTIFACT_S3_REGION is required for S3 storage"))?
+                .ok_or_else(|| eyre!("CLI_S3_REGION is required for S3 storage"))?
                 .clone();
             info!("using S3 artifact storage");
-            Ok(ArtifactStorageConfig::S3 { bucket, region })
-        } else if non_empty(&self.artifact_gcs_bucket) {
-            let bucket = self
-                .artifact_gcs_bucket
-                .as_ref()
-                .ok_or_else(|| eyre!("ARTIFACT_GCS_BUCKET is set but empty"))?
-                .clone();
-            let concurrency = self.artifact_gcs_concurrency;
-            info!("using GCS artifact storage");
-            Ok(ArtifactStorageConfig::Gcs { bucket, concurrency })
+            let client = sp1_cluster_artifact::s3::S3ArtifactClient::new(
+                region.clone(),
+                bucket.clone(),
+                32,
+                sp1_cluster_artifact::s3::S3DownloadMode::AwsSDK(
+                    sp1_cluster_artifact::s3::S3ArtifactClient::create_s3_sdk_download_client(
+                        region.clone(),
+                    )
+                    .await,
+                ),
+            )
+            .await;
+            Ok((ArtifactClientWrapper::S3(client), ArtifactStorageConfig::S3 { bucket, region }))
         } else {
             eyre::bail!(
                 "no artifact storage configured; \
-                 set ARTIFACT_REDIS_NODES, ARTIFACT_S3_BUCKET, or ARTIFACT_GCS_BUCKET"
+                 set CLI_REDIS_NODES or CLI_S3_BUCKET"
             );
         }
     }
-}
 
-fn non_empty(opt: &Option<String>) -> bool {
-    opt.as_ref().is_some_and(|s| !s.is_empty())
+    fn non_empty(opt: &Option<String>) -> bool {
+        opt.as_ref().is_some_and(|s| !s.is_empty())
+    }
 }

@@ -19,6 +19,37 @@ use x509_parser::{
 
 use crate::{Result, VerifierError};
 
+/// Computes accumulated path digests for a chain of DER-encoded certificates.
+///
+/// Returns one `B256` per certificate, where:
+/// - `digests[0] = sha256(certs_der[0])`
+/// - `digests[i] = sha256(digests[i-1] || sha256(certs_der[i]))` for `i > 0`
+///
+/// This mirrors the on-chain `NitroEnclaveVerifier` path digest accumulation
+/// used for intermediate certificate caching. Both this function and the
+/// Solidity implementation must produce identical digests for the same input.
+///
+/// Returns an empty `Vec` for an empty input.
+pub fn compute_path_digests(certs_der: &[&[u8]]) -> Vec<B256> {
+    let mut digests = Vec::with_capacity(certs_der.len());
+    let mut path_digest = B256::ZERO;
+
+    for (i, der) in certs_der.iter().enumerate() {
+        let cert_digest = B256::from_slice(Sha256::digest(der).as_slice());
+        if i == 0 {
+            path_digest = cert_digest;
+        } else {
+            let mut hasher = Sha256::new();
+            hasher.update(path_digest.as_slice());
+            hasher.update(cert_digest.as_slice());
+            path_digest = B256::from_slice(hasher.finalize().as_slice());
+        }
+        digests.push(path_digest);
+    }
+
+    digests
+}
+
 /// Parsed DER certificate with its raw bytes.
 #[derive(Debug)]
 struct ParsedCert<'a> {
@@ -52,8 +83,14 @@ impl<'a> CertChain<'a> {
             .iter()
             .enumerate()
             .map(|(i, der)| {
-                let (_, cert) = X509Certificate::from_der(der)
+                let (remaining, cert) = X509Certificate::from_der(der)
                     .map_err(|e| VerifierError::X509Parse(format!("certificate {i}: {e}")))?;
+                if !remaining.is_empty() {
+                    return Err(VerifierError::X509Parse(format!(
+                        "certificate {i}: trailing DER data ({} bytes)",
+                        remaining.len()
+                    )));
+                }
                 Ok(ParsedCert { cert, der })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -61,15 +98,23 @@ impl<'a> CertChain<'a> {
         Ok(Self { certs: parsed })
     }
 
-    /// Verifies the certificate chain and returns accumulated cert digests.
+    /// Verifies the certificate chain and returns accumulated cert digests
+    /// paired with expiry timestamps.
     ///
     /// Skips verification of the first `trusted_prefix_len` certificates
     /// (they are already trusted on-chain). Verifies from `trusted_prefix_len`
     /// through the leaf certificate.
     ///
-    /// Returns a `Vec<B256>` of accumulated path digests (one per cert),
-    /// matching the on-chain `VerifierJournal.certs` field.
-    pub fn verify_chain(&self, trusted_prefix_len: usize, timestamp: u64) -> Result<Vec<B256>> {
+    /// Returns `(Vec<B256>, Vec<u64>)`:
+    /// - Accumulated path digests (one per cert), matching the on-chain
+    ///   `VerifierJournal.certs` field.
+    /// - Certificate expiry timestamps (`notAfter` as seconds since epoch),
+    ///   matching the on-chain `VerifierJournal.certExpiries` field.
+    pub fn verify_chain(
+        &self,
+        trusted_prefix_len: usize,
+        timestamp: u64,
+    ) -> Result<(Vec<B256>, Vec<u64>)> {
         if trusted_prefix_len > self.certs.len() {
             return Err(VerifierError::CertificateVerification(format!(
                 "trusted prefix length {trusted_prefix_len} exceeds chain length {}",
@@ -77,31 +122,31 @@ impl<'a> CertChain<'a> {
             )));
         }
 
-        let mut digests = Vec::with_capacity(self.certs.len());
-        // Accumulate path digests for all certs (including trusted prefix).
-        let mut path_digest = B256::ZERO;
+        // Compute accumulated path digests for all certs (including trusted
+        // prefix). This is pure hashing and does not depend on validation.
+        let der_refs: Vec<&[u8]> = self.certs.iter().map(|c| c.der).collect();
+        let digests = compute_path_digests(&der_refs);
+
+        let mut expiries = Vec::with_capacity(self.certs.len());
 
         for (i, parsed) in self.certs.iter().enumerate() {
-            // A cert is a leaf only if it's the last in a multi-cert chain.
-            // A single-cert chain (root only) is treated as CA, not leaf.
-            let is_leaf = i == self.certs.len() - 1 && self.certs.len() > 1;
-            let cert_digest = B256::from_slice(Sha256::digest(parsed.der).as_slice());
-
-            // Accumulate: path_digest = sha256(parent_path_digest || cert_digest)
-            if i == 0 {
-                path_digest = cert_digest;
-            } else {
-                let mut hasher = Sha256::new();
-                hasher.update(path_digest.as_slice());
-                hasher.update(cert_digest.as_slice());
-                path_digest = B256::from_slice(hasher.finalize().as_slice());
-            }
-            digests.push(path_digest);
+            // Extract notAfter as seconds since epoch for on-chain expiry tracking.
+            let not_after = parsed.cert.validity().not_after.timestamp();
+            let not_after_secs = u64::try_from(not_after).map_err(|_| {
+                VerifierError::CertificateVerification(format!(
+                    "certificate {i}: notAfter timestamp is negative ({not_after})"
+                ))
+            })?;
+            expiries.push(not_after_secs);
 
             // Skip validation for trusted prefix certs.
             if i < trusted_prefix_len {
                 continue;
             }
+
+            // A cert is a leaf only if it's the last in a multi-cert chain.
+            // A single-cert chain (root only) is treated as CA, not leaf.
+            let is_leaf = i == self.certs.len() - 1 && self.certs.len() > 1;
 
             // Validate x509 content (M-01 audit fixes).
             Self::validate_cert_content(&parsed.cert, is_leaf)?;
@@ -144,7 +189,7 @@ impl<'a> CertChain<'a> {
             Self::verify_signature(parent, parsed, i)?;
         }
 
-        Ok(digests)
+        Ok((digests, expiries))
     }
 
     /// Returns the public key bytes from the leaf certificate.
@@ -327,7 +372,7 @@ mod tests {
     const INTER2_HEX: &str = "308203163082029ba003020102021100cb286a4a4a09207f8b0c14950dcd6861300a06082a8648ce3d0403033064310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c034157533136303406035504030c2d636264383238303866646138623434642e75732d656173742d312e6177732e6e6974726f2d656e636c61766573301e170d3234313133303033313435345a170d3234313230363031313435345a308189313c303a06035504030c33343762313739376131663031386266302e7a6f6e616c2e75732d656173742d312e6177732e6e6974726f2d656e636c61766573310c300a060355040b0c03415753310f300d060355040a0c06416d617a6f6e310b3009060355040613025553310b300906035504080c0257413110300e06035504070c0753656174746c653076301006072a8648ce3d020106052b810400220362000423959f700ef87dcbdba686449d944f2a89ad22aa03d73cf93d28853f2fb6a80b0cc714d3090e34cda8234eef8f804e46c0dcb216062afba3e2b36a693660d9965e2370308b8e1ffad8542ddbe3e733077481b0cbc747d8c7beb7612820d4fe95a381ea3081e730120603551d130101ff040830060101ff020101301f0603551d23041830168014bfbd54a168f57f7391b66ca60a2836f30acfb9a1301d0603551d0e04160414bbf52a3a42fdc4f301f72536b90e65aaa1b70a99300e0603551d0f0101ff0404030201863081800603551d1f047930773075a073a071866f687474703a2f2f63726c2d75732d656173742d312d6177732d6e6974726f2d656e636c617665732e73332e75732d656173742d312e616d617a6f6e6177732e636f6d2f63726c2f30366434386638652d326330382d343738312d613634352d6231646534303261656662382e63726c300a06082a8648ce3d0403030369003066023100fa31509230632a002939201eb5686b52d79f0276db5c2b954bed324caa5c3271a60d25e2e05a5e6700e488a074af4ecd02310084770462c2ef86dcdb11fa8a31dcf770866cbd28822b682a112b98c09a30e35e94affd3482bf8b01b59a0a7775b4af18";
 
     /// Intermediate 3 (signed by inter2). Validity: 2024-11-30 to 2024-12-01.
-    const INTER3_HEX: &str = "308202bf30820245a003020102021500c8925d382506d820d93d2c704a7523c4ba2ddfaa300a06082a8648ce3d040303308189313c303a06035504030c33343762313739376131663031386266302e7a6f6e616c2e75732d656173742d312e6177732e6e6974726f2d656e636c61766573310c300a060355040b0c03415753310f300d060355040a0c06416d617a6f6e310b3009060355040613025553310b300906035504080c0257413110300e06035504070c0753656174746c65301e170d3234313133303132343133315a170d3234313230313132343133315a30818e310b30090603550406130255533113301106035504080c0a57617368696e67746f6e3110300e06035504070c0753656174746c65310f300d060355040a0c06416d617a6f6e310c300a060355040b0c034157533139303706035504030c30692d30646533386232623638353363633965382e75732d656173742d312e6177732e6e6974726f2d656e636c617665733076301006072a8648ce3d020106052b8104002203620004466754b5718024df3564bcd722361e7c65a4922eda7b1f826758e30afac40b04a281062897d085311fd509b70a6bbc5f8280f86ae2ff255ad147146fc97b7afb16064f0712d335c1d473b716be320be625e91c5870973084b3a0005bc020c7b2a366306430120603551d130101ff040830060101ff020100300e0603551d0f0101ff040403020204301d0603551d0e04160414345c86a9ec55bc30cafd923d6b73111d9c57abc0301f0603551d23041830168014bbf52a3a42fdc4f301f72536b90e65aaa1b70a99300a06082a8648ce3d0403030368003065023100aba82c02f40acb9846012bf070578217eeb2ebbfd16414948438cf67eeab6f64cdc5a152998766c88b2cdebd5a97ebd402307421611ed511567bc8e6a0a2805b981ef38dc3bd6a6c661522802b5c5d658cc4fcc9b5e8df148b161d366926896736836a";
+    const INTER3_HEX: &str = "308202bf30820245a003020102021500c8925d382506d820d93d2c704a7523c4ba2ddfaa300a06082a8648ce3d040303308189313c303a06035504030c33343762313739376131663031386266302e7a6f6e616c2e75732d656173742d312e6177732e6e6974726f2d656e636c61766573310c300a060355040b0c03415753310f300d060355040a0c06416d617a6f6e310b3009060355040613025553310b300906035504080c0257413110300e06035504070c0753656174746c65301e170d3234313133303132343133315a170d3234313230313132343133315a30818e310b30090603550406130255533113301106035504080c0a57617368696e67746f6e3110300e06035504070c0753656174746c65310f300d060355040a0c06416d617a6f6e310c300a060355040b0c034157533139303706035504030c30692d30646533386232623638353363633965382e75732d656173742d312e6177732e6e6974726f2d656e636c617665733076301006072a8648ce3d020106052b8104002203620004466754b5718024df3564bcd722361e7c65a4922eda7b1f826758e30afac40b04a281062897d085311fd509b70a6bbc5f8280f86ae2ff255ad147146fc97b7afb16064f0712d335c1d473b716be320be625e91c5870973084b3a0005bc020c7b2a366306430120603551d130101ff040830060101ff020100300e0603551d0f0101ff040403020204301d0603551d0e04160414345c86a9ec55bc30cafd923d6b73111d9c57abc0301f0603551d23041830168014bbf52a3a42fdc4f301f72536b90e65aaa1b70a99300a06082a8648ce3d0403030368003065023100aba82c02f40acb9846012bf070578217eeb2ebbfd16414948438cf67eeab6f64cdc5a152998766c88b2cdebd5a97ebd402307421611ed511567bc8e6a0a2805b981ef38dc3bd6a6c661522802b5c5d658cc4fcc9b5e8df148b161d36692689673683";
 
     /// Leaf enclave cert (signed by inter3). Validity: 2024-11-30T16:22 to 2024-11-30T19:22.
     const LEAF_HEX: &str = "3082027c30820201a00302010202100193685e7fee7d8500000000674b3bd8300a06082a8648ce3d04030330818e310b30090603550406130255533113301106035504080c0a57617368696e67746f6e3110300e06035504070c0753656174746c65310f300d060355040a0c06416d617a6f6e310c300a060355040b0c034157533139303706035504030c30692d30646533386232623638353363633965382e75732d656173742d312e6177732e6e6974726f2d656e636c61766573301e170d3234313133303136323234355a170d3234313133303139323234385a308193310b30090603550406130255533113301106035504080c0a57617368696e67746f6e3110300e06035504070c0753656174746c65310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753313e303c06035504030c35692d30646533386232623638353363633965382d656e63303139333638356537666565376438352e75732d656173742d312e6177733076301006072a8648ce3d020106052b810400220362000461d930c61be969237398264901d6a37282cfd42c0694d012d9143cc86a339d567913dae552bad2f10d47c50d4e670247f0344983cbdc2d2e0045d4ccbdff59ef7a26ebf1be83a81e24a651c92008fe9f465757792a0877fba02c8b5e1eb2ed90a31d301b300c0603551d130101ff04023000300b0603551d0f0404030206c0300a06082a8648ce3d0403030369003066023100e48f39a39b444a6e5ea7a38b808198a2318dd531ed62faf4a9223f71f27dff4a5e495e32dd10f250bbaf1f892a4d328f023100d09fc8e48e233b9e972eecb94798865664dbeb0d75b29041f482777a4b7cae133483dcc9d35509c4967be51db37a7454";
@@ -335,6 +380,17 @@ mod tests {
     /// Attestation timestamp (within all cert validity windows).
     /// 0x000001937de1c543 = 1732931765571 ms = 2024-11-30T16:22:45Z.
     const VALID_TIMESTAMP_MS: u64 = 0x000001937de1c543;
+
+    /// Expected notAfter timestamps (seconds since epoch) for each cert in the
+    /// real Nitro chain, extracted from the X.509 validity fields above.
+    /// Order: root, intermediate1, intermediate2, intermediate3, leaf.
+    const EXPECTED_EXPIRIES: [u64; 5] = [
+        2519044085, // Root CA: 2049-10-28T14:28:05Z
+        1734505665, // Intermediate 1: 2024-12-18T07:07:45Z
+        1733447694, // Intermediate 2: 2024-12-06T01:14:54Z
+        1733056891, // Intermediate 3: 2024-12-01T12:41:31Z
+        1732994568, // Leaf: 2024-11-30T19:22:48Z
+    ];
 
     // ── Fixtures ────────────────────────────────────────────────────────
 
@@ -360,18 +416,21 @@ mod tests {
         let certs = vec![root_der.as_slice()];
         let chain = CertChain::from_der(&certs).unwrap();
         // Root validity: 2019-10-28 to 2049-10-28.
-        let digests = chain.verify_chain(0, 1_700_000_000_000).unwrap();
+        let (digests, expiries) = chain.verify_chain(0, 1_700_000_000_000).unwrap();
         assert_eq!(digests.len(), 1);
+        assert_eq!(expiries.len(), 1);
         let expected = B256::from_slice(Sha256::digest(&root_der).as_slice());
         assert_eq!(digests[0], expected);
+        assert_eq!(expiries[0], EXPECTED_EXPIRIES[0]);
     }
 
     #[rstest]
     fn full_chain_verifies_all_untrusted(full_chain_der: Vec<Vec<u8>>) {
         let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
         let chain = CertChain::from_der(&refs).unwrap();
-        let digests = chain.verify_chain(0, VALID_TIMESTAMP_MS).unwrap();
+        let (digests, expiries) = chain.verify_chain(0, VALID_TIMESTAMP_MS).unwrap();
         assert_eq!(digests.len(), 5);
+        assert_eq!(expiries.len(), 5);
     }
 
     #[rstest]
@@ -383,15 +442,26 @@ mod tests {
     fn full_chain_with_trusted_prefix(full_chain_der: Vec<Vec<u8>>, #[case] prefix_len: usize) {
         let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
         let chain = CertChain::from_der(&refs).unwrap();
-        let digests = chain.verify_chain(prefix_len, VALID_TIMESTAMP_MS).unwrap();
+        let (digests, expiries) = chain.verify_chain(prefix_len, VALID_TIMESTAMP_MS).unwrap();
         assert_eq!(digests.len(), 5);
+        assert_eq!(expiries.len(), 5);
+        // Structural invariant: each child cert expires at or before its parent
+        // (AWS issues progressively shorter-lived certs down the chain).
+        for i in 1..expiries.len() {
+            assert!(
+                expiries[i] <= expiries[i - 1],
+                "cert {i} expires after its parent: {} > {}",
+                expiries[i],
+                expiries[i - 1]
+            );
+        }
     }
 
     #[rstest]
     fn digests_are_accumulated_path_hashes(full_chain_der: Vec<Vec<u8>>) {
         let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
         let chain = CertChain::from_der(&refs).unwrap();
-        let digests = chain.verify_chain(5, 0).unwrap();
+        let (digests, _expiries) = chain.verify_chain(5, 0).unwrap();
 
         // First digest = sha256(root_der).
         let root_hash = B256::from_slice(Sha256::digest(&full_chain_der[0]).as_slice());
@@ -430,6 +500,21 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[rstest]
+    fn trailing_der_certificate_alias_rejected(full_chain_der: Vec<Vec<u8>>) {
+        let canonical_refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
+        CertChain::from_der(&canonical_refs).unwrap();
+
+        let mut aliased = full_chain_der;
+        aliased[1].extend_from_slice(b"chain-4256-trailing-der");
+        let alias_refs: Vec<&[u8]> = aliased.iter().map(|c| c.as_slice()).collect();
+        let err = CertChain::from_der(&alias_refs).unwrap_err();
+        let msg = err.to_string();
+
+        assert!(msg.contains("certificate 1"), "expected cert index in error, got: {msg}");
+        assert!(msg.contains("trailing DER data"), "expected trailing DER error, got: {msg}");
+    }
+
     // ── Trusted prefix boundary tests ───────────────────────────────────
 
     #[rstest]
@@ -437,8 +522,9 @@ mod tests {
         let certs = vec![root_der.as_slice()];
         let chain = CertChain::from_der(&certs).unwrap();
         // All trusted → timestamp 0 is fine (validation skipped).
-        let digests = chain.verify_chain(1, 0).unwrap();
+        let (digests, expiries) = chain.verify_chain(1, 0).unwrap();
         assert_eq!(digests.len(), 1);
+        assert_eq!(expiries.len(), 1);
     }
 
     #[rstest]
@@ -508,5 +594,44 @@ mod tests {
         if let Ok(chain) = CertChain::from_der(&refs) {
             assert!(chain.verify_chain(0, VALID_TIMESTAMP_MS).is_err());
         }
+    }
+
+    // ── Certificate expiry extraction ───────────────────────────────────
+
+    #[rstest]
+    fn expiries_match_known_cert_validity(full_chain_der: Vec<Vec<u8>>) {
+        let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
+        let chain = CertChain::from_der(&refs).unwrap();
+        // All trusted — skip validation so we can inspect expiries regardless of timestamp.
+        let (_digests, expiries) = chain.verify_chain(5, 0).unwrap();
+        assert_eq!(expiries.len(), EXPECTED_EXPIRIES.len());
+
+        // Verify each cert's notAfter against the known X.509 validity periods.
+        for (i, (&actual, &expected)) in expiries.iter().zip(EXPECTED_EXPIRIES.iter()).enumerate() {
+            assert_eq!(actual, expected, "expiry mismatch at cert index {i}");
+        }
+    }
+
+    #[rstest]
+    fn expiries_returned_even_for_trusted_prefix(full_chain_der: Vec<Vec<u8>>) {
+        let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
+        let chain = CertChain::from_der(&refs).unwrap();
+
+        // Trusted prefix = 4: root + 3 intermediates cached, only leaf validated.
+        let (_digests, expiries_prefix4) = chain.verify_chain(4, VALID_TIMESTAMP_MS).unwrap();
+        // All trusted: skip all validation.
+        let (_digests, expiries_all) = chain.verify_chain(5, 0).unwrap();
+
+        // Expiries must be identical regardless of trusted prefix length,
+        // since notAfter is extracted unconditionally for all certs.
+        assert_eq!(expiries_prefix4, expiries_all);
+    }
+
+    #[rstest]
+    fn expiries_length_matches_digests_length(full_chain_der: Vec<Vec<u8>>) {
+        let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
+        let chain = CertChain::from_der(&refs).unwrap();
+        let (digests, expiries) = chain.verify_chain(0, VALID_TIMESTAMP_MS).unwrap();
+        assert_eq!(digests.len(), expiries.len());
     }
 }

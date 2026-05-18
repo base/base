@@ -1,5 +1,5 @@
 [package]
-name = "base-alloy-rpc-types-engine"
+name = "base-common-rpc-types-engine"
 description = "Base RPC types for the `engine` namespace"
 
 version.workspace = true
@@ -15,13 +15,13 @@ workspace = true
 
 [dependencies]
 # Workspace
-base-alloy-consensus.workspace = true
+base-common-consensus.workspace = true
 
 # Alloy
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
-alloy-primitives.workspace = true
 alloy-consensus.workspace = true
+alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
 
 # Encoding
@@ -59,7 +59,7 @@ std = [
 	"alloy-rpc-types-engine/ssz",
 	"alloy-rpc-types-engine/std",
 	"alloy-serde?/std",
-	"base-alloy-consensus/std",
+	"base-common-consensus/std",
 	"dep:ethereum_ssz",
 	"dep:ethereum_ssz_derive",
 	"dep:snap",
@@ -72,11 +72,11 @@ serde = [
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
 	"alloy-rpc-types-engine/serde",
-	"base-alloy-consensus/serde",
+	"base-common-consensus/serde",
 	"dep:alloy-serde",
 	"dep:serde",
 ]
-k256 = [ "base-alloy-consensus/k256" ]
+k256 = [ "base-common-consensus/k256" ]
 arbitrary = [
 	"alloy-consensus/arbitrary",
 	"alloy-eips/arbitrary",
@@ -84,7 +84,7 @@ arbitrary = [
 	"alloy-primitives/rand",
 	"alloy-rpc-types-engine/arbitrary",
 	"alloy-serde?/arbitrary",
-	"base-alloy-consensus/arbitrary",
+	"base-common-consensus/arbitrary",
 	"dep:arbitrary",
 	"std",
 ]

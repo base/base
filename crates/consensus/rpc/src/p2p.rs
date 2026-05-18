@@ -1,9 +1,4 @@
 //! RPC Module to serve the P2P API.
-//!
-//! The P2P RPC API is a JSON-RPC API compatible with the [op-node] API.
-//!
-//!
-//! [op-node]: https://github.com/ethereum-optimism/optimism/blob/7a6788836984996747193b91901a824c39032bd8/op-node/p2p/rpc_api.go#L45
 
 use std::{net::IpAddr, str::FromStr, time::Duration};
 
@@ -16,10 +11,10 @@ use jsonrpsee::{
     types::{ErrorCode, ErrorObject},
 };
 
-use crate::{OpP2PApiServer, net::P2pRpc};
+use crate::{BaseP2PApiServer, net::P2pRpc};
 
 #[async_trait]
-impl OpP2PApiServer for P2pRpc {
+impl BaseP2PApiServer for P2pRpc {
     async fn opp2p_self(&self) -> RpcResult<PeerInfo> {
         Metrics::rpc_calls("opp2p_self").increment(1.0);
         let (tx, rx) = tokio::sync::oneshot::channel();

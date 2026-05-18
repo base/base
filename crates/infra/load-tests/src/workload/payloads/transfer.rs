@@ -41,8 +41,10 @@ impl Payload for TransferPayload {
         let value = if self.min_value == self.max_value {
             self.min_value
         } else {
-            let min: u128 = self.min_value.try_into().unwrap_or(u128::MAX);
-            let max: u128 = self.max_value.try_into().unwrap_or(u128::MAX);
+            let min: u128 =
+                self.min_value.try_into().expect("validated <= u128::MAX at config parse");
+            let max: u128 =
+                self.max_value.try_into().expect("validated <= u128::MAX at config parse");
             U256::from(rng.gen_range(min..=max))
         };
 

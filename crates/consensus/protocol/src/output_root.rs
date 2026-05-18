@@ -7,9 +7,9 @@ use derive_more::Display;
 /// block header as well as the storage root of the [`Predeploys::L2_TO_L1_MESSAGE_PASSER`] account
 /// into the top-level commitment construction.
 ///
-/// <https://specs.optimism.io/protocol/proposals.html#l2-output-commitment-construction>
+/// <https://specs.base.org/protocol/fault-proof/proposer#l2-output-commitment-construction>
 ///
-/// [Predeploys::L2_TO_L1_MESSAGE_PASSER]: crate::Predeploys::L2_TO_L1_MESSAGE_PASSER
+/// [Predeploys::L2_TO_L1_MESSAGE_PASSER]: base_common_consensus::Predeploys::L2_TO_L1_MESSAGE_PASSER
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
 #[display("OutputRootV0({}, {}, {})", state_root, bridge_storage_root, block_hash)]
 pub struct OutputRoot {

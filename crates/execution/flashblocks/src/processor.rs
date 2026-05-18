@@ -8,20 +8,19 @@ use alloy_consensus::{
 };
 use alloy_eips::BlockNumberOrTag;
 use alloy_network::TransactionResponse;
-use alloy_primitives::{Address, BlockNumber, U256};
+use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{BaseBlock, OpEip8130Transaction, OpTxEnvelope};
-use base_alloy_flashblocks::Flashblock;
-use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use base_common_chains::Upgrades;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_flashblocks::Flashblock;
+use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_primitives::RecoveredBlock;
 use reth_provider::{BlockReaderIdExt, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
-use reth_trie_common::TrieInput;
 use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
@@ -50,7 +49,6 @@ pub struct StateProcessor<Client> {
     rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
     max_depth: u64,
-    simulate_state_root: bool,
     client: Client,
     sender: Sender<Arc<PendingBlocks>>,
     cache: Arc<Mutex<FlashblockCache>>,
@@ -59,7 +57,7 @@ pub struct StateProcessor<Client> {
 impl<Client> StateProcessor<Client>
 where
     Client: StateProviderFactory
-        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + BaseUpgrades>
+        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + Upgrades>
         + BlockReaderIdExt<Header = Header>
         + Clone
         + 'static,
@@ -69,7 +67,6 @@ where
         client: Client,
         pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
         max_depth: u64,
-        simulate_state_root: bool,
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
@@ -77,15 +74,7 @@ where
             .best_block_number()
             .map_or_else(|_| FlashblockCache::new(0), FlashblockCache::new);
 
-        Self {
-            pending_blocks,
-            client,
-            max_depth,
-            simulate_state_root,
-            rx,
-            sender,
-            cache: Arc::new(Mutex::new(cache)),
-        }
+        Self { pending_blocks, client, max_depth, rx, sender, cache: Arc::new(Mutex::new(cache)) }
     }
 
     /// Processes updates from the queue until the channel closes.
@@ -169,15 +158,20 @@ where
                         {
                             return;
                         }
-                        info!("waiting for first Flashblock");
                         // we should ignore this error since it doesn't necessarily indicate a problem
                         return;
                     }
                     _ => {}
                 }
 
-                error!(message = "could not process Flashblock", error = %e);
-                Metrics::block_processing_error().increment(1);
+                // skip logging expected caching case
+                if !matches!(
+                    e,
+                    StateProcessorError::Provider(ProviderError::MissingCanonicalHeader { .. })
+                ) {
+                    error!(message = "could not process Flashblock", error = %e);
+                    Metrics::block_processing_error().increment(1);
+                }
             }
         }
     }
@@ -370,7 +364,7 @@ where
             .map_err(|e| ProviderError::StateProvider(e.to_string()))?
             .ok_or(ProviderError::MissingCanonicalHeader { block_number: canonical_block })?;
 
-        let evm_config = OpEvmConfig::optimism(self.client.chain_spec());
+        let evm_config = BaseEvmConfig::base(self.client.chain_spec());
         let state_provider = self
             .client
             .state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))
@@ -404,7 +398,7 @@ where
             // Extract L1 block info using the AssembledBlock method
             let l1_block_info = assembled.l1_block_info()?;
 
-            let block_env_attributes = OpNextBlockEnvAttributes {
+            let block_env_attributes = BaseNextBlockEnvAttributes {
                 timestamp: assembled.base.timestamp,
                 suggested_fee_recipient: assembled.base.fee_recipient,
                 prev_randao: assembled.base.prev_randao,
@@ -420,13 +414,13 @@ where
 
             // Parallel sender recovery - batch all ECDSA operations upfront
             let recovery_start = Instant::now();
-            let txs_with_senders: Vec<(OpTxEnvelope, Address)> = assembled
+            let txs_with_senders: Vec<(BaseTxEnvelope, Address)> = assembled
                 .block
                 .body
                 .transactions
                 .par_iter()
                 .cloned()
-                .map(|tx| -> Result<(OpTxEnvelope, Address)> {
+                .map(|tx| -> Result<(BaseTxEnvelope, Address)> {
                     let tx_hash = tx.tx_hash();
                     let sender = match prev_pending_blocks
                         .as_ref()
@@ -458,18 +452,11 @@ where
             pending_state_builder
                 .apply_pre_execution_changes(parent_hash, parent_beacon_block_root)?;
 
-            let mut cached_trie = None;
-
             for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
                 let tx_hash = transaction.tx_hash();
-                let is_deposit = transaction.is_deposit();
 
                 pending_blocks_builder.with_transaction_sender(tx_hash, sender);
-                if let Some(aa_tx) = transaction.as_eip8130() {
-                    pending_blocks_builder.increment_aa_nonce(sender, U256::from(aa_tx.nonce_key));
-                } else {
-                    pending_blocks_builder.increment_nonce(sender);
-                }
+                pending_blocks_builder.increment_nonce(sender);
 
                 let recovered_transaction = Recovered::new_unchecked(transaction, sender);
 
@@ -478,43 +465,6 @@ where
 
                 if let Some(time_us) = executed_transaction.execution_time_us {
                     pending_blocks_builder.with_execution_time(tx_hash, time_us);
-                }
-
-                // Per-tx state root simulation is best-effort instrumentation:
-                // compute the state root after each non-deposit transaction while
-                // accumulating trie nodes across txs, but do not fail flashblock
-                // processing if the measurement itself errors.
-                if self.simulate_state_root && !is_deposit {
-                    let db = pending_state_builder.db_mut();
-                    db.merge_transitions(BundleRetention::Reverts);
-                    let state_provider = db.database.as_ref();
-                    let hashed_state = state_provider.hashed_post_state(&db.bundle_state);
-
-                    let start = Instant::now();
-                    let trie_result = if let Some((prev_updates, prev_hashed)) = cached_trie.take()
-                    {
-                        let mut trie_input = TrieInput::from_state(hashed_state.clone());
-                        trie_input.prepend_cached(prev_updates, prev_hashed);
-                        state_provider.state_root_from_nodes_with_updates(trie_input)
-                    } else {
-                        state_provider.state_root_with_updates(hashed_state.clone())
-                    };
-                    let state_root_time_us = start.elapsed().as_micros();
-
-                    match trie_result {
-                        Ok((_, trie_updates)) => {
-                            cached_trie = Some((trie_updates, hashed_state));
-                            pending_blocks_builder
-                                .with_state_root_time(tx_hash, state_root_time_us);
-                        }
-                        Err(error) => {
-                            warn!(
-                                tx_hash = %tx_hash,
-                                error = %error,
-                                "state root simulation failed; skipping timing for this transaction"
-                            );
-                        }
-                    }
                 }
 
                 for (address, account) in &executed_transaction.state {
@@ -534,10 +484,7 @@ where
             last_block_header = block_header;
         }
 
-        // Extract the accumulated bundle state for state root calculation.
-        // When simulate_state_root is enabled, transitions for non-deposit txs
-        // are already merged per-tx; this merge picks up any remaining deposit
-        // transitions and is otherwise a no-op.
+        // Extract the accumulated bundle state for pending block serving.
         db.merge_transitions(BundleRetention::Reverts);
         pending_blocks_builder.with_bundle_state(db.take_bundle());
         pending_blocks_builder.with_state_overrides(state_overrides);

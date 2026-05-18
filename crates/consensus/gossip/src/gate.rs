@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use ipnet::IpNet;
 use libp2p::{Multiaddr, PeerId};
 
-use crate::{Connectedness, DialError};
+use crate::ConnectionError;
 
 /// Connection Gate
 ///
@@ -13,12 +13,17 @@ use crate::{Connectedness, DialError};
 /// logic for which peers are allowed to connect to the
 /// gossip swarm.
 pub trait ConnectionGate {
-    /// Checks if a peer is allowed to connect to the gossip swarm.
-    /// Returns Ok(()) if the peer can be dialed, or Err(DialError) with the reason why not.
-    fn can_dial(&mut self, peer_id: &Multiaddr) -> Result<(), DialError>;
+    /// Checks if an outbound peer is allowed to connect to the gossip swarm.
+    /// Returns Ok(()) if the peer can be dialed, or Err(ConnectionError) with the reason why not.
+    fn can_connect_outbound(&mut self, addr: &Multiaddr) -> Result<(), ConnectionError>;
 
-    /// Returns the [`Connectedness`] for a given peer id.
-    fn connectedness(&self, peer_id: &PeerId) -> Connectedness;
+    /// Checks if an inbound peer is allowed to connect to the gossip swarm.
+    /// Returns Ok(()) if the peer can be accepted, or Err(ConnectionError) with the reason why not.
+    fn can_connect_inbound(
+        &mut self,
+        peer_id: &PeerId,
+        addr: &Multiaddr,
+    ) -> Result<(), ConnectionError>;
 
     /// Marks an address as currently being dialed.
     fn dialing(&mut self, addr: &Multiaddr);
@@ -70,4 +75,8 @@ pub trait ConnectionGate {
 
     /// Lists all protected peers.
     fn list_protected_peers(&self) -> Vec<PeerId>;
+
+    /// Periodic housekeeping. Called by the network actor on a fixed cadence.
+    /// Default impl is a no-op for gates that hold no expiring state.
+    fn prune(&mut self) {}
 }

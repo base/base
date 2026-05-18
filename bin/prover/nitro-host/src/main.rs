@@ -4,12 +4,11 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 #[cfg(not(any(target_os = "linux", feature = "local")))]
-use base_consensus_registry as _;
+use base_common_chains as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
 use base_proof_host as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
 use base_proof_tee_nitro_host as _;
-use clap::Parser as _;
 use serde as _;
 use tokio as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
@@ -18,10 +17,5 @@ use tracing as _;
 mod cli;
 
 fn main() {
-    base_cli_utils::init_common!();
-
-    if let Err(err) = cli::Cli::parse().run() {
-        eprintln!("Error: {err:?}");
-        std::process::exit(1);
-    }
+    base_cli_utils::run_cli_main!(cli::Cli);
 }

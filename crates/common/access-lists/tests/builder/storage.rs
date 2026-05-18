@@ -3,8 +3,8 @@
 use std::collections::{BTreeSet, HashMap};
 
 use super::{
-    AccessListContract, AccountInfo, Bytecode, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER,
-    OpTransaction, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
+    AccessListContract, AccountInfo, BaseTransaction, Bytecode, DEVNET_CHAIN_ID, IntoAddress,
+    ONE_ETHER, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
 };
 
 #[test]
@@ -20,7 +20,7 @@ fn test_sload_zero_value() {
             .with_code(Bytecode::new_raw(AccessListContract::DEPLOYED_BYTECODE.clone())),
     );
 
-    let tx = OpTransaction::builder()
+    let tx = BaseTransaction::builder()
         .base(
             TxEnv::builder()
                 .caller(sender)
@@ -62,7 +62,7 @@ fn test_update_one_value() {
     );
 
     let txs = vec![
-        OpTransaction::builder()
+        BaseTransaction::builder()
             .base(
                 TxEnv::builder()
                     .caller(sender)
@@ -80,7 +80,7 @@ fn test_update_one_value() {
                     .gas_limit(100_000),
             )
             .build_fill(),
-        OpTransaction::builder()
+        BaseTransaction::builder()
             .base(
                 TxEnv::builder()
                     .caller(sender)
@@ -140,7 +140,7 @@ fn test_multi_sload_same_slot() {
     );
 
     // getAb reads both `a` and `b` which are packed in slot 1
-    let tx = OpTransaction::builder()
+    let tx = BaseTransaction::builder()
         .base(
             TxEnv::builder()
                 .caller(sender)
@@ -186,7 +186,7 @@ fn test_multi_sstore() {
             .with_code(Bytecode::new_raw(AccessListContract::DEPLOYED_BYTECODE.clone())),
     );
 
-    let tx = OpTransaction::builder()
+    let tx = BaseTransaction::builder()
         .base(
             TxEnv::builder()
                 .caller(sender)
@@ -241,7 +241,7 @@ fn test_reverted_tx_does_not_record_contract_storage_changes() {
 
     let txs = vec![
         // Successful write.
-        OpTransaction::builder()
+        BaseTransaction::builder()
             .base(
                 TxEnv::builder()
                     .caller(sender)
@@ -263,7 +263,7 @@ fn test_reverted_tx_does_not_record_contract_storage_changes() {
             )
             .build_fill(),
         // Reverted write (`keys.length != values.length`).
-        OpTransaction::builder()
+        BaseTransaction::builder()
             .base(
                 TxEnv::builder()
                     .caller(sender)

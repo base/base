@@ -6,10 +6,11 @@ use base_zk_db::{ProofRequestRepo, ProofType};
 use base_zk_outbox::{OutboxTask, TaskQueue};
 use serde::Deserialize;
 use tokio::{sync::Mutex, task::JoinHandle};
-use tracing::{error, info};
+use tracing::{Instrument, error, info};
 
 use crate::{
     backends::{BackendRegistry, BackendType},
+    metrics,
     worker::prover_worker::ProverWorker,
 };
 
@@ -22,6 +23,8 @@ struct ProveBlockRequestParams {
     sequence_window: Option<u64>,
     proof_type: String,
     prover_address: Option<String>,
+    l1_head: Option<String>,
+    intermediate_root_interval: Option<u64>,
 }
 
 impl ProveBlockRequestParams {
@@ -37,7 +40,8 @@ impl ProveBlockRequestParams {
             proof_type: proof_type.proto_i32(),
             session_id: None,
             prover_address: self.prover_address,
-            l1_head: None,
+            l1_head: self.l1_head,
+            intermediate_root_interval: self.intermediate_root_interval,
         };
 
         Ok((request, proof_type))
@@ -86,7 +90,6 @@ impl ProverWorkerPool {
 impl TaskQueue for ProverWorkerPool {
     async fn submit(&self, task: OutboxTask) -> anyhow::Result<()> {
         let proof_request_id = task.proof_request_id;
-        let sequence_id = task.sequence_id;
 
         // Deserialize params from JSON (string proof_type) to intermediate struct
         let params_intermediate: ProveBlockRequestParams = serde_json::from_value(task.params)
@@ -96,6 +99,7 @@ impl TaskQueue for ProverWorkerPool {
                     error = %e,
                     "Failed to deserialize ProveBlockRequestParams"
                 );
+                metrics::inc_outbox_tasks_processed("failed", "unknown");
                 anyhow::anyhow!("Failed to deserialize ProveBlockRequestParams: {e}")
             })?;
 
@@ -106,8 +110,10 @@ impl TaskQueue for ProverWorkerPool {
                 error = %e,
                 "Failed to convert to ProveBlockRequest"
             );
+            metrics::inc_outbox_tasks_processed("failed", "unknown");
             e
         })?;
+        let pt_label = metrics::proof_type_label(proof_type);
         let backend_type: BackendType = proof_type.into();
 
         // Get backend from registry
@@ -118,6 +124,7 @@ impl TaskQueue for ProverWorkerPool {
                 backend_type = ?backend_type,
                 "Backend not found"
             );
+            metrics::inc_outbox_tasks_processed("failed", pt_label);
             anyhow::anyhow!(error_msg)
         })?;
 
@@ -130,34 +137,45 @@ impl TaskQueue for ProverWorkerPool {
         // Clone dependencies for the worker
         let repo = self.repo.clone();
 
+        // Capture backend name before moving the Arc into ProverWorker
+        let backend_name = backend.name();
+
         // Create a new ProverWorker
-        let worker = ProverWorker::new(repo, backend, proof_request_id, sequence_id, params);
+        let worker = ProverWorker::new(repo, backend, proof_request_id, params);
 
-        // Spawn the worker task
-        let handle = tokio::spawn(async move {
-            let result = worker.run().await;
+        // Create a tracing span that propagates proof_request_id to ALL nested log
+        // calls — including witness generation, L1-head calculation, cluster submission,
+        // and deep library code. With `tracing_subscriber::fmt().json()` the span
+        // fields are automatically included in every JSON log event.
+        let prove_span = tracing::info_span!(
+            "prove_request",
+            proof_request_id = %proof_request_id,
+            backend = %backend_name,
+        );
 
-            // Log the result (actual task completion is tracked in database)
-            match result {
-                Ok(()) => {
-                    info!(
-                        proof_request_id = %proof_request_id,
-                        "Worker completed successfully"
-                    );
-                }
-                Err(e) => {
-                    error!(
-                        proof_request_id = %proof_request_id,
-                        error = %e,
-                        "Worker failed"
-                    );
+        // Spawn the worker task, instrumenting the future with the span
+        let handle = tokio::spawn(
+            async move {
+                let result = worker.run().await;
+
+                // Log the result (actual task completion is tracked in database)
+                match result {
+                    Ok(()) => {
+                        info!("Worker completed successfully");
+                    }
+                    Err(e) => {
+                        error!(error = %e, "Worker failed");
+                    }
                 }
             }
-        });
+            .instrument(prove_span),
+        );
 
         let mut guard = self.handles.lock().await;
         guard.retain(|h| !h.is_finished());
         guard.push(handle);
+
+        metrics::inc_outbox_tasks_processed("submitted", pt_label);
 
         // Return immediately - task has been successfully submitted to the worker
         Ok(())

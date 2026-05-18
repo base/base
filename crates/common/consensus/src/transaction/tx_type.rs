@@ -2,6 +2,8 @@
 
 use core::fmt::Display;
 
+use alloy_consensus::InMemorySize;
+
 use crate::transaction::envelope::OpTxType;
 
 /// Identifier for a deposit transaction
@@ -40,6 +42,13 @@ impl OpTxType {
     /// Returns `true` if the type is [`OpTxType::Eip8130`].
     pub const fn is_eip8130(&self) -> bool {
         matches!(self, Self::Eip8130)
+    }
+}
+
+impl InMemorySize for OpTxType {
+    #[inline]
+    fn size(&self) -> usize {
+        core::mem::size_of::<Self>()
     }
 }
 

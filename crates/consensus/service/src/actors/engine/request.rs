@@ -1,7 +1,10 @@
 use alloy_rpc_types_engine::PayloadId;
-use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
-use base_consensus_engine::{BuildTaskError, ConsolidateInput, EngineQueries, SealTaskError};
-use base_protocol::AttributesWithParent;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_consensus_engine::{
+    BuildTaskError, ConsolidateInput, DelegatedForkchoiceUpdate, EngineQueries, InsertTaskError,
+    SealTaskError,
+};
+use base_protocol::{AttributesWithParent, L2BlockInfo};
 use thiserror::Error;
 use tokio::sync::mpsc;
 
@@ -28,6 +31,10 @@ pub enum EngineClientError {
     #[error(transparent)]
     SealError(#[from] SealTaskError),
 
+    /// An error occurred inserting an unsafe block.
+    #[error(transparent)]
+    InsertError(#[from] InsertTaskError),
+
     /// An error occurred performing the reset.
     #[error("An error occurred performing the reset: {0}.")]
     ResetForkchoiceError(String),
@@ -47,16 +54,16 @@ pub enum EngineActorRequest {
     /// Request to consolidate using a safe L2 signal from attributes or delegated safe-block
     /// derivation
     ProcessSafeL2SignalRequest(ConsolidateInput),
+    /// Request to apply delegated follow-node safe/finalized labels together.
+    ProcessDelegatedForkchoiceUpdateRequest(Box<DelegatedForkchoiceUpdate>),
     /// Request to finalize the L2 block at the provided block number.
     ProcessFinalizedL2BlockNumberRequest(Box<u64>),
-    /// Request to insert the provided unsafe block.
-    ProcessUnsafeL2BlockRequest(Box<OpExecutionPayloadEnvelope>),
+    /// Request to insert the provided external unsafe block.
+    ProcessUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
+    /// Request to insert a locally produced sequencer unsafe block.
+    ProcessLocalUnsafeL2BlockRequest(Box<InsertUnsafePayloadRequest>),
     /// Request to reset engine forkchoice.
     ResetRequest(Box<ResetRequest>),
-    /// Request for the engine to process the provided RPC request.
-    RpcRequest(Box<EngineRpcRequest>),
-    /// Request to seal the block with the provided details.
-    SealRequest(Box<SealRequest>),
 }
 
 /// RPC Request for the engine to handle.
@@ -73,7 +80,7 @@ pub struct BuildRequest {
     /// The [`AttributesWithParent`] from which the block build should be started.
     pub attributes: AttributesWithParent,
     /// The channel on which the result, successful or not, will be sent.
-    pub result_tx: mpsc::Sender<PayloadId>,
+    pub result_tx: mpsc::Sender<Result<PayloadId, BuildTaskError>>,
 }
 
 /// A request to reset the engine forkchoice.
@@ -85,16 +92,13 @@ pub struct ResetRequest {
     pub result_tx: mpsc::Sender<EngineClientResult<()>>,
 }
 
-/// A request to seal and canonicalize a payload.
-/// Contains the `PayloadId`, attributes, and a channel to send back the result.
+/// A request to insert a local unsafe payload.
 #[derive(Debug)]
-pub struct SealRequest {
-    /// The `PayloadId` to seal and canonicalize.
-    pub payload_id: PayloadId,
-    /// The attributes necessary for the seal operation.
-    pub attributes: AttributesWithParent,
-    /// The channel on which the result, successful or not, will be sent.
-    pub result_tx: mpsc::Sender<Result<OpExecutionPayloadEnvelope, SealTaskError>>,
+pub struct InsertUnsafePayloadRequest {
+    /// The payload envelope to insert.
+    pub envelope: BaseExecutionPayloadEnvelope,
+    /// Optional response channel used by the sequencer to wait for actual insertion.
+    pub result_tx: Option<mpsc::Sender<Result<L2BlockInfo, InsertTaskError>>>,
 }
 
 /// A request to get the sealed payload without inserting it into the engine.
@@ -106,5 +110,5 @@ pub struct GetPayloadRequest {
     /// The attributes associated with the payload.
     pub attributes: AttributesWithParent,
     /// The channel on which the result, successful or not, will be sent.
-    pub result_tx: mpsc::Sender<Result<OpExecutionPayloadEnvelope, SealTaskError>>,
+    pub result_tx: mpsc::Sender<Result<BaseExecutionPayloadEnvelope, SealTaskError>>,
 }

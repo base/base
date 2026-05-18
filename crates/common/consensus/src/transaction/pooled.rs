@@ -1,27 +1,28 @@
 //! Defines the exact transaction variants that are allowed to be propagated over the eth p2p
-//! protocol in op.
+//! protocol for Base.
 
 use core::hash::Hash;
 
 use alloy_consensus::{
-    Extended, Sealed, SignableTransaction, Signed, TransactionEnvelope, TxEip7702, TxEnvelope,
+    Extended, InMemorySize, SignableTransaction, Signed, TransactionEnvelope, TxEip7702,
+    TxEnvelope,
     error::ValueError,
     transaction::{TxEip1559, TxEip2930, TxHashRef, TxLegacy},
 };
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{B256, Signature, TxHash, bytes};
 
-use crate::{OpTxEnvelope, TxEip8130};
+use crate::BaseTxEnvelope;
 
 /// All possible transactions that can be included in a response to `GetPooledTransactions`.
 /// A response to `GetPooledTransactions`. This can include a typed signed transaction, but cannot
 /// include a deposit transaction or EIP-4844 transaction.
 ///
-/// The difference between this and the [`OpTxEnvelope`] is that this type does not have the deposit
+/// The difference between this and the [`BaseTxEnvelope`] is that this type does not have the deposit
 /// transaction variant, which is not expected to be pooled.
 #[derive(Clone, Debug, TransactionEnvelope)]
-#[envelope(tx_type_name = OpPooledTxType, serde_cfg(feature = "serde"))]
-pub enum OpPooledTransaction {
+#[envelope(tx_type_name = BasePooledTxType, serde_cfg(feature = "serde"))]
+pub enum BasePooledTransaction {
     /// An untagged [`TxLegacy`].
     #[envelope(ty = 0)]
     Legacy(Signed<TxLegacy>),
@@ -34,12 +35,9 @@ pub enum OpPooledTransaction {
     /// A [`TxEip7702`] transaction tagged with type 4.
     #[envelope(ty = 4)]
     Eip7702(Signed<TxEip7702>),
-    /// A [`TxEip8130`] transaction tagged with type 0x7B (EIP-8130).
-    #[envelope(ty = 123)]
-    Eip8130(Sealed<TxEip8130>),
 }
 
-impl OpPooledTransaction {
+impl BasePooledTransaction {
     /// Heavy operation that returns the signature hash over rlp encoded transaction. It is only
     /// for signature signing or signer recovery.
     pub fn signature_hash(&self) -> B256 {
@@ -48,7 +46,6 @@ impl OpPooledTransaction {
             Self::Eip2930(tx) => tx.signature_hash(),
             Self::Eip1559(tx) => tx.signature_hash(),
             Self::Eip7702(tx) => tx.signature_hash(),
-            Self::Eip8130(tx) => tx.seal(),
         }
     }
 
@@ -59,20 +56,16 @@ impl OpPooledTransaction {
             Self::Eip2930(tx) => tx.hash(),
             Self::Eip1559(tx) => tx.hash(),
             Self::Eip7702(tx) => tx.hash(),
-            Self::Eip8130(tx) => tx.hash_ref(),
         }
     }
 
     /// Returns the signature of the transaction.
-    pub fn signature(&self) -> &Signature {
-        static AA_DUMMY_SIG: Signature =
-            Signature::new(alloy_primitives::U256::ZERO, alloy_primitives::U256::ZERO, false);
+    pub const fn signature(&self) -> &Signature {
         match self {
             Self::Legacy(tx) => tx.signature(),
             Self::Eip2930(tx) => tx.signature(),
             Self::Eip1559(tx) => tx.signature(),
             Self::Eip7702(tx) => tx.signature(),
-            Self::Eip8130(_) => &AA_DUMMY_SIG,
         }
     }
 
@@ -84,35 +77,26 @@ impl OpPooledTransaction {
             Self::Eip2930(tx) => tx.tx().encode_for_signing(out),
             Self::Eip1559(tx) => tx.tx().encode_for_signing(out),
             Self::Eip7702(tx) => tx.tx().encode_for_signing(out),
-            Self::Eip8130(tx) => tx.inner().encode_2718(out),
         }
     }
 
     /// Converts the transaction into the ethereum [`TxEnvelope`].
-    ///
-    /// Returns `Err` for EIP-8130 AA transactions which have no Ethereum
-    /// equivalent.
-    pub fn try_into_envelope(self) -> Result<TxEnvelope, ValueError<Self>> {
-        match self {
-            Self::Legacy(tx) => Ok(tx.into()),
-            Self::Eip2930(tx) => Ok(tx.into()),
-            Self::Eip1559(tx) => Ok(tx.into()),
-            Self::Eip7702(tx) => Ok(tx.into()),
-            Self::Eip8130(tx) => Err(ValueError::new(
-                Self::Eip8130(tx),
-                "AA transactions cannot be converted to ethereum TxEnvelope",
-            )),
-        }
-    }
-
-    /// Converts the transaction into the Base chain [`OpTxEnvelope`].
-    pub fn into_op_envelope(self) -> OpTxEnvelope {
+    pub fn into_envelope(self) -> TxEnvelope {
         match self {
             Self::Legacy(tx) => tx.into(),
             Self::Eip2930(tx) => tx.into(),
             Self::Eip1559(tx) => tx.into(),
             Self::Eip7702(tx) => tx.into(),
-            Self::Eip8130(tx) => OpTxEnvelope::Eip8130(tx),
+        }
+    }
+
+    /// Converts the transaction into the Base chain [`BaseTxEnvelope`].
+    pub fn into_base_envelope(self) -> BaseTxEnvelope {
+        match self {
+            Self::Legacy(tx) => tx.into(),
+            Self::Eip2930(tx) => tx.into(),
+            Self::Eip1559(tx) => tx.into(),
+            Self::Eip7702(tx) => tx.into(),
         }
     }
 
@@ -149,67 +133,52 @@ impl OpPooledTransaction {
     }
 }
 
-impl From<Signed<TxLegacy>> for OpPooledTransaction {
+impl From<Signed<TxLegacy>> for BasePooledTransaction {
     fn from(v: Signed<TxLegacy>) -> Self {
         Self::Legacy(v)
     }
 }
 
-impl From<Signed<TxEip2930>> for OpPooledTransaction {
+impl From<Signed<TxEip2930>> for BasePooledTransaction {
     fn from(v: Signed<TxEip2930>) -> Self {
         Self::Eip2930(v)
     }
 }
 
-impl From<Signed<TxEip1559>> for OpPooledTransaction {
+impl From<Signed<TxEip1559>> for BasePooledTransaction {
     fn from(v: Signed<TxEip1559>) -> Self {
         Self::Eip1559(v)
     }
 }
 
-impl From<Signed<TxEip7702>> for OpPooledTransaction {
+impl From<Signed<TxEip7702>> for BasePooledTransaction {
     fn from(v: Signed<TxEip7702>) -> Self {
         Self::Eip7702(v)
     }
 }
 
-impl From<Sealed<TxEip8130>> for OpPooledTransaction {
-    fn from(v: Sealed<TxEip8130>) -> Self {
-        Self::Eip8130(v)
-    }
-}
-
-impl TryFrom<OpPooledTransaction> for alloy_consensus::transaction::PooledTransaction {
-    type Error = ValueError<OpPooledTransaction>;
-
-    fn try_from(value: OpPooledTransaction) -> Result<Self, Self::Error> {
+impl From<BasePooledTransaction> for alloy_consensus::transaction::PooledTransaction {
+    fn from(value: BasePooledTransaction) -> Self {
         match value {
-            OpPooledTransaction::Legacy(tx) => Ok(tx.into()),
-            OpPooledTransaction::Eip2930(tx) => Ok(tx.into()),
-            OpPooledTransaction::Eip1559(tx) => Ok(tx.into()),
-            OpPooledTransaction::Eip7702(tx) => Ok(tx.into()),
-            OpPooledTransaction::Eip8130(tx) => Err(ValueError::new(
-                OpPooledTransaction::Eip8130(tx),
-                "AA transactions cannot be converted to ethereum PooledTransaction",
-            )),
+            BasePooledTransaction::Legacy(tx) => tx.into(),
+            BasePooledTransaction::Eip2930(tx) => tx.into(),
+            BasePooledTransaction::Eip1559(tx) => tx.into(),
+            BasePooledTransaction::Eip7702(tx) => tx.into(),
         }
     }
 }
 
-impl TxHashRef for OpPooledTransaction {
+impl TxHashRef for BasePooledTransaction {
     fn tx_hash(&self) -> &B256 {
         Self::hash(self)
     }
 }
 
 #[cfg(feature = "k256")]
-impl alloy_consensus::transaction::SignerRecoverable for OpPooledTransaction {
+impl alloy_consensus::transaction::SignerRecoverable for BasePooledTransaction {
     fn recover_signer(
         &self,
     ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
-        if let Self::Eip8130(tx) = self {
-            return super::envelope::recover_eip8130_signer(tx.inner());
-        }
         let signature_hash = self.signature_hash();
         alloy_consensus::crypto::secp256k1::recover_signer(self.signature(), signature_hash)
     }
@@ -217,9 +186,6 @@ impl alloy_consensus::transaction::SignerRecoverable for OpPooledTransaction {
     fn recover_signer_unchecked(
         &self,
     ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
-        if let Self::Eip8130(tx) = self {
-            return super::envelope::recover_eip8130_signer(tx.inner());
-        }
         let signature_hash = self.signature_hash();
         alloy_consensus::crypto::secp256k1::recover_signer_unchecked(
             self.signature(),
@@ -244,44 +210,40 @@ impl alloy_consensus::transaction::SignerRecoverable for OpPooledTransaction {
             Self::Eip7702(tx) => {
                 alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
             }
-            Self::Eip8130(tx) => super::envelope::recover_eip8130_signer(tx.inner()),
         }
     }
 }
 
-impl From<OpPooledTransaction> for OpTxEnvelope {
-    fn from(tx: OpPooledTransaction) -> Self {
-        tx.into_op_envelope()
+impl From<BasePooledTransaction> for TxEnvelope {
+    fn from(tx: BasePooledTransaction) -> Self {
+        tx.into_envelope()
     }
 }
 
-impl TryFrom<OpTxEnvelope> for OpPooledTransaction {
-    type Error = ValueError<OpTxEnvelope>;
-
-    fn try_from(value: OpTxEnvelope) -> Result<Self, Self::Error> {
-        match value {
-            OpTxEnvelope::Legacy(tx) => Ok(tx.into()),
-            OpTxEnvelope::Eip2930(tx) => Ok(tx.into()),
-            OpTxEnvelope::Eip1559(tx) => Ok(tx.into()),
-            OpTxEnvelope::Eip7702(tx) => Ok(tx.into()),
-            OpTxEnvelope::Eip8130(tx) => Ok(Self::Eip8130(tx)),
-            OpTxEnvelope::Deposit(tx) => {
-                Err(ValueError::new(tx.into(), "Deposit transactions cannot be pooled"))
-            }
-        }
+impl From<BasePooledTransaction> for BaseTxEnvelope {
+    fn from(tx: BasePooledTransaction) -> Self {
+        tx.into_base_envelope()
     }
 }
 
-impl<Tx> From<OpPooledTransaction> for Extended<OpTxEnvelope, Tx> {
-    fn from(tx: OpPooledTransaction) -> Self {
+impl TryFrom<BaseTxEnvelope> for BasePooledTransaction {
+    type Error = ValueError<BaseTxEnvelope>;
+
+    fn try_from(value: BaseTxEnvelope) -> Result<Self, Self::Error> {
+        value.try_into_pooled()
+    }
+}
+
+impl<Tx> From<BasePooledTransaction> for Extended<BaseTxEnvelope, Tx> {
+    fn from(tx: BasePooledTransaction) -> Self {
         Self::BuiltIn(tx.into())
     }
 }
 
-impl<Tx> TryFrom<Extended<OpTxEnvelope, Tx>> for OpPooledTransaction {
+impl<Tx> TryFrom<Extended<BaseTxEnvelope, Tx>> for BasePooledTransaction {
     type Error = ();
 
-    fn try_from(_tx: Extended<OpTxEnvelope, Tx>) -> Result<Self, Self::Error> {
+    fn try_from(_tx: Extended<BaseTxEnvelope, Tx>) -> Result<Self, Self::Error> {
         match _tx {
             Extended::BuiltIn(inner) => inner.try_into().map_err(|_| ()),
             Extended::Other(_tx) => Err(()),
@@ -289,10 +251,20 @@ impl<Tx> TryFrom<Extended<OpTxEnvelope, Tx>> for OpPooledTransaction {
     }
 }
 
+impl InMemorySize for BasePooledTransaction {
+    fn size(&self) -> usize {
+        match self {
+            Self::Legacy(tx) => tx.size(),
+            Self::Eip2930(tx) => tx.size(),
+            Self::Eip1559(tx) => tx.size(),
+            Self::Eip7702(tx) => tx.size(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Sealable, Transaction};
-    use alloy_eips::eip2718::IsTyped2718;
+    use alloy_consensus::Transaction;
     use alloy_primitives::{address, hex};
     use alloy_rlp::Decodable;
     use bytes::Bytes;
@@ -319,7 +291,7 @@ mod tests {
 
         for hex_data in &input_too_short {
             let input_rlp = &mut &hex_data[..];
-            let res = OpPooledTransaction::decode(input_rlp);
+            let res = BasePooledTransaction::decode(input_rlp);
 
             assert!(
                 res.is_err(),
@@ -329,7 +301,7 @@ mod tests {
 
             // this is a legacy tx so we can attempt the same test with decode_enveloped
             let input_rlp = &mut &hex_data[..];
-            let res = OpPooledTransaction::decode_2718(input_rlp);
+            let res = BasePooledTransaction::decode_2718(input_rlp);
 
             assert!(
                 res.is_err(),
@@ -346,7 +318,7 @@ mod tests {
             "02f903d382426882ba09832dc6c0848674742682ed9694714b6a4ea9b94a8a7d9fd362ed72630688c8898c80b90364492d24749189822d8512430d3f3ff7a2ede675ac08265c08e2c56ff6fdaa66dae1cdbe4a5d1d7809f3e99272d067364e597542ac0c369d69e22a6399c3e9bee5da4b07e3f3fdc34c32c3d88aa2268785f3e3f8086df0934b10ef92cfffc2e7f3d90f5e83302e31382e302d64657600000000000000000000000000000000000000000000569e75fc77c1a856f6daaf9e69d8a9566ca34aa47f9133711ce065a571af0cfd000000000000000000000000e1e210594771824dad216568b91c9cb4ceed361c00000000000000000000000000000000000000000000000000000000000546e00000000000000000000000000000000000000000000000000000000000e4e1c00000000000000000000000000000000000000000000000000000000065d6750c00000000000000000000000000000000000000000000000000000000000f288000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002cf600000000000000000000000000000000000000000000000000000000000000640000000000000000000000000000000000000000000000000000000000000000f1628e56fa6d8c50e5b984a58c0df14de31c7b857ce7ba499945b99252976a93d06dcda6776fc42167fbe71cb59f978f5ef5b12577a90b132d14d9c6efa528076f0161d7bf03643cfc5490ec5084f4a041db7f06c50bd97efa08907ba79ddcac8b890f24d12d8db31abbaaf18985d54f400449ee0559a4452afe53de5853ce090000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000028000000000000000000000000000000000000000000000000000000000000003e800000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000064ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000c080a01428023fc54a27544abc421d5d017b9a7c5936ad501cbdecd0d9d12d04c1a033a0753104bbf1c87634d6ff3f0ffa0982710612306003eb022363b57994bdef445a"
         );
 
-        let res = OpPooledTransaction::decode_2718(&mut &data[..]).unwrap();
+        let res = BasePooledTransaction::decode_2718(&mut &data[..]).unwrap();
         assert_eq!(res.to(), Some(address!("714b6a4ea9b94a8a7d9fd362ed72630688c8898c")));
     }
 
@@ -365,33 +337,12 @@ mod tests {
         let data = &hex!("d30b02808083c5cdeb8783c5acfd9e407c565656")[..];
 
         let input_rlp = &mut &data[..];
-        let res = OpPooledTransaction::decode(input_rlp);
+        let res = BasePooledTransaction::decode(input_rlp);
         assert!(res.is_ok());
         assert!(input_rlp.is_empty());
 
         // we can also decode_enveloped
-        let res = OpPooledTransaction::decode_2718(&mut &data[..]);
+        let res = BasePooledTransaction::decode_2718(&mut &data[..]);
         assert!(res.is_ok());
-    }
-
-    #[test]
-    fn eip8130_pooled_type_and_roundtrip() {
-        let tx = TxEip8130 {
-            chain_id: 8453,
-            from: Some(address!("0123456789012345678901234567890123456789")),
-            nonce_sequence: 3,
-            max_fee_per_gas: 10,
-            max_priority_fee_per_gas: 2,
-            gas_limit: 100_000,
-            calls: vec![vec![]],
-            ..Default::default()
-        };
-        let pooled = OpPooledTransaction::Eip8130(tx.seal_slow());
-        assert!(OpPooledTransaction::is_type(123));
-
-        let mut encoded = Vec::new();
-        pooled.encode_2718(&mut encoded);
-        let decoded = OpPooledTransaction::decode_2718(&mut encoded.as_slice()).unwrap();
-        assert!(matches!(decoded, OpPooledTransaction::Eip8130(_)));
     }
 }

@@ -1,19 +1,17 @@
 //! Ingress RPC binary entry point.
 
+use std::time::Duration;
+
 use alloy_provider::ProviderBuilder;
-use audit_archiver_lib::{
-    AuditConnector, BundleEvent, KafkaBundleEventPublisher, load_kafka_config_from_file,
-};
-use base_alloy_network::Base;
+use audit_archiver_lib::{AuditConnector, BundleEvent, RpcBundleEventPublisher};
 use base_bundles::MeterBundleResponse;
 use base_cli_utils::LogConfig;
+use base_common_network::Base;
 use clap::Parser;
 use ingress_rpc_lib::{
-    BuilderConnector, Config, HealthServer, IngressApiServer, IngressService, KafkaMessageQueue,
-    Providers,
+    BuilderConnector, Config, HealthServer, IngressApiServer, IngressService, Providers,
 };
 use jsonrpsee::server::Server;
-use rdkafka::{ClientConfig, producer::FutureProducer};
 use tokio::sync::{broadcast, mpsc};
 use tracing::info;
 
@@ -75,22 +73,17 @@ async fn main() -> anyhow::Result<()> {
         }),
     };
 
-    let ingress_client_config =
-        ClientConfig::from_iter(load_kafka_config_from_file(&config.ingress_kafka_properties)?);
-
-    let queue_producer: FutureProducer = ingress_client_config.create()?;
-
-    let queue = KafkaMessageQueue::new(queue_producer);
-
-    let audit_client_config =
-        ClientConfig::from_iter(load_kafka_config_from_file(&config.audit_kafka_properties)?);
-
-    let audit_producer: FutureProducer = audit_client_config.create()?;
-
-    let audit_publisher =
-        KafkaBundleEventPublisher::new(audit_producer, config.audit_topic.clone());
-    let (audit_tx, audit_rx) = mpsc::unbounded_channel::<BundleEvent>();
-    AuditConnector::connect(audit_rx, audit_publisher);
+    let audit_publisher = RpcBundleEventPublisher::new(
+        config.audit_rpc_url.as_str(),
+        Duration::from_secs(config.audit_rpc_timeout_secs),
+    )?;
+    let (audit_tx, audit_rx) = mpsc::channel::<BundleEvent>(config.audit_channel_capacity);
+    AuditConnector::connect_batched(
+        audit_rx,
+        audit_publisher,
+        config.audit_batch_max_size,
+        Duration::from_millis(config.audit_batch_max_wait_ms),
+    );
 
     let (builder_tx, _) =
         broadcast::channel::<MeterBundleResponse>(config.max_buffered_meter_bundle_responses);
@@ -112,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let bind_addr = format!("{}:{}", config.address, config.port);
-    let service = IngressService::new(providers, queue, audit_tx, builder_tx, cli.config);
+    let service = IngressService::new(providers, audit_tx, builder_tx, cli.config);
 
     let server = Server::builder().build(&bind_addr).await?;
     let addr = server.local_addr()?;

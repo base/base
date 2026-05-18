@@ -6,7 +6,7 @@ use alloy_network::Ethereum;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
-use base_alloy_network::Base;
+use base_common_network::Base;
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};
 use tempfile::TempDir;
@@ -115,8 +115,8 @@ impl Devnet {
             l1_rpc: self.l1_rpc_url().await?.to_string(),
             l2_builder_rpc: self.l2_rpc_url()?.to_string(),
             l2_client_rpc: self.l2_client_rpc_url()?.to_string(),
-            l2_builder_op_rpc: self.l2_stack().builder_consensus_rpc_url().to_string(),
-            l2_client_op_rpc: self.l2_stack().client_consensus_rpc_url().to_string(),
+            l2_builder_consensus_rpc: self.l2_stack().builder_consensus_rpc_url().to_string(),
+            l2_client_consensus_rpc: self.l2_stack().client_consensus_rpc_url().to_string(),
         })
     }
 }
@@ -127,9 +127,12 @@ pub struct DevnetBuilder {
     l1_chain_id: Option<u64>,
     l2_chain_id: Option<u64>,
     slot_duration: Option<u64>,
+    base_azul_activation_block: Option<u64>,
+    base_beryl_activation_block: Option<u64>,
     output_dir: Option<PathBuf>,
     stable_config: Option<StableDevnetConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
+    verifier_l1_confs: u64,
 }
 
 impl DevnetBuilder {
@@ -156,6 +159,18 @@ impl DevnetBuilder {
         self
     }
 
+    /// Sets the L2 block number at which Base Azul activates.
+    pub const fn with_base_azul_activation_block(mut self, block: u64) -> Self {
+        self.base_azul_activation_block = Some(block);
+        self
+    }
+
+    /// Sets the L2 block number at which Base Beryl activates.
+    pub const fn with_base_beryl_activation_block(mut self, block: u64) -> Self {
+        self.base_beryl_activation_block = Some(block);
+        self
+    }
+
     /// Sets the output directory for devnet files.
     pub fn with_output_dir(mut self, output_dir: PathBuf) -> Self {
         self.output_dir = Some(output_dir);
@@ -176,6 +191,13 @@ impl DevnetBuilder {
         self
     }
 
+    /// Sets the number of L1 blocks to keep distance from the L1 head for the
+    /// client (validator) node's derivation pipeline.
+    pub const fn with_verifier_l1_confs(mut self, confs: u64) -> Self {
+        self.verifier_l1_confs = confs;
+        self
+    }
+
     /// Builds and starts the devnet.
     pub async fn build(self) -> Result<Devnet> {
         let l1_chain_id = self.l1_chain_id.unwrap_or(DEFAULT_L1_CHAIN_ID);
@@ -189,6 +211,14 @@ impl DevnetBuilder {
             .with_chain_id(l1_chain_id)
             .with_l2_chain_id(l2_chain_id)
             .with_slot_duration(slot_duration);
+
+        if let Some(block) = self.base_azul_activation_block {
+            setup = setup.with_base_azul_activation_block(block);
+        }
+
+        if let Some(block) = self.base_beryl_activation_block {
+            setup = setup.with_base_beryl_activation_block(block);
+        }
 
         if let Some(ref config) = self.stable_config {
             setup = setup.with_network_name(&config.network_name);
@@ -274,6 +304,7 @@ impl DevnetBuilder {
             l1_beacon_url: l1_stack.beacon().beacon_url().await?,
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
+            verifier_l1_confs: self.verifier_l1_confs,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;

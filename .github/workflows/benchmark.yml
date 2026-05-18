@@ -1,9 +1,6 @@
 name: Benchmark
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 concurrency:
@@ -12,16 +9,17 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
   BENCHMARK_REPO: "base/benchmark"
-  BENCHMARK_REF: "69063144e3c05e309a236e928281a8d6a0ee4c46"
+  BENCHMARK_REF: "48f0e0405fc9df31bd8b3e59d686374695e06d64"
 
 permissions:
   contents: read
 
 jobs:
-  # Build base-reth-node and base-builder together, cached by source hash
+  # Build base-reth-node, base-builder, and base-load-test together, cached by source hash
   build-binaries:
-    if: false # Disabled: workflow consistently failing in CI — remove this line to re-enable
     name: Build binaries
     runs-on: ubuntu-latest
     permissions:
@@ -68,6 +66,12 @@ jobs:
         run: |
           cargo build --locked --bin base-builder --profile maxperf
           cp target/maxperf/base-builder ~/bin/base-builder
+
+      - name: Build base-load-test
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
+        run: |
+          cargo build --locked -p base-load-tests --bin base-load-test --profile maxperf
+          cp target/maxperf/base-load-test ~/bin/base-load-test
 
       - name: Verify binaries exist
         run: |
@@ -137,11 +141,12 @@ jobs:
           go run benchmark/cmd/main.go \
             --log.level info \
             run \
-            --config ../node-reth/.github/benchmark/transfer-only.yml \
+            --config ../node-reth/.github/benchmark/load-test.yml \
             --root-dir ${{ runner.temp }}/data-dir \
             --output-dir ${{ runner.temp }}/output \
             --builder-bin ${{ runner.temp }}/bin/base-builder \
-            --base-reth-node-bin ${{ runner.temp }}/bin/base-reth-node
+            --base-reth-node-bin ${{ runner.temp }}/bin/base-reth-node \
+            --load-test-bin ${{ runner.temp }}/bin/base-load-test
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

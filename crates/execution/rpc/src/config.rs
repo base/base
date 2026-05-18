@@ -7,7 +7,7 @@ use alloy_eips::{
     eip7840::BlobParams,
     eip7910::{EthConfig, EthForkConfig, SystemContract},
 };
-use base_alloy_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
@@ -30,10 +30,7 @@ const fn zero_blob_params() -> BlobParams {
     }
 }
 
-fn sanitize_system_contracts_for_fork(
-    chain_spec: &impl BaseUpgrades,
-    fork_config: &mut EthForkConfig,
-) {
+fn sanitize_system_contracts_for_fork(chain_spec: &impl Upgrades, fork_config: &mut EthForkConfig) {
     let activation_time = fork_config.activation_time;
 
     fork_config.system_contracts.retain(|contract, _| match contract {
@@ -44,7 +41,8 @@ fn sanitize_system_contracts_for_fork(
         // Base does not support L1-style deposit, consolidation, or withdrawal request contracts.
         SystemContract::ConsolidationRequestPredeploy
         | SystemContract::DepositContract
-        | SystemContract::WithdrawalRequestPredeploy => false,
+        | SystemContract::WithdrawalRequestPredeploy
+        | SystemContract::Other(_) => false,
     });
 }
 
@@ -82,7 +80,7 @@ pub struct BaseEthConfigHandler<Provider: ChainSpecProvider, Evm> {
 
 impl<Provider, Evm> BaseEthConfigHandler<Provider, Evm>
 where
-    Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks + BaseUpgrades>
+    Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks + Upgrades>
         + BlockReaderIdExt<Header: HeaderMut>
         + Clone
         + 'static,
@@ -110,7 +108,7 @@ where
 
 impl<Provider, Evm> BaseEthConfigApiServer for BaseEthConfigHandler<Provider, Evm>
 where
-    Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks + BaseUpgrades>
+    Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks + Upgrades>
         + BlockReaderIdExt<Header: HeaderMut>
         + Clone
         + 'static,
@@ -132,7 +130,7 @@ mod tests {
         eip4844::BLOB_TX_MIN_BLOB_GASPRICE,
         eip7910::{EthForkConfig, SystemContract},
     };
-    use base_execution_chainspec::OpChainSpecBuilder;
+    use base_execution_chainspec::BaseChainSpecBuilder;
 
     use super::{sanitize_system_contracts_for_fork, zero_blob_params};
 
@@ -153,26 +151,26 @@ mod tests {
 
     #[test]
     fn ecotone_only_keeps_beacon_roots() {
-        let chain_spec = OpChainSpecBuilder::base_mainnet().ecotone_activated().build();
+        let chain_spec = BaseChainSpecBuilder::base_mainnet().ecotone_activated().build();
         let mut fork_config = fork_config(0);
 
         sanitize_system_contracts_for_fork(&chain_spec, &mut fork_config);
 
         assert_eq!(
-            fork_config.system_contracts.keys().copied().collect::<Vec<_>>(),
+            fork_config.system_contracts.keys().cloned().collect::<Vec<_>>(),
             vec![SystemContract::BeaconRoots]
         );
     }
 
     #[test]
     fn isthmus_keeps_beacon_roots_and_history_storage() {
-        let chain_spec = OpChainSpecBuilder::base_mainnet().isthmus_activated().build();
+        let chain_spec = BaseChainSpecBuilder::base_mainnet().isthmus_activated().build();
         let mut fork_config = fork_config(0);
 
         sanitize_system_contracts_for_fork(&chain_spec, &mut fork_config);
 
         assert_eq!(
-            fork_config.system_contracts.keys().copied().collect::<Vec<_>>(),
+            fork_config.system_contracts.keys().cloned().collect::<Vec<_>>(),
             vec![SystemContract::BeaconRoots, SystemContract::HistoryStorage]
         );
     }

@@ -5,10 +5,11 @@ Payload builder for Base.
 ## Overview
 
 Implements Base payload building and validation for the Base execution node. The
-`OpPayloadBuilder` assembles new execution payloads from transaction pool contents and
-`OpPayloadAttributes` received from the consensus layer. `OpExecutionPayloadValidator` verifies
+`BasePayloadBuilder` assembles new execution payloads from transaction pool contents and
+`BasePayloadBuilderAttributes` received from the consensus layer. `BaseExecutionPayloadValidator`
+verifies
 built payloads against consensus rules. Also provides data availability configuration via
-`OpDAConfig` for fee calculation.
+`BaseDAConfig` for fee calculation.
 
 ## Usage
 
@@ -20,9 +21,9 @@ base-execution-payload-builder = { workspace = true }
 ```
 
 ```rust,ignore
-use base_execution_payload_builder::OpPayloadBuilder;
+use base_execution_payload_builder::BasePayloadBuilder;
 
-let builder = OpPayloadBuilder::new(evm_config, payload_validator);
+let builder = BasePayloadBuilder::new(evm_config, payload_validator);
 let payload = builder.build_payload(attrs, best_payload)?;
 ```
 

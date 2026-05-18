@@ -2,8 +2,8 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
-use base_alloy_rpc_types_engine::{
-    OpExecutionPayload, OpExecutionPayloadEnvelope, OpPayloadAttributes,
+use base_common_rpc_types_engine::{
+    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
 };
 use base_consensus_derive::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};
 use base_consensus_engine::SealTaskError;
@@ -12,8 +12,8 @@ use jsonrpsee::core::ClientError;
 use rstest::rstest;
 
 use crate::{
-    ConductorError, SealState, SealStepError, SequencerActorError, UnsafePayloadGossipClientError,
-    UnsealedPayloadHandle,
+    ConductorError, SealState, SealStepError, SealStepOutcome, SequencerActorError,
+    UnsafePayloadGossipClientError, UnsealedPayloadHandle,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
         MockUnsafePayloadGossipClient,
@@ -22,10 +22,10 @@ use crate::{
     },
 };
 
-fn dummy_envelope() -> OpExecutionPayloadEnvelope {
-    OpExecutionPayloadEnvelope {
+fn dummy_envelope() -> BaseExecutionPayloadEnvelope {
+    BaseExecutionPayloadEnvelope {
         parent_beacon_block_root: None,
-        execution_payload: OpExecutionPayload::V1(ExecutionPayloadV1 {
+        execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
             parent_hash: B256::ZERO,
             fee_recipient: alloy_primitives::Address::ZERO,
             state_root: B256::ZERO,
@@ -49,7 +49,7 @@ fn conductor_rpc_error() -> ConductorError {
 }
 
 fn dummy_attributes_with_parent() -> AttributesWithParent {
-    AttributesWithParent::new(OpPayloadAttributes::default(), L2BlockInfo::default(), None, false)
+    AttributesWithParent::new(BasePayloadAttributes::default(), L2BlockInfo::default(), None, false)
 }
 
 fn handle_with_parent_number(number: u64) -> UnsealedPayloadHandle {
@@ -64,7 +64,7 @@ fn handle_with_parent(number: u64, hash: B256) -> UnsealedPayloadHandle {
     UnsealedPayloadHandle {
         payload_id: Default::default(),
         attributes_with_parent: AttributesWithParent::new(
-            OpPayloadAttributes::default(),
+            BasePayloadAttributes::default(),
             parent,
             None,
             false,
@@ -288,7 +288,7 @@ async fn test_sealer_full_pipeline_no_conductor() {
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
     let mut engine = MockSequencerEngineClient::new();
-    engine.expect_insert_unsafe_payload().times(1).return_once(|_| Ok(()));
+    engine.expect_insert_unsafe_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
 
     let conductor: Option<MockConductor> = None;
     let mut sealer = PayloadSealer::new(envelope);
@@ -296,15 +296,15 @@ async fn test_sealer_full_pipeline_no_conductor() {
     assert_eq!(sealer.state, SealState::Sealed);
 
     let result = sealer.step(&conductor, &gossip, &engine).await;
-    assert!(!result.unwrap());
+    assert_eq!(result.unwrap(), SealStepOutcome::Pending);
     assert_eq!(sealer.state, SealState::Committed);
 
     let result = sealer.step(&conductor, &gossip, &engine).await;
-    assert!(!result.unwrap());
+    assert_eq!(result.unwrap(), SealStepOutcome::Pending);
     assert_eq!(sealer.state, SealState::Gossiped);
 
     let result = sealer.step(&conductor, &gossip, &engine).await;
-    assert!(result.unwrap());
+    assert_eq!(result.unwrap(), SealStepOutcome::Inserted(L2BlockInfo::default()));
 }
 
 #[tokio::test]
@@ -318,21 +318,21 @@ async fn test_sealer_full_pipeline_with_conductor() {
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
     let mut engine = MockSequencerEngineClient::new();
-    engine.expect_insert_unsafe_payload().times(1).return_once(|_| Ok(()));
+    engine.expect_insert_unsafe_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
 
     let conductor = Some(conductor);
     let mut sealer = PayloadSealer::new(envelope);
 
     let result = sealer.step(&conductor, &gossip, &engine).await;
-    assert!(!result.unwrap());
+    assert_eq!(result.unwrap(), SealStepOutcome::Pending);
     assert_eq!(sealer.state, SealState::Committed);
 
     let result = sealer.step(&conductor, &gossip, &engine).await;
-    assert!(!result.unwrap());
+    assert_eq!(result.unwrap(), SealStepOutcome::Pending);
     assert_eq!(sealer.state, SealState::Gossiped);
 
     let result = sealer.step(&conductor, &gossip, &engine).await;
-    assert!(result.unwrap());
+    assert_eq!(result.unwrap(), SealStepOutcome::Inserted(L2BlockInfo::default()));
 }
 
 #[tokio::test]

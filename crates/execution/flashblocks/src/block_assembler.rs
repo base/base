@@ -10,19 +10,19 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
     PraguePayloadFields,
 };
-use base_alloy_consensus::BaseBlock;
-use base_alloy_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
-use base_alloy_rpc_types_engine::{
-    OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4,
+use base_common_consensus::BaseBlock;
+use base_common_evm::L1BlockInfo;
+use base_common_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
+use base_common_rpc_types_engine::{
+    BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4,
 };
-use base_revm::L1BlockInfo;
 
 use crate::{ExecutionError, ProtocolError, Result};
 
 /// Result of assembling a block from flashblocks.
 #[derive(Debug, Clone)]
 pub struct AssembledBlock {
-    /// The reconstructed OP block.
+    /// The reconstructed Base block.
     pub block: BaseBlock,
     /// The base payload data from the first flashblock.
     pub base: ExecutionPayloadBaseV1,
@@ -83,8 +83,8 @@ impl BlockAssembler {
         let withdrawals: Vec<Withdrawal> =
             flashblocks.iter().flat_map(|flashblock| flashblock.diff.withdrawals.clone()).collect();
 
-        // OpExecutionPayloadV4 sets withdrawals_root directly instead of computing from list.
-        let execution_payload = OpExecutionPayloadV4 {
+        // BaseExecutionPayloadV4 sets withdrawals_root directly instead of computing from list.
+        let execution_payload = BaseExecutionPayloadV4 {
             payload_inner: ExecutionPayloadV3 {
                 blob_gas_used: latest_flashblock.diff.blob_gas_used.unwrap_or_default(),
                 excess_blob_gas: 0,
@@ -112,7 +112,7 @@ impl BlockAssembler {
         };
 
         // Create sidecar with fields passed separately to Engine API
-        let sidecar = OpExecutionPayloadSidecar::v4(
+        let sidecar = BaseExecutionPayloadSidecar::v4(
             CancunPayloadFields {
                 parent_beacon_block_root: base.parent_beacon_block_root,
                 versioned_hashes: vec![],
@@ -120,7 +120,7 @@ impl BlockAssembler {
             PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
         );
 
-        let block: BaseBlock = OpExecutionPayload::V4(execution_payload)
+        let block: BaseBlock = BaseExecutionPayload::V4(execution_payload)
             .try_into_block_with_sidecar(&sidecar)
             .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?;
 
@@ -135,7 +135,7 @@ impl BlockAssembler {
 mod tests {
     use alloy_primitives::{Address, Bloom, U256};
     use alloy_rpc_types_engine::PayloadId;
-    use base_alloy_flashblocks::{
+    use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata,
     };
 

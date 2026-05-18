@@ -6,7 +6,8 @@ use std::sync::{
 };
 
 use alloy_primitives::Address;
-use alloy_provider::Provider;
+use alloy_provider::{Provider, ProviderBuilder};
+use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{
@@ -16,9 +17,8 @@ use base_proof_contracts::{
 use base_proof_primitives::ProverClient;
 use base_proof_rpc::{
     L1Client, L1ClientConfig, L2Client, L2ClientConfig, RollupClient, RollupClientConfig,
-    RollupProvider,
 };
-use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManager};
+use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::task::JoinHandle;
@@ -27,305 +27,272 @@ use tracing::{info, warn};
 
 use crate::{
     Metrics,
-    balance::balance_monitor,
     config::ProposerConfig,
-    driver::{
-        DriverConfig, PipelineConfig, PipelineHandle, ProposerDriverControl, ProvingPipeline,
-    },
+    constants::MAX_PROOF_RETRIES,
+    driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
     output_proposer::ProposalSubmitter,
+    pipeline::{PipelineConfig, ProvingPipeline},
 };
 
-/// Runs the full proposer service lifecycle.
-pub async fn run(config: ProposerConfig) -> Result<()> {
-    config.log.init_tracing_subscriber()?;
+/// Top-level proposer service.
+#[derive(Debug)]
+pub struct ProposerService;
 
-    // Install the default rustls CryptoProvider before any TLS connections are created.
-    // Required by rustls 0.23+ when custom TLS configs are used (e.g. skip_tls_verify).
-    let _ = rustls::crypto::ring::default_provider().install_default();
+impl ProposerService {
+    /// Runs the full proposer service lifecycle.
+    pub async fn run(config: ProposerConfig) -> Result<()> {
+        // Install the default rustls CryptoProvider before any TLS connections are created.
+        // Required by rustls 0.23+ when custom TLS configs are used (e.g. skip_tls_verify).
+        let _ = rustls::crypto::ring::default_provider().install_default();
 
-    info!(version = env!("CARGO_PKG_VERSION"), "Proposer starting");
-    info!(
-        dry_run = config.dry_run,
-        allow_non_finalized = config.allow_non_finalized,
-        anchor_state_registry = %config.anchor_state_registry_addr,
-        dispute_game_factory = %config.dispute_game_factory_addr,
-        game_type = config.game_type,
-        tee_image_hash = %config.tee_image_hash,
-        poll_interval = ?config.poll_interval,
-        rpc_timeout = ?config.rpc_timeout,
-        max_parallel_proofs = config.max_parallel_proofs,
-        max_game_recovery_lookback = config.max_game_recovery_lookback,
-        health_addr = %config.health_addr,
-        admin_addr = ?config.admin_addr,
-        tee_prover_registry = ?config.tee_prover_registry_address,
-        "Resolved configuration"
-    );
+        info!(version = env!("CARGO_PKG_VERSION"), "Proposer starting");
+        info!(
+            dry_run = config.dry_run,
+            allow_non_finalized = config.allow_non_finalized,
+            anchor_state_registry = %config.anchor_state_registry_addr,
+            dispute_game_factory = %config.dispute_game_factory_addr,
+            game_type = config.game_type,
+            tee_image_hash = %config.tee_image_hash,
+            prover_timeout = ?config.prover_timeout,
+            poll_interval = ?config.poll_interval,
+            rpc_timeout = ?config.rpc_timeout,
+            max_parallel_proofs = config.max_parallel_proofs,
+            health_addr = %config.health_addr,
+            admin_addr = ?config.admin_addr,
+            tee_prover_registry = ?config.tee_prover_registry_address,
+            "Resolved configuration"
+        );
 
-    // ── 1. Global cancellation token and signal handler ──────────────────
-    let cancel = CancellationToken::new();
-    let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
+        let cancel = CancellationToken::new();
+        let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
 
-    // ── 2. Metrics recorder and HTTP server (if enabled) ─────────────────
-    config
-        .metrics
-        .init_with(|| {
-            base_cli_utils::register_version_metrics!();
-        })
-        .wrap_err("failed to install Prometheus recorder")?;
+        let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())
+            .with_timeout(config.rpc_timeout)
+            .with_retry_config(config.retry.clone())
+            .with_skip_tls_verify(config.skip_tls_verify)
+            .with_metrics_prefix("base_proposer");
+        let l1_client = Arc::new(L1Client::new(l1_config)?);
+        info!(endpoint = %config.l1_eth_rpc, "L1 client initialized");
 
-    // ── 3. Create RPC clients ────────────────────────────────────────────
-    let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())
-        .with_timeout(config.rpc_timeout)
-        .with_retry_config(config.retry.clone())
-        .with_skip_tls_verify(config.skip_tls_verify)
-        .with_metrics_prefix("base_proposer");
-    let l1_client = Arc::new(L1Client::new(l1_config)?);
-    info!(endpoint = %config.l1_eth_rpc, "L1 client initialized");
+        let l2_config = L2ClientConfig::new(config.l2_eth_rpc.clone())
+            .with_timeout(config.rpc_timeout)
+            .with_retry_config(config.retry.clone())
+            .with_skip_tls_verify(config.skip_tls_verify)
+            .with_metrics_prefix("base_proposer");
+        let l2_client = Arc::new(L2Client::new(l2_config)?);
+        info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
 
-    // Create L2 client
-    let l2_config = L2ClientConfig::new(config.l2_eth_rpc.clone())
-        .with_timeout(config.rpc_timeout)
-        .with_retry_config(config.retry.clone())
-        .with_skip_tls_verify(config.skip_tls_verify)
-        .with_metrics_prefix("base_proposer");
-    let l2_client = Arc::new(L2Client::new(l2_config)?);
-    info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
+        let rollup_config = RollupClientConfig::new(config.rollup_rpc.clone())
+            .with_timeout(config.rpc_timeout)
+            .with_retry_config(config.retry.clone())
+            .with_skip_tls_verify(config.skip_tls_verify);
+        let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
+        info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
 
-    // Create Rollup client
-    let rollup_rpc = config.rollup_rpc.clone();
-    let rollup_config = RollupClientConfig::new(rollup_rpc.clone())
-        .with_timeout(config.rpc_timeout)
-        .with_retry_config(config.retry.clone())
-        .with_skip_tls_verify(config.skip_tls_verify);
-    let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
-    info!(endpoint = %rollup_rpc, "Rollup client initialized");
+        let prover_client = HttpClientBuilder::default()
+            .request_timeout(config.prover_timeout)
+            .build(config.prover_rpc.as_str())
+            .wrap_err("failed to create prover RPC client")?;
+        info!(endpoint = %config.prover_rpc, "Prover RPC client initialized");
 
-    // Fetch chain configuration from op-node
-    info!("Fetching chain configuration from rollup RPC...");
-    let chain_config = rollup_client.rollup_config().await?;
-    info!(
-        chain_id = %chain_config.l2_chain_id.id(),
-        "Chain configuration loaded"
-    );
+        let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
+            config.anchor_state_registry_addr,
+            config.l1_eth_rpc.clone(),
+        )?);
+        info!(address = %config.anchor_state_registry_addr, "AnchorStateRegistry client initialized");
 
-    let prover_client = HttpClientBuilder::default()
-        .request_timeout(crate::constants::PROVER_TIMEOUT)
-        .build(config.prover_rpc.as_str())
-        .map_err(|e| eyre::eyre!("failed to create prover RPC client: {e}"))?;
-    info!(endpoint = %config.prover_rpc, "Prover RPC client initialized");
+        let factory_client = DisputeGameFactoryContractClient::new(
+            config.dispute_game_factory_addr,
+            config.l1_eth_rpc.clone(),
+        )?;
+        info!(address = %config.dispute_game_factory_addr, "DisputeGameFactory client initialized");
 
-    // ── 4. Create contract clients and read onchain config ──────────────
-    let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
-        config.anchor_state_registry_addr,
-        config.l1_eth_rpc.clone(),
-    )?);
-    info!(address = %config.anchor_state_registry_addr, "AnchorStateRegistry client initialized");
-
-    let factory_client = DisputeGameFactoryContractClient::new(
-        config.dispute_game_factory_addr,
-        config.l1_eth_rpc.clone(),
-    )?;
-    info!(address = %config.dispute_game_factory_addr, "DisputeGameFactory client initialized");
-
-    // Read BLOCK_INTERVAL from the AggregateVerifier implementation.
-    let verifier_client = AggregateVerifierContractClient::new(config.l1_eth_rpc.clone())?;
-    let impl_address = factory_client.game_impls(config.game_type).await?;
-    if impl_address == Address::ZERO {
-        return Err(eyre::eyre!(
-            "no AggregateVerifier implementation registered for game type {}",
-            config.game_type
-        ));
-    }
-    let block_interval = verifier_client.read_block_interval(impl_address).await?;
-    let intermediate_block_interval =
-        verifier_client.read_intermediate_block_interval(impl_address).await?;
-    if block_interval < 2 {
-        return Err(eyre::eyre!(
-            "BLOCK_INTERVAL ({block_interval}) must be at least 2; single-block proposals are not supported"
-        ));
-    }
-    if block_interval % intermediate_block_interval != 0 {
-        return Err(eyre::eyre!(
-            "BLOCK_INTERVAL ({block_interval}) is not divisible by INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
-        ));
-    }
-    info!(
-        block_interval,
-        intermediate_block_interval,
-        intermediate_roots_count = block_interval / intermediate_block_interval,
-        impl_address = %impl_address,
-        game_type = config.game_type,
-        "Read BLOCK_INTERVAL and INTERMEDIATE_BLOCK_INTERVAL from AggregateVerifier"
-    );
-
-    let init_bond = factory_client.init_bonds(config.game_type).await?;
-    info!(init_bond = %init_bond, game_type = config.game_type, "Read initBond from DisputeGameFactory");
-
-    // Wrap in Arc for shared ownership.
-    let factory_client = Arc::new(factory_client);
-    let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
-
-    // ── 5a. Create prover ──────────────────────────────────────────────
-    let prover_client: Arc<dyn ProverClient> = Arc::new(prover_client);
-    info!("Prover initialized");
-
-    // ── 5b. Create output proposer (or dry-run stub) ────────────────────
-    let (output_proposer, proposer_address): (Arc<dyn crate::OutputProposer>, Option<Address>) =
-        if config.dry_run {
-            info!("Dry-run mode enabled — proofs will be sourced but NOT submitted on-chain");
-            (Arc::new(crate::DryRunProposer), None)
-        } else {
-            let signing = config
-                .signing
-                .ok_or_else(|| eyre::eyre!("signing config required when not in dry-run mode"))?;
-            let tx_config = config.tx_manager.ok_or_else(|| {
-                eyre::eyre!("tx manager config required when not in dry-run mode")
-            })?;
-
-            let l1_tx_provider = alloy_provider::RootProvider::new_http(config.l1_eth_rpc.clone());
-            let l1_chain_id = l1_tx_provider
-                .get_chain_id()
-                .await
-                .map_err(|e| eyre::eyre!("failed to fetch L1 chain ID: {e}"))?;
-            let tx_manager = SimpleTxManager::new(
-                l1_tx_provider,
-                signing,
-                tx_config,
-                l1_chain_id,
-                Arc::new(BaseTxMetrics::new("proposer")),
-            )
-            .await
-            .map_err(|e| eyre::eyre!("failed to construct tx manager: {e}"))?;
-            let addr = tx_manager.sender_address();
-            info!(%addr, "Transaction manager initialized");
-
-            let submitter = ProposalSubmitter::new(
-                tx_manager,
-                config.dispute_game_factory_addr,
-                config.game_type,
-                init_bond,
-            );
-            (Arc::new(submitter), Some(addr))
-        };
-    info!("Output proposer initialized");
-
-    // ── 6. Create proving pipeline ─────────────────────────────────────────
-    let pipeline_config = PipelineConfig {
-        max_parallel_proofs: config.max_parallel_proofs,
-        max_game_recovery_lookback: config.max_game_recovery_lookback,
-        max_retries: 3,
-        tee_prover_registry_address: config.tee_prover_registry_address,
-        driver: DriverConfig {
-            poll_interval: config.poll_interval,
+        let verifier_client = AggregateVerifierContractClient::new(config.l1_eth_rpc.clone())?;
+        let impl_address = factory_client.game_impls(config.game_type).await?;
+        if impl_address == Address::ZERO {
+            return Err(eyre::eyre!(
+                "no AggregateVerifier implementation registered for game type {}",
+                config.game_type
+            ));
+        }
+        let (block_interval, intermediate_block_interval, init_bond) = tokio::try_join!(
+            verifier_client.read_block_interval(impl_address),
+            verifier_client.read_intermediate_block_interval(impl_address),
+            factory_client.init_bonds(config.game_type),
+        )?;
+        if block_interval < 2 {
+            return Err(eyre::eyre!(
+                "BLOCK_INTERVAL ({block_interval}) must be at least 2; single-block proposals are not supported"
+            ));
+        }
+        if block_interval % intermediate_block_interval != 0 {
+            return Err(eyre::eyre!(
+                "BLOCK_INTERVAL ({block_interval}) is not divisible by INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
+            ));
+        }
+        info!(
             block_interval,
             intermediate_block_interval,
-            init_bond,
-            game_type: config.game_type,
-            allow_non_finalized: config.allow_non_finalized,
-            proposer_address: proposer_address.unwrap_or_default(),
-            tee_image_hash: config.tee_image_hash,
-        },
-    };
-    let pipeline = ProvingPipeline::new(
-        pipeline_config,
-        prover_client,
-        Arc::clone(&l1_client),
-        l2_client,
-        rollup_client,
-        anchor_registry,
-        factory_client,
-        verifier_client,
-        output_proposer,
-        cancel.child_token(),
-    );
-    info!(max_parallel_proofs = config.max_parallel_proofs, "Proving pipeline initialized");
-    let driver_handle: Arc<dyn ProposerDriverControl> =
-        Arc::new(PipelineHandle::new(pipeline, cancel.clone()));
+            intermediate_roots_count = block_interval / intermediate_block_interval,
+            init_bond = %init_bond,
+            impl_address = %impl_address,
+            game_type = config.game_type,
+            "Read on-chain config from AggregateVerifier and DisputeGameFactory"
+        );
 
-    // ── 7. Start health HTTP server ─────────────────────────────────────
-    let ready = Arc::new(AtomicBool::new(false));
-    let health_handle: JoinHandle<Result<()>> = {
-        let ready = Arc::clone(&ready);
-        let addr = config.health_addr;
-        let health_cancel = cancel.clone();
-        tokio::spawn(async move { HealthServer::serve(addr, ready, health_cancel).await })
-    };
+        let factory_client = Arc::new(factory_client);
+        let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
 
-    // ── 8. Start admin RPC server (separate listener, localhost-only) ───
-    let admin_handle: Option<JoinHandle<Result<()>>> = config.admin_addr.map(|admin_addr| {
-        info!("Admin RPC enabled");
-        let driver = Arc::clone(&driver_handle);
-        let admin_cancel = cancel.clone();
-        tokio::spawn(async move {
-            let app = crate::admin::AdminState::router(driver);
-            let listener = tokio::net::TcpListener::bind(admin_addr).await?;
-            info!(%admin_addr, "Admin RPC server started");
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move { admin_cancel.cancelled().await })
-                .await?;
-            info!("Admin RPC server stopped");
-            Ok(())
-        })
-    });
+        let prover_client: Arc<dyn ProverClient> = Arc::new(prover_client);
 
-    // ── 9. Start balance monitor (if metrics enabled and not dry-run) ───
-    let balance_handle: Option<JoinHandle<()>> = if config.metrics.enabled
-        && let Some(addr) = proposer_address
-    {
-        let handle = tokio::spawn(balance_monitor(Arc::clone(&l1_client), addr, cancel.clone()));
-        info!(%addr, "Balance monitor started");
-        Some(handle)
-    } else {
-        None
-    };
+        let (output_proposer, proposer_address): (Arc<dyn crate::OutputProposer>, Option<Address>) =
+            if config.dry_run {
+                info!("Dry-run mode enabled — proofs will be sourced but NOT submitted on-chain");
+                (Arc::new(crate::DryRunProposer), None)
+            } else {
+                let signing = config.signing.ok_or_else(|| {
+                    eyre::eyre!("signing config required when not in dry-run mode")
+                })?;
+                let tx_config = config.tx_manager.ok_or_else(|| {
+                    eyre::eyre!("tx manager config required when not in dry-run mode")
+                })?;
 
-    // ── 10. Start the driver loop ────────────────────────────────────────
-    driver_handle.start_proposer().await.map_err(|e| eyre::eyre!(e))?;
+                let sender_addr = signing.address();
 
-    ready.store(true, Ordering::SeqCst);
-    Metrics::record_startup();
-    info!(
-        poll_interval = ?config.poll_interval,
-        block_interval,
-        game_type = config.game_type,
-        "Service is ready"
-    );
+                let l1_tx_provider = if config.metrics.enabled {
+                    let (layer, balance_rx) = BalanceMonitorLayer::new(
+                        sender_addr,
+                        cancel.clone(),
+                        BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
+                    );
+                    let provider =
+                        ProviderBuilder::new().layer(layer).connect_http(config.l1_eth_rpc.clone());
+                    tokio::spawn(async move {
+                        let mut rx = balance_rx;
+                        while rx.changed().await.is_ok() {
+                            Metrics::account_balance_wei().set(f64::from(*rx.borrow_and_update()));
+                        }
+                    });
+                    info!(addr = %sender_addr, "Balance monitor started");
+                    provider
+                } else {
+                    ProviderBuilder::new().connect_http(config.l1_eth_rpc.clone())
+                };
 
-    // ── 11. Wait for shutdown signal ─────────────────────────────────────
-    cancel.cancelled().await;
-    info!("Shutdown signal received, stopping service...");
+                let l1_chain_id =
+                    l1_tx_provider.get_chain_id().await.wrap_err("failed to fetch L1 chain ID")?;
+                let tx_manager = SimpleTxManager::new(
+                    l1_tx_provider,
+                    signing,
+                    tx_config,
+                    l1_chain_id,
+                    Arc::new(BaseTxMetrics::new("proposer")),
+                )
+                .await
+                .wrap_err("failed to construct tx manager")?;
+                info!(addr = %sender_addr, "Transaction manager initialized");
 
-    // ── 12. Graceful shutdown (reverse initialisation order) ─────────────
-    ready.store(false, Ordering::SeqCst);
+                let submitter = ProposalSubmitter::new(
+                    tx_manager,
+                    config.dispute_game_factory_addr,
+                    config.game_type,
+                    init_bond,
+                );
+                (Arc::new(submitter), Some(sender_addr))
+            };
+        info!("Output proposer initialized");
 
-    if driver_handle.is_running()
-        && let Err(e) = driver_handle.stop_proposer().await
-    {
-        warn!(error = e, "Error stopping proposer driver");
-    }
+        let pipeline_config = PipelineConfig {
+            max_parallel_proofs: config.max_parallel_proofs,
+            max_retries: MAX_PROOF_RETRIES,
+            recovery_scan_concurrency: config.recovery_scan_concurrency,
+            tee_prover_registry_address: config.tee_prover_registry_address,
+            driver: DriverConfig {
+                poll_interval: config.poll_interval,
+                block_interval,
+                intermediate_block_interval,
+                game_type: config.game_type,
+                allow_non_finalized: config.allow_non_finalized,
+                proposer_address: proposer_address.unwrap_or_default(),
+                tee_image_hash: config.tee_image_hash,
+                anchor_state_registry_address: config.anchor_state_registry_addr,
+            },
+        };
+        let pipeline = ProvingPipeline::new(
+            pipeline_config,
+            prover_client,
+            l1_client,
+            l2_client,
+            rollup_client,
+            anchor_registry,
+            factory_client,
+            verifier_client,
+            output_proposer,
+            cancel.child_token(),
+        );
+        info!(max_parallel_proofs = config.max_parallel_proofs, "Proving pipeline initialized");
+        let driver_handle: Arc<dyn ProposerDriverControl> =
+            Arc::new(PipelineHandle::new(pipeline, cancel.clone()));
 
-    if let Some(handle) = balance_handle {
-        let _ = handle.await;
-    }
+        let ready = Arc::new(AtomicBool::new(false));
+        let health_handle: JoinHandle<Result<()>> = {
+            let ready = Arc::clone(&ready);
+            let addr = config.health_addr;
+            let health_cancel = cancel.clone();
+            tokio::spawn(async move { HealthServer::serve(addr, ready, health_cancel).await })
+        };
 
-    if let Some(handle) = admin_handle {
-        match handle.await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => warn!(error = %e, "Admin RPC server error during shutdown"),
-            Err(e) => warn!(error = %e, "Admin RPC server task panicked"),
+        let admin_server = if let Some(admin_addr) = config.admin_addr {
+            info!("Admin RPC enabled");
+            let driver = Arc::clone(&driver_handle);
+            Some(crate::admin::AdminServer::spawn(admin_addr, driver).await?)
+        } else {
+            None
+        };
+
+        driver_handle
+            .start_proposer()
+            .await
+            .map_err(|e| eyre::eyre!("failed to start proposer: {e}"))?;
+
+        ready.store(true, Ordering::SeqCst);
+        Metrics::record_startup();
+        info!(
+            poll_interval = ?config.poll_interval,
+            block_interval,
+            game_type = config.game_type,
+            "Service is ready"
+        );
+
+        cancel.cancelled().await;
+        info!("Shutdown signal received, stopping service...");
+
+        ready.store(false, Ordering::SeqCst);
+
+        if driver_handle.is_running()
+            && let Err(e) = driver_handle.stop_proposer().await
+        {
+            warn!(error = %e, "Error stopping proposer driver");
         }
-    }
 
-    match health_handle.await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => warn!(error = %e, "Health server error during shutdown"),
-        Err(e) => warn!(error = %e, "Health server task panicked"),
-    }
+        if let Some(admin_server) = admin_server {
+            admin_server.shutdown().await;
+        }
 
-    if let Err(e) = signal_handle.await {
-        warn!(error = %e, "Signal handler task panicked");
-    }
+        match health_handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => warn!(error = %e, "Health server error during shutdown"),
+            Err(e) => warn!(error = %e, "Health server task panicked"),
+        }
 
-    info!("Service stopped");
-    Ok(())
+        signal_handle.abort();
+        match signal_handle.await {
+            Ok(()) => {}
+            Err(e) if e.is_cancelled() => {}
+            Err(e) => warn!(error = %e, "Signal handler task panicked"),
+        }
+
+        info!("Service stopped");
+        Ok(())
+    }
 }

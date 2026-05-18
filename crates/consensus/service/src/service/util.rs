@@ -40,7 +40,7 @@ macro_rules! spawn_and_wait {
         )*
 
         // Create the shutdown signal future
-        let shutdown = $crate::service::util::ShutdownSignal::wait();
+        let shutdown = $crate::ShutdownSignal::wait();
         tokio::pin!(shutdown);
 
         loop {
@@ -80,11 +80,11 @@ pub(crate) use spawn_and_wait;
 
 /// Listens for OS shutdown signals (SIGTERM, SIGINT)
 #[derive(Debug)]
-pub(crate) struct ShutdownSignal;
+pub struct ShutdownSignal;
 
 impl ShutdownSignal {
     /// Waits for OS shutdown signals (SIGTERM, SIGINT).
-    pub(crate) async fn wait() {
+    pub async fn wait() {
         let ctrl_c = async {
             tokio::signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
         };

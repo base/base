@@ -15,28 +15,27 @@ normal = ["getrandom"]
 
 [dependencies]
 # Workspace
-base-proof-mpt.workspace = true
 base-protocol.workspace = true
-base-consensus-genesis.workspace = true
+base-proof-mpt.workspace = true
+base-common-genesis.workspace = true
 
 # Alloy
-alloy-eips.workspace = true
 alloy-rlp.workspace = true
+alloy-eips.workspace = true
 alloy-trie.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
 # Base Alloy
-base-alloy-consensus.workspace = true
-base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "k256"] }
+base-common-consensus.workspace = true
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "k256"] }
 
 # revm
 revm.workspace = true
-base-revm.workspace = true
 
 # alloy-evm
 alloy-evm.workspace = true
-base-alloy-evm.workspace = true
+base-common-evm.workspace = true
 
 # General
 tracing.workspace = true
@@ -49,14 +48,14 @@ getrandom = { version = "0.2", features = ["custom"] }
 # `test-utils` feature dependencies
 rand = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
-alloy-transport = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+alloy-transport = { workspace = true, optional = true }
 alloy-rpc-client = { workspace = true, optional = true }
-alloy-rpc-types-engine = { workspace = true, optional = true }
 alloy-transport-http = { workspace = true, optional = true }
-base-consensus-registry = { workspace = true, optional = true }
-serde = { workspace = true, features = ["derive"], optional = true }
+alloy-rpc-types-engine = { workspace = true, optional = true }
+base-common-chains = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
 rocksdb = { workspace = true, features = ["snappy"], optional = true }
 alloy-provider = { workspace = true, features = ["reqwest"], optional = true }
 
@@ -69,14 +68,13 @@ std = [
 	"alloy-rlp/std",
 	"alloy-rpc-types-engine?/std",
 	"alloy-trie/std",
-	"base-alloy-consensus/std",
-	"base-alloy-evm/std",
-	"base-alloy-rpc-types-engine/std",
-	"base-consensus-genesis/std",
-	"base-consensus-registry?/std",
+	"base-common-chains?/std",
+	"base-common-consensus/std",
+	"base-common-evm/std",
+	"base-common-genesis/std",
+	"base-common-rpc-types-engine/std",
 	"base-proof-mpt/std",
 	"base-protocol/std",
-	"base-revm/std",
 	"getrandom/std",
 	"revm/std",
 	"serde?/std",
@@ -85,14 +83,14 @@ std = [
 	"tracing/std",
 ]
 test-utils = [
-	"base-consensus-registry?/test-utils",
+	"base-common-chains?/test-utils",
 	"base-protocol/test-utils",
 	"dep:alloy-provider",
 	"dep:alloy-rpc-client",
 	"dep:alloy-rpc-types-engine",
 	"dep:alloy-transport",
 	"dep:alloy-transport-http",
-	"dep:base-consensus-registry",
+	"dep:base-common-chains",
 	"dep:rand",
 	"dep:rocksdb",
 	"dep:serde",

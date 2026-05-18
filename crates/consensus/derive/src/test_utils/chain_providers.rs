@@ -5,8 +5,8 @@ use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
 use alloy_consensus::{Header, Receipt, TxEnvelope};
 use alloy_primitives::{B256, map::HashMap};
 use async_trait::async_trait;
-use base_alloy_consensus::BaseBlock;
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_consensus::BaseBlock;
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo};
 use thiserror::Error;
 
@@ -160,7 +160,7 @@ pub struct TestL2ChainProvider {
     /// Short circuit the block return to be the first block.
     pub short_circuit: bool,
     /// Blocks
-    pub op_blocks: Vec<BaseBlock>,
+    pub base_blocks: Vec<BaseBlock>,
     /// System configs
     pub system_configs: HashMap<u64, SystemConfig>,
 }
@@ -169,10 +169,10 @@ impl TestL2ChainProvider {
     /// Creates a new [`TestL2ChainProvider`] with the given origin and batches.
     pub const fn new(
         blocks: Vec<L2BlockInfo>,
-        op_blocks: Vec<BaseBlock>,
+        base_blocks: Vec<BaseBlock>,
         system_configs: HashMap<u64, SystemConfig>,
     ) -> Self {
-        Self { blocks, short_circuit: false, op_blocks, system_configs }
+        Self { blocks, short_circuit: false, base_blocks, system_configs }
     }
 }
 
@@ -192,7 +192,7 @@ impl BatchValidationProvider for TestL2ChainProvider {
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
-        self.op_blocks
+        self.base_blocks
             .iter()
             .find(|p| p.header.number == number)
             .cloned()

@@ -30,7 +30,7 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let mut blocks = Vec::with_capacity(L2_BLOCK_COUNT as usize);
     for _ in 0..L2_BLOCK_COUNT {
-        blocks.push(sequencer.build_next_block_with_single_transaction());
+        blocks.push(sequencer.build_next_block_with_single_transaction().await);
     }
 
     // Create the node before any mining so chain updates are visible.
@@ -49,10 +49,6 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
-    let l1_block_1 = h.l1.tip_info();
-
-    // Initialize: seed the genesis SystemConfig and drain the empty genesis
-    // L1 block so IndexedTraversal is ready for new block signals.
     node.initialize().await;
 
     // --- Phase 2: Gossip each block into the node. ---
@@ -68,7 +64,6 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     assert_eq!(node.l2_safe_number(), 0, "safe_head should still be at genesis before derivation");
 
     // --- Phase 3+4: Signal L1 head and run derivation. ---
-    node.act_l1_head_signal(l1_block_1).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected {L2_BLOCK_COUNT} L2 blocks derived");
@@ -99,9 +94,9 @@ async fn test_out_of_order_gossip_is_dropped() {
     // Build 3 sequential L2 blocks (we will inject block 3 first, skipping 1 & 2).
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block1 = sequencer.build_next_block_with_single_transaction();
-    let _block2 = sequencer.build_next_block_with_single_transaction();
-    let block3 = sequencer.build_next_block_with_single_transaction();
+    let block1 = sequencer.build_next_block_with_single_transaction().await;
+    let _block2 = sequencer.build_next_block_with_single_transaction().await;
+    let block3 = sequencer.build_next_block_with_single_transaction().await;
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,

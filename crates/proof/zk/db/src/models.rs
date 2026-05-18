@@ -59,6 +59,10 @@ impl TryFrom<&str> for ProofStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SessionStatus {
+    /// Reservation placeholder before the backend job has been submitted. The row holds a
+    /// synthetic `backend_session_id` so the partial unique index serializes concurrent
+    /// reservations; sync loops skip it because they only poll RUNNING rows.
+    Submitting,
     /// Backend session is actively running.
     Running,
     /// Backend session completed successfully.
@@ -71,6 +75,7 @@ impl SessionStatus {
     /// Convert enum to static string representation
     pub const fn as_str(&self) -> &'static str {
         match self {
+            Self::Submitting => "SUBMITTING",
             Self::Running => "RUNNING",
             Self::Completed => "COMPLETED",
             Self::Failed => "FAILED",
@@ -89,6 +94,7 @@ impl TryFrom<&str> for SessionStatus {
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
+            "SUBMITTING" => Ok(Self::Submitting),
             "RUNNING" => Ok(Self::Running),
             "COMPLETED" => Ok(Self::Completed),
             "FAILED" => Ok(Self::Failed),
@@ -135,37 +141,100 @@ impl TryFrom<&str> for SessionType {
     }
 }
 
+/// Outcome of attempting to retry or fail a stuck proof request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryOutcome {
+    /// Request was reset to CREATED with incremented `retry_count`.
+    Retried,
+    /// Request was permanently marked FAILED (max retries exceeded).
+    PermanentlyFailed,
+    /// Request was no longer in PENDING state (already claimed or transitioned).
+    Skipped,
+}
+
+/// Outcome of a `create_with_outbox` call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateProofRequestOutcome {
+    /// A new proof request row and outbox entry were inserted.
+    Created(Uuid),
+    /// An existing terminal `FAILED` row was reset to `CREATED` and a fresh
+    /// outbox entry was inserted; the worker will pick it up again.
+    Requeued(Uuid),
+    /// An existing non-terminal or `SUCCEEDED` row was returned unchanged for
+    /// idempotent replay; no new outbox entry was inserted.
+    Replayed(Uuid),
+    /// An existing terminal `FAILED` row is at the retry cap; no requeue.
+    RetryExhausted(Uuid),
+}
+
+impl CreateProofRequestOutcome {
+    /// Returns the proof request UUID regardless of outcome variant.
+    pub const fn id(&self) -> Uuid {
+        match self {
+            Self::Created(id)
+            | Self::Requeued(id)
+            | Self::Replayed(id)
+            | Self::RetryExhausted(id) => *id,
+        }
+    }
+}
+
+/// Errors returned by `create_with_outbox`.
+#[derive(Debug, thiserror::Error)]
+pub enum CreateProofRequestError {
+    /// Persisted row disagrees with the new request for this `session_id`.
+    #[error(
+        "session_id {id} already exists with a different {field} \
+         (existing request parameters do not match the new request)"
+    )]
+    IdCollision {
+        /// Conflicting proof request UUID.
+        id: Uuid,
+        /// Name of the first mismatched field. Stable across runs.
+        field: &'static str,
+    },
+    /// Conflicting row disappeared after insert conflict; safe to retry.
+    #[error("session_id {id}: proof request row missing after insert conflict; retry prove_block")]
+    SessionRowMissingAfterConflict {
+        /// Proof request UUID that was expected to exist.
+        id: Uuid,
+    },
+    /// Underlying database error.
+    #[error(transparent)]
+    Sqlx(#[from] sqlx::Error),
+}
+
 /// Type of proof that determines success criteria
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "VARCHAR")]
 pub enum ProofType {
-    /// Compressed proof generated via generic zkVM cluster.
-    #[sqlx(rename = "generic_zkvm_cluster_compressed")]
-    GenericZkvmClusterCompressed,
-    /// SNARK Groth16 proof generated via generic zkVM cluster.
-    #[sqlx(rename = "generic_zkvm_cluster_snark_groth16")]
-    GenericZkvmClusterSnarkGroth16,
+    /// Compressed proof generated via the Succinct SP1 cluster.
+    #[sqlx(rename = "op_succinct_sp1_cluster_compressed")]
+    OpSuccinctSp1ClusterCompressed,
+    /// SNARK Groth16 proof generated via the Succinct SP1 cluster.
+    #[sqlx(rename = "op_succinct_sp1_cluster_snark_groth16")]
+    OpSuccinctSp1ClusterSnarkGroth16,
 }
 
 impl ProofType {
-    /// Proto discriminant for `PROOF_TYPE_GENERIC_ZKVM_CLUSTER_COMPRESSED`.
+    /// Proto discriminant for `PROOF_TYPE_COMPRESSED`.
     pub const PROTO_COMPRESSED: i32 = 3;
-    /// Proto discriminant for `PROOF_TYPE_GENERIC_ZKVM_CLUSTER_SNARK_GROTH16`.
+    /// Proto discriminant for `PROOF_TYPE_SNARK_GROTH16`.
     pub const PROTO_SNARK_GROTH16: i32 = 4;
 
     /// Returns the proto wire value for this proof type.
     pub const fn proto_i32(&self) -> i32 {
         match self {
-            Self::GenericZkvmClusterCompressed => Self::PROTO_COMPRESSED,
-            Self::GenericZkvmClusterSnarkGroth16 => Self::PROTO_SNARK_GROTH16,
+            Self::OpSuccinctSp1ClusterCompressed => Self::PROTO_COMPRESSED,
+            Self::OpSuccinctSp1ClusterSnarkGroth16 => Self::PROTO_SNARK_GROTH16,
         }
     }
 
     /// Convert enum to static string representation
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Self::GenericZkvmClusterCompressed => "generic_zkvm_cluster_compressed",
-            Self::GenericZkvmClusterSnarkGroth16 => "generic_zkvm_cluster_snark_groth16",
+            Self::OpSuccinctSp1ClusterCompressed => "op_succinct_sp1_cluster_compressed",
+            Self::OpSuccinctSp1ClusterSnarkGroth16 => "op_succinct_sp1_cluster_snark_groth16",
         }
     }
 }
@@ -181,8 +250,8 @@ impl TryFrom<&str> for ProofType {
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
-            "generic_zkvm_cluster_compressed" => Ok(Self::GenericZkvmClusterCompressed),
-            "generic_zkvm_cluster_snark_groth16" => Ok(Self::GenericZkvmClusterSnarkGroth16),
+            "op_succinct_sp1_cluster_compressed" => Ok(Self::OpSuccinctSp1ClusterCompressed),
+            "op_succinct_sp1_cluster_snark_groth16" => Ok(Self::OpSuccinctSp1ClusterSnarkGroth16),
             other => Err(format!("Unknown proof type: {other}")),
         }
     }
@@ -194,8 +263,8 @@ impl TryFrom<i32> for ProofType {
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
-            Self::PROTO_COMPRESSED => Ok(Self::GenericZkvmClusterCompressed),
-            Self::PROTO_SNARK_GROTH16 => Ok(Self::GenericZkvmClusterSnarkGroth16),
+            Self::PROTO_COMPRESSED => Ok(Self::OpSuccinctSp1ClusterCompressed),
+            Self::PROTO_SNARK_GROTH16 => Ok(Self::OpSuccinctSp1ClusterSnarkGroth16),
             _ => Err(format!("Unknown proof type: {value}")),
         }
     }
@@ -222,12 +291,76 @@ pub struct ProofRequest {
     pub status: ProofStatus,
     /// Error message if the proof failed.
     pub error_message: Option<String>,
+    /// Ethereum address of the on-chain prover.
+    pub prover_address: Option<String>,
+    /// Explicit L1 head hash used for witness generation.
+    pub l1_head: Option<String>,
+    /// Intermediate root interval requested for ZK proof generation.
+    pub intermediate_root_interval: Option<i64>,
     /// Timestamp when the request was created.
     pub created_at: DateTime<Utc>,
     /// Timestamp of the last status update.
     pub updated_at: DateTime<Utc>,
     /// Timestamp when the proof completed (success or failure).
     pub completed_at: Option<DateTime<Utc>>,
+    /// Number of times this request has been retried after getting stuck.
+    pub retry_count: i32,
+}
+
+/// Receipt-free proof request row used by list endpoints.
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct ProofRequestListItem {
+    /// Unique identifier.
+    pub id: Uuid,
+    /// Starting L2 block number.
+    pub start_block_number: i64,
+    /// Number of consecutive blocks to prove.
+    pub number_of_blocks_to_prove: i64,
+    /// Type of proof to generate.
+    pub proof_type: ProofType,
+    /// Current proof status.
+    pub status: ProofStatus,
+    /// Error message if the proof failed.
+    pub error_message: Option<String>,
+    /// Timestamp when the request was created.
+    pub created_at: DateTime<Utc>,
+    /// Timestamp of the last status update.
+    pub updated_at: DateTime<Utc>,
+    /// Timestamp when the proof completed (success or failure).
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+/// Offset pagination parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProofRequestPage {
+    limit: i64,
+    offset: i64,
+}
+
+impl ProofRequestPage {
+    /// Create pagination parameters from API-level unsigned values.
+    pub fn try_new(limit: u64, offset: u64) -> Result<Self, String> {
+        if limit == 0 {
+            return Err("limit must be greater than zero".to_owned());
+        }
+
+        let limit =
+            i64::try_from(limit).map_err(|_| "limit exceeds maximum supported value".to_owned())?;
+        let offset = i64::try_from(offset)
+            .map_err(|_| "offset exceeds maximum supported value".to_owned())?;
+
+        Ok(Self { limit, offset })
+    }
+
+    /// Maximum number of rows to return.
+    pub const fn limit(&self) -> i64 {
+        self.limit
+    }
+
+    /// Number of rows to skip.
+    pub const fn offset(&self) -> i64 {
+        self.offset
+    }
 }
 
 /// A proof session record tracking a specific backend job (STARK or SNARK)
@@ -264,8 +397,14 @@ pub struct CreateProofRequest {
     pub sequence_window: Option<u64>,
     /// Type of proof to generate.
     pub proof_type: ProofType,
+    /// Client-provided UUID for idempotent requests.
+    pub session_id: Option<Uuid>,
     /// Ethereum address of the on-chain prover (required for SNARK Groth16 proofs).
     pub prover_address: Option<String>,
+    /// Explicit L1 head hash for witness generation.
+    pub l1_head: Option<String>,
+    /// Intermediate root interval for ZK proof generation.
+    pub intermediate_root_interval: Option<u64>,
 }
 
 /// Parameters for creating a new proof session
@@ -361,8 +500,8 @@ mod tests {
 
     #[test]
     fn test_proof_type_try_from_proto() {
-        assert_eq!(ProofType::try_from(3).unwrap(), ProofType::GenericZkvmClusterCompressed);
-        assert_eq!(ProofType::try_from(4).unwrap(), ProofType::GenericZkvmClusterSnarkGroth16);
+        assert_eq!(ProofType::try_from(3).unwrap(), ProofType::OpSuccinctSp1ClusterCompressed);
+        assert_eq!(ProofType::try_from(4).unwrap(), ProofType::OpSuccinctSp1ClusterSnarkGroth16);
 
         assert!(ProofType::try_from(0).is_err());
         assert!(ProofType::try_from(1).is_err());

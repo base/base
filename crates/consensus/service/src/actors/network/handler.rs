@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_alloy_rpc_types_engine::{
-    OpExecutionPayloadEnvelope, OpNetworkPayloadEnvelope, PayloadHash,
+use base_common_rpc_types_engine::{
+    BaseExecutionPayloadEnvelope, NetworkPayloadEnvelope, PayloadHash,
 };
 use base_consensus_disc::{Discv5Handler, HandlerRequest};
 use base_consensus_gossip::{
@@ -31,6 +31,8 @@ pub struct NetworkHandler {
     pub unsafe_block_signer_sender: watch::Sender<Address>,
     /// The peer score inspector. Is used to ban peers that are below a given threshold.
     pub peer_score_inspector: tokio::time::Interval,
+    /// Periodic pruner for expired connection gater state.
+    pub gater_pruner: tokio::time::Interval,
     /// A handler for the block signer.
     pub signer: Option<BlockSignerHandler>,
 }
@@ -81,7 +83,7 @@ impl NetworkHandler {
                                 .record(start_time.elapsed().as_secs_f64());
                         }
 
-                if let Some(info) = self.gossip.peerstore.remove(&peer_to_remove) {
+                if let Some(info) = self.gossip.peerstore.pop(&peer_to_remove) {
                     self.gossip.connection_gate.remove_dial(&peer_to_remove);
                     let _score = self.gossip.swarm.behaviour().gossipsub.peer_score(&peer_to_remove).unwrap_or_default();
                     Metrics::banned_peers().increment(1.0);
@@ -112,7 +114,7 @@ impl NetworkHandler {
 impl GossipTransport for NetworkHandler {
     type Error = NetworkActorError;
 
-    async fn publish(&mut self, block: OpExecutionPayloadEnvelope) -> Result<(), Self::Error> {
+    async fn publish(&mut self, block: BaseExecutionPayloadEnvelope) -> Result<(), Self::Error> {
         let timestamp = block.execution_payload.timestamp();
         let selector = |handler: &BlockHandler| handler.topic(timestamp);
 
@@ -126,7 +128,7 @@ impl GossipTransport for NetworkHandler {
         let payload_hash: PayloadHash = block.payload_hash();
         let signature = signer.sign_block(payload_hash, chain_id, sender_address).await?;
 
-        let payload = OpNetworkPayloadEnvelope {
+        let payload = NetworkPayloadEnvelope {
             payload: block.execution_payload,
             parent_beacon_block_root: block.parent_beacon_block_root,
             signature,
@@ -141,7 +143,7 @@ impl GossipTransport for NetworkHandler {
         Ok(())
     }
 
-    async fn next_unsafe_block(&mut self) -> Option<OpNetworkPayloadEnvelope> {
+    async fn next_unsafe_block(&mut self) -> Option<NetworkPayloadEnvelope> {
         loop {
             let has_peer_monitoring = self.gossip.peer_monitoring.as_ref().is_some();
             select! {
@@ -157,6 +159,9 @@ impl GossipTransport for NetworkHandler {
                 }
                 _ = self.peer_score_inspector.tick(), if has_peer_monitoring => {
                     self.handle_peer_monitoring().await;
+                }
+                _ = self.gater_pruner.tick() => {
+                    self.gossip.connection_gate.prune();
                 }
             }
         }

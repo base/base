@@ -42,6 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
       issues: write
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -54,5 +55,8 @@ jobs:
           repo: ${{ github.repository }}
           issue-id: ${{ github.event.issue.number }}
           comment-id: ${{ github.event.comment.id }}
+          # Branch protection requires changes go through a PR + merge queue.
+          # Direct pushes to main are rejected (GH006).
+          pull-request: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

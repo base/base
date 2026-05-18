@@ -4,10 +4,9 @@ use alloc::vec::Vec;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
-use base_alloy_consensus::TxDeposit;
-use base_protocol::{Deployers, Predeploys, SystemAddresses};
+use base_common_consensus::{Deployers, Predeploys, SystemAddresses, TxDeposit};
 
-use crate::{Hardfork, UpgradeCalldata};
+use crate::{Upgrade, UpgradeCalldata};
 
 /// The Ecotone network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]
@@ -31,12 +30,12 @@ impl Ecotone {
     pub const EIP4788_FROM: Address = address!("0B799C86a49DEeb90402691F1041aa3AF2d3C875");
 
     /// The L1 Block Deployer Code Hash
-    /// See: <https://specs.optimism.io/protocol/ecotone/derivation.html#l1block-deployment>
+    /// See: <https://specs.base.org/upgrades/ecotone/derivation#l1block-deployment>
     pub const L1_BLOCK_DEPLOYER_CODE_HASH: B256 = alloy_primitives::b256!(
         "0xc88a313aa75dc4fbf0b6850d9f9ae41e04243b7008cf3eadb29256d4a71c1dfd"
     );
     /// The Gas Price Oracle Code Hash
-    /// See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-deployment>
+    /// See: <https://specs.base.org/upgrades/ecotone/derivation#gaspriceoracle-deployment>
     pub const GAS_PRICE_ORACLE_CODE_HASH: B256 = alloy_primitives::b256!(
         "0x8b71360ea773b4cfaf1ae6d2bd15464a4e1e2e360f786e475f63aeaed8da0ae5"
     );
@@ -96,7 +95,7 @@ impl Ecotone {
     pub fn deposits() -> impl Iterator<Item = TxDeposit> {
         ([
             // Deploy the L1 Block contract for Ecotone.
-            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#l1block-deployment>
+            // See: <https://specs.base.org/upgrades/ecotone/derivation#l1block-deployment>
             TxDeposit {
                 source_hash: Self::deploy_l1_block_source(),
                 from: Deployers::ECOTONE_L1_BLOCK,
@@ -108,7 +107,7 @@ impl Ecotone {
                 input: Self::l1_block_deployment_bytecode(),
             },
             // Deploy the Gas Price Oracle contract for Ecotone.
-            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-deployment>
+            // See: <https://specs.base.org/upgrades/ecotone/derivation#gaspriceoracle-deployment>
             TxDeposit {
                 source_hash: Self::deploy_gas_price_oracle_source(),
                 from: Deployers::ECOTONE_GAS_PRICE_ORACLE,
@@ -120,7 +119,7 @@ impl Ecotone {
                 input: Self::ecotone_gas_price_oracle_deployment_bytecode(),
             },
             // Updates the l1 block proxy to point to the new L1 Block contract.
-            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#l1block-proxy-update>
+            // See: <https://specs.base.org/upgrades/ecotone/derivation#l1block-proxy-update>
             TxDeposit {
                 source_hash: Self::update_l1_block_source(),
                 from: Address::ZERO,
@@ -132,7 +131,7 @@ impl Ecotone {
                 input: UpgradeCalldata::build(Self::NEW_L1_BLOCK),
             },
             // Updates the gas price oracle proxy to point to the new Gas Price Oracle contract.
-            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-proxy-update>
+            // See: <https://specs.base.org/upgrades/ecotone/derivation#gaspriceoracle-proxy-update>
             TxDeposit {
                 source_hash: Self::update_gas_price_oracle_source(),
                 from: Address::ZERO,
@@ -144,7 +143,7 @@ impl Ecotone {
                 input: UpgradeCalldata::build(Self::GAS_PRICE_ORACLE),
             },
             // Enables the Ecotone Gas Price Oracle.
-            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-enable-ecotone>
+            // See: <https://specs.base.org/upgrades/ecotone/derivation#gaspriceoracle-enable-ecotone>
             TxDeposit {
                 source_hash: Self::enable_ecotone_source(),
                 from: SystemAddresses::DEPOSITOR_ACCOUNT,
@@ -156,7 +155,7 @@ impl Ecotone {
                 input: Self::ENABLE_ECOTONE_INPUT.into(),
             },
             // Deploys the beacon block roots contract.
-            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#beacon-block-roots-contract-deployment-eip-4788>
+            // See: <https://specs.base.org/upgrades/ecotone/derivation#beacon-block-roots-contract-deployment-eip-4788>
             TxDeposit {
                 source_hash: Self::beacon_roots_source(),
                 from: Self::EIP4788_FROM,
@@ -172,7 +171,7 @@ impl Ecotone {
     }
 }
 
-impl Hardfork for Ecotone {
+impl Upgrade for Ecotone {
     /// Constructs the Ecotone network upgrade transactions.
     fn txs(&self) -> impl Iterator<Item = Bytes> + '_ {
         Self::deposits().map(|tx| {
@@ -187,76 +186,32 @@ impl Hardfork for Ecotone {
 mod tests {
     use alloc::vec;
 
+    use rstest::rstest;
+
     use super::*;
     use crate::test_utils::check_deployment_code;
 
-    #[test]
-    fn test_deploy_l1_block_source() {
-        assert_eq!(
-            Ecotone::deploy_l1_block_source(),
-            hex!("877a6077205782ea15a6dc8699fa5ebcec5e0f4389f09cb8eda09488231346f8")
-        );
+    #[rstest]
+    #[case(Ecotone::deploy_l1_block_source(), hex!("877a6077205782ea15a6dc8699fa5ebcec5e0f4389f09cb8eda09488231346f8"))]
+    #[case(Ecotone::deploy_gas_price_oracle_source(), hex!("a312b4510adf943510f05fcc8f15f86995a5066bd83ce11384688ae20e6ecf42"))]
+    #[case(Ecotone::update_l1_block_source(), hex!("18acb38c5ff1c238a7460ebc1b421fa49ec4874bdf1e0a530d234104e5e67dbc"))]
+    #[case(Ecotone::update_gas_price_oracle_source(), hex!("ee4f9385eceef498af0be7ec5862229f426dec41c8d42397c7257a5117d9230a"))]
+    #[case(Ecotone::enable_ecotone_source(), hex!("0c1cb38e99dbc9cbfab3bb80863380b0905290b37eb3d6ab18dc01c1f3e75f93"))]
+    #[case(Ecotone::beacon_roots_source(), hex!("69b763c48478b9dc2f65ada09b3d92133ec592ea715ec65ad6e7f3dc519dc00c"))]
+    fn test_ecotone_source_hashes(#[case] actual: B256, #[case] expected: [u8; 32]) {
+        assert_eq!(actual, expected);
     }
-    #[test]
-    fn test_verify_ecotone_l1_deployment_code_hash() {
+
+    #[rstest]
+    #[case(0, Ecotone::NEW_L1_BLOCK, Ecotone::L1_BLOCK_DEPLOYER_CODE_HASH)]
+    #[case(1, Ecotone::GAS_PRICE_ORACLE, Ecotone::GAS_PRICE_ORACLE_CODE_HASH)]
+    fn test_ecotone_deployment_code_hashes(
+        #[case] tx_idx: usize,
+        #[case] addr: Address,
+        #[case] code_hash: B256,
+    ) {
         let txs = Ecotone::deposits().collect::<Vec<_>>();
-
-        check_deployment_code(
-            txs[0].clone(),
-            Ecotone::NEW_L1_BLOCK,
-            Ecotone::L1_BLOCK_DEPLOYER_CODE_HASH,
-        );
-    }
-
-    #[test]
-    fn test_verify_ecotone_gas_price_oracle_deployment_code_hash() {
-        let txs = Ecotone::deposits().collect::<Vec<_>>();
-
-        check_deployment_code(
-            txs[1].clone(),
-            Ecotone::GAS_PRICE_ORACLE,
-            Ecotone::GAS_PRICE_ORACLE_CODE_HASH,
-        );
-    }
-
-    #[test]
-    fn test_deploy_gas_price_oracle_source() {
-        assert_eq!(
-            Ecotone::deploy_gas_price_oracle_source(),
-            hex!("a312b4510adf943510f05fcc8f15f86995a5066bd83ce11384688ae20e6ecf42")
-        );
-    }
-
-    #[test]
-    fn test_update_l1_block_source() {
-        assert_eq!(
-            Ecotone::update_l1_block_source(),
-            hex!("18acb38c5ff1c238a7460ebc1b421fa49ec4874bdf1e0a530d234104e5e67dbc")
-        );
-    }
-
-    #[test]
-    fn test_update_gas_price_oracle_source() {
-        assert_eq!(
-            Ecotone::update_gas_price_oracle_source(),
-            hex!("ee4f9385eceef498af0be7ec5862229f426dec41c8d42397c7257a5117d9230a")
-        );
-    }
-
-    #[test]
-    fn test_enable_ecotone_source() {
-        assert_eq!(
-            Ecotone::enable_ecotone_source(),
-            hex!("0c1cb38e99dbc9cbfab3bb80863380b0905290b37eb3d6ab18dc01c1f3e75f93")
-        );
-    }
-
-    #[test]
-    fn test_beacon_block_roots_source() {
-        assert_eq!(
-            Ecotone::beacon_roots_source(),
-            hex!("69b763c48478b9dc2f65ada09b3d92133ec592ea715ec65ad6e7f3dc519dc00c")
-        );
+        check_deployment_code(txs[tx_idx].clone(), addr, code_hash);
     }
 
     #[test]

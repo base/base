@@ -10,7 +10,7 @@ use core::error::Error;
 use alloy_consensus::{Header, Sealed};
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_proof_executor::BlockBuildingOutcome;
 
 /// Executor trait for block execution in the driver pipeline.
@@ -26,6 +26,11 @@ pub trait Executor {
     /// The error type for the Executor.
     type Error: Error;
 
+    /// Returns whether the provided error should trigger Holocene deposit-only recovery.
+    fn is_deposit_only_retryable(_error: &Self::Error) -> bool {
+        false
+    }
+
     /// Waits for the executor to be ready for block execution.
     async fn wait_until_ready(&mut self);
 
@@ -35,7 +40,7 @@ pub trait Executor {
     /// Execute the given payload attributes to build and execute a block.
     async fn execute_payload(
         &mut self,
-        attributes: OpPayloadAttributes,
+        attributes: BasePayloadAttributes,
     ) -> Result<BlockBuildingOutcome, Self::Error>;
 
     /// Computes the output root for the most recently executed block.

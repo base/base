@@ -9,15 +9,15 @@ use std::time::Duration;
 use alloy_primitives::Address;
 use base_cli_utils::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
-use base_consensus_registry::Registry;
+use base_common_chains::rollup_config;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host::ProverConfig;
 #[cfg(feature = "local")]
-use base_proof_tee_nitro_host::EnclaveServer;
+use base_proof_tee_nitro_enclave::Server as EnclaveServer;
+#[cfg(target_os = "linux")]
+use base_proof_tee_nitro_enclave::VSOCK_PORT;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro_host::RegistrationHealthConfig;
-#[cfg(target_os = "linux")]
-use base_proof_tee_nitro_host::VSOCK_PORT;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro_host::{NitroProverServer, NitroTransport};
 use clap::{Parser, Subcommand};
@@ -25,6 +25,8 @@ use clap::{Parser, Subcommand};
 use eyre::eyre;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use tracing::info;
+#[cfg(feature = "local")]
+use tracing::warn;
 
 base_cli_utils::define_log_args!("BASE_PROVER_NITRO_HOST");
 base_cli_utils::define_metrics_args!("BASE_PROVER_NITRO_HOST", 7300);
@@ -114,9 +116,9 @@ struct ServerArgs {
     #[command(flatten)]
     server: ProverServerArgs,
 
-    /// Vsock CID of the enclave.
-    #[arg(long, env = "VSOCK_CID")]
-    vsock_cid: u32,
+    /// Vsock CID(s) of the enclave(s), comma-separated for multi-enclave mode.
+    #[arg(long, env = "VSOCK_CID", value_delimiter = ',')]
+    vsock_cid: Vec<u32>,
 }
 
 impl Cli {
@@ -141,11 +143,11 @@ impl Cli {
 #[cfg(target_os = "linux")]
 impl ServerArgs {
     async fn run(self) -> eyre::Result<()> {
-        let rollup_config = Registry::rollup_config(self.server.l2_chain_id)
-            .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.server.l2_chain_id))?
-            .clone();
+        let rollup_config = rollup_config!(self.server.l2_chain_id)
+            .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.server.l2_chain_id))?;
 
-        let l1_config = Registry::l1_config(rollup_config.l1_chain_id)
+        let l1_config = base_common_chains::L1_CONFIGS
+            .get(&rollup_config.l1_chain_id)
             .ok_or_else(|| eyre!("unknown L1 chain ID: {}", rollup_config.l1_chain_id))?
             .clone();
 
@@ -161,13 +163,26 @@ impl ServerArgs {
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
         };
 
-        let transport = Arc::new(NitroTransport::vsock(self.vsock_cid, VSOCK_PORT));
+        if self.vsock_cid.is_empty() {
+            return Err(eyre!("at least one --vsock-cid is required"));
+        }
+        if self.vsock_cid.len() > 1 && self.server.tee_prover_registry_address.is_none() {
+            return Err(eyre!(
+                "multi-CID requires --tee-prover-registry-address for on-chain routing"
+            ));
+        }
+        let transports: Vec<Arc<NitroTransport>> = self
+            .vsock_cid
+            .iter()
+            .map(|&cid| Arc::new(NitroTransport::vsock(cid, VSOCK_PORT)))
+            .collect();
         let timeout = Duration::from_secs(self.server.proof_request_timeout_secs);
-        let mut server = NitroProverServer::new(config, transport, timeout);
+        let mut server = NitroProverServer::new_multi(config, transports, timeout);
         if let Some(reg) = registration_health {
             server = server.with_registration_health(reg);
         }
 
+        info!(cids = ?self.vsock_cid, "configured vsock CIDs");
         info!(addr = %self.server.listen_addr, "starting nitro prover host server");
         let handle = server.run(self.server.listen_addr).await?;
         handle.stopped().await;
@@ -181,16 +196,20 @@ impl ServerArgs {
 struct LocalArgs {
     #[command(flatten)]
     server: ProverServerArgs,
+
+    /// Number of local enclave instances to run (minimum 1).
+    #[arg(long, env = "LOCAL_ENCLAVE_COUNT", default_value = "1")]
+    local_enclave_count: usize,
 }
 
 #[cfg(feature = "local")]
 impl LocalArgs {
     async fn run(self) -> eyre::Result<()> {
-        let rollup_config = Registry::rollup_config(self.server.l2_chain_id)
-            .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.server.l2_chain_id))?
-            .clone();
+        let rollup_config = rollup_config!(self.server.l2_chain_id)
+            .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.server.l2_chain_id))?;
 
-        let l1_config = Registry::l1_config(rollup_config.l1_chain_id)
+        let l1_config = base_common_chains::L1_CONFIGS
+            .get(&rollup_config.l1_chain_id)
             .ok_or_else(|| eyre!("unknown L1 chain ID: {}", rollup_config.l1_chain_id))?
             .clone();
 
@@ -206,10 +225,23 @@ impl LocalArgs {
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
         };
 
-        let enclave_server = Arc::new(EnclaveServer::new_local()?);
-        let transport = Arc::new(NitroTransport::local(enclave_server));
+        if self.local_enclave_count == 0 {
+            return Err(eyre!("--local-enclave-count must be at least 1"));
+        }
+        if self.local_enclave_count > 1 && self.server.tee_prover_registry_address.is_none() {
+            warn!(
+                count = self.local_enclave_count,
+                "multiple local enclaves without registry; defaulting to index 0 for routing"
+            );
+        }
+        let transports: Vec<Arc<NitroTransport>> = (0..self.local_enclave_count)
+            .map(|_| {
+                let server = Arc::new(EnclaveServer::new_local()?);
+                Ok(Arc::new(NitroTransport::local(server)))
+            })
+            .collect::<eyre::Result<Vec<_>>>()?;
         let timeout = Duration::from_secs(self.server.proof_request_timeout_secs);
-        let mut server = NitroProverServer::new(prover_config, transport, timeout);
+        let mut server = NitroProverServer::new_multi(prover_config, transports, timeout);
         if let Some(reg) = registration_health {
             server = server.with_registration_health(reg);
         }

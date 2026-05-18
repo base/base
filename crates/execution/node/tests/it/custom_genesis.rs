@@ -5,8 +5,8 @@ use std::sync::Arc;
 use alloy_consensus::BlockHeader;
 use alloy_genesis::Genesis;
 use alloy_primitives::B256;
-use base_execution_chainspec::OpChainSpecBuilder;
-use base_node_core::{OpNode, utils::optimism_payload_attributes};
+use base_execution_chainspec::BaseChainSpecBuilder;
+use base_node_core::{BaseNode, utils::payload_attributes};
 use reth_chainspec::EthChainSpec;
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{
@@ -18,9 +18,9 @@ use reth_provider::{HeaderProvider, StageCheckpointReader, providers::Blockchain
 use reth_stages_types::StageId;
 use tokio::sync::Mutex;
 
-/// Tests that an OP node can initialize with a custom genesis block number.
-#[tokio::test]
-async fn test_op_node_custom_genesis_number() {
+/// Tests that a Base node can initialize with a custom genesis block number.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_base_node_custom_genesis_number() {
     reth_tracing::init_test_tracing();
 
     let genesis_number = 1000;
@@ -32,7 +32,7 @@ async fn test_op_node_custom_genesis_number() {
     genesis.parent_hash = Some(B256::random());
 
     let chain_spec =
-        Arc::new(OpChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build());
+        Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build());
 
     let wallet = Arc::new(Mutex::new(Wallet::default().with_chain_id(chain_spec.chain().into())));
 
@@ -51,9 +51,9 @@ async fn test_op_node_custom_genesis_number() {
     let runtime = reth_tasks::Runtime::test();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
-        .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
-        .with_components(OpNode::default().components())
-        .with_add_ons(OpNode::new(Default::default()).add_ons())
+        .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
+        .with_components(BaseNode::default().components())
+        .with_add_ons(BaseNode::new(Default::default()).add_ons())
         .launch_with_fn(|builder| {
             let launcher = EngineNodeLauncher::new(
                 runtime.clone(),
@@ -65,8 +65,7 @@ async fn test_op_node_custom_genesis_number() {
         .await
         .expect("Failed to launch node");
 
-    let mut node =
-        NodeTestContext::new(node_handle.node, optimism_payload_attributes).await.unwrap();
+    let mut node = NodeTestContext::new(node_handle.node, payload_attributes).await.unwrap();
 
     // Verify stage checkpoints are initialized to genesis block number (1000)
     for stage in StageId::ALL {

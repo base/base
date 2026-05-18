@@ -4,13 +4,13 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_rpc_types_eth::Block;
 use async_trait::async_trait;
-use base_alloy_rpc_types::Transaction;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
+use base_common_rpc_types::Transaction;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 
 use crate::{
-    ConsolidateTaskError, EngineClient, EngineState, EngineTaskExt, SynchronizeTask,
-    state::EngineSyncStateUpdate, task_queue::build_and_seal,
+    ConsolidateTaskError, EngineClient, EngineState, EngineTaskExt, InsertPayloadSafety,
+    SynchronizeTask, state::EngineSyncStateUpdate, task_queue::build_and_seal,
 };
 
 /// Input for consolidation - either derived attributes or safe L2 block
@@ -96,7 +96,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
             Arc::clone(&self.client),
             Arc::clone(&self.cfg),
             attributes.clone(),
-            true,
+            InsertPayloadSafety::Safe,
         )
         .await?;
 
@@ -126,6 +126,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
             Arc::clone(&self.cfg),
             EngineSyncStateUpdate {
                 unsafe_head: Some(*safe_l2),
+                local_safe_head: Some(*safe_l2),
                 safe_head: Some(*safe_l2),
                 ..Default::default()
             },
@@ -205,6 +206,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
 
                     // Apply a transient update to the safe head.
                     state.sync_state = state.sync_state.apply_update(EngineSyncStateUpdate {
+                        local_safe_head: Some(block_info),
                         safe_head: Some(block_info),
                         ..Default::default()
                     });
@@ -226,7 +228,11 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                     SynchronizeTask::new(
                         Arc::clone(&self.client),
                         Arc::clone(&self.cfg),
-                        EngineSyncStateUpdate { safe_head: Some(block_info), ..Default::default() },
+                        EngineSyncStateUpdate {
+                            local_safe_head: Some(block_info),
+                            safe_head: Some(block_info),
+                            ..Default::default()
+                        },
                     )
                     .execute(state)
                     .await

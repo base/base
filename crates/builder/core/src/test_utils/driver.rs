@@ -9,19 +9,19 @@ use alloy_primitives::{B64, B256, Bytes, TxKind, U256, address, hex};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadAttributes, PayloadStatusEnum};
 use alloy_rpc_types_eth::Block;
-use base_alloy_consensus::{OpTypedTransaction, TxDeposit};
-use base_alloy_network::Base;
-use base_alloy_rpc_types::Transaction;
-use base_execution_payload_builder::OpPayloadAttributes;
+use base_common_consensus::{BaseTypedTransaction, TxDeposit};
+use base_common_network::Base;
+use base_common_rpc_types::Transaction;
+use base_common_rpc_types_engine::BasePayloadAttributes;
 use chrono::Utc;
 
 use super::{
     DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, DEFAULT_GAS_LIMIT, EngineApi, ExternalNode, Ipc,
-    LocalInstance, PrivateKeySigner, Protocol, TransactionBuilder, sign_op_tx,
+    LocalInstance, PrivateKeySigner, Protocol, TransactionBuilder, sign_base_tx,
 };
 use crate::BuilderConfig;
 
-/// The `ChainDriver` is a type that allows driving the op builder node to build new blocks manually
+/// The `ChainDriver` is a type that allows driving the Base builder node to build new blocks manually.
 /// by calling the `build_new_block` method. It uses the Engine API to interact with the node
 /// and the provider to fetch blocks and transactions.
 #[derive(Debug)]
@@ -147,7 +147,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 
             // Create a temporary signer for the deposit
             let signer = self.signer.clone().unwrap_or_else(PrivateKeySigner::random);
-            let signed_tx = sign_op_tx(&signer, OpTypedTransaction::Deposit(deposit_tx))?;
+            let signed_tx = sign_base_tx(&signer, BaseTypedTransaction::Deposit(deposit_tx))?;
             signed_tx.encoded_2718().into()
         };
 
@@ -179,7 +179,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             ((DEFAULT_DENOMINATOR as u64) << 32) | (DEFAULT_ELASTICITY as u64);
 
         let fcu_result = self
-            .fcu(OpPayloadAttributes {
+            .fcu(BasePayloadAttributes {
                 payload_attributes: PayloadAttributes {
                     timestamp: block_timestamp,
                     parent_beacon_block_root: Some(B256::ZERO),
@@ -323,7 +323,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 
 // internal methods
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
-    async fn fcu(&self, attribs: OpPayloadAttributes) -> eyre::Result<ForkchoiceUpdated> {
+    async fn fcu(&self, attribs: BasePayloadAttributes) -> eyre::Result<ForkchoiceUpdated> {
         let latest = self.latest().await?.header.hash;
         let response = self.engine_api.update_forkchoice(latest, latest, Some(attribs)).await?;
 
@@ -331,14 +331,15 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     }
 }
 
-// L1 block info for OP mainnet block 124665056 (stored in input of tx at index 0)
+// L1 block info from a legacy compatibility fixture, block 124665056.
+// (stored in input of tx at index 0).
 // https://optimistic.etherscan.io/tx/0x312e290cf36df704a2217b015d6455396830b0ce678b860ebfcc30f41403d7b1
 // It has the following modifications:
 // 1. Function signature  support Jovian: cast sig "setL1BlockValuesJovian()" => 0x3db6be2b
 // 2. Zero operator fee scalar
 // 3. Zero operator fee constant
 // 4. DA footprint of 400 applied
-// See: // https://specs.optimism.io/protocol/jovian/l1-attributes.html for Jovian specs.
+// See: // https://specs.base.org/upgrades/jovian/l1-attributes for Jovian specs.
 const JOVIAN_DATA: &[u8] = &hex!(
     "3db6be2b0000146b000f79c500000000000000040000000066d052e700000000013ad8a
     3000000000000000000000000000000000000000000000000000000003ef12787000000

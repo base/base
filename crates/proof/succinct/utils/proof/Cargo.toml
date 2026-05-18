@@ -1,0 +1,38 @@
+[package]
+name = "base-proof-succinct-proof-utils"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+# local
+base-proof-succinct-elfs.workspace = true
+base-proof-succinct-ethereum-host-utils.workspace = true
+base-proof-succinct-host-utils.workspace = true
+
+# sp1
+sp1-sdk = { workspace = true, features = ["blocking", "profiling", "network"] }
+sp1-prover-types.workspace = true
+sp1-cluster-artifact.workspace = true
+sp1-cluster-common.workspace = true
+sp1-cluster-utils.workspace = true
+
+# general
+anyhow.workspace = true
+cfg-if.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[features]
+default = [ "ethereum" ]
+ethereum = []
+
+[lints]
+workspace = true
+

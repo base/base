@@ -3,7 +3,6 @@
 use core::convert::Infallible;
 
 use alloy_consensus::{SignableTransaction, error::ValueError};
-use alloy_eips::eip2718::{Encodable2718, Typed2718};
 use alloy_evm::{
     EvmEnv,
     env::BlockEnvironment,
@@ -12,23 +11,23 @@ use alloy_evm::{
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, Bytes};
 use alloy_signer::Signature;
-use base_alloy_consensus::{OpTransaction, OpTransactionInfo, OpTxEnvelope, build_eip8130_parts};
-use base_revm::OpTransaction as OpRevm;
+use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope};
+use base_common_evm::BaseTransaction as BaseRevm;
 use reth_rpc_convert::{
     SignTxRequestError, SignableTxRequest, TryIntoSimTx, transaction::FromConsensusTx,
 };
 use revm::context::TxEnv;
 
-use crate::{OpTransactionRequest, Transaction};
+use crate::{BaseTransactionRequest, Transaction};
 
-impl<T: OpTransaction + alloy_consensus::Transaction> FromConsensusTx<T> for Transaction<T> {
-    type TxInfo = OpTransactionInfo;
+impl FromConsensusTx<BaseTxEnvelope> for Transaction {
+    type TxInfo = BaseTransactionInfo;
     type Err = Infallible;
 
     fn from_consensus_tx(
-        tx: T,
+        tx: BaseTxEnvelope,
         signer: Address,
-        tx_info: OpTransactionInfo,
+        tx_info: BaseTransactionInfo,
     ) -> Result<Self, Infallible> {
         Ok(Self::from_transaction(
             alloy_consensus::transaction::Recovered::new_unchecked(tx, signer),
@@ -37,48 +36,23 @@ impl<T: OpTransaction + alloy_consensus::Transaction> FromConsensusTx<T> for Tra
     }
 }
 
-impl<Block: BlockEnvironment> TryIntoTxEnv<OpRevm<TxEnv>, Block> for OpTransactionRequest {
+impl<Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Block> for BaseTransactionRequest {
     type Err = EthTxEnvError;
 
     fn try_into_tx_env<Spec>(
         self,
         evm_env: &EvmEnv<Spec, Block>,
-    ) -> Result<OpRevm<TxEnv>, Self::Err> {
-        if let Some(aa_tx) = self.build_eip8130() {
-            let sender = self.as_ref().from.unwrap_or_else(|| aa_tx.effective_sender());
-            let eip8130 = build_eip8130_parts(&aa_tx, sender);
-            let enveloped_tx = Bytes::from(aa_tx.encoded_2718());
-            let mut base: TxEnv = self.as_ref().clone().try_into_tx_env(evm_env)?;
-            base.tx_type = aa_tx.ty();
-            base.caller = sender;
-            base.nonce = aa_tx.nonce_sequence;
-            base.kind = revm::primitives::TxKind::Call(sender);
-            base.value = alloy_primitives::U256::ZERO;
-            base.data = Bytes::new();
-            base.gas_price = aa_tx.max_fee_per_gas;
-            base.gas_priority_fee = Some(aa_tx.max_priority_fee_per_gas);
-            // NOTE: authorization_list is intentionally not copied to TxEnv for
-            // AA (type 0x7B) transactions. The AA handler applies auto-delegation
-            // directly and does not invoke revm's standard EIP-7702 processing.
-            return Ok(OpRevm {
-                base,
-                enveloped_tx: Some(enveloped_tx),
-                deposit: Default::default(),
-                eip8130,
-            });
-        }
-
-        Ok(OpRevm {
+    ) -> Result<BaseRevm<TxEnv>, Self::Err> {
+        Ok(BaseRevm {
             base: self.as_ref().clone().try_into_tx_env(evm_env)?,
             enveloped_tx: Some(Bytes::new()),
             deposit: Default::default(),
-            eip8130: Default::default(),
         })
     }
 }
 
-impl TryIntoSimTx<OpTxEnvelope> for OpTransactionRequest {
-    fn try_into_sim_tx(self) -> Result<OpTxEnvelope, ValueError<Self>> {
+impl TryIntoSimTx<BaseTxEnvelope> for BaseTransactionRequest {
+    fn try_into_sim_tx(self) -> Result<BaseTxEnvelope, ValueError<Self>> {
         let tx = self
             .build_typed_tx()
             .map_err(|request| ValueError::new(request, "Required fields missing"))?;
@@ -90,11 +64,11 @@ impl TryIntoSimTx<OpTxEnvelope> for OpTransactionRequest {
     }
 }
 
-impl SignableTxRequest<OpTxEnvelope> for OpTransactionRequest {
+impl SignableTxRequest<BaseTxEnvelope> for BaseTransactionRequest {
     async fn try_build_and_sign(
         self,
         signer: impl TxSigner<Signature> + Send,
-    ) -> Result<OpTxEnvelope, SignTxRequestError> {
+    ) -> Result<BaseTxEnvelope, SignTxRequestError> {
         let mut tx =
             self.build_typed_tx().map_err(|_| SignTxRequestError::InvalidTransactionRequest)?;
 

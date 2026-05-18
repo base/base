@@ -14,6 +14,14 @@ pub enum FlashblockDecodeError {
     /// Brotli decompression failed.
     #[error("failed to decompress brotli payload: {0}")]
     Decompress(#[source] std::io::Error),
+    /// The decoded payload exceeded the maximum allowed size.
+    #[error("flashblock payload too large: {given} bytes, max {max}")]
+    PayloadTooLarge {
+        /// Decoded payload size.
+        given: usize,
+        /// Maximum allowed decoded payload size.
+        max: usize,
+    },
     /// The decompressed payload was not valid UTF-8 JSON.
     #[error("decompressed payload is not valid UTF-8 JSON: {0}")]
     Utf8(#[source] std::string::FromUtf8Error),
@@ -32,6 +40,7 @@ mod tests {
         "test"
     )))]
     #[case::decompress(FlashblockDecodeError::Decompress(std::io::Error::other("test")))]
+    #[case::payload_too_large(FlashblockDecodeError::PayloadTooLarge { given: 2, max: 1 })]
     #[case::utf8(FlashblockDecodeError::Utf8(String::from_utf8(vec![0xff, 0xfe]).unwrap_err()))]
     fn test_flashblock_decode_error_display(#[case] error: FlashblockDecodeError) {
         let display = format!("{error}");

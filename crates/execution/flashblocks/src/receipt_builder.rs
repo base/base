@@ -4,8 +4,8 @@
 //! transactions seamlessly, without requiring error handling at the call site.
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTxEnvelope, OpTxType};
+use base_common_chains::Upgrades;
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt, OpTxType};
 use reth_evm::Evm;
 use revm::{Database, context::result::ExecutionResult};
 
@@ -47,7 +47,7 @@ impl<C> UnifiedReceiptBuilder<C> {
     }
 }
 
-impl<C: BaseUpgrades> UnifiedReceiptBuilder<C> {
+impl<C: Upgrades> UnifiedReceiptBuilder<C> {
     /// Builds a receipt for any transaction type, handling deposit receipts internally.
     ///
     /// This method builds either a regular receipt or a deposit receipt based on
@@ -69,11 +69,11 @@ impl<C: BaseUpgrades> UnifiedReceiptBuilder<C> {
     pub fn build<E>(
         &self,
         evm: &mut E,
-        transaction: &Recovered<OpTxEnvelope>,
+        transaction: &Recovered<BaseTxEnvelope>,
         result: &ExecutionResult<E::HaltReason>,
         cumulative_gas_used: u64,
         timestamp: u64,
-    ) -> Result<OpReceipt, ReceiptBuildError>
+    ) -> Result<BaseReceipt, ReceiptBuildError>
     where
         E: Evm,
         E::DB: Database,
@@ -105,7 +105,7 @@ impl<C: BaseUpgrades> UnifiedReceiptBuilder<C> {
                 None
             };
 
-            Ok(OpReceipt::Deposit(OpDepositReceipt {
+            Ok(BaseReceipt::Deposit(DepositReceipt {
                 inner: receipt,
                 deposit_nonce,
                 deposit_receipt_version: is_canyon_active.then_some(1),
@@ -113,11 +113,10 @@ impl<C: BaseUpgrades> UnifiedReceiptBuilder<C> {
         } else {
             // Handle non-deposit transaction
             Ok(match tx_type {
-                OpTxType::Legacy => OpReceipt::Legacy(receipt),
-                OpTxType::Eip2930 => OpReceipt::Eip2930(receipt),
-                OpTxType::Eip1559 => OpReceipt::Eip1559(receipt),
-                OpTxType::Eip7702 => OpReceipt::Eip7702(receipt),
-                OpTxType::Eip8130 => OpReceipt::Eip8130(receipt),
+                OpTxType::Legacy => BaseReceipt::Legacy(receipt),
+                OpTxType::Eip2930 => BaseReceipt::Eip2930(receipt),
+                OpTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
+                OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
                 OpTxType::Deposit => unreachable!(),
             })
         }
@@ -130,16 +129,16 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::{Address, Log, LogData, TxKind, address};
-    use base_alloy_consensus::TxDeposit;
-    use base_execution_chainspec::OpChainSpecBuilder;
-    use base_execution_evm::OpEvmConfig;
-    use base_revm::OpHaltReason;
+    use base_common_consensus::TxDeposit;
+    use base_common_evm::BaseHaltReason;
+    use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_execution_evm::BaseEvmConfig;
     use reth_evm::ConfigureEvm;
     use revm::database::InMemoryDB;
 
     use super::*;
 
-    fn create_legacy_tx() -> Recovered<OpTxEnvelope> {
+    fn create_legacy_tx() -> Recovered<BaseTxEnvelope> {
         let tx = alloy_consensus::TxLegacy {
             chain_id: Some(1),
             nonce: 0,
@@ -149,7 +148,7 @@ mod tests {
             value: alloy_primitives::U256::ZERO,
             input: alloy_primitives::Bytes::new(),
         };
-        let envelope = OpTxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
+        let envelope = BaseTxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
             tx,
             alloy_primitives::Signature::test_signature(),
             alloy_primitives::B256::ZERO,
@@ -157,7 +156,7 @@ mod tests {
         Recovered::new_unchecked(envelope, Address::ZERO)
     }
 
-    fn create_deposit_tx() -> Recovered<OpTxEnvelope> {
+    fn create_deposit_tx() -> Recovered<BaseTxEnvelope> {
         let deposit = TxDeposit {
             source_hash: alloy_primitives::B256::ZERO,
             from: address!("0x1234567890123456789012345678901234567890"),
@@ -169,11 +168,11 @@ mod tests {
             input: alloy_primitives::Bytes::new(),
         };
         let sealed = alloy_consensus::Sealed::new_unchecked(deposit, alloy_primitives::B256::ZERO);
-        let envelope = OpTxEnvelope::Deposit(sealed);
+        let envelope = BaseTxEnvelope::Deposit(sealed);
         Recovered::new_unchecked(envelope, address!("0x1234567890123456789012345678901234567890"))
     }
 
-    fn create_success_result() -> ExecutionResult<OpHaltReason> {
+    fn create_success_result() -> ExecutionResult<BaseHaltReason> {
         ExecutionResult::Success {
             reason: revm::context::result::SuccessReason::Stop,
             gas_used: 21000,
@@ -188,14 +187,14 @@ mod tests {
 
     #[test]
     fn test_unified_receipt_builder_creation() {
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let builder = UnifiedReceiptBuilder::new(Arc::clone(&chain_spec));
         assert!(Arc::ptr_eq(builder.chain_spec(), &chain_spec));
     }
 
     #[test]
     fn test_receipt_from_success_result() {
-        let result: ExecutionResult<OpHaltReason> = create_success_result();
+        let result: ExecutionResult<BaseHaltReason> = create_success_result();
         let receipt = Receipt {
             status: Eip658Value::Eip658(result.is_success()),
             cumulative_gas_used: 21000,
@@ -208,7 +207,7 @@ mod tests {
 
     #[test]
     fn test_receipt_from_revert_result() {
-        let result: ExecutionResult<OpHaltReason> =
+        let result: ExecutionResult<BaseHaltReason> =
             ExecutionResult::Revert { gas_used: 10000, output: alloy_primitives::Bytes::new() };
         let receipt = Receipt {
             status: Eip658Value::Eip658(result.is_success()),
@@ -221,24 +220,24 @@ mod tests {
     }
 
     #[test]
-    fn test_op_receipt_legacy_variant() {
+    fn test_base_receipt_legacy_variant() {
         let receipt: Receipt<Log> =
             Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: 21000, logs: vec![] };
-        let op_receipt = OpReceipt::Legacy(receipt);
-        assert!(matches!(op_receipt, OpReceipt::Legacy(_)));
+        let base_receipt = BaseReceipt::Legacy(receipt);
+        assert!(matches!(base_receipt, BaseReceipt::Legacy(_)));
     }
 
     #[test]
-    fn test_op_receipt_deposit_variant() {
+    fn test_base_receipt_deposit_variant() {
         let receipt: Receipt<Log> =
             Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: 21000, logs: vec![] };
-        let op_receipt = OpReceipt::Deposit(OpDepositReceipt {
+        let base_receipt = BaseReceipt::Deposit(DepositReceipt {
             inner: receipt,
             deposit_nonce: Some(1),
             deposit_receipt_version: Some(1),
         });
-        assert!(matches!(op_receipt, OpReceipt::Deposit(_)));
-        if let OpReceipt::Deposit(deposit) = op_receipt {
+        assert!(matches!(base_receipt, BaseReceipt::Deposit(_)));
+        if let BaseReceipt::Deposit(deposit) = base_receipt {
             assert_eq!(deposit.deposit_nonce, Some(1));
             assert_eq!(deposit.deposit_receipt_version, Some(1));
         }
@@ -246,10 +245,10 @@ mod tests {
 
     /// Helper to create an EVM instance for testing
     fn create_test_evm(
-        chain_spec: Arc<base_execution_chainspec::OpChainSpec>,
+        chain_spec: Arc<base_execution_chainspec::BaseChainSpec>,
         db: &mut InMemoryDB,
-    ) -> impl Evm<HaltReason = OpHaltReason, DB = &mut InMemoryDB> + '_ {
-        let evm_config = OpEvmConfig::optimism(chain_spec);
+    ) -> impl Evm<HaltReason = BaseHaltReason, DB = &mut InMemoryDB> + '_ {
+        let evm_config = BaseEvmConfig::base(chain_spec);
         let header = Header::default();
         let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
         evm_config.evm_with_env(db, evm_env)
@@ -257,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_build_legacy_receipt() {
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
         let mut evm = create_test_evm(Arc::clone(&chain_spec), &mut db);
 
@@ -268,8 +267,8 @@ mod tests {
         let receipt =
             builder.build(&mut evm, &tx, &result, 21000, 0).expect("build should succeed");
 
-        assert!(matches!(receipt, OpReceipt::Legacy(_)));
-        if let OpReceipt::Legacy(inner) = receipt {
+        assert!(matches!(receipt, BaseReceipt::Legacy(_)));
+        if let BaseReceipt::Legacy(inner) = receipt {
             assert!(inner.status.coerce_status());
             assert_eq!(inner.cumulative_gas_used, 21000);
         }
@@ -277,7 +276,7 @@ mod tests {
 
     #[test]
     fn test_build_deposit_receipt() {
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
         let mut evm = create_test_evm(Arc::clone(&chain_spec), &mut db);
 
@@ -288,8 +287,8 @@ mod tests {
         let receipt =
             builder.build(&mut evm, &tx, &result, 21000, 0).expect("build should succeed");
 
-        assert!(matches!(receipt, OpReceipt::Deposit(_)));
-        if let OpReceipt::Deposit(deposit) = receipt {
+        assert!(matches!(receipt, BaseReceipt::Deposit(_)));
+        if let BaseReceipt::Deposit(deposit) = receipt {
             assert!(deposit.inner.status.coerce_status());
             assert_eq!(deposit.inner.cumulative_gas_used, 21000);
         }
@@ -298,7 +297,7 @@ mod tests {
     #[test]
     fn test_build_deposit_receipt_with_canyon_active() {
         // Canyon activates deposit_receipt_version
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
         let mut evm = create_test_evm(Arc::clone(&chain_spec), &mut db);
 
@@ -312,7 +311,7 @@ mod tests {
             .build(&mut evm, &tx, &result, 21000, canyon_timestamp)
             .expect("build should succeed");
 
-        if let OpReceipt::Deposit(deposit) = receipt {
+        if let BaseReceipt::Deposit(deposit) = receipt {
             assert_eq!(deposit.deposit_receipt_version, Some(1));
         } else {
             panic!("Expected deposit receipt");
@@ -321,19 +320,19 @@ mod tests {
 
     #[test]
     fn test_build_failed_transaction_receipt() {
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
         let mut evm = create_test_evm(Arc::clone(&chain_spec), &mut db);
 
         let builder = UnifiedReceiptBuilder::new(chain_spec);
         let tx = create_legacy_tx();
-        let result: ExecutionResult<OpHaltReason> =
+        let result: ExecutionResult<BaseHaltReason> =
             ExecutionResult::Revert { gas_used: 10000, output: alloy_primitives::Bytes::new() };
 
         let receipt =
             builder.build(&mut evm, &tx, &result, 10000, 0).expect("build should succeed");
 
-        if let OpReceipt::Legacy(inner) = receipt {
+        if let BaseReceipt::Legacy(inner) = receipt {
             assert!(!inner.status.coerce_status()); // Failed transaction
             assert_eq!(inner.cumulative_gas_used, 10000);
         } else {

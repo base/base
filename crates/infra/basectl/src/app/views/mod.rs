@@ -1,28 +1,31 @@
 //! TUI view components for basectl panels and dashboards.
 
 mod command_center;
-pub(crate) use command_center::CommandCenterView;
+pub use command_center::CommandCenterView;
 
 mod conductor;
-pub(crate) use conductor::ConductorView;
+pub use conductor::{ActionMenuItem, ConductorView, ConfirmButton, Overlay, PendingAction};
 
 mod config;
-pub(crate) use config::ConfigView;
+pub use config::ConfigView;
 
 mod da_monitor;
-pub(crate) use da_monitor::DaMonitorView;
+pub use da_monitor::DaMonitorView;
 
 mod factory;
-pub(crate) use factory::create_view;
+pub use factory::create_view;
 
 mod flashblocks;
-pub(crate) use flashblocks::FlashblocksView;
+pub use flashblocks::FlashblocksView;
 
 mod home;
-pub(crate) use home::HomeView;
+pub use home::HomeView;
 
 mod proofs;
-pub(crate) use proofs::ProofsView;
+pub use proofs::ProofsView;
 
 mod transaction_pane;
-pub(crate) use transaction_pane::TransactionPane;
+pub use transaction_pane::TransactionPane;
+
+mod upgrades;
+pub use upgrades::UpgradesView;

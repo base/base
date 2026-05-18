@@ -9,15 +9,6 @@ use super::Payload;
 use crate::workload::SeededRng;
 
 sol! {
-    interface IUniswapV2Router {
-        function swapExactETHForTokens(
-            uint256 amountOutMin,
-            address[] calldata path,
-            address to,
-            uint256 deadline
-        ) external payable returns (uint256[] memory amounts);
-    }
-
     interface IUniswapV3Router {
         struct ExactInputSingleParams {
             address tokenIn;
@@ -32,58 +23,6 @@ sol! {
         function exactInputSingle(
             ExactInputSingleParams calldata params
         ) external payable returns (uint256 amountOut);
-    }
-}
-
-/// Generates Uniswap V2 style swap transactions.
-#[derive(Debug, Clone)]
-pub struct UniswapV2Payload {
-    router: Address,
-    weth: Address,
-    token: Address,
-    min_amount: U256,
-    max_amount: U256,
-}
-
-impl UniswapV2Payload {
-    /// Creates a new `UniswapV2` payload.
-    pub const fn new(
-        router: Address,
-        weth: Address,
-        token: Address,
-        min_amount: U256,
-        max_amount: U256,
-    ) -> Self {
-        Self { router, weth, token, min_amount, max_amount }
-    }
-}
-
-impl Payload for UniswapV2Payload {
-    fn name(&self) -> &'static str {
-        "uniswap_v2"
-    }
-
-    fn generate(&self, rng: &mut SeededRng, _from: Address, to: Address) -> TransactionRequest {
-        let amount = if self.min_amount == self.max_amount {
-            self.min_amount
-        } else {
-            let min: u128 = self.min_amount.try_into().unwrap_or(u128::MAX);
-            let max: u128 = self.max_amount.try_into().unwrap_or(u128::MAX);
-            U256::from(rng.gen_range(min..=max))
-        };
-
-        let call = IUniswapV2Router::swapExactETHForTokensCall {
-            amountOutMin: U256::ZERO,
-            path: vec![self.weth, self.token],
-            to,
-            deadline: U256::from(u64::MAX),
-        };
-
-        TransactionRequest::default()
-            .with_to(self.router)
-            .with_input(Bytes::from(call.abi_encode()))
-            .with_value(amount)
-            .with_gas_limit(200_000)
     }
 }
 
@@ -117,21 +56,32 @@ impl Payload for UniswapV3Payload {
         "uniswap_v3"
     }
 
-    fn generate(&self, rng: &mut SeededRng, _from: Address, to: Address) -> TransactionRequest {
+    fn generate(&self, rng: &mut SeededRng, from: Address, _to: Address) -> TransactionRequest {
         let amount = if self.min_amount == self.max_amount {
             self.min_amount
         } else {
-            let min: u128 = self.min_amount.try_into().unwrap_or(u128::MAX);
-            let max: u128 = self.max_amount.try_into().unwrap_or(u128::MAX);
+            let min: u128 =
+                self.min_amount.try_into().expect("validated <= u128::MAX at config parse");
+            let max: u128 =
+                self.max_amount.try_into().expect("validated <= u128::MAX at config parse");
             U256::from(rng.gen_range(min..=max))
+        };
+
+        // Randomly swap direction to exercise both sides of the pool.
+        // V3 pools are keyed by (token0, token1, fee) with token0 < token1,
+        // so the fee tier is direction-agnostic and this is safe.
+        let (input, output) = if rng.random::<bool>() {
+            (self.token_in, self.token_out)
+        } else {
+            (self.token_out, self.token_in)
         };
 
         let call = IUniswapV3Router::exactInputSingleCall {
             params: IUniswapV3Router::ExactInputSingleParams {
-                tokenIn: self.token_in,
-                tokenOut: self.token_out,
+                tokenIn: input,
+                tokenOut: output,
                 fee: U24::from(self.fee),
-                recipient: to,
+                recipient: from,
                 amountIn: amount,
                 amountOutMinimum: U256::ZERO,
                 sqrtPriceLimitX96: U160::ZERO,

@@ -5,7 +5,7 @@ use super::{Action, Resources};
 use crate::tui::Keybinding;
 
 /// Trait implemented by each TUI view screen.
-pub(crate) trait View {
+pub trait View {
     /// Returns the keybindings available in this view.
     fn keybindings(&self) -> &'static [Keybinding];
 
@@ -27,6 +27,12 @@ pub(crate) trait View {
     /// Returns true if this view wants to handle the `q` key itself
     /// (e.g., to close a detail pane) instead of quitting.
     fn consumes_quit(&self) -> bool {
+        false
+    }
+
+    /// Returns true if this view is in a text-input mode and should receive all
+    /// character keys — including those the app normally intercepts (e.g. `n`).
+    fn captures_char_input(&self) -> bool {
         false
     }
 

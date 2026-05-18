@@ -59,6 +59,10 @@ pub struct NonceManager<P> {
     provider: P,
     address: Address,
     rpc_timeout: Duration,
+    /// When `true`, the initial nonce fetch uses the `pending` block tag
+    /// (counting both confirmed and mempool transactions). When `false`
+    /// (the default), `latest` is used (confirmed transactions only).
+    use_pending_tag: bool,
 }
 
 impl<P: Provider> NonceManager<P> {
@@ -70,7 +74,20 @@ impl<P: Provider> NonceManager<P> {
     /// The first call to [`next_nonce`](Self::next_nonce) will fetch the
     /// current transaction count from the provider.
     pub fn new(provider: P, address: Address, rpc_timeout: Duration) -> Self {
-        Self { inner: Arc::new(Mutex::new(NonceState::default())), provider, address, rpc_timeout }
+        Self {
+            inner: Arc::new(Mutex::new(NonceState::default())),
+            provider,
+            address,
+            rpc_timeout,
+            use_pending_tag: false,
+        }
+    }
+
+    /// Configures the nonce manager to use the `pending` block tag when
+    /// fetching the initial nonce from chain.
+    pub const fn with_pending_tag(mut self) -> Self {
+        self.use_pending_tag = true;
+        self
     }
 
     /// Maximum number of retry attempts when `reset()` races with
@@ -122,26 +139,28 @@ impl<P: Provider> NonceManager<P> {
             // concurrent callers are not blocked by the RPC round-trip.
             // Multiple concurrent callers may fetch redundantly; only
             // the first writer's value is used.
-            let fetched = tokio::time::timeout(
-                self.rpc_timeout,
-                self.provider.get_transaction_count(self.address),
-            )
-            .await
-            .map_err(|_| {
-                warn!(
-                    address = %self.address,
-                    timeout = ?self.rpc_timeout,
-                    "nonce fetch timed out",
-                );
-                TxManagerError::Rpc("nonce fetch timed out".into())
-            })?
-            .map_err(|e| {
-                warn!(
-                    error = %e, address = %self.address,
-                    "failed to fetch nonce from chain",
-                );
-                TxManagerError::Rpc(e.to_string())
-            })?;
+            let count_fut = if self.use_pending_tag {
+                self.provider.get_transaction_count(self.address).pending()
+            } else {
+                self.provider.get_transaction_count(self.address)
+            };
+            let fetched = tokio::time::timeout(self.rpc_timeout, count_fut)
+                .await
+                .map_err(|_| {
+                    warn!(
+                        address = %self.address,
+                        timeout = ?self.rpc_timeout,
+                        "nonce fetch timed out",
+                    );
+                    TxManagerError::Rpc("nonce fetch timed out".into())
+                })?
+                .map_err(|e| {
+                    warn!(
+                        error = %e, address = %self.address,
+                        "failed to fetch nonce from chain",
+                    );
+                    TxManagerError::Rpc(e.to_string())
+                })?;
 
             // Phase 3: re-acquire the lock and populate only if still
             // unset AND the generation has not changed. If reset()
@@ -252,7 +271,8 @@ impl<P: Provider> NonceManager<P> {
     ///
     /// # Caution
     ///
-    /// The fresh fetch uses the `latest` block tag, so pending-but-unconfirmed
+    /// Unless [`with_pending_tag`](Self::with_pending_tag) was set, the
+    /// fresh fetch uses the `latest` block tag, so pending-but-unconfirmed
     /// transactions are not counted. Callers should avoid calling `reset()`
     /// while transactions are still in-flight, as the freshly fetched nonce
     /// may conflict with pending transactions in the mempool.
@@ -383,6 +403,7 @@ mod tests {
                 provider,
                 address,
                 rpc_timeout: Duration::from_secs(10),
+                use_pending_tag: false,
             }
         }
     }

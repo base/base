@@ -5,12 +5,13 @@ target/
 .sisyphus/
 eif*.bin
 docs/specs/node_modules/
-node_modules/
-etc/scripts/devnet/package.json
-etc/scripts/devnet/package-lock.json
 docs/specs/dist/
 docs/specs/.vocs/
 *.log
 .vscode/
-cache/
-out/
+*.env
+# SP1 ELF binaries are built on demand and not committed.
+crates/proof/succinct/elf/range-elf-embedded
+crates/proof/succinct/elf/aggregation-elf
+crates/proof/succinct/elf/*.bin
+/etc/scripts/local/__pycache__/

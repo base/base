@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 
 use crate::{
     BrotliCompressor, ChannelCompressor, CompressionAlgo, CompressorResult, CompressorWriter,

@@ -25,6 +25,13 @@ pub struct AwsDiscoveryConfig {
 /// recovering in-flight Boundless proofs after an instance rotation.
 pub const DEFAULT_MAX_RECOVERY_ATTEMPTS: u32 = 5;
 
+/// Default maximum age (in seconds) of a recovered proof's attestation
+/// timestamp before it is considered stale and skipped.
+///
+/// Set to 3300 s (55 minutes), slightly under the on-chain `MAX_AGE` of
+/// 60 minutes, to account for clock skew and processing delays.
+pub const DEFAULT_MAX_ATTESTATION_AGE_SECS: u64 = 3300;
+
 /// Boundless Network configuration for ZK proof generation.
 #[derive(Clone)]
 pub struct BoundlessConfig {
@@ -41,11 +48,13 @@ pub struct BoundlessConfig {
     pub poll_interval: Duration,
     /// Proof generation timeout.
     pub timeout: Duration,
-    /// `NitroEnclaveVerifier` contract address for certificate caching (optional).
-    pub nitro_verifier_address: Option<Address>,
     /// Maximum number of deterministic request-ID slots to probe when
     /// recovering in-flight proofs after an instance rotation.
     pub max_recovery_attempts: u32,
+    /// Maximum age of a recovered proof's attestation timestamp before it
+    /// is considered stale and skipped. Should be set slightly below the
+    /// on-chain `MAX_AGE` to account for clock skew.
+    pub max_attestation_age: Duration,
 }
 
 impl std::fmt::Debug for BoundlessConfig {
@@ -57,8 +66,8 @@ impl std::fmt::Debug for BoundlessConfig {
             .field("image_id", &self.image_id)
             .field("poll_interval", &self.poll_interval)
             .field("timeout", &self.timeout)
-            .field("nitro_verifier_address", &self.nitro_verifier_address)
             .field("max_recovery_attempts", &self.max_recovery_attempts)
+            .field("max_attestation_age", &self.max_attestation_age)
             .finish()
     }
 }
@@ -73,6 +82,21 @@ pub enum ProvingConfig {
         /// Path to the guest ELF binary on disk.
         elf_path: PathBuf,
     },
+}
+
+/// CRL (Certificate Revocation List) checking configuration.
+#[derive(Clone, Debug)]
+pub struct CrlConfig {
+    /// Whether CRL checking is enabled. When disabled, no CRL fetches or
+    /// `revokeCert` transactions are attempted. Defaults to `false`.
+    pub enabled: bool,
+    /// `NitroEnclaveVerifier` contract address on L1. Required when
+    /// `enabled` is `true`; consulted both for the durable on-chain
+    /// `revokedCerts` pre-check and as the destination for outgoing
+    /// `revokeCert` transactions.
+    pub nitro_verifier_address: Option<Address>,
+    /// HTTP timeout for CRL fetches from AWS S3 endpoints.
+    pub fetch_timeout: Duration,
 }
 
 /// Runtime configuration for the prover registrar.
@@ -116,6 +140,9 @@ pub struct RegistrarConfig {
     pub unhealthy_registration_window: Duration,
     /// Health server socket address.
     pub health_addr: SocketAddr,
+    // ── CRL Checking ──────────────────────────────────────────────────────
+    /// CRL (Certificate Revocation List) checking configuration.
+    pub crl: CrlConfig,
 }
 
 impl std::fmt::Debug for RegistrarConfig {
@@ -135,6 +162,7 @@ impl std::fmt::Debug for RegistrarConfig {
             .field("tx_retry_delay", &self.tx_retry_delay)
             .field("unhealthy_registration_window", &self.unhealthy_registration_window)
             .field("health_addr", &self.health_addr)
+            .field("crl", &self.crl)
             .finish()
     }
 }

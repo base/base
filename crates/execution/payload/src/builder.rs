@@ -6,13 +6,10 @@ use alloy_evm::Evm as AlloyEvm;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::OpTransaction;
-use base_protocol::Predeploys;
-use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo};
-use base_txpool::{
-    MergedBestTransactions, OpPooledTx, SharedEip8130Pool, estimated_da_size::DataAvailabilitySized,
-};
+use base_common_chains::Upgrades;
+use base_common_consensus::{BaseTransaction, Predeploys};
+use base_common_evm::L1BlockInfo;
+use base_execution_txpool::{BasePooledTx, estimated_da_size::DataAvailabilitySized};
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,
@@ -42,18 +39,18 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, trace, warn};
 
 use crate::{
-    OpAttributes, OpPayloadBuilderAttributes, OpPayloadPrimitives, config::OpBuilderConfig,
-    error::OpPayloadBuilderError, payload::OpBuiltPayload,
+    Attributes, BasePayloadBuilderAttributes, PayloadPrimitives, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 /// Base payload builder
 #[derive(Debug)]
-pub struct OpPayloadBuilder<
+pub struct BasePayloadBuilder<
     Pool,
     Client,
     Evm,
     Txs = (),
-    Attrs = OpPayloadBuilderAttributes<TxTy<<Evm as ConfigureEvm>::Primitives>>,
+    Attrs = BasePayloadBuilderAttributes<TxTy<<Evm as ConfigureEvm>::Primitives>>,
 > {
     /// The rollup's compute pending block configuration option.
     pub compute_pending_block: bool,
@@ -64,7 +61,7 @@ pub struct OpPayloadBuilder<
     /// Node client.
     pub client: Client,
     /// Settings for the builder, e.g. DA settings.
-    pub config: OpBuilderConfig,
+    pub config: BaseBuilderConfig,
     /// The type responsible for yielding the best transactions for the payload if mempool
     /// transactions are allowed.
     pub best_transactions: Txs,
@@ -72,7 +69,7 @@ pub struct OpPayloadBuilder<
     _pd: PhantomData<Attrs>,
 }
 
-impl<Pool, Client, Evm, Txs, Attrs> Clone for OpPayloadBuilder<Pool, Client, Evm, Txs, Attrs>
+impl<Pool, Client, Evm, Txs, Attrs> Clone for BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs>
 where
     Pool: Clone,
     Client: Clone,
@@ -92,20 +89,20 @@ where
     }
 }
 
-impl<Pool, Client, Evm, Attrs> OpPayloadBuilder<Pool, Client, Evm, (), Attrs> {
-    /// `OpPayloadBuilder` constructor.
+impl<Pool, Client, Evm, Attrs> BasePayloadBuilder<Pool, Client, Evm, (), Attrs> {
+    /// `BasePayloadBuilder` constructor.
     ///
     /// Configures the builder with the default settings.
     pub fn new(pool: Pool, client: Client, evm_config: Evm) -> Self {
         Self::with_builder_config(pool, client, evm_config, Default::default())
     }
 
-    /// Configures the builder with the given [`OpBuilderConfig`].
+    /// Configures the builder with the given [`BaseBuilderConfig`].
     pub const fn with_builder_config(
         pool: Pool,
         client: Client,
         evm_config: Evm,
-        config: OpBuilderConfig,
+        config: BaseBuilderConfig,
     ) -> Self {
         Self {
             pool,
@@ -119,7 +116,7 @@ impl<Pool, Client, Evm, Attrs> OpPayloadBuilder<Pool, Client, Evm, (), Attrs> {
     }
 }
 
-impl<Pool, Client, Evm, Txs, Attrs> OpPayloadBuilder<Pool, Client, Evm, Txs, Attrs> {
+impl<Pool, Client, Evm, Txs, Attrs> BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs> {
     /// Sets the rollup's compute pending block configuration option.
     pub const fn set_compute_pending_block(mut self, compute_pending_block: bool) -> Self {
         self.compute_pending_block = compute_pending_block;
@@ -131,9 +128,9 @@ impl<Pool, Client, Evm, Txs, Attrs> OpPayloadBuilder<Pool, Client, Evm, Txs, Att
     pub fn with_transactions<T>(
         self,
         best_transactions: T,
-    ) -> OpPayloadBuilder<Pool, Client, Evm, T, Attrs> {
+    ) -> BasePayloadBuilder<Pool, Client, Evm, T, Attrs> {
         let Self { pool, client, compute_pending_block, evm_config, config, .. } = self;
-        OpPayloadBuilder {
+        BasePayloadBuilder {
             pool,
             client,
             compute_pending_block,
@@ -155,16 +152,16 @@ impl<Pool, Client, Evm, Txs, Attrs> OpPayloadBuilder<Pool, Client, Evm, Txs, Att
     }
 }
 
-impl<Pool, Client, Evm, N, T, Attrs> OpPayloadBuilder<Pool, Client, Evm, T, Attrs>
+impl<Pool, Client, Evm, N, T, Attrs> BasePayloadBuilder<Pool, Client, Evm, T, Attrs>
 where
-    Pool: TransactionPool<Transaction: OpPooledTx<Consensus = N::SignedTx>>,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: BaseUpgrades>,
-    N: OpPayloadPrimitives,
+    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
+    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades>,
+    N: PayloadPrimitives,
     Evm: ConfigureEvm<
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Client::ChainSpec>,
         >,
-    Attrs: OpAttributes<Transaction = TxTy<Evm::Primitives>>,
+    Attrs: Attributes<Transaction = TxTy<Evm::Primitives>>,
 {
     /// Constructs a Base payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -176,16 +173,17 @@ where
     /// a result indicating success with the payload or an error in case of failure.
     fn build_payload<'a, Txs>(
         &self,
-        args: BuildArguments<Attrs, OpBuiltPayload<N>>,
+        args: BuildArguments<Attrs, BaseBuiltPayload<N>>,
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
-    ) -> Result<BuildOutcome<OpBuiltPayload<N>>, PayloadBuilderError>
+    ) -> Result<BuildOutcome<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
-        Txs:
-            PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx> + OpPooledTx>,
+        Txs: PayloadTransactions<
+            Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
+        >,
     {
         let BuildArguments { mut cached_reads, config, cancel, best_payload } = args;
 
-        let ctx = OpPayloadBuilderCtx {
+        let ctx = BasePayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
             builder_config: self.config.clone(),
             chain_spec: self.client.chain_spec(),
@@ -194,7 +192,7 @@ where
             best_payload,
         };
 
-        let builder = OpBuilder::new(best);
+        let builder = Builder::new(best);
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let state = StateProviderDatabase::new(&state_provider);
@@ -221,7 +219,7 @@ where
             Attrs::try_new(parent.hash(), attributes, 3).map_err(PayloadBuilderError::other)?;
 
         let config = PayloadConfig { parent_header: Arc::new(parent), attributes };
-        let ctx = OpPayloadBuilderCtx {
+        let ctx = BasePayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
             builder_config: self.config.clone(),
             chain_spec: self.client.chain_spec(),
@@ -232,27 +230,27 @@ where
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
-        let builder = OpBuilder::new(|_| NoopPayloadTransactions::<Pool::Transaction>::default());
+        let builder = Builder::new(|_| NoopPayloadTransactions::<Pool::Transaction>::default());
         builder.witness(state_provider, &ctx)
     }
 }
 
-/// Implementation of the [`PayloadBuilder`] trait for [`OpPayloadBuilder`].
+/// Implementation of the [`PayloadBuilder`] trait for [`BasePayloadBuilder`].
 impl<Pool, Client, Evm, N, Txs, Attrs> PayloadBuilder
-    for OpPayloadBuilder<Pool, Client, Evm, Txs, Attrs>
+    for BasePayloadBuilder<Pool, Client, Evm, Txs, Attrs>
 where
-    N: OpPayloadPrimitives,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: BaseUpgrades> + Clone,
-    Pool: TransactionPool<Transaction: OpPooledTx<Consensus = N::SignedTx>>,
+    N: PayloadPrimitives,
+    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + Clone,
+    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
     Evm: ConfigureEvm<
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Client::ChainSpec>,
         >,
-    Txs: OpPayloadTransactions<Pool::Transaction>,
-    Attrs: OpAttributes<Transaction = N::SignedTx>,
+    Txs: BasePayloadTransactions<Pool::Transaction>,
+    Attrs: Attributes<Transaction = N::SignedTx>,
 {
     type Attributes = Attrs;
-    type BuiltPayload = OpBuiltPayload<N>;
+    type BuiltPayload = BaseBuiltPayload<N>;
 
     fn try_build(
         &self,
@@ -305,37 +303,38 @@ where
 /// And finally
 /// 5. build the block: compute all roots (txs, state)
 #[derive(derive_more::Debug)]
-pub struct OpBuilder<'a, Txs> {
+pub struct Builder<'a, Txs> {
     /// Yields the best transaction to include if transactions from the mempool are allowed.
     #[debug(skip)]
     best: Box<dyn FnOnce(BestTransactionsAttributes) -> Txs + 'a>,
 }
 
-impl<'a, Txs> OpBuilder<'a, Txs> {
-    /// Creates a new [`OpBuilder`].
+impl<'a, Txs> Builder<'a, Txs> {
+    /// Creates a new [`Builder`].
     pub fn new(best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a) -> Self {
         Self { best: Box::new(best) }
     }
 }
 
-impl<Txs> OpBuilder<'_, Txs> {
+impl<Txs> Builder<'_, Txs> {
     /// Builds the payload on top of the state.
     pub fn build<Evm, ChainSpec, N, Attrs>(
         self,
         db: impl Database<Error = ProviderError>,
         state_provider: impl StateProvider,
-        ctx: OpPayloadBuilderCtx<Evm, ChainSpec, Attrs>,
-    ) -> Result<BuildOutcomeKind<OpBuiltPayload<N>>, PayloadBuilderError>
+        ctx: BasePayloadBuilderCtx<Evm, ChainSpec, Attrs>,
+    ) -> Result<BuildOutcomeKind<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
         Evm: ConfigureEvm<
                 Primitives = N,
                 NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, ChainSpec>,
             >,
-        ChainSpec: EthChainSpec + BaseUpgrades,
-        N: OpPayloadPrimitives,
-        Txs:
-            PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx> + OpPooledTx>,
-        Attrs: OpAttributes<Transaction = N::SignedTx>,
+        ChainSpec: EthChainSpec + Upgrades,
+        N: PayloadPrimitives,
+        Txs: PayloadTransactions<
+            Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
+        >,
+        Attrs: Attributes<Transaction = N::SignedTx>,
     {
         let Self { best } = self;
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
@@ -345,7 +344,7 @@ impl<Txs> OpBuilder<'_, Txs> {
         // Load the L1 block contract into the database cache. If the L1 block contract is not
         // pre-loaded the database will panic when trying to fetch the DA footprint gas
         // scalar.
-        db.load_cache_account(L1_BLOCK_CONTRACT).map_err(BlockExecutionError::other)?;
+        db.load_cache_account(Predeploys::L1_BLOCK_INFO).map_err(BlockExecutionError::other)?;
 
         let mut builder = ctx.block_builder(&mut db)?;
 
@@ -393,7 +392,7 @@ impl<Txs> OpBuilder<'_, Txs> {
         let no_tx_pool = ctx.attributes().no_tx_pool();
 
         let payload =
-            OpBuiltPayload::new(ctx.payload_id(), sealed_block, info.total_fees, Some(executed));
+            BaseBuiltPayload::new(ctx.payload_id(), sealed_block, info.total_fees, Some(executed));
 
         if no_tx_pool {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
@@ -409,17 +408,17 @@ impl<Txs> OpBuilder<'_, Txs> {
     pub fn witness<Evm, ChainSpec, N, Attrs>(
         self,
         state_provider: impl StateProvider,
-        ctx: &OpPayloadBuilderCtx<Evm, ChainSpec, Attrs>,
+        ctx: &BasePayloadBuilderCtx<Evm, ChainSpec, Attrs>,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
         Evm: ConfigureEvm<
                 Primitives = N,
                 NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, ChainSpec>,
             >,
-        ChainSpec: EthChainSpec + BaseUpgrades,
-        N: OpPayloadPrimitives,
+        ChainSpec: EthChainSpec + Upgrades,
+        N: PayloadPrimitives,
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx>>,
-        Attrs: OpAttributes<Transaction = N::SignedTx>,
+        Attrs: Attributes<Transaction = N::SignedTx>,
     {
         let mut db = State::builder()
             .with_database(StateProviderDatabase::new(&state_provider))
@@ -450,7 +449,7 @@ impl<Txs> OpBuilder<'_, Txs> {
 }
 
 /// A type that returns the [`PayloadTransactions`] that should be included in the pool.
-pub trait OpPayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'static {
+pub trait BasePayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'static {
     /// Returns an iterator that yields the transaction in the order they should get included in the
     /// new payload.
     fn best_transactions<Pool: TransactionPool<Transaction = Transaction>>(
@@ -460,48 +459,13 @@ pub trait OpPayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'sta
     ) -> impl PayloadTransactions<Transaction = Transaction>;
 }
 
-impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
+impl<T: PoolTransaction> BasePayloadTransactions<T> for () {
     fn best_transactions<Pool: TransactionPool<Transaction = T>>(
         &self,
         pool: Pool,
         attr: BestTransactionsAttributes,
     ) -> impl PayloadTransactions<Transaction = T> {
         BestPayloadTransactions::new(pool.best_transactions_with_attributes(attr))
-    }
-}
-
-/// Payload transaction source that merges the standard pool's best iterator
-/// with the EIP-8130 2D nonce pool's ready transactions.
-///
-/// Follows Tempo's `MergeBestTransactions` pattern: both iterators are
-/// interleaved by effective priority (tip), with deduplication by tx hash.
-#[derive(Debug, Clone)]
-pub struct Eip8130PayloadTransactions<T> {
-    /// Shared reference to the 2D nonce pool.
-    eip8130_pool: SharedEip8130Pool<T>,
-}
-
-impl<T> Eip8130PayloadTransactions<T> {
-    /// Creates a new payload transaction source backed by the given 2D pool.
-    pub fn new(eip8130_pool: SharedEip8130Pool<T>) -> Self {
-        Self { eip8130_pool }
-    }
-}
-
-impl<T: reth_transaction_pool::EthPoolTransaction + Clone> OpPayloadTransactions<T>
-    for Eip8130PayloadTransactions<T>
-{
-    fn best_transactions<Pool: TransactionPool<Transaction = T>>(
-        &self,
-        pool: Pool,
-        attr: BestTransactionsAttributes,
-    ) -> impl PayloadTransactions<Transaction = T> {
-        let base_fee = attr.basefee;
-        let standard = pool.best_transactions_with_attributes(attr);
-        let eip8130 = self.eip8130_pool.best_transactions_with_base_fee(base_fee);
-        BestPayloadTransactions::new(Box::new(MergedBestTransactions::with_base_fee(
-            standard, eip8130, base_fee,
-        )))
     }
 }
 
@@ -575,15 +539,15 @@ impl ExecutionInfo {
 
 /// Container type that holds all necessities to build a new payload.
 #[derive(derive_more::Debug)]
-pub struct OpPayloadBuilderCtx<
+pub struct BasePayloadBuilderCtx<
     Evm: ConfigureEvm,
     ChainSpec,
-    Attrs = OpPayloadBuilderAttributes<TxTy<<Evm as ConfigureEvm>::Primitives>>,
+    Attrs = BasePayloadBuilderAttributes<TxTy<<Evm as ConfigureEvm>::Primitives>>,
 > {
     /// The type that knows how to perform system calls and configure the evm.
     pub evm_config: Evm,
     /// Additional config for the builder/sequencer, e.g. DA and gas limit
-    pub builder_config: OpBuilderConfig,
+    pub builder_config: BaseBuilderConfig,
     /// The chainspec
     pub chain_spec: Arc<ChainSpec>,
     /// How to build the payload.
@@ -591,17 +555,17 @@ pub struct OpPayloadBuilderCtx<
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancelOnDrop,
     /// The currently best payload.
-    pub best_payload: Option<OpBuiltPayload<Evm::Primitives>>,
+    pub best_payload: Option<BaseBuiltPayload<Evm::Primitives>>,
 }
 
-impl<Evm, ChainSpec, Attrs> OpPayloadBuilderCtx<Evm, ChainSpec, Attrs>
+impl<Evm, ChainSpec, Attrs> BasePayloadBuilderCtx<Evm, ChainSpec, Attrs>
 where
     Evm: ConfigureEvm<
-            Primitives: OpPayloadPrimitives,
+            Primitives: PayloadPrimitives,
             NextBlockEnvCtx: BuildNextEnv<Attrs, HeaderTy<Evm::Primitives>, ChainSpec>,
         >,
-    ChainSpec: EthChainSpec + BaseUpgrades,
-    Attrs: OpAttributes<Transaction = TxTy<Evm::Primitives>>,
+    ChainSpec: EthChainSpec + Upgrades,
+    Attrs: Attributes<Transaction = TxTy<Evm::Primitives>>,
 {
     /// Returns the parent block the payload will be build on.
     pub fn parent(&self) -> &SealedHeaderFor<Evm::Primitives> {
@@ -657,17 +621,31 @@ where
     }
 
     /// Executes all sequencer transactions that are included in the payload attributes.
+    ///
+    /// When `no_tx_pool` is set the attribute-supplied transaction list is the consensus input
+    /// for the payload (derived from L1 batches by `base-consensus`), not a list of optional
+    /// pre-include candidates. In that mode an `InvalidTx` from any sequencer transaction must
+    /// be propagated as a fatal error so the EL rejects the payload, matching the strictness of
+    /// the proof executor. Silently skipping the offending transaction would diverge the EL
+    /// safe-head from the proof-derived state and break Holocene's deposit-only fallback (the
+    /// EL would freeze a skip-and-continue block while the proof path produces a deposit-only
+    /// replacement root).
+    ///
+    /// When `no_tx_pool` is `false` the builder is composing a new block from mempool plus
+    /// attribute pre-includes; pre-includes there may legitimately be skipped on `InvalidTx`,
+    /// so the historical skip-and-continue behavior is preserved.
     pub fn execute_sequencer_transactions(
         &self,
         builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::new();
+        let no_tx_pool = self.attributes().no_tx_pool();
 
         for sequencer_tx in self.attributes().sequencer_transactions() {
             // A sequencer's block should never contain blob transactions.
             if sequencer_tx.value().is_eip4844() {
                 return Err(PayloadBuilderError::other(
-                    OpPayloadBuilderError::BlobTransactionRejected,
+                    BasePayloadBuilderError::BlobTransactionRejected,
                 ));
             }
 
@@ -676,7 +654,7 @@ where
             // Deposit transactions do not have signatures, so if the tx is a deposit, this
             // will just pull in its `from` address.
             let sequencer_tx = sequencer_tx.value().try_clone_into_recovered().map_err(|_| {
-                PayloadBuilderError::other(OpPayloadBuilderError::TransactionEcRecoverFailed)
+                PayloadBuilderError::other(BasePayloadBuilderError::TransactionEcRecoverFailed)
             })?;
 
             let gas_used = match builder.execute_transaction(sequencer_tx.clone()) {
@@ -684,12 +662,16 @@ where
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
-                })) => {
+                })) if !no_tx_pool => {
                     trace!(target: "payload_builder", %error, ?sequencer_tx, "Error in sequencer transaction, skipping.");
                     continue;
                 }
                 Err(err) => {
-                    // this is an error that we should treat as fatal for this attempt
+                    // Either a fatal execution error, or an `InvalidTx` from an
+                    // attribute-derived (`no_tx_pool=true`) transaction list. The latter must
+                    // be fatal so the EL rejects the payload exactly like the proof executor
+                    // does, allowing Holocene's deposit-only fallback to apply consistently
+                    // across both consumers of the same L1 input.
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
@@ -709,7 +691,7 @@ where
         info: &mut ExecutionInfo,
         builder: &mut Builder,
         mut best_txs: impl PayloadTransactions<
-            Transaction: PoolTransaction<Consensus = TxTy<Evm::Primitives>> + OpPooledTx,
+            Transaction: PoolTransaction<Consensus = TxTy<Evm::Primitives>> + BasePooledTx,
         >,
     ) -> Result<Option<()>, PayloadBuilderError>
     where

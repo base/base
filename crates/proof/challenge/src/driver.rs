@@ -4,33 +4,34 @@
 //! invalid dispute games, validating output roots, requesting proofs, and
 //! submitting dispute transactions — into a single polling loop.
 //!
-//! Three dispute paths are supported:
+//! Four dispute paths are supported:
 //!
 //! 1. **Wrong TEE proof** — nullify with a TEE proof (`nullify()`) or
 //!    challenge with a ZK proof (`challenge()`).
 //! 2. **Correct TEE proof challenged with a wrong ZK proof** — nullify
 //!    the fraudulent ZK challenge with a ZK proof (`nullify()`).
 //! 3. **Wrong ZK proposal** — nullify with a ZK proof (`nullify()`).
+//! 4. **Wrong dual proposal (TEE + ZK, no challenge)** — nullify with a
+//!    TEE proof first (`nullify()`), falling back to ZK `nullify()`.
+//!    After the TEE proof is nullified, the game is re-scanned as Path 3.
 
 use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_proof_contracts::AggregateVerifierClient;
+use base_proof_contracts::{AggregateVerifierClient, GameStatus};
 use base_proof_primitives::{
     ProofEncoder, ProofRequest as TeeProofRequest, ProofResult, ProverClient,
 };
 use base_proof_rpc::L2Provider;
+use base_runtime::{Clock, TokioRuntime};
 use base_tx_manager::TxManager;
 use base_zk_client::{ProofType, ProveBlockRequest, ZkProofProvider};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     BondManager, CandidateGame, ChallengeSubmitter, ChallengerMetrics, DisputeIntent, GameCategory,
@@ -43,10 +44,10 @@ use crate::{
 pub struct DriverConfig {
     /// How often the driver polls for new games.
     pub poll_interval: Duration,
+    /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
+    pub max_proof_duration: Duration,
     /// Cancellation token for graceful shutdown.
     pub cancel: CancellationToken,
-    /// Shared flag flipped to `true` after the first successful driver step.
-    pub ready: Arc<AtomicBool>,
 }
 
 /// TEE proof configuration, bundling the provider and L1 head provider.
@@ -61,7 +62,12 @@ pub struct TeeConfig {
 }
 
 /// Service-layer dependencies injected into the [`Driver`].
-pub struct DriverComponents<L2: L2Provider, P: ZkProofProvider, T: TxManager> {
+pub struct DriverComponents<
+    L2: L2Provider,
+    P: ZkProofProvider,
+    T: TxManager,
+    C: Clock = TokioRuntime,
+> {
     /// Scans for new dispute games on L1.
     pub scanner: GameScanner,
     /// Validates L2 output roots against the local node.
@@ -75,11 +81,11 @@ pub struct DriverComponents<L2: L2Provider, P: ZkProofProvider, T: TxManager> {
     /// Client for the aggregate verifier contract.
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
-    pub bond_manager: Option<BondManager>,
+    pub bond_manager: Option<BondManager<C>>,
 }
 
-impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> std::fmt::Debug
-    for DriverComponents<L2, P, T>
+impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> std::fmt::Debug
+    for DriverComponents<L2, P, T, C>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DriverComponents")
@@ -91,7 +97,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> std::fmt::Debug
 }
 
 /// Orchestrates the challenger pipeline: scan, validate, prove, submit.
-pub struct Driver<L2, P, T>
+pub struct Driver<L2, P, T, C: Clock = TokioRuntime>
 where
     L2: L2Provider,
     P: ZkProofProvider,
@@ -112,33 +118,32 @@ where
     /// In-flight proof sessions keyed by game address.
     pub pending_proofs: PendingProofs,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
-    pub bond_manager: Option<BondManager>,
+    pub bond_manager: Option<BondManager<C>>,
     /// Interval between polling cycles.
     pub poll_interval: Duration,
+    /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
+    pub max_proof_duration: Duration,
     /// Token used to signal graceful shutdown.
     pub cancel: CancellationToken,
-    /// Indicates whether the driver has completed its first scan.
-    pub ready: Arc<AtomicBool>,
-    /// The last L1 block number that was scanned.
-    pub last_scanned: Option<u64>,
 }
 
-impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> std::fmt::Debug for Driver<L2, P, T> {
+impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> std::fmt::Debug
+    for Driver<L2, P, T, C>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Driver")
             .field("pending_proofs", &self.pending_proofs.len())
             .field("poll_interval", &self.poll_interval)
-            .field("last_scanned", &self.last_scanned)
             .finish_non_exhaustive()
     }
 }
 
-impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
+impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T, C> {
     /// Maximum number of times a failed proof job will be retried before being dropped.
     pub const MAX_PROOF_RETRIES: u32 = 3;
 
     /// Creates a new driver with the given components.
-    pub fn new(config: DriverConfig, components: DriverComponents<L2, P, T>) -> Self {
+    pub fn new(config: DriverConfig, components: DriverComponents<L2, P, T, C>) -> Self {
         Self {
             scanner: components.scanner,
             validator: components.validator,
@@ -149,33 +154,22 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             pending_proofs: PendingProofs::new(),
             bond_manager: components.bond_manager,
             poll_interval: config.poll_interval,
+            max_proof_duration: config.max_proof_duration,
             cancel: config.cancel,
-            ready: config.ready,
-            last_scanned: None,
         }
     }
 
     /// Runs the main driver loop until the cancellation token is fired.
     pub async fn run(mut self) {
         info!("challenger driver starting");
-        let mut signalled_ready = false;
         loop {
             if self.cancel.is_cancelled() {
                 info!("challenger driver shutting down");
                 break;
             }
 
-            match self.step().await {
-                Ok(()) => {
-                    if !signalled_ready {
-                        signalled_ready = true;
-                        self.ready.store(true, Ordering::SeqCst);
-                        info!("service is ready");
-                    }
-                }
-                Err(e) => {
-                    warn!(error = %e, "driver step failed");
-                }
+            if let Err(e) = self.step().await {
+                warn!(error = %e, "driver step failed");
             }
 
             ChallengerMetrics::pending_proofs().set(self.pending_proofs.len() as f64);
@@ -194,14 +188,14 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     /// Executes a single scan-validate-prove-submit cycle.
     ///
     /// First polls any in-flight proof sessions that are not in the current
-    /// scan batch, then advances bond lifecycle claims, then scans for new
-    /// candidates and processes them.
+    /// scan batch, then discovers claimable bonds, advances bond lifecycle
+    /// claims, and finally scans for new candidates and processes them.
     pub async fn step(&mut self) -> eyre::Result<()> {
         self.poll_pending_proofs().await;
+        self.discover_claimable_bonds().await;
         self.poll_bond_claims().await;
 
-        let (candidates, new_last_scanned) = self.scanner.scan(self.last_scanned).await?;
-        self.last_scanned = new_last_scanned;
+        let candidates = self.scanner.scan().await?;
 
         for candidate in candidates {
             let index = candidate.index;
@@ -211,6 +205,18 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         }
 
         Ok(())
+    }
+
+    /// Discovers new claimable games via incremental and periodic full
+    /// rescanning. Runs before [`poll_bond_claims`](Self::poll_bond_claims)
+    /// so that newly discovered games are immediately eligible for
+    /// advancement in the same tick.
+    async fn discover_claimable_bonds(&mut self) {
+        if let Some(ref mut bond_manager) = self.bond_manager
+            && let Err(e) = bond_manager.discover_claimable_games(&*self.verifier_client).await
+        {
+            warn!(error = %e, "bond discovery scan failed");
+        }
     }
 
     /// Polls the bond manager to advance tracked games through the bond
@@ -255,7 +261,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             GameCategory::FraudulentZkChallenge { challenged_index } => {
                 self.process_fraudulent_zk_challenge(candidate, challenged_index).await
             }
-            GameCategory::InvalidZkProposal => {
+            GameCategory::InvalidZkProposal | GameCategory::InvalidDualProposal => {
                 self.process_invalid_proposal(candidate, DisputeIntent::Nullify).await
             }
         }
@@ -288,28 +294,47 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             Ok(result) => Ok(Some((result, intermediate_roots))),
             Err(e) => {
                 match &e {
+                    // Transient: the L2 node has not produced this block yet.
+                    // Safe to skip — the next scan tick will retry.
                     ValidatorError::BlockNotAvailable { .. } => {
                         debug!(
                             game = %game_address,
                             error = %e,
                             "block not yet available, skipping game"
                         );
+                        Ok(None)
                     }
+
+                    // Persistent configuration errors: these indicate a
+                    // mismatch between the cached interval and on-chain
+                    // state (e.g. after a governance `setImplementation`
+                    // that changed `INTERMEDIATE_BLOCK_INTERVAL`).
+                    // Propagate so the caller logs the error at game level
+                    // and operators are alerted. No log here — the caller
+                    // in `step()` already logs at warn level.
+                    ValidatorError::CheckpointCountMismatch { .. }
+                    | ValidatorError::InvalidInterval
+                    | ValidatorError::InvalidBlockRange { .. } => Err(e.into()),
+
+                    // Other errors (RPC, header hash mismatch, account
+                    // proof failure, arithmetic overflow) are potentially
+                    // transient — skip and retry on the next tick.
                     _ => {
                         warn!(
                             game = %game_address,
                             error = %e,
-                            "validation error, skipping game"
+                            "transient validation error, skipping game"
                         );
+                        Ok(None)
                     }
                 }
-                Ok(None)
             }
         }
     }
 
     /// Processes a game whose proposal may contain an invalid intermediate
-    /// root (Path 1: wrong TEE proof, Path 3: wrong ZK proof).
+    /// root (Path 1: wrong TEE proof, Path 3: wrong ZK proof, Path 4:
+    /// wrong dual proposal).
     ///
     /// Validates the intermediate roots against the local L2 node. If a
     /// mismatch is found, initiates a proof with the given `intent`.
@@ -344,11 +369,38 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             "invalid intermediate root detected, requesting proof"
         );
 
-        if intent == DisputeIntent::Nullify {
-            ChallengerMetrics::invalid_zk_proposal_detected_total().increment(1);
-        }
+        let try_tee_first = match candidate.category {
+            GameCategory::InvalidTeeProposal => {
+                ChallengerMetrics::invalid_tee_proposal_detected_total().increment(1);
+                true
+            }
+            GameCategory::InvalidZkProposal => {
+                ChallengerMetrics::invalid_zk_proposal_detected_total().increment(1);
+                false
+            }
+            GameCategory::InvalidDualProposal => {
+                ChallengerMetrics::invalid_dual_proposal_detected_total().increment(1);
+                true
+            }
+            GameCategory::FraudulentZkChallenge { .. } => {
+                error!(
+                    category = ?candidate.category,
+                    game = %game_address,
+                    "unexpected category in process_invalid_proposal"
+                );
+                debug_assert!(
+                    false,
+                    "unexpected category in process_invalid_proposal: {:?}",
+                    candidate.category
+                );
+                return Err(eyre::eyre!(
+                    "unexpected category in process_invalid_proposal: {:?}",
+                    candidate.category
+                ));
+            }
+        };
 
-        self.initiate_proof(candidate, invalid_index, expected_root, intent).await
+        self.initiate_proof(candidate, invalid_index, expected_root, intent, try_tee_first).await
     }
 
     /// Processes a game whose correct TEE proposal has been challenged with
@@ -364,66 +416,48 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
-        let (result, intermediate_roots) = match self.validate_game(&candidate).await? {
-            Some(pair) => pair,
-            None => return Ok(()),
+        // Fetch only the challenged onchain intermediate root (not all roots).
+        let on_chain_root =
+            self.verifier_client.intermediate_output_root(game_address, challenged_index).await?;
+
+        // Validate only the challenged root — not all intermediate roots.
+        // The checkpoint block for index `i` is:
+        //   starting_block + interval * (i + 1)
+        let checkpoint_block = candidate.checkpoint_start_block(challenged_index + 1)?;
+
+        let expected_root = match self.validator.compute_output_root(checkpoint_block).await {
+            Ok(root) => root,
+            Err(ValidatorError::BlockNotAvailable { .. }) => {
+                debug!(
+                    game = %game_address,
+                    block = checkpoint_block,
+                    "block not yet available, skipping game"
+                );
+                return Ok(());
+            }
+            Err(e) => {
+                warn!(
+                    game = %game_address,
+                    block = checkpoint_block,
+                    error = %e,
+                    "output root computation failed, skipping game"
+                );
+                return Ok(());
+            }
         };
 
-        // For Path 2: If the original proposal's root at the challenged index
-        // is valid, the ZK challenge was fraudulent. If it's invalid, the
-        // challenge was legitimate — skip.
-        //
-        // The validator scans intermediate roots sequentially and reports the
-        // first invalid index. If `first_invalid <= challenged_index`, the
-        // root at the challenged index (or an earlier one) was wrong, so the
-        // ZK challenge was legitimate.
-        if !result.is_valid {
-            match result.invalid_intermediate_index {
-                Some(first_invalid) => {
-                    let first_invalid_u64 = u64::try_from(first_invalid).map_err(|_| {
-                        eyre::eyre!(
-                            "first invalid intermediate index {first_invalid} overflows u64"
-                        )
-                    })?;
-                    if first_invalid_u64 <= challenged_index {
-                        debug!(
-                            game = %game_address,
-                            challenged_index = challenged_index,
-                            first_invalid_index = first_invalid,
-                            "ZK challenge is legitimate (original root was wrong), skipping"
-                        );
-                        return Ok(());
-                    }
-                    // first_invalid > challenged_index: all roots up to and
-                    // including the challenged index are valid, so the ZK
-                    // challenge was fraudulent. Fall through to nullify.
-                }
-                None => {
-                    // Validation says invalid but no specific index was identified.
-                    // Cannot confirm the challenged root is correct, so skip to
-                    // avoid submitting a potentially wrong nullification.
-                    warn!(
-                        game = %game_address,
-                        challenged_index = challenged_index,
-                        "validation returned invalid without specific index, skipping"
-                    );
-                    return Ok(());
-                }
-            }
+        // If the onchain root at the challenged index does not match the
+        // locally computed root, the ZK challenge was legitimate — skip.
+        if on_chain_root != expected_root {
+            debug!(
+                game = %game_address,
+                challenged_index = challenged_index,
+                on_chain = %on_chain_root,
+                expected = %expected_root,
+                "ZK challenge is legitimate (challenged root was wrong), skipping"
+            );
+            return Ok(());
         }
-
-        // The on-chain root at the challenged index is correct.
-        // Use the on-chain root value as `intermediateRootToProve` — the
-        // contract requires it to match `intermediateOutputRoot(index)`.
-        let idx = usize::try_from(challenged_index)
-            .map_err(|_| eyre::eyre!("challenged_index {challenged_index} overflows usize"))?;
-        let on_chain_root = intermediate_roots.get(idx).copied().ok_or_else(|| {
-            eyre::eyre!(
-                "challenged_index {challenged_index} out of bounds \
-                     (game has {} intermediate roots)",
-                intermediate_roots.len()
-            )
-        })?;
 
         info!(
             game = %game_address,
@@ -440,23 +474,30 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
 
     /// Attempts TEE-first proof sourcing with ZK fallback.
     ///
-    /// The `intent` determines the on-chain action. For Path 1
-    /// ([`DisputeIntent::Challenge`]) the ZK proof targets `challenge()`.
+    /// The `intent` determines the on-chain action for the ZK fallback path.
     /// TEE proofs always use `nullify()` regardless of `intent`.
+    ///
+    /// When `try_tee_first` is `true` and the game has a non-zero TEE prover,
+    /// a synchronous TEE proof is attempted before falling back to ZK.
+    /// Path 1 (`InvalidTeeProposal`) sets `try_tee_first = true` with
+    /// `intent = Challenge`; Path 4 (`InvalidDualProposal`) sets
+    /// `try_tee_first = true` with `intent = Nullify` so the ZK fallback
+    /// also calls `nullify()`.
     async fn initiate_proof(
         &mut self,
         candidate: CandidateGame,
         invalid_index: u64,
         expected_root: B256,
         intent: DisputeIntent,
+        try_tee_first: bool,
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
-        // TEE-first: try if game has a TEE prover and we have a TEE config.
-        // TEE proofs only make sense when the intent is to challenge a TEE
-        // proposal — TEE nullification replaces the bad TEE proof.
+        // TEE-first: try if the game has a TEE prover, we have a TEE config,
+        // and the caller opted in. Path 1 (InvalidTeeProposal) and Path 4
+        // (InvalidDualProposal) set `try_tee_first = true`.
         if candidate.tee_prover != Address::ZERO
-            && intent == DisputeIntent::Challenge
+            && try_tee_first
             && let Some(tee) = &self.tee
         {
             ChallengerMetrics::tee_proof_attempts_total().increment(1);
@@ -471,12 +512,32 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                 }
                 Ok(Ok(proof_bytes)) => {
                     info!(game = %game_address, path = "tee", "TEE proof obtained");
+
+                    let (zk_fallback_request, zk_fallback_intent) =
+                        match self.build_zk_request(&candidate, invalid_index) {
+                            Ok(req) => (Some(req), Some(intent)),
+                            Err(e) => {
+                                warn!(
+                                    error = %e,
+                                    game = %game_address,
+                                    "failed to build ZK fallback request; \
+                                     TEE proof will have no ZK fallback"
+                                );
+                                (None, None)
+                            }
+                        };
                     self.pending_proofs.insert(
                         game_address,
-                        PendingProof::ready_tee(proof_bytes, invalid_index, expected_root),
+                        PendingProof::ready_tee(
+                            proof_bytes,
+                            invalid_index,
+                            expected_root,
+                            zk_fallback_request,
+                            zk_fallback_intent,
+                        ),
                     );
                     if let Err(e) = self.poll_or_submit(game_address).await {
-                        warn!(error = %e, game = %game_address, "initial TEE submission failed, will retry next tick");
+                        warn!(error = %e, game = %game_address, "initial TEE submission failed");
                     }
                     ChallengerMetrics::tee_proof_obtained_total().increment(1);
                     return Ok(());
@@ -554,6 +615,29 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         }
     }
 
+    /// Builds a [`ProveBlockRequest`] for the given candidate and invalid index.
+    fn build_zk_request(
+        &self,
+        candidate: &CandidateGame,
+        invalid_index: u64,
+    ) -> eyre::Result<ProveBlockRequest> {
+        let game_address = candidate.factory.proxy;
+        let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
+        let session_id = PendingProof::derive_session_id(game_address, invalid_index);
+        let prover_address = format!("{:#x}", self.submitter.sender_address());
+
+        Ok(ProveBlockRequest {
+            start_block_number,
+            number_of_blocks_to_prove: candidate.intermediate_block_interval,
+            sequence_window: None,
+            proof_type: ProofType::SnarkGroth16.into(),
+            session_id: Some(session_id),
+            prover_address: Some(prover_address),
+            l1_head: Some(format!("{:#x}", candidate.l1_head)),
+            intermediate_root_interval: Some(candidate.intermediate_block_interval),
+        })
+    }
+
     /// Requests a ZK proof, stores the session, and polls for the result.
     async fn initiate_zk_proof(
         &mut self,
@@ -568,19 +652,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         // invalid_index == 0) is a trusted anchor, so the ZK proof only
         // needs to cover the single interval that contains the invalid
         // checkpoint: [prior_checkpoint .. invalid_checkpoint].
-        let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
-
-        let session_id = PendingProof::derive_session_id(game_address, invalid_index);
-        let prover_address = format!("{:#x}", self.submitter.sender_address());
-        let request = ProveBlockRequest {
-            start_block_number,
-            number_of_blocks_to_prove: candidate.intermediate_block_interval,
-            sequence_window: None,
-            proof_type: ProofType::GenericZkvmClusterSnarkGroth16.into(),
-            session_id: Some(session_id),
-            prover_address: Some(prover_address),
-            l1_head: Some(format!("{:#x}", candidate.l1_head)),
-        };
+        let request = self.build_zk_request(&candidate, invalid_index)?;
 
         let prove_response = self.zk_prover.prove_block(request.clone()).await?;
 
@@ -630,7 +702,10 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         // Poll proof status first — if still pending, skip the contract
         // calls that check game liveness. This avoids 3 RPC round-trips
         // per tick for proofs that are not yet ready.
-        let proof_update = self.pending_proofs.poll(game_address, &*self.zk_prover).await?;
+        let proof_update = self
+            .pending_proofs
+            .poll(game_address, &*self.zk_prover, self.max_proof_duration)
+            .await?;
         match &proof_update {
             Some(ProofUpdate::Pending) => {
                 debug!(game = %game_address, "proof not ready, will retry next tick");
@@ -648,8 +723,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             self.verifier_client.zk_prover(game_address),
         )?;
 
-        if status != GameScanner::STATUS_IN_PROGRESS {
-            debug!(game = %game_address, status = status, "game no longer in progress, dropping pending proof");
+        if status != GameStatus::InProgress {
+            debug!(game = %game_address, status = ?status, "game no longer in progress, dropping pending proof");
             self.pending_proofs.remove(&game_address);
             return Ok(());
         }
@@ -724,6 +799,17 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                 }
             }
             Err(e) => {
+                if targets_tee && let Some(p) = self.pending_proofs.get_mut(&game_address) {
+                    warn!(
+                        error = %e,
+                        game = %game_address,
+                        "TEE dispute tx failed, falling back to ZK"
+                    );
+                    // Don't retry the failed TEE submission — switch to the ZK
+                    // fallback so the next retry uses the pre-built ZK request.
+                    p.phase = ProofPhase::NeedsRetry;
+                    return self.handle_proof_retry(game_address).await;
+                }
                 warn!(
                     error = %e,
                     game = %game_address,
@@ -758,12 +844,34 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             return Ok(());
         }
 
+        // If this was a TEE proof, eagerly transition to ZK *before*
+        // calling `prove_block` so that subsequent retries take the ZK branch
+        // and the fallback metric is emitted exactly once per transition.
         let request = match &pending.kind {
-            ProofKind::Tee => {
-                // TEE proofs have no ZK session to re-initiate — drop the entry.
-                debug!(game = %game_address, "TEE proof has no ZK request, dropping entry");
-                self.pending_proofs.remove(&game_address);
-                return Ok(());
+            ProofKind::Tee { zk_fallback_request, zk_fallback_intent } => {
+                let (Some(fallback_request), Some(fallback_intent)) =
+                    (zk_fallback_request.clone(), *zk_fallback_intent)
+                else {
+                    // No ZK fallback available — nothing more we can do.
+                    debug!(
+                        game = %game_address,
+                        "TEE proof has no ZK fallback request, dropping entry"
+                    );
+                    self.pending_proofs.remove(&game_address);
+                    return Ok(());
+                };
+
+                debug!(game = %game_address, "TEE proof needs retry, falling back to ZK");
+                ChallengerMetrics::tee_proof_fallback_total().increment(1);
+
+                // Transition eagerly so retries use the ZK path.
+                if let Some(p) = self.pending_proofs.get_mut(&game_address) {
+                    p.kind = ProofKind::Zk { prove_request: fallback_request.clone() };
+                    p.intent = fallback_intent;
+                    p.retry_count = 0;
+                }
+
+                fallback_request
             }
             ProofKind::Zk { prove_request } => prove_request.clone(),
         };
@@ -779,7 +887,10 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                     "proof job re-initiated"
                 );
                 if let Some(p) = self.pending_proofs.get_mut(&game_address) {
-                    p.phase = ProofPhase::AwaitingProof { session_id: response.session_id };
+                    p.phase = ProofPhase::AwaitingProof {
+                        session_id: response.session_id,
+                        started_at: Instant::now(),
+                    };
                 }
             }
             Err(e) => {

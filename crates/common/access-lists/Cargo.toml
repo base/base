@@ -30,13 +30,8 @@ serde = { workspace = true, features = ["std"] }
 # workspace
 base-test-utils.workspace = true
 
-# reth
-reth-evm.workspace = true
-base-execution-evm.workspace = true
-base-execution-chainspec.workspace = true
-
 # revm
-base-revm.workspace = true
+base-common-evm.workspace = true
 
 # alloy
 alloy-contract.workspace = true

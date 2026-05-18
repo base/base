@@ -4,12 +4,12 @@
 
 A `no_std` compatible implementation of Base's [derivation pipeline][derive].
 
-[derive]: https://specs.optimism.io/protocol/derivation.html#l2-chain-derivation-specification
+[derive]: https://specs.base.org/protocol/consensus/derivation#l2-chain-derivation-specification
 
 ## Overview
 
 Implements the full L2 chain derivation pipeline as specified by the Base protocol. The
-`DerivationPipeline` steps through L1 data to produce `OpPayloadAttributes` for each L2 block.
+`DerivationPipeline` steps through L1 data to produce `BasePayloadAttributes` for each L2 block.
 `EthereumDataSource` fetches batch data from calldata or blobs, `StatefulAttributesBuilder`
 constructs payload attributes with deposits and sequencer configuration, and `PipelineBuilder`
 wires all stages together. The crate is `no_std` compatible for use in fault proof VMs.
@@ -20,7 +20,7 @@ The intended way of working with `base-consensus-derive` is to use the [`Derivat
 
 ```rust,ignore
 use std::sync::Arc;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_consensus_derive::EthereumDataSource;
 use base_consensus_derive::PipelineBuilder;
 use base_consensus_derive::StatefulAttributesBuilder;

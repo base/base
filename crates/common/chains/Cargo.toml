@@ -1,5 +1,5 @@
 [package]
-name = "base-alloy-chains"
+name = "base-common-chains"
 description = "Chain configuration and network upgrade bindings"
 version.workspace = true
 edition.workspace = true
@@ -18,15 +18,49 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # alloy
-alloy-primitives.workspace = true
+alloy-eips.workspace = true
+alloy-chains.workspace = true
+alloy-genesis.workspace = true
 alloy-hardforks.workspace = true
+alloy-primitives = { workspace = true, features = ["map"] }
+
+# base
+base-common-genesis.workspace = true
+
+# revm
+revm.workspace = true
 
 # misc
+spin.workspace = true
 auto_impl.workspace = true
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 alloy-chains.workspace = true
 
+[[test]]
+name = "hardfork_consistency"
+required-features = ["test-utils"]
+
 [features]
-serde = [ "alloy-hardforks/serde", "alloy-primitives/serde", "dep:serde" ]
+default = []
+std = [
+	"alloy-chains/std",
+	"alloy-eips/std",
+	"alloy-genesis/std",
+	"alloy-primitives/std",
+	"base-common-genesis/std",
+	"revm/std",
+	"serde?/std",
+	"spin/std",
+]
+serde = [
+	"alloy-chains/serde",
+	"alloy-eips/serde",
+	"alloy-hardforks/serde",
+	"alloy-primitives/serde",
+	"base-common-genesis/serde",
+	"dep:serde",
+	"revm/serde",
+]
+test-utils = []

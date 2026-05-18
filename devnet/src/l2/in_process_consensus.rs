@@ -6,7 +6,9 @@
 
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    num::NonZeroUsize,
     sync::Arc,
+    time::Duration,
 };
 
 use alloy_genesis::ChainConfig;
@@ -14,13 +16,13 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::test_utils::get_available_port;
+use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
-use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
 };
 use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
-use base_consensus_rpc::{AdminApiClient, OpP2PApiClient, RollupNodeApiClient, RpcBuilder};
+use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
 use base_consensus_sources::BlockSigner;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
@@ -61,6 +63,8 @@ pub struct InProcessConsensusConfig {
     pub l1_slot_duration_override: Option<u64>,
     /// Whether the sequencer should start in stopped mode.
     pub sequencer_stopped: bool,
+    /// Number of L1 blocks to keep distance from the L1 head for the verifier.
+    pub verifier_l1_confs: u64,
 }
 
 /// A running in-process consensus node.
@@ -140,6 +144,7 @@ impl InProcessConsensus {
             beacon: config.l1_beacon_url,
             rpc_url: config.l1_rpc_url.clone(),
             slot_duration_override: config.l1_slot_duration_override,
+            verifier_l1_confs: config.verifier_l1_confs,
         };
 
         let engine_config = EngineConfig {
@@ -158,6 +163,8 @@ impl InProcessConsensus {
             admin_persistence: None,
             ws_enabled: false,
             dev_enabled: false,
+            http_timeout: Duration::from_secs(60),
+            max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
         };
 
         let mut builder = RollupNodeBuilder::new(
@@ -178,7 +185,7 @@ impl InProcessConsensus {
             });
         }
 
-        let node = builder.build();
+        let node = builder.build().await.wrap_err("Failed to build consensus node")?;
 
         let mode = config.mode;
         let (startup_tx, startup_rx) = tokio::sync::oneshot::channel();
@@ -245,7 +252,7 @@ impl InProcessConsensus {
         // (non-zero unsafe head hash), then pass the real value.
         let mut unsafe_head = B256::ZERO;
         for _ in 0..40 {
-            match client.op_sync_status().await {
+            match client.sync_status().await {
                 Ok(status) if status.unsafe_l2.block_info.hash != B256::ZERO => {
                     unsafe_head = status.unsafe_l2.block_info.hash;
                     break;

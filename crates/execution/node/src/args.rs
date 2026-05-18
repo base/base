@@ -4,8 +4,6 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use alloy_primitives::Address;
-use base_txpool::{CustomVerifierPolicy, VerifierAdmissionPolicy, VerifierAllowlist};
 use clap::{ValueEnum, builder::ArgPredicate};
 
 /// Transaction ordering strategy for the mempool.
@@ -25,32 +23,6 @@ pub enum TxpoolOrdering {
     /// Transactions are ordered by when they were received by the mempool,
     /// regardless of the fees they offer.
     Timestamp,
-}
-
-/// Admission policy for custom EIP-8130 verifiers at txpool ingress.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "kebab-case")]
-pub enum TxpoolCustomVerifierPolicy {
-    /// Accept any custom verifier that passes runtime validation.
-    Open,
-    /// Accept only allowlisted custom verifiers.
-    Allowlist,
-    /// Accept only pure custom verifiers.
-    Pure,
-    /// Accept allowlisted custom verifiers plus any pure verifier.
-    #[default]
-    AllowlistOrPure,
-}
-
-impl From<TxpoolCustomVerifierPolicy> for CustomVerifierPolicy {
-    fn from(value: TxpoolCustomVerifierPolicy) -> Self {
-        match value {
-            TxpoolCustomVerifierPolicy::Open => Self::Open,
-            TxpoolCustomVerifierPolicy::Allowlist => Self::Allowlist,
-            TxpoolCustomVerifierPolicy::Pure => Self::Pure,
-            TxpoolCustomVerifierPolicy::AllowlistOrPure => Self::AllowlistOrPure,
-        }
-    }
 }
 
 /// Parameters for rollup configuration
@@ -96,22 +68,11 @@ pub struct RollupArgs {
     #[arg(long = "rollup.txpool-ordering", default_value = "coinbase-tip")]
     pub txpool_ordering: TxpoolOrdering,
 
-    /// Admission policy for custom EIP-8130 verifiers in the txpool.
-    ///
-    /// Native verifiers are always accepted. This flag controls only custom
-    /// verifier contracts.
-    #[arg(long = "rollup.txpool-custom-verifier-policy", default_value = "allowlist-or-pure")]
-    pub txpool_custom_verifier_policy: TxpoolCustomVerifierPolicy,
-
-    /// Allowlisted custom EIP-8130 verifier addresses for txpool admission.
-    ///
-    /// Can be provided multiple times or as a comma-delimited list.
-    #[arg(
-        long = "rollup.txpool-custom-verifier-allowlist",
-        value_name = "ADDRESS",
-        value_delimiter = ','
-    )]
-    pub txpool_custom_verifier_allowlist: Vec<Address>,
+    /// Maximum number of inflight EIP-7702 delegated account transactions per sender in the
+    /// txpool. Reth defaults to 1, which prevents delegated accounts from submitting multiple
+    /// transactions within a block (e.g. buy + approve in a single Flashblock).
+    #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 1)]
+    pub max_inflight_delegated_slots: usize,
 
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
     /// faster.
@@ -172,6 +133,13 @@ pub struct RollupArgs {
         default_value_t = 0
     )]
     pub proofs_history_verification_interval: u64,
+
+    /// Enable the Base discv5 protocol identity.
+    ///
+    /// When enabled, the node advertises itself with the `basev0` protocol ID in discv5,
+    /// allowing it to find and connect to other Base nodes more efficiently.
+    #[arg(long = "rollup.discovery.v5.base", default_value_t = true, action = clap::ArgAction::Set)]
+    pub base_protocol: bool,
 }
 
 impl Default for RollupArgs {
@@ -184,23 +152,14 @@ impl Default for RollupArgs {
             sequencer_headers: Vec::new(),
             min_suggested_priority_fee: 1_000_000,
             txpool_ordering: TxpoolOrdering::default(),
-            txpool_custom_verifier_policy: TxpoolCustomVerifierPolicy::default(),
-            txpool_custom_verifier_allowlist: Vec::new(),
+            max_inflight_delegated_slots: 1,
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_window: 1_296_000,
             proofs_history_prune_interval: Duration::from_secs(15),
             proofs_history_verification_interval: 0,
+            base_protocol: true,
         }
-    }
-}
-
-impl RollupArgs {
-    /// Returns the txpool verifier admission policy implied by the CLI args.
-    pub fn verifier_admission_policy(&self) -> VerifierAdmissionPolicy {
-        let allowlist =
-            VerifierAllowlist::new(self.txpool_custom_verifier_allowlist.iter().copied());
-        VerifierAdmissionPolicy::new(self.txpool_custom_verifier_policy.into(), allowlist)
     }
 }
 
@@ -282,6 +241,18 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_max_inflight_delegated_slots() {
+        let expected_args = RollupArgs { max_inflight_delegated_slots: 4, ..Default::default() };
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.txpool-max-inflight-delegated-slots",
+            "4",
+        ])
+        .args;
+        assert_eq!(args, expected_args);
+    }
+
+    #[test]
     fn test_parse_txpool_ordering_default() {
         let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
         assert_eq!(args.txpool_ordering, TxpoolOrdering::CoinbaseTip);
@@ -310,33 +281,19 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_txpool_custom_verifier_policy_default() {
+    fn test_parse_base_protocol_default_true() {
         let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
-        assert_eq!(args.txpool_custom_verifier_policy, TxpoolCustomVerifierPolicy::AllowlistOrPure);
+        assert!(args.base_protocol);
     }
 
     #[test]
-    fn test_parse_txpool_custom_verifier_policy_open() {
+    fn test_parse_base_protocol_disabled() {
         let args = CommandParser::<RollupArgs>::parse_from([
             "reth",
-            "--rollup.txpool-custom-verifier-policy",
-            "open",
+            "--rollup.discovery.v5.base",
+            "false",
         ])
         .args;
-        assert_eq!(args.txpool_custom_verifier_policy, TxpoolCustomVerifierPolicy::Open);
-    }
-
-    #[test]
-    fn test_parse_txpool_custom_verifier_allowlist() {
-        let args = CommandParser::<RollupArgs>::parse_from([
-            "reth",
-            "--rollup.txpool-custom-verifier-allowlist",
-            "0x1111111111111111111111111111111111111111,0x2222222222222222222222222222222222222222",
-        ])
-        .args;
-        assert_eq!(
-            args.txpool_custom_verifier_allowlist,
-            vec![Address::repeat_byte(0x11), Address::repeat_byte(0x22)]
-        );
+        assert!(!args.base_protocol);
     }
 }

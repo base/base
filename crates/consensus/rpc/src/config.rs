@@ -1,6 +1,6 @@
 //! Contains the RPC Configuration.
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, num::NonZeroUsize, path::PathBuf, time::Duration};
 
 /// The RPC configuration.
 #[derive(Debug, Clone)]
@@ -18,6 +18,10 @@ pub struct RpcBuilder {
     pub ws_enabled: bool,
     /// Enable development RPC endpoints
     pub dev_enabled: bool,
+    /// HTTP request timeout for the RPC server.
+    pub http_timeout: Duration,
+    /// Maximum number of concurrent in-flight RPC requests.
+    pub max_concurrent_requests: NonZeroUsize,
 }
 
 impl RpcBuilder {
@@ -29,6 +33,11 @@ impl RpcBuilder {
     /// Returns whether development RPC endpoints are enabled
     pub const fn dev_enabled(&self) -> bool {
         self.dev_enabled
+    }
+
+    /// Returns whether the admin RPC namespace is enabled.
+    pub const fn admin_enabled(&self) -> bool {
+        self.enable_admin
     }
 
     /// Returns the socket address of the [`RpcBuilder`].

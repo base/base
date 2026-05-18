@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::{
     app::{Action, Resources, View},
-    commands::common::COLOR_BASE_BLUE,
+    commands::COLOR_BASE_BLUE,
     tui::Keybinding,
 };
 
@@ -19,7 +19,7 @@ const KEYBINDINGS: &[Keybinding] = &[
 
 /// View displaying chain configuration and L1 system config parameters.
 #[derive(Debug)]
-pub(crate) struct ConfigView {
+pub struct ConfigView {
     needs_refresh: bool,
 }
 
@@ -31,7 +31,7 @@ impl Default for ConfigView {
 
 impl ConfigView {
     /// Creates a new config view.
-    pub(crate) const fn new() -> Self {
+    pub const fn new() -> Self {
         Self { needs_refresh: true }
     }
 }
@@ -86,7 +86,10 @@ fn render_chain_config(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
         ("RPC", config.rpc.as_str()),
         ("Flashblocks WS", config.flashblocks_ws.as_str()),
         ("L1 RPC", config.l1_rpc.as_str()),
-        ("Op-Node RPC", config.op_node_rpc.as_ref().map(|u| u.as_str()).unwrap_or("-")),
+        (
+            "Consensus Node RPC",
+            config.consensus_node_rpc.as_ref().map(|u| u.as_str()).unwrap_or("-"),
+        ),
         ("Batcher Address", &batcher_str),
     ];
 

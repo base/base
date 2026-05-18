@@ -41,6 +41,16 @@ pub enum RegistrarError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
+    /// An on-chain `NitroEnclaveVerifier` contract call failed.
+    #[error("nitro verifier call failed: {context}")]
+    NitroVerifierCall {
+        /// Description of the call that failed (e.g. `"revokedCerts(0x…)"`).
+        context: String,
+        /// The underlying contract call error.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
     /// Transaction signing or submission failed.
     #[error("signing error")]
     Signing(#[source] Box<dyn std::error::Error + Send + Sync>),
@@ -52,6 +62,10 @@ pub enum RegistrarError {
     /// Configuration is invalid.
     #[error("config error: {0}")]
     Config(String),
+
+    /// CRL (Certificate Revocation List) check failed.
+    #[error("CRL error: {0}")]
+    Crl(#[from] crate::crl::CrlError),
 }
 
 impl From<ProverError> for RegistrarError {

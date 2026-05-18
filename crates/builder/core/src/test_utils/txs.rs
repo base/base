@@ -8,9 +8,9 @@ use alloy_consensus::TxEip1559;
 use alloy_eips::{BlockNumberOrTag, eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
-use base_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
-use base_alloy_network::Base;
-use base_txpool::BasePooledTransaction;
+use base_common_consensus::{BaseTxEnvelope, BaseTypedTransaction};
+use base_common_network::Base;
+use base_execution_txpool::BasePooledTransaction;
 use dashmap::DashMap;
 use futures::StreamExt;
 use reth_primitives::Recovered;
@@ -18,7 +18,7 @@ use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, Transac
 use tokio::sync::watch;
 use tracing::debug;
 
-use super::{PrivateKeySigner, funded_signer, sign_op_tx};
+use super::{PrivateKeySigner, funded_signer, sign_base_tx};
 
 /// Builder for constructing and sending EIP-1559 transactions in tests.
 #[derive(Clone, Debug)]
@@ -115,7 +115,7 @@ impl TransactionBuilder {
 
     /// Signs the transaction and returns it as a recovered envelope. Auto-fetches nonce and base
     /// fee from the provider when not explicitly set.
-    pub async fn build(mut self) -> Recovered<OpTxEnvelope> {
+    pub async fn build(mut self) -> Recovered<BaseTxEnvelope> {
         let signer = self.signer.unwrap_or_else(funded_signer);
         let signer_address = signer.address();
 
@@ -161,7 +161,7 @@ impl TransactionBuilder {
             self.tx.max_fee_per_gas = base_fee + self.tx.max_priority_fee_per_gas;
         }
 
-        sign_op_tx(&signer, OpTypedTransaction::Eip1559(self.tx))
+        sign_base_tx(&signer, BaseTypedTransaction::Eip1559(self.tx))
             .expect("Failed to sign transaction")
     }
 

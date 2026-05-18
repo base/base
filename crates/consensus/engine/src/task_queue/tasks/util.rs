@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::AttributesWithParent;
 
-use super::{BuildTask, BuildTaskError, EngineTaskExt, SealTask, SealTaskError};
-use crate::{EngineClient, EngineState};
+use super::{BuildTaskError, EngineTaskExt, SealTask, SealTaskError};
+use crate::{Engine, EngineClient, EngineState, InsertPayloadSafety};
 
 /// Error type for build and seal operations.
 #[derive(Debug, thiserror::Error)]
@@ -22,7 +22,7 @@ pub(in crate::task_queue) enum BuildAndSealError {
 /// Builds and seals a payload in sequence.
 ///
 /// This is a utility function that:
-/// 1. Creates and executes a [`BuildTask`] to initiate block building
+/// 1. Starts an execution-layer build
 /// 2. Creates and executes a [`SealTask`] to seal the block, referencing the initiated payload
 ///
 /// This pattern is commonly used for Holocene deposits-only fallback and other scenarios
@@ -34,28 +34,24 @@ pub(in crate::task_queue) enum BuildAndSealError {
 /// * `engine` - The engine client
 /// * `cfg` - The rollup configuration
 /// * `attributes` - The payload attributes to build
-/// * `is_attributes_derived` - Whether the attributes were derived or created by the sequencer
+/// * `payload_safety` - Whether the sealed payload should advance the safe head
 pub(in crate::task_queue) async fn build_and_seal<EngineClient_: EngineClient>(
     state: &mut EngineState,
     engine: Arc<EngineClient_>,
     cfg: Arc<RollupConfig>,
     attributes: AttributesWithParent,
-    is_attributes_derived: bool,
+    payload_safety: InsertPayloadSafety,
 ) -> Result<(), BuildAndSealError> {
-    // Execute the build task
-    let payload_id = BuildTask::new(
-        Arc::clone(&engine),
-        Arc::clone(&cfg),
+    let payload_id = Engine::<EngineClient_>::build_with_state(
+        state,
+        engine.as_ref(),
+        cfg.as_ref(),
         attributes.clone(),
-        None, // Build task doesn't send the payload yet
     )
-    .execute(state)
     .await?;
 
     // Execute the seal task with the payload ID from the build
-    SealTask::new(engine, cfg, payload_id, attributes, is_attributes_derived, None)
-        .execute(state)
-        .await?;
+    SealTask::new(engine, cfg, payload_id, attributes, payload_safety, None).execute(state).await?;
 
     Ok(())
 }

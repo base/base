@@ -3,9 +3,14 @@
 
 mod backends;
 pub use backends::{
-    ArtifactStorageConfig, BackendConfig, BackendRegistry, BackendType, ProofProcessingResult,
-    ProveResult, ProvingBackend, SessionStatus, build_backend,
+    ArtifactClientWrapper, ArtifactStorageConfig, BackendConfig, BackendRegistry, BackendType,
+    L1HeadCalculator, OpSuccinctClusterBackend, OpSuccinctMockBackend, OpSuccinctNetworkBackend,
+    OpSuccinctProvider, OpSuccinctWitnessParams, ProofProcessingResult, ProveResult,
+    ProvingBackend, SessionStatus,
 };
+
+pub mod metrics;
+pub use metrics::ProverMetrics;
 
 mod proof_request_manager;
 pub use proof_request_manager::ProofRequestManager;
@@ -15,6 +20,9 @@ pub use proxy::{ProxyConfig, ProxyConfigs, RateLimitConfig, start_all_proxies};
 
 mod server;
 pub use server::ProverServiceServer;
+
+mod snark_e2e;
+pub use snark_e2e::SnarkE2e;
 
 mod worker;
 pub use worker::{ProverWorker, ProverWorkerPool, StatusPoller};

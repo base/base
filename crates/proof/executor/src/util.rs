@@ -3,9 +3,9 @@
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::Bytes;
-use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
-use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_consensus_genesis::RollupConfig;
+use base_common_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
+use base_common_genesis::RollupConfig;
+use base_common_rpc_types_engine::BasePayloadAttributes;
 
 use crate::{Eip1559ValidationError, ExecutorError, ExecutorResult};
 
@@ -60,14 +60,14 @@ pub(crate) fn decode_jovian_eip_1559_params_block_header(
 ///
 /// ## Takes
 /// - `config`: The [`RollupConfig`] for the chain.
-/// - `attributes`: The [`OpPayloadAttributes`] for the block.
+/// - `attributes`: The [`BasePayloadAttributes`] for the block.
 ///
 /// ## Returns
 /// - `Ok(data)`: The encoded extra data.
 /// - `Err(ExecutorError::MissingEIP1559Params)`: If the EIP-1559 parameters are missing.
 pub(crate) fn encode_holocene_eip_1559_params(
     config: &RollupConfig,
-    attributes: &OpPayloadAttributes,
+    attributes: &BasePayloadAttributes,
 ) -> ExecutorResult<Bytes> {
     Ok(HoloceneExtraData::encode(
         attributes.eip_1559_params.ok_or(ExecutorError::MissingEIP1559Params)?,
@@ -79,14 +79,14 @@ pub(crate) fn encode_holocene_eip_1559_params(
 ///
 /// ## Takes
 /// - `config`: The [`RollupConfig`] for the chain.
-/// - `attributes`: The [`OpPayloadAttributes`] for the block.
+/// - `attributes`: The [`BasePayloadAttributes`] for the block.
 ///
 /// ## Returns
 /// - `Ok(data)`: The encoded extra data.
 /// - `Err(ExecutorError::MissingEIP1559Params)`: If the EIP-1559 parameters are missing.
 pub(crate) fn encode_jovian_eip_1559_params(
     config: &RollupConfig,
-    attributes: &OpPayloadAttributes,
+    attributes: &BasePayloadAttributes,
 ) -> ExecutorResult<Bytes> {
     Ok(JovianExtraData::encode(
         attributes.eip_1559_params.ok_or(ExecutorError::MissingEIP1559Params)?,
@@ -102,16 +102,16 @@ mod test {
     use alloy_consensus::Header;
     use alloy_primitives::{B64, b64, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
-    use base_alloy_rpc_types_engine::OpPayloadAttributes;
-    use base_consensus_genesis::{BaseFeeConfig, RollupConfig};
+    use base_common_genesis::{FeeConfig, RollupConfig};
+    use base_common_rpc_types_engine::BasePayloadAttributes;
 
     use super::decode_holocene_eip_1559_params_block_header;
     use crate::util::{
         decode_jovian_eip_1559_params_block_header, encode_holocene_eip_1559_params,
     };
 
-    fn mock_payload(eip_1559_params: Option<B64>) -> OpPayloadAttributes {
-        OpPayloadAttributes {
+    fn mock_payload(eip_1559_params: Option<B64>) -> BasePayloadAttributes {
+        BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: 0,
                 prev_randao: Default::default(),
@@ -172,7 +172,7 @@ mod test {
     #[test]
     fn test_encode_holocene_eip_1559_params_missing() {
         let cfg = RollupConfig {
-            chain_op_config: BaseFeeConfig {
+            chain_op_config: FeeConfig {
                 eip1559_denominator: 50,
                 eip1559_elasticity: 64,
                 eip1559_denominator_canyon: 250,
@@ -187,7 +187,7 @@ mod test {
     #[test]
     fn test_encode_holocene_eip_1559_params_default() {
         let cfg = RollupConfig {
-            chain_op_config: BaseFeeConfig {
+            chain_op_config: FeeConfig {
                 eip1559_denominator: 50,
                 eip1559_elasticity: 64,
                 eip1559_denominator_canyon: 250,
@@ -205,7 +205,7 @@ mod test {
     #[test]
     fn test_encode_holocene_eip_1559_params() {
         let cfg = RollupConfig {
-            chain_op_config: BaseFeeConfig {
+            chain_op_config: FeeConfig {
                 eip1559_denominator: 50,
                 eip1559_elasticity: 64,
                 eip1559_denominator_canyon: 250,

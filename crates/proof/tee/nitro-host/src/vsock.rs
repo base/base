@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use base_proof_preimage::PreimageKey;
-use base_proof_tee_nitro_enclave::{EnclaveRequest, EnclaveResponse, Frame, TeeProofResult};
+use base_proof_primitives::ProofResult;
+use base_proof_tee_nitro_enclave::{EnclaveRequest, EnclaveResponse, Frame};
 use tokio_vsock::{VsockAddr, VsockStream};
 use tracing::info;
 
@@ -32,15 +33,15 @@ impl VsockTransport {
         let addr = VsockAddr::new(self.cid, self.port);
         tokio::time::timeout(CONNECT_TIMEOUT, VsockStream::connect(addr))
             .await
-            .map_err(|_| NitroHostError::Transport("connect timed out".into()))?
-            .map_err(|e| NitroHostError::Transport(format!("connect failed: {e}")))
+            .map_err(|_| NitroHostError::ConnectTimeout)?
+            .map_err(NitroHostError::ConnectFailed)
     }
 
     /// Send preimages to the enclave and return the proof result.
     pub async fn prove(
         &self,
         preimages: Vec<(PreimageKey, Vec<u8>)>,
-    ) -> Result<TeeProofResult, NitroHostError> {
+    ) -> Result<ProofResult, NitroHostError> {
         let preimage_count = preimages.len();
         let total_value_bytes: usize = preimages.iter().map(|(_, v)| v.len()).sum();
         info!(
@@ -55,17 +56,16 @@ impl VsockTransport {
 
         Frame::write(&mut stream, &EnclaveRequest::Prove(preimages))
             .await
-            .map_err(|e| NitroHostError::Transport(format!("write failed: {e}")))?;
+            .map_err(NitroHostError::FrameWrite)?;
 
-        let response: EnclaveResponse = Frame::read(&mut stream)
-            .await
-            .map_err(|e| NitroHostError::Transport(format!("read failed: {e}")))?;
+        let response: EnclaveResponse =
+            Frame::read(&mut stream).await.map_err(NitroHostError::FrameRead)?;
 
         match response {
             EnclaveResponse::Prove(result) => Ok(*result),
-            EnclaveResponse::Error(e) => Err(NitroHostError::Transport(format!("enclave: {e}"))),
+            EnclaveResponse::Error(e) => Err(NitroHostError::EnclaveRemoteError(e)),
             EnclaveResponse::SignerPublicKey(_) | EnclaveResponse::SignerAttestation(_) => {
-                Err(NitroHostError::Transport("unexpected response for prove".into()))
+                Err(NitroHostError::UnexpectedResponse { expected: "prove" })
             }
         }
     }
@@ -76,26 +76,24 @@ impl VsockTransport {
 
         Frame::write(&mut stream, &EnclaveRequest::SignerPublicKey)
             .await
-            .map_err(|e| NitroHostError::Transport(format!("write failed: {e}")))?;
+            .map_err(NitroHostError::FrameWrite)?;
 
         let response: EnclaveResponse =
             tokio::time::timeout(SIGNER_TIMEOUT, Frame::read(&mut stream))
                 .await
-                .map_err(|_| NitroHostError::Transport("signer_public_key timed out".into()))?
-                .map_err(|e| NitroHostError::Transport(format!("read failed: {e}")))?;
+                .map_err(|_| NitroHostError::ResponseTimeout { operation: "signer_public_key" })?
+                .map_err(NitroHostError::FrameRead)?;
 
         match response {
             EnclaveResponse::SignerPublicKey(key) => {
                 if key.len() != 65 || key[0] != 0x04 {
-                    return Err(NitroHostError::Transport(
-                        "invalid signer public key: expected 65-byte uncompressed SEC1 key".into(),
-                    ));
+                    return Err(NitroHostError::InvalidSignerKey);
                 }
                 Ok(key)
             }
-            EnclaveResponse::Error(e) => Err(NitroHostError::Transport(format!("enclave: {e}"))),
+            EnclaveResponse::Error(e) => Err(NitroHostError::EnclaveRemoteError(e)),
             EnclaveResponse::Prove(_) | EnclaveResponse::SignerAttestation(_) => {
-                Err(NitroHostError::Transport("unexpected response for signer_public_key".into()))
+                Err(NitroHostError::UnexpectedResponse { expected: "signer_public_key" })
             }
         }
     }
@@ -110,19 +108,19 @@ impl VsockTransport {
 
         Frame::write(&mut stream, &EnclaveRequest::SignerAttestation { user_data, nonce })
             .await
-            .map_err(|e| NitroHostError::Transport(format!("write failed: {e}")))?;
+            .map_err(NitroHostError::FrameWrite)?;
 
         let response: EnclaveResponse =
             tokio::time::timeout(SIGNER_TIMEOUT, Frame::read(&mut stream))
                 .await
-                .map_err(|_| NitroHostError::Transport("signer_attestation timed out".into()))?
-                .map_err(|e| NitroHostError::Transport(format!("read failed: {e}")))?;
+                .map_err(|_| NitroHostError::ResponseTimeout { operation: "signer_attestation" })?
+                .map_err(NitroHostError::FrameRead)?;
 
         match response {
             EnclaveResponse::SignerAttestation(doc) => Ok(doc),
-            EnclaveResponse::Error(e) => Err(NitroHostError::Transport(format!("enclave: {e}"))),
+            EnclaveResponse::Error(e) => Err(NitroHostError::EnclaveRemoteError(e)),
             EnclaveResponse::Prove(_) | EnclaveResponse::SignerPublicKey(_) => {
-                Err(NitroHostError::Transport("unexpected response for signer_attestation".into()))
+                Err(NitroHostError::UnexpectedResponse { expected: "signer_attestation" })
             }
         }
     }

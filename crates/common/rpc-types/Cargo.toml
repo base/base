@@ -1,5 +1,5 @@
 [package]
-name = "base-alloy-rpc-types"
+name = "base-common-rpc-types"
 description = "Base RPC types"
 
 version.workspace = true
@@ -15,7 +15,7 @@ workspace = true
 
 [dependencies]
 # Workspace
-base-alloy-consensus = { workspace = true, features = ["serde"] }
+base-common-consensus = { workspace = true, features = ["serde"] }
 
 # Alloy
 alloy-serde.workspace = true
@@ -32,7 +32,7 @@ serde = { workspace = true, features = ["derive", "alloc"] }
 # reth
 revm = { workspace = true, optional = true }
 alloy-evm = { workspace = true, optional = true }
-base-revm = { workspace = true, optional = true }
+base-common-evm = { workspace = true, optional = true }
 reth-rpc-convert = { workspace = true, optional = true }
 
 # signing
@@ -64,8 +64,8 @@ std = [
 	"alloy-primitives/std",
 	"alloy-rpc-types-eth/std",
 	"alloy-serde/std",
-	"base-alloy-consensus/std",
-	"base-revm?/std",
+	"base-common-consensus/std",
+	"base-common-evm?/std",
 	"derive_more/std",
 	"revm?/std",
 	"serde/std",
@@ -77,27 +77,27 @@ arbitrary = [
 	"alloy-primitives/arbitrary",
 	"alloy-rpc-types-eth/arbitrary",
 	"alloy-serde/arbitrary",
-	"base-alloy-consensus/arbitrary",
+	"base-common-consensus/arbitrary",
 	"dep:arbitrary",
 	"revm?/arbitrary",
 	"std",
 ]
-k256 = [ "alloy-rpc-types-eth/k256", "base-alloy-consensus/k256" ]
+k256 = [ "alloy-rpc-types-eth/k256", "base-common-consensus/k256" ]
 serde = [
 	"alloy-consensus/serde",
 	"alloy-eips/serde",
 	"alloy-network-primitives/serde",
 	"alloy-primitives/serde",
 	"alloy-rpc-types-eth/serde",
-	"base-alloy-consensus/serde",
-	"base-revm?/serde",
+	"base-common-consensus/serde",
+	"base-common-evm?/serde",
 	"revm?/serde",
 ]
 reth = [
 	"dep:alloy-evm",
 	"dep:alloy-network",
 	"dep:alloy-signer",
-	"dep:base-revm",
+	"dep:base-common-evm",
 	"dep:reth-rpc-convert",
 	"dep:revm",
 	"base-alloy-consensus/evm",

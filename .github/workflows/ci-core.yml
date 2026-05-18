@@ -1,0 +1,331 @@
+name: CI Core
+
+on:
+  workflow_call:
+    inputs:
+      base_ref:
+        required: false
+        type: string
+        default: ""
+      build_command:
+        required: true
+        type: string
+      test_command:
+        required: true
+        type: string
+      clippy_command:
+        required: true
+        type: string
+      run_sigsegv:
+        required: false
+        type: boolean
+        default: false
+      run_devnet:
+        required: false
+        type: boolean
+        default: false
+      allow_registry_login:
+        required: true
+        type: boolean
+      save_rust_cache:
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+
+permissions:
+  checks: write
+  contents: read
+
+jobs:
+  changes:
+    name: Detect Docker Changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          filters: |
+            docker:
+              - 'etc/docker/Dockerfile.*'
+              - 'etc/docker/docker-bake.hcl'
+              - '.dockerignore'
+
+  metadata-checks:
+    name: Metadata Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup
+        with:
+          tools: cargo-deny
+      - name: Validate Cargo.lock is up to date
+        run: cargo metadata --format-version 1 --no-deps --locked >/dev/null
+      - name: Check cargo-deny
+        run: cargo deny check bans --hide-inclusion-graph
+      - name: Check crate dependencies
+        run: ./etc/scripts/ci/check-crate-deps.sh
+
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup
+        with:
+          toolchain: nightly
+          components: rustfmt
+          rust-cache-shared-key: "nightly"
+          rust-cache-save: ${{ inputs.save_rust_cache }}
+      - run: just check::format
+
+  build:
+    name: Build
+    runs-on:
+      group: BasePerfRunnerGroup
+    env:
+      BASE_REF: ${{ inputs.base_ref }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: ${{ inputs.base_ref != '' && 0 || 1 }}
+      - name: Fetch base branch
+        if: inputs.base_ref != ''
+        run: git fetch origin "$BASE_REF":refs/remotes/origin/"$BASE_REF"
+      - uses: ./.github/actions/setup
+        with:
+          free-disk: "true"
+          native-deps: "true"
+          mold: "true"
+          foundry: "true"
+          sp1: "true"
+          elf-cache: "true"
+          rust-cache-shared-key: "stable"
+          rust-cache-save: ${{ inputs.save_rust_cache }}
+      - name: Run build
+        run: ${{ inputs.build_command }}
+
+  clippy:
+    name: Clippy
+    runs-on:
+      group: BasePerfRunnerGroup
+    env:
+      BASE_REF: ${{ inputs.base_ref }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: ${{ inputs.base_ref != '' && 0 || 1 }}
+      - name: Fetch base branch
+        if: inputs.base_ref != ''
+        run: git fetch origin "$BASE_REF":refs/remotes/origin/"$BASE_REF"
+      - uses: ./.github/actions/setup
+        with:
+          free-disk: "true"
+          native-deps: "true"
+          mold: "true"
+          foundry: "true"
+          components: clippy
+          rust-cache-shared-key: "stable"
+          rust-cache-save: ${{ inputs.save_rust_cache }}
+      - name: Run clippy
+        run: ${{ inputs.clippy_command }}
+
+  test:
+    name: Test
+    runs-on:
+      group: BasePerfRunnerGroup
+    env:
+      BASE_REF: ${{ inputs.base_ref }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: ${{ inputs.base_ref != '' && 0 || 1 }}
+      - name: Fetch base branch
+        if: inputs.base_ref != ''
+        run: git fetch origin "$BASE_REF":refs/remotes/origin/"$BASE_REF"
+      - uses: ./.github/actions/setup
+        with:
+          free-disk: "true"
+          native-deps: "true"
+          mold: "true"
+          foundry: "true"
+          sp1: "true"
+          elf-cache: "true"
+          tools: cargo-nextest
+          rust-cache-shared-key: "stable"
+          rust-cache-save: ${{ inputs.save_rust_cache }}
+      - name: Clear prior JUnit report
+        run: rm -f target/nextest/ci/test-results.xml
+      - name: Run tests
+        run: ${{ inputs.test_command }}
+      - name: Check for JUnit testcases
+        if: always()
+        id: junit-results
+        shell: bash
+        run: |
+          if [ -f target/nextest/ci/test-results.xml ] && grep -q '<testcase[ >]' target/nextest/ci/test-results.xml; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Report test results
+        if: ${{ always() && steps.junit-results.outputs.present == 'true' }}
+        uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
+        with:
+          report_paths: target/nextest/ci/test-results.xml
+
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup
+        with:
+          free-disk: "true"
+          native-deps: "true"
+          mold: "true"
+          rust-cache-shared-key: "stable"
+      - run: cargo bench --locked -p base-proof-mpt --bench trie_node -- --test
+
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Login to GHCR
+        if: inputs.allow_registry_login
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Docker image
+        run: docker buildx bake -f etc/docker/docker-bake.hcl client --load
+
+  test-musl-sigsegv:
+    name: Test SIGSEGV (musl)
+    if: inputs.run_sigsegv
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update && sudo apt-get install -y musl-tools
+          rustup target add x86_64-unknown-linux-musl
+      - name: Run SIGSEGV tests under musl
+        run: cargo test --locked -p base-cli-utils --test sigsegv_test --target x86_64-unknown-linux-musl
+
+  devnet-tests:
+    name: Devnet Tests
+    if: inputs.run_devnet
+    runs-on:
+      group: BasePerfRunnerGroup
+    timeout-minutes: 60
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup
+        with:
+          free-disk: "true"
+          native-deps: "true"
+          mold: "true"
+          foundry: "true"
+          sp1: "true"
+          elf-cache: "true"
+          tools: cargo-nextest
+          rust-cache-shared-key: "stable"
+      - name: Clear prior JUnit report
+        run: rm -f target/nextest/ci/test-results.xml
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Pre-pull docker images
+        run: just devnet pull-images
+      - name: Run devnet tests
+        run: just devnet tests-ci
+      - name: Check for JUnit testcases
+        if: always()
+        id: junit-results
+        shell: bash
+        run: |
+          if [ -f target/nextest/ci/test-results.xml ] && grep -q '<testcase[ >]' target/nextest/ci/test-results.xml; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Report test results
+        if: ${{ always() && steps.junit-results.outputs.present == 'true' }}
+        uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
+        with:
+          report_paths: target/nextest/ci/test-results.xml

@@ -3,13 +3,21 @@
 use alloc::vec::Vec;
 use core::mem;
 
-use alloy_consensus::{Sealable, Transaction, Typed2718};
+use alloy_consensus::{InMemorySize, Sealable, Transaction, Typed2718};
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718, IsTyped2718},
     eip2930::AccessList,
 };
+#[cfg(feature = "evm")]
+use alloy_evm::FromRecoveredTx;
+#[cfg(feature = "alloy-compat")]
+use alloy_network::{UnknownTxEnvelope, UnknownTypedTransaction};
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxHash, TxKind, U256, keccak256};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header};
+#[cfg(feature = "alloy-compat")]
+use alloy_rpc_types_eth::ConversionError;
+#[cfg(feature = "evm")]
+use revm::context::TxEnv;
 
 use super::OpTxType;
 
@@ -101,7 +109,7 @@ impl TxDeposit {
 
     /// Outputs the length of the transaction's fields, without a RLP header or length of the
     /// eip155 fields.
-    pub(crate) fn rlp_encoded_fields_length(&self) -> usize {
+    pub fn rlp_encoded_fields_length(&self) -> usize {
         self.source_hash.length()
             + self.from.length()
             + self.to.length()
@@ -114,7 +122,7 @@ impl TxDeposit {
 
     /// Encodes only the transaction's fields into the desired buffer, without a RLP header.
     /// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/deposits.md#the-deposited-transaction-type>
-    pub(crate) fn rlp_encode_fields(&self, out: &mut dyn alloy_rlp::BufMut) {
+    pub fn rlp_encode_fields(&self, out: &mut dyn alloy_rlp::BufMut) {
         self.source_hash.encode(out);
         self.from.encode(out);
         self.to.encode(out);
@@ -139,7 +147,7 @@ impl TxDeposit {
     }
 
     /// Get the transaction type
-    pub(crate) const fn tx_type(&self) -> OpTxType {
+    pub const fn tx_type(&self) -> OpTxType {
         OpTxType::Deposit
     }
 
@@ -333,6 +341,30 @@ impl Sealable for TxDeposit {
 }
 
 #[cfg(feature = "alloy-compat")]
+impl TryFrom<UnknownTxEnvelope> for TxDeposit {
+    type Error = ConversionError;
+
+    fn try_from(value: UnknownTxEnvelope) -> Result<Self, Self::Error> {
+        value.inner.try_into()
+    }
+}
+
+#[cfg(feature = "alloy-compat")]
+impl TryFrom<UnknownTypedTransaction> for TxDeposit {
+    type Error = ConversionError;
+
+    fn try_from(value: UnknownTypedTransaction) -> Result<Self, Self::Error> {
+        if !value.is_type(OpTxType::Deposit as u8) {
+            return Err(ConversionError::Custom("invalid transaction type".to_string()));
+        }
+        value
+            .fields
+            .deserialize_into()
+            .map_err(|_| ConversionError::Custom("invalid transaction data".to_string()))
+    }
+}
+
+#[cfg(feature = "alloy-compat")]
 impl From<TxDeposit> for alloy_rpc_types_eth::TransactionRequest {
     fn from(tx: TxDeposit) -> Self {
         let TxDeposit {
@@ -352,6 +384,31 @@ impl From<TxDeposit> for alloy_rpc_types_eth::TransactionRequest {
             value: Some(value),
             gas: Some(gas_limit),
             input: input.into(),
+            ..Default::default()
+        }
+    }
+}
+
+#[cfg(feature = "evm")]
+impl FromRecoveredTx<TxDeposit> for TxEnv {
+    fn from_recovered_tx(tx: &TxDeposit, caller: alloy_primitives::Address) -> Self {
+        let TxDeposit {
+            to,
+            value,
+            gas_limit,
+            input,
+            source_hash: _,
+            from: _,
+            mint: _,
+            is_system_transaction: _,
+        } = tx;
+        Self {
+            tx_type: tx.ty(),
+            caller,
+            gas_limit: *gas_limit,
+            kind: *to,
+            value: *value,
+            data: input.clone(),
             ..Default::default()
         }
     }
@@ -416,6 +473,13 @@ pub fn serde_deposit_tx_rpc<T: serde::Serialize, S: serde::Serializer>(
     }
 
     SerdeHelper { value, signature: TxDeposit::signature() }.serialize(serializer)
+}
+
+impl InMemorySize for TxDeposit {
+    #[inline]
+    fn size(&self) -> usize {
+        Self::size(self)
+    }
 }
 
 #[cfg(test)]
@@ -693,7 +757,7 @@ pub(super) mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use base_alloy_consensus::{TxDeposit, serde_bincode_compat};
+    /// use base_common_consensus::{TxDeposit, serde_bincode_compat};
     /// use serde::{Deserialize, Serialize};
     /// use serde_with::serde_as;
     ///

@@ -7,7 +7,6 @@ use std::{
 
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_alloy_consensus::BaseBlock;
 use base_batcher_core::{
     BatchDriver, BatchDriverConfig, DaThrottle, ThrottleConfig, ThrottleController,
     ThrottleStrategy,
@@ -20,6 +19,7 @@ use base_batcher_encoder::{
     BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId,
 };
 use base_batcher_source::{L2BlockEvent, SourceError, UnsafeBlockSource};
+use base_common_consensus::BaseBlock;
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
@@ -47,6 +47,7 @@ fn test_throttle_client_called_on_high_backlog() {
                 inbox: Address::ZERO,
                 max_pending_transactions: 1,
                 drain_timeout: Duration::from_millis(10),
+                force_blobs_when_throttling: true,
             },
             DaThrottle::new(throttle, Arc::new(throttle_client)),
             PendingL1HeadSource,
@@ -91,6 +92,7 @@ fn test_throttle_client_called_with_upper_limits_on_zero_backlog() {
                 inbox: Address::ZERO,
                 max_pending_transactions: 1,
                 drain_timeout: Duration::from_millis(10),
+                force_blobs_when_throttling: true,
             },
             DaThrottle::new(throttle, Arc::new(throttle_client)),
             PendingL1HeadSource,
@@ -135,6 +137,7 @@ fn test_throttle_not_called_redundantly() {
                 inbox: Address::ZERO,
                 max_pending_transactions: 1,
                 drain_timeout: Duration::from_millis(10),
+                force_blobs_when_throttling: true,
             },
             DaThrottle::new(throttle, Arc::new(throttle_client)),
             PendingL1HeadSource,
@@ -179,6 +182,7 @@ fn test_step_strategy_full_intensity_applies_lower_limits() {
                 inbox: Address::ZERO,
                 max_pending_transactions: 1,
                 drain_timeout: Duration::from_millis(10),
+                force_blobs_when_throttling: true,
             },
             DaThrottle::new(throttle, Arc::new(throttle_client)),
             PendingL1HeadSource,
@@ -274,6 +278,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
                 inbox: Address::ZERO,
                 max_pending_transactions: 1,
                 drain_timeout: Duration::from_millis(10),
+                force_blobs_when_throttling: true,
             },
             DaThrottle::new(throttle, Arc::new(throttle_client)),
             PendingL1HeadSource,

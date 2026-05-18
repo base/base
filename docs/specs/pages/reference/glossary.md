@@ -6,7 +6,7 @@
 
 [L1]: glossary.md#layer-1-L1
 
-Refers the Ethereum blockchain, used in contrast to [layer 2][L2], which refers to Base.
+Refers to the Ethereum blockchain, used in contrast to [layer 2][L2], which refers to Base.
 
 ### Layer 2 (L2)
 
@@ -40,7 +40,7 @@ block, and output block properties, which are derived after executing the block'
 [mpt]: glossary.md#merkle-patricia-trie
 
 A [Merkle Patricia Trie (MPT)][mpt-details] is a sparse trie, which is a tree-like structure that maps keys to values.
-The root hash of a MPT is a commitment to the contents of the tree, which allows a
+The root hash of an MPT is a commitment to the contents of the tree, which allows a
 proof to be constructed for any key-value mapping encoded in the tree. Such a proof is called a Merkle proof, and can be
 verified against the Merkle root.
 
@@ -206,7 +206,7 @@ Deposits are specified in the [deposits specification][deposits-spec].
 
 [deposited]: glossary.md#deposited-transaction
 
-A _deposited transaction_ is a L2 transaction that was derived from L1 and included in a L2 block.
+A _deposited transaction_ is an L2 transaction that was derived from L1 and included in an L2 block.
 
 There are two kinds of deposited transactions:
 
@@ -806,7 +806,7 @@ cf. [Fault Proofs](../protocol/fault-proof/index.md)
 
 [time-slot]: glossary.md#time-slot
 
-On L2, there is a block every 2 second (this duration is known as the [block time][block-time]).
+On L2, there is a block every 2 seconds (this duration is known as the [block time][block-time]).
 
 We say that there is a "time slot" every multiple of 2s after the timestamp of the [L2 genesis block][l2-genesis].
 
@@ -817,7 +817,7 @@ of even benign consensus issues.
 
 [block-time]: glossary.md#block-time
 
-The L2 block time is 2 second, meaning there is an L2 block at every 2s [time slot][time-slot].
+The L2 block time is 2 seconds, meaning there is an L2 block at every 2s [time slot][time-slot].
 
 Post-[merge], it could be said that the L1 block time is 12s as that is the L1 [time slot][time-slot]. However, in
 reality the block time is variable as some time slots might be skipped.

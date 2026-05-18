@@ -5,11 +5,11 @@ use core::fmt::Debug;
 
 use alloy_consensus::{Eip658Value, TransactionEnvelope};
 use alloy_evm::{Evm, eth::receipt_builder::ReceiptBuilderCtx};
-use base_alloy_consensus::{OpDepositReceipt, OpReceiptEnvelope, OpTxEnvelope, OpTxType};
+use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope, DepositReceipt, OpTxType};
 
 /// Type that knows how to build a receipt based on execution result.
 #[auto_impl::auto_impl(&, Arc)]
-pub trait OpReceiptBuilder: Debug {
+pub trait BaseReceiptBuilder: Debug {
     /// Transaction type.
     type Transaction: TransactionEnvelope;
     /// Receipt type.
@@ -28,17 +28,17 @@ pub trait OpReceiptBuilder: Debug {
     >;
 
     /// Builds receipt for a deposit transaction.
-    fn build_deposit_receipt(&self, inner: OpDepositReceipt) -> Self::Receipt;
+    fn build_deposit_receipt(&self, inner: DepositReceipt) -> Self::Receipt;
 }
 
-/// Receipt builder operating on op-alloy types.
+/// Receipt builder operating on base-alloy types.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
-pub struct OpAlloyReceiptBuilder;
+pub struct AlloyReceiptBuilder;
 
-impl OpReceiptBuilder for OpAlloyReceiptBuilder {
-    type Transaction = OpTxEnvelope;
-    type Receipt = OpReceiptEnvelope;
+impl BaseReceiptBuilder for AlloyReceiptBuilder {
+    type Transaction = BaseTxEnvelope;
+    type Receipt = BaseReceiptEnvelope;
 
     fn build_receipt<'a, E: Evm>(
         &self,
@@ -55,18 +55,17 @@ impl OpReceiptBuilder for OpAlloyReceiptBuilder {
                 .with_bloom();
 
                 Ok(match ty {
-                    OpTxType::Legacy => OpReceiptEnvelope::Legacy(receipt),
-                    OpTxType::Eip2930 => OpReceiptEnvelope::Eip2930(receipt),
-                    OpTxType::Eip1559 => OpReceiptEnvelope::Eip1559(receipt),
-                    OpTxType::Eip7702 => OpReceiptEnvelope::Eip7702(receipt),
-                    OpTxType::Eip8130 => OpReceiptEnvelope::Eip8130(receipt),
+                    OpTxType::Legacy => BaseReceiptEnvelope::Legacy(receipt),
+                    OpTxType::Eip2930 => BaseReceiptEnvelope::Eip2930(receipt),
+                    OpTxType::Eip1559 => BaseReceiptEnvelope::Eip1559(receipt),
+                    OpTxType::Eip7702 => BaseReceiptEnvelope::Eip7702(receipt),
                     OpTxType::Deposit => unreachable!(),
                 })
             }
         }
     }
 
-    fn build_deposit_receipt(&self, inner: OpDepositReceipt) -> Self::Receipt {
-        OpReceiptEnvelope::Deposit(inner.with_bloom())
+    fn build_deposit_receipt(&self, inner: DepositReceipt) -> Self::Receipt {
+        BaseReceiptEnvelope::Deposit(inner.with_bloom())
     }
 }

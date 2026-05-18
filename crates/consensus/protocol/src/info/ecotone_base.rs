@@ -11,7 +11,8 @@ use crate::info::{
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy, Delegate)]
 #[delegate(L1BlockInfoBedrockBaseFields, target = "base")]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub(crate) struct L1BlockInfoEcotoneBase {
+/// The base fields shared by all L1 block info transactions from Ecotone onward.
+pub struct L1BlockInfoEcotoneBase {
     base: L1BlockInfoBedrockBase,
     /// The current blob base fee on L1
     pub blob_base_fee: u128,
@@ -24,7 +25,7 @@ pub(crate) struct L1BlockInfoEcotoneBase {
 impl L1BlockInfoEcotoneBase {
     /// Construct new from all values.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) const fn new(
+    pub const fn new(
         number: u64,
         time: u64,
         base_fee: u64,
@@ -50,47 +51,48 @@ impl L1BlockInfoEcotoneBase {
         }
     }
     /// Construct from default values and `base_fee`.
-    pub(crate) fn new_from_base_fee(base_fee: u64) -> Self {
+    pub fn new_from_base_fee(base_fee: u64) -> Self {
         Self { base: L1BlockInfoBedrockBase::new_from_base_fee(base_fee), ..Default::default() }
     }
     /// Construct from default values and `block_hash`.
-    pub(crate) fn new_from_block_hash(block_hash: B256) -> Self {
+    pub fn new_from_block_hash(block_hash: B256) -> Self {
         let base = L1BlockInfoBedrockBase::new_from_block_hash(block_hash);
         Self { base, ..Default::default() }
     }
     /// Construct from default values and `sequence_number`.
-    pub(crate) fn new_from_sequence_number(sequence_number: u64) -> Self {
+    pub fn new_from_sequence_number(sequence_number: u64) -> Self {
         Self {
             base: L1BlockInfoBedrockBase::new_from_sequence_number(sequence_number),
             ..Default::default()
         }
     }
     /// Construct from default values and `batcher_address`.
-    pub(crate) fn new_from_batcher_address(batcher_address: Address) -> Self {
+    pub fn new_from_batcher_address(batcher_address: Address) -> Self {
         Self {
             base: L1BlockInfoBedrockBase::new_from_batcher_address(batcher_address),
             ..Default::default()
         }
     }
     /// Construct from default values and `blob_base_fee`.
-    pub(crate) fn new_from_blob_base_fee(blob_base_fee: u128) -> Self {
+    pub fn new_from_blob_base_fee(blob_base_fee: u128) -> Self {
         Self { base: Default::default(), blob_base_fee, ..Default::default() }
     }
     /// Construct from default values and `blob_base_fee_scalar`.
-    pub(crate) fn new_from_blob_base_fee_scalar(blob_base_fee_scalar: u32) -> Self {
+    pub fn new_from_blob_base_fee_scalar(blob_base_fee_scalar: u32) -> Self {
         Self { base: Default::default(), blob_base_fee_scalar, ..Default::default() }
     }
     /// Construct from default values and `base_fee_scalar`.
-    pub(crate) fn new_from_base_fee_scalar(base_fee_scalar: u32) -> Self {
+    pub fn new_from_base_fee_scalar(base_fee_scalar: u32) -> Self {
         Self { base: Default::default(), base_fee_scalar, ..Default::default() }
     }
     /// Construct from default values, `number` and `block_hash`.
-    pub(crate) fn new_from_number_and_block_hash(number: u64, block_hash: B256) -> Self {
+    pub fn new_from_number_and_block_hash(number: u64, block_hash: B256) -> Self {
         let base = L1BlockInfoBedrockBase::new_from_number_and_block_hash(number, block_hash);
         Self { base, ..Default::default() }
     }
 
-    pub(crate) fn encode_calldata_body(&self, buf: &mut Vec<u8>) {
+    /// Encodes the Ecotone base fields into the calldata buffer.
+    pub fn encode_calldata_body(&self, buf: &mut Vec<u8>) {
         // We cannot `self.base.encode_bedrock_base(buf)` here, because the fields do not match.
         buf.extend_from_slice(self.base_fee_scalar.to_be_bytes().as_ref());
         buf.extend_from_slice(self.blob_base_fee_scalar.to_be_bytes().as_ref());
@@ -113,7 +115,7 @@ impl L1BlockInfoEcotoneBase {
     /// # Safety
     /// This method assumes the slice is at least 164 bytes long and starts at
     /// the correct offset. Callers must validate the length before calling.
-    pub(crate) fn decode_calldata_body(r: &[u8]) -> Self {
+    pub fn decode_calldata_body(r: &[u8]) -> Self {
         // SAFETY: All slice operations below assume r is at least 164 bytes.
         // The caller must validate this before calling this method.
 

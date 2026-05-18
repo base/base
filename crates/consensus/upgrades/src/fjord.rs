@@ -4,10 +4,9 @@ use alloc::vec::Vec;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
-use base_alloy_consensus::TxDeposit;
-use base_protocol::{Deployers, Predeploys, SystemAddresses};
+use base_common_consensus::{Deployers, Predeploys, SystemAddresses, TxDeposit};
 
-use crate::{Hardfork, UpgradeCalldata};
+use crate::{Upgrade, UpgradeCalldata};
 
 /// The Fjord network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]
@@ -27,7 +26,7 @@ impl Fjord {
     pub const SET_FJORD_METHOD_SIGNATURE: [u8; 4] = hex!("8e98b106");
 
     /// The Fjord Gas Price Oracle code hash.
-    /// See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-deployment>
+    /// See: <https://specs.base.org/upgrades/fjord/derivation#gaspriceoracle-deployment>
     pub const GAS_PRICE_ORACLE_CODE_HASH: B256 = alloy_primitives::b256!(
         "0xa88fa50a2745b15e6794247614b5298483070661adacb8d32d716434ed24c6b2"
     );
@@ -59,7 +58,7 @@ impl Fjord {
     pub fn deposits() -> impl Iterator<Item = TxDeposit> {
         ([
             // Deploys the Fjord Gas Price Oracle contract.
-            // See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-deployment>
+            // See: <https://specs.base.org/upgrades/fjord/derivation#gaspriceoracle-deployment>
             TxDeposit {
                 source_hash: Self::deploy_fjord_gas_price_oracle_source(),
                 from: Deployers::FJORD_GAS_PRICE_ORACLE,
@@ -71,7 +70,7 @@ impl Fjord {
                 input: Self::gas_price_oracle_deployment_bytecode(),
             },
             // Updates the gas price Oracle proxy to point to the Fjord Gas Price Oracle.
-            // See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-proxy-update>
+            // See: <https://specs.base.org/upgrades/fjord/derivation#gaspriceoracle-proxy-update>
             TxDeposit {
                 source_hash: Self::update_fjord_gas_price_oracle_source(),
                 from: Address::ZERO,
@@ -83,7 +82,7 @@ impl Fjord {
                 input: UpgradeCalldata::build(Self::FJORD_GAS_PRICE_ORACLE),
             },
             // Enables the Fjord Gas Price Oracle.
-            // See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-enable-fjord>
+            // See: <https://specs.base.org/upgrades/fjord/derivation#gaspriceoracle-enable-fjord>
             TxDeposit {
                 source_hash: Self::enable_fjord_source(),
                 from: SystemAddresses::DEPOSITOR_ACCOUNT,
@@ -99,7 +98,7 @@ impl Fjord {
     }
 }
 
-impl Hardfork for Fjord {
+impl Upgrade for Fjord {
     /// Constructs the Fjord network upgrade transactions.
     fn txs(&self) -> impl Iterator<Item = Bytes> + '_ {
         Self::deposits().map(|tx| {
@@ -114,31 +113,17 @@ impl Hardfork for Fjord {
 mod tests {
     use alloc::vec;
 
+    use rstest::rstest;
+
     use super::*;
     use crate::test_utils::check_deployment_code;
 
-    #[test]
-    fn test_deploy_fjord_gas_price_oracle_source() {
-        assert_eq!(
-            Fjord::deploy_fjord_gas_price_oracle_source(),
-            hex!("86122c533fdcb89b16d8713174625e44578a89751d96c098ec19ab40a51a8ea3")
-        );
-    }
-
-    #[test]
-    fn test_update_fjord_gas_price_oracle_source() {
-        assert_eq!(
-            Fjord::update_fjord_gas_price_oracle_source(),
-            hex!("1e6bb0c28bfab3dc9b36ffb0f721f00d6937f33577606325692db0965a7d58c6")
-        );
-    }
-
-    #[test]
-    fn test_enable_fjord_source() {
-        assert_eq!(
-            Fjord::enable_fjord_source(),
-            hex!("bac7bb0d5961cad209a345408b0280a0d4686b1b20665e1b0f9cdafd73b19b6b")
-        );
+    #[rstest]
+    #[case(Fjord::deploy_fjord_gas_price_oracle_source(), hex!("86122c533fdcb89b16d8713174625e44578a89751d96c098ec19ab40a51a8ea3"))]
+    #[case(Fjord::update_fjord_gas_price_oracle_source(), hex!("1e6bb0c28bfab3dc9b36ffb0f721f00d6937f33577606325692db0965a7d58c6"))]
+    #[case(Fjord::enable_fjord_source(), hex!("bac7bb0d5961cad209a345408b0280a0d4686b1b20665e1b0f9cdafd73b19b6b"))]
+    fn test_fjord_source_hashes(#[case] actual: B256, #[case] expected: [u8; 32]) {
+        assert_eq!(actual, expected);
     }
 
     #[test]

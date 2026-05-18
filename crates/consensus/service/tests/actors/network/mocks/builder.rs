@@ -4,9 +4,9 @@ use alloy_chains::Chain;
 use alloy_primitives::Address;
 use alloy_signer::k256;
 use async_trait::async_trait;
-use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_common_genesis::RollupConfig;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_disc::LocalNode;
-use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{
     EngineClientResult, NetworkActor, NetworkBuilder, NetworkEngineClient, NodeActor,
 };
@@ -114,12 +114,15 @@ impl TestNetworkBuilder {
 
 #[derive(Debug)]
 struct ForwardingNetworkEngineClient {
-    blocks_tx: mpsc::Sender<OpExecutionPayloadEnvelope>,
+    blocks_tx: mpsc::Sender<BaseExecutionPayloadEnvelope>,
 }
 
 #[async_trait]
 impl NetworkEngineClient for ForwardingNetworkEngineClient {
-    async fn send_unsafe_block(&self, block: OpExecutionPayloadEnvelope) -> EngineClientResult<()> {
+    async fn send_unsafe_block(
+        &self,
+        block: BaseExecutionPayloadEnvelope,
+    ) -> EngineClientResult<()> {
         let _ = self
             .blocks_tx
             .send(block)

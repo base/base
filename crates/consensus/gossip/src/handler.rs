@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use alloy_primitives::{Address, B256};
-use base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
+use base_common_rpc_types_engine::NetworkPayloadEnvelope;
 use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
 use tokio::sync::watch::Receiver;
 
@@ -18,7 +18,7 @@ use crate::HandlerEncodeError;
 pub trait Handler: Send {
     /// Manages validation and further processing of messages
     /// This is a stateful method, because the handler needs to keep track of seen hashes.
-    fn handle(&mut self, msg: Message) -> (MessageAcceptance, Option<OpNetworkPayloadEnvelope>);
+    fn handle(&mut self, msg: Message) -> (MessageAcceptance, Option<NetworkPayloadEnvelope>);
 
     /// Specifies which topics the handler is interested in
     fn topics(&self) -> Vec<TopicHash>;
@@ -45,17 +45,17 @@ pub struct BlockHandler {
 }
 
 impl Handler for BlockHandler {
-    /// Checks validity of a [`OpNetworkPayloadEnvelope`] received over P2P gossip.
-    /// If valid, sends the [`OpNetworkPayloadEnvelope`] to the block update channel.
-    fn handle(&mut self, msg: Message) -> (MessageAcceptance, Option<OpNetworkPayloadEnvelope>) {
+    /// Checks validity of a [`NetworkPayloadEnvelope`] received over P2P gossip.
+    /// If valid, sends the [`NetworkPayloadEnvelope`] to the block update channel.
+    fn handle(&mut self, msg: Message) -> (MessageAcceptance, Option<NetworkPayloadEnvelope>) {
         let decoded = if msg.topic == self.blocks_v1_topic.hash() {
-            OpNetworkPayloadEnvelope::decode_v1(&msg.data)
+            NetworkPayloadEnvelope::decode_v1(&msg.data)
         } else if msg.topic == self.blocks_v2_topic.hash() {
-            OpNetworkPayloadEnvelope::decode_v2(&msg.data)
+            NetworkPayloadEnvelope::decode_v2(&msg.data)
         } else if msg.topic == self.blocks_v3_topic.hash() {
-            OpNetworkPayloadEnvelope::decode_v3(&msg.data)
+            NetworkPayloadEnvelope::decode_v3(&msg.data)
         } else if msg.topic == self.blocks_v4_topic.hash() {
-            OpNetworkPayloadEnvelope::decode_v4(&msg.data)
+            NetworkPayloadEnvelope::decode_v4(&msg.data)
         } else {
             warn!(target: "gossip", topic = ?msg.topic, "Received block with unknown topic");
             return (MessageAcceptance::Reject, None);
@@ -119,12 +119,12 @@ impl BlockHandler {
         }
     }
 
-    /// Encodes a [`OpNetworkPayloadEnvelope`] into a byte array
+    /// Encodes a [`NetworkPayloadEnvelope`] into a byte array
     /// based on the specified topic.
     pub fn encode(
         &self,
         topic: IdentTopic,
-        envelope: OpNetworkPayloadEnvelope,
+        envelope: NetworkPayloadEnvelope,
     ) -> Result<Vec<u8>, HandlerEncodeError> {
         let encoded = match topic.hash() {
             hash if hash == self.blocks_v1_topic.hash() => envelope.encode_v1()?,
@@ -142,7 +142,7 @@ mod tests {
     use alloy_chains::Chain;
     use alloy_primitives::{B256, Signature};
     use alloy_rpc_types_engine::{ExecutionPayloadV2, ExecutionPayloadV3};
-    use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadV4, PayloadHash};
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
 
     use super::*;
     use crate::{v2_valid_block, v3_valid_block, v4_valid_block};
@@ -153,8 +153,8 @@ mod tests {
 
         let v2 = ExecutionPayloadV2::from_block_slow(&block);
 
-        let payload = OpExecutionPayload::V2(v2);
-        let envelope = OpNetworkPayloadEnvelope {
+        let payload = BaseExecutionPayload::V2(v2);
+        let envelope = NetworkPayloadEnvelope {
             payload,
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
@@ -173,7 +173,7 @@ mod tests {
         // signer in the handler to ensure that the payload won't be rejected for invalid
         // signature.
         let encoded = handler.encode(handler.blocks_v2_topic.clone(), envelope).unwrap();
-        let decoded = OpNetworkPayloadEnvelope::decode_v2(&encoded).unwrap();
+        let decoded = NetworkPayloadEnvelope::decode_v2(&encoded).unwrap();
 
         let msg = decoded.payload_hash.signature_message(8453);
         let signer = decoded.signature.recover_address_from_prehash(&msg).unwrap();
@@ -198,8 +198,8 @@ mod tests {
 
         let v2 = ExecutionPayloadV2::from_block_slow(&block);
 
-        let payload = OpExecutionPayload::V2(v2);
-        let envelope = OpNetworkPayloadEnvelope {
+        let payload = BaseExecutionPayload::V2(v2);
+        let envelope = NetworkPayloadEnvelope {
             payload,
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
@@ -232,8 +232,8 @@ mod tests {
 
         let v2 = ExecutionPayloadV2::from_block_slow(&block);
 
-        let payload = OpExecutionPayload::V2(v2);
-        let envelope = OpNetworkPayloadEnvelope {
+        let payload = BaseExecutionPayload::V2(v2);
+        let envelope = NetworkPayloadEnvelope {
             payload,
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
@@ -269,8 +269,8 @@ mod tests {
 
         let v3 = ExecutionPayloadV3::from_block_slow(&block);
 
-        let payload = OpExecutionPayload::V3(v3);
-        let envelope = OpNetworkPayloadEnvelope {
+        let payload = BaseExecutionPayload::V3(v3);
+        let envelope = NetworkPayloadEnvelope {
             payload,
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
@@ -308,8 +308,8 @@ mod tests {
 
         let v2 = ExecutionPayloadV2::from_block_slow(&block);
 
-        let payload = OpExecutionPayload::V2(v2);
-        let envelope = OpNetworkPayloadEnvelope {
+        let payload = BaseExecutionPayload::V2(v2);
+        let envelope = NetworkPayloadEnvelope {
             payload,
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
@@ -346,13 +346,13 @@ mod tests {
         let block = v4_valid_block();
 
         let v3 = ExecutionPayloadV3::from_block_slow(&block);
-        let v4 = OpExecutionPayloadV4::from_v3_with_withdrawals_root(
+        let v4 = BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
             v3,
             block.withdrawals_root.unwrap(),
         );
 
-        let payload = OpExecutionPayload::V4(v4);
-        let envelope = OpNetworkPayloadEnvelope {
+        let payload = BaseExecutionPayload::V4(v4);
+        let envelope = NetworkPayloadEnvelope {
             payload,
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
@@ -388,13 +388,13 @@ mod tests {
         let block = v4_valid_block();
 
         let v3 = ExecutionPayloadV3::from_block_slow(&block);
-        let v4 = OpExecutionPayloadV4::from_v3_with_withdrawals_root(
+        let v4 = BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
             v3,
             block.withdrawals_root.unwrap(),
         );
 
-        let payload = OpExecutionPayload::V4(v4);
-        let envelope = OpNetworkPayloadEnvelope {
+        let payload = BaseExecutionPayload::V4(v4);
+        let envelope = NetworkPayloadEnvelope {
             payload,
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
@@ -415,7 +415,7 @@ mod tests {
         // signer in the handler to ensure that the payload won't be rejected for invalid
         // signature.
         let encoded = handler.encode(handler.blocks_v4_topic.clone(), envelope).unwrap();
-        let decoded = OpNetworkPayloadEnvelope::decode_v4(&encoded).unwrap();
+        let decoded = NetworkPayloadEnvelope::decode_v4(&encoded).unwrap();
 
         let msg = decoded.payload_hash.signature_message(8453);
         let signer = decoded.signature.recover_address_from_prehash(&msg).unwrap();
@@ -439,8 +439,8 @@ mod tests {
 
         let v3 = ExecutionPayloadV3::from_block_slow(&block);
 
-        let payload = OpExecutionPayload::V3(v3);
-        let envelope = OpNetworkPayloadEnvelope {
+        let payload = BaseExecutionPayload::V3(v3);
+        let envelope = NetworkPayloadEnvelope {
             payload,
             signature: Signature::test_signature(),
             payload_hash: PayloadHash(B256::ZERO),
@@ -461,7 +461,7 @@ mod tests {
         // signer in the handler to ensure that the payload won't be rejected for invalid
         // signature.
         let encoded = handler.encode(handler.blocks_v3_topic.clone(), envelope).unwrap();
-        let decoded = OpNetworkPayloadEnvelope::decode_v3(&encoded).unwrap();
+        let decoded = NetworkPayloadEnvelope::decode_v3(&encoded).unwrap();
 
         let msg = decoded.payload_hash.signature_message(8453);
         let signer = decoded.signature.recover_address_from_prehash(&msg).unwrap();

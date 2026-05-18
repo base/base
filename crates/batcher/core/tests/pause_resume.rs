@@ -7,7 +7,6 @@ use std::{
 
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_alloy_consensus::BaseBlock;
 use base_batcher_core::{
     AdminHandle, BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient,
     ThrottleController,
@@ -19,6 +18,7 @@ use base_batcher_encoder::{
     BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId,
 };
 use base_batcher_source::{ChannelBlockSource, L2BlockEvent, SourceError, UnsafeBlockSource};
+use base_common_consensus::BaseBlock;
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
@@ -96,6 +96,7 @@ fn test_resume_triggers_catchup_from_safe_head() {
                 inbox: Address::ZERO,
                 max_pending_transactions: 1,
                 drain_timeout: Duration::from_millis(10),
+                force_blobs_when_throttling: true,
             },
             DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,
@@ -185,6 +186,7 @@ fn test_paused_drops_block_and_flush_events() {
                 inbox: Address::ZERO,
                 max_pending_transactions: 1,
                 drain_timeout: Duration::from_millis(10),
+                force_blobs_when_throttling: true,
             },
             DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,
@@ -195,7 +197,7 @@ fn test_paused_drops_block_and_flush_events() {
         // Pause, then send a block — it must be dropped.
         admin_handle.pause().await.unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
-        source_tx.send(L2BlockEvent::Block(Box::new(BaseBlock::default()))).unwrap();
+        source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
         ctx.cancel();
 

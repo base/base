@@ -14,6 +14,15 @@ inputs:
   foundry:
     description: Install Foundry
     default: "false"
+  sp1:
+    description: Install the SP1 toolchain (cargo-prove) for building ELFs
+    default: "false"
+  sp1-version:
+    description: SP1 release tag used when sp1 is enabled (matches etc/just/succinct.just)
+    default: "v6.1.0"
+  elf-cache:
+    description: Restore/save the ELF cache keyed on crates/proof/succinct/elf/manifest.toml
+    default: "false"
   mold:
     description: Install mold linker
     default: "false"
@@ -61,7 +70,7 @@ runs:
       uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
       with:
         packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config protobuf-compiler
-        version: 1.3
+        version: 1.4
 
     - name: Install Rust (stable via rust-toolchain.toml)
       if: inputs.toolchain == 'stable'
@@ -84,6 +93,9 @@ runs:
       if: inputs.mold == 'true'
       uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
 
+    - name: Setup sccache
+      uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+
     - name: Rust cache
       if: inputs.rust-cache-shared-key != ''
       uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
@@ -91,9 +103,12 @@ runs:
         cache-on-failure: true
         shared-key: ${{ inputs.rust-cache-shared-key }}
         save-if: ${{ inputs.rust-cache-save }}
+        cache-targets: "false"
 
     - name: Install just
-      uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      with:
+        just-version: "1.43.1"
 
     - name: Install cargo tools
       if: inputs.tools != ''
@@ -107,9 +122,33 @@ runs:
       with:
         version: stable
 
+    - name: Restore ELF cache
+      if: inputs.elf-cache == 'true'
+      uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+      with:
+        path: |
+          crates/proof/succinct/elf/range-elf-embedded
+          crates/proof/succinct/elf/aggregation-elf
+        key: sp1-elfs-${{ runner.os }}-${{ hashFiles('crates/proof/succinct/elf/manifest.toml') }}
+
+    - name: Install SP1 toolchain
+      if: inputs.sp1 == 'true'
+      shell: bash
+      env:
+        SP1_VERSION: ${{ inputs.sp1-version }}
+      run: |
+        if [ -x "$HOME/.sp1/bin/cargo-prove" ]; then
+          echo "cargo-prove already installed"
+        else
+          curl -L https://sp1up.succinct.xyz | bash
+          "$HOME/.sp1/bin/sp1up" --version "$SP1_VERSION"
+        fi
+        echo "$HOME/.sp1/bin" >> "$GITHUB_PATH"
+
     - name: Set LIBCLANG_PATH
       if: inputs.native-deps == 'true'
       shell: bash
       run: |
-        LLVM_VERSION=$(llvm-config --version | cut -d. -f1)
+        LLVM_BIN=$(command -v llvm-config || ls /usr/bin/llvm-config-* 2>/dev/null | sort -V | tail -1)
+        LLVM_VERSION=$($LLVM_BIN --version | cut -d. -f1)
         echo "LIBCLANG_PATH=/usr/lib/llvm-${LLVM_VERSION}/lib" >> $GITHUB_ENV

@@ -1,5 +1,7 @@
 //! The internal state of the engine controller.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use alloy_rpc_types_engine::ForkchoiceState;
 use base_protocol::L2BlockInfo;
 use serde::{Deserialize, Serialize};
@@ -17,15 +19,18 @@ use crate::Metrics;
 /// The state tracks blocks at different safety levels, listed from least to most safe:
 ///
 /// 1. **Unsafe** - Most recent blocks from P2P network (unverified)
-/// 2. **Safe** - Derived from L1 data
-/// 3. **Finalized** - Derived from finalized L1 data only
+/// 2. **Local-safe** - Derived from L1 data, completed span-batch
+/// 3. **Safe** - Derived from L1 data and cross-verified to have safe L1 dependencies
+/// 4. **Finalized** - Derived from finalized L1 data only
 ///
-/// See the [Base specifications](https://specs.optimism.io) for detailed safety definitions.
+/// See the [Base specifications](https://specs.base.org) for detailed safety definitions.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub struct EngineSyncState {
     /// Most recent block found on the P2P network (lowest safety level).
     unsafe_head: L2BlockInfo,
-    /// Derived from L1 data.
+    /// Derived from L1 data as a completed span-batch, but not yet cross-verified.
+    local_safe_head: L2BlockInfo,
+    /// Derived from L1 data and cross-verified to have safe L1 dependencies.
     safe_head: L2BlockInfo,
     /// Derived from finalized L1 data with only finalized dependencies (highest safety level).
     finalized_head: L2BlockInfo,
@@ -35,6 +40,11 @@ impl EngineSyncState {
     /// Returns the current unsafe head.
     pub const fn unsafe_head(&self) -> L2BlockInfo {
         self.unsafe_head
+    }
+
+    /// Returns the current local safe head.
+    pub const fn local_safe_head(&self) -> L2BlockInfo {
+        self.local_safe_head
     }
 
     /// Returns the current safe head.
@@ -65,21 +75,34 @@ impl EngineSyncState {
     /// Applies the update to the provided sync state, using the current state values if the update
     /// is not specified. Returns the new sync state.
     pub fn apply_update(self, sync_state_update: EngineSyncStateUpdate) -> Self {
+        let now_secs =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64();
         if let Some(unsafe_head) = sync_state_update.unsafe_head {
             Metrics::block_labels(Metrics::UNSAFE_BLOCK_LABEL)
                 .set(unsafe_head.block_info.number as f64);
+            Metrics::block_refs_latency(Metrics::UNSAFE_BLOCK_LABEL)
+                .set(now_secs - unsafe_head.block_info.timestamp as f64);
+        }
+        if let Some(local_safe_head) = sync_state_update.local_safe_head {
+            Metrics::block_labels(Metrics::LOCAL_SAFE_BLOCK_LABEL)
+                .set(local_safe_head.block_info.number as f64);
         }
         if let Some(safe_head) = sync_state_update.safe_head {
             Metrics::block_labels(Metrics::SAFE_BLOCK_LABEL)
                 .set(safe_head.block_info.number as f64);
+            Metrics::block_refs_latency(Metrics::SAFE_BLOCK_LABEL)
+                .set(now_secs - safe_head.block_info.timestamp as f64);
         }
         if let Some(finalized_head) = sync_state_update.finalized_head {
             Metrics::block_labels(Metrics::FINALIZED_BLOCK_LABEL)
                 .set(finalized_head.block_info.number as f64);
+            Metrics::block_refs_latency(Metrics::FINALIZED_BLOCK_LABEL)
+                .set(now_secs - finalized_head.block_info.timestamp as f64);
         }
 
         Self {
             unsafe_head: sync_state_update.unsafe_head.unwrap_or(self.unsafe_head),
+            local_safe_head: sync_state_update.local_safe_head.unwrap_or(self.local_safe_head),
             safe_head: sync_state_update.safe_head.unwrap_or(self.safe_head),
             finalized_head: sync_state_update.finalized_head.unwrap_or(self.finalized_head),
         }
@@ -91,9 +114,13 @@ impl EngineSyncState {
 pub struct EngineSyncStateUpdate {
     /// Most recent block found on the p2p network
     pub unsafe_head: Option<L2BlockInfo>,
-    /// Derived from L1 data.
+    /// Derived from L1, and known to be a completed span-batch,
+    /// but not cross-verified yet.
+    pub local_safe_head: Option<L2BlockInfo>,
+    /// Derived from L1 and cross-verified to have cross-safe dependencies.
     pub safe_head: Option<L2BlockInfo>,
-    /// Derived from finalized L1 data.
+    /// Derived from finalized L1 data,
+    /// and cross-verified to only have finalized dependencies.
     pub finalized_head: Option<L2BlockInfo>,
 }
 
@@ -119,9 +146,9 @@ impl EngineState {
     ///
     /// [Consolidation] is only performed by a rollup node when the unsafe head
     /// is ahead of the safe head. When the two are equal, consolidation isn't
-    /// required and the [`crate::BuildTask`] can be used to build the block.
+    /// required and [`crate::Engine::build`] can be used to build the block.
     ///
-    /// [Consolidation]: https://specs.optimism.io/protocol/derivation.html#l1-consolidation-payload-attributes-matching
+    /// [Consolidation]: https://specs.base.org/protocol/consensus/derivation#l1-consolidation-payload-attributes-matching
     pub fn needs_consolidation(&self) -> bool {
         self.sync_state.safe_head() != self.sync_state.unsafe_head()
     }
@@ -129,6 +156,9 @@ impl EngineState {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "metrics")]
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     #[cfg(feature = "metrics")]
     use base_protocol::BlockInfo;
     #[cfg(feature = "metrics")]
@@ -143,6 +173,14 @@ mod tests {
         pub fn set_unsafe_head(&mut self, unsafe_head: L2BlockInfo) {
             self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
                 unsafe_head: Some(unsafe_head),
+                ..Default::default()
+            });
+        }
+
+        /// Set the local safe head.
+        pub fn set_local_safe_head(&mut self, local_safe_head: L2BlockInfo) {
+            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
+                local_safe_head: Some(local_safe_head),
                 ..Default::default()
             });
         }
@@ -166,8 +204,9 @@ mod tests {
 
     #[rstest]
     #[case::set_unsafe(EngineState::set_unsafe_head, Metrics::UNSAFE_BLOCK_LABEL, 1)]
-    #[case::set_safe_head(EngineState::set_safe_head, Metrics::SAFE_BLOCK_LABEL, 2)]
-    #[case::set_finalized_head(EngineState::set_finalized_head, Metrics::FINALIZED_BLOCK_LABEL, 3)]
+    #[case::set_local_safe(EngineState::set_local_safe_head, Metrics::LOCAL_SAFE_BLOCK_LABEL, 2)]
+    #[case::set_safe_head(EngineState::set_safe_head, Metrics::SAFE_BLOCK_LABEL, 3)]
+    #[case::set_finalized_head(EngineState::set_finalized_head, Metrics::FINALIZED_BLOCK_LABEL, 4)]
     #[cfg(feature = "metrics")]
     fn test_chain_label_metrics(
         #[case] set_fn: impl Fn(&mut EngineState, L2BlockInfo),
@@ -191,5 +230,43 @@ mod tests {
         assert!(handle.render().contains(
             format!("base_node_block_labels{{label=\"{label_name}\"}} {number}").as_str()
         ));
+    }
+
+    #[rstest]
+    #[case::set_unsafe(EngineState::set_unsafe_head, Metrics::UNSAFE_BLOCK_LABEL)]
+    #[case::set_safe_head(EngineState::set_safe_head, Metrics::SAFE_BLOCK_LABEL)]
+    #[case::set_finalized_head(EngineState::set_finalized_head, Metrics::FINALIZED_BLOCK_LABEL)]
+    #[cfg(feature = "metrics")]
+    fn test_chain_refs_latency_metrics(
+        #[case] set_fn: impl Fn(&mut EngineState, L2BlockInfo),
+        #[case] label_name: &str,
+    ) {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        let timestamp =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() - 10;
+
+        metrics::with_local_recorder(&recorder, || {
+            let mut state = EngineState::default();
+            set_fn(
+                &mut state,
+                L2BlockInfo {
+                    block_info: BlockInfo { timestamp, ..Default::default() },
+                    ..Default::default()
+                },
+            );
+        });
+
+        let rendered = handle.render();
+        let latency_line = rendered
+            .lines()
+            .find(|l| {
+                l.starts_with(&format!("base_node_block_refs_latency{{label=\"{label_name}\"}}"))
+            })
+            .expect("latency metric not found");
+        let latency: f64 =
+            latency_line.split_whitespace().last().unwrap_or("0").parse().unwrap_or(0.0);
+        assert!((9.0..30.0).contains(&latency), "latency {latency} not in expected range [9, 30)");
     }
 }

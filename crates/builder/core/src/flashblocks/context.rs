@@ -1,23 +1,25 @@
 use core::fmt::Debug;
 use std::{
     sync::Arc,
-    time::{Instant, SystemTime},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use alloy_consensus::{Eip658Value, Transaction};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
-use alloy_primitives::{B256, BlockHash, Bytes, U256};
+use alloy_primitives::{BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTransactionSigned, OpTxType};
-use base_alloy_evm::OpReceiptBuilder;
-use base_execution_chainspec::OpChainSpec;
-use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use base_execution_payload_builder::{OpPayloadBuilderAttributes, error::OpPayloadBuilderError};
-use base_revm::{L1BlockInfo, OpSpecId};
-use base_txpool::{
+use base_bundles::{MeterBundleResponse, RejectedTransaction, RejectionReason};
+use base_common_chains::Upgrades;
+use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
+use base_common_evm::{BaseReceiptBuilder, BaseSpecId, L1BlockInfo};
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
+use base_execution_payload_builder::{
+    BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
+};
+use base_execution_txpool::{
     BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
 };
 use reth_basic_payload_builder::PayloadConfig;
@@ -33,6 +35,7 @@ use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace, warn};
 
@@ -124,6 +127,10 @@ pub struct FlashblockDiagnostics {
     pub txs_rejected_other: u64,
     /// Minimum effective priority fee (tip per gas) among included transactions.
     pub min_priority_fee: Option<u64>,
+    /// Transaction hashes permanently rejected due to per-tx intrinsic limits
+    /// (e.g. tx DA size exceeded, tx execution time exceeded). These will never
+    /// be includable and should be evicted from the pool.
+    pub permanently_rejected_txs: Vec<TxHash>,
 }
 
 impl FlashblockDiagnostics {
@@ -270,26 +277,28 @@ impl FlashblocksExtraCtx {
 
 /// Container type that holds all the necessities to build a new payload.
 #[derive(Debug)]
-pub struct OpPayloadBuilderCtx {
+pub struct BasePayloadBuilderCtx {
     /// The type that knows how to perform system calls and configure the evm.
-    pub evm_config: OpEvmConfig,
+    pub evm_config: BaseEvmConfig,
     /// The chainspec
-    pub chain_spec: Arc<OpChainSpec>,
+    pub chain_spec: Arc<BaseChainSpec>,
     /// How to build the payload.
-    pub config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
+    pub config: PayloadConfig<BasePayloadBuilderAttributes<BaseTransactionSigned>>,
     /// Evm Settings
-    pub evm_env: EvmEnv<OpSpecId>,
+    pub evm_env: EvmEnv<BaseSpecId>,
     /// Block env attributes for the current block.
-    pub block_env_attributes: OpNextBlockEnvAttributes,
+    pub block_env_attributes: BaseNextBlockEnvAttributes,
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancellationToken,
     /// Extra context for the payload builder
     pub extra: FlashblocksExtraCtx,
     /// Builder configuration containing limits and metering settings.
     pub builder_config: BuilderConfig,
+    /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
+    pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
 }
 
-impl OpPayloadBuilderCtx {
+impl BasePayloadBuilderCtx {
     pub(super) fn with_cancel(self, cancel: CancellationToken) -> Self {
         Self { cancel, ..self }
     }
@@ -322,7 +331,7 @@ impl OpPayloadBuilderCtx {
     }
 
     /// Returns the builder attributes.
-    pub(super) const fn attributes(&self) -> &OpPayloadBuilderAttributes<OpTransactionSigned> {
+    pub(super) const fn attributes(&self) -> &BasePayloadBuilderAttributes<BaseTransactionSigned> {
         &self.config.attributes
     }
 
@@ -442,15 +451,63 @@ impl OpPayloadBuilderCtx {
     pub fn chain_id(&self) -> u64 {
         self.chain_spec.chain_id()
     }
+
+    fn record_rejected_tx(
+        &self,
+        info: &mut ExecutionInfo,
+        tx_hash: TxHash,
+        reason: RejectionReason,
+        metering: MeterBundleResponse,
+    ) {
+        if self.rejected_tx_sender.is_none() {
+            return;
+        }
+
+        if info.rejected_txs.len() >= self.builder_config.max_rejected_txs_per_block {
+            BuilderMetrics::rejected_tx_per_block_drops().increment(1);
+            return;
+        }
+
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        info.rejected_txs.push(RejectedTransaction {
+            tx_hash,
+            block_number: self.block_number(),
+            reason,
+            timestamp: now,
+            metering,
+        });
+    }
+
+    /// Flushes all accumulated rejected transactions to the audit-archiver channel
+    /// as a single per-block batch.
+    pub fn flush_rejected_txs(&self, info: &mut ExecutionInfo) {
+        if info.rejected_txs.is_empty() {
+            return;
+        }
+
+        if let Some(sender) = &self.rejected_tx_sender {
+            let batch = std::mem::take(&mut info.rejected_txs);
+            let batch_size = batch.len();
+            if let Err(e) = sender.try_send(batch) {
+                BuilderMetrics::rejected_tx_channel_drops().increment(batch_size as u64);
+                warn!(
+                    target: "payload_builder",
+                    error = %e,
+                    batch_size,
+                    "Rejected tx channel full or closed, dropping batch"
+                );
+            }
+        }
+    }
 }
 
-impl OpPayloadBuilderCtx {
+impl BasePayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     pub fn build_receipt<E: Evm>(
         &self,
         ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
         deposit_nonce: Option<u64>,
-    ) -> OpReceipt {
+    ) -> BaseReceipt {
         let receipt_builder = self.evm_config.block_executor_factory().receipt_builder();
         match receipt_builder.build_receipt(ctx) {
             Ok(receipt) => receipt,
@@ -463,7 +520,7 @@ impl OpPayloadBuilderCtx {
                     logs: ctx.result.into_logs(),
                 };
 
-                receipt_builder.build_deposit_receipt(OpDepositReceipt {
+                receipt_builder.build_deposit_receipt(DepositReceipt {
                     inner: receipt,
                     deposit_nonce,
                     // The deposit receipt version was introduced in Canyon to indicate an
@@ -478,11 +535,22 @@ impl OpPayloadBuilderCtx {
     }
 
     /// Executes all sequencer transactions that are included in the payload attributes.
+    ///
+    /// When `no_tx_pool` is set the attribute-supplied transaction list is the consensus input
+    /// for the payload (derived from L1 batches by `base-consensus`), not a list of optional
+    /// pre-include candidates. In that mode any invalid-tx error must be propagated as fatal so
+    /// the EL rejects the payload, matching the strictness of the proof executor and allowing
+    /// Holocene's deposit-only fallback to apply consistently across both consumers.
+    ///
+    /// When `no_tx_pool` is `false` the builder is composing a new block from mempool plus
+    /// attribute pre-includes; pre-includes there may legitimately be skipped on invalid-tx
+    /// errors, so the historical skip-and-continue behavior is preserved.
     pub(super) fn execute_sequencer_transactions(
         &self,
         db: &mut State<impl Database>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
+        let no_tx_pool = self.attributes().no_tx_pool;
 
         let mut fbal_db = FBALBuilderDb::new(&mut *db);
         let min_tx_index = info.executed_transactions.iter().len() as u64;
@@ -493,7 +561,7 @@ impl OpPayloadBuilderCtx {
             // A sequencer's block should never contain blob transactions.
             if sequencer_tx.value().is_eip4844() {
                 return Err(PayloadBuilderError::other(
-                    OpPayloadBuilderError::BlobTransactionRejected,
+                    BasePayloadBuilderError::BlobTransactionRejected,
                 ));
             }
 
@@ -502,7 +570,7 @@ impl OpPayloadBuilderCtx {
             // Deposit transactions do not have signatures, so if the tx is a deposit, this
             // will just pull in its `from` address.
             let sequencer_tx = sequencer_tx.value().try_clone_into_recovered().map_err(|_| {
-                PayloadBuilderError::other(OpPayloadBuilderError::TransactionEcRecoverFailed)
+                PayloadBuilderError::other(BasePayloadBuilderError::TransactionEcRecoverFailed)
             })?;
 
             // Cache the depositor account prior to the state transition for the deposit nonce.
@@ -519,7 +587,7 @@ impl OpPayloadBuilderCtx {
                 })
                 .transpose()
                 .map_err(|_| {
-                    PayloadBuilderError::other(OpPayloadBuilderError::AccountLoadFailed(
+                    PayloadBuilderError::other(BasePayloadBuilderError::AccountLoadFailed(
                         sequencer_tx.signer(),
                     ))
                 })?;
@@ -527,11 +595,14 @@ impl OpPayloadBuilderCtx {
             let ResultAndState { result, state } = match evm.transact(&sequencer_tx) {
                 Ok(res) => res,
                 Err(err) => {
-                    if err.is_invalid_tx_err() {
+                    if err.is_invalid_tx_err() && !no_tx_pool {
                         trace!(target: "payload_builder", %err, ?sequencer_tx, "Error in sequencer transaction, skipping.");
                         continue;
                     }
-                    // this is an error that we should treat as fatal for this attempt
+                    // Either a fatal execution error, or an invalid-tx error from an
+                    // attribute-derived (`no_tx_pool=true`) transaction list. The latter must
+                    // be fatal so the EL rejects the payload exactly like the proof executor
+                    // does.
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
@@ -541,7 +612,7 @@ impl OpPayloadBuilderCtx {
             info.cumulative_gas_used += gas_used;
 
             if !sequencer_tx.is_deposit() {
-                info.cumulative_da_bytes_used += base_alloy_flz::tx_estimated_size_fjord_bytes(
+                info.cumulative_da_bytes_used += base_common_flz::tx_estimated_size_fjord_bytes(
                     sequencer_tx.encoded_2718().as_slice(),
                 );
                 info.cumulative_uncompressed_bytes += sequencer_tx.encode_2718_len() as u64;
@@ -701,6 +772,7 @@ impl OpPayloadBuilderCtx {
                 if tx_age_ms < wait_duration.as_millis() {
                     log_txn(Err(TxnExecutionError::MeteringDataPending));
                     BuilderMetrics::metering_data_pending_skip().increment(1);
+                    self.builder_config.metering_provider.skip(&tx_hash);
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
                 }
@@ -761,6 +833,27 @@ impl OpPayloadBuilderCtx {
                     if !dry_run {
                         diag.record_rejection(&err);
                         record_rejected_tx_priority_fee(&err, priority_fee);
+                        if err.is_permanent() {
+                            diag.permanently_rejected_txs.push(tx_hash);
+                        }
+
+                        if let ExecutionMeteringLimitExceeded::TransactionExecutionTime(
+                            tx_time_us,
+                            limit_us,
+                        ) = limit_err
+                        {
+                            // Only record per-tx execution time limits for the audit trail for now
+                            self.record_rejected_tx(
+                                info,
+                                tx_hash,
+                                RejectionReason::ExecutionTimeExceeded {
+                                    tx_time_us: *tx_time_us,
+                                    limit_us: *limit_us,
+                                },
+                                resource_usage.unwrap_or_default(),
+                            );
+                        }
+
                         log_txn(Err(err));
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
                         continue;
@@ -773,6 +866,9 @@ impl OpPayloadBuilderCtx {
                     let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                     record_rejected_tx_priority_fee(&err, priority_fee);
 
+                    if err.is_permanent() {
+                        diag.permanently_rejected_txs.push(tx_hash);
+                    }
                     log_txn(Err(err));
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
@@ -889,6 +985,9 @@ impl OpPayloadBuilderCtx {
                 diag.record_rejection(&err);
                 let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                 record_rejected_tx_priority_fee(&err, priority_fee);
+                if err.is_permanent() {
+                    diag.permanently_rejected_txs.push(tx_hash);
+                }
                 log_txn(Err(err));
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
@@ -938,6 +1037,17 @@ impl OpPayloadBuilderCtx {
             // track minimum priority fee for diagnostics (saturate u128 -> u64)
             let fee_u64 = miner_fee.min(u64::MAX as u128) as u64;
             diag.min_priority_fee = Some(diag.min_priority_fee.map_or(fee_u64, |m| m.min(fee_u64)));
+
+            // Record metering hit/miss only for committed transactions so the
+            // metric reflects actual payload inclusion, not speculative lookups.
+            if self.builder_config.metering_provider.is_enabled() && resource_usage.is_some() {
+                BuilderMetrics::metering_known_transaction().increment(1);
+            } else {
+                BuilderMetrics::metering_unknown_transaction().increment(1);
+                if self.builder_config.metering_provider.is_enabled() {
+                    self.builder_config.metering_provider.mark_included_without_metering(&tx_hash);
+                }
+            }
 
             // append sender and transaction to the respective lists
             // and increment the next txn index for the access list
@@ -1023,16 +1133,19 @@ impl OpPayloadBuilderCtx {
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-impl OpPayloadBuilderCtx {
-    /// Creates a minimal [`OpPayloadBuilderCtx`] for unit tests.
+use alloy_primitives::B256;
+
+#[cfg(any(test, feature = "test-utils"))]
+impl BasePayloadBuilderCtx {
+    /// Creates a minimal [`BasePayloadBuilderCtx`] for unit tests.
     ///
     /// Derives the EVM environment from the given chain spec and parent header,
     /// using default builder attributes and a no-op cancellation token.
-    pub fn for_test(chain_spec: Arc<OpChainSpec>, parent: Arc<SealedHeader>) -> Self {
-        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+    pub fn for_test(chain_spec: Arc<BaseChainSpec>, parent: Arc<SealedHeader>) -> Self {
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let timestamp = parent.timestamp + 2;
 
-        let attributes = OpPayloadBuilderAttributes {
+        let attributes = BasePayloadBuilderAttributes {
             payload_attributes: reth_payload_builder::EthPayloadBuilderAttributes {
                 id: PayloadId::new([0; 8]),
                 parent: parent.hash(),
@@ -1044,7 +1157,7 @@ impl OpPayloadBuilderCtx {
             ..Default::default()
         };
 
-        let block_env_attributes = OpNextBlockEnvAttributes {
+        let block_env_attributes = BaseNextBlockEnvAttributes {
             timestamp,
             suggested_fee_recipient: Default::default(),
             prev_randao: Default::default(),
@@ -1068,13 +1181,27 @@ impl OpPayloadBuilderCtx {
             cancel: CancellationToken::new(),
             extra: FlashblocksExtraCtx::default(),
             builder_config: crate::BuilderConfig::default(),
+            rejected_tx_sender: None,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::{Header, TxEip1559};
+    use alloy_eips::Encodable2718;
+    use alloy_primitives::{TxKind, U256};
+    use alloy_signer_local::PrivateKeySigner;
+    use base_common_consensus::BaseTypedTransaction;
+    use base_execution_chainspec::BaseChainSpec;
+    use reth_chainspec::ChainSpec;
+    use reth_primitives::SealedHeader;
+    use reth_primitives_traits::WithEncoded;
+    use reth_provider::noop::NoopProvider;
+    use reth_revm::{State, database::StateProviderDatabase};
+
     use super::*;
+    use crate::test_utils::sign_base_tx;
 
     #[test]
     fn diagnostics_report_selection_outcome() {
@@ -1192,5 +1319,80 @@ mod tests {
         assert_eq!(next.da_footprint_per_batch, Some(600));
         assert_eq!(next.execution_time_per_batch_us, Some(300_000));
         assert_eq!(next.state_root_gas_per_batch, Some(150_000));
+    }
+
+    /// Regression test: when the payload attributes are derived (`no_tx_pool=true`), an
+    /// invalid-tx error from a sequencer transaction must be propagated as a fatal error
+    /// rather than silently skipped.
+    ///
+    /// In `no_tx_pool=true` mode the attribute-supplied transaction list is the consensus
+    /// input for the payload (produced by `base-consensus` from L1 batches). The proof
+    /// executor strictly executes the full list and fails the block on any invalid tx; the
+    /// EL must do the same so Holocene's deposit-only fallback applies consistently across
+    /// both consumers of the same L1 input. Skip-and-continue here would let the EL freeze a
+    /// safe-head whose state cannot be reproduced by an honest proof client.
+    #[test]
+    fn execute_sequencer_transactions_propagates_invalid_tx_when_no_tx_pool() {
+        // Minimal Base chainspec: chain id 901 with all L1 forks through Cancun active at
+        // genesis. No inherited rollup forks, so block construction stays on the simplest
+        // path. (Mirrors the helper used by the `build_block` tests in `payload.rs`.)
+        let genesis: serde_json::Value = serde_json::json!({
+            "config": { "chainId": 901 },
+            "gasLimit": "0x1C9C380",
+            "timestamp": "0x0"
+        });
+        let genesis = serde_json::from_value(genesis).expect("valid genesis");
+        let inner =
+            ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
+        let chain_spec = Arc::new(BaseChainSpec { inner });
+        let parent_header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
+        let parent = Arc::new(SealedHeader::seal_slow(parent_header));
+
+        // A randomly-generated signer with no balance in the (empty) NoopProvider state.
+        // Any non-deposit transfer attempt will fail validation with
+        // `InvalidTransaction::LackOfFundForMaxFee` — an `is_invalid_tx_err()` outcome.
+        let signer = PrivateKeySigner::random();
+        let tx = TxEip1559 {
+            chain_id: 901,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(signer.address()),
+            value: U256::from(1u64),
+            ..Default::default()
+        };
+        let recovered =
+            sign_base_tx(&signer, BaseTypedTransaction::Eip1559(tx)).expect("sign sequencer tx");
+        let signed = recovered.into_inner();
+        let encoded = signed.encoded_2718().into();
+        let with_encoded = WithEncoded::new(encoded, signed);
+
+        // Strict mode: derived attributes (`no_tx_pool=true`) — the invalid tx must be fatal.
+        let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, parent);
+        ctx.config.attributes.no_tx_pool = true;
+        ctx.config.attributes.transactions = vec![with_encoded];
+
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let err = ctx
+            .execute_sequencer_transactions(&mut state)
+            .expect_err("invalid sequencer tx must fail when no_tx_pool=true");
+        assert!(
+            matches!(err, PayloadBuilderError::EvmExecutionError(_)),
+            "expected EvmExecutionError, got: {err:?}"
+        );
+
+        // Mempool mode (`no_tx_pool=false`): pre-includes are still skippable. Identical
+        // input now succeeds with zero gas consumed and no receipt — this guards against
+        // accidentally tightening the legacy code path along with the strict one.
+        ctx.config.attributes.no_tx_pool = false;
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let info = ctx
+            .execute_sequencer_transactions(&mut state)
+            .expect("invalid pre-include is skipped when no_tx_pool=false");
+        assert_eq!(info.cumulative_gas_used, 0, "skipped tx should not consume gas");
+        assert!(info.receipts.is_empty(), "skipped tx should not produce a receipt");
     }
 }

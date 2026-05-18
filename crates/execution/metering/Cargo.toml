@@ -1,0 +1,99 @@
+[package]
+name = "base-metering"
+description = "Metering RPC for Base node"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-bundles.workspace = true
+base-flashblocks.workspace = true
+base-node-runner.workspace = true
+
+# reth
+reth-evm.workspace = true
+reth-revm.workspace = true
+reth-provider.workspace = true
+reth-trie-common.workspace = true
+base-common-evm.workspace = true
+base-execution-evm.workspace = true
+reth-primitives-traits.workspace = true
+base-execution-chainspec.workspace = true
+
+# revm
+revm.workspace = true
+revm-database.workspace = true
+revm-inspectors.workspace = true
+revm-bytecode.workspace = true
+
+# alloy
+alloy-primitives.workspace = true
+alloy-rpc-types-engine.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+
+# base-alloy
+base-common-consensus.workspace = true
+
+# rpc
+jsonrpsee.workspace = true
+
+# DA calculation
+base-common-flz.workspace = true
+
+# metrics
+base-metrics.workspace = true
+metrics = { workspace = true, optional = true }
+
+# misc
+lru.workspace = true
+eyre.workspace = true
+tokio.workspace = true
+arc-swap.workspace = true
+thiserror.workspace = true
+parking_lot.workspace = true
+derive_more.workspace = true
+serde = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+# workspace
+base-test-utils.workspace = true
+base-common-flashblocks.workspace = true
+base-node-runner = { workspace = true, features = ["test-utils"] }
+
+# reth
+base-node-core.workspace = true
+reth-db-common.workspace = true
+reth-db = { workspace = true, features = ["test-utils"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+
+# revm
+revm-context-interface.workspace = true
+
+# alloy
+alloy-network.workspace = true
+alloy-sol-types.workspace = true
+alloy-rpc-client.workspace = true
+alloy-genesis = { workspace = true, features = ["std"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+
+# base-alloy
+base-common-rpc-types.workspace = true
+
+# misc
+url.workspace = true
+rand.workspace = true
+serde_json.workspace = true
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics", "reth-evm/metrics" ]

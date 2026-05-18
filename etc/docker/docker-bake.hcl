@@ -20,6 +20,7 @@ group "default" {
 
 group "rust-services" {
   targets = [
+    "base",
     "client",
     "builder",
     "consensus",
@@ -32,11 +33,11 @@ group "rust-services" {
 }
 
 group "devnet" {
-  targets = ["builder", "consensus", "client", "batcher"]
+  targets = ["builder", "consensus", "client", "base", "batcher"]
 }
 
 group "ingress" {
-  targets = ["builder", "consensus", "client", "ingress-rpc", "audit-archiver", "batcher"]
+  targets = ["builder", "consensus", "client", "base", "ingress-rpc", "audit-archiver", "batcher"]
 }
 
 target "_rust-service-common" {
@@ -53,6 +54,12 @@ target "client" {
   inherits = ["_rust-service-common"]
   target = "client"
   tags = ["base-reth-node:local"]
+}
+
+target "base" {
+  inherits = ["_rust-service-common"]
+  target = "base"
+  tags = ["base:local"]
 }
 
 target "builder" {

@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use alloy_genesis::ChainConfig;
 use alloy_provider::RootProvider;
-use base_alloy_network::Base;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
+use base_common_network::Base;
 use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_proof_primitives::ProofRequest;
 use serde::Serialize;

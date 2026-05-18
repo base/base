@@ -5,7 +5,8 @@
 
 use std::time::Instant;
 
-use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_protocol::L2BlockInfo;
 
 use crate::{
     Metrics, UnsafePayloadGossipClient,
@@ -21,6 +22,15 @@ pub enum SealState {
     Committed,
     /// Gossiped to peers. Ready for engine insertion.
     Gossiped,
+}
+
+/// Result from one seal pipeline step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealStepOutcome {
+    /// The current step completed and the pipeline has more work to do.
+    Pending,
+    /// The sealed payload has been inserted and acknowledged by the engine.
+    Inserted(L2BlockInfo),
 }
 
 impl SealState {
@@ -40,33 +50,37 @@ impl SealState {
 /// based on the current [`SealState`]. On success the state advances; on
 /// failure the state is unchanged so the same step is retried on the next call.
 ///
-/// Once insertion succeeds, `step` returns `Ok(true)` and the caller should
+/// Once insertion succeeds, `step` returns [`SealStepOutcome::Inserted`] and the caller should
 /// remove the sealer (the pipeline is complete).
 #[derive(Debug)]
 pub struct PayloadSealer {
     /// The sealed execution payload being driven through the pipeline.
-    pub envelope: OpExecutionPayloadEnvelope,
+    pub envelope: BaseExecutionPayloadEnvelope,
     /// Current pipeline stage.
     pub state: SealState,
+    /// Wall-clock instant the sealer was constructed (start of the seal pipeline).
+    /// Read by the actor on `Ok(true)` to record
+    /// [`crate::Metrics::sequencer_seal_pipeline_duration`].
+    pub started_at: Instant,
 }
 
 impl PayloadSealer {
     /// Creates a new sealer starting at the [`SealState::Sealed`] stage.
-    pub const fn new(envelope: OpExecutionPayloadEnvelope) -> Self {
-        Self { envelope, state: SealState::Sealed }
+    pub fn new(envelope: BaseExecutionPayloadEnvelope) -> Self {
+        Self { envelope, state: SealState::Sealed, started_at: Instant::now() }
     }
 
     /// Performs one step of the seal pipeline.
     ///
-    /// Returns `Ok(true)` when the pipeline is complete (payload inserted).
-    /// Returns `Ok(false)` when the step succeeded but more steps remain.
+    /// Returns [`SealStepOutcome::Inserted`] when the pipeline is complete.
+    /// Returns [`SealStepOutcome::Pending`] when the step succeeded but more steps remain.
     /// Returns `Err` when the step failed — state is unchanged for retry.
     pub async fn step<C, G, E>(
         &mut self,
         conductor: &Option<C>,
         gossip_client: &G,
         engine_client: &E,
-    ) -> Result<bool, SealStepError>
+    ) -> Result<SealStepOutcome, SealStepError>
     where
         C: Conductor,
         G: UnsafePayloadGossipClient,
@@ -84,7 +98,7 @@ impl PayloadSealer {
                         .map_err(SealStepError::Conductor)?;
                 }
                 self.state = SealState::Committed;
-                Ok(false)
+                Ok(SealStepOutcome::Pending)
             }
             SealState::Committed => {
                 gossip_client
@@ -92,19 +106,19 @@ impl PayloadSealer {
                     .await
                     .map_err(SealStepError::Gossip)?;
                 self.state = SealState::Gossiped;
-                Ok(false)
+                Ok(SealStepOutcome::Pending)
             }
             SealState::Gossiped => {
-                engine_client
+                let inserted_head = engine_client
                     .insert_unsafe_payload(self.envelope.clone())
                     .await
                     .map_err(SealStepError::Insert)?;
-                Ok(true)
+                Ok(SealStepOutcome::Inserted(inserted_head))
             }
         };
 
         match &result {
-            Ok(_) => Metrics::sequencer_seal_step_duration(step_label).set(step_start.elapsed()),
+            Ok(_) => Metrics::sequencer_seal_step_duration(step_label).record(step_start.elapsed()),
             Err(_) => Metrics::sequencer_seal_step_retries_total(step_label).increment(1),
         }
 

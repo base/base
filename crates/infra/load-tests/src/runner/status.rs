@@ -18,6 +18,8 @@ pub struct DisplaySnapshot {
     pub confirmed: usize,
     /// Total transactions failed.
     pub failed: u64,
+    /// Total confirmed transactions that reverted.
+    pub reverted: u64,
     /// Total in-flight (unconfirmed) transactions.
     pub in_flight: u64,
     /// Number of senders at the in-flight limit.
@@ -32,6 +34,14 @@ pub struct DisplaySnapshot {
     pub p50_latency: Duration,
     /// Rolling 30s p99 latency.
     pub p99_latency: Duration,
+    /// Rolling 30s block receipt delay p50.
+    pub block_receipt_delay_p50: Duration,
+    /// Rolling 30s block receipt delay p99.
+    pub block_receipt_delay_p99: Duration,
+    /// Rolling 30s flashblocks p50 latency.
+    pub flashblocks_p50_latency: Duration,
+    /// Rolling 30s flashblocks p99 latency.
+    pub flashblocks_p99_latency: Duration,
     /// Current gas price in gwei.
     pub gas_price_gwei: f64,
     /// Total ETH across all sender accounts (formatted).
@@ -40,6 +50,10 @@ pub struct DisplaySnapshot {
     pub min_eth: Option<String>,
     /// Whether any account is below the low-balance threshold.
     pub funds_low: bool,
+    /// Checksummed address of the funder wallet (set after `fund_accounts` runs).
+    pub funder_address: Option<String>,
+    /// Checksummed addresses of all sender accounts.
+    pub sender_addresses: Vec<String>,
 }
 
 /// Live progress-bar display for a running load test.
@@ -54,6 +68,7 @@ pub struct LoadTestDisplay {
     flight: ProgressBar,
     funding: ProgressBar,
     gas_lat: ProgressBar,
+    flashblocks_lat: ProgressBar,
     duration: Option<Duration>,
 }
 
@@ -123,6 +138,7 @@ impl LoadTestDisplay {
             flight: make_stat(mp),
             funding: make_stat(mp),
             gas_lat: make_stat(mp),
+            flashblocks_lat: make_stat(mp),
             duration,
         }
     }
@@ -147,12 +163,22 @@ impl LoadTestDisplay {
             self.header.set_message(format!("Base Load Test  elapsed {elapsed_str}   continuous"));
         }
 
-        self.txs.set_message(format!(
-            "txs     sub {}   conf {}   failed {}",
-            fmt_num(snap.submitted),
-            fmt_num(snap.confirmed as u64),
-            fmt_num(snap.failed),
-        ));
+        self.txs.set_message(if snap.reverted > 0 {
+            format!(
+                "txs     sub {}   conf {}   failed {}   reverted {}",
+                fmt_num(snap.submitted),
+                fmt_num(snap.confirmed as u64),
+                fmt_num(snap.failed),
+                fmt_num(snap.reverted),
+            )
+        } else {
+            format!(
+                "txs     sub {}   conf {}   failed {}",
+                fmt_num(snap.submitted),
+                fmt_num(snap.confirmed as u64),
+                fmt_num(snap.failed),
+            )
+        });
 
         let success_rate = if snap.submitted > 0 {
             snap.confirmed as f64 / snap.submitted as f64 * 100.0
@@ -194,11 +220,26 @@ impl LoadTestDisplay {
         });
 
         self.gas_lat.set_message(format!(
-            "gas     {:.2} gwei   latency p50 {}   p99 {}",
+            "gas     {:.2} gwei   block latency p50 {}   p99 {}   receipt delay p50 {}   p99 {}",
             snap.gas_price_gwei,
             fmt_latency(snap.p50_latency),
             fmt_latency(snap.p99_latency),
+            fmt_latency(snap.block_receipt_delay_p50),
+            fmt_latency(snap.block_receipt_delay_p99),
         ));
+
+        if snap.flashblocks_p50_latency > Duration::ZERO
+            || snap.flashblocks_p99_latency > Duration::ZERO
+        {
+            self.flashblocks_lat.set_message(format!(
+                "               fb latency p50 {}   p99 {}",
+                fmt_latency(snap.flashblocks_p50_latency),
+                fmt_latency(snap.flashblocks_p99_latency),
+            ));
+        } else {
+            self.flashblocks_lat
+                .set_message("               fb latency waiting for data...".to_string());
+        }
     }
 
     /// Finishes all bars and clears the stat rows.
@@ -207,7 +248,14 @@ impl LoadTestDisplay {
             self.header.set_position(d.as_secs());
         }
         self.header.finish_with_message("Base Load Test  complete");
-        for bar in [&self.txs, &self.rate, &self.flight, &self.funding, &self.gas_lat] {
+        for bar in [
+            &self.txs,
+            &self.rate,
+            &self.flight,
+            &self.funding,
+            &self.gas_lat,
+            &self.flashblocks_lat,
+        ] {
             bar.finish_and_clear();
         }
     }

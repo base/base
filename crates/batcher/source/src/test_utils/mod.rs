@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use async_trait::async_trait;
-use base_alloy_consensus::BaseBlock;
+use base_common_consensus::BaseBlock;
 use base_protocol::L2BlockInfo;
 
 pub use crate::{ChannelBlockSource, ChannelL1HeadSource};

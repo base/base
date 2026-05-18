@@ -23,11 +23,11 @@ alloy-rpc-types-eth.workspace = true
 alloy-transport-http.workspace = true
 
 # Base Alloy
-base-alloy-network.workspace = true
-base-alloy-rpc-types.workspace = true
+base-common-network.workspace = true
+base-common-rpc-types.workspace = true
 
 # Consensus
-base-consensus-genesis = { workspace = true, features = ["serde"] }
+base-common-genesis = { workspace = true, features = ["serde"] }
 
 # Async
 async-trait.workspace = true
@@ -51,4 +51,4 @@ backon.workspace = true
 moka = { workspace = true, features = ["future"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
