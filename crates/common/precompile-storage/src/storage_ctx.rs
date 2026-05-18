@@ -1,13 +1,25 @@
-//! Thread-local storage context for Base native precompiles.
+//! Scoped storage context for Base native precompiles.
 //!
 //! [`StorageCtx`] is a zero-size token that provides access to the current
-//! thread-local [`PrecompileStorageProvider`]. All storage operations within
+//! scoped [`PrecompileStorageProvider`]. All storage operations within
 //! a precompile call must happen inside a [`StorageCtx::enter`] closure.
+//!
+//! In `std` builds, the active provider is thread-local. In `no_std` builds,
+//! `core` does not provide thread-local storage, so the active provider is stored
+//! as a scoped process-local pointer for the duration of [`StorageCtx::enter`].
 
 use alloc::string::ToString;
 #[cfg(any(test, feature = "test-utils"))]
 use alloc::vec::Vec;
+#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
+use core::sync::atomic::{AtomicPtr, Ordering};
+#[cfg(feature = "std")]
 use core::{cell::RefCell, mem};
+#[cfg(not(feature = "std"))]
+use core::{
+    cell::{Cell, UnsafeCell},
+    ptr,
+};
 
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 use alloy_sol_types::SolInterface;
@@ -16,6 +28,7 @@ use revm::{
     precompile::{PrecompileOutput, PrecompileResult},
     state::{AccountInfo, Bytecode},
 };
+#[cfg(feature = "std")]
 use scoped_tls::scoped_thread_local;
 
 use crate::{
@@ -23,9 +36,85 @@ use crate::{
     provider::PrecompileStorageProvider,
 };
 
+#[cfg(feature = "std")]
 scoped_thread_local!(static STORAGE: RefCell<&mut dyn PrecompileStorageProvider>);
+#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
+static STORAGE: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
+#[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
+static mut STORAGE: *mut () = ptr::null_mut();
 
-/// Zero-size token providing access to the thread-local [`PrecompileStorageProvider`].
+#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
+fn storage_load() -> *mut () {
+    STORAGE.load(Ordering::SeqCst)
+}
+
+#[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
+fn storage_load() -> *mut () {
+    // SAFETY: `no_std` execution is scoped through `StorageCtx::enter`. Targets without
+    // pointer atomics cannot support concurrent mutation here, so callers must not enter
+    // the storage context concurrently.
+    unsafe { STORAGE }
+}
+
+#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
+fn storage_replace(ptr: *mut ()) -> *mut () {
+    STORAGE.swap(ptr, Ordering::SeqCst)
+}
+
+#[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
+fn storage_replace(ptr: *mut ()) -> *mut () {
+    // SAFETY: See `storage_load`.
+    unsafe {
+        let parent = STORAGE;
+        STORAGE = ptr;
+        parent
+    }
+}
+
+#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
+fn storage_store(ptr: *mut ()) {
+    STORAGE.store(ptr, Ordering::SeqCst);
+}
+
+#[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
+fn storage_store(ptr: *mut ()) {
+    // SAFETY: See `storage_load`.
+    unsafe {
+        STORAGE = ptr;
+    }
+}
+
+#[cfg(not(feature = "std"))]
+struct StorageScope<'a> {
+    storage: UnsafeCell<&'a mut dyn PrecompileStorageProvider>,
+    borrowed: Cell<bool>,
+}
+
+#[cfg(not(feature = "std"))]
+struct StorageScopeGuard {
+    parent: *mut (),
+}
+
+#[cfg(not(feature = "std"))]
+impl Drop for StorageScopeGuard {
+    fn drop(&mut self) {
+        storage_store(self.parent);
+    }
+}
+
+#[cfg(not(feature = "std"))]
+struct StorageBorrowGuard<'a> {
+    borrowed: &'a Cell<bool>,
+}
+
+#[cfg(not(feature = "std"))]
+impl Drop for StorageBorrowGuard<'_> {
+    fn drop(&mut self) {
+        self.borrowed.set(false);
+    }
+}
+
+/// Zero-size token providing access to the scoped [`PrecompileStorageProvider`].
 ///
 /// Must be used within a [`StorageCtx::enter`] closure.
 #[derive(Debug, Default, Clone, Copy)]
@@ -37,39 +126,117 @@ impl StorageCtx {
     where
         S: PrecompileStorageProvider,
     {
-        let storage: &mut dyn PrecompileStorageProvider = storage;
-        // SAFETY: `scoped_tls` ensures the pointer is only accessible within the closure scope.
-        // The reference is erased to 'static, but scoped_tls guarantees it never escapes `f`.
-        let storage_static: &mut (dyn PrecompileStorageProvider + 'static) =
-            unsafe { mem::transmute(storage) };
-        let cell = RefCell::new(storage_static);
-        STORAGE.set(&cell, f)
+        #[cfg(feature = "std")]
+        {
+            let storage: &mut dyn PrecompileStorageProvider = storage;
+            // SAFETY: `scoped_tls` ensures the pointer is only accessible within the closure scope.
+            // The reference is erased to 'static, but scoped_tls guarantees it never escapes `f`.
+            let storage_static: &mut (dyn PrecompileStorageProvider + 'static) =
+                unsafe { mem::transmute(storage) };
+            let cell = RefCell::new(storage_static);
+            STORAGE.set(&cell, f)
+        }
+
+        #[cfg(not(feature = "std"))]
+        {
+            let storage: &mut dyn PrecompileStorageProvider = storage;
+            let scope =
+                StorageScope { storage: UnsafeCell::new(storage), borrowed: Cell::new(false) };
+            let scope_ptr = (&scope as *const StorageScope<'_>).cast_mut().cast::<()>();
+            let parent = storage_replace(scope_ptr);
+            let _guard = StorageScopeGuard { parent };
+            f()
+        }
     }
 
     fn with_storage<F, R>(f: F) -> R
     where
         F: FnOnce(&mut dyn PrecompileStorageProvider) -> R,
     {
-        assert!(STORAGE.is_set(), "No storage context. 'StorageCtx::enter' must be called first");
-        STORAGE.with(|cell| {
-            let mut guard = cell.borrow_mut();
-            f(&mut **guard)
-        })
+        #[cfg(feature = "std")]
+        {
+            assert!(
+                STORAGE.is_set(),
+                "No storage context. 'StorageCtx::enter' must be called first"
+            );
+            STORAGE.with(|cell| {
+                let mut guard = cell.borrow_mut();
+                f(&mut **guard)
+            })
+        }
+
+        #[cfg(not(feature = "std"))]
+        {
+            let storage = Self::current_storage();
+            let guard = Self::borrow_storage(storage);
+            // SAFETY: `StorageScope::storage` points to the provider passed to the active
+            // `StorageCtx::enter` call. The borrow guard prevents overlapping mutable access.
+            let result = unsafe {
+                let storage = &mut *storage.storage.get();
+                f(&mut **storage)
+            };
+            drop(guard);
+            result
+        }
     }
 
     fn try_with_storage<F, R>(f: F) -> Result<R>
     where
         F: FnOnce(&mut dyn PrecompileStorageProvider) -> Result<R>,
     {
-        if !STORAGE.is_set() {
-            return Err(BasePrecompileError::Fatal(
-                "No storage context. 'StorageCtx::enter' must be called first".to_string(),
-            ));
+        #[cfg(feature = "std")]
+        {
+            if !STORAGE.is_set() {
+                return Err(BasePrecompileError::Fatal(
+                    "No storage context. 'StorageCtx::enter' must be called first".to_string(),
+                ));
+            }
+            STORAGE.with(|cell| {
+                let mut guard = cell.borrow_mut();
+                f(&mut **guard)
+            })
         }
-        STORAGE.with(|cell| {
-            let mut guard = cell.borrow_mut();
-            f(&mut **guard)
-        })
+
+        #[cfg(not(feature = "std"))]
+        {
+            let Some(storage) = Self::try_current_storage() else {
+                return Err(BasePrecompileError::Fatal(
+                    "No storage context. 'StorageCtx::enter' must be called first".to_string(),
+                ));
+            };
+            let guard = Self::borrow_storage(storage);
+            // SAFETY: `StorageScope::storage` points to the provider passed to the active
+            // `StorageCtx::enter` call. The borrow guard prevents overlapping mutable access.
+            let result = unsafe {
+                let storage = &mut *storage.storage.get();
+                f(&mut **storage)
+            };
+            drop(guard);
+            result
+        }
+    }
+
+    #[cfg(not(feature = "std"))]
+    fn try_current_storage() -> Option<&'static StorageScope<'static>> {
+        let ptr = storage_load();
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: `StorageCtx::enter` stores a pointer to a stack-local `StorageScope` and
+        // `StorageScopeGuard` restores the previous pointer before that stack frame exits.
+        Some(unsafe { &*ptr.cast::<StorageScope<'static>>() })
+    }
+
+    #[cfg(not(feature = "std"))]
+    fn current_storage() -> &'static StorageScope<'static> {
+        Self::try_current_storage()
+            .expect("No storage context. 'StorageCtx::enter' must be called first")
+    }
+
+    #[cfg(not(feature = "std"))]
+    fn borrow_storage(storage: &'static StorageScope<'static>) -> StorageBorrowGuard<'static> {
+        assert!(!storage.borrowed.replace(true), "already borrowed");
+        StorageBorrowGuard { borrowed: &storage.borrowed }
     }
 
     // --- Provider method delegates ---
