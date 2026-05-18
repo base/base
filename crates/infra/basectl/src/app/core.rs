@@ -248,7 +248,17 @@ impl App {
         let (tx, rx) = oneshot::channel();
         self.pending_network = Some(rx);
         tokio::spawn(async move {
-            let result = MonitoringConfig::load(&name).await;
+            let result = match MonitoringConfig::load(&name).await {
+                Ok(mut config) => {
+                    if let Some(detected) =
+                        MonitoringConfig::detect_name_from_rpc(&config.rpc).await
+                    {
+                        config.name = detected;
+                    }
+                    Ok(config)
+                }
+                Err(e) => Err(e),
+            };
             let _ = tx.send(result);
         });
     }

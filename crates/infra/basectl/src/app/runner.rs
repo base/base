@@ -29,7 +29,10 @@ pub async fn run_app(
     network: &str,
     conductor_rpc: Option<Url>,
 ) -> Result<()> {
-    let config = MonitoringConfig::load(network).await?;
+    let mut config = MonitoringConfig::load(network).await?;
+    if let Some(detected) = MonitoringConfig::detect_name_from_rpc(&config.rpc).await {
+        config.name = detected;
+    }
     let mut resources = Resources::new(config.clone());
     start_background_services(&config, &mut resources, conductor_rpc.clone());
     let app = App::new(resources, initial_view, conductor_rpc);

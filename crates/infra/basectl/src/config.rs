@@ -114,9 +114,9 @@ pub struct DiscoveryPorts {
     /// Consensus-layer JSON-RPC port (default 7545).
     #[serde(default = "default_cl_rpc_port")]
     pub cl_rpc: u16,
-    /// Optional execution-layer JSON-RPC port. When `None`, EL data is not
-    /// polled for discovered peers and shows as `—` in the UI.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Execution-layer JSON-RPC port (default 8545). When `None`, EL data is
+    /// not polled for discovered peers and shows as `—` in the UI.
+    #[serde(default = "default_el_rpc_port", skip_serializing_if = "Option::is_none")]
     pub el_rpc: Option<u16>,
 }
 
@@ -125,7 +125,7 @@ impl Default for DiscoveryPorts {
         Self {
             conductor_rpc: default_conductor_rpc_port(),
             cl_rpc: default_cl_rpc_port(),
-            el_rpc: None,
+            el_rpc: default_el_rpc_port(),
         }
     }
 }
@@ -136,6 +136,10 @@ const fn default_conductor_rpc_port() -> u16 {
 
 const fn default_cl_rpc_port() -> u16 {
     7545
+}
+
+const fn default_el_rpc_port() -> Option<u16> {
+    Some(8545)
 }
 
 /// Origin of the conductor cluster node list used by the poller.
@@ -304,6 +308,29 @@ impl MonitoringConfig {
             "sepolia" => Some("https://sepolia.etherscan.io"),
             _ => None,
         }
+    }
+
+    /// Returns the basectl display name for a known Base chain ID.
+    ///
+    /// Maps 8453/84532/763360 to `"mainnet"`/`"sepolia"`/`"zeronet"` so the
+    /// network badge agrees with what `-c` accepts on the CLI.
+    pub const fn name_for_chain_id(chain_id: u64) -> Option<&'static str> {
+        match chain_id {
+            8453 => Some("mainnet"),
+            84532 => Some("sepolia"),
+            763360 => Some("zeronet"),
+            _ => None,
+        }
+    }
+
+    /// Detects the live network name by calling `eth_chainId` on the L2 RPC.
+    ///
+    /// Returns the basectl-style name (e.g. `"mainnet"`) for known Base chain
+    /// IDs, or `None` when the RPC is unreachable or the chain ID is unknown.
+    pub async fn detect_name_from_rpc(rpc: &Url) -> Option<String> {
+        let provider = ProviderBuilder::new().connect(rpc.as_str()).await.ok()?;
+        let chain_id = provider.get_chain_id().await.ok()?;
+        Self::name_for_chain_id(chain_id).map(str::to_owned)
     }
 }
 
