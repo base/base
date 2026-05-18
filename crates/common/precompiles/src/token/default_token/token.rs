@@ -1,6 +1,7 @@
 //! `DefaultToken` struct — the concrete B-20 token type.
 
 use alloy_primitives::Address;
+use base_precompile_storage::StorageCtx;
 
 use super::storage::{DEFAULT_TOKEN_ADDRESS, DefaultTokenStorage};
 use crate::token::common::{
@@ -12,16 +13,16 @@ use crate::token::common::{
 ///
 /// The generic `S` lets callers swap in an in-memory [`TokenAccounting`]
 /// implementation for unit tests without touching real EVM storage. In
-/// production `S` defaults to [`DefaultTokenStorage`].
+/// production, [`DefaultToken::new`] wires in [`DefaultTokenStorage`].
 #[derive(Debug, Clone)]
-pub struct DefaultToken<S: TokenAccounting = DefaultTokenStorage> {
+pub struct DefaultToken<S: TokenAccounting> {
     pub(super) accounting: S,
 }
 
-impl DefaultToken {
+impl<'a> DefaultToken<DefaultTokenStorage<'a>> {
     /// Creates a new `DefaultToken` backed by [`DefaultTokenStorage`].
-    pub fn new() -> Self {
-        Self { accounting: DefaultTokenStorage::new() }
+    pub fn new(storage: StorageCtx<'a>) -> Self {
+        Self { accounting: DefaultTokenStorage::new(storage) }
     }
 }
 
@@ -31,12 +32,6 @@ impl<S: TokenAccounting> DefaultToken<S> {
     /// Use this in tests to inject an in-memory [`TokenAccounting`] implementation.
     pub const fn with_storage(accounting: S) -> Self {
         Self { accounting }
-    }
-}
-
-impl Default for DefaultToken {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

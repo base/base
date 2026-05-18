@@ -1,3 +1,5 @@
+use alloc::{string::String, vec, vec::Vec};
+
 use alloy_primitives::{Address, B256, FixedBytes, U256, keccak256};
 use alloy_sol_types::SolValue;
 use base_precompile_storage::{BasePrecompileError, Result};

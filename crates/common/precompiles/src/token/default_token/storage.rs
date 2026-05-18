@@ -1,6 +1,8 @@
+use alloc::string::String;
+
 use alloy_primitives::{Address, LogData, U256, address};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
 
 use crate::token::common::TokenAccounting;
 
@@ -23,7 +25,7 @@ pub struct DefaultTokenStorage {
     pub capabilities: U256,                                   // slot 11
 }
 
-impl TokenAccounting for DefaultTokenStorage {
+impl TokenAccounting for DefaultTokenStorage<'_> {
     fn balance_of(&self, account: Address) -> Result<U256> {
         self.balances.at(&account).read()
     }
@@ -116,7 +118,6 @@ impl TokenAccounting for DefaultTokenStorage {
     }
 
     fn emit_event(&mut self, log: LogData) -> Result<()> {
-        let mut ctx = StorageCtx;
-        ctx.emit_event(DEFAULT_TOKEN_ADDRESS, log)
+        self.emit_event(log)
     }
 }

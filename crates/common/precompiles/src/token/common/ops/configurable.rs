@@ -1,3 +1,5 @@
+use alloc::string::String;
+
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};

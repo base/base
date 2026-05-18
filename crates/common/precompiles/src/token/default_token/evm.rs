@@ -26,6 +26,6 @@ impl DefaultTokenEvm {
         }
         let calldata: Bytes = input.data.to_vec().into();
         let mut provider = EvmPrecompileStorageProvider::new(input);
-        StorageCtx::enter(&mut provider, || DefaultToken::new().dispatch(&calldata))
+        StorageCtx::enter(&mut provider, |ctx| DefaultToken::new(ctx).dispatch(ctx, &calldata))
     }
 }
