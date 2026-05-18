@@ -52,15 +52,8 @@ impl StorageCtx<'_> {
 }
 
 impl<'a> StorageCtx<'a> {
-    fn with_storage<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut dyn PrecompileStorageProvider) -> R,
-    {
-        let mut guard = self.storage.borrow_mut();
-        f(&mut **guard)
-    }
-
-    fn try_with_storage<F, R>(&self, f: F) -> Result<R>
+    /// Executes a provider operation with the active storage provider.
+    pub fn try_with_storage<F, R>(&self, f: F) -> Result<R>
     where
         F: FnOnce(&mut dyn PrecompileStorageProvider) -> Result<R>,
     {
@@ -92,20 +85,20 @@ impl<'a> StorageCtx<'a> {
     }
 
     /// Returns the current chain ID.
-    pub fn chain_id(&self) -> u64 {
-        self.with_storage(|s| s.chain_id())
+    pub fn chain_id(&self) -> Result<u64> {
+        self.try_with_storage(|s| Ok(s.chain_id()))
     }
     /// Returns the current block timestamp.
-    pub fn timestamp(&self) -> U256 {
-        self.with_storage(|s| s.timestamp())
+    pub fn timestamp(&self) -> Result<U256> {
+        self.try_with_storage(|s| Ok(s.timestamp()))
     }
     /// Returns the block beneficiary (coinbase).
-    pub fn beneficiary(&self) -> Address {
-        self.with_storage(|s| s.beneficiary())
+    pub fn beneficiary(&self) -> Result<Address> {
+        self.try_with_storage(|s| Ok(s.beneficiary()))
     }
     /// Returns the current block number.
-    pub fn block_number(&self) -> u64 {
-        self.with_storage(|s| s.block_number())
+    pub fn block_number(&self) -> Result<u64> {
+        self.try_with_storage(|s| Ok(s.block_number()))
     }
 
     /// Sets the bytecode at the given address.
@@ -139,28 +132,31 @@ impl<'a> StorageCtx<'a> {
     }
 
     /// Adds gas to the refund counter.
-    pub fn refund_gas(&self, gas: i64) {
-        self.with_storage(|s| s.refund_gas(gas))
+    pub fn refund_gas(&self, gas: i64) -> Result<()> {
+        self.try_with_storage(|s| {
+            s.refund_gas(gas);
+            Ok(())
+        })
     }
     /// Returns the gas limit for this precompile call.
-    pub fn gas_limit(&self) -> u64 {
-        self.with_storage(|s| s.gas_limit())
+    pub fn gas_limit(&self) -> Result<u64> {
+        self.try_with_storage(|s| Ok(s.gas_limit()))
     }
     /// Returns the gas used so far.
-    pub fn gas_used(&self) -> u64 {
-        self.with_storage(|s| s.gas_used())
+    pub fn gas_used(&self) -> Result<u64> {
+        self.try_with_storage(|s| Ok(s.gas_used()))
     }
     /// Returns the gas refunded so far.
-    pub fn gas_refunded(&self) -> i64 {
-        self.with_storage(|s| s.gas_refunded())
+    pub fn gas_refunded(&self) -> Result<i64> {
+        self.try_with_storage(|s| Ok(s.gas_refunded()))
     }
     /// Returns whether the current call context is static.
-    pub fn is_static(&self) -> bool {
-        self.with_storage(|s| s.is_static())
+    pub fn is_static(&self) -> Result<bool> {
+        self.try_with_storage(|s| Ok(s.is_static()))
     }
     /// Returns the address that called this precompile.
-    pub fn caller(&self) -> Address {
-        self.with_storage(|s| s.caller())
+    pub fn caller(&self) -> Result<Address> {
+        self.try_with_storage(|s| Ok(s.caller()))
     }
 
     /// Deducts gas from the remaining gas, returning `OutOfGas` if insufficient.
@@ -174,34 +170,37 @@ impl<'a> StorageCtx<'a> {
     }
 
     /// Creates a journal checkpoint and returns a RAII guard that auto-reverts on drop.
-    pub fn checkpoint(&self) -> CheckpointGuard<'a> {
-        let checkpoint = self.with_storage(|s| s.checkpoint());
-        CheckpointGuard { storage: *self, checkpoint: Some(checkpoint) }
+    pub fn checkpoint(&self) -> Result<CheckpointGuard<'a>> {
+        let checkpoint = self.try_with_storage(|s| Ok(s.checkpoint()))?;
+        Ok(CheckpointGuard { storage: *self, checkpoint: Some(checkpoint) })
     }
 
     /// Returns a success [`PrecompileOutput`] with the current gas used.
-    pub fn success_output(&self, output: Bytes) -> PrecompileOutput {
-        PrecompileOutput::new(self.gas_used(), output)
+    pub fn success_output(&self, output: Bytes) -> Result<PrecompileOutput> {
+        Ok(PrecompileOutput::new(self.gas_used()?, output))
     }
 
     /// Returns an ABI-encoded success output.
-    pub fn abi_success(&self, output: impl SolInterface) -> PrecompileOutput {
+    pub fn abi_success(&self, output: impl SolInterface) -> Result<PrecompileOutput> {
         self.success_output(output.abi_encode().into())
     }
 
     /// Returns a revert [`PrecompileOutput`] with the current gas used.
-    pub fn revert_output(&self, output: Bytes) -> PrecompileOutput {
-        PrecompileOutput::new_reverted(self.gas_used(), output)
+    pub fn revert_output(&self, output: Bytes) -> Result<PrecompileOutput> {
+        Ok(PrecompileOutput::new_reverted(self.gas_used()?, output))
     }
 
     /// Reverts with an ABI-encoded error.
-    pub fn abi_revert(&self, error: impl SolInterface) -> PrecompileOutput {
+    pub fn abi_revert(&self, error: impl SolInterface) -> Result<PrecompileOutput> {
         self.revert_output(error.abi_encode().into())
     }
 
     /// Returns a [`PrecompileResult`] constructed from the given error.
     pub fn error_result(&self, error: impl Into<BasePrecompileError>) -> PrecompileResult {
-        error.into().into_precompile_result(self.gas_used())
+        match self.gas_used() {
+            Ok(gas) => error.into().into_precompile_result(gas),
+            Err(err) => err.into_precompile_result(0),
+        }
     }
 }
 
@@ -217,17 +216,24 @@ pub struct CheckpointGuard<'a> {
 
 impl CheckpointGuard<'_> {
     /// Commits all state changes since the checkpoint.
-    pub fn commit(mut self) {
+    pub fn commit(mut self) -> Result<()> {
         if let Some(cp) = self.checkpoint.take() {
-            self.storage.with_storage(|s| s.checkpoint_commit(cp));
+            self.storage.try_with_storage(|s| {
+                s.checkpoint_commit(cp);
+                Ok(())
+            })?;
         }
+        Ok(())
     }
 }
 
 impl Drop for CheckpointGuard<'_> {
     fn drop(&mut self) {
         if let Some(cp) = self.checkpoint.take() {
-            self.storage.with_storage(|s| s.checkpoint_revert(cp));
+            let _ = self.storage.try_with_storage(|s| {
+                s.checkpoint_revert(cp);
+                Ok(())
+            });
         }
     }
 }
@@ -329,10 +335,17 @@ mod tests {
     use super::*;
 
     #[test]
-    #[should_panic(expected = "already borrowed")]
-    fn test_reentrant_with_storage_panics() {
+    fn test_reentrant_storage_borrow_returns_error() {
         let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
-        StorageCtx::enter(&mut storage, |ctx| ctx.with_storage(|_| ctx.with_storage(|_| ())));
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            ctx.try_with_storage(|_| ctx.gas_used().map(|_| ()))
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::Fatal("Storage context is already mutably borrowed".to_string())
+        );
     }
 
     #[test]
@@ -343,13 +356,13 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             ctx.sstore(addr, key, U256::from(42)).unwrap();
-            let guard = ctx.checkpoint();
+            let guard = ctx.checkpoint().unwrap();
             ctx.sstore(addr, key, U256::from(99)).unwrap();
-            guard.commit();
+            guard.commit().unwrap();
             assert_eq!(ctx.sload(addr, key).unwrap(), U256::from(99));
 
             {
-                let _guard = ctx.checkpoint();
+                let _guard = ctx.checkpoint().unwrap();
                 ctx.sstore(addr, key, U256::from(1)).unwrap();
             }
             assert_eq!(ctx.sload(addr, key).unwrap(), U256::from(99));
