@@ -6,7 +6,7 @@ use super::Transferable;
 use crate::token::IDefaultToken;
 
 /// ERC-5267 `eip712Domain()` return tuple: (fields, name, version, chainId, verifyingContract, salt, extensions).
-pub type Eip712Domain = (FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>);
+pub(super) type Eip712Domain = (FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>);
 
 // keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)")
 const PERMIT_TYPEHASH: B256 =
@@ -29,10 +29,7 @@ pub trait Permittable: Transferable {
     }
 
     /// Returns the ERC-5267 `eip712Domain()` tuple for this token.
-    fn eip712_domain(
-        &self,
-        chain_id: u64,
-    ) -> Result<Eip712Domain> {
+    fn eip712_domain(&self, chain_id: u64) -> Result<Eip712Domain> {
         Ok((
             FixedBytes::<1>::from([0x0c]), // bits 2+3: chainId + verifyingContract
             String::new(),
