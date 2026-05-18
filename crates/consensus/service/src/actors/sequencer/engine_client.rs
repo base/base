@@ -143,13 +143,20 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
             return Err(EngineClientError::RequestError("request channel closed.".to_string()));
         }
 
-        payload_id_rx.recv()
-            .await
-            .inspect(|payload_id| trace!(target: "sequencer", ?payload_id, "Start build request successfully."))
-            .ok_or_else(|| {
-            error!(target: "block_engine", "Failed to receive payload for initiated block build");
-            EngineClientError::ResponseError("response channel closed.".to_string())
-        })
+        match payload_id_rx.recv().await {
+            Some(Ok(payload_id)) => {
+                trace!(target: "sequencer", ?payload_id, "Start build request successfully.");
+                Ok(payload_id)
+            }
+            Some(Err(err)) => {
+                info!(target: "sequencer", ?err, "Start build request failed.");
+                Err(EngineClientError::StartBuildError(err))
+            }
+            None => {
+                error!(target: "block_engine", "Failed to receive payload for initiated block build");
+                Err(EngineClientError::ResponseError("response channel closed.".to_string()))
+            }
+        }
     }
 
     async fn get_sealed_payload(

@@ -1,7 +1,7 @@
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::{B64, Bytes};
 
-use super::{EIP1559ParamError, encode_eip_1559_params};
+use super::{EIP1559ParamEncoder, EIP1559ParamError};
 
 const VERSION_BYTE: u8 = 1;
 
@@ -50,7 +50,7 @@ impl JovianExtraData {
     ) -> Result<Bytes, EIP1559ParamError> {
         let mut extra_data = [0u8; 17];
         extra_data[0] = VERSION_BYTE;
-        encode_eip_1559_params(eip_1559_params, default_base_fee_params, &mut extra_data)?;
+        EIP1559ParamEncoder::encode(eip_1559_params, default_base_fee_params, &mut extra_data)?;
         extra_data[9..17].copy_from_slice(&min_base_fee.to_be_bytes());
         Ok(Bytes::copy_from_slice(&extra_data))
     }

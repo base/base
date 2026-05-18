@@ -760,10 +760,9 @@ mod tests {
     use base_common_consensus::BaseBlock;
     use base_common_genesis::{ChainGenesis, HardForkConfig};
     use tracing::Level;
-    use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
-    use crate::test_utils::{CollectingLayer, TestBatchValidator, TraceStorage};
+    use crate::test_utils::TestBatchValidator;
 
     fn gen_l1_blocks(
         start_num: u64,
@@ -869,10 +868,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_missing_l1_block_input() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig::default();
         let l1_blocks = vec![];
@@ -891,10 +887,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batches_is_empty() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig::default();
         let l1_blocks = vec![BlockInfo::default()];
@@ -949,10 +942,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_eager_block_missing_origins() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig::default();
         let block = BlockInfo { number: 9, ..Default::default() };
@@ -977,10 +967,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_delta_inactive() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             hardforks: HardForkConfig { delta_time: Some(10), ..Default::default() },
@@ -1009,10 +996,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_out_of_order() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
@@ -1042,10 +1026,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_no_new_blocks() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
@@ -1073,10 +1054,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_overlapping_blocks_tx_count_mismatch() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
@@ -1139,10 +1117,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_overlapping_blocks_tx_mismatch() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
@@ -1218,10 +1193,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_block_timestamp_lt_l1_origin() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
@@ -1256,10 +1228,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_misaligned_timestamp() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
@@ -1288,10 +1257,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_misaligned_without_overlap() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
@@ -1320,10 +1286,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_failed_to_fetch_l2_block() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
@@ -1355,10 +1318,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_parent_hash_fail() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
@@ -1407,10 +1367,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_sequence_window_expired() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
@@ -1455,10 +1412,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_starting_epoch_too_far_ahead() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             seq_window_size: 100,
@@ -1510,10 +1464,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_epoch_hash_mismatch() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             seq_window_size: 100,
@@ -1569,10 +1520,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_need_more_l1_blocks() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             seq_window_size: 100,
@@ -1623,10 +1571,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_batch_epoch_too_old() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             seq_window_size: 100,
@@ -1680,10 +1625,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_exceeds_max_seq_drif() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             seq_window_size: 100,
@@ -1731,12 +1673,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_continuing_with_empty_batch() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default()
-            .with(layer)
-            .with(tracing_subscriber::fmt::layer());
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             seq_window_size: 100,
@@ -1791,10 +1728,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_exceeds_sequencer_time_drift() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             seq_window_size: 100,
@@ -1855,10 +1789,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_empty_txs() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             seq_window_size: 100,
@@ -1923,10 +1854,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_with_deposit_tx() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             seq_window_size: 100,
@@ -1985,10 +1913,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_with_eip7702_tx() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             seq_window_size: 100,
@@ -2051,10 +1976,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_failed_to_fetch_payload() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             seq_window_size: 100,
@@ -2107,10 +2029,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_failed_to_extract_l2_block_info() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let cfg = RollupConfig {
             seq_window_size: 100,
@@ -2176,10 +2095,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_overlapped_blocks_origin_mismatch() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let payload_block_hash =
             b256!("0e2ee9abe94ee4514b170d7039d8151a7469d434a8575dbab5bd4187a27732dd");
@@ -2247,10 +2163,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_overlapped_blocks_origin_outdated() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
         let cfg = RollupConfig {
@@ -2317,10 +2230,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_valid_with_genesis_epoch() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         let payload_block_hash =
             b256!("0e2ee9abe94ee4514b170d7039d8151a7469d434a8575dbab5bd4187a27732dd");

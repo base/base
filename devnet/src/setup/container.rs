@@ -118,6 +118,8 @@ pub struct SetupContainer {
     chain_id: u64,
     l2_chain_id: u64,
     slot_duration: u64,
+    base_azul_activation_block: Option<u64>,
+    base_beryl_activation_block: Option<u64>,
     network_name: Option<String>,
 }
 
@@ -129,6 +131,8 @@ impl SetupContainer {
             chain_id: 1337,
             l2_chain_id: 84538453,
             slot_duration: 2,
+            base_azul_activation_block: None,
+            base_beryl_activation_block: None,
             network_name: None,
         }
     }
@@ -148,6 +152,18 @@ impl SetupContainer {
     /// Sets the slot duration.
     pub const fn with_slot_duration(mut self, slot_duration: u64) -> Self {
         self.slot_duration = slot_duration;
+        self
+    }
+
+    /// Sets the L2 block number at which Base Azul activates.
+    pub const fn with_base_azul_activation_block(mut self, block: u64) -> Self {
+        self.base_azul_activation_block = Some(block);
+        self
+    }
+
+    /// Sets the L2 block number at which Base Beryl activates.
+    pub const fn with_base_beryl_activation_block(mut self, block: u64) -> Self {
+        self.base_beryl_activation_block = Some(block);
         self
     }
 
@@ -213,7 +229,7 @@ impl SetupContainer {
         let image = GenericImage::new("devnet-setup", "local")
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)));
 
-        let _container = image
+        let mut container = image
             .with_network(net)
             .with_startup_timeout(Duration::from_secs(DEPLOY_TIMEOUT_SECS))
             .with_env_var("OUTPUT_DIR", "/output/l2")
@@ -234,7 +250,17 @@ impl SetupContainer {
             .with_env_var("L2_EL_BOOTNODE_ENODE_ID", EL_BOOTNODE_ENODE_ID)
             .with_env_var("L2_EL_BOOTNODE_ENODE", EL_BOOTNODE_ENODE)
             .with_env_var("L2_CL_BOOTNODE_P2P_KEY", CL_BOOTNODE_P2P_KEY)
-            .with_env_var("L2_CL_BOOTNODE_ENR_PATH", CL_BOOTNODE_ENR_PATH)
+            .with_env_var("L2_CL_BOOTNODE_ENR_PATH", CL_BOOTNODE_ENR_PATH);
+
+        if let Some(block) = self.base_azul_activation_block {
+            container = container.with_env_var("L2_BASE_AZUL_BLOCK", block.to_string());
+        }
+
+        if let Some(block) = self.base_beryl_activation_block {
+            container = container.with_env_var("L2_BASE_BERYL_BLOCK", block.to_string());
+        }
+
+        let _container = container
             .with_mount(Mount::bind_mount(l2_output_mount, "/output/l2"))
             .with_mount(Mount::bind_mount(shared_mount, "/shared"))
             .with_cmd(["setup-l2.sh"])

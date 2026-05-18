@@ -570,7 +570,6 @@ rand_08 = { package = "rand", version = "0.8" }
 strum = { version = "0.27", default-features = false }
 brotli = { version = "8.0.2", default-features = false }
 rocksdb = { version = "0.24", default-features = false }
-rdkafka = { version = "0.39", default-features = false }
 thiserror = { version = "2.0", default-features = false }
 either = { version = "1.15.0", default-features = false }
 syn = { version = "2", features = ["full", "extra-traits"] }

@@ -14,7 +14,7 @@ use clap::{Parser, ValueEnum};
 use jsonrpsee::server::ServerBuilder;
 use moka::{policy::EvictionPolicy, sync::Cache};
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::info;
 
 base_cli_utils::define_log_args!("TIPS_AUDIT");
 base_cli_utils::define_metrics_args!("TIPS_AUDIT", 9002);
@@ -28,18 +28,6 @@ enum S3ConfigType {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Deprecated: bundle events are now ingested over RPC. Accepted for
-    /// backward compatibility with existing deploy configs and ignored at
-    /// runtime (a deprecation warning is logged when set).
-    #[arg(long, env = "TIPS_AUDIT_KAFKA_PROPERTIES_FILE")]
-    kafka_properties_file: Option<String>,
-
-    /// Deprecated: bundle events are now ingested over RPC. Accepted for
-    /// backward compatibility with existing deploy configs and ignored at
-    /// runtime (a deprecation warning is logged when set).
-    #[arg(long, env = "TIPS_AUDIT_KAFKA_TOPIC")]
-    kafka_topic: Option<String>,
-
     #[arg(long, env = "TIPS_AUDIT_S3_BUCKET")]
     s3_bucket: String,
 
@@ -110,14 +98,6 @@ async fn main() -> Result<()> {
         channel_buffer_size = args.channel_buffer_size,
         "Starting audit archiver"
     );
-
-    if args.kafka_properties_file.is_some() || args.kafka_topic.is_some() {
-        warn!(
-            "TIPS_AUDIT_KAFKA_PROPERTIES_FILE / TIPS_AUDIT_KAFKA_TOPIC are deprecated and ignored: \
-             bundle events are now ingested over RPC via base_persistBatchedBundleEvent. \
-             Remove these args from the deploy config."
-        );
-    }
 
     let s3_client = create_s3_client(&args).await?;
     let s3_bucket = args.s3_bucket.clone();

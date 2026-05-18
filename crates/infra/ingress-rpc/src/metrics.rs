@@ -10,8 +10,6 @@ base_metrics::define_metrics! {
     successful_simulations: counter,
     #[describe("Number of bundles that failed simulation")]
     failed_simulations: counter,
-    #[describe("Number of bundles sent to kafka")]
-    sent_to_kafka: counter,
     #[describe("Number of transactions sent to mempool")]
     sent_to_mempool: counter,
     #[describe("Duration of validate_tx")]

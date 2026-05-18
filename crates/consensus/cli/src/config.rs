@@ -7,7 +7,6 @@ use std::{fs::File, path::PathBuf};
 
 use alloy_chains::Chain;
 use alloy_genesis::ChainConfig;
-use base_common_chains::Registry;
 use base_common_genesis::RollupConfig;
 use serde_json::from_reader;
 use tracing::debug;
@@ -33,7 +32,7 @@ pub enum ConfigError {
 #[derive(Clone, Debug, Default, clap::Args)]
 pub struct L1ConfigFile {
     /// Path to a custom L1 chain configuration file.
-    /// (overrides the default configuration from the registry)
+    /// (overrides the default configuration from the built-in Ethereum L1 mapping)
     #[arg(long, visible_alias = "rollup-l1-cfg", env = "BASE_NODE_L1_CHAIN_CONFIG")]
     pub l1_config_file: Option<PathBuf>,
 }
@@ -74,11 +73,11 @@ impl L1ConfigFile {
 /// L2 rollup configuration file path wrapper.
 ///
 /// Wraps an optional path to a custom L2 rollup configuration file.
-/// If no path is provided, the configuration is loaded from the registry.
+/// If no path is provided, the configuration is loaded from the built-in Base chain config.
 #[derive(Clone, Debug, Default, clap::Args)]
 pub struct L2ConfigFile {
     /// Path to a custom L2 rollup configuration file.
-    /// (overrides the default rollup configuration from the registry)
+    /// (overrides the default rollup configuration from the built-in Base chain config)
     #[arg(long, visible_alias = "rollup-cfg", env = "BASE_NODE_ROLLUP_CONFIG")]
     pub l2_config_file: Option<PathBuf>,
 }
@@ -97,7 +96,7 @@ impl L2ConfigFile {
     /// Loads the L2 rollup configuration.
     ///
     /// If a file path is set, loads the configuration from the JSON file.
-    /// Otherwise, falls back to the superchain registry using the provided chain.
+    /// Otherwise, falls back to the built-in Base chain config using the provided chain.
     pub fn load(&self, l2_chain: &Chain) -> Result<RollupConfig, ConfigError> {
         match &self.l2_config_file {
             Some(path) => {
@@ -106,10 +105,9 @@ impl L2ConfigFile {
                 from_reader(file).map_err(ConfigError::Parse)
             }
             None => {
-                debug!("Loading l2 config from registry");
-                let cfg = Registry::rollup_config_by_chain(l2_chain)
-                    .ok_or_else(|| ConfigError::NotFound(l2_chain.id()))?;
-                Ok(cfg.clone())
+                debug!("loading l2 config from built-in chain config");
+                base_common_chains::rollup_config!(l2_chain)
+                    .ok_or_else(|| ConfigError::NotFound(l2_chain.id()))
             }
         }
     }

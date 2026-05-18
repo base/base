@@ -6,6 +6,9 @@
 )]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+#[macro_use]
+mod macros;
+
 mod aggregate_verifier;
 pub use aggregate_verifier::{
     AggregateVerifierClient, AggregateVerifierContractClient, GameInfo, GameStatus,

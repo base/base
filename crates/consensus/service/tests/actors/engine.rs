@@ -97,7 +97,7 @@ impl EngineRequestReceiver for CountingEngineReceiver {
                 if let EngineActorRequest::BuildRequest(build_request) = request {
                     builds_processed.fetch_add(1, Ordering::SeqCst);
                     let payload_id = PayloadId::new([0x01; 8]);
-                    let _ = build_request.result_tx.send(payload_id).await;
+                    let _ = build_request.result_tx.send(Ok(payload_id)).await;
                 }
             }
         })
@@ -238,7 +238,8 @@ async fn full_public_rpc_queue_does_not_block_engine_processing_requests() {
     let payload_id = tokio::time::timeout(Duration::from_secs(2), payload_id_rx.recv())
         .await
         .expect("build request was blocked behind rpc backpressure")
-        .expect("build response channel closed");
+        .expect("build response channel closed")
+        .expect("build request failed");
 
     assert_eq!(payload_id, PayloadId::new([0x01; 8]));
     assert_eq!(builds_processed.load(Ordering::SeqCst), 1);

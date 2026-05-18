@@ -10,7 +10,9 @@ use anyhow::Result;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_flashblocks::Flashblock;
 use base_common_network::Base;
-use base_consensus_rpc::{BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient};
+use base_consensus_rpc::{
+    AdminApiClient, BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient,
+};
 use futures::{StreamExt, stream};
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::{mpsc, watch};
@@ -688,6 +690,20 @@ pub struct ConductorNodeStatus {
     /// Whether the conductor's sequencer is actively sequencing (`conductor_active`).
     /// Expected to be `false` for followers. `None` means unreachable.
     pub conductor_active: Option<bool>,
+    /// Whether op-conductor's control loop is paused (`conductor_paused`). When paused,
+    /// the conductor stops driving leader election and health checks. `None` means
+    /// unreachable.
+    pub conductor_paused: Option<bool>,
+    /// Whether op-conductor has been fully stopped (`conductor_stopped`). `None` means
+    /// unreachable.
+    pub conductor_stopped: Option<bool>,
+    /// Whether the sequencer is reporting healthy via `conductor_sequencerHealthy`.
+    /// `None` means unreachable.
+    pub sequencer_healthy: Option<bool>,
+    /// Whether the sequencer is currently producing blocks (`admin_sequencerActive`).
+    /// Sourced from the consensus node's admin namespace on `cl_rpc`. `None` means
+    /// unreachable.
+    pub sequencer_active: Option<bool>,
 
     // ── CL (consensus layer) ─────────────────────────────────────────────
     /// Unsafe L2 block number from `optimism_syncStatus`.
@@ -771,6 +787,105 @@ pub async fn transfer_conductor_leader(
                 Ok(format!("leadership transferred to {target}"))
             }
         }
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
+/// Pauses op-conductor's control loop on a single node via `conductor_pause`.
+///
+/// While paused, the conductor stops driving leader election and sequencer
+/// health checks, but the underlying Raft membership is preserved. Paired with
+/// [`conductor_resume_node`].
+pub async fn conductor_pause_node(
+    node: ConductorNodeConfig,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let outcome: anyhow::Result<String> = async {
+        let client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(node.conductor_rpc.as_str())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        ConductorApiClient::conductor_pause(&client).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(format!("conductor paused on {}", node.name))
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
+/// Resumes op-conductor's control loop on a single node via `conductor_resume`.
+pub async fn conductor_resume_node(
+    node: ConductorNodeConfig,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let outcome: anyhow::Result<String> = async {
+        let client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(node.conductor_rpc.as_str())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        ConductorApiClient::conductor_resume(&client).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(format!("conductor resumed on {}", node.name))
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
+/// Starts the sequencer on a single node via `admin_startSequencer`.
+///
+/// The `unsafe_head` hash must match the node's current engine unsafe head; the
+/// server rejects mismatches and `B256::ZERO`. When op-conductor is enabled,
+/// this only succeeds if the target node is the Raft leader.
+pub async fn start_sequencer_node(
+    node: ConductorNodeConfig,
+    unsafe_head: B256,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let outcome: anyhow::Result<String> = async {
+        if unsafe_head == B256::ZERO {
+            return Err(anyhow::anyhow!("unsafe_head must not be zero"));
+        }
+        let client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(node.cl_rpc.as_str())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        AdminApiClient::admin_start_sequencer(&client, unsafe_head)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(format!("sequencer started on {} at {unsafe_head}", node.name))
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
+/// Stops the sequencer on a single node via `admin_stopSequencer`.
+///
+/// Returns the unsafe head hash captured at the moment the sequencer was
+/// stopped, suitable for passing back into [`start_sequencer_node`] later.
+pub async fn stop_sequencer_node(
+    node: ConductorNodeConfig,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let outcome: anyhow::Result<String> = async {
+        let client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(node.cl_rpc.as_str())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let head = AdminApiClient::admin_stop_sequencer(&client)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(format!("sequencer stopped on {} at {head}", node.name))
     }
     .await;
 
@@ -954,10 +1069,19 @@ pub async fn unpause_sequencer_node(
             for enode in &peers.el_enodes {
                 let r: Result<bool, _> =
                     ClientT::request(&el_client, "admin_addPeer", rpc_params![enode]).await;
-                if r.is_ok() {
+                if matches!(r, Ok(true)) {
                     el_ok += 1;
                 }
             }
+        }
+
+        if cl_ok != peers.cl_addrs.len() || el_ok != peers.el_enodes.len() {
+            anyhow::bail!(
+                "unpaused {} — reconnected {cl_ok}/{} CL peer(s), {el_ok}/{} EL peer(s); saved peers kept for retry",
+                node.name,
+                peers.cl_addrs.len(),
+                peers.el_enodes.len()
+            );
         }
 
         Ok(format!(
@@ -1025,10 +1149,14 @@ pub async fn run_conductor_poller(
         let statuses = futures::future::join_all(clients.iter().map(
             |(name, conductor_client, cl_client, el_client)| async move {
                 // Fire all RPCs concurrently so a single timed-out node does not
-                // stall the poll for the full sum of all call timeouts (7 × 500 ms).
+                // stall the poll for the full sum of all call timeouts (11 × 500 ms).
                 let (
                     is_leader,
                     conductor_active,
+                    conductor_paused,
+                    conductor_stopped,
+                    sequencer_healthy,
+                    sequencer_active,
                     sync,
                     cl_peer_stats,
                     el_block_r,
@@ -1037,6 +1165,10 @@ pub async fn run_conductor_poller(
                 ) = tokio::join!(
                     ConductorApiClient::conductor_leader(conductor_client),
                     ConductorApiClient::conductor_active(conductor_client),
+                    ConductorApiClient::conductor_paused(conductor_client),
+                    ConductorApiClient::conductor_stopped(conductor_client),
+                    ConductorApiClient::conductor_sequencer_healthy(conductor_client),
+                    AdminApiClient::admin_sequencer_active(cl_client),
                     RollupNodeApiClient::sync_status(cl_client),
                     BaseP2PApiClient::opp2p_peer_stats(cl_client),
                     async {
@@ -1073,6 +1205,10 @@ pub async fn run_conductor_poller(
                     name: name.clone(),
                     is_leader: is_leader.ok(),
                     conductor_active: conductor_active.ok(),
+                    conductor_paused: conductor_paused.ok(),
+                    conductor_stopped: conductor_stopped.ok(),
+                    sequencer_healthy: sequencer_healthy.ok(),
+                    sequencer_active: sequencer_active.ok(),
                     unsafe_l2_block: sync.as_ref().map(|s| s.unsafe_l2.block_info.number),
                     unsafe_l2_hash: sync.as_ref().map(|s| s.unsafe_l2.block_info.hash),
                     safe_l2_block: sync.as_ref().map(|s| s.safe_l2.block_info.number),

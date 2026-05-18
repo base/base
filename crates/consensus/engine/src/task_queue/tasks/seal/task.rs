@@ -1,18 +1,17 @@
 //! A task for importing a block that has already been started.
 use std::{sync::Arc, time::Instant};
 
-use alloy_rpc_types_engine::{ExecutionPayload, PayloadId};
+use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 
 use super::SealTaskError;
 use crate::{
-    EngineClient, EngineGetPayloadVersion, EngineState, EngineTaskExt, InsertPayloadSafety,
-    InsertTask,
+    Engine, EngineClient, EngineState, EngineTaskExt, InsertPayloadSafety, InsertTask,
     InsertTaskError::{self},
     task_queue::build_and_seal,
 };
@@ -66,73 +65,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         payload_id: PayloadId,
         payload_attrs: AttributesWithParent,
     ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
-        let payload_timestamp = payload_attrs.attributes().payload_attributes.timestamp;
-
-        debug!(
-            target: "engine",
-            payload_id = payload_id.to_string(),
-            l2_time = payload_timestamp,
-            "Sealing payload"
-        );
-
-        let get_payload_version = EngineGetPayloadVersion::from_cfg(cfg, payload_timestamp);
-        let payload_envelope = match get_payload_version {
-            EngineGetPayloadVersion::V5 => {
-                let payload = engine.get_payload_v5(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
-
-                // V5 drops parent_beacon_block_root from the get_payload response; source it
-                // from the attributes instead so InsertTask can still pass it to new_payload.
-                BaseExecutionPayloadEnvelope {
-                    parent_beacon_block_root: payload_attrs
-                        .attributes()
-                        .payload_attributes
-                        .parent_beacon_block_root,
-                    execution_payload: BaseExecutionPayload::V4(payload.execution_payload),
-                }
-            }
-            EngineGetPayloadVersion::V4 => {
-                let payload = engine.get_payload_v4(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
-
-                BaseExecutionPayloadEnvelope {
-                    parent_beacon_block_root: Some(payload.parent_beacon_block_root),
-                    execution_payload: BaseExecutionPayload::V4(payload.execution_payload),
-                }
-            }
-            EngineGetPayloadVersion::V3 => {
-                let payload = engine.get_payload_v3(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
-
-                BaseExecutionPayloadEnvelope {
-                    parent_beacon_block_root: Some(payload.parent_beacon_block_root),
-                    execution_payload: BaseExecutionPayload::V3(payload.execution_payload),
-                }
-            }
-            EngineGetPayloadVersion::V2 => {
-                let payload = engine.get_payload_v2(payload_id).await.map_err(|e| {
-                    error!(target: "engine", error = %e, "Payload fetch failed");
-                    SealTaskError::GetPayloadFailed(e)
-                })?;
-
-                BaseExecutionPayloadEnvelope {
-                    parent_beacon_block_root: None,
-                    execution_payload: match payload.execution_payload.into_payload() {
-                        ExecutionPayload::V1(payload) => BaseExecutionPayload::V1(payload),
-                        ExecutionPayload::V2(payload) => BaseExecutionPayload::V2(payload),
-                        _ => unreachable!("the response should be a V1 or V2 payload"),
-                    },
-                }
-            }
-        };
-
-        Ok(payload_envelope)
+        Engine::<EngineClient_>::fetch_payload(cfg, engine, payload_id, &payload_attrs).await
     }
 
     /// Inserts a payload into the engine with Holocene fallback support.
@@ -290,7 +223,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SealTask<EngineClient_> {
         );
 
         // NOTE: the reference node does not compare the current unsafe head against the
-        // attributes parent before sealing.  The BuildTask already sent an FCU
+        // attributes parent before sealing. The build step already sent an FCU
         // with `attributes.parent` as the head, so the EL is building on the
         // correct parent regardless of where the engine's in-memory unsafe head
         // sits.  During consolidation the safe head is intentionally behind the

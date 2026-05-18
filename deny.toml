@@ -185,7 +185,7 @@ skip = [
     "aws-smithy-http",
     "aws-smithy-json",
 
-    # TLS/HTTP stack version mismatches from aws-sdk/rdkafka deps
+    # TLS/HTTP stack version mismatches from aws-sdk deps
     "h2",
     "http",
     "http-body",

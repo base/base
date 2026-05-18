@@ -8,6 +8,7 @@ L1_CHAIN_ID="${L1_CHAIN_ID:-1337}"
 L2_DATA_DIR="${L2_DATA_DIR:-/data}"
 TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
 L2_BASE_AZUL_BLOCK="${L2_BASE_AZUL_BLOCK:-}"
+L2_BASE_BERYL_BLOCK="${L2_BASE_BERYL_BLOCK:-}"
 L2_EL_BOOTNODE_P2P_KEY="${L2_EL_BOOTNODE_P2P_KEY:-1111111111111111111111111111111111111111111111111111111111111111}"
 L2_EL_BOOTNODE_ENODE_ID="${L2_EL_BOOTNODE_ENODE_ID:-4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1}"
 L2_EL_BOOTNODE_ENODE="${L2_EL_BOOTNODE_ENODE:-enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303}"
@@ -16,6 +17,10 @@ L2_CL_BOOTNODE_ENR_PATH="${L2_CL_BOOTNODE_ENR_PATH:-/bootnodes/cl-bootnode.enr}"
 
 if [ -n "$L2_BASE_AZUL_BLOCK" ] && ! [[ "$L2_BASE_AZUL_BLOCK" =~ ^[0-9]+$ ]]; then
   echo "ERROR: L2_BASE_AZUL_BLOCK must be a non-negative integer when set, got: $L2_BASE_AZUL_BLOCK"
+  exit 1
+fi
+if [ -n "$L2_BASE_BERYL_BLOCK" ] && ! [[ "$L2_BASE_BERYL_BLOCK" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: L2_BASE_BERYL_BLOCK must be a non-negative integer when set, got: $L2_BASE_BERYL_BLOCK"
   exit 1
 fi
 
@@ -27,6 +32,11 @@ if [ -n "$L2_BASE_AZUL_BLOCK" ]; then
   echo "Base Azul activation block: $L2_BASE_AZUL_BLOCK"
 else
   echo "Base Azul activation block: <unset>"
+fi
+if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
+  echo "Base Beryl activation block: $L2_BASE_BERYL_BLOCK"
+else
+  echo "Base Beryl activation block: <unset>"
 fi
 echo "Output directory: $OUTPUT_DIR"
 
@@ -170,6 +180,41 @@ else
   echo "L2 genesis time: $L2_GENESIS_TIME"
   echo "L2 block time: $L2_BLOCK_TIME"
   echo "Base Azul activation block is unset; leaving base.azul and osakaTime unchanged"
+fi
+
+if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
+  L2_BASE_BERYL_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_BERYL_BLOCK))
+
+  echo ""
+  echo "=== Configuring Base Beryl Activation ==="
+  echo "L2 genesis time: $L2_GENESIS_TIME"
+  echo "L2 block time: $L2_BLOCK_TIME"
+  echo "Base Beryl activation block: $L2_BASE_BERYL_BLOCK"
+  echo "Derived Base Beryl activation timestamp: $L2_BASE_BERYL_TIME"
+
+  TMP_ROLLUP=$(mktemp)
+  jq \
+    --argjson beryl_time "$L2_BASE_BERYL_TIME" \
+    '.base = ((.base // {}) + {beryl: $beryl_time})' \
+    "$OUTPUT_DIR/rollup.json" \
+    >"$TMP_ROLLUP"
+  mv "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
+
+  TMP_GENESIS=$(mktemp)
+  jq \
+    --argjson beryl_time "$L2_BASE_BERYL_TIME" \
+    '.config.base = ((.config.base // {}) + {beryl: $beryl_time})' \
+    "$OUTPUT_DIR/genesis.json" \
+    >"$TMP_GENESIS"
+  mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
+
+  echo "Patched Base Beryl activation into rollup and genesis configs"
+else
+  echo ""
+  echo "=== Configuring Base Beryl Activation ==="
+  echo "L2 genesis time: $L2_GENESIS_TIME"
+  echo "L2 block time: $L2_BLOCK_TIME"
+  echo "Base Beryl activation block is unset; leaving base.beryl unchanged"
 fi
 
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."

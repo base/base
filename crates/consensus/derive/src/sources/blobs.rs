@@ -236,7 +236,7 @@ pub(super) mod tests {
 
     use alloy_consensus::{Blob, Signed, TxEip4844, TxEip4844Variant};
     use alloy_primitives::Signature;
-    use base_common_chains::Registry;
+    use base_common_chains::ChainConfig;
 
     use super::*;
     use crate::{
@@ -256,7 +256,7 @@ pub(super) mod tests {
     }
 
     pub(crate) fn valid_blob_txs() -> Vec<TxEnvelope> {
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         let sig = Signature::test_signature();
         vec![TxEnvelope::Eip4844(Signed::new_unchecked(
             TxEip4844Variant::TxEip4844(TxEip4844 {
@@ -317,7 +317,7 @@ pub(super) mod tests {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.blob_fetcher.should_error = true;
@@ -333,7 +333,7 @@ pub(super) mod tests {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.chain_provider.insert_block_with_transactions(1, block_info, txs);
@@ -403,7 +403,7 @@ pub(super) mod tests {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.blob_fetcher.should_return_extra_blob = true;
@@ -490,7 +490,7 @@ pub(super) mod tests {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         source.chain_provider.insert_block_with_transactions(1, block_info, valid_blob_txs());
         source.blob_fetcher.should_return_not_found = true;
@@ -509,7 +509,7 @@ pub(super) mod tests {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         source.chain_provider.insert_block_with_transactions(1, block_info, valid_blob_txs());
         source.blob_fetcher.should_return_not_found = true;
@@ -551,7 +551,7 @@ pub(super) mod tests {
     #[test]
     fn test_extract_blob_data_non_batcher_blobs_excluded() {
         // Case 1: source.batcher_address = Address::ZERO does not match the tx's batch inbox
-        // address from `Registry::rollup_config(8453)`, so the transaction is skipped and no
+        // address from `ChainConfig::MAINNET`, so the transaction is skipped and no
         // blobs are captured.
         let source = default_test_blob_source(); // batch_inbox_address = Address::ZERO
         let batcher_address = valid_blob_batcher_address();
@@ -561,7 +561,7 @@ pub(super) mod tests {
 
         // Case 2: correct batch inbox address → all 5 blobs from the batcher transaction captured.
         let mut source2 = default_test_blob_source();
-        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
         source2.batcher_address = batch_inbox_address;
         let batcher_address = valid_blob_batcher_address();
         let (data, hashes) = source2.extract_blob_data(valid_blob_txs(), batcher_address);

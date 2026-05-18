@@ -68,13 +68,12 @@ impl BootInfoStruct {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, b256};
-    use base_common_chains::Registry;
+    use base_common_chains::ChainConfig;
 
     use super::*;
 
     fn boot_info(claimed_l2_block_number: u64) -> BootInfo {
-        let rollup_config =
-            Registry::rollup_config(8453).expect("Base mainnet config should exist").clone();
+        let rollup_config = base_common_chains::rollup_config!(ChainConfig::MAINNET);
         let l1_config = base_common_chains::L1_CONFIGS
             .get(&rollup_config.l1_chain_id)
             .expect("Base mainnet L1 config should exist")
@@ -126,9 +125,9 @@ mod tests {
         ];
 
         for &(chain_id, expected) in cases {
-            let rollup = Registry::rollup_config(chain_id)
+            let rollup = base_common_chains::rollup_config!(chain_id)
                 .unwrap_or_else(|| panic!("missing rollup config for chain {chain_id}"));
-            let got = hash_rollup_config(rollup);
+            let got = hash_rollup_config(&rollup);
             assert_eq!(got, expected, "config hash mismatch for chain {chain_id}");
         }
     }

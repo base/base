@@ -167,14 +167,14 @@ impl BatcherService {
         fetch_provider: Arc<dyn Provider<Base> + Send + Sync>,
     ) -> Subscription {
         let Some(url) = url else {
-            return Subscription::Null(NullSubscription);
+            return Subscription::Null(NullSubscription::new());
         };
 
         let ws_provider = match ProviderBuilder::new().connect(url.as_str()).await {
             Ok(p) => Arc::new(p),
             Err(e) => {
                 warn!(error = %e, l2_rpc = %url, "failed to connect L2 WS provider; falling back to polling");
-                return Subscription::Null(NullSubscription);
+                return Subscription::Null(NullSubscription::new());
             }
         };
 
@@ -182,7 +182,7 @@ impl BatcherService {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "failed to subscribe to new L2 blocks; falling back to polling");
-                return Subscription::Null(NullSubscription);
+                return Subscription::Null(NullSubscription::new());
             }
         };
 
@@ -222,14 +222,14 @@ impl BatcherService {
     /// [`HybridL1HeadSource`]: base_batcher_source::HybridL1HeadSource
     async fn build_l1_subscription(url: Option<&Url>) -> L1Subscription {
         let Some(url) = url else {
-            return L1Subscription::Null(NullL1HeadSubscription);
+            return L1Subscription::Null(NullL1HeadSubscription::new());
         };
 
         let ws_provider = match ProviderBuilder::new().connect(url.as_str()).await {
             Ok(p) => Arc::new(p),
             Err(e) => {
                 warn!(error = %e, l1_ws = %url, "failed to connect L1 WS provider; falling back to polling");
-                return L1Subscription::Null(NullL1HeadSubscription);
+                return L1Subscription::Null(NullL1HeadSubscription::new());
             }
         };
 
@@ -237,7 +237,7 @@ impl BatcherService {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "failed to subscribe to new L1 blocks; falling back to polling");
-                return L1Subscription::Null(NullL1HeadSubscription);
+                return L1Subscription::Null(NullL1HeadSubscription::new());
             }
         };
 

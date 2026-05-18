@@ -47,16 +47,10 @@ impl DelayedWETHContractClient {
 #[async_trait]
 impl DelayedWETHClient for DelayedWETHContractClient {
     async fn delay(&self) -> Result<Duration, ContractError> {
-        let delay_u256: U256 = self
-            .contract
-            .delay()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "delay failed".into(), source: e })?;
+        let delay_u256: U256 = contract_call!(self.contract.delay().call(), "delay failed")?;
 
-        let delay_secs: u64 = delay_u256
-            .try_into()
-            .map_err(|_| ContractError::Validation("delay overflows u64".into()))?;
+        let delay_secs: u64 =
+            delay_u256.try_into().map_err(|_| ContractError::validation("delay overflows u64"))?;
 
         Ok(Duration::from_secs(delay_secs))
     }

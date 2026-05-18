@@ -17,8 +17,8 @@ pub use upgrades::Upgrades;
 mod chain;
 pub use chain::ChainUpgrades;
 
-mod registry;
-pub use registry::Registry;
+mod macros;
+pub use macros::RollupConfigSource;
 
 mod ethereum;
 pub use ethereum::{Holesky, Hoodi, L1_CONFIGS, Mainnet, Sepolia};
