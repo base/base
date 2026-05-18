@@ -41,7 +41,7 @@ use crate::{
 };
 
 /// Default maximum number of concurrent Base debug RPC requests.
-pub const DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS: usize = 3;
+pub const DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS: usize = 24;
 
 /// Represents the current proofs sync status.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
