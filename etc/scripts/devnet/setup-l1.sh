@@ -54,6 +54,20 @@ echo "=== Generating Execution Layer Genesis ==="
 export CHAIN_ID GENESIS_TIME_HEX BALANCE
 
 envsubst < "$TEMPLATE_DIR/l1-el-genesis.json.template" > "$OUTPUT_DIR/el/genesis.json"
+
+# Inject faucet address with a large starting balance. Enabled whenever FAUCET_ADDR is set.
+if [ -n "${FAUCET_ADDR:-}" ]; then
+  FAUCET_BALANCE="0x84595161401484a000000"  # 10,000,000 ETH
+  echo "Injecting FAUCET_ADDR $FAUCET_ADDR into L1 genesis with 10M ETH..."
+  TMP_L1=$(mktemp)
+  jq --arg addr "$FAUCET_ADDR" --arg bal "$FAUCET_BALANCE" \
+    '.alloc[$addr] = {"balance": $bal}' \
+    "$OUTPUT_DIR/el/genesis.json" > "$TMP_L1"
+  mv "$TMP_L1" "$OUTPUT_DIR/el/genesis.json"
+fi
+
+# NOTE: L1 intentionally keeps the standard anvil account allocs funded.
+
 jq '.config' "$OUTPUT_DIR/el/genesis.json" > "$OUTPUT_DIR/el/chain-config.json"
 
 echo "EL genesis written to $OUTPUT_DIR/el/genesis.json"

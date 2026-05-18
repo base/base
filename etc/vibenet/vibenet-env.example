@@ -1,0 +1,68 @@
+# Vibenet host-specific configuration.
+#
+# Copy this file to `etc/vibenet/vibenet-env` on the host and fill in the real
+# values. Never commit the populated file.
+
+# === Public TLS listener (production only) ===
+# On the production host, Cloudflare proxies public traffic (orange-cloud)
+# to Caddy's :443 listener. Caddy is activated by `just vibe` when
+# /etc/vibenet/tls/origin.crt (a Cloudflare Origin CA certificate) is present.
+#
+# Generate the cert pair from the Cloudflare dashboard:
+#   SSL/TLS -> Origin Server -> Create Certificate
+# Covering hostnames: vibes.base.org, *.vibes.base.org
+# Then on the host:
+#   sudo install -d -m 0755 /etc/vibenet/tls
+#   sudo tee /etc/vibenet/tls/origin.crt > /dev/null  # paste cert
+#   sudo tee /etc/vibenet/tls/origin.key > /dev/null  # paste key
+#   sudo chmod 0644 /etc/vibenet/tls/origin.crt
+#   sudo chmod 0600 /etc/vibenet/tls/origin.key
+#
+# VIBENET_PUBLIC_BIND_ADDR is the host IP :443 is published on. Leave unset
+# on laptops; set to the Cloudflare-reachable public IP on prod.
+# VIBENET_PUBLIC_BIND_ADDR=
+
+# === UI image ===
+# By default `just vibe` builds the Next.js UI from the sibling base/ui repo
+# at ../ui (relative to this repo). To use a pre-built image instead:
+# VIBENET_UI_IMAGE=ghcr.io/base/ui:main
+
+# === Faucet ===
+# Address that funds every public drip. Prefunded with 10M ETH in the L1
+# genesis (setup-l1.sh) and topped up on L2 by vibenet-setup sweeping the
+# standard anvil EOAs into it at boot.
+#
+# Generate a fresh key for each deployment:
+#   cast wallet new
+# Local default: the first standard Anvil/Foundry account. Production hosts
+# should replace this with a fresh generated key.
+FAUCET_ADDR=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+FAUCET_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+
+# === Faucet rate limits ===
+# How much to drip per request, how often a given IP / address may drip.
+# USDV drip is in *base units* (6 decimals); 1_000_000_000 = 1000 USDV.
+#
+# Cooldowns are namespaced per asset: a successful ETH drip does not put the
+# caller into cooldown for USDV. In practice this means a fresh caller can get
+# one ETH drip and one USDV drip back-to-back, then waits `*_COOLDOWN_SECS`
+# before the next drip of either asset. Default is 1 hour for both.
+VIBENET_FAUCET_DRIP_WEI=100000000000000000
+VIBENET_FAUCET_USDV_DRIP_UNITS=1000000000
+VIBENET_FAUCET_IP_COOLDOWN_SECS=3600
+VIBENET_FAUCET_ADDR_COOLDOWN_SECS=3600
+
+# === Optional: contract list override path ===
+# Defaults to etc/vibenet/setup/contracts.yaml. Override on a per-branch basis
+# to add demo-specific contracts without modifying the setup script.
+VIBENET_CONTRACTS_YAML=etc/vibenet/setup/contracts.yaml
+
+# === Optional: local-dev host ports ===
+# Loopback-only bindings on `just vibe`. In production Caddy binds :443.
+# VIBENET_HOST_PORT=18080     # Next.js app (landing / faucet / explorer)
+# VIBENET_WS_HOST_PORT=18081  # WebSocket RPC (base-client direct)
+# VIBENET_RPC_HOST_PORT=18082 # HTTP RPC (proxyd)
+
+# === Optional: explorer indexer tuning ===
+# VIBESCAN_START_BLOCK=0
+# VIBESCAN_BACKFILL_CONCURRENCY=16

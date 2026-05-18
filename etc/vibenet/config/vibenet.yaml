@@ -1,0 +1,27 @@
+# Vibenet UI content + per-branch config.
+# This file is mounted into the nginx container and exposed at:
+#   https://vibes.base.org/config.json
+#
+# Edit this file and re-run `just vibe` (or just restart nginx-gateway) to
+# update what devs see. No rebuild of the UI is required.
+#
+# NOTE: The `branch` and `commit` fields are overwritten at container build
+# time by etc/vibenet/scripts/render-config.sh. Do not rely on values set
+# here for those two fields.
+
+title: "base vibenet"
+subtitle: "An ephemeral Base devnet for trying out in-flight features."
+
+# Things unique to this devnet branch. Each item has a title,
+# one-sentence description, and optional link. Keep the baseline vibenet
+# tools as a single card; branch owners can add their feature-specific
+# "what's new" cards above or below it.
+features:
+  - title: "Vibenet faucet + explorer"
+    description: "Request test funds, browse blocks, inspect transactions, and follow token activity."
+  - title: "What's new on this vibe"
+    description: "Branch-specific updates will show up here when a vibe is deployed to preview what's upcoming or experimental."
+
+# Override injected at build time. Do not edit.
+branch: "unknown"
+commit: "unknown"

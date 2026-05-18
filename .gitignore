@@ -10,6 +10,7 @@ docs/specs/.vocs/
 *.log
 .vscode/
 *.env
+etc/vibenet/vibenet-env
 # SP1 ELF binaries are built on demand and not committed.
 crates/proof/succinct/elf/range-elf-embedded
 crates/proof/succinct/elf/aggregation-elf

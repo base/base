@@ -1,0 +1,76 @@
+# proxyd config for vibenet - per-method rate limits applied after the
+# per-IP limits in the nginx gateway. 
+# routes eth_sendRawTransaction to the builder and
+# everything else to the client.
+
+[server]
+rpc_host = "0.0.0.0"
+rpc_port = 8080
+max_body_size_bytes = 10485760
+max_concurrent_rpcs = 100
+
+[backend]
+response_timeout_seconds = 30
+max_response_size_bytes = 5242880
+max_retries = 3
+out_of_service_seconds = 10
+
+[rate_limit]
+base_rate = 50
+base_interval = "1s"
+
+[rate_limit.method_overrides]
+[rate_limit.method_overrides.eth_sendRawTransaction]
+limit = 20
+interval = "1s"
+[rate_limit.method_overrides.eth_call]
+limit = 100
+interval = "1s"
+[rate_limit.method_overrides.eth_getLogs]
+limit = 20
+interval = "1s"
+
+[backends]
+[backends.builder]
+rpc_url = "http://base-builder:7545"
+max_rps = 100
+
+[backends.client]
+rpc_url = "http://base-client:8545"
+max_rps = 200
+
+[backend_groups]
+[backend_groups.builder]
+backends = ["builder"]
+
+[backend_groups.client]
+backends = ["client"]
+
+[rpc_method_mappings]
+eth_sendRawTransaction = "builder"
+eth_chainId = "client"
+eth_blockNumber = "client"
+eth_syncing = "client"
+eth_call = "client"
+eth_estimateGas = "client"
+eth_createAccessList = "client"
+eth_gasPrice = "client"
+eth_maxPriorityFeePerGas = "client"
+eth_feeHistory = "client"
+eth_getLogs = "client"
+eth_getBalance = "client"
+eth_getStorageAt = "client"
+eth_getTransactionCount = "client"
+eth_getCode = "client"
+eth_getProof = "client"
+eth_getBlockByHash = "client"
+eth_getBlockByNumber = "client"
+eth_getBlockTransactionCountByHash = "client"
+eth_getBlockTransactionCountByNumber = "client"
+eth_getTransactionByHash = "client"
+eth_getTransactionByBlockHashAndIndex = "client"
+eth_getTransactionByBlockNumberAndIndex = "client"
+eth_getTransactionReceipt = "client"
+net_version = "client"
+web3_clientVersion = "client"
+base_transactionStatus = "client"

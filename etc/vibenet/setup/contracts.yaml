@@ -1,0 +1,30 @@
+# Contracts deployed by vibenet-setup after the L2 chain is live.
+#
+# Each entry names a contract, its forge artifact identifier
+# (src/<file>.sol:<contract>), and optional constructor args (templating:
+# "{{ otherContract }}" resolves to a previously-deployed address).
+#
+# Output: every entry adds `{ name: address }` to /shared/contracts.json.
+#
+# To add a demo contract on a branch, drop a .sol file into
+# etc/vibenet/setup/contracts/src/ and add an entry here. Re-run `just vibe`.
+#
+# TODO: add canonical ERC-4337 EntryPoint v0.7 / v0.8 deploys. These require
+# pulling the audited bytecode (eth-infinitism/account-abstraction) and
+# CREATE2-ing to the canonical address; leaving as follow-up work.
+#
+# TODO: add the Coinbase Smart Wallet factory. The factory bytecode lives in
+# coinbase/smart-wallet and is CREATE2-deployable at a canonical address.
+# Leaving as follow-up work so we don't block vibenet on pulling that repo
+# into our docker build context.
+
+contracts:
+  # USDV (Vibe USD): public-mint ERC-20 with USDC-compatible 6 decimals.
+  # Replaces the older MockUSDC name so nobody mistakes it for real USDC.
+  - name: usdv
+    artifact: src/USDV.sol:USDV
+    args: []
+  # NFV (Non-Fungible Vibe): public-mint ERC-721 for NFT-flow demos.
+  - name: nfv
+    artifact: src/NFV.sol:NFV
+    args: []

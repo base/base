@@ -1,0 +1,36 @@
+# Caddy TLS termination + subdomain routing for vibenet.
+# Uses Cloudflare Origin CA certificate (not ACME) so Caddy never
+# needs to reach Let's Encrypt — works even if the host isn't directly
+# reachable from the internet (Cloudflare proxies traffic orange-cloud).
+
+(tls_cf) {
+  tls /etc/caddy/tls/origin.crt /etc/caddy/tls/origin.key
+}
+
+# Landing page, faucet UI/API, and block explorer.
+# Next.js proxy.ts reads the Host header and routes internally:
+#   vibes.base.org          → serves /  (landing)
+#   faucet.vibes.base.org   → rewrites to /faucet
+#   explorer.vibes.base.org → rewrites to /explorer/*
+vibes.base.org faucet.vibes.base.org explorer.vibes.base.org {
+  import tls_cf
+  reverse_proxy next-app:3000
+}
+
+# JSON-RPC (HTTP + WebSocket).
+# proxyd handles HTTP; base-client handles WebSocket upgrades directly.
+rpc.vibes.base.org {
+  import tls_cf
+
+  # WebSocket RPC. base-client's WS port is fixed at 8546 in
+  # etc/docker/devnet-env (L2_CLIENT_WS_PORT) — hardcoded here because
+  # Caddy env interpolation needs the var passed into the caddy container,
+  # and this value never changes per deployment.
+  handle /ws {
+    reverse_proxy base-client:8546
+  }
+
+  handle {
+    reverse_proxy proxyd:8080
+  }
+}
