@@ -64,7 +64,7 @@ impl CancellableContext for RpcContext {
 /// ## Errors
 ///
 /// - [`std::io::Error`] if the server fails to start.
-async fn launch(
+pub(crate) async fn launch_rpc_server(
     config: &RpcBuilder,
     module: RpcModule<()>,
 ) -> Result<ServerHandle, std::io::Error> {
@@ -144,12 +144,12 @@ where
 
         let restarts = self.config.restart_count();
 
-        let mut handle = launch(&self.config, modules.clone()).await?;
+        let mut handle = launch_rpc_server(&self.config, modules.clone()).await?;
 
         for _ in 0..=restarts {
             tokio::select! {
                 _ = handle.clone().stopped() => {
-                    match launch(&self.config, modules.clone()).await {
+                    match launch_rpc_server(&self.config, modules.clone()).await {
                         Ok(h) => handle = h,
                         Err(err) => {
                             error!(target: "rpc", ?err, "Failed to launch rpc server");
@@ -191,7 +191,7 @@ mod tests {
             http_timeout: Duration::from_secs(60),
             max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
         };
-        let result = launch(&launcher, RpcModule::new(())).await;
+        let result = launch_rpc_server(&launcher, RpcModule::new(())).await;
         assert!(result.is_ok());
     }
 
@@ -213,7 +213,7 @@ mod tests {
         modules.merge(RpcModule::new(())).expect("module merge");
         modules.merge(RpcModule::new(())).expect("module merge");
 
-        let result = launch(&launcher, modules).await;
+        let result = launch_rpc_server(&launcher, modules).await;
         assert!(result.is_ok());
     }
 }

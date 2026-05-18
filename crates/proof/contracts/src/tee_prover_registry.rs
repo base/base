@@ -68,24 +68,21 @@ impl TEEProverRegistryContractClient {
 #[async_trait]
 impl TEEProverRegistryClient for TEEProverRegistryContractClient {
     async fn is_valid_signer(&self, signer: Address) -> Result<bool, ContractError> {
-        self.contract.isValidSigner(signer).call().await.map_err(|e| ContractError::Call {
-            context: format!("isValidSigner({signer})"),
-            source: e,
-        })
+        contract_call!(
+            self.contract.isValidSigner(signer).call(),
+            format!("isValidSigner({signer})")
+        )
     }
 
     async fn is_registered_signer(&self, signer: Address) -> Result<bool, ContractError> {
-        self.contract.isRegisteredSigner(signer).call().await.map_err(|e| ContractError::Call {
-            context: format!("isRegisteredSigner({signer})"),
-            source: e,
-        })
+        contract_call!(
+            self.contract.isRegisteredSigner(signer).call(),
+            format!("isRegisteredSigner({signer})")
+        )
     }
 
     async fn get_registered_signers(&self) -> Result<Vec<Address>, ContractError> {
-        self.contract.getRegisteredSigners().call().await.map_err(|e| ContractError::Call {
-            context: "getRegisteredSigners()".into(),
-            source: e,
-        })
+        contract_call!(self.contract.getRegisteredSigners().call(), "getRegisteredSigners()")
     }
 }
 
