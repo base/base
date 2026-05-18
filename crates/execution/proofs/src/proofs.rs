@@ -40,7 +40,6 @@ impl BaseNodeExtension for ProofsHistoryExtension {
         let proofs_history_window = args.proofs_history_window;
         let proofs_history_prune_interval = args.proofs_history_prune_interval;
         let proofs_history_verification_interval = args.proofs_history_verification_interval;
-        let debug_max_concurrent_requests = args.debug_max_concurrent_requests;
 
         if proofs_history_enabled {
             let path = args
@@ -89,7 +88,6 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                         storage,
                         Box::new(ctx.node().task_executor().clone()),
                         ctx.node().evm_config().clone(),
-                        debug_max_concurrent_requests,
                     );
                     ctx.modules.replace_configured(api_ext.into_rpc())?;
                     ctx.modules.replace_configured(debug_ext.into_rpc())?;

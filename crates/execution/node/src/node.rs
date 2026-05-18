@@ -3,7 +3,6 @@
 use std::{
     marker::PhantomData,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    num::NonZeroUsize,
     sync::Arc,
 };
 
@@ -24,7 +23,6 @@ use base_execution_payload_builder::{
 use base_execution_rpc::{
     MinerApiExtServer,
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
-    debug::DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS,
     eth::BaseEthApiBuilder,
     miner::BaseMinerExtApi,
     witness::BaseDebugWitnessApi,
@@ -276,7 +274,6 @@ impl BaseNode {
             .with_sequencer_headers(self.args.sequencer_headers.clone())
             .with_da_config(self.da_config.clone())
             .with_gas_limit_config(self.gas_limit_config.clone())
-            .with_debug_max_concurrent_requests(self.args.debug_max_concurrent_requests)
             .with_min_suggested_priority_fee(self.args.min_suggested_priority_fee)
     }
 
@@ -395,8 +392,6 @@ pub struct BaseAddOns<
     pub da_config: BaseDAConfig,
     /// Gas limit configuration for the payload builder.
     pub gas_limit_config: GasLimitConfig,
-    /// Maximum concurrent debug RPC requests.
-    pub debug_max_concurrent_requests: NonZeroUsize,
     /// Sequencer client, configured to forward submitted transactions to sequencer of the given
     /// Base network.
     pub sequencer_url: Option<String>,
@@ -416,7 +411,6 @@ where
         rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
         da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
-        debug_max_concurrent_requests: NonZeroUsize,
         sequencer_url: Option<String>,
         sequencer_headers: Vec<String>,
         min_suggested_priority_fee: u64,
@@ -425,7 +419,6 @@ where
             rpc_add_ons,
             da_config,
             gas_limit_config,
-            debug_max_concurrent_requests,
             sequencer_url,
             sequencer_headers,
             min_suggested_priority_fee,
@@ -475,7 +468,6 @@ where
             rpc_add_ons,
             da_config,
             gas_limit_config,
-            debug_max_concurrent_requests,
             sequencer_url,
             sequencer_headers,
             min_suggested_priority_fee,
@@ -485,7 +477,6 @@ where
             rpc_add_ons.with_engine_api(engine_api_builder),
             da_config,
             gas_limit_config,
-            debug_max_concurrent_requests,
             sequencer_url,
             sequencer_headers,
             min_suggested_priority_fee,
@@ -501,7 +492,6 @@ where
             rpc_add_ons,
             da_config,
             gas_limit_config,
-            debug_max_concurrent_requests,
             sequencer_url,
             sequencer_headers,
             min_suggested_priority_fee,
@@ -511,7 +501,6 @@ where
             rpc_add_ons.with_payload_validator(payload_validator_builder),
             da_config,
             gas_limit_config,
-            debug_max_concurrent_requests,
             sequencer_url,
             sequencer_headers,
             min_suggested_priority_fee,
@@ -530,7 +519,6 @@ where
             rpc_add_ons,
             da_config,
             gas_limit_config,
-            debug_max_concurrent_requests,
             sequencer_url,
             sequencer_headers,
             min_suggested_priority_fee,
@@ -540,7 +528,6 @@ where
             rpc_add_ons.with_rpc_middleware(rpc_middleware),
             da_config,
             gas_limit_config,
-            debug_max_concurrent_requests,
             sequencer_url,
             sequencer_headers,
             min_suggested_priority_fee,
@@ -593,9 +580,7 @@ where
         self,
         ctx: reth_node_api::AddOnsContext<'_, N>,
     ) -> eyre::Result<Self::Handle> {
-        let Self {
-            rpc_add_ons, da_config, gas_limit_config, debug_max_concurrent_requests, ..
-        } = self;
+        let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         let eth_config =
             BaseEthConfigHandler::new(ctx.node.provider().clone(), ctx.node.evm_config().clone());
 
@@ -609,7 +594,6 @@ where
             ctx.node.provider().clone(),
             Box::new(ctx.node.task_executor().clone()),
             builder,
-            debug_max_concurrent_requests,
         );
         let miner_ext = BaseMinerExtApi::new(da_config, gas_limit_config);
 
@@ -703,8 +687,6 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     da_config: Option<BaseDAConfig>,
     /// Gas limit configuration for the payload builder.
     gas_limit_config: Option<GasLimitConfig>,
-    /// Maximum concurrent debug RPC requests.
-    debug_max_concurrent_requests: NonZeroUsize,
     /// Marker for network types.
     _nt: PhantomData<NetworkT>,
     /// Minimum suggested priority fee (tip)
@@ -722,7 +704,6 @@ impl<NetworkT> Default for BaseAddOnsBuilder<NetworkT> {
             sequencer_headers: Vec::new(),
             da_config: None,
             gas_limit_config: None,
-            debug_max_concurrent_requests: DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS,
             min_suggested_priority_fee: 1_000_000,
             _nt: PhantomData,
             rpc_middleware: Identity::new(),
@@ -756,15 +737,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
         self
     }
 
-    /// Configure the maximum number of concurrent Base debug RPC requests.
-    pub const fn with_debug_max_concurrent_requests(
-        mut self,
-        max_concurrent_requests: NonZeroUsize,
-    ) -> Self {
-        self.debug_max_concurrent_requests = max_concurrent_requests;
-        self
-    }
-
     /// Configure the minimum priority fee (tip)
     pub const fn with_min_suggested_priority_fee(mut self, min: u64) -> Self {
         self.min_suggested_priority_fee = min;
@@ -786,7 +758,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             sequencer_headers,
             da_config,
             gas_limit_config,
-            debug_max_concurrent_requests,
             min_suggested_priority_fee,
             tokio_runtime,
             _nt,
@@ -797,7 +768,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             sequencer_headers,
             da_config,
             gas_limit_config,
-            debug_max_concurrent_requests,
             min_suggested_priority_fee,
             _nt,
             rpc_middleware,
@@ -823,7 +793,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             sequencer_headers,
             da_config,
             gas_limit_config,
-            debug_max_concurrent_requests,
             min_suggested_priority_fee,
             rpc_middleware,
             tokio_runtime,
@@ -844,7 +813,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             .with_tokio_runtime(tokio_runtime),
             da_config.unwrap_or_default(),
             gas_limit_config.unwrap_or_default(),
-            debug_max_concurrent_requests,
             sequencer_url,
             sequencer_headers,
             min_suggested_priority_fee,

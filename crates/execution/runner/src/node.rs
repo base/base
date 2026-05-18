@@ -99,7 +99,6 @@ impl BaseNode {
             .with_sequencer_headers(self.args.sequencer_headers.clone())
             .with_da_config(self.da_config.clone())
             .with_gas_limit_config(self.gas_limit_config.clone())
-            .with_debug_max_concurrent_requests(self.args.debug_max_concurrent_requests)
             .with_min_suggested_priority_fee(self.args.min_suggested_priority_fee)
     }
 

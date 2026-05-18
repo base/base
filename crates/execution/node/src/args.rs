@@ -2,9 +2,8 @@
 
 //! clap [Args](clap::Args) for Base rollup configuration
 
-use std::{num::NonZeroUsize, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
-use base_execution_rpc::debug::DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS;
 use clap::{ValueEnum, builder::ArgPredicate};
 
 /// Transaction ordering strategy for the mempool.
@@ -135,14 +134,6 @@ pub struct RollupArgs {
     )]
     pub proofs_history_verification_interval: u64,
 
-    /// Maximum number of concurrent Base debug RPC requests.
-    #[arg(
-        long = "debug.max-concurrent-requests",
-        value_name = "DEBUG_MAX_CONCURRENT_REQUESTS",
-        default_value_t = DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS
-    )]
-    pub debug_max_concurrent_requests: NonZeroUsize,
-
     /// Enable the Base discv5 protocol identity.
     ///
     /// When enabled, the node advertises itself with the `basev0` protocol ID in discv5,
@@ -167,7 +158,6 @@ impl Default for RollupArgs {
             proofs_history_window: 1_296_000,
             proofs_history_prune_interval: Duration::from_secs(15),
             proofs_history_verification_interval: 0,
-            debug_max_concurrent_requests: DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS,
             base_protocol: true,
         }
     }
@@ -305,26 +295,5 @@ mod tests {
         ])
         .args;
         assert!(!args.base_protocol);
-    }
-
-    #[test]
-    fn test_parse_debug_max_concurrent_requests() {
-        let args = CommandParser::<RollupArgs>::parse_from([
-            "reth",
-            "--debug.max-concurrent-requests",
-            "5",
-        ])
-        .args;
-        assert_eq!(args.debug_max_concurrent_requests.get(), 5);
-    }
-
-    #[test]
-    fn test_parse_debug_max_concurrent_requests_rejects_zero() {
-        let result = CommandParser::<RollupArgs>::try_parse_from([
-            "reth",
-            "--debug.max-concurrent-requests",
-            "0",
-        ]);
-        assert!(result.is_err());
     }
 }

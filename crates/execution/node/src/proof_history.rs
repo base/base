@@ -32,7 +32,6 @@ pub async fn launch_node_with_proof_history(
         proofs_history_window,
         proofs_history_prune_interval,
         proofs_history_verification_interval,
-        debug_max_concurrent_requests,
         ..
     } = args;
 
@@ -80,7 +79,6 @@ pub async fn launch_node_with_proof_history(
                     storage,
                     Box::new(ctx.node().task_executor().clone()),
                     ctx.node().evm_config().clone(),
-                    debug_max_concurrent_requests,
                 );
                 ctx.modules.replace_configured(api_ext.into_rpc())?;
                 ctx.modules.replace_configured(debug_ext.into_rpc())?;

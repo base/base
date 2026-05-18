@@ -1,6 +1,6 @@
 //! Support for Base-specific witness RPCs.
 
-use std::{fmt::Debug, num::NonZeroUsize, sync::Arc};
+use std::{fmt::Debug, sync::Arc};
 
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
@@ -20,7 +20,7 @@ use reth_storage_api::{
 };
 use reth_tasks::TaskSpawner;
 use reth_transaction_pool::TransactionPool;
-use tokio::sync::{Semaphore, oneshot};
+use tokio::sync::oneshot;
 
 /// An extension to the `debug_` namespace of the RPC API.
 pub struct BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs> {
@@ -33,10 +33,8 @@ impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmCo
         provider: Provider,
         task_spawner: Box<dyn TaskSpawner>,
         builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
-        max_concurrent_requests: NonZeroUsize,
     ) -> Self {
-        let semaphore = Arc::new(Semaphore::new(max_concurrent_requests.get()));
-        let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner, semaphore };
+        let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner };
         Self { inner: Arc::new(inner) }
     }
 }
@@ -85,8 +83,6 @@ where
         parent_block_hash: B256,
         attributes: Attrs::RpcPayloadAttributes,
     ) -> RpcResult<ExecutionWitness> {
-        let _permit = self.inner.semaphore.acquire().await;
-
         let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
 
         let (tx, rx) = oneshot::channel();
@@ -121,5 +117,4 @@ struct BaseDebugWitnessApiInner<Pool, Provider, EvmConfig, Attrs> {
     provider: Provider,
     builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
     task_spawner: Box<dyn TaskSpawner>,
-    semaphore: Arc<Semaphore>,
 }
