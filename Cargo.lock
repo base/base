@@ -4210,6 +4210,7 @@ dependencies = [
  "base-metrics",
  "bincode 2.0.1",
  "bytes",
+ "criterion",
  "derive_more 2.1.1",
  "eyre",
  "metrics",
