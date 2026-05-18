@@ -98,13 +98,11 @@ pub trait StorageOps {
 /// Trait providing access to a contract's address and storage.
 ///
 /// Automatically implemented by the `#[contract]` macro.
-pub trait ContractStorage {
+pub trait ContractStorage<'a> {
     /// Contract address.
     fn address(&self) -> Address;
     /// Contract storage accessor.
-    fn storage(&self) -> &crate::storage_ctx::StorageCtx;
-    /// Contract mutable storage accessor.
-    fn storage_mut(&mut self) -> &mut crate::storage_ctx::StorageCtx;
+    fn storage(&self) -> crate::storage_ctx::StorageCtx<'a>;
 
     /// Returns true if the contract has bytecode deployed at its address.
     fn is_initialized(&self) -> Result<bool> {
@@ -190,10 +188,15 @@ pub trait StorableType {
     const IS_DYNAMIC: bool = false;
 
     /// The handler type that provides storage access for this type.
-    type Handler;
+    type Handler<'a>;
 
     /// Creates a handler for this type at the given storage location.
-    fn handle(slot: U256, ctx: LayoutCtx, address: Address) -> Self::Handler;
+    fn handle<'a>(
+        slot: U256,
+        ctx: LayoutCtx,
+        address: Address,
+        storage: crate::storage_ctx::StorageCtx<'a>,
+    ) -> Self::Handler<'a>;
 }
 
 /// Handler trait for read/write/delete operations on a storable value.

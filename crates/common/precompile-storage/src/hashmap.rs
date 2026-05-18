@@ -235,6 +235,11 @@ impl HashMapStorageProvider {
         self.caller = caller;
     }
 
+    /// Sets whether the current call is static (test-utils only).
+    pub const fn set_static(&mut self, is_static: bool) {
+        self.is_static = is_static;
+    }
+
     /// Clears all transient storage (test-utils only).
     pub fn clear_transient(&mut self) {
         self.transient.clear();

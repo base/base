@@ -39,10 +39,15 @@ fn gen_storable_layout_impl(type_path: &TokenStream, byte_count: usize) -> Token
     quote! {
         impl ::base_precompile_storage::StorableType for #type_path {
             const LAYOUT: ::base_precompile_storage::Layout = ::base_precompile_storage::Layout::Bytes(#byte_count);
-            type Handler = ::base_precompile_storage::Slot<Self>;
+            type Handler<'a> = ::base_precompile_storage::Slot<'a, Self>;
 
-            fn handle(slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx, address: ::alloy_primitives::Address) -> Self::Handler {
-                ::base_precompile_storage::Slot::new_with_ctx(slot, ctx, address)
+            fn handle<'a>(
+                slot: ::alloy_primitives::U256,
+                ctx: ::base_precompile_storage::LayoutCtx,
+                address: ::alloy_primitives::Address,
+                storage: ::base_precompile_storage::StorageCtx<'a>,
+            ) -> Self::Handler<'a> {
+                ::base_precompile_storage::Slot::new_with_ctx(slot, ctx, address, storage)
             }
         }
     }
@@ -309,11 +314,16 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
     quote! {
         impl ::base_precompile_storage::StorableType for [#elem_type; #array_size] {
             const LAYOUT: ::base_precompile_storage::Layout = ::base_precompile_storage::Layout::Slots(#slot_count_expr);
-            type Handler = ::base_precompile_storage::ArrayHandler<#elem_type, #array_size>;
+            type Handler<'a> = ::base_precompile_storage::ArrayHandler<'a, #elem_type, #array_size>;
 
-            fn handle(slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx, address: ::alloy_primitives::Address) -> Self::Handler {
+            fn handle<'a>(
+                slot: ::alloy_primitives::U256,
+                ctx: ::base_precompile_storage::LayoutCtx,
+                address: ::alloy_primitives::Address,
+                storage: ::base_precompile_storage::StorageCtx<'a>,
+            ) -> Self::Handler<'a> {
                 debug_assert_eq!(ctx, ::base_precompile_storage::LayoutCtx::FULL, "Arrays cannot be packed");
-                Self::Handler::new(slot, address)
+                Self::Handler::new(slot, address, storage)
             }
         }
 
@@ -506,9 +516,14 @@ fn gen_struct_array_impl(struct_type: &TokenStream, array_size: usize) -> TokenS
 
         impl ::base_precompile_storage::StorableType for [#struct_type; #array_size] {
             const LAYOUT: ::base_precompile_storage::Layout = ::base_precompile_storage::Layout::Slots(#mod_ident::SLOT_COUNT);
-            type Handler = ::base_precompile_storage::Slot<Self>;
-            fn handle(slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx, address: ::alloy_primitives::Address) -> Self::Handler {
-                ::base_precompile_storage::Slot::new_with_ctx(slot, ctx, address)
+            type Handler<'a> = ::base_precompile_storage::Slot<'a, Self>;
+            fn handle<'a>(
+                slot: ::alloy_primitives::U256,
+                ctx: ::base_precompile_storage::LayoutCtx,
+                address: ::alloy_primitives::Address,
+                storage: ::base_precompile_storage::StorageCtx<'a>,
+            ) -> Self::Handler<'a> {
+                ::base_precompile_storage::Slot::new_with_ctx(slot, ctx, address, storage)
             }
         }
 

@@ -12,6 +12,8 @@
 //! - Values are right-aligned within their byte range
 //! - Types smaller than 32 bytes can pack multiple per slot when dimensions align
 
+use alloc::format;
+
 use alloy_primitives::U256;
 
 use crate::{
@@ -491,7 +493,7 @@ mod tests {
     #[test]
     fn test_packed_at_multiple_types() -> Result<()> {
         let (mut storage, address) = crate::hashmap::setup_storage();
-        StorageCtx::enter(&mut storage, || {
+        StorageCtx::enter(&mut storage, |ctx| {
             let struct_base = U256::from(0x2000);
 
             let flag = true;
@@ -499,16 +501,17 @@ mod tests {
             let amount: u128 = 999888777666;
 
             let mut flag_slot =
-                Slot::<bool>::new_with_ctx(struct_base, LayoutCtx::packed(0), address);
+                Slot::<bool>::new_with_ctx(struct_base, LayoutCtx::packed(0), address, ctx);
             flag_slot.write(flag)?;
             assert_eq!(flag_slot.read()?, flag);
 
-            let mut ts_slot = Slot::<u64>::new_with_ctx(struct_base, LayoutCtx::packed(1), address);
+            let mut ts_slot =
+                Slot::<u64>::new_with_ctx(struct_base, LayoutCtx::packed(1), address, ctx);
             ts_slot.write(timestamp)?;
             assert_eq!(ts_slot.read()?, timestamp);
 
             let mut amount_slot =
-                Slot::<u128>::new_with_ctx(struct_base, LayoutCtx::packed(9), address);
+                Slot::<u128>::new_with_ctx(struct_base, LayoutCtx::packed(9), address, ctx);
             amount_slot.write(amount)?;
             assert_eq!(amount_slot.read()?, amount);
 

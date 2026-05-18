@@ -6,7 +6,8 @@
 //! - **Base slot**: Stores the array length
 //! - **Data slots**: Start at `keccak256(len_slot)`; elements packed where possible.
 
-use std::ops::{Index, IndexMut};
+use alloc::vec::Vec;
+use core::ops::{Index, IndexMut};
 
 use alloy_primitives::{Address, U256, keccak256};
 
@@ -23,10 +24,15 @@ where
 {
     const LAYOUT: Layout = Layout::Slots(1);
     const IS_DYNAMIC: bool = true;
-    type Handler = VecHandler<T>;
+    type Handler<'a> = VecHandler<'a, T>;
 
-    fn handle(slot: U256, _ctx: LayoutCtx, address: Address) -> Self::Handler {
-        VecHandler::new(slot, address)
+    fn handle<'a>(
+        slot: U256,
+        _ctx: LayoutCtx,
+        address: Address,
+        storage: crate::StorageCtx<'a>,
+    ) -> Self::Handler<'a> {
+        VecHandler::new(slot, address, storage)
     }
 }
 
@@ -95,13 +101,14 @@ where
 
 /// Type-safe handler for accessing `Vec<T>` in storage.
 #[derive(Debug, Clone)]
-pub struct VecHandler<T: Storable> {
+pub struct VecHandler<'a, T: Storable> {
     len_slot: U256,
     address: Address,
-    cache: HandlerCache<usize, T::Handler>,
+    storage: crate::StorageCtx<'a>,
+    cache: HandlerCache<usize, T::Handler<'a>>,
 }
 
-impl<T> Handler<Vec<T>> for VecHandler<T>
+impl<T> Handler<Vec<T>> for VecHandler<'_, T>
 where
     T: Storable,
 {
@@ -131,14 +138,14 @@ where
     }
 }
 
-impl<T> VecHandler<T>
+impl<'a, T> VecHandler<'a, T>
 where
     T: Storable,
 {
     /// Creates a new handler for the vector at the given length slot and contract address.
     #[inline]
-    pub fn new(len_slot: U256, address: Address) -> Self {
-        Self { len_slot, address, cache: HandlerCache::new() }
+    pub const fn new(len_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
+        Self { len_slot, address, storage, cache: HandlerCache::new() }
     }
 
     const fn max_index() -> usize {
@@ -158,14 +165,14 @@ where
     }
 
     #[inline]
-    const fn as_slot(&self) -> Slot<Vec<T>> {
-        Slot::new(self.len_slot, self.address)
+    const fn as_slot(&self) -> Slot<'a, Vec<T>> {
+        Slot::new(self.len_slot, self.address, self.storage)
     }
 
     /// Returns the number of elements in the vector.
     #[inline]
     pub fn len(&self) -> Result<usize> {
-        let slot = Slot::<U256>::new(self.len_slot, self.address);
+        let slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
         load_checked_len(&slot, self.len_slot)
     }
 
@@ -176,7 +183,12 @@ where
     }
 
     #[inline]
-    fn compute_handler(data_start: U256, address: Address, index: usize) -> T::Handler {
+    fn compute_handler(
+        data_start: U256,
+        address: Address,
+        storage: crate::StorageCtx<'a>,
+        index: usize,
+    ) -> T::Handler<'a> {
         let (slot, layout_ctx) = if T::BYTES <= 16 {
             let location = calc_element_loc(index, T::BYTES);
             (
@@ -186,17 +198,19 @@ where
         } else {
             (data_start + U256::from(index * T::SLOTS), LayoutCtx::FULL)
         };
-        T::handle(slot, layout_ctx, address)
+        T::handle(slot, layout_ctx, address, storage)
     }
 
     /// Returns a handler for the element at the given index, or `None` if out of bounds.
-    pub fn at(&self, index: usize) -> Result<Option<&T::Handler>> {
+    pub fn at(&self, index: usize) -> Result<Option<&T::Handler<'a>>> {
         if index >= self.len()? {
             return Ok(None);
         }
-        let (data_start, address) = (self.data_slot(), self.address);
+        let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
         Ok(Some(
-            self.cache.get_or_insert(&index, || Self::compute_handler(data_start, address, index)),
+            self.cache.get_or_insert(&index, || {
+                Self::compute_handler(data_start, address, storage, index)
+            }),
         ))
     }
 
@@ -205,15 +219,16 @@ where
     pub fn push(&self, value: T) -> Result<()>
     where
         T: Storable,
-        T::Handler: Handler<T>,
+        T::Handler<'a>: Handler<T>,
     {
         let length = self.len()?;
         if length >= Self::max_index() {
             return Err(BasePrecompileError::Fatal("Vec is at max capacity".into()));
         }
-        let mut elem_slot = Self::compute_handler(self.data_slot(), self.address, length);
+        let mut elem_slot =
+            Self::compute_handler(self.data_slot(), self.address, self.storage, length);
         elem_slot.write(value)?;
-        let mut length_slot = Slot::<U256>::new(self.len_slot, self.address);
+        let mut length_slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
         length_slot.write(U256::from(length + 1))
     }
 
@@ -222,40 +237,44 @@ where
     pub fn pop(&self) -> Result<Option<T>>
     where
         T: Storable,
-        T::Handler: Handler<T>,
+        T::Handler<'a>: Handler<T>,
     {
         let length = self.len()?;
         if length == 0 {
             return Ok(None);
         }
         let last_index = length - 1;
-        let mut elem_slot = Self::compute_handler(self.data_slot(), self.address, last_index);
+        let mut elem_slot =
+            Self::compute_handler(self.data_slot(), self.address, self.storage, last_index);
         let element = elem_slot.read()?;
         elem_slot.delete()?;
-        let mut length_slot = Slot::<U256>::new(self.len_slot, self.address);
+        let mut length_slot = Slot::<U256>::new(self.len_slot, self.address, self.storage);
         length_slot.write(U256::from(last_index))?;
         Ok(Some(element))
     }
 }
 
-impl<T> Index<usize> for VecHandler<T>
+impl<'a, T> Index<usize> for VecHandler<'a, T>
 where
     T: Storable,
 {
-    type Output = T::Handler;
+    type Output = T::Handler<'a>;
     fn index(&self, index: usize) -> &Self::Output {
-        let (data_start, address) = (self.data_slot(), self.address);
-        self.cache.get_or_insert(&index, || Self::compute_handler(data_start, address, index))
+        let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
+        self.cache
+            .get_or_insert(&index, || Self::compute_handler(data_start, address, storage, index))
     }
 }
 
-impl<T> IndexMut<usize> for VecHandler<T>
+impl<'a, T> IndexMut<usize> for VecHandler<'a, T>
 where
     T: Storable,
 {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        let (data_start, address) = (self.data_slot(), self.address);
-        self.cache.get_or_insert_mut(&index, || Self::compute_handler(data_start, address, index))
+        let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
+        self.cache.get_or_insert_mut(&index, || {
+            Self::compute_handler(data_start, address, storage, index)
+        })
     }
 }
 
@@ -384,9 +403,9 @@ mod tests {
     #[test]
     fn test_vec_empty_roundtrip() {
         let (mut storage, address) = setup_storage();
-        StorageCtx::enter(&mut storage, || {
+        StorageCtx::enter(&mut storage, |ctx| {
             let len_slot = U256::from(100u64);
-            let mut slot = Slot::<Vec<u8>>::new(len_slot, address);
+            let mut slot = Slot::<Vec<u8>>::new(len_slot, address, ctx);
             slot.write(vec![]).unwrap();
             let loaded: Vec<u8> = slot.read().unwrap();
             assert!(loaded.is_empty());
@@ -396,10 +415,10 @@ mod tests {
     #[test]
     fn test_vec_u8_roundtrip() {
         let (mut storage, address) = setup_storage();
-        StorageCtx::enter(&mut storage, || {
+        StorageCtx::enter(&mut storage, |ctx| {
             let len_slot = U256::from(200u64);
             let data = vec![10u8, 20, 30, 40, 50];
-            let mut slot = Slot::<Vec<u8>>::new(len_slot, address);
+            let mut slot = Slot::<Vec<u8>>::new(len_slot, address, ctx);
             slot.write(data.clone()).unwrap();
             assert_eq!(slot.read().unwrap(), data);
             slot.delete().unwrap();
@@ -411,16 +430,16 @@ mod tests {
     #[test]
     fn test_vec_u8_explicit_slot_packing() {
         let (mut storage, address) = setup_storage();
-        StorageCtx::enter(&mut storage, || {
+        StorageCtx::enter(&mut storage, |ctx| {
             let len_slot = U256::from(2000u64);
             let data = vec![10u8, 20, 30, 40, 50];
-            VecHandler::<u8>::new(len_slot, address).write(data).unwrap();
+            VecHandler::<u8>::new(len_slot, address, ctx).write(data).unwrap();
 
-            let length = U256::handle(len_slot, LayoutCtx::FULL, address).read().unwrap();
+            let length = U256::handle(len_slot, LayoutCtx::FULL, address, ctx).read().unwrap();
             assert_eq!(length, U256::from(5u64));
 
             let data_start = calc_data_slot(len_slot);
-            let slot_data = U256::handle(data_start, LayoutCtx::FULL, address).read().unwrap();
+            let slot_data = U256::handle(data_start, LayoutCtx::FULL, address, ctx).read().unwrap();
             let expected = gen_word_from(&["0x32", "0x28", "0x1e", "0x14", "0x0a"]);
             assert_eq!(slot_data, expected, "u8 packing should match Solidity layout");
         });
@@ -437,9 +456,9 @@ mod tests {
     #[test]
     fn test_vec_handler_push_pop() {
         let (mut storage, address) = setup_storage();
-        StorageCtx::enter(&mut storage, || {
+        StorageCtx::enter(&mut storage, |ctx| {
             let len_slot = U256::from(300u64);
-            let handler = VecHandler::<U256>::new(len_slot, address);
+            let handler = VecHandler::<U256>::new(len_slot, address, ctx);
 
             let vals: Vec<U256> = (0..5).map(U256::from).collect();
             for &v in &vals {
@@ -458,9 +477,9 @@ mod tests {
     #[test]
     fn test_vec_length_overflow() {
         let (mut storage, address) = setup_storage();
-        StorageCtx::enter(&mut storage, || {
-            let mut len_slot = Slot::<U256>::new(U256::ZERO, address);
-            let handler = VecHandler::<u32>::new(U256::ZERO, address);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut len_slot = Slot::<U256>::new(U256::ZERO, address, ctx);
+            let handler = VecHandler::<u32>::new(U256::ZERO, address, ctx);
 
             len_slot.write(U256::from(0x0004000000000000u64)).unwrap();
             assert_eq!(handler.len(), Err(BasePrecompileError::under_overflow()));

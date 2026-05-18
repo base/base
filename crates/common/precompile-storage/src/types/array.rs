@@ -4,7 +4,7 @@
 //! - **Base slot**: Arrays start directly at `base_slot` (not at keccak256)
 //! - Small elements (`T::BYTES` ≤ 16) are packed; larger elements use full slots.
 
-use std::ops::{Index, IndexMut};
+use core::ops::{Index, IndexMut};
 
 use alloy_primitives::{Address, U256};
 
@@ -22,22 +22,23 @@ base_precompile_macros::storable_nested_arrays!();
 
 /// Type-safe handler for accessing fixed-size arrays `[T; N]` in storage.
 #[derive(Debug, Clone)]
-pub struct ArrayHandler<T: StorableType, const N: usize> {
+pub struct ArrayHandler<'a, T: StorableType, const N: usize> {
     base_slot: U256,
     address: Address,
-    cache: HandlerCache<usize, T::Handler>,
+    storage: crate::StorageCtx<'a>,
+    cache: HandlerCache<usize, T::Handler<'a>>,
 }
 
-impl<T: StorableType, const N: usize> ArrayHandler<T, N> {
+impl<'a, T: StorableType, const N: usize> ArrayHandler<'a, T, N> {
     /// Creates a new handler for the array at the given base slot and address.
     #[inline]
-    pub fn new(base_slot: U256, address: Address) -> Self {
-        Self { base_slot, address, cache: HandlerCache::new() }
+    pub const fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
+        Self { base_slot, address, storage, cache: HandlerCache::new() }
     }
 
     #[inline]
-    const fn as_slot(&self) -> Slot<[T; N]> {
-        Slot::new(self.base_slot, self.address)
+    const fn as_slot(&self) -> Slot<'a, [T; N]> {
+        Slot::new(self.base_slot, self.address, self.storage)
     }
 
     /// Returns the base storage slot where this array's data is stored.
@@ -60,16 +61,25 @@ impl<T: StorableType, const N: usize> ArrayHandler<T, N> {
 
     /// Returns a handler for the element at the given index, or `None` if out of bounds.
     #[inline]
-    pub fn at(&mut self, index: usize) -> Option<&T::Handler> {
+    pub fn at(&mut self, index: usize) -> Option<&T::Handler<'a>> {
         if index >= N {
             return None;
         }
-        let (base_slot, address) = (self.base_slot, self.address);
-        Some(self.cache.get_or_insert(&index, || Self::compute_handler(base_slot, address, index)))
+        let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
+        Some(
+            self.cache.get_or_insert(&index, || {
+                Self::compute_handler(base_slot, address, storage, index)
+            }),
+        )
     }
 
     #[inline]
-    fn compute_handler(base_slot: U256, address: Address, index: usize) -> T::Handler {
+    fn compute_handler(
+        base_slot: U256,
+        address: Address,
+        storage: crate::StorageCtx<'a>,
+        index: usize,
+    ) -> T::Handler<'a> {
         let (slot, layout_ctx) = if T::BYTES <= 16 {
             let location = packing::calc_element_loc(index, T::BYTES);
             (
@@ -79,29 +89,31 @@ impl<T: StorableType, const N: usize> ArrayHandler<T, N> {
         } else {
             (base_slot + U256::from(index * T::SLOTS), LayoutCtx::FULL)
         };
-        T::handle(slot, layout_ctx, address)
+        T::handle(slot, layout_ctx, address, storage)
     }
 }
 
-impl<T: StorableType, const N: usize> Index<usize> for ArrayHandler<T, N> {
-    type Output = T::Handler;
+impl<'a, T: StorableType, const N: usize> Index<usize> for ArrayHandler<'a, T, N> {
+    type Output = T::Handler<'a>;
 
     fn index(&self, index: usize) -> &Self::Output {
         assert!(index < N, "index out of bounds: {index} >= {N}");
-        let (base_slot, address) = (self.base_slot, self.address);
-        self.cache.get_or_insert(&index, || Self::compute_handler(base_slot, address, index))
+        let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
+        self.cache
+            .get_or_insert(&index, || Self::compute_handler(base_slot, address, storage, index))
     }
 }
 
-impl<T: StorableType, const N: usize> IndexMut<usize> for ArrayHandler<T, N> {
+impl<'a, T: StorableType, const N: usize> IndexMut<usize> for ArrayHandler<'a, T, N> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         assert!(index < N, "index out of bounds: {index} >= {N}");
-        let (base_slot, address) = (self.base_slot, self.address);
-        self.cache.get_or_insert_mut(&index, || Self::compute_handler(base_slot, address, index))
+        let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
+        self.cache
+            .get_or_insert_mut(&index, || Self::compute_handler(base_slot, address, storage, index))
     }
 }
 
-impl<T: StorableType, const N: usize> Handler<[T; N]> for ArrayHandler<T, N>
+impl<T: StorableType, const N: usize> Handler<[T; N]> for ArrayHandler<'_, T, N>
 where
     [T; N]: Storable,
 {
