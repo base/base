@@ -107,6 +107,20 @@ impl FixtureManifest {
             l2_end: None,
         }
     }
+
+    /// Return the Base chain ID for a supported fixture network name.
+    pub fn chain_id_for_network(network: &str) -> Option<u64> {
+        match network {
+            "base-mainnet" => Some(8453),
+            "base-sepolia" => Some(84532),
+            _ => None,
+        }
+    }
+
+    /// Return this fixture manifest's Base chain ID.
+    pub fn chain_id(&self) -> Option<u64> {
+        Self::chain_id_for_network(&self.network)
+    }
 }
 
 /// Captured EIP-4844 blob sidecar data keyed by versioned hash.
@@ -163,7 +177,9 @@ pub struct FixtureL1DiskCodec;
 
 impl FixtureL1DiskCodec {
     /// Encode typed L1 blocks into compact disk blocks.
-    pub fn encode_blocks(blocks: &[FixtureL1Block]) -> Vec<FixtureL1DiskBlock> {
+    pub fn encode_blocks(
+        blocks: &[FixtureL1Block],
+    ) -> Result<Vec<FixtureL1DiskBlock>, FixtureL1DiskBlockError> {
         blocks.iter().map(Self::encode_block).collect()
     }
 
@@ -175,19 +191,27 @@ impl FixtureL1DiskCodec {
     }
 
     /// Encode one typed L1 block into a compact disk block.
-    pub fn encode_block(block: &FixtureL1Block) -> FixtureL1DiskBlock {
+    pub fn encode_block(
+        block: &FixtureL1Block,
+    ) -> Result<FixtureL1DiskBlock, FixtureL1DiskBlockError> {
         let mut header = Vec::new();
         block.header.encode(&mut header);
-        FixtureL1DiskBlock {
+        let receipts = block
+            .receipts
+            .iter()
+            .map(|receipt| {
+                serde_json::to_vec(receipt).map_err(|source| {
+                    FixtureL1DiskBlockError::ReceiptJsonEncode { error: source.to_string() }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(FixtureL1DiskBlock {
             header,
             transactions: block.transactions.iter().map(|tx| tx.to_vec()).collect(),
-            receipts: block
-                .receipts
-                .iter()
-                .map(|receipt| serde_json::to_vec(receipt).expect("receipt serializes to JSON"))
-                .collect(),
+            receipts,
             blobs: block.blobs.clone(),
-        }
+        })
     }
 
     /// Decode one compact disk block into a typed L1 block.
@@ -223,6 +247,12 @@ pub enum FixtureL1DiskBlockError {
     #[error("failed to decode L1 header RLP: {error}")]
     Header {
         /// Decode error text.
+        error: String,
+    },
+    /// Receipt JSON could not be encoded.
+    #[error("failed to encode L1 receipt JSON: {error}")]
+    ReceiptJsonEncode {
+        /// Encode error text.
         error: String,
     },
     /// Receipt JSON could not be decoded.

@@ -60,13 +60,10 @@ impl DerivationFixtureReplayer {
 
     /// Return the rollup config for a fixture's network.
     pub fn rollup_config(fixture: &ActionFixture) -> Result<RollupConfig, FixtureReplayError> {
-        let chain_id = match fixture.manifest.network.as_str() {
-            "base-mainnet" => 8453,
-            "base-sepolia" => 84532,
-            other => {
-                return Err(FixtureReplayError::UnsupportedNetwork { network: other.to_owned() });
-            }
-        };
+        let chain_id = crate::FixtureManifest::chain_id_for_network(&fixture.manifest.network)
+            .ok_or_else(|| FixtureReplayError::UnsupportedNetwork {
+                network: fixture.manifest.network.clone(),
+            })?;
         let mut config = BaseChainConfig::by_chain_id(chain_id)
             .map(BaseChainConfig::rollup_config)
             .ok_or(FixtureReplayError::MissingRollupConfig { chain_id })?;
@@ -152,6 +149,9 @@ impl DerivationFixtureReplayer {
                 StepResult::AdvancedOrigin
                 | StepResult::StepFailed(PipelineErrorKind::Temporary(
                     PipelineError::NotEnoughData | PipelineError::ChannelReaderEmpty,
+                ))
+                | StepResult::OriginAdvanceErr(PipelineErrorKind::Temporary(
+                    PipelineError::Eof | PipelineError::Provider(_),
                 )) => {}
                 StepResult::OriginAdvanceErr(error) => {
                     return Err(FixtureReplayError::Pipeline {

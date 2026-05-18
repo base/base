@@ -22,8 +22,9 @@ use tracing::info;
 
 use crate::{
     ActionFixture, DerivationFixture, ExpectedOutcome, ExpectedPayload, FixtureKind,
-    FixtureKindParseError, FixtureL1Block, FixtureL1DiskCodec, FixtureL2Block, FixtureLoader,
-    FixtureLoaderError, FixtureManifest, FixturePaths, FixtureReplayError, StateRoot,
+    FixtureKindParseError, FixtureL1Block, FixtureL1DiskBlockError, FixtureL1DiskCodec,
+    FixtureL2Block, FixtureLoader, FixtureLoaderError, FixtureManifest, FixturePaths,
+    FixtureReplayError, StateRoot,
 };
 
 /// Concurrent L1 requests used while scanning derivation windows.
@@ -306,11 +307,8 @@ impl RpcFixtureCapture {
 
     /// Return the rollup config for a supported fixture network.
     pub fn rollup_config_for_network(network: &str) -> Result<RollupConfig, CaptureError> {
-        let chain_id = match network {
-            "base-mainnet" => 8453,
-            "base-sepolia" => 84532,
-            _ => return Err(CaptureError::UnsupportedNetwork { network: network.to_owned() }),
-        };
+        let chain_id = FixtureManifest::chain_id_for_network(network)
+            .ok_or_else(|| CaptureError::UnsupportedNetwork { network: network.to_owned() })?;
         BaseChainConfig::by_chain_id(chain_id)
             .map(BaseChainConfig::rollup_config)
             .ok_or(CaptureError::MissingRollupConfig { chain_id })
@@ -343,7 +341,7 @@ impl RpcFixtureCapture {
         l2_start: u64,
         rollup_config: &RollupConfig,
     ) -> Result<DerivationFixture, CaptureError> {
-        if l2_start == rollup_config.genesis.l2.number {
+        if l2_start <= rollup_config.genesis.l2.number {
             return Err(CaptureError::InvalidDerivationStart { l2_start });
         }
 
@@ -407,11 +405,14 @@ impl RpcFixtureCapture {
             .await;
         }
 
-        let scan_end = default_start + rollup_config.seq_window_size + 1;
+        let scan_end =
+            default_start.saturating_add(rollup_config.seq_window_size.saturating_add(1));
         let mut blocks = Vec::new();
         let mut next_start = start;
         while next_start <= scan_end {
-            let next_end = (next_start + L1_DERIVATION_CAPTURE_CHUNK_SIZE - 1).min(scan_end);
+            let next_end = next_start
+                .saturating_add(L1_DERIVATION_CAPTURE_CHUNK_SIZE.saturating_sub(1))
+                .min(scan_end);
             blocks.extend(
                 Self::capture_l1_derivation_range(
                     client,
@@ -505,6 +506,11 @@ impl RpcFixtureCapture {
         }
     }
 
+    /// Return the capacity for an inclusive block range.
+    pub const fn inclusive_range_capacity(start: u64, end: u64) -> usize {
+        end.saturating_sub(start).saturating_add(1) as usize
+    }
+
     /// Capture an inclusive L2 block range.
     pub async fn capture_l2_range(
         client: &reqwest::Client,
@@ -512,7 +518,7 @@ impl RpcFixtureCapture {
         start: u64,
         end: u64,
     ) -> Result<Vec<FixtureL2Block>, CaptureError> {
-        let mut blocks = Vec::with_capacity((end - start + 1) as usize);
+        let mut blocks = Vec::with_capacity(Self::inclusive_range_capacity(start, end));
         for number in start..=end {
             blocks.push(Self::capture_l2_block(client, rpc_url, number).await?);
         }
@@ -609,7 +615,7 @@ impl RpcFixtureCapture {
         start: u64,
         end: u64,
     ) -> Result<Vec<FixtureL1Block>, CaptureError> {
-        let mut blocks = Vec::with_capacity((end - start + 1) as usize);
+        let mut blocks = Vec::with_capacity(Self::inclusive_range_capacity(start, end));
         for number in start..=end {
             blocks.push(Self::capture_l1_block(client, rpc_url, number).await?);
         }
@@ -624,7 +630,7 @@ impl RpcFixtureCapture {
         end: u64,
         rollup_config: &RollupConfig,
     ) -> Result<Vec<FixtureL1Block>, CaptureError> {
-        let mut blocks = Vec::with_capacity((end - start + 1) as usize);
+        let mut blocks = Vec::with_capacity(Self::inclusive_range_capacity(start, end));
         let captures = stream::iter(start..=end)
             .map(|number| Self::capture_l1_derivation_block(client, rpc_url, number, rollup_config))
             .buffered(L1_DERIVATION_CAPTURE_CONCURRENCY);
@@ -676,7 +682,7 @@ impl RpcFixtureCapture {
         start: u64,
         end: u64,
     ) -> Result<Vec<FixtureL1Block>, CaptureError> {
-        let mut blocks = Vec::with_capacity((end - start + 1) as usize);
+        let mut blocks = Vec::with_capacity(Self::inclusive_range_capacity(start, end));
         for number in start..=end {
             blocks.push(Self::capture_l1_header_block(client, rpc_url, number).await?);
         }
@@ -987,7 +993,7 @@ impl RpcFixtureCapture {
         fs::create_dir_all(path)
             .map_err(|source| CaptureError::CreateOutput { path: path.to_path_buf(), source })?;
         Self::write_toml(&path.join(FixturePaths::MANIFEST), &fixture.manifest)?;
-        let l1_blocks = FixtureL1DiskCodec::encode_blocks(&fixture.l1_blocks);
+        let l1_blocks = FixtureL1DiskCodec::encode_blocks(&fixture.l1_blocks)?;
         Self::write_snappy_bincode(&path.join(FixturePaths::L1), &l1_blocks)?;
         Self::remove_legacy_file(&path.join(FixturePaths::L1_JSON_SNAP))?;
         Self::remove_legacy_file(&path.join(FixturePaths::L1_JSON))?;
@@ -1307,6 +1313,9 @@ pub enum CaptureError {
     /// Written fixture failed loader validation.
     #[error(transparent)]
     Loader(#[from] FixtureLoaderError),
+    /// L1 disk block encoding failed.
+    #[error(transparent)]
+    L1Disk(#[from] FixtureL1DiskBlockError),
     /// Fixture adapter conversion failed.
     #[error(transparent)]
     Adapter(#[from] crate::FixtureAdapterError),
