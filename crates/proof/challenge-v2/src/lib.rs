@@ -27,17 +27,23 @@ pub use prove::ProofError;
 mod dispute_action;
 pub use dispute_action::{DisputeAction, DisputeRequest};
 
+mod bond_action;
+pub use bond_action::{BondAction, BondRequest};
+
 mod submission;
-pub use submission::SubmissionTask;
+pub use submission::{Submission, SubmissionTask};
 
 mod game_worker;
-pub use game_worker::{WorkerConfig, WorkerDeps, run_game_worker};
+pub use game_worker::{GameWorkerConfig, GameWorkerDeps, run_game_worker};
 
 mod game_pool;
 pub use game_pool::GamePool;
 
 mod bond_discovery;
 pub use bond_discovery::{BondCandidate, BondDiscovery};
+
+mod bond_worker;
+pub use bond_worker::{BondError, BondWorkerConfig, BondWorkerDeps, run_bond_worker};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

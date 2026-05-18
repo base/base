@@ -1,29 +1,70 @@
-//! Submission task: drains [`DisputeRequest`]s from the game workers
-//! and submits each one through a single [`TxManager`] for nonce safety.
+//! Submission task: drains [`Submission`]s from the game and bond
+//! workers and submits each one through a single [`TxManager`] for
+//! nonce safety.
 //!
 //! The contract itself rejects stale or invalid submissions at
 //! `eth_estimateGas` time, so no client-side re-verification is needed.
 
+use std::fmt;
+
+use alloy_primitives::{Address, Bytes};
 use base_tx_manager::{TxCandidate, TxManager};
 use derive_more::Debug;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::DisputeRequest;
+use crate::{BondRequest, DisputeRequest};
 
-/// Long-running task that drains [`DisputeRequest`]s, encodes the
+/// One unit of L1 work routed through [`SubmissionTask`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Submission {
+    /// Dispute action (challenge or nullify) produced by a game worker.
+    Dispute(DisputeRequest),
+    /// Bond lifecycle action (resolve, claimCredit, closeGame)
+    /// produced by a bond worker.
+    Bond(BondRequest),
+}
+
+impl Submission {
+    /// Game proxy this submission targets.
+    pub const fn game_address(&self) -> Address {
+        match self {
+            Self::Dispute(r) => r.game_address,
+            Self::Bond(r) => r.game_address,
+        }
+    }
+
+    /// Encodes the L1 calldata for this submission.
+    pub fn into_calldata(self) -> Bytes {
+        match self {
+            Self::Dispute(r) => r.action.to_calldata(r.proof_bytes),
+            Self::Bond(r) => r.action.to_calldata(),
+        }
+    }
+}
+
+impl fmt::Display for Submission {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Dispute(r) => fmt::Display::fmt(&r.action, f),
+            Self::Bond(r) => fmt::Display::fmt(&r.action, f),
+        }
+    }
+}
+
+/// Long-running task that drains [`Submission`]s, encodes the
 /// calldata, and submits the transaction through a single
 /// [`TxManager`].
 ///
-/// Routing every dispute through one task is a deliberate choice:
+/// Routing every submission through one task is a deliberate choice:
 /// the underlying [`TxManager`] then sees a serial stream of
 /// transactions from a single sender, which is the only way to
 /// avoid nonce races without coordinating across workers.
 #[derive(Debug)]
 pub struct SubmissionTask<Tx> {
-    /// Sender used for every dispute transaction; serial use here
-    /// is what guarantees nonce safety.
+    /// Sender used for every submission; serial use here is what
+    /// guarantees nonce safety.
     #[debug(skip)]
     tx_manager: Tx,
 }
@@ -35,28 +76,28 @@ impl<Tx: TxManager> SubmissionTask<Tx> {
     }
 
     /// Drains `rx` until it closes or `cancel` fires, handling each
-    /// request to completion before reading the next. Sequential
+    /// submission to completion before reading the next. Sequential
     /// processing keeps the [`TxManager`]'s nonce stream contiguous
     /// and bounds in-flight L1 work to one transaction at a time.
-    pub async fn run(self, mut rx: mpsc::Receiver<DisputeRequest>, cancel: CancellationToken) {
+    pub async fn run(self, mut rx: mpsc::Receiver<Submission>, cancel: CancellationToken) {
         loop {
             tokio::select! {
                 biased;
                 () = cancel.cancelled() => return,
-                request = rx.recv() => match request {
-                    Some(req) => self.handle(req).await,
+                submission = rx.recv() => match submission {
+                    Some(s) => self.handle(s).await,
                     None => return,
                 },
             }
         }
     }
 
-    /// Encodes the request's calldata and submits the transaction.
-    async fn handle(&self, request: DisputeRequest) {
-        let game = request.game_address;
-
+    /// Encodes the submission's calldata and submits the transaction.
+    async fn handle(&self, submission: Submission) {
+        let game = submission.game_address();
+        let label = submission.to_string();
         let candidate = TxCandidate {
-            tx_data: request.action.to_calldata(request.proof_bytes),
+            tx_data: submission.into_calldata(),
             to: Some(game),
             ..TxCandidate::default()
         };
@@ -64,19 +105,19 @@ impl<Tx: TxManager> SubmissionTask<Tx> {
         match self.tx_manager.send(candidate).await {
             Ok(receipt) if receipt.status() => info!(
                 %game,
-                action = %request.action,
+                action = %label,
                 tx_hash = %receipt.transaction_hash,
                 "submission confirmed on L1"
             ),
             Ok(receipt) => warn!(
                 %game,
-                action = %request.action,
+                action = %label,
                 tx_hash = %receipt.transaction_hash,
                 "submission reverted at inclusion"
             ),
             Err(e) => warn!(
                 %game,
-                action = %request.action,
+                action = %label,
                 error = %e,
                 "submission failed before confirmation"
             ),
@@ -90,7 +131,7 @@ mod tests {
     use base_tx_manager::TxManagerError;
 
     use super::*;
-    use crate::{DisputeAction, test_utils::MockTxManager};
+    use crate::{BondAction, DisputeAction, test_utils::MockTxManager};
 
     const GAME: Address = address!("00000000000000000000000000000000000000a1");
     const SENDER: Address = address!("00000000000000000000000000000000000000b2");
@@ -130,12 +171,16 @@ mod tests {
         SubmissionTask::new(tx_manager)
     }
 
-    fn request(action: DisputeAction, proof_first_byte: u8) -> DisputeRequest {
-        DisputeRequest {
+    fn dispute(action: DisputeAction, proof_first_byte: u8) -> Submission {
+        Submission::Dispute(DisputeRequest {
             game_address: GAME,
             action,
             proof_bytes: Bytes::from(vec![proof_first_byte, 0x42]),
-        }
+        })
+    }
+
+    fn bond(action: BondAction) -> Submission {
+        Submission::Bond(BondRequest { game_address: GAME, action })
     }
 
     #[tokio::test]
@@ -143,7 +188,7 @@ mod tests {
         let tx_manager = MockTxManager::new(SENDER);
         tx_manager.push_success(TX_HASH);
 
-        task(tx_manager.clone()).handle(request(challenge(2, B256::repeat_byte(0x11)), 0x01)).await;
+        task(tx_manager.clone()).handle(dispute(challenge(2, B256::repeat_byte(0x11)), 0x01)).await;
 
         let calls = tx_manager.calls();
         assert_eq!(calls.len(), 1);
@@ -156,7 +201,7 @@ mod tests {
         tx_manager.push_success(TX_HASH);
 
         task(tx_manager.clone())
-            .handle(request(nullify_tee(2, B256::repeat_byte(0x22)), 0x00))
+            .handle(dispute(nullify_tee(2, B256::repeat_byte(0x22)), 0x00))
             .await;
 
         assert_eq!(tx_manager.calls().len(), 1);
@@ -168,20 +213,45 @@ mod tests {
         tx_manager.push_success(TX_HASH);
 
         task(tx_manager.clone())
-            .handle(request(nullify_zk(2, B256::repeat_byte(0x33)), 0x01))
+            .handle(dispute(nullify_zk(2, B256::repeat_byte(0x33)), 0x01))
             .await;
 
         assert_eq!(tx_manager.calls().len(), 1);
     }
 
     #[tokio::test]
-    async fn tx_data_matches_action_to_calldata() {
+    async fn bond_resolve_submits_one_tx_to_game_address() {
         let tx_manager = MockTxManager::new(SENDER);
         tx_manager.push_success(TX_HASH);
-        let req = request(challenge(2, B256::repeat_byte(0x11)), 0x01);
-        let expected = req.action.to_calldata(req.proof_bytes.clone());
 
-        task(tx_manager.clone()).handle(req).await;
+        task(tx_manager.clone()).handle(bond(BondAction::Resolve)).await;
+
+        let calls = tx_manager.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].to, Some(GAME));
+        assert_eq!(calls[0].tx_data, BondAction::Resolve.to_calldata());
+    }
+
+    #[tokio::test]
+    async fn bond_unlock_credit_submits_claim_credit_calldata() {
+        let tx_manager = MockTxManager::new(SENDER);
+        tx_manager.push_success(TX_HASH);
+
+        task(tx_manager.clone()).handle(bond(BondAction::UnlockCredit)).await;
+
+        let calls = tx_manager.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tx_data, BondAction::UnlockCredit.to_calldata());
+    }
+
+    #[tokio::test]
+    async fn dispute_tx_data_matches_action_to_calldata() {
+        let tx_manager = MockTxManager::new(SENDER);
+        tx_manager.push_success(TX_HASH);
+        let submission = dispute(challenge(2, B256::repeat_byte(0x11)), 0x01);
+        let expected = submission.clone().into_calldata();
+
+        task(tx_manager.clone()).handle(submission).await;
 
         let call = tx_manager.calls().pop().expect("one tx submitted");
         assert_eq!(call.tx_data, expected);
@@ -193,7 +263,7 @@ mod tests {
         let tx_manager = MockTxManager::new(SENDER);
         tx_manager.push_revert(TX_HASH);
 
-        task(tx_manager.clone()).handle(request(challenge(2, B256::repeat_byte(0x11)), 0x01)).await;
+        task(tx_manager.clone()).handle(dispute(challenge(2, B256::repeat_byte(0x11)), 0x01)).await;
 
         assert_eq!(tx_manager.calls().len(), 1);
     }
@@ -203,7 +273,7 @@ mod tests {
         let tx_manager = MockTxManager::new(SENDER);
         tx_manager.push_error(TxManagerError::NonceTooLow);
 
-        task(tx_manager.clone()).handle(request(challenge(2, B256::repeat_byte(0x11)), 0x01)).await;
+        task(tx_manager.clone()).handle(dispute(challenge(2, B256::repeat_byte(0x11)), 0x01)).await;
 
         assert_eq!(tx_manager.calls().len(), 1);
     }
@@ -211,10 +281,10 @@ mod tests {
     #[tokio::test]
     async fn cancel_token_exits_immediately() {
         let task = SubmissionTask::new(MockTxManager::new(SENDER));
-        let (_request_tx, request_rx) = mpsc::channel(8);
+        let (_tx, rx) = mpsc::channel(8);
         let cancel = CancellationToken::new();
 
-        let handle = tokio::spawn(task.run(request_rx, cancel.clone()));
+        let handle = tokio::spawn(task.run(rx, cancel.clone()));
         cancel.cancel();
         handle.await.expect("run must exit cleanly");
     }
@@ -222,34 +292,35 @@ mod tests {
     #[tokio::test]
     async fn closed_request_channel_exits_cleanly() {
         let task = SubmissionTask::new(MockTxManager::new(SENDER));
-        let (request_tx, request_rx) = mpsc::channel(8);
+        let (tx, rx) = mpsc::channel(8);
         let cancel = CancellationToken::new();
 
-        let handle = tokio::spawn(task.run(request_rx, cancel));
-        drop(request_tx);
+        let handle = tokio::spawn(task.run(rx, cancel));
+        drop(tx);
         handle.await.expect("run must exit when senders drop");
     }
 
     #[tokio::test]
-    async fn processes_pending_request_before_exit() {
+    async fn processes_pending_submission_before_exit() {
         let tx_manager = MockTxManager::new(SENDER);
         tx_manager.push_success(TX_HASH);
         let task = SubmissionTask::new(tx_manager.clone());
-        let (request_tx, request_rx) = mpsc::channel(8);
+        let (tx, rx) = mpsc::channel(8);
         let cancel = CancellationToken::new();
 
-        let handle = tokio::spawn(task.run(request_rx, cancel));
-        request_tx
-            .send(DisputeRequest {
-                game_address: GAME,
-                action: challenge(2, B256::repeat_byte(0x11)),
-                proof_bytes: Bytes::from(vec![0x01]),
-            })
+        let handle = tokio::spawn(task.run(rx, cancel));
+        tx.send(dispute(challenge(2, B256::repeat_byte(0x11)), 0x01))
             .await
             .expect("send must succeed");
-        drop(request_tx);
+        drop(tx);
         handle.await.expect("run must exit cleanly after draining");
 
         assert_eq!(tx_manager.calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn submission_display_delegates_to_inner_action() {
+        assert_eq!(dispute(challenge(2, B256::ZERO), 0x01).to_string(), "Challenge");
+        assert_eq!(bond(BondAction::Resolve).to_string(), "Resolve");
     }
 }

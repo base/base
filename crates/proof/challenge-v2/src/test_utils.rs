@@ -6,6 +6,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use alloy_consensus::{
@@ -19,8 +20,8 @@ use async_trait::async_trait;
 use base_common_consensus::Predeploys;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
-    AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex,
-    GameInfo as VerifierGameInfo, GameStatus,
+    AnchorStateRegistryClient, ContractError, DelayedWETHClient, DisputeGameFactoryClient,
+    GameAtIndex, GameInfo as VerifierGameInfo, GameStatus,
 };
 use base_proof_rpc::{BaseBlock, L2Provider, RpcError, RpcResult};
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
@@ -218,6 +219,12 @@ pub struct MockGameState {
     pub intermediate_output_roots: Vec<B256>,
     /// Address returned by `bondRecipient()`.
     pub bond_recipient: Address,
+    /// Value returned by `gameOver()`.
+    pub game_over: bool,
+    /// Value returned by `bondUnlocked()`.
+    pub bond_unlocked: bool,
+    /// Value returned by `bondClaimed()`.
+    pub bond_claimed: bool,
 }
 
 impl MockGameState {
@@ -239,6 +246,9 @@ impl MockGameState {
             l1_head: B256::ZERO,
             intermediate_output_roots: Vec::new(),
             bond_recipient: Address::ZERO,
+            game_over: false,
+            bond_unlocked: false,
+            bond_claimed: false,
         }
     }
 }
@@ -484,8 +494,8 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         self.get(address, |s| s.countered_index)
     }
 
-    async fn game_over(&self, _address: Address) -> Result<bool, ContractError> {
-        unimplemented!("game_over not used by scanner tests")
+    async fn game_over(&self, address: Address) -> Result<bool, ContractError> {
+        self.get(address, |s| s.game_over)
     }
 
     async fn resolved_at(&self, _address: Address) -> Result<u64, ContractError> {
@@ -496,12 +506,12 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         self.get(address, |s| s.bond_recipient)
     }
 
-    async fn bond_unlocked(&self, _address: Address) -> Result<bool, ContractError> {
-        unimplemented!("bond_unlocked not used by scanner tests")
+    async fn bond_unlocked(&self, address: Address) -> Result<bool, ContractError> {
+        self.get(address, |s| s.bond_unlocked)
     }
 
-    async fn bond_claimed(&self, _address: Address) -> Result<bool, ContractError> {
-        unimplemented!("bond_claimed not used by scanner tests")
+    async fn bond_claimed(&self, address: Address) -> Result<bool, ContractError> {
+        self.get(address, |s| s.bond_claimed)
     }
 
     async fn expected_resolution(&self, _address: Address) -> Result<u64, ContractError> {
@@ -538,6 +548,66 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         _address: Address,
     ) -> Result<AnchorPreflight, ContractError> {
         unimplemented!("anchor_preflight not used by scanner tests")
+    }
+}
+
+/// Mock [`DelayedWETHClient`] backed by an in-memory map.
+///
+/// Programmed via [`MockDelayedWETH::set_withdrawal`]. Unset
+/// `(holder, recipient)` pairs return `(0, 0)`, mirroring the Solidity
+/// mapping default.
+#[derive(Debug)]
+pub struct MockDelayedWETH {
+    /// Withdrawal delay returned by [`Self::delay`].
+    pub delay: Mutex<Duration>,
+    /// Recorded `(amount, timestamp)` keyed by `(holder, recipient)`.
+    pub withdrawals: Mutex<HashMap<(Address, Address), (U256, u64)>>,
+}
+
+impl MockDelayedWETH {
+    /// Creates a mock with the given withdrawal delay and no recorded withdrawals.
+    pub fn new(delay: Duration) -> Self {
+        Self { delay: Mutex::new(delay), withdrawals: Mutex::new(HashMap::new()) }
+    }
+
+    /// Replaces the withdrawal delay returned by [`Self::delay`].
+    pub fn set_delay(&self, delay: Duration) {
+        *self.delay.lock().expect("delay lock poisoned") = delay;
+    }
+
+    /// Records the `(amount, timestamp)` pair for the `(holder, recipient)` key.
+    pub fn set_withdrawal(
+        &self,
+        holder: Address,
+        recipient: Address,
+        amount: U256,
+        timestamp: u64,
+    ) {
+        self.withdrawals
+            .lock()
+            .expect("withdrawals lock poisoned")
+            .insert((holder, recipient), (amount, timestamp));
+    }
+}
+
+#[async_trait]
+impl DelayedWETHClient for MockDelayedWETH {
+    async fn delay(&self) -> Result<Duration, ContractError> {
+        Ok(*self.delay.lock().expect("delay lock poisoned"))
+    }
+
+    async fn withdrawals(
+        &self,
+        holder: Address,
+        recipient: Address,
+    ) -> Result<(U256, u64), ContractError> {
+        Ok(self
+            .withdrawals
+            .lock()
+            .expect("withdrawals lock poisoned")
+            .get(&(holder, recipient))
+            .copied()
+            .unwrap_or((U256::ZERO, 0)))
     }
 }
 

@@ -11,14 +11,14 @@ use derive_more::Debug;
 use tokio::sync::{Semaphore, mpsc};
 use tracing::{debug, info, warn};
 
-use crate::{DisputeRequest, GameInfo, OutputValidator, TeeProofProvider, Violation};
+use crate::{GameInfo, OutputValidator, Submission, TeeProofProvider, Violation};
 
 /// Read-only handles and config shared across every game-worker task.
 ///
-/// Cloned via `Arc<WorkerDeps>` when spawning workers, so spawning is
+/// Cloned via `Arc<GameWorkerDeps>` when spawning workers, so spawning is
 /// cheap and all tasks observe the same configured services.
 #[derive(Debug)]
-pub struct WorkerDeps {
+pub struct GameWorkerDeps {
     /// L2 output root computer used by [`Violation::detect`].
     #[debug(skip)]
     pub validator: Arc<dyn OutputValidator>,
@@ -40,10 +40,10 @@ pub struct WorkerDeps {
     #[debug(skip)]
     pub detect_semaphore: Arc<Semaphore>,
     /// Static worker config.
-    pub config: WorkerConfig,
+    pub config: GameWorkerConfig,
 }
 
-impl WorkerDeps {
+impl GameWorkerDeps {
     /// Bundles the read clients, proving services and config for
     /// sharing across workers.
     pub fn new(
@@ -52,7 +52,7 @@ impl WorkerDeps {
         zk_prover: Arc<dyn ZkProofProvider>,
         tee_prover: Arc<dyn TeeProofProvider>,
         detect_semaphore: Arc<Semaphore>,
-        config: WorkerConfig,
+        config: GameWorkerConfig,
     ) -> Self {
         Self { validator, verifier, zk_prover, tee_prover, detect_semaphore, config }
     }
@@ -61,7 +61,7 @@ impl WorkerDeps {
 /// Per-worker configuration. `Copy` so it flows through async boundaries
 /// without atomics or clones.
 #[derive(Debug, Clone, Copy)]
-pub struct WorkerConfig {
+pub struct GameWorkerConfig {
     /// Address that will sign and submit dispute transactions on L1.
     /// Forwarded to the ZK service so the SNARK journal commits to
     /// the same `msg.sender` the contract will see.
@@ -82,8 +82,8 @@ pub struct WorkerConfig {
 /// scanner re-emitting the game.
 pub async fn run_game_worker(
     game: GameInfo,
-    deps: Arc<WorkerDeps>,
-    submit_tx: mpsc::Sender<DisputeRequest>,
+    deps: Arc<GameWorkerDeps>,
+    submit_tx: mpsc::Sender<Submission>,
 ) {
     let address = game.address;
 
@@ -115,7 +115,7 @@ pub async fn run_game_worker(
         }
     };
 
-    if submit_tx.send(request).await.is_err() {
+    if submit_tx.send(Submission::Dispute(request)).await.is_err() {
         warn!(game = %address, "submission channel closed");
         return;
     }
@@ -147,8 +147,8 @@ mod tests {
         STARTING_BLOCK + (i + 1) * INTERVAL
     }
 
-    fn config() -> WorkerConfig {
-        WorkerConfig {
+    fn config() -> GameWorkerConfig {
+        GameWorkerConfig {
             sender_address: addr(0xB2),
             max_proof_retries: 0,
             proof_poll_interval: Duration::from_millis(1),
@@ -171,7 +171,7 @@ mod tests {
         }
     }
 
-    /// Bundles the four mocks needed by [`WorkerDeps`].
+    /// Bundles the four mocks needed by [`GameWorkerDeps`].
     struct Mocks {
         validator: Arc<MockOutputValidator>,
         verifier: Arc<MockAggregateVerifier>,
@@ -189,8 +189,8 @@ mod tests {
             }
         }
 
-        fn deps(&self) -> Arc<WorkerDeps> {
-            Arc::new(WorkerDeps::new(
+        fn deps(&self) -> Arc<GameWorkerDeps> {
+            Arc::new(GameWorkerDeps::new(
                 Arc::<MockOutputValidator>::clone(&self.validator),
                 Arc::<MockAggregateVerifier>::clone(&self.verifier),
                 Arc::<MockZkProofProvider>::clone(&self.zk),
@@ -245,7 +245,10 @@ mod tests {
 
         run_game_worker(game.clone(), mocks.deps(), tx).await;
 
-        let req = rx.try_recv().expect("a request was sent");
+        let submission = rx.try_recv().expect("a submission was sent");
+        let Submission::Dispute(req) = submission else {
+            panic!("game worker must wrap dispute requests in Submission::Dispute");
+        };
         assert_eq!(req.game_address, game.address);
         assert!(matches!(req.action, DisputeAction::NullifyZk { .. }));
     }

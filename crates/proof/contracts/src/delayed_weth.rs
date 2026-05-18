@@ -1,9 +1,10 @@
 //! `DelayedWETH` contract bindings.
 //!
-//! Used to read the withdrawal delay from the `DelayedWETH` contract. The
-//! bond lifecycle in `AggregateVerifier` requires waiting this delay between
-//! the first `claimCredit()` call (which triggers `unlock()`) and the second
-//! call (which triggers `withdraw()`).
+//! Used to read the withdrawal delay and pending unlocks from the
+//! `DelayedWETH` contract. The bond lifecycle in `AggregateVerifier`
+//! requires waiting `delay()` between the first `claimCredit()` call
+//! (which triggers `unlock()`) and the second call (which triggers
+//! `withdraw()`).
 
 use std::time::Duration;
 
@@ -19,6 +20,13 @@ alloy_sol_types::sol! {
     interface IDelayedWETH {
         /// Returns the withdrawal delay in seconds.
         function delay() external view returns (uint256);
+
+        /// Returns `(amount, timestamp)` for `withdrawals[holder][recipient]`.
+        /// Both fields are zero when no unlock has been recorded.
+        function withdrawals(address holder, address recipient)
+            external
+            view
+            returns (uint256 amount, uint256 timestamp);
     }
 }
 
@@ -27,6 +35,18 @@ alloy_sol_types::sol! {
 pub trait DelayedWETHClient: Send + Sync {
     /// Returns the withdrawal delay enforced between `unlock()` and `withdraw()`.
     async fn delay(&self) -> Result<Duration, ContractError>;
+
+    /// Returns `(amount, timestamp)` for `withdrawals[holder][recipient]`.
+    /// Both fields are zero when no unlock has been recorded.
+    ///
+    /// `holder` is the address that called `unlock()` (the dispute
+    /// game proxy in our use case); `recipient` is the sub-account
+    /// the unlock was scoped to (the on-chain `bondRecipient`).
+    async fn withdrawals(
+        &self,
+        holder: Address,
+        recipient: Address,
+    ) -> Result<(U256, u64), ContractError>;
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -59,5 +79,23 @@ impl DelayedWETHClient for DelayedWETHContractClient {
             .map_err(|_| ContractError::Validation("delay overflows u64".into()))?;
 
         Ok(Duration::from_secs(delay_secs))
+    }
+
+    async fn withdrawals(
+        &self,
+        holder: Address,
+        recipient: Address,
+    ) -> Result<(U256, u64), ContractError> {
+        let result =
+            self.contract.withdrawals(holder, recipient).call().await.map_err(|e| {
+                ContractError::Call { context: "withdrawals failed".into(), source: e }
+            })?;
+
+        let timestamp: u64 = result
+            .timestamp
+            .try_into()
+            .map_err(|_| ContractError::Validation("withdrawals timestamp overflows u64".into()))?;
+
+        Ok((result.amount, timestamp))
     }
 }

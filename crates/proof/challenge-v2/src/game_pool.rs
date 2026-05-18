@@ -9,7 +9,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
-use crate::{DisputeRequest, GameInfo, WorkerDeps, run_game_worker};
+use crate::{GameInfo, GameWorkerDeps, Submission, run_game_worker};
 
 /// Spawns one [`run_game_worker`] per active game address.
 #[derive(Debug)]
@@ -18,10 +18,10 @@ pub struct GamePool {
     #[debug(skip)]
     workers: HashMap<Address, JoinHandle<()>>,
     /// Shared dependencies passed to every worker.
-    deps: Arc<WorkerDeps>,
+    deps: Arc<GameWorkerDeps>,
     /// Outbound channel to the [`crate::SubmissionTask`].
     #[debug(skip)]
-    submit_tx: mpsc::Sender<DisputeRequest>,
+    submit_tx: mpsc::Sender<Submission>,
 }
 
 impl GamePool {
@@ -29,7 +29,7 @@ impl GamePool {
     const GC_THRESHOLD: usize = 256;
 
     /// Builds a pool wired to `deps` and `submit_tx`.
-    pub fn new(deps: Arc<WorkerDeps>, submit_tx: mpsc::Sender<DisputeRequest>) -> Self {
+    pub fn new(deps: Arc<GameWorkerDeps>, submit_tx: mpsc::Sender<Submission>) -> Self {
         Self { workers: HashMap::new(), deps, submit_tx }
     }
 
@@ -91,7 +91,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        OutputRootError, OutputValidator, ProvingState, WorkerConfig,
+        GameWorkerConfig, OutputRootError, OutputValidator, ProvingState,
         test_utils::{
             MockAggregateVerifier, MockGameState, MockOutputValidator, MockTeeProofProvider,
             MockZkProofProvider, addr,
@@ -109,8 +109,8 @@ mod tests {
         STARTING_BLOCK + (i + 1) * INTERVAL
     }
 
-    fn config() -> WorkerConfig {
-        WorkerConfig {
+    fn config() -> GameWorkerConfig {
+        GameWorkerConfig {
             sender_address: addr(0xB2),
             max_proof_retries: 0,
             proof_poll_interval: Duration::from_millis(1),
@@ -173,7 +173,7 @@ mod tests {
         }
     }
 
-    /// Bundles a verifier + provers; tests build a [`WorkerDeps`] from
+    /// Bundles a verifier + provers; tests build a [`GameWorkerDeps`] from
     /// these plus their chosen validator.
     struct Mocks {
         verifier: Arc<MockAggregateVerifier>,
@@ -190,8 +190,8 @@ mod tests {
             }
         }
 
-        fn deps(&self, validator: Arc<dyn OutputValidator>) -> Arc<WorkerDeps> {
-            Arc::new(WorkerDeps::new(
+        fn deps(&self, validator: Arc<dyn OutputValidator>) -> Arc<GameWorkerDeps> {
+            Arc::new(GameWorkerDeps::new(
                 validator,
                 Arc::<MockAggregateVerifier>::clone(&self.verifier),
                 Arc::<MockZkProofProvider>::clone(&self.zk),
@@ -234,11 +234,11 @@ mod tests {
 
         game_tx.send(game_info_zk_only(address, vec![root(10)])).await.unwrap();
 
-        let req = tokio::time::timeout(Duration::from_secs(1), submit_rx.recv())
+        let submission = tokio::time::timeout(Duration::from_secs(1), submit_rx.recv())
             .await
             .expect("worker must dispatch within timeout")
             .expect("submit channel must stay open");
-        assert_eq!(req.game_address, address);
+        assert_eq!(submission.game_address(), address);
 
         cancel.cancel();
         pool_handle.await.unwrap();
@@ -264,11 +264,11 @@ mod tests {
 
         let mut seen = Vec::new();
         for _ in 0..2 {
-            let req = tokio::time::timeout(Duration::from_secs(1), submit_rx.recv())
+            let submission = tokio::time::timeout(Duration::from_secs(1), submit_rx.recv())
                 .await
-                .expect("two requests must dispatch")
+                .expect("two submissions must dispatch")
                 .expect("submit channel must stay open");
-            seen.push(req.game_address);
+            seen.push(submission.game_address());
         }
         seen.sort();
         assert_eq!(seen, vec![address_a, address_b]);

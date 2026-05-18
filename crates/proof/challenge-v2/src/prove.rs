@@ -25,7 +25,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
-    DisputeAction, DisputeRequest, Violation, ViolationKind, WorkerDeps,
+    DisputeAction, DisputeRequest, GameWorkerDeps, Violation, ViolationKind,
     tee_provider::TeeProofProvider,
 };
 
@@ -68,7 +68,7 @@ impl Violation {
     /// See the module docs for the full decision policy.
     pub async fn build_dispute_request(
         self,
-        deps: &WorkerDeps,
+        deps: &GameWorkerDeps,
     ) -> Result<DisputeRequest, ProofError> {
         match self.kind {
             ViolationKind::ZkWrong => self.build_nullify_zk_request(self.computed_root, deps).await,
@@ -94,7 +94,7 @@ impl Violation {
     async fn build_nullify_zk_request(
         &self,
         root_to_prove: B256,
-        deps: &WorkerDeps,
+        deps: &GameWorkerDeps,
     ) -> Result<DisputeRequest, ProofError> {
         let proof_bytes = self.request_zk_proof(deps).await?;
 
@@ -116,7 +116,7 @@ impl Violation {
     /// computed.
     async fn build_challenge_request(
         &self,
-        deps: &WorkerDeps,
+        deps: &GameWorkerDeps,
     ) -> Result<DisputeRequest, ProofError> {
         let proof_bytes = self.request_zk_proof(deps).await?;
 
@@ -210,7 +210,7 @@ impl Violation {
     /// The session id is derived from `(game_address, invalid_index)`
     /// and reused across retries so the ZK service can requeue the
     /// existing job instead of starting from scratch.
-    async fn request_zk_proof(&self, deps: &WorkerDeps) -> Result<Bytes, ProofError> {
+    async fn request_zk_proof(&self, deps: &GameWorkerDeps) -> Result<Bytes, ProofError> {
         let session_id = self.zk_session_id();
         let request = ProveBlockRequest {
             start_block_number: self.start_block,
@@ -281,7 +281,10 @@ impl Violation {
     /// Polls the ZK service for `session_id` until a terminal status
     /// is reached or the per-attempt deadline elapses. Successful
     /// runs return the raw receipt bytes (no proof type prefix yet).
-    async fn poll_zk_session(session_id: &str, deps: &WorkerDeps) -> Result<Vec<u8>, ProofError> {
+    async fn poll_zk_session(
+        session_id: &str,
+        deps: &GameWorkerDeps,
+    ) -> Result<Vec<u8>, ProofError> {
         // Per-attempt deadline. Each retry of the outer loop gets a
         // fresh deadline by design: a retry after a service recovery
         // should have the full budget to complete.
@@ -335,7 +338,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        TeeProofError, WorkerConfig,
+        GameWorkerConfig, TeeProofError,
         test_utils::{
             MockAggregateVerifier, MockOutputValidator, MockTeeProofProvider, MockZkProofProvider,
         },
@@ -372,8 +375,8 @@ mod tests {
         Bytes::from(sig)
     }
 
-    fn config() -> WorkerConfig {
-        WorkerConfig {
+    fn config() -> GameWorkerConfig {
+        GameWorkerConfig {
             sender_address: SENDER,
             max_proof_retries: 2,
             proof_poll_interval: Duration::from_millis(10),
@@ -381,8 +384,8 @@ mod tests {
         }
     }
 
-    fn deps(zk: Arc<MockZkProofProvider>, tee: Arc<MockTeeProofProvider>) -> WorkerDeps {
-        WorkerDeps::new(
+    fn deps(zk: Arc<MockZkProofProvider>, tee: Arc<MockTeeProofProvider>) -> GameWorkerDeps {
+        GameWorkerDeps::new(
             Arc::new(MockOutputValidator::new()),
             Arc::new(MockAggregateVerifier::new()),
             zk,
@@ -393,8 +396,8 @@ mod tests {
     }
 
     /// Convenience for tests that exercise only the ZK path. The TEE
-    /// mock is wired in (mandatory in `WorkerDeps`) but never called.
-    fn deps_zk_path(zk: Arc<MockZkProofProvider>) -> WorkerDeps {
+    /// mock is wired in (mandatory in `GameWorkerDeps`) but never called.
+    fn deps_zk_path(zk: Arc<MockZkProofProvider>) -> GameWorkerDeps {
         deps(zk, Arc::new(MockTeeProofProvider::new()))
     }
 
@@ -494,7 +497,7 @@ mod tests {
 
             let mut cfg = config();
             cfg.max_proof_duration = Duration::ZERO;
-            let deps = WorkerDeps::new(
+            let deps = GameWorkerDeps::new(
                 Arc::new(MockOutputValidator::new()),
                 Arc::new(MockAggregateVerifier::new()),
                 Arc::<MockZkProofProvider>::clone(&zk),
@@ -526,7 +529,7 @@ mod tests {
 
             let mut cfg = config();
             cfg.max_proof_duration = Duration::ZERO;
-            let deps = WorkerDeps::new(
+            let deps = GameWorkerDeps::new(
                 Arc::new(MockOutputValidator::new()),
                 Arc::new(MockAggregateVerifier::new()),
                 Arc::<MockZkProofProvider>::clone(&zk),
