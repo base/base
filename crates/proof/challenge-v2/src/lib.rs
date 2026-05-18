@@ -45,5 +45,8 @@ pub use bond_discovery::{BondCandidate, BondDiscovery};
 mod bond_worker;
 pub use bond_worker::{BondError, BondWorkerDeps, run_bond_worker};
 
+mod bond_pool;
+pub use bond_pool::BondPool;
+
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
