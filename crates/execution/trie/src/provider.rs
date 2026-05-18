@@ -1,9 +1,8 @@
 //! Provider for external proofs storage
 
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::OnceLock};
 
 use alloy_primitives::keccak256;
-use derive_more::Constructor;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
@@ -15,7 +14,6 @@ use reth_revm::{
 };
 use reth_trie::{
     StateRoot, StorageRoot,
-    hashed_cursor::HashedCursor,
     proof::{self, Proof},
     witness::TrieWitness,
 };
@@ -34,7 +32,6 @@ use crate::{
 };
 
 /// State provider for external proofs storage.
-#[derive(Constructor)]
 pub struct BaseProofsStateProviderRef<'a, Storage: BaseProofsStore> {
     /// Historical state provider for non-state related tasks.
     latest: Box<dyn StateProvider + Send + 'a>,
@@ -44,6 +41,27 @@ pub struct BaseProofsStateProviderRef<'a, Storage: BaseProofsStore> {
 
     /// Max block number that can be used for state lookups.
     block_number: BlockNumber,
+
+    /// Request-scoped read transaction for EVM account and storage reads.
+    tx: OnceLock<Result<Storage::Tx<'a>, BaseProofsStorageError>>,
+}
+
+impl<'a, Storage: BaseProofsStore> BaseProofsStateProviderRef<'a, Storage> {
+    /// Creates a state provider over external proofs storage.
+    pub const fn new(
+        latest: Box<dyn StateProvider + Send + 'a>,
+        storage: &'a BaseProofsStorage<Storage>,
+        block_number: BlockNumber,
+    ) -> Self {
+        Self { latest, storage, block_number, tx: OnceLock::new() }
+    }
+
+    fn tx(&self) -> ProviderResult<&Storage::Tx<'a>> {
+        match self.tx.get_or_init(|| self.storage.ro_tx()) {
+            Ok(tx) => Ok(tx),
+            Err(error) => Err(error.clone().into()),
+        }
+    }
 }
 
 impl<'a, Storage> Debug for BaseProofsStateProviderRef<'a, Storage>
@@ -64,13 +82,10 @@ impl<'a, Storage: BaseProofsStore + Clone> BaseProofsStateProviderRef<'a, Storag
         address: Address,
         hashed_key: B256,
     ) -> ProviderResult<Option<StorageValue>> {
-        Ok(self
-            .storage
-            .storage_hashed_cursor(keccak256(address.0), self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, storage)| (key == hashed_key).then_some(storage)))
+        let tx = self.tx()?;
+        self.storage
+            .storage_by_hashed_key_with_tx(tx, keccak256(address.0), hashed_key, self.block_number)
+            .map_err(Into::<ProviderError>::into)
     }
 }
 
@@ -206,13 +221,10 @@ impl<'a, Storage: BaseProofsStore> HashedPostStateProvider
 impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<'a, Storage> {
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         let hashed_key = keccak256(address.0);
-        Ok(self
-            .storage
-            .account_hashed_cursor(self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, account)| (key == hashed_key).then_some(account)))
+        let tx = self.tx()?;
+        self.storage
+            .account_by_hashed_key_with_tx(tx, hashed_key, self.block_number)
+            .map_err(Into::<ProviderError>::into)
     }
 }
 
@@ -223,6 +235,17 @@ where
     fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {
         let hashed_key = keccak256(storage_key);
         self.storage_by_hashed_key(address, hashed_key)
+    }
+
+    fn storage_by_hashed_key(
+        &self,
+        address: Address,
+        hashed_key: B256,
+    ) -> ProviderResult<Option<StorageValue>> {
+        let tx = self.tx()?;
+        self.storage
+            .storage_by_hashed_key_with_tx(tx, keccak256(address.0), hashed_key, self.block_number)
+            .map_err(Into::<ProviderError>::into)
     }
 }
 

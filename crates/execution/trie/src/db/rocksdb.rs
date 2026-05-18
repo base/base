@@ -1706,6 +1706,48 @@ impl BaseProofsStore for RocksdbProofsStorage {
         Ok(RocksdbAccountCursor::new_with_snapshot(Arc::clone(tx), max_block_number))
     }
 
+    fn account_by_hashed_key_with_tx<'tx, 'db>(
+        &self,
+        tx: &'tx Self::Tx<'db>,
+        hashed_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>>
+    where
+        Self: 'db,
+        'db: 'tx,
+    {
+        let cursor = RocksdbVersionedCursor::<HashedAccountHistory>::new_with_snapshot(
+            Arc::clone(tx),
+            max_block_number,
+        );
+        let Some((_, value)) = cursor.latest_version_for_key(hashed_key)? else {
+            return Ok(None);
+        };
+        Ok(value.value.0)
+    }
+
+    fn storage_by_hashed_key_with_tx<'tx, 'db>(
+        &self,
+        tx: &'tx Self::Tx<'db>,
+        hashed_address: B256,
+        hashed_storage_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>>
+    where
+        Self: 'db,
+        'db: 'tx,
+    {
+        let cursor = RocksdbVersionedCursor::<HashedStorageHistory>::new_with_snapshot(
+            Arc::clone(tx),
+            max_block_number,
+        );
+        let key = HashedStorageKey::new(hashed_address, hashed_storage_key);
+        let Some((_, value)) = cursor.latest_version_for_key(key)? else {
+            return Ok(None);
+        };
+        Ok(value.value.0.and_then(|value| (!value.0.is_zero()).then_some(value.0)))
+    }
+
     fn store_trie_updates(
         &self,
         block_ref: BlockWithParent,
