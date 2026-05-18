@@ -45,7 +45,7 @@ pub const VARIANT_SECURITY: u8 = 3;
 /// is deployed at the address (which is the full `isB20` check).
 pub fn has_b20_prefix(addr: &Address) -> bool {
     let b = addr.as_slice();
-    b[0] == 0xb0 && matches!(b[1], 0x20 | 0x21 | 0x22) && b[2..12] == [0u8; 10]
+    b[0] == 0xb0 && matches!(b[1], 0x20..=0x22) && b[2..12] == [0u8; 10]
 }
 
 /// Returns the variant discriminant for `addr` based on its address prefix.

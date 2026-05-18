@@ -5,11 +5,10 @@ use alloy_sol_types::{SolCall, SolInterface};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use crate::token::abi::ITokenFactory;
-
 use super::storage::{
     TokenFactory, compute_default_address, compute_security_address, compute_stablecoin_address,
 };
+use crate::token::abi::ITokenFactory;
 
 impl<'a> TokenFactory<'a> {
     /// ABI-dispatches `calldata` to the appropriate `ITokenFactory` handler.
