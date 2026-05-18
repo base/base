@@ -614,3 +614,65 @@ fn test_rocksdb_exact_reads_use_supplied_snapshot() -> Result<(), BaseProofsStor
 
     Ok(())
 }
+
+#[test]
+#[serial]
+fn test_rocksdb_exact_lookup_finds_latest_version_at_or_below_bound()
+-> Result<(), BaseProofsStorageError> {
+    let storage = create_rocksdb_proofs_storage();
+    let account_key = B256::repeat_byte(0x51);
+    let account_v1 = create_test_account_with_values(1, 100, 0xAA);
+    let account_v3 = create_test_account_with_values(3, 300, 0xCC);
+
+    let block1 = BlockWithParent::new(B256::ZERO, NumHash::new(1, B256::repeat_byte(0x11)));
+    let mut post_state = HashedPostState::default();
+    post_state.accounts.insert(account_key, Some(account_v1));
+    storage.store_trie_updates(
+        block1,
+        BlockStateDiff {
+            sorted_trie_updates: TrieUpdatesSorted::default(),
+            sorted_post_state: post_state.into_sorted(),
+        },
+    )?;
+
+    let block3 = BlockWithParent::new(block1.block.hash, NumHash::new(3, B256::repeat_byte(0x33)));
+    let mut post_state = HashedPostState::default();
+    post_state.accounts.insert(account_key, Some(account_v3));
+    storage.store_trie_updates(
+        block3,
+        BlockStateDiff {
+            sorted_trie_updates: TrieUpdatesSorted::default(),
+            sorted_post_state: post_state.into_sorted(),
+        },
+    )?;
+
+    assert_eq!(storage.storage.account_by_hashed_key(account_key, 2)?, Some(account_v1));
+    assert_eq!(storage.storage.account_by_hashed_key(account_key, 3)?, Some(account_v3));
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn test_rocksdb_exact_lookup_returns_none_when_versions_are_above_bound()
+-> Result<(), BaseProofsStorageError> {
+    let storage = create_rocksdb_proofs_storage();
+    let account_key = B256::repeat_byte(0x61);
+    let account = create_test_account_with_values(10, 1_000, 0xAA);
+
+    let block10 = BlockWithParent::new(B256::ZERO, NumHash::new(10, B256::repeat_byte(0x10)));
+    let mut post_state = HashedPostState::default();
+    post_state.accounts.insert(account_key, Some(account));
+    storage.store_trie_updates(
+        block10,
+        BlockStateDiff {
+            sorted_trie_updates: TrieUpdatesSorted::default(),
+            sorted_post_state: post_state.into_sorted(),
+        },
+    )?;
+
+    assert_eq!(storage.storage.account_by_hashed_key(account_key, 9)?, None);
+    assert_eq!(storage.storage.account_by_hashed_key(account_key, 10)?, Some(account));
+
+    Ok(())
+}
