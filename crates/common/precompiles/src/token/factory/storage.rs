@@ -4,10 +4,7 @@ use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Handler, Result};
 use revm::state::Bytecode;
 
-use crate::token::{
-    DefaultTokenStorage, TokenAccounting,
-    abi::ITokenFactory,
-};
+use crate::token::{DefaultTokenStorage, TokenAccounting, abi::ITokenFactory};
 
 // ── Addresses ────────────────────────────────────────────────────────────────
 
@@ -111,7 +108,7 @@ pub struct TokenFactory {}
 
 // ── Factory methods ───────────────────────────────────────────────────────────
 
-impl TokenFactory<'_> {
+impl<'a> TokenFactory<'a> {
     /// Creates a Default-variant token at a deterministic address derived from `(caller, salt)`.
     pub fn create_default(
         &mut self,
@@ -138,9 +135,8 @@ impl TokenFactory<'_> {
         }
 
         // Collision guard: revert if code already exists at the target address.
-        let already_deployed = self
-            .storage
-            .with_account_info(token_address, |info| Ok(!info.is_empty_code_hash()))?;
+        let already_deployed =
+            self.storage.with_account_info(token_address, |info| Ok(!info.is_empty_code_hash()))?;
         if already_deployed {
             return Err(BasePrecompileError::revert(ITokenFactory::TokenAlreadyExists {
                 token: token_address,
@@ -442,9 +438,7 @@ mod integration {
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use super::*;
-    use crate::token::{
-        DefaultToken, DefaultTokenStorage, Mintable, Token, Transferable,
-    };
+    use crate::token::{DefaultToken, DefaultTokenStorage, Mintable, Token, Transferable};
 
     /// Creates a token at the given address and returns a usable `DefaultToken` handle.
     fn token_at<'a>(addr: Address, ctx: StorageCtx<'a>) -> DefaultToken<DefaultTokenStorage<'a>> {
@@ -502,11 +496,11 @@ mod integration {
 
             let t = DefaultTokenStorage::from_address(token_addr, ctx);
 
-            assert_eq!(t.name.read().unwrap(),         "USD Coin");
-            assert_eq!(t.symbol.read().unwrap(),        "USDC");
-            assert_eq!(t.decimals.read().unwrap(),      6u8);
-            assert_eq!(t.capabilities.read().unwrap(),  U256::from(0b11u64));
-            assert_eq!(t.supply_cap.read().unwrap(),    U256::from(u128::MAX));
+            assert_eq!(t.name.read().unwrap(), "USD Coin");
+            assert_eq!(t.symbol.read().unwrap(), "USDC");
+            assert_eq!(t.decimals.read().unwrap(), 6u8);
+            assert_eq!(t.capabilities.read().unwrap(), U256::from(0b11u64));
+            assert_eq!(t.supply_cap.read().unwrap(), U256::from(u128::MAX));
             assert_eq!(t.minimum_redeemable.read().unwrap(), U256::from(10u64));
             assert_eq!(t.contract_uri.read().unwrap(), "ipfs://QmTest");
             assert_eq!(t.total_supply.read().unwrap(), U256::from(1_000_000u64));
@@ -533,23 +527,23 @@ mod integration {
                 B256::repeat_byte(0x02),
             );
 
-            let sender   = Address::repeat_byte(0xCD); // initialSupplyRecipient
+            let sender = Address::repeat_byte(0xCD); // initialSupplyRecipient
             let receiver = Address::repeat_byte(0xBB);
-            let amount   = U256::from(300u64);
+            let amount = U256::from(300u64);
 
             let mut token = token_at(token_addr, ctx);
 
             // Pre-transfer state.
-            assert_eq!(token.accounting().balance_of(sender).unwrap(),   U256::from(1_000u64));
-            assert_eq!(token.accounting().balance_of(receiver).unwrap(),  U256::ZERO);
-            assert_eq!(token.accounting().total_supply().unwrap(),        U256::from(1_000u64));
+            assert_eq!(token.accounting().balance_of(sender).unwrap(), U256::from(1_000u64));
+            assert_eq!(token.accounting().balance_of(receiver).unwrap(), U256::ZERO);
+            assert_eq!(token.accounting().total_supply().unwrap(), U256::from(1_000u64));
 
             token.transfer(sender, receiver, amount).unwrap();
 
             // Post-transfer state.
-            assert_eq!(token.accounting().balance_of(sender).unwrap(),   U256::from(700u64));
-            assert_eq!(token.accounting().balance_of(receiver).unwrap(),  U256::from(300u64));
-            assert_eq!(token.accounting().total_supply().unwrap(),        U256::from(1_000u64));
+            assert_eq!(token.accounting().balance_of(sender).unwrap(), U256::from(700u64));
+            assert_eq!(token.accounting().balance_of(receiver).unwrap(), U256::from(300u64));
+            assert_eq!(token.accounting().total_supply().unwrap(), U256::from(1_000u64));
         });
     }
 
@@ -570,7 +564,7 @@ mod integration {
                 B256::repeat_byte(0x03),
             );
 
-            let sender   = Address::repeat_byte(0xCD);
+            let sender = Address::repeat_byte(0xCD);
             let receiver = Address::repeat_byte(0xBB);
 
             let mut token = token_at(token_addr, ctx);
@@ -649,8 +643,8 @@ mod integration {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = TokenFactory::new(ctx);
-            let alice   = Address::repeat_byte(0xCD); // initialSupplyRecipient
-            let bob     = Address::repeat_byte(0xBB);
+            let alice = Address::repeat_byte(0xCD); // initialSupplyRecipient
+            let bob = Address::repeat_byte(0xBB);
             let charlie = Address::repeat_byte(0xCC);
 
             let token_addr = create_token(
@@ -665,7 +659,7 @@ mod integration {
             );
 
             // ── verify factory state ──────────────────────────────────────────
-            assert!(factory.is_b20(token_addr).unwrap(),         "should be B-20");
+            assert!(factory.is_b20(token_addr).unwrap(), "should be B-20");
             assert_eq!(factory.variant_of_token(token_addr).unwrap(), VARIANT_DEFAULT);
 
             // ── verify 0xEF stub at token address ────────────────────────────
@@ -673,7 +667,7 @@ mod integration {
 
             // ── verify metadata ───────────────────────────────────────────────
             let storage_handle = DefaultTokenStorage::from_address(token_addr, ctx);
-            assert_eq!(storage_handle.name.read().unwrap(),   "My Stablecoin");
+            assert_eq!(storage_handle.name.read().unwrap(), "My Stablecoin");
             assert_eq!(storage_handle.symbol.read().unwrap(), "MSC");
             assert_eq!(storage_handle.decimals.read().unwrap(), 6u8);
             assert_eq!(storage_handle.supply_cap.read().unwrap(), U256::from(1_000_000u64));
@@ -684,24 +678,24 @@ mod integration {
             token.transfer(alice, bob, U256::from(4_000u64)).unwrap();
 
             assert_eq!(token.accounting().balance_of(alice).unwrap(), U256::from(6_000u64));
-            assert_eq!(token.accounting().balance_of(bob).unwrap(),   U256::from(4_000u64));
-            assert_eq!(token.accounting().total_supply().unwrap(),     U256::from(10_000u64));
+            assert_eq!(token.accounting().balance_of(bob).unwrap(), U256::from(4_000u64));
+            assert_eq!(token.accounting().total_supply().unwrap(), U256::from(10_000u64));
 
             // ── bob → charlie: 1_500 tokens ───────────────────────────────────
             token.transfer(bob, charlie, U256::from(1_500u64)).unwrap();
 
-            assert_eq!(token.accounting().balance_of(bob).unwrap(),     U256::from(2_500u64));
+            assert_eq!(token.accounting().balance_of(bob).unwrap(), U256::from(2_500u64));
             assert_eq!(token.accounting().balance_of(charlie).unwrap(), U256::from(1_500u64));
 
             // ── mint 5_000 more to alice ───────────────────────────────────────
             token.mint(alice, U256::from(5_000u64)).unwrap();
 
             assert_eq!(token.accounting().balance_of(alice).unwrap(), U256::from(11_000u64));
-            assert_eq!(token.accounting().total_supply().unwrap(),     U256::from(15_000u64));
+            assert_eq!(token.accounting().total_supply().unwrap(), U256::from(15_000u64));
 
             // Final balances must sum to total supply.
-            let alice_bal   = token.accounting().balance_of(alice).unwrap();
-            let bob_bal     = token.accounting().balance_of(bob).unwrap();
+            let alice_bal = token.accounting().balance_of(alice).unwrap();
+            let bob_bal = token.accounting().balance_of(bob).unwrap();
             let charlie_bal = token.accounting().balance_of(charlie).unwrap();
             assert_eq!(alice_bal + bob_bal + charlie_bal, U256::from(15_000u64));
         });

@@ -11,10 +11,12 @@ use super::storage::{
     TokenFactory, compute_default_address, compute_security_address, compute_stablecoin_address,
 };
 
-impl TokenFactory<'_> {
+impl<'a> TokenFactory<'a> {
     /// ABI-dispatches `calldata` to the appropriate `ITokenFactory` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        self.inner(ctx, calldata).into_precompile_result(ctx.gas_used(), |b| b)
+        let result = self.inner(ctx, calldata);
+        let gas = ctx.gas_used();
+        result.into_precompile_result(gas, |b| b)
     }
 
     fn inner(

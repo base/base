@@ -47,3 +47,6 @@ optional_fee_charge = [ "revm/optional_fee_charge" ]
 optional_balance_check = [ "revm/optional_balance_check" ]
 optional_block_gas_limit = [ "revm/optional_block_gas_limit" ]
 test-utils = [ "base-precompile-storage/test-utils" ]
+
+[dev-dependencies]
+base-precompile-storage = { workspace = true, features = ["test-utils"] }
