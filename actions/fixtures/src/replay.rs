@@ -1,11 +1,11 @@
 use std::{fmt::Debug, sync::Arc};
 
-use alloy_genesis::ChainConfig;
+use alloy_genesis::ChainConfig as L1ChainConfig;
 use base_action_harness::{
     ActionBlobProvider, ActionL1ChainProvider, ActionL2ChainProvider, SharedL1Chain,
     block_info_from,
 };
-use base_common_chains::ChainConfig as BaseChainConfig;
+use base_common_chains::{ChainConfig as BaseChainConfig, L1_CONFIGS};
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{
     EthereumDataSource, Pipeline, PipelineBuilder, PipelineError, PipelineErrorKind,
@@ -13,7 +13,9 @@ use base_consensus_derive::{
 };
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 
-use crate::{ActionFixture, ActionFixtureAdapter, FixtureAdapterError};
+use crate::{
+    ActionFixture, ActionFixtureAdapter, DerivationFixture, FixtureAdapterError, FixtureL2Block,
+};
 
 /// Replays captured derivation fixtures through the production derivation pipeline.
 #[derive(Debug, Clone, Copy, Default)]
@@ -24,7 +26,8 @@ impl DerivationFixtureReplayer {
     pub async fn derive_payloads(
         fixture: &ActionFixture,
     ) -> Result<Vec<AttributesWithParent>, FixtureReplayError> {
-        Self::derive_payloads_with_rollup_config(fixture, Self::rollup_config(fixture)?).await
+        let rollup_config = Self::rollup_config(fixture)?;
+        Self::derive_payloads_with_rollup_config(fixture, rollup_config).await
     }
 
     /// Derive payload attributes using an explicit rollup config.
@@ -32,21 +35,50 @@ impl DerivationFixtureReplayer {
         fixture: &ActionFixture,
         rollup_config: RollupConfig,
     ) -> Result<Vec<AttributesWithParent>, FixtureReplayError> {
+        let shared_l1 = ActionFixtureAdapter::shared_l1_chain(fixture)?;
+        Self::derive_payloads_with_shared_l1(fixture, rollup_config, shared_l1).await
+    }
+
+    /// Derive payload attributes using an explicit rollup config and L1 chain.
+    pub async fn derive_payloads_with_shared_l1(
+        fixture: &ActionFixture,
+        rollup_config: RollupConfig,
+        shared_l1: SharedL1Chain,
+    ) -> Result<Vec<AttributesWithParent>, FixtureReplayError> {
         let derivation =
             fixture.derivation.as_ref().ok_or(FixtureReplayError::MissingDerivationFixture)?;
+        let l1_chain_config = Self::l1_chain_config(fixture)?;
+        Self::derive_payloads_from_parts(
+            derivation,
+            &fixture.l2_blocks,
+            rollup_config,
+            l1_chain_config,
+            shared_l1,
+        )
+        .await
+    }
+
+    /// Derive payload attributes from fixture parts using an explicit shared L1 chain.
+    pub async fn derive_payloads_from_parts(
+        derivation: &DerivationFixture,
+        l2_blocks: &[FixtureL2Block],
+        rollup_config: RollupConfig,
+        l1_chain_config: L1ChainConfig,
+        shared_l1: SharedL1Chain,
+    ) -> Result<Vec<AttributesWithParent>, FixtureReplayError> {
         let rollup_config = Arc::new(rollup_config);
-        let shared_l1 = ActionFixtureAdapter::shared_l1_chain(fixture)?;
-        let l2_provider = Self::seed_l2_provider(fixture, rollup_config.as_ref())?;
+        let l2_provider = Self::seed_l2_provider(derivation, rollup_config.as_ref())?;
         let mut cursor = derivation.safe_head;
         let mut pipeline = Self::build_pipeline(
             &shared_l1,
             l2_provider.clone(),
             Arc::clone(&rollup_config),
+            Arc::new(l1_chain_config),
             derivation.safe_head,
         )?;
-        let mut payloads = Vec::with_capacity(fixture.l2_blocks.len());
+        let mut payloads = Vec::with_capacity(l2_blocks.len());
 
-        for block in &fixture.l2_blocks {
+        for block in l2_blocks {
             let payload = Self::next_payload(&mut pipeline, cursor).await?;
             let base_block = ActionFixtureAdapter::l2_block(block)?;
             cursor = ActionFixtureAdapter::l2_block_info(block, &rollup_config.genesis)?;
@@ -58,28 +90,52 @@ impl DerivationFixtureReplayer {
         Ok(payloads)
     }
 
+    /// Return the Base chain config for a fixture's network.
+    pub fn base_chain_config(
+        fixture: &ActionFixture,
+    ) -> Result<&'static BaseChainConfig, FixtureReplayError> {
+        Self::base_chain_config_for_network(&fixture.manifest.network)
+    }
+
+    /// Return the Base chain config for a supported fixture network.
+    pub fn base_chain_config_for_network(
+        network: &str,
+    ) -> Result<&'static BaseChainConfig, FixtureReplayError> {
+        let chain_id = crate::FixtureManifest::chain_id_for_network(network).ok_or_else(|| {
+            FixtureReplayError::UnsupportedNetwork { network: network.to_owned() }
+        })?;
+        BaseChainConfig::by_chain_id(chain_id)
+            .ok_or(FixtureReplayError::MissingRollupConfig { chain_id })
+    }
+
     /// Return the rollup config for a fixture's network.
     pub fn rollup_config(fixture: &ActionFixture) -> Result<RollupConfig, FixtureReplayError> {
-        let chain_id = crate::FixtureManifest::chain_id_for_network(&fixture.manifest.network)
-            .ok_or_else(|| FixtureReplayError::UnsupportedNetwork {
-                network: fixture.manifest.network.clone(),
-            })?;
-        let mut config = BaseChainConfig::by_chain_id(chain_id)
-            .map(BaseChainConfig::rollup_config)
-            .ok_or(FixtureReplayError::MissingRollupConfig { chain_id })?;
+        let mut config = Self::base_chain_config(fixture)?.rollup_config();
         if let Some(derivation) = &fixture.derivation {
             config.genesis.system_config = Some(derivation.system_config);
         }
         Ok(config)
     }
 
+    /// Return the L1 chain config for a fixture's network.
+    pub fn l1_chain_config(fixture: &ActionFixture) -> Result<L1ChainConfig, FixtureReplayError> {
+        Self::l1_chain_config_for_network(&fixture.manifest.network)
+    }
+
+    /// Return the L1 chain config for a supported fixture network.
+    pub fn l1_chain_config_for_network(network: &str) -> Result<L1ChainConfig, FixtureReplayError> {
+        let base_config = Self::base_chain_config_for_network(network)?;
+        L1_CONFIGS
+            .get(&base_config.l1_chain_id)
+            .cloned()
+            .ok_or(FixtureReplayError::MissingL1ChainConfig { chain_id: base_config.l1_chain_id })
+    }
+
     /// Seed an action L2 provider with the safe-head anchor and fixture history.
     pub fn seed_l2_provider(
-        fixture: &ActionFixture,
+        derivation: &DerivationFixture,
         rollup_config: &RollupConfig,
     ) -> Result<ActionL2ChainProvider, FixtureReplayError> {
-        let derivation =
-            fixture.derivation.as_ref().ok_or(FixtureReplayError::MissingDerivationFixture)?;
         let provider = ActionL2ChainProvider::default();
         provider.insert_block(derivation.safe_head);
         provider
@@ -98,6 +154,7 @@ impl DerivationFixtureReplayer {
         shared_l1: &SharedL1Chain,
         l2_provider: ActionL2ChainProvider,
         rollup_config: Arc<RollupConfig>,
+        l1_chain_config: Arc<L1ChainConfig>,
         safe_head: L2BlockInfo,
     ) -> Result<impl Pipeline + Debug, FixtureReplayError> {
         let l1_provider = ActionL1ChainProvider::new(shared_l1.clone());
@@ -107,7 +164,7 @@ impl DerivationFixtureReplayer {
         let l1_origin = Self::origin_from_shared_l1(shared_l1, safe_head)?;
         let attrs_builder = StatefulAttributesBuilder::new(
             Arc::clone(&rollup_config),
-            Arc::new(ChainConfig::default()),
+            l1_chain_config,
             l2_provider.clone(),
             l1_provider.clone(),
         );
@@ -187,6 +244,12 @@ pub enum FixtureReplayError {
     #[error("missing rollup config for chain ID {chain_id}")]
     MissingRollupConfig {
         /// L2 chain ID.
+        chain_id: u64,
+    },
+    /// The L1 chain config registry is missing a chain ID.
+    #[error("missing L1 chain config for chain ID {chain_id}")]
+    MissingL1ChainConfig {
+        /// L1 chain ID.
         chain_id: u64,
     },
     /// No captured L1 origin block was available.

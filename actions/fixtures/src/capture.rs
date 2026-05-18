@@ -6,8 +6,10 @@ use std::{
 
 use alloy_consensus::{Receipt, Transaction as _, TxEnvelope, constants::EMPTY_TRANSACTIONS};
 use alloy_eips::Encodable2718;
+use alloy_genesis::ChainConfig as L1ChainConfig;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
+use base_action_harness::SharedL1Chain;
 use base_common_chains::ChainConfig as BaseChainConfig;
 use base_common_consensus::{BaseBlock, BaseReceiptEnvelope};
 use base_common_genesis::RollupConfig;
@@ -21,10 +23,10 @@ use serde_json::{Value, json};
 use tracing::info;
 
 use crate::{
-    ActionFixture, DerivationFixture, ExpectedOutcome, ExpectedPayload, FixtureKind,
-    FixtureKindParseError, FixtureL1Block, FixtureL1DiskBlockError, FixtureL1DiskCodec,
-    FixtureL2Block, FixtureLoader, FixtureLoaderError, FixtureManifest, FixturePaths,
-    FixtureReplayError, StateRoot,
+    ActionFixture, ActionFixtureAdapter, DerivationFixture, ExpectedOutcome, ExpectedPayload,
+    FixtureKind, FixtureKindParseError, FixtureL1Block, FixtureL1DiskBlockError,
+    FixtureL1DiskCodec, FixtureL2Block, FixtureLoader, FixtureLoaderError, FixtureManifest,
+    FixturePaths, FixtureReplayError, StateRoot,
 };
 
 /// Concurrent L1 requests used while scanning derivation windows.
@@ -408,24 +410,37 @@ impl RpcFixtureCapture {
         let scan_end =
             default_start.saturating_add(rollup_config.seq_window_size.saturating_add(1));
         let mut blocks = Vec::new();
+        let shared_l1 = SharedL1Chain::default();
+        let l1_chain_config =
+            crate::DerivationFixtureReplayer::l1_chain_config_for_network(&input.network)
+                .map_err(|error| CaptureError::DerivationReplay { error })?;
         let mut next_start = start;
         while next_start <= scan_end {
             let next_end = next_start
                 .saturating_add(L1_DERIVATION_CAPTURE_CHUNK_SIZE.saturating_sub(1))
                 .min(scan_end);
-            blocks.extend(
-                Self::capture_l1_derivation_range(
-                    client,
-                    l1_rpc_url,
-                    next_start,
-                    next_end,
-                    rollup_config,
-                )
-                .await?,
-            );
+            let chunk = Self::capture_l1_derivation_range(
+                client,
+                l1_rpc_url,
+                next_start,
+                next_end,
+                rollup_config,
+            )
+            .await?;
+            for block in &chunk {
+                shared_l1.push(ActionFixtureAdapter::l1_block(block)?);
+            }
+            blocks.extend(chunk);
 
-            if let Some(required_end) =
-                Self::derived_l1_end(input, derivation, l2_blocks, &blocks, rollup_config).await?
+            if let Some(required_end) = Self::derived_l1_end(
+                derivation,
+                l2_blocks,
+                &blocks,
+                &shared_l1,
+                rollup_config,
+                &l1_chain_config,
+            )
+            .await?
             {
                 blocks.retain(|block| block.header.number <= required_end);
                 return Ok(blocks);
@@ -444,31 +459,19 @@ impl RpcFixtureCapture {
 
     /// Return the highest L1 block needed by a successful replay, or `None` if more L1 data is needed.
     pub async fn derived_l1_end(
-        input: &CaptureInput,
         derivation: &DerivationFixture,
         l2_blocks: &[FixtureL2Block],
         l1_blocks: &[FixtureL1Block],
+        shared_l1: &SharedL1Chain,
         rollup_config: &RollupConfig,
+        l1_chain_config: &L1ChainConfig,
     ) -> Result<Option<u64>, CaptureError> {
-        let mut manifest =
-            FixtureManifest::new(input.name.clone(), input.network.clone(), input.kind);
-        manifest.source = "rpc-capture-probe".to_owned();
-        manifest.l1_start = l1_blocks.first().map(FixtureL1Block::id);
-        manifest.l1_end = l1_blocks.last().map(FixtureL1Block::id);
-        manifest.l2_start = l2_blocks.first().map(FixtureL2Block::id);
-        manifest.l2_end = l2_blocks.last().map(FixtureL2Block::id);
-
-        let fixture = ActionFixture::new(
-            manifest,
-            l1_blocks.to_vec(),
-            l2_blocks.to_vec(),
-            Self::expected_outcome(l2_blocks),
-        )
-        .with_derivation(derivation.clone());
-
-        match crate::DerivationFixtureReplayer::derive_payloads_with_rollup_config(
-            &fixture,
+        match crate::DerivationFixtureReplayer::derive_payloads_from_parts(
+            derivation,
+            l2_blocks,
             rollup_config.clone(),
+            l1_chain_config.clone(),
+            shared_l1.clone(),
         )
         .await
         {
