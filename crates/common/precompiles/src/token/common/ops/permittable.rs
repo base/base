@@ -5,6 +5,9 @@ use base_precompile_storage::{BasePrecompileError, Result};
 use super::Transferable;
 use crate::token::IDefaultToken;
 
+/// ERC-5267 `eip712Domain()` return tuple: (fields, name, version, chainId, verifyingContract, salt, extensions).
+pub type Eip712Domain = (FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>);
+
 // keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)")
 const PERMIT_TYPEHASH: B256 =
     alloy_primitives::b256!("6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9");
@@ -29,7 +32,7 @@ pub trait Permittable: Transferable {
     fn eip712_domain(
         &self,
         chain_id: u64,
-    ) -> Result<(FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>)> {
+    ) -> Result<Eip712Domain> {
         Ok((
             FixedBytes::<1>::from([0x0c]), // bits 2+3: chainId + verifyingContract
             String::new(),
