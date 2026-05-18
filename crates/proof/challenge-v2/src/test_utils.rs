@@ -739,8 +739,12 @@ impl ZkProofProvider for MockZkProofProvider {
 pub struct TeeProveRangeCall {
     /// L2 block at the start of the proven range.
     pub start_block: u64,
+    /// Output root at `start_block`.
+    pub start_root: B256,
     /// L2 block at the end of the proven range.
     pub end_block: u64,
+    /// Output root the caller expects the enclave to sign at `end_block`.
+    pub end_root: B256,
     /// L1 head hash provided to the TEE.
     pub l1_head: B256,
     /// Checkpoint interval forwarded to the TEE.
@@ -784,13 +788,17 @@ impl TeeProofProvider for MockTeeProofProvider {
     async fn prove_range(
         &self,
         start_block: u64,
+        start_root: B256,
         end_block: u64,
+        end_root: B256,
         l1_head: B256,
         intermediate_block_interval: u64,
     ) -> Result<TeeProofResult, TeeProofError> {
         self.calls.lock().expect("calls lock poisoned").push(TeeProveRangeCall {
             start_block,
+            start_root,
             end_block,
+            end_root,
             l1_head,
             intermediate_block_interval,
         });

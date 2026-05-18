@@ -34,10 +34,10 @@ pub struct Violation {
     /// Root we computed for `invalid_index` from our L2 RPC.
     /// Treated as the value to assert on-chain; only as good as our
     /// L2 RPC view (no independent consensus check).
-    pub computed_root: B256,
+    pub end_root: B256,
     /// Predecessor root at `invalid_index - 1`, or the game's
     /// `startingOutputRoot` when `invalid_index == 0`.
-    pub starting_root: B256,
+    pub start_root: B256,
     /// L2 block at the start of the disputed range.
     pub start_block: u64,
     /// L2 block at the end of the disputed range.
@@ -145,12 +145,12 @@ impl Violation {
             .min_by_key(|(i, _, _)| *i);
 
         // Every root matches what we compute: nothing to dispute.
-        let Some((invalid_index, _, computed_root)) = mismatch else {
+        let Some((invalid_index, _, end_root)) = mismatch else {
             return Ok(None);
         };
 
-        let starting_root = Self::fetch_starting_root(game, validator, invalid_index).await?;
-        let violation = Self::build(game, invalid_index, computed_root, starting_root, kind);
+        let start_root = Self::fetch_start_root(game, validator, invalid_index).await?;
+        let violation = Self::build(game, invalid_index, end_root, start_root, kind);
         info!(
             game = %game.address,
             invalid_index,
@@ -178,23 +178,23 @@ impl Violation {
         // Our computed view at the contested checkpoint.
         let end_block =
             Self::checkpoint_block(game.starting_l2_block, challenged_index + 1, interval);
-        let computed_root = validator.compute_output_root(end_block).await?;
+        let end_root = validator.compute_output_root(end_block).await?;
 
         // Proposed root diverges from our view: the ZK challenger
         // reached the same conclusion as us, let them resolve in
         // their favor on their own.
-        if proposed_root != computed_root {
+        if proposed_root != end_root {
             return Ok(None);
         }
 
         // Proposed root matches our view: the ZK challenge looks
         // fraudulent from our vantage and must be countered.
-        let starting_root = Self::fetch_starting_root(game, validator, challenged_index).await?;
+        let start_root = Self::fetch_start_root(game, validator, challenged_index).await?;
         let violation = Self::build(
             game,
             challenged_index,
-            computed_root,
-            starting_root,
+            end_root,
+            start_root,
             ViolationKind::FraudulentZkChallenge { proposed_root },
         );
         info!(
@@ -207,7 +207,7 @@ impl Violation {
 
     /// Returns the predecessor root for `invalid_index`. For index 0
     /// the predecessor is what we compute at the game's starting block.
-    async fn fetch_starting_root(
+    async fn fetch_start_root(
         game: &GameInfo,
         validator: &dyn OutputValidator,
         invalid_index: u64,
@@ -224,8 +224,8 @@ impl Violation {
     const fn build(
         game: &GameInfo,
         invalid_index: u64,
-        computed_root: B256,
-        starting_root: B256,
+        end_root: B256,
+        start_root: B256,
         kind: ViolationKind,
     ) -> Self {
         let interval = game.intermediate_block_interval;
@@ -234,8 +234,8 @@ impl Violation {
             l1_head: game.l1_head,
             intermediate_block_interval: interval,
             invalid_index,
-            computed_root,
-            starting_root,
+            end_root,
+            start_root,
             start_block: Self::checkpoint_block(game.starting_l2_block, invalid_index, interval),
             end_block: Self::checkpoint_block(game.starting_l2_block, invalid_index + 1, interval),
             kind,
@@ -369,8 +369,8 @@ mod tests {
         let violation = Violation::detect(&game, &v, &c).await.unwrap().unwrap();
         assert_eq!(violation.kind, ViolationKind::TeeWrong);
         assert_eq!(violation.invalid_index, 2);
-        assert_eq!(violation.computed_root, expected_r2);
-        assert_eq!(violation.starting_root, r1);
+        assert_eq!(violation.end_root, expected_r2);
+        assert_eq!(violation.start_root, r1);
         assert_eq!(violation.start_block, STARTING_BLOCK + 2 * INTERVAL);
         assert_eq!(violation.end_block, STARTING_BLOCK + 3 * INTERVAL);
         assert_eq!(violation.intermediate_block_interval, INTERVAL);
@@ -379,7 +379,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn zk_only_index_0_wrong_uses_computed_starting_root() {
+    async fn zk_only_index_0_wrong_uses_computed_start_root() {
         let r0 = root(10);
         let expected_r0 = root(99);
         let starting_expected = root(50);
@@ -391,8 +391,8 @@ mod tests {
         let violation = Violation::detect(&game, &v, &c).await.unwrap().unwrap();
         assert_eq!(violation.kind, ViolationKind::ZkWrong);
         assert_eq!(violation.invalid_index, 0);
-        assert_eq!(violation.computed_root, expected_r0);
-        assert_eq!(violation.starting_root, starting_expected);
+        assert_eq!(violation.end_root, expected_r0);
+        assert_eq!(violation.start_root, starting_expected);
         assert_eq!(violation.start_block, STARTING_BLOCK);
         assert_eq!(violation.end_block, STARTING_BLOCK + INTERVAL);
     }
@@ -416,7 +416,7 @@ mod tests {
         // BothProven nullifies TEE first; ZK gets caught on a later scan.
         assert_eq!(violation.kind, ViolationKind::TeeWrong);
         assert_eq!(violation.invalid_index, 1);
-        assert_eq!(violation.computed_root, expected_r1);
+        assert_eq!(violation.end_root, expected_r1);
     }
 
     #[tokio::test]
@@ -442,8 +442,8 @@ mod tests {
             other => panic!("expected FraudulentZkChallenge, got {other:?}"),
         }
         assert_eq!(violation.invalid_index, 1);
-        assert_eq!(violation.computed_root, r1);
-        assert_eq!(violation.starting_root, r0);
+        assert_eq!(violation.end_root, r1);
+        assert_eq!(violation.start_root, r0);
     }
 
     #[tokio::test]
@@ -479,8 +479,8 @@ mod tests {
             other => panic!("expected FraudulentZkChallenge, got {other:?}"),
         }
         assert_eq!(violation.invalid_index, 1);
-        assert_eq!(violation.computed_root, r1);
-        assert_eq!(violation.starting_root, r0);
+        assert_eq!(violation.end_root, r1);
+        assert_eq!(violation.start_root, r0);
     }
 
     #[tokio::test]

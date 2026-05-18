@@ -29,7 +29,7 @@ pub enum DisputeAction {
         /// The root we are asserting (computed from our L2 RPC).
         our_root: B256,
         /// Predecessor root (anchor or previous intermediate root).
-        starting_root: B256,
+        start_root: B256,
         /// L2 block at the start of the challenged range.
         start_block: u64,
         /// L2 block at the end of the challenged range.
@@ -43,7 +43,7 @@ pub enum DisputeAction {
         /// Root attested by our TEE prover.
         our_root: B256,
         /// Predecessor root (anchor or previous intermediate root).
-        starting_root: B256,
+        start_root: B256,
         /// L2 block at the start of the challenged range.
         start_block: u64,
         /// L2 block at the end of the challenged range.
@@ -58,7 +58,7 @@ pub enum DisputeAction {
         /// `ZkWrong`, proposed root for `FraudulentZkChallenge`).
         root_to_prove: B256,
         /// Predecessor root (anchor or previous intermediate root).
-        starting_root: B256,
+        start_root: B256,
         /// L2 block at the start of the challenged range.
         start_block: u64,
         /// L2 block at the end of the challenged range.
@@ -133,7 +133,7 @@ mod tests {
         DisputeAction::Challenge {
             index,
             our_root,
-            starting_root: B256::ZERO,
+            start_root: B256::ZERO,
             start_block: 100,
             end_block: 200,
         }
@@ -143,7 +143,7 @@ mod tests {
         DisputeAction::NullifyTee {
             index,
             our_root,
-            starting_root: B256::ZERO,
+            start_root: B256::ZERO,
             start_block: 100,
             end_block: 200,
         }
@@ -153,7 +153,7 @@ mod tests {
         DisputeAction::NullifyZk {
             index,
             root_to_prove,
-            starting_root: B256::ZERO,
+            start_root: B256::ZERO,
             start_block: 100,
             end_block: 200,
         }
@@ -190,22 +190,22 @@ mod tests {
     }
 
     #[test]
-    fn ignores_starting_root_and_block_range_fields() {
-        // starting_root, start_block and end_block are local context for
+    fn ignores_start_root_and_block_range_fields() {
+        // start_root, start_block and end_block are local context for
         // submission ergonomics; they must not appear in the L1 calldata.
         let proof = Bytes::from(vec![0x01]);
         let root = B256::repeat_byte(0x42);
         let same_index_same_root = DisputeAction::Challenge {
             index: 1,
             our_root: root,
-            starting_root: B256::repeat_byte(0xAA),
+            start_root: B256::repeat_byte(0xAA),
             start_block: 1,
             end_block: 2,
         };
         let other_context = DisputeAction::Challenge {
             index: 1,
             our_root: root,
-            starting_root: B256::repeat_byte(0xBB),
+            start_root: B256::repeat_byte(0xBB),
             start_block: 999,
             end_block: 1000,
         };

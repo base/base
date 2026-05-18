@@ -18,8 +18,10 @@ pub use output_validator::{L2OutputValidator, OutputRootError, OutputValidator};
 mod violation;
 pub use violation::{ValidationError, Violation, ViolationKind};
 
-mod tee_provider;
-pub use tee_provider::{TeeProofError, TeeProofProvider, TeeProofResult};
+mod tee_proof_provider;
+pub use tee_proof_provider::{
+    RpcTeeProofProvider, TeeProofError, TeeProofProvider, TeeProofResult,
+};
 
 mod prove;
 pub use prove::ProofError;
@@ -56,6 +58,9 @@ pub use cli::{ChallengerArgs, Cli};
 
 mod config;
 pub use config::{ChallengerConfig, ConfigError};
+
+mod service;
+pub use service::ChallengerService;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

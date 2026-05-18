@@ -160,7 +160,7 @@ mod tests {
         DisputeAction::Challenge {
             index,
             our_root,
-            starting_root: B256::ZERO,
+            start_root: B256::ZERO,
             start_block: 100,
             end_block: 200,
         }
@@ -170,7 +170,7 @@ mod tests {
         DisputeAction::NullifyTee {
             index,
             our_root,
-            starting_root: B256::ZERO,
+            start_root: B256::ZERO,
             start_block: 100,
             end_block: 200,
         }
@@ -180,7 +180,7 @@ mod tests {
         DisputeAction::NullifyZk {
             index,
             root_to_prove,
-            starting_root: B256::ZERO,
+            start_root: B256::ZERO,
             start_block: 100,
             end_block: 200,
         }

@@ -73,11 +73,11 @@ pub trait OutputValidator: Send + Sync {
 
 /// Concrete [`OutputValidator`] backed by a real L2 RPC client.
 #[derive(Debug)]
-pub struct L2OutputValidator<L2: L2Provider> {
+pub struct L2OutputValidator<L2: L2Provider + ?Sized> {
     l2: Arc<L2>,
 }
 
-impl<L2: L2Provider> L2OutputValidator<L2> {
+impl<L2: L2Provider + ?Sized> L2OutputValidator<L2> {
     /// Creates a new validator wrapping the provided L2 RPC client.
     pub const fn new(l2: Arc<L2>) -> Self {
         Self { l2 }
@@ -85,7 +85,7 @@ impl<L2: L2Provider> L2OutputValidator<L2> {
 }
 
 #[async_trait]
-impl<L2: L2Provider> OutputValidator for L2OutputValidator<L2> {
+impl<L2: L2Provider + ?Sized> OutputValidator for L2OutputValidator<L2> {
     async fn compute_output_root(&self, block_number: u64) -> Result<B256, OutputRootError> {
         let rpc_header =
             self.l2.header_by_number(Some(block_number)).await.map_err(|e| match e {

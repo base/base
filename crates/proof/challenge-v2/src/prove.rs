@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use crate::{
     DisputeAction, DisputeRequest, GameWorkerDeps, Violation, ViolationKind,
-    tee_provider::TeeProofProvider,
+    tee_proof_provider::TeeProofProvider,
 };
 
 /// Errors that can prevent [`Violation::build_dispute_request`] from emitting a [`DisputeRequest`].
@@ -71,7 +71,7 @@ impl Violation {
         deps: &GameWorkerDeps,
     ) -> Result<DisputeRequest, ProofError> {
         match self.kind {
-            ViolationKind::ZkWrong => self.build_nullify_zk_request(self.computed_root, deps).await,
+            ViolationKind::ZkWrong => self.build_nullify_zk_request(self.end_root, deps).await,
             ViolationKind::FraudulentZkChallenge { proposed_root } => {
                 self.build_nullify_zk_request(proposed_root, deps).await
             }
@@ -103,7 +103,7 @@ impl Violation {
             action: DisputeAction::NullifyZk {
                 index: self.invalid_index,
                 root_to_prove,
-                starting_root: self.starting_root,
+                start_root: self.start_root,
                 start_block: self.start_block,
                 end_block: self.end_block,
             },
@@ -124,8 +124,8 @@ impl Violation {
             game_address: self.game_address,
             action: DisputeAction::Challenge {
                 index: self.invalid_index,
-                our_root: self.computed_root,
-                starting_root: self.starting_root,
+                our_root: self.end_root,
+                start_root: self.start_root,
                 start_block: self.start_block,
                 end_block: self.end_block,
             },
@@ -145,7 +145,9 @@ impl Violation {
         let attestation = match tee_prover
             .prove_range(
                 self.start_block,
+                self.start_root,
                 self.end_block,
+                self.end_root,
                 self.l1_head,
                 self.intermediate_block_interval,
             )
@@ -167,11 +169,11 @@ impl Violation {
         // attestation, so we cannot proceed with a TEE-based dispute.
         // Fall back rather than flip the global TEE killswitch on the
         // basis of a single source we can no longer trust.
-        if attestation.signed_root != self.computed_root {
+        if attestation.signed_root != self.end_root {
             warn!(
                 game = %self.game_address,
                 signed_root = %attestation.signed_root,
-                computed_root = %self.computed_root,
+                end_root = %self.end_root,
                 "TEE signed a divergent root, falling back to ZK Challenge"
             );
             return None;
@@ -194,8 +196,8 @@ impl Violation {
             game_address: self.game_address,
             action: DisputeAction::NullifyTee {
                 index: self.invalid_index,
-                our_root: self.computed_root,
-                starting_root: self.starting_root,
+                our_root: self.end_root,
+                start_root: self.start_root,
                 start_block: self.start_block,
                 end_block: self.end_block,
             },
@@ -359,8 +361,8 @@ mod tests {
             l1_head: L1_HEAD,
             intermediate_block_interval: INTERVAL,
             invalid_index: 2,
-            computed_root: COMPUTED_ROOT,
-            starting_root: STARTING_ROOT,
+            end_root: COMPUTED_ROOT,
+            start_root: STARTING_ROOT,
             start_block: 100,
             end_block: 100 + INTERVAL,
             kind,
@@ -573,7 +575,7 @@ mod tests {
         use super::*;
 
         #[tokio::test]
-        async fn zk_wrong_emits_nullify_zk_with_computed_root() {
+        async fn zk_wrong_emits_nullify_zk_with_end_root() {
             let zk = Arc::new(MockZkProofProvider::new());
             zk.push_prove_ok();
             zk.push_get_succeeded(vec![0xCA, 0xFE]);
