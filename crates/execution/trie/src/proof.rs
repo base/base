@@ -356,6 +356,17 @@ pub trait DatabaseTrieWitness<'tx, S: BaseProofsStore + 'tx + Clone> {
         input: TrieInput,
         target: HashedPostState,
     ) -> Result<B256Map<Bytes>, TrieWitnessError>;
+
+    /// Generates the trie witness for the target state, reusing `tx`.
+    fn overlay_witness_with_tx<'cursor>(
+        storage: &'tx BaseProofsStorage<S>,
+        tx: &'cursor <BaseProofsStorage<S> as BaseProofsStore>::Tx<'tx>,
+        block_number: u64,
+        input: TrieInput,
+        target: HashedPostState,
+    ) -> Result<B256Map<Bytes>, TrieWitnessError>
+    where
+        'tx: 'cursor;
 }
 
 impl<'tx, S> DatabaseTrieWitness<'tx, S>
@@ -372,13 +383,26 @@ where
         input: TrieInput,
         target: HashedPostState,
     ) -> Result<B256Map<Bytes>, TrieWitnessError> {
-        let nodes_sorted = input.nodes.into_sorted();
-        let state_sorted = input.state.into_sorted();
         let tx = storage.ro_tx().map_err(|error| {
             let error = Into::<DatabaseError>::into(error);
             StateProofError::from(error)
         })?;
-        let (trie_factory, hashed_factory) = from_tx(storage, &tx, block_number);
+        Self::overlay_witness_with_tx(storage, &tx, block_number, input, target)
+    }
+
+    fn overlay_witness_with_tx<'cursor>(
+        storage: &'tx BaseProofsStorage<S>,
+        tx: &'cursor <BaseProofsStorage<S> as BaseProofsStore>::Tx<'tx>,
+        block_number: u64,
+        input: TrieInput,
+        target: HashedPostState,
+    ) -> Result<B256Map<Bytes>, TrieWitnessError>
+    where
+        'tx: 'cursor,
+    {
+        let nodes_sorted = input.nodes.into_sorted();
+        let state_sorted = input.state.into_sorted();
+        let (trie_factory, hashed_factory) = from_tx(storage, tx, block_number);
         TrieWitness::new(trie_factory.clone(), hashed_factory.clone())
             .with_trie_cursor_factory(InMemoryTrieCursorFactory::new(trie_factory, &nodes_sorted))
             .with_hashed_cursor_factory(HashedPostStateCursorFactory::new(
