@@ -6,7 +6,10 @@
 //! - **Values Vec**: A `Vec<T>` storing all set elements at `keccak256(base_slot)`
 //! - **Positions Mapping**: A `Mapping<T, u32>` at `base_slot + 1` (1-indexed, 0 = not present)
 
-use alloc::vec::{IntoIter, Vec};
+use alloc::{
+    collections::BTreeSet,
+    vec::{IntoIter, Vec},
+};
 use core::{fmt, hash::Hash, ops::Deref, slice};
 
 use alloy_primitives::{Address, U256};
@@ -46,11 +49,12 @@ impl<T> From<Set<T>> for Vec<T> {
     }
 }
 
-impl<T: Eq + Hash + Clone> From<Vec<T>> for Set<T> {
+impl<T: Eq + Hash + Clone + Ord> From<Vec<T>> for Set<T> {
     fn from(vec: Vec<T>) -> Self {
+        let mut seen = BTreeSet::new();
         let mut deduped = Vec::new();
         for item in vec {
-            if !deduped.contains(&item) {
+            if seen.insert(item.clone()) {
                 deduped.push(item);
             }
         }
@@ -58,7 +62,7 @@ impl<T: Eq + Hash + Clone> From<Vec<T>> for Set<T> {
     }
 }
 
-impl<T: Eq + Hash + Clone> FromIterator<T> for Set<T> {
+impl<T: Eq + Hash + Clone + Ord> FromIterator<T> for Set<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         Self::from(iter.into_iter().collect::<Vec<_>>())
     }
@@ -83,7 +87,7 @@ impl<'a, T> IntoIterator for &'a Set<T> {
 /// Type-safe handler for accessing `Set<T>` in storage.
 pub struct SetHandler<T>
 where
-    T: Storable + StorageKey + Hash + Eq + Clone,
+    T: Storable + StorageKey + Hash + Eq + Clone + Ord,
 {
     values: VecHandler<T>,
     positions: Mapping<T, u32>,
@@ -94,7 +98,7 @@ where
 /// Set occupies 2 slots: slot 0 = Vec length, slot 1 = positions mapping base.
 impl<T> StorableType for Set<T>
 where
-    T: Storable + StorageKey + Hash + Eq + Clone,
+    T: Storable + StorageKey + Hash + Eq + Clone + Ord,
 {
     const LAYOUT: Layout = Layout::Slots(2);
     const IS_DYNAMIC: bool = true;
@@ -107,7 +111,7 @@ where
 
 impl<T> Storable for Set<T>
 where
-    T: Storable + StorageKey + Hash + Eq + Clone,
+    T: Storable + StorageKey + Hash + Eq + Clone + Ord,
     T::Handler: Handler<T>,
 {
     fn load<S: StorageOps>(storage: &S, slot: U256, _ctx: LayoutCtx) -> Result<Self> {
@@ -141,7 +145,7 @@ fn checked_position(index: usize) -> Result<u32> {
 
 impl<T> SetHandler<T>
 where
-    T: Storable + StorageKey + Hash + Eq + Clone,
+    T: Storable + StorageKey + Hash + Eq + Clone + Ord,
 {
     /// Creates a new handler for the set at the given base slot.
     pub fn new(base_slot: U256, address: Address) -> Self {
@@ -171,7 +175,7 @@ where
     /// Returns true if the value is in the set.
     pub fn contains(&self, value: &T) -> Result<bool>
     where
-        T: StorageKey + Hash + Eq + Clone,
+        T: StorageKey + Hash + Eq + Clone + Ord,
     {
         self.positions.at(value).read().map(|pos| pos != 0)
     }
@@ -179,7 +183,7 @@ where
     /// Inserts a value into the set. Returns `true` if newly inserted, `false` if already present.
     pub fn insert(&mut self, value: T) -> Result<bool>
     where
-        T: StorageKey + Hash + Eq + Clone,
+        T: StorageKey + Hash + Eq + Clone + Ord,
         T::Handler: Handler<T>,
     {
         if self.contains(&value)? {
@@ -194,7 +198,7 @@ where
     /// Removes a value from the set using swap-and-pop. Returns `true` if found and removed.
     pub fn remove(&mut self, value: &T) -> Result<bool>
     where
-        T: StorageKey + Hash + Eq + Clone,
+        T: StorageKey + Hash + Eq + Clone + Ord,
         T::Handler: Handler<T>,
     {
         let position = self.positions.at(value).read()?;
@@ -247,7 +251,7 @@ where
 
 impl<T> Handler<Set<T>> for SetHandler<T>
 where
-    T: Storable + StorageKey + Hash + Eq + Clone,
+    T: Storable + StorageKey + Hash + Eq + Clone + Ord,
     T::Handler: Handler<T>,
 {
     fn read(&self) -> Result<Set<T>> {
@@ -303,7 +307,7 @@ where
 
 impl<T> fmt::Debug for SetHandler<T>
 where
-    T: Storable + StorageKey + Hash + Eq + Clone + fmt::Debug,
+    T: Storable + StorageKey + Hash + Eq + Clone + Ord + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SetHandler").field("base_slot", &self.base_slot).finish()

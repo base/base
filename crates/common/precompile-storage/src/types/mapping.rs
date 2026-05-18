@@ -36,7 +36,7 @@ impl<K, V: StorableType> Mapping<K, V> {
     /// Returns a handler for the given key (immutable access, cached).
     pub fn at(&self, key: &K) -> &V::Handler
     where
-        K: StorageKey + Hash + Eq + Clone,
+        K: StorageKey + Hash + Eq + Clone + Ord,
     {
         let (base_slot, address) = (self.base_slot, self.address);
         self.cache
@@ -46,7 +46,7 @@ impl<K, V: StorableType> Mapping<K, V> {
     /// Returns a mutable handler for the given key (mutable access, cached).
     pub fn at_mut(&mut self, key: &K) -> &mut V::Handler
     where
-        K: StorageKey + Hash + Eq + Clone,
+        K: StorageKey + Hash + Eq + Clone + Ord,
     {
         let (base_slot, address) = (self.base_slot, self.address);
         self.cache.get_or_insert_mut(key, || {
@@ -63,7 +63,7 @@ impl<K, V: StorableType> Default for Mapping<K, V> {
 
 impl<K, V: StorableType> Index<K> for Mapping<K, V>
 where
-    K: StorageKey + Hash + Eq + Clone,
+    K: StorageKey + Hash + Eq + Clone + Ord,
 {
     type Output = V::Handler;
 
@@ -77,7 +77,7 @@ where
 
 impl<K, V: StorableType> IndexMut<K> for Mapping<K, V>
 where
-    K: StorageKey + Hash + Eq + Clone,
+    K: StorageKey + Hash + Eq + Clone + Ord,
 {
     fn index_mut(&mut self, key: K) -> &mut Self::Output {
         let (base_slot, address) = (self.base_slot, self.address);
