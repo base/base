@@ -225,7 +225,15 @@ impl<'a, Storage: BaseProofsStore + Clone> StateProofProvider
         target: HashedPostState,
         mode: ExecutionWitnessMode,
     ) -> ProviderResult<Vec<Bytes>> {
-        TrieWitness::overlay_witness(self.storage, self.block_number, input, target, mode)
+        let tx = self.tx()?;
+        TrieWitness::overlay_witness_with_tx(
+            self.storage,
+            tx,
+            self.block_number,
+            input,
+            target,
+            mode,
+        )
             .map_err(ProviderError::from)
             .map(|hm| hm.into_values().collect())
     }
