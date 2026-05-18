@@ -105,7 +105,7 @@ impl<'a> StorageCtx<'a> {
     }
 
     /// Sets the bytecode at the given address.
-    pub fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
+    pub fn set_code(&self, address: Address, code: Bytecode) -> Result<()> {
         self.try_with_storage(|s| s.set_code(address, code))
     }
 
@@ -120,22 +120,22 @@ impl<'a> StorageCtx<'a> {
     }
 
     /// Performs an SSTORE (persistent storage write).
-    pub fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+    pub fn sstore(&self, address: Address, key: U256, value: U256) -> Result<()> {
         self.try_with_storage(|s| s.sstore(address, key, value))
     }
 
     /// Performs a TSTORE (transient storage write).
-    pub fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+    pub fn tstore(&self, address: Address, key: U256, value: U256) -> Result<()> {
         self.try_with_storage(|s| s.tstore(address, key, value))
     }
 
     /// Emits an event from the given contract address.
-    pub fn emit_event(&mut self, address: Address, event: LogData) -> Result<()> {
+    pub fn emit_event(&self, address: Address, event: LogData) -> Result<()> {
         self.try_with_storage(|s| s.emit_event(address, event))
     }
 
     /// Adds gas to the refund counter.
-    pub fn refund_gas(&mut self, gas: i64) {
+    pub fn refund_gas(&self, gas: i64) {
         self.with_storage(|s| s.refund_gas(gas))
     }
     /// Returns the gas limit for this precompile call.
@@ -160,7 +160,7 @@ impl<'a> StorageCtx<'a> {
     }
 
     /// Deducts gas from the remaining gas, returning `OutOfGas` if insufficient.
-    pub fn deduct_gas(&mut self, gas: u64) -> Result<()> {
+    pub fn deduct_gas(&self, gas: u64) -> Result<()> {
         self.try_with_storage(|s| s.deduct_gas(gas))
     }
 
@@ -257,31 +257,31 @@ impl StorageCtx<'_> {
     }
 
     /// Sets the nonce for the given address (test-utils only).
-    pub fn set_nonce(&mut self, address: Address, nonce: u64) {
+    pub fn set_nonce(&self, address: Address, nonce: u64) {
         self.as_hashmap().set_nonce(address, nonce)
     }
 
     /// Overrides the block timestamp (test-utils only).
-    pub fn set_timestamp(&mut self, timestamp: U256) {
+    pub fn set_timestamp(&self, timestamp: U256) {
         self.as_hashmap().set_timestamp(timestamp)
     }
 
     /// Overrides the block beneficiary (test-utils only).
-    pub fn set_beneficiary(&mut self, beneficiary: Address) {
+    pub fn set_beneficiary(&self, beneficiary: Address) {
         self.as_hashmap().set_beneficiary(beneficiary)
     }
 
     /// Overrides the block number (test-utils only).
-    pub fn set_block_number(&mut self, block_number: u64) {
+    pub fn set_block_number(&self, block_number: u64) {
         self.as_hashmap().set_block_number(block_number)
     }
 
     /// Clears all transient storage (test-utils only).
-    pub fn clear_transient(&mut self) {
+    pub fn clear_transient(&self) {
         self.as_hashmap().clear_transient()
     }
     /// Clears emitted events for the given address (test-utils only).
-    pub fn clear_events(&mut self, address: Address) {
+    pub fn clear_events(&self, address: Address) {
         self.as_hashmap().clear_events(address);
     }
     /// Returns the SLOAD counter (test-utils only).
@@ -293,7 +293,7 @@ impl StorageCtx<'_> {
         self.as_hashmap().counter_sstore()
     }
     /// Resets the SLOAD/SSTORE counters (test-utils only).
-    pub fn reset_counters(&mut self) {
+    pub fn reset_counters(&self) {
         self.as_hashmap().reset_counters()
     }
 
@@ -329,7 +329,7 @@ mod tests {
         let addr = Address::ZERO;
         let key = U256::from(1);
 
-        StorageCtx::enter(&mut storage, |mut ctx| {
+        StorageCtx::enter(&mut storage, |ctx| {
             ctx.sstore(addr, key, U256::from(42)).unwrap();
             let guard = ctx.checkpoint();
             ctx.sstore(addr, key, U256::from(99)).unwrap();

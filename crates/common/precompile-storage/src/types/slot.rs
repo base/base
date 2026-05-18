@@ -96,8 +96,7 @@ impl<T> StorageOps for Slot<'_, T> {
     }
 
     fn store(&mut self, slot: U256, value: U256) -> Result<()> {
-        let mut storage = self.storage;
-        storage.sstore(self.address, slot, value)
+        self.storage.sstore(self.address, slot, value)
     }
 }
 
@@ -112,8 +111,7 @@ impl StorageOps for TransientOps<'_> {
     }
 
     fn store(&mut self, slot: U256, value: U256) -> Result<()> {
-        let mut storage = self.storage;
-        storage.tstore(self.address, slot, value)
+        self.storage.tstore(self.address, slot, value)
     }
 }
 
