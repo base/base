@@ -16,7 +16,12 @@ pub(crate) struct Cli {
     /// When set, basectl ignores any hardcoded conductor list in the chain
     /// config and instead asks this URL for the live raft membership, then
     /// polls all discovered peers via templated ports.
-    #[arg(long = "conductor-rpc", env = "BASECTL_CONDUCTOR_RPC", global = true)]
+    #[arg(
+        long = "conductor-rpc",
+        env = "BASECTL_CONDUCTOR_RPC",
+        global = true,
+        default_value = "http://localhost:5545"
+    )]
     pub(crate) conductor_rpc: Option<Url>,
     #[command(subcommand)]
     pub(crate) command: Option<Commands>,
