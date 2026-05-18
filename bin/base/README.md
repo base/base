@@ -30,6 +30,20 @@ for consensus chain resolution:
 base rpc --execution-chain dev
 ```
 
+## `base update`
+
+`base update` updates the installed `base` binary by running `baseup --bin base` against the same
+directory as the currently running executable. `baseup` downloads the `GitHub` release artifact,
+checks the archive checksum, verifies the release signature, and installs the verified binary.
+
+Supported forms:
+
+```text
+base update
+base update --install v0.6.0
+base update --update-installer
+```
+
 ## Chain Selection
 
 Chain selection supports:

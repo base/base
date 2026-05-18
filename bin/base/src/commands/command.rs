@@ -3,8 +3,8 @@
 use clap::Subcommand;
 
 use crate::{
-    commands::{bootnode::BootnodeCommand, rpc::RpcCommand},
-    config::ResolvedChainConfig,
+    commands::{bootnode::BootnodeCommand, rpc::RpcCommand, update::UpdateCommand},
+    config::ChainResolver,
 };
 
 /// Top-level commands for `base`.
@@ -17,14 +17,18 @@ pub(crate) enum BaseCommand {
     /// Run the integrated node in RPC mode.
     #[command(name = "rpc")]
     Rpc(Box<RpcCommand>),
+    /// Update the base binary to the latest release.
+    #[command(name = "update")]
+    Update(Box<UpdateCommand>),
 }
 
 impl BaseCommand {
     /// Runs the selected top-level command.
-    pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
+    pub(crate) fn run(self, chain_resolver: ChainResolver) -> eyre::Result<()> {
         match self {
-            Self::Bootnode(bootnode) => (*bootnode).run(resolved_chain),
-            Self::Rpc(rpc) => (*rpc).run(resolved_chain),
+            Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?),
+            Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?),
+            Self::Update(update) => (*update).run(),
         }
     }
 }

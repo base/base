@@ -2,5 +2,6 @@
 
 mod clz;
 mod derivation;
+mod env;
 mod modexp;
 mod p256;
