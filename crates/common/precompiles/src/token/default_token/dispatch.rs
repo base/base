@@ -24,6 +24,9 @@ impl<S: TokenAccounting> DefaultToken<S> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
+        // TODO: Reject calls to uninitialized tokens (empty code hash), mirroring the check
+        // in tempo's TIP-20 dispatch. A token with no bytecode should return an error rather
+        // than silently operating on zeroed-out storage.
         if calldata.len() < 4 {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
         }

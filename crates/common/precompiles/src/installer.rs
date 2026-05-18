@@ -41,7 +41,7 @@ impl<S: BasePrecompileSpec> BasePrecompileInstaller<S> {
 // Function pointer (not a closure) satisfies the HRTB `for<'a> Fn(&'a Address) -> Option<DynPrecompile>`
 // required by `set_precompile_lookup`.
 fn b20_lookup(address: &Address) -> Option<DynPrecompile> {
-    if crate::token::TokenFactory::is_b20(address)
+    if crate::token::has_b20_prefix(address) {
         // TODO: Check if the token has byte code deployed at the address
         Some(crate::token::DefaultTokenEvm::create_precompile(*address))
     } else if *address == crate::token::FACTORY_ADDRESS {
