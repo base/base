@@ -21,8 +21,8 @@ pub struct TestToken {
 fn test_contract_macro_basic_roundtrip() {
     let (mut storage, _) = setup_storage();
 
-    StorageCtx::enter(&mut storage, || {
-        let mut token = TestToken::new();
+    StorageCtx::enter(&mut storage, |ctx| {
+        let mut token = TestToken::new(ctx);
 
         let alice = Address::from([0xaa; 20]);
         let bob = Address::from([0xbb; 20]);
@@ -64,13 +64,13 @@ fn test_contract_mapping_slot_derivation() {
     let expected = alice.mapping_slot(slots::BALANCES);
 
     let (mut storage, _) = setup_storage();
-    StorageCtx::enter(&mut storage, || {
-        let mut token = TestToken::new();
+    StorageCtx::enter(&mut storage, |ctx| {
+        let mut token = TestToken::new(ctx);
         let write_value = U256::from(42u64);
         token.balances.at_mut(&alice).write(write_value).unwrap();
 
         // Verify the raw storage slot matches the expected derivation.
-        let raw = StorageCtx.sload(TEST_ADDR, expected).unwrap();
+        let raw = ctx.sload(TEST_ADDR, expected).unwrap();
         assert_eq!(raw, write_value);
     });
 }
@@ -82,13 +82,13 @@ fn test_contract_multiple_instances_independent() {
 
     let alice = Address::from([0xaa; 20]);
 
-    StorageCtx::enter(&mut storage1, || {
-        let mut t1 = TestToken::new();
+    StorageCtx::enter(&mut storage1, |ctx| {
+        let mut t1 = TestToken::new(ctx);
         t1.balances.at_mut(&alice).write(U256::from(100u64)).unwrap();
     });
 
-    StorageCtx::enter(&mut storage2, || {
-        let t2 = TestToken::new();
+    StorageCtx::enter(&mut storage2, |ctx| {
+        let t2 = TestToken::new(ctx);
         // storage2 is independent — balance should be zero.
         assert_eq!(t2.balances.at(&alice).read().unwrap(), U256::ZERO);
     });

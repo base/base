@@ -101,10 +101,15 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
                 <#direct_tys as ::base_precompile_storage::StorableType>::IS_DYNAMIC
             )||*;
 
-            type Handler = #handler_name;
+            type Handler<'a> = #handler_name<'a>;
 
-            fn handle(slot: ::alloy_primitives::U256, _ctx: ::base_precompile_storage::LayoutCtx, address: ::alloy_primitives::Address) -> Self::Handler {
-                #handler_name::new(slot, address)
+            fn handle<'a>(
+                slot: ::alloy_primitives::U256,
+                _ctx: ::base_precompile_storage::LayoutCtx,
+                address: ::alloy_primitives::Address,
+                storage: ::base_precompile_storage::StorageCtx<'a>,
+            ) -> Self::Handler<'a> {
+                #handler_name::new(slot, address, storage)
             }
         }
 
@@ -208,10 +213,15 @@ fn derive_unit_enum_impl(input: &DeriveInput, data_enum: &DataEnum) -> syn::Resu
     Ok(quote! {
         impl #impl_generics ::base_precompile_storage::StorableType for #enum_name #ty_generics #where_clause {
             const LAYOUT: ::base_precompile_storage::Layout = ::base_precompile_storage::Layout::Bytes(1);
-            type Handler = ::base_precompile_storage::Slot<Self>;
+            type Handler<'a> = ::base_precompile_storage::Slot<'a, Self>;
 
-            fn handle(slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx, address: ::alloy_primitives::Address) -> Self::Handler {
-                ::base_precompile_storage::Slot::new_with_ctx(slot, ctx, address)
+            fn handle<'a>(
+                slot: ::alloy_primitives::U256,
+                ctx: ::base_precompile_storage::LayoutCtx,
+                address: ::alloy_primitives::Address,
+                storage: ::base_precompile_storage::StorageCtx<'a>,
+            ) -> Self::Handler<'a> {
+                ::base_precompile_storage::Slot::new_with_ctx(slot, ctx, address, storage)
             }
         }
 
@@ -313,17 +323,23 @@ fn gen_handler_struct(
     quote! {
         /// Type-safe handler for accessing `#struct_name` in storage.
         #[derive(Debug, Clone)]
-        pub struct #handler_name {
+        pub struct #handler_name<'a> {
             address: ::alloy_primitives::Address,
             base_slot: ::alloy_primitives::U256,
+            storage: ::base_precompile_storage::StorageCtx<'a>,
             #(#handler_fields,)*
         }
 
-        impl #handler_name {
+        impl<'a> #handler_name<'a> {
             #[inline]
-            pub fn new(base_slot: ::alloy_primitives::U256, address: ::alloy_primitives::Address) -> Self {
+            pub fn new(
+                base_slot: ::alloy_primitives::U256,
+                address: ::alloy_primitives::Address,
+                storage: ::base_precompile_storage::StorageCtx<'a>,
+            ) -> Self {
                 Self {
                     base_slot,
+                    storage,
                     #(#field_inits,)*
                     address,
                 }
@@ -335,12 +351,16 @@ fn gen_handler_struct(
             }
 
             #[inline]
-            fn as_slot(&self) -> ::base_precompile_storage::Slot<#struct_name> {
-                ::base_precompile_storage::Slot::<#struct_name>::new(self.base_slot, self.address)
+            fn as_slot(&self) -> ::base_precompile_storage::Slot<'a, #struct_name> {
+                ::base_precompile_storage::Slot::<#struct_name>::new(
+                    self.base_slot,
+                    self.address,
+                    self.storage,
+                )
             }
         }
 
-        impl ::base_precompile_storage::Handler<#struct_name> for #handler_name {
+        impl ::base_precompile_storage::Handler<#struct_name> for #handler_name<'_> {
             #[inline]
             fn read(&self) -> ::base_precompile_storage::Result<#struct_name> {
                 self.as_slot().read()

@@ -17,7 +17,7 @@ use alloy_primitives::{Address, U256};
 use crate::{
     error::{BasePrecompileError, Result},
     provider::{Handler, Layout, LayoutCtx, Storable, StorableType, StorageKey, StorageOps},
-    types::{Mapping, Slot, vec::VecHandler},
+    types::{MappingHandler, Slot, vec::VecHandler},
 };
 
 /// Read-only snapshot of a set stored via [`SetHandler`].
@@ -85,14 +85,15 @@ impl<'a, T> IntoIterator for &'a Set<T> {
 }
 
 /// Type-safe handler for accessing `Set<T>` in storage.
-pub struct SetHandler<T>
+pub struct SetHandler<'a, T>
 where
     T: Storable + StorageKey + Eq + Clone + Ord,
 {
-    values: VecHandler<T>,
-    positions: Mapping<T, u32>,
+    values: VecHandler<'a, T>,
+    positions: MappingHandler<'a, T, u32>,
     base_slot: U256,
     address: Address,
+    storage: crate::StorageCtx<'a>,
 }
 
 /// Set occupies 2 slots: slot 0 = Vec length, slot 1 = positions mapping base.
@@ -102,17 +103,22 @@ where
 {
     const LAYOUT: Layout = Layout::Slots(2);
     const IS_DYNAMIC: bool = true;
-    type Handler = SetHandler<T>;
+    type Handler<'a> = SetHandler<'a, T>;
 
-    fn handle(slot: U256, _ctx: LayoutCtx, address: Address) -> Self::Handler {
-        SetHandler::new(slot, address)
+    fn handle<'a>(
+        slot: U256,
+        _ctx: LayoutCtx,
+        address: Address,
+        storage: crate::StorageCtx<'a>,
+    ) -> Self::Handler<'a> {
+        SetHandler::new(slot, address, storage)
     }
 }
 
 impl<T> Storable for Set<T>
 where
     T: Storable + StorageKey + Eq + Clone + Ord,
-    T::Handler: Handler<T>,
+    for<'a> T::Handler<'a>: Handler<T>,
 {
     fn load<S: StorageOps>(storage: &S, slot: U256, _ctx: LayoutCtx) -> Result<Self> {
         let values: Vec<T> = Vec::load(storage, slot, LayoutCtx::FULL)?;
@@ -143,17 +149,18 @@ fn checked_position(index: usize) -> Result<u32> {
         .ok_or_else(BasePrecompileError::under_overflow)
 }
 
-impl<T> SetHandler<T>
+impl<'a, T> SetHandler<'a, T>
 where
     T: Storable + StorageKey + Eq + Clone + Ord,
 {
     /// Creates a new handler for the set at the given base slot.
-    pub fn new(base_slot: U256, address: Address) -> Self {
+    pub fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
         Self {
-            values: VecHandler::new(base_slot, address),
-            positions: Mapping::new(base_slot + U256::ONE, address),
+            values: VecHandler::new(base_slot, address, storage),
+            positions: MappingHandler::new(base_slot + U256::ONE, address, storage),
             base_slot,
             address,
+            storage,
         }
     }
 
@@ -184,7 +191,7 @@ where
     pub fn insert(&mut self, value: T) -> Result<bool>
     where
         T: StorageKey + Eq + Clone + Ord,
-        T::Handler: Handler<T>,
+        T::Handler<'a>: Handler<T>,
     {
         if self.contains(&value)? {
             return Ok(false);
@@ -199,7 +206,7 @@ where
     pub fn remove(&mut self, value: &T) -> Result<bool>
     where
         T: StorageKey + Eq + Clone + Ord,
-        T::Handler: Handler<T>,
+        T::Handler<'a>: Handler<T>,
     {
         let position = self.positions.at(value).read()?;
         if position == 0 {
@@ -217,7 +224,8 @@ where
         }
 
         self.values[last_index].delete()?;
-        Slot::<U256>::new(self.values.len_slot(), self.address).write(U256::from(last_index))?;
+        Slot::<U256>::new(self.values.len_slot(), self.address, self.storage)
+            .write(U256::from(last_index))?;
         self.positions.at_mut(value).delete()?;
         Ok(true)
     }
@@ -225,7 +233,7 @@ where
     /// Returns the value at the given index, or `None` if out of bounds.
     pub fn at(&self, index: usize) -> Result<Option<T>>
     where
-        T::Handler: Handler<T>,
+        T::Handler<'a>: Handler<T>,
     {
         if index >= self.len()? {
             return Ok(None);
@@ -236,7 +244,7 @@ where
     /// Reads a contiguous range of elements from the set.
     pub fn read_range(&self, start: usize, end: usize) -> Result<Vec<T>>
     where
-        T::Handler: Handler<T>,
+        T::Handler<'a>: Handler<T>,
     {
         let len = self.len()?;
         let end = end.min(len);
@@ -249,10 +257,10 @@ where
     }
 }
 
-impl<T> Handler<Set<T>> for SetHandler<T>
+impl<'a, T> Handler<Set<T>> for SetHandler<'a, T>
 where
     T: Storable + StorageKey + Eq + Clone + Ord,
-    T::Handler: Handler<T>,
+    for<'ctx> T::Handler<'ctx>: Handler<T>,
 {
     fn read(&self) -> Result<Set<T>> {
         let len = self.len()?;
@@ -277,7 +285,8 @@ where
             self.values[index].write(new_value)?;
         }
 
-        Slot::<U256>::new(self.values.len_slot(), self.address).write(U256::from(new_len))?;
+        Slot::<U256>::new(self.values.len_slot(), self.address, self.storage)
+            .write(U256::from(new_len))?;
 
         for i in new_len..old_len {
             self.values[i].delete()?;
@@ -305,7 +314,7 @@ where
     }
 }
 
-impl<T> fmt::Debug for SetHandler<T>
+impl<T> fmt::Debug for SetHandler<'_, T>
 where
     T: Storable + StorageKey + Eq + Clone + Ord + fmt::Debug,
 {
@@ -324,9 +333,9 @@ mod tests {
     #[test]
     fn test_set_insert_contains_remove() {
         let (mut storage, contract_addr) = setup_storage();
-        StorageCtx::enter(&mut storage, || {
+        StorageCtx::enter(&mut storage, |ctx| {
             let base = U256::from(500u64);
-            let mut handler = SetHandler::<Address>::new(base, contract_addr);
+            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
 
             let a = Address::from([0x11; 20]);
             let b = Address::from([0x22; 20]);
@@ -351,9 +360,9 @@ mod tests {
     #[test]
     fn test_set_read_write() {
         let (mut storage, contract_addr) = setup_storage();
-        StorageCtx::enter(&mut storage, || {
+        StorageCtx::enter(&mut storage, |ctx| {
             let base = U256::from(600u64);
-            let mut handler = SetHandler::<Address>::new(base, contract_addr);
+            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
 
             let addrs: Vec<Address> = (0..5u8).map(|i| Address::from([i; 20])).collect();
             let set = Set::from(addrs.clone());

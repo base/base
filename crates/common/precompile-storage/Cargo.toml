@@ -26,7 +26,6 @@ base-precompile-macros.workspace = true
 
 # misc
 thiserror.workspace = true
-scoped-tls = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["from", "try_into"] }
 
 [dev-dependencies]
@@ -43,7 +42,6 @@ std = [
 	"alloy-evm/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
-	"dep:scoped-tls",
 	"derive_more/std",
 	"revm/std",
 	"thiserror/std",

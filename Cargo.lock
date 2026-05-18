@@ -4702,7 +4702,6 @@ dependencies = [
  "derive_more 2.1.1",
  "proptest",
  "revm",
- "scoped-tls",
  "thiserror 2.0.18",
 ]
 

@@ -15,7 +15,7 @@ use core::cell::RefCell;
 
 pub use array::ArrayHandler;
 pub use bytes_like::BytesLikeHandler;
-pub use mapping::Mapping;
+pub use mapping::{Mapping, MappingHandler};
 pub use set::{Set, SetHandler};
 pub use slot::Slot;
 pub use vec::VecHandler;

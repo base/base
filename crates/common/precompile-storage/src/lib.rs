@@ -29,7 +29,8 @@ pub use storage_ctx::{CheckpointGuard, StorageCtx};
 
 mod types;
 pub use types::{
-    ArrayHandler, BytesLikeHandler, HandlerCache, Mapping, Set, SetHandler, Slot, VecHandler,
+    ArrayHandler, BytesLikeHandler, HandlerCache, Mapping, MappingHandler, Set, SetHandler, Slot,
+    VecHandler,
 };
 
 mod evm;

@@ -1,27 +1,13 @@
-//! Scoped storage context for Base native precompiles.
+//! Explicit storage context for Base native precompiles.
 //!
 //! [`StorageCtx`] is a zero-size token that provides access to the current
-//! scoped [`PrecompileStorageProvider`]. All storage operations within
-//! a precompile call must happen inside a [`StorageCtx::enter`] closure.
-//!
-//! In `std` builds, the active provider is thread-local. In `no_std` builds,
-//! `core` does not provide thread-local storage, so the active provider is stored
-//! as a scoped process-local pointer for the duration of [`StorageCtx::enter`].
+//! scoped [`PrecompileStorageProvider`]. All storage operations within a
+//! precompile call receive a context from [`StorageCtx::enter`].
 
 use alloc::string::ToString;
 #[cfg(any(test, feature = "test-utils"))]
 use alloc::vec::Vec;
-#[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-use core::cell::Cell;
-#[cfg(feature = "std")]
-use core::{cell::RefCell, mem};
-#[cfg(not(feature = "std"))]
-use core::{cell::UnsafeCell, ptr};
-#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-use core::{
-    hint::spin_loop,
-    sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
-};
+use core::{cell::RefCell, fmt};
 
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 use alloy_sol_types::SolInterface;
@@ -30,320 +16,58 @@ use revm::{
     precompile::{PrecompileOutput, PrecompileResult},
     state::{AccountInfo, Bytecode},
 };
-#[cfg(feature = "std")]
-use scoped_tls::scoped_thread_local;
 
 use crate::{
     error::{BasePrecompileError, Result},
     provider::PrecompileStorageProvider,
 };
 
-#[cfg(feature = "std")]
-scoped_thread_local!(static STORAGE: RefCell<&mut dyn PrecompileStorageProvider>);
-#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-static STORAGE: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
-#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-static STORAGE_LOCK: AtomicBool = AtomicBool::new(false);
-#[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-static mut STORAGE: *mut () = ptr::null_mut();
-
-#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-struct StorageLockGuard;
-
-#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-impl StorageLockGuard {
-    fn acquire() -> Self {
-        while STORAGE_LOCK
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            spin_loop();
-        }
-        Self
-    }
-}
-
-#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-impl Drop for StorageLockGuard {
-    fn drop(&mut self) {
-        STORAGE_LOCK.store(false, Ordering::Release);
-    }
-}
-
-#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-type ScopedProvider<'a> = dyn PrecompileStorageProvider + Send + 'a;
-
-#[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
 type ScopedProvider<'a> = dyn PrecompileStorageProvider + 'a;
 
-#[cfg(not(feature = "std"))]
-struct StorageScope<'a> {
-    storage: UnsafeCell<&'a mut ScopedProvider<'a>>,
-    #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-    borrowed: AtomicBool,
-    #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-    active_borrows: AtomicUsize,
-    #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-    borrowed: Cell<bool>,
-}
-
-#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-// SAFETY: `StorageScope` gates mutable access to `storage` with `borrowed` and
-// keeps stack-local scopes alive while cross-thread borrows are active.
-unsafe impl Sync for StorageScope<'_> {}
-
-#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-fn storage_replace(ptr: *mut ()) -> *mut () {
-    let _guard = StorageLockGuard::acquire();
-    let parent = STORAGE.load(Ordering::Acquire);
-    STORAGE.store(ptr, Ordering::Release);
-    parent
-}
-
-#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-fn storage_store_and_wait(parent: *mut (), scope: *mut StorageScope<'_>) {
-    {
-        let _guard = StorageLockGuard::acquire();
-        STORAGE.store(parent, Ordering::Release);
-    }
-
-    // Wait until any cross-thread borrow that acquired this scope before it was
-    // detached has finished, so the stack-local scope cannot be used after return.
-    // SAFETY: `scope` is still in the active `StorageCtx::enter` stack frame.
-    while unsafe { (*scope).active_borrows.load(Ordering::Acquire) } != 0 {
-        spin_loop();
-    }
-}
-
-#[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-fn storage_acquire() -> Option<*mut StorageScope<'static>> {
-    let _guard = StorageLockGuard::acquire();
-    let ptr = STORAGE.load(Ordering::Acquire);
-    if ptr.is_null() {
-        return None;
-    }
-    let scope = ptr.cast::<StorageScope<'static>>();
-    // SAFETY: The storage lock prevents the current scope from being detached
-    // until this active borrow is recorded.
-    unsafe {
-        (*scope).active_borrows.fetch_add(1, Ordering::AcqRel);
-    }
-    Some(scope)
-}
-
-#[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-fn storage_replace(ptr: *mut ()) -> *mut () {
-    // SAFETY: Targets without pointer atomics cannot support concurrent mutation
-    // here. The no-std context remains scoped through `StorageCtx::enter`.
-    unsafe {
-        let parent = STORAGE;
-        STORAGE = ptr;
-        parent
-    }
-}
-
-#[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-fn storage_store_and_wait(parent: *mut (), _scope: *mut StorageScope<'_>) {
-    // SAFETY: See `storage_replace`.
-    unsafe {
-        STORAGE = parent;
-    }
-}
-
-#[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-fn storage_acquire() -> Option<*mut StorageScope<'static>> {
-    // SAFETY: See `storage_replace`.
-    let ptr = unsafe { STORAGE };
-    if ptr.is_null() { None } else { Some(ptr.cast::<StorageScope<'static>>()) }
-}
-
-#[cfg(not(feature = "std"))]
-struct StorageScopeGuard {
-    parent: *mut (),
-    scope: *mut StorageScope<'static>,
-}
-
-#[cfg(not(feature = "std"))]
-impl Drop for StorageScopeGuard {
-    fn drop(&mut self) {
-        storage_store_and_wait(self.parent, self.scope);
-    }
-}
-
-#[cfg(not(feature = "std"))]
-struct StorageBorrowGuard {
-    scope: *mut StorageScope<'static>,
-}
-
-#[cfg(not(feature = "std"))]
-impl Drop for StorageBorrowGuard {
-    fn drop(&mut self) {
-        // SAFETY: `StorageBorrowGuard` is only constructed after acquiring an
-        // active borrow for this scope.
-        unsafe {
-            #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-            {
-                (*self.scope).borrowed.store(false, Ordering::Release);
-                (*self.scope).active_borrows.fetch_sub(1, Ordering::AcqRel);
-            }
-            #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-            {
-                (*self.scope).borrowed.set(false);
-            }
-        }
-    }
-}
-
-/// Zero-size token providing access to the scoped [`PrecompileStorageProvider`].
+/// Scoped handle providing access to the active [`PrecompileStorageProvider`].
 ///
-/// Must be used within a [`StorageCtx::enter`] closure.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct StorageCtx;
+/// Values of this type are created by [`StorageCtx::enter`] and cannot outlive
+/// that closure.
+#[derive(Clone, Copy)]
+pub struct StorageCtx<'a> {
+    storage: &'a RefCell<&'a mut ScopedProvider<'a>>,
+}
 
-impl StorageCtx {
-    /// Enter the storage context. All storage operations must happen within the closure.
-    #[cfg(feature = "std")]
-    pub fn enter<S, R>(storage: &mut S, f: impl FnOnce() -> R) -> R
-    where
-        S: PrecompileStorageProvider,
-    {
-        let storage: &mut dyn PrecompileStorageProvider = storage;
-        // SAFETY: `scoped_tls` ensures the pointer is only accessible within the closure scope.
-        // The reference is erased to 'static, but scoped_tls guarantees it never escapes `f`.
-        let storage_static: &mut (dyn PrecompileStorageProvider + 'static) =
-            unsafe { mem::transmute(storage) };
-        let cell = RefCell::new(storage_static);
-        STORAGE.set(&cell, f)
+impl fmt::Debug for StorageCtx<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StorageCtx").finish_non_exhaustive()
     }
+}
 
+impl StorageCtx<'_> {
     /// Enter the storage context. All storage operations must happen within the closure.
-    #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-    pub fn enter<S, R>(storage: &mut S, f: impl FnOnce() -> R) -> R
-    where
-        S: PrecompileStorageProvider + Send,
-    {
-        let storage: &mut ScopedProvider<'_> = storage;
-        let scope = StorageScope {
-            storage: UnsafeCell::new(storage),
-            borrowed: AtomicBool::new(false),
-            active_borrows: AtomicUsize::new(0),
-        };
-        let scope_ptr = (&scope as *const StorageScope<'_>).cast_mut().cast::<()>();
-        let parent = storage_replace(scope_ptr);
-        let scope = scope_ptr.cast::<StorageScope<'static>>();
-        let _guard = StorageScopeGuard { parent, scope };
-        f()
-    }
-
-    /// Enter the storage context. All storage operations must happen within the closure.
-    #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-    pub fn enter<S, R>(storage: &mut S, f: impl FnOnce() -> R) -> R
+    pub fn enter<S, R>(storage: &mut S, f: impl for<'ctx> FnOnce(StorageCtx<'ctx>) -> R) -> R
     where
         S: PrecompileStorageProvider,
     {
         let storage: &mut ScopedProvider<'_> = storage;
-        let scope = StorageScope { storage: UnsafeCell::new(storage), borrowed: Cell::new(false) };
-        let scope_ptr = (&scope as *const StorageScope<'_>).cast_mut().cast::<()>();
-        let parent = storage_replace(scope_ptr);
-        let scope = scope_ptr.cast::<StorageScope<'static>>();
-        let _guard = StorageScopeGuard { parent, scope };
-        f()
+        let cell = RefCell::new(storage);
+        f(StorageCtx { storage: &cell })
     }
+}
 
-    fn with_storage<F, R>(f: F) -> R
+impl<'a> StorageCtx<'a> {
+    fn with_storage<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut dyn PrecompileStorageProvider) -> R,
     {
-        #[cfg(feature = "std")]
-        {
-            assert!(
-                STORAGE.is_set(),
-                "No storage context. 'StorageCtx::enter' must be called first"
-            );
-            STORAGE.with(|cell| {
-                let mut guard = cell.borrow_mut();
-                f(&mut **guard)
-            })
-        }
-
-        #[cfg(not(feature = "std"))]
-        {
-            let guard = Self::borrow_storage();
-            // SAFETY: `StorageScope::storage` points to the provider passed to the active
-            // `StorageCtx::enter` call. The borrow guard prevents overlapping mutable access.
-            let result = unsafe {
-                let storage = &mut *(*guard.scope).storage.get();
-                f(&mut **storage)
-            };
-            drop(guard);
-            result
-        }
+        let mut guard = self.storage.borrow_mut();
+        f(&mut **guard)
     }
 
-    fn try_with_storage<F, R>(f: F) -> Result<R>
+    fn try_with_storage<F, R>(&self, f: F) -> Result<R>
     where
         F: FnOnce(&mut dyn PrecompileStorageProvider) -> Result<R>,
     {
-        #[cfg(feature = "std")]
-        {
-            if !STORAGE.is_set() {
-                return Err(BasePrecompileError::Fatal(
-                    "No storage context. 'StorageCtx::enter' must be called first".to_string(),
-                ));
-            }
-            STORAGE.with(|cell| {
-                let mut guard = cell.borrow_mut();
-                f(&mut **guard)
-            })
-        }
-
-        #[cfg(not(feature = "std"))]
-        {
-            let Some(guard) = Self::try_borrow_storage() else {
-                return Err(BasePrecompileError::Fatal(
-                    "No storage context. 'StorageCtx::enter' must be called first".to_string(),
-                ));
-            };
-            // SAFETY: `StorageScope::storage` points to the provider passed to the active
-            // `StorageCtx::enter` call. The borrow guard prevents overlapping mutable access.
-            let result = unsafe {
-                let storage = &mut *(*guard.scope).storage.get();
-                f(&mut **storage)
-            };
-            drop(guard);
-            result
-        }
-    }
-
-    #[cfg(not(feature = "std"))]
-    fn borrow_storage() -> StorageBorrowGuard {
-        Self::try_borrow_storage()
-            .expect("No storage context. 'StorageCtx::enter' must be called first")
-    }
-
-    #[cfg(not(feature = "std"))]
-    fn try_borrow_storage() -> Option<StorageBorrowGuard> {
-        let scope = storage_acquire()?;
-
-        // SAFETY: `storage_acquire` records an active borrow before returning the
-        // stack-local scope pointer, preventing the scope from being dropped while
-        // this guard is being constructed.
-        unsafe {
-            #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
-            if (*scope)
-                .borrowed
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_err()
-            {
-                (*scope).active_borrows.fetch_sub(1, Ordering::AcqRel);
-                panic!("already borrowed");
-            }
-
-            #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
-            assert!(!(*scope).borrowed.replace(true), "already borrowed");
-        }
-
-        Some(StorageBorrowGuard { scope })
+        let mut guard = self.storage.try_borrow_mut().map_err(|_| {
+            BasePrecompileError::Fatal("Storage context is already mutably borrowed".to_string())
+        })?;
+        f(&mut **guard)
     }
 
     // --- Provider method delegates ---
@@ -355,7 +79,7 @@ impl StorageCtx {
         mut f: impl FnMut(&AccountInfo) -> Result<T>,
     ) -> Result<T> {
         let mut result: Option<Result<T>> = None;
-        Self::try_with_storage(|s| {
+        self.try_with_storage(|s| {
             s.with_account_info(address, &mut |info| {
                 result = Some(f(info));
             })
@@ -365,90 +89,90 @@ impl StorageCtx {
 
     /// Returns the current chain ID.
     pub fn chain_id(&self) -> u64 {
-        Self::with_storage(|s| s.chain_id())
+        self.with_storage(|s| s.chain_id())
     }
     /// Returns the current block timestamp.
     pub fn timestamp(&self) -> U256 {
-        Self::with_storage(|s| s.timestamp())
+        self.with_storage(|s| s.timestamp())
     }
     /// Returns the block beneficiary (coinbase).
     pub fn beneficiary(&self) -> Address {
-        Self::with_storage(|s| s.beneficiary())
+        self.with_storage(|s| s.beneficiary())
     }
     /// Returns the current block number.
     pub fn block_number(&self) -> u64 {
-        Self::with_storage(|s| s.block_number())
+        self.with_storage(|s| s.block_number())
     }
 
     /// Sets the bytecode at the given address.
     pub fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
-        Self::try_with_storage(|s| s.set_code(address, code))
+        self.try_with_storage(|s| s.set_code(address, code))
     }
 
     /// Performs an SLOAD (persistent storage read).
     pub fn sload(&self, address: Address, key: U256) -> Result<U256> {
-        Self::try_with_storage(|s| s.sload(address, key))
+        self.try_with_storage(|s| s.sload(address, key))
     }
 
     /// Performs a TLOAD (transient storage read).
     pub fn tload(&self, address: Address, key: U256) -> Result<U256> {
-        Self::try_with_storage(|s| s.tload(address, key))
+        self.try_with_storage(|s| s.tload(address, key))
     }
 
     /// Performs an SSTORE (persistent storage write).
     pub fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
-        Self::try_with_storage(|s| s.sstore(address, key, value))
+        self.try_with_storage(|s| s.sstore(address, key, value))
     }
 
     /// Performs a TSTORE (transient storage write).
     pub fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
-        Self::try_with_storage(|s| s.tstore(address, key, value))
+        self.try_with_storage(|s| s.tstore(address, key, value))
     }
 
     /// Emits an event from the given contract address.
     pub fn emit_event(&mut self, address: Address, event: LogData) -> Result<()> {
-        Self::try_with_storage(|s| s.emit_event(address, event))
+        self.try_with_storage(|s| s.emit_event(address, event))
     }
 
     /// Adds gas to the refund counter.
     pub fn refund_gas(&mut self, gas: i64) {
-        Self::with_storage(|s| s.refund_gas(gas))
+        self.with_storage(|s| s.refund_gas(gas))
     }
     /// Returns the gas limit for this precompile call.
     pub fn gas_limit(&self) -> u64 {
-        Self::with_storage(|s| s.gas_limit())
+        self.with_storage(|s| s.gas_limit())
     }
     /// Returns the gas used so far.
     pub fn gas_used(&self) -> u64 {
-        Self::with_storage(|s| s.gas_used())
+        self.with_storage(|s| s.gas_used())
     }
     /// Returns the gas refunded so far.
     pub fn gas_refunded(&self) -> i64 {
-        Self::with_storage(|s| s.gas_refunded())
+        self.with_storage(|s| s.gas_refunded())
     }
     /// Returns whether the current call context is static.
     pub fn is_static(&self) -> bool {
-        Self::with_storage(|s| s.is_static())
+        self.with_storage(|s| s.is_static())
     }
     /// Returns the address that called this precompile.
     pub fn caller(&self) -> Address {
-        Self::with_storage(|s| s.caller())
+        self.with_storage(|s| s.caller())
     }
 
     /// Deducts gas from the remaining gas, returning `OutOfGas` if insufficient.
     pub fn deduct_gas(&mut self, gas: u64) -> Result<()> {
-        Self::try_with_storage(|s| s.deduct_gas(gas))
+        self.try_with_storage(|s| s.deduct_gas(gas))
     }
 
     /// Computes keccak256 and charges the appropriate gas.
     pub fn keccak256(&self, data: &[u8]) -> Result<B256> {
-        Self::try_with_storage(|s| s.keccak256(data))
+        self.try_with_storage(|s| s.keccak256(data))
     }
 
     /// Creates a journal checkpoint and returns a RAII guard that auto-reverts on drop.
-    pub fn checkpoint(&mut self) -> CheckpointGuard {
-        let checkpoint = Self::with_storage(|s| s.checkpoint());
-        CheckpointGuard { checkpoint: Some(checkpoint) }
+    pub fn checkpoint(&self) -> CheckpointGuard<'a> {
+        let checkpoint = self.with_storage(|s| s.checkpoint());
+        CheckpointGuard { storage: *self, checkpoint: Some(checkpoint) }
     }
 
     /// Returns a success [`PrecompileOutput`] with the current gas used.
@@ -482,23 +206,24 @@ impl StorageCtx {
 /// On drop, automatically reverts all state changes made since the checkpoint
 /// unless [`commit`](CheckpointGuard::commit) is called.
 #[derive(Debug)]
-pub struct CheckpointGuard {
+pub struct CheckpointGuard<'a> {
+    storage: StorageCtx<'a>,
     checkpoint: Option<JournalCheckpoint>,
 }
 
-impl CheckpointGuard {
+impl CheckpointGuard<'_> {
     /// Commits all state changes since the checkpoint.
     pub fn commit(mut self) {
         if let Some(cp) = self.checkpoint.take() {
-            StorageCtx::with_storage(|s| s.checkpoint_commit(cp));
+            self.storage.with_storage(|s| s.checkpoint_commit(cp));
         }
     }
 }
 
-impl Drop for CheckpointGuard {
+impl Drop for CheckpointGuard<'_> {
     fn drop(&mut self) {
         if let Some(cp) = self.checkpoint.take() {
-            StorageCtx::with_storage(|s| s.checkpoint_revert(cp));
+            self.storage.with_storage(|s| s.checkpoint_revert(cp));
         }
     }
 }
@@ -507,10 +232,10 @@ impl Drop for CheckpointGuard {
 use crate::hashmap::HashMapStorageProvider;
 
 #[cfg(any(test, feature = "test-utils"))]
-impl StorageCtx {
+impl StorageCtx<'_> {
     #[allow(clippy::mut_from_ref)]
     fn as_hashmap(&self) -> &mut HashMapStorageProvider {
-        Self::with_storage(|s| {
+        self.with_storage(|s| {
             // SAFETY: Test code always uses HashMapStorageProvider. The reference is valid
             // for the duration of the StorageCtx::enter closure.
             unsafe {
@@ -595,9 +320,7 @@ mod tests {
     #[should_panic(expected = "already borrowed")]
     fn test_reentrant_with_storage_panics() {
         let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
-        StorageCtx::enter(&mut storage, || {
-            StorageCtx::with_storage(|_| StorageCtx::with_storage(|_| ()))
-        });
+        StorageCtx::enter(&mut storage, |ctx| ctx.with_storage(|_| ctx.with_storage(|_| ())));
     }
 
     #[test]
@@ -606,8 +329,7 @@ mod tests {
         let addr = Address::ZERO;
         let key = U256::from(1);
 
-        StorageCtx::enter(&mut storage, || {
-            let mut ctx = StorageCtx;
+        StorageCtx::enter(&mut storage, |mut ctx| {
             ctx.sstore(addr, key, U256::from(42)).unwrap();
             let guard = ctx.checkpoint();
             ctx.sstore(addr, key, U256::from(99)).unwrap();
