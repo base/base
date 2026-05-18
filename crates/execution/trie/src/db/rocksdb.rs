@@ -2280,10 +2280,16 @@ where
         self.snapshot.cf(T::NAME)
     }
 
+    fn exact_lookup_bounds(&self, key: &T::Key) -> (Vec<u8>, Vec<u8>) {
+        let mut target = encode_history_key_prefix::<T>(key);
+        let prefix = target.clone();
+        target.extend_from_slice(&self.max_block_number.to_be_bytes());
+        (prefix, target)
+    }
+
     fn latest_version_for_key(&self, key: T::Key) -> RocksDbLatestVersionResult<T> {
         let cf = self.cf()?;
-        let prefix = encode_history_key_prefix::<T>(&key);
-        let target = encode_history_key::<T>(&key, self.max_block_number);
+        let (prefix, target) = self.exact_lookup_bounds(&key);
         let read_options = exact_prefix_read_options(&prefix);
         let mut iter = self.snapshot.snapshot().raw_iterator_cf_opt(&cf, read_options);
         iter.seek_for_prev(&target);
@@ -2305,8 +2311,7 @@ where
 
     fn latest_value_for_key(&self, key: T::Key) -> Result<Option<T::Value>, DatabaseError> {
         let cf = self.cf()?;
-        let prefix = encode_history_key_prefix::<T>(&key);
-        let target = encode_history_key::<T>(&key, self.max_block_number);
+        let (prefix, target) = self.exact_lookup_bounds(&key);
         let read_options = exact_prefix_read_options(&prefix);
         let mut iter = self.snapshot.snapshot().raw_iterator_cf_opt(&cf, read_options);
         iter.seek_for_prev(&target);
