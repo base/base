@@ -47,12 +47,16 @@ impl<K: Ord + Clone, H> HandlerCache<K, H> {
     pub fn get_or_insert(&self, key: &K, f: impl FnOnce() -> H) -> &H {
         let mut cache = self.inner.borrow_mut();
         if let Some(boxed) = cache.get(key) {
-            // SAFETY: Box provides a stable heap address. The cache never removes entries.
+            // SAFETY: The returned reference intentionally outlives this `RefMut` guard.
+            // `Box` gives `H` a stable heap address, this cache never removes or replaces
+            // entries, and later `BTreeMap` inserts may move the `Box` pointer value but
+            // not the boxed `H` allocation.
             return unsafe { &*(boxed.as_ref() as *const H) };
         }
         cache.insert(key.clone(), Box::new(f()));
         let boxed = cache.get(key).expect("handler cache was just populated");
-        // SAFETY: Box provides a stable heap address. The cache never removes entries.
+        // SAFETY: See the safety note above. The newly inserted handler is also stored in
+        // an append-only entry whose boxed allocation remains stable after this borrow ends.
         unsafe { &*(boxed.as_ref() as *const H) }
     }
 

@@ -239,8 +239,3 @@ fn gen_collision_checks(allocated_fields: &[LayoutField<'_>]) -> proc_macro2::To
 
     generated
 }
-
-pub(crate) fn gen_default_impl(name: &Ident) -> proc_macro2::TokenStream {
-    let _ = name;
-    quote! {}
-}
