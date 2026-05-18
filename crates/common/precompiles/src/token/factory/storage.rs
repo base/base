@@ -446,33 +446,33 @@ mod integration {
         DefaultToken::with_storage(DefaultTokenStorage::from_address(addr, ctx))
     }
 
-    fn create_token(
-        factory: &mut TokenFactory<'_>,
+    fn default_token_params(
         name: &str,
         symbol: &str,
-        decimals: u8,
-        initial_supply: U256,
-        capabilities: U256,
-        supply_cap: U256,
         salt: B256,
+    ) -> ITokenFactory::CreateDefaultTokenParams {
+        ITokenFactory::CreateDefaultTokenParams {
+            name: name.to_string(),
+            symbol: symbol.to_string(),
+            decimals: 18,
+            admin: Address::repeat_byte(0xAD),
+            capabilities: U256::ZERO,
+            initialSupply: U256::ZERO,
+            initialSupplyRecipient: Address::repeat_byte(0xCD),
+            transferPolicyId: 1,
+            supplyCap: U256::MAX,
+            minimumRedeemable: U256::from(10u64),
+            contractURI: "ipfs://QmTest".to_string(),
+            salt,
+        }
+    }
+
+    fn create_token(
+        factory: &mut TokenFactory<'_>,
+        params: ITokenFactory::CreateDefaultTokenParams,
     ) -> Address {
         let caller = Address::repeat_byte(0xCA);
-        let call = ITokenFactory::createDefaultCall {
-            params: ITokenFactory::CreateDefaultTokenParams {
-                name: name.to_string(),
-                symbol: symbol.to_string(),
-                decimals,
-                admin: Address::repeat_byte(0xAD),
-                capabilities,
-                initialSupply: initial_supply,
-                initialSupplyRecipient: Address::repeat_byte(0xCD),
-                transferPolicyId: 1,
-                supplyCap: supply_cap,
-                minimumRedeemable: U256::from(10u64),
-                contractURI: "ipfs://QmTest".to_string(),
-                salt,
-            },
-        };
+        let call = ITokenFactory::createDefaultCall { params };
         factory.create_default(caller, call).unwrap()
     }
 
@@ -484,16 +484,12 @@ mod integration {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = TokenFactory::new(ctx);
-            let token_addr = create_token(
-                &mut factory,
-                "USD Coin",
-                "USDC",
-                6,
-                U256::from(1_000_000u64),
-                U256::from(0b11u64), // PAUSABLE | CAP_MUTABLE
-                U256::from(u128::MAX),
-                B256::repeat_byte(0x01),
-            );
+            let mut params = default_token_params("USD Coin", "USDC", B256::repeat_byte(0x01));
+            params.decimals = 6;
+            params.initialSupply = U256::from(1_000_000u64);
+            params.capabilities = U256::from(0b11u64); // PAUSABLE | CAP_MUTABLE
+            params.supplyCap = U256::from(u128::MAX);
+            let token_addr = create_token(&mut factory, params);
 
             let t = DefaultTokenStorage::from_address(token_addr, ctx);
 
@@ -517,16 +513,9 @@ mod integration {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = TokenFactory::new(ctx);
-            let token_addr = create_token(
-                &mut factory,
-                "Test Token",
-                "TST",
-                18,
-                U256::from(1_000u64),
-                U256::ZERO,
-                U256::MAX,
-                B256::repeat_byte(0x02),
-            );
+            let mut params = default_token_params("Test Token", "TST", B256::repeat_byte(0x02));
+            params.initialSupply = U256::from(1_000u64);
+            let token_addr = create_token(&mut factory, params);
 
             let sender = Address::repeat_byte(0xCD); // initialSupplyRecipient
             let receiver = Address::repeat_byte(0xBB);
@@ -554,16 +543,9 @@ mod integration {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = TokenFactory::new(ctx);
-            let token_addr = create_token(
-                &mut factory,
-                "T",
-                "T",
-                18,
-                U256::from(100u64),
-                U256::ZERO,
-                U256::MAX,
-                B256::repeat_byte(0x03),
-            );
+            let mut params = default_token_params("T", "T", B256::repeat_byte(0x03));
+            params.initialSupply = U256::from(100u64);
+            let token_addr = create_token(&mut factory, params);
 
             let sender = Address::repeat_byte(0xCD);
             let receiver = Address::repeat_byte(0xBB);
@@ -585,16 +567,9 @@ mod integration {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = TokenFactory::new(ctx);
-            let token_addr = create_token(
-                &mut factory,
-                "Mintable",
-                "MNT",
-                18,
-                U256::from(500u64),
-                U256::ZERO,
-                U256::MAX,
-                B256::repeat_byte(0x04),
-            );
+            let mut params = default_token_params("Mintable", "MNT", B256::repeat_byte(0x04));
+            params.initialSupply = U256::from(500u64);
+            let token_addr = create_token(&mut factory, params);
 
             let recipient = Address::repeat_byte(0xEE);
             let mut token = token_at(token_addr, ctx);
@@ -613,16 +588,10 @@ mod integration {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = TokenFactory::new(ctx);
             let cap = U256::from(1_000u64);
-            let token_addr = create_token(
-                &mut factory,
-                "Capped",
-                "CAP",
-                18,
-                U256::from(900u64),
-                U256::ZERO,
-                cap,
-                B256::repeat_byte(0x05),
-            );
+            let mut params = default_token_params("Capped", "CAP", B256::repeat_byte(0x05));
+            params.initialSupply = U256::from(900u64);
+            params.supplyCap = cap;
+            let token_addr = create_token(&mut factory, params);
 
             let recipient = Address::repeat_byte(0xEE);
             let mut token = token_at(token_addr, ctx);
@@ -648,16 +617,12 @@ mod integration {
             let bob = Address::repeat_byte(0xBB);
             let charlie = Address::repeat_byte(0xCC);
 
-            let token_addr = create_token(
-                &mut factory,
-                "My Stablecoin",
-                "MSC",
-                6,
-                U256::from(10_000u64),
-                U256::from(0b11u64),
-                U256::from(1_000_000u64),
-                B256::repeat_byte(0x06),
-            );
+            let mut params = default_token_params("My Stablecoin", "MSC", B256::repeat_byte(0x06));
+            params.decimals = 6;
+            params.initialSupply = U256::from(10_000u64);
+            params.capabilities = U256::from(0b11u64);
+            params.supplyCap = U256::from(1_000_000u64);
+            let token_addr = create_token(&mut factory, params);
 
             // ── verify factory state ──────────────────────────────────────────
             assert!(factory.is_b20(token_addr).unwrap(), "should be B-20");
