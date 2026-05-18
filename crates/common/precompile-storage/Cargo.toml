@@ -43,8 +43,8 @@ std = [
 	"alloy-evm/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
-	"derive_more/std",
 	"dep:scoped-tls",
+	"derive_more/std",
 	"revm/std",
 	"thiserror/std",
 ]
