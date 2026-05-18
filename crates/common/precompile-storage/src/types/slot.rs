@@ -1,6 +1,6 @@
 //! Type-safe wrapper for a single EVM storage slot.
 
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use alloy_primitives::{Address, U256};
 

@@ -95,23 +95,22 @@ impl<'a> NativeErc20Precompile<'a> {
         self
     }
 
-    /// Waits for the precompile address to return non-empty bytecode.
-    pub async fn wait_for_code(
+    /// Waits for the precompile address to respond to native ERC20 calls.
+    pub async fn wait_until_ready(
         &self,
         wait_timeout: Duration,
         poll_interval: Duration,
     ) -> Result<()> {
         timeout(wait_timeout, async {
             loop {
-                let code = self.provider.get_code_at(Self::ADDRESS).await?;
-                if !code.is_empty() {
+                if self.issuer_role().await.is_ok() {
                     return Ok::<_, eyre::Error>(());
                 }
                 sleep(poll_interval).await;
             }
         })
         .await
-        .wrap_err("Timed out waiting for native ERC20 precompile code")?
+        .wrap_err("Timed out waiting for native ERC20 precompile readiness")?
     }
 
     /// Reads the issuer role.

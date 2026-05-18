@@ -1,6 +1,6 @@
 //! Type-safe wrapper for EVM storage mappings (hash-based key-value storage).
 
-use std::{
+use core::{
     hash::Hash,
     ops::{Index, IndexMut},
 };
@@ -23,7 +23,7 @@ pub struct Mapping<K, V: StorableType> {
 impl<K, V: StorableType> Mapping<K, V> {
     /// Creates a new mapping with the given base slot and contract address.
     #[inline]
-    pub fn new(base_slot: U256, address: Address) -> Self {
+    pub const fn new(base_slot: U256, address: Address) -> Self {
         Self { base_slot, address, cache: HandlerCache::new() }
     }
 

@@ -6,7 +6,8 @@
 //! - **Values Vec**: A `Vec<T>` storing all set elements at `keccak256(base_slot)`
 //! - **Positions Mapping**: A `Mapping<T, u32>` at `base_slot + 1` (1-indexed, 0 = not present)
 
-use std::{collections::HashSet, fmt, hash::Hash, ops::Deref};
+use alloc::vec::{IntoIter, Vec};
+use core::{fmt, hash::Hash, ops::Deref, slice};
 
 use alloy_primitives::{Address, U256};
 
@@ -47,9 +48,9 @@ impl<T> From<Set<T>> for Vec<T> {
 
 impl<T: Eq + Hash + Clone> From<Vec<T>> for Set<T> {
     fn from(vec: Vec<T>) -> Self {
-        let (mut seen, mut deduped) = (HashSet::new(), Vec::new());
+        let mut deduped = Vec::new();
         for item in vec {
-            if seen.insert(item.clone()) {
+            if !deduped.contains(&item) {
                 deduped.push(item);
             }
         }
@@ -65,7 +66,7 @@ impl<T: Eq + Hash + Clone> FromIterator<T> for Set<T> {
 
 impl<T> IntoIterator for Set<T> {
     type Item = T;
-    type IntoIter = std::vec::IntoIter<T>;
+    type IntoIter = IntoIter<T>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
@@ -73,7 +74,7 @@ impl<T> IntoIterator for Set<T> {
 
 impl<'a, T> IntoIterator for &'a Set<T> {
     type Item = &'a T;
-    type IntoIter = std::slice::Iter<'a, T>;
+    type IntoIter = slice::Iter<'a, T>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
     }

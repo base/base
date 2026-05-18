@@ -14,6 +14,11 @@ pub use installer::BasePrecompileInstaller;
 mod spec;
 pub use spec::BasePrecompileSpec;
 
+#[cfg(feature = "std")]
+mod default_token;
+#[cfg(feature = "std")]
+pub use default_token::{DEFAULT_ADMIN_ROLE, DEFAULT_TOKEN_ADDRESS, DefaultToken, ISSUER_ROLE};
+
 mod bn254_pair;
 
 mod bls12_381;

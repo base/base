@@ -24,7 +24,7 @@ const MINT_AMOUNT: u64 = 1_000_000_000;
 const TRANSFER_AMOUNT: u64 = 100_000_000;
 
 #[tokio::test]
-#[ignore = "requires the native ERC20 precompile implementation to be installed"]
+#[ignore = "requires default-token admin role bootstrap in devnet state"]
 async fn test_native_erc20_precompile_transfer_via_rpc() -> Result<()> {
     let devnet = NativeErc20Devnet::start().await?;
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
@@ -32,7 +32,7 @@ async fn test_native_erc20_precompile_transfer_via_rpc() -> Result<()> {
     let recipient = ANVIL_ACCOUNT_6.address;
 
     devnet.wait_for_balance(admin.address()).await?;
-    devnet.wait_for_native_erc20_code(&admin).await?;
+    devnet.wait_for_native_erc20_ready(&admin).await?;
 
     let native_erc20 = NativeErc20Precompile::new(devnet.provider(), &admin, L2_CHAIN_ID)
         .with_receipt_timeout(TX_RECEIPT_TIMEOUT);
@@ -115,9 +115,9 @@ impl NativeErc20Devnet {
         .wrap_err("Timed out waiting for funded devnet account")?
     }
 
-    async fn wait_for_native_erc20_code(&self, signer: &PrivateKeySigner) -> Result<()> {
+    async fn wait_for_native_erc20_ready(&self, signer: &PrivateKeySigner) -> Result<()> {
         NativeErc20Precompile::new(&self.provider, signer, L2_CHAIN_ID)
-            .wait_for_code(TX_RECEIPT_TIMEOUT, BLOCK_POLL_INTERVAL)
+            .wait_until_ready(TX_RECEIPT_TIMEOUT, BLOCK_POLL_INTERVAL)
             .await
     }
 }

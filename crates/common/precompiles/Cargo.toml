@@ -15,16 +15,35 @@ workspace = true
 [dependencies]
 # alloy
 alloy-evm.workspace = true
+alloy-sol-types = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, optional = true }
 
 # base
 base-common-chains.workspace = true
+base-precompile-macros = { workspace = true, optional = true }
+base-precompile-storage = { workspace = true, optional = true }
 
 # revm
 revm.workspace = true
 
+[dev-dependencies]
+base-precompile-storage = { workspace = true, features = ["test-utils"] }
+
 [features]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
-std = [ "alloy-evm/std", "base-common-chains/std", "revm/std" ]
+std = [
+	"alloy-evm/std",
+	"dep:alloy-primitives",
+	"dep:alloy-sol-types",
+	"dep:base-precompile-macros",
+	"dep:base-precompile-storage",
+	"alloy-primitives/std",
+	"alloy-sol-types/std",
+	"base-common-chains/std",
+	"base-precompile-storage/std",
+	"revm/std",
+]
+test-utils = [ "std", "base-precompile-storage/test-utils" ]
 bn = [ "revm/bn" ]
 blst = [ "revm/blst" ]
 c-kzg = [ "revm/c-kzg" ]

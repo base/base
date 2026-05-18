@@ -3,6 +3,9 @@ use base_common_chains::BaseUpgrade;
 
 use crate::{BasePrecompileSpec, BasePrecompiles};
 
+#[cfg(feature = "std")]
+use crate::DefaultToken;
+
 /// Installs the full Base precompile set for a given spec.
 #[derive(Debug, Clone, Copy)]
 pub struct BasePrecompileInstaller<S = BaseUpgrade> {
@@ -30,7 +33,15 @@ impl<S: BasePrecompileSpec> BasePrecompileInstaller<S> {
     }
 
     /// Installs Base-specific dynamic precompiles into an existing [`PrecompilesMap`].
-    pub const fn install_into(self, _precompiles: &mut PrecompilesMap) {}
+    pub fn install_into(self, precompiles: &mut PrecompilesMap) {
+        #[cfg(feature = "std")]
+        if self.spec.upgrade().idx() >= BaseUpgrade::Beryl.idx() {
+            precompiles.extend_precompiles([DefaultToken::registration()]);
+        }
+
+        #[cfg(not(feature = "std"))]
+        let _ = precompiles;
+    }
 }
 
 impl<S: BasePrecompileSpec> Default for BasePrecompileInstaller<S> {
@@ -51,6 +62,15 @@ mod tests {
 
         assert!(precompiles.get(&bn254::pair::ADDRESS).is_some());
         assert!(precompiles.get(secp256r1::P256VERIFY.address()).is_some());
+    }
+
+    #[test]
+    fn default_token_is_beryl_gated() {
+        let azul = BasePrecompileInstaller::new(BaseUpgrade::Azul).install();
+        let beryl = BasePrecompileInstaller::new(BaseUpgrade::Beryl).install();
+
+        assert!(azul.get(&DefaultToken::ADDRESS).is_none());
+        assert!(beryl.get(&DefaultToken::ADDRESS).is_some());
     }
 
     #[test]

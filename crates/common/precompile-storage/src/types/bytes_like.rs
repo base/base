@@ -10,7 +10,8 @@
 //! - Base slot: stores `length * 2 + 1` (bit 0 = 1 indicates long string)
 //! - Data slots: stored at `keccak256(main_slot) + i` for each 32-byte chunk
 
-use std::marker::PhantomData;
+use alloc::{format, string::String, vec::Vec};
+use core::marker::PhantomData;
 
 use alloy_primitives::{Address, Bytes, U256, keccak256};
 

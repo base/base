@@ -4,7 +4,7 @@
 //! - **Base slot**: Arrays start directly at `base_slot` (not at keccak256)
 //! - Small elements (`T::BYTES` ≤ 16) are packed; larger elements use full slots.
 
-use std::ops::{Index, IndexMut};
+use core::ops::{Index, IndexMut};
 
 use alloy_primitives::{Address, U256};
 
@@ -31,7 +31,7 @@ pub struct ArrayHandler<T: StorableType, const N: usize> {
 impl<T: StorableType, const N: usize> ArrayHandler<T, N> {
     /// Creates a new handler for the array at the given base slot and address.
     #[inline]
-    pub fn new(base_slot: U256, address: Address) -> Self {
+    pub const fn new(base_slot: U256, address: Address) -> Self {
         Self { base_slot, address, cache: HandlerCache::new() }
     }
 
