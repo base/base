@@ -1,33 +1,31 @@
-//! Submission task: drains [`Submission`]s from the game and bond
-//! workers and submits each one through a single [`TxManager`] for
-//! nonce safety.
-//!
-//! The contract itself rejects stale or invalid submissions at
-//! `eth_estimateGas` time, so no client-side re-verification is needed.
+//! Submission task: drains [`Submission`]s sent through a
+//! [`SubmissionHandle`] and submits each one through a single
+//! [`TxManager`] for nonce safety, returning the per-transaction
+//! outcome to the caller via a oneshot.
 
 use std::fmt;
 
-use alloy_primitives::{Address, Bytes};
-use base_tx_manager::{TxCandidate, TxManager};
+use alloy_primitives::{Address, Bytes, TxHash};
+use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use derive_more::Debug;
-use tokio::sync::mpsc;
+use thiserror::Error;
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::debug;
 
 use crate::{BondRequest, DisputeRequest};
 
 /// One unit of L1 work routed through [`SubmissionTask`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Submission {
-    /// Dispute action (challenge or nullify) produced by a game worker.
+    /// Dispute action produced by a game worker.
     Dispute(DisputeRequest),
-    /// Bond lifecycle action (resolve, claimCredit, closeGame)
-    /// produced by a bond worker.
+    /// Bond lifecycle action produced by a bond worker.
     Bond(BondRequest),
 }
 
 impl Submission {
-    /// Game proxy this submission targets.
+    /// Game proxy targeted by this submission.
     pub const fn game_address(&self) -> Address {
         match self {
             Self::Dispute(r) => r.game_address,
@@ -35,7 +33,7 @@ impl Submission {
         }
     }
 
-    /// Encodes the L1 calldata for this submission.
+    /// Encoded L1 calldata for this submission.
     pub fn into_calldata(self) -> Bytes {
         match self {
             Self::Dispute(r) => r.action.to_calldata(r.proof_bytes),
@@ -53,74 +51,95 @@ impl fmt::Display for Submission {
     }
 }
 
-/// Long-running task that drains [`Submission`]s, encodes the
-/// calldata, and submits the transaction through a single
-/// [`TxManager`].
-///
-/// Routing every submission through one task is a deliberate choice:
-/// the underlying [`TxManager`] then sees a serial stream of
-/// transactions from a single sender, which is the only way to
-/// avoid nonce races without coordinating across workers.
+/// Errors returned by [`SubmissionHandle::submit`].
+#[derive(Debug, Error)]
+pub enum SubmitError {
+    /// The transaction was included in a block with `status == 0`.
+    #[error("transaction reverted on-chain (tx_hash {0})")]
+    Reverted(TxHash),
+    /// Underlying [`TxManager`] failure.
+    #[error("tx manager error: {0}")]
+    TxManager(#[from] TxManagerError),
+    /// Submission channel closed.
+    #[error("submission channel closed")]
+    ChannelClosed,
+}
+
+/// Sender-side handle for [`SubmissionTask`].
+#[derive(Debug, Clone)]
+pub struct SubmissionHandle {
+    sender: mpsc::Sender<Envelope>,
+}
+
+impl SubmissionHandle {
+    /// Submits `submission` and awaits its on-chain outcome.
+    pub async fn submit(&self, submission: Submission) -> Result<TxHash, SubmitError> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.sender
+            .send(Envelope { submission, response_tx })
+            .await
+            .map_err(|_| SubmitError::ChannelClosed)?;
+        response_rx.await.map_err(|_| SubmitError::ChannelClosed)?
+    }
+}
+
+/// One submission paired with the oneshot used to return its outcome.
+struct Envelope {
+    submission: Submission,
+    response_tx: oneshot::Sender<Result<TxHash, SubmitError>>,
+}
+
+/// Long-running task that drains submissions and submits them
+/// serially through a single [`TxManager`] (one sender, contiguous
+/// nonces).
 #[derive(Debug)]
 pub struct SubmissionTask<Tx> {
-    /// Sender used for every submission; serial use here is what
-    /// guarantees nonce safety.
     #[debug(skip)]
     tx_manager: Tx,
+    #[debug(skip)]
+    receiver: mpsc::Receiver<Envelope>,
 }
 
 impl<Tx: TxManager> SubmissionTask<Tx> {
-    /// Builds a task wired to `tx_manager` for L1 submission.
-    pub const fn new(tx_manager: Tx) -> Self {
-        Self { tx_manager }
+    /// Builds the task and its paired [`SubmissionHandle`].
+    /// `capacity` bounds the underlying mpsc channel.
+    pub fn new(tx_manager: Tx, capacity: usize) -> (Self, SubmissionHandle) {
+        let (sender, receiver) = mpsc::channel(capacity);
+        (Self { tx_manager, receiver }, SubmissionHandle { sender })
     }
 
-    /// Drains `rx` until it closes or `cancel` fires, handling each
-    /// submission to completion before reading the next. Sequential
-    /// processing keeps the [`TxManager`]'s nonce stream contiguous
-    /// and bounds in-flight L1 work to one transaction at a time.
-    pub async fn run(self, mut rx: mpsc::Receiver<Submission>, cancel: CancellationToken) {
+    /// Drains envelopes until every [`SubmissionHandle`] is dropped or
+    /// `cancel` fires.
+    pub async fn run(mut self, cancel: CancellationToken) {
         loop {
             tokio::select! {
                 biased;
                 () = cancel.cancelled() => return,
-                submission = rx.recv() => match submission {
-                    Some(s) => self.handle(s).await,
+                envelope = self.receiver.recv() => match envelope {
+                    Some(e) => self.handle(e).await,
                     None => return,
                 },
             }
         }
     }
 
-    /// Encodes the submission's calldata and submits the transaction.
-    async fn handle(&self, submission: Submission) {
-        let game = submission.game_address();
-        let label = submission.to_string();
+    /// Submits one envelope and forwards the outcome to its caller.
+    async fn handle(&self, envelope: Envelope) {
+        let game = envelope.submission.game_address();
         let candidate = TxCandidate {
-            tx_data: submission.into_calldata(),
+            tx_data: envelope.submission.into_calldata(),
             to: Some(game),
             ..TxCandidate::default()
         };
 
-        match self.tx_manager.send(candidate).await {
-            Ok(receipt) if receipt.status() => info!(
-                %game,
-                action = %label,
-                tx_hash = %receipt.transaction_hash,
-                "submission confirmed on L1"
-            ),
-            Ok(receipt) => warn!(
-                %game,
-                action = %label,
-                tx_hash = %receipt.transaction_hash,
-                "submission reverted at inclusion"
-            ),
-            Err(e) => warn!(
-                %game,
-                action = %label,
-                error = %e,
-                "submission failed before confirmation"
-            ),
+        let outcome = match self.tx_manager.send(candidate).await {
+            Ok(receipt) if receipt.status() => Ok(receipt.transaction_hash),
+            Ok(receipt) => Err(SubmitError::Reverted(receipt.transaction_hash)),
+            Err(e) => Err(SubmitError::TxManager(e)),
+        };
+
+        if envelope.response_tx.send(outcome).is_err() {
+            debug!(%game, "submission caller dropped before outcome");
         }
     }
 }
@@ -167,10 +186,6 @@ mod tests {
         }
     }
 
-    fn task(tx_manager: MockTxManager) -> SubmissionTask<MockTxManager> {
-        SubmissionTask::new(tx_manager)
-    }
-
     fn dispute(action: DisputeAction, proof_first_byte: u8) -> Submission {
         Submission::Dispute(DisputeRequest {
             game_address: GAME,
@@ -183,138 +198,141 @@ mod tests {
         Submission::Bond(BondRequest { game_address: GAME, action })
     }
 
+    /// Spawns a [`SubmissionTask`] backed by `tx_manager` and returns
+    /// `(handle, cancel, join_handle)`. Cancelling and joining is the
+    /// caller's responsibility.
+    fn spawn(
+        tx_manager: MockTxManager,
+    ) -> (SubmissionHandle, CancellationToken, tokio::task::JoinHandle<()>) {
+        let (task, handle) = SubmissionTask::new(tx_manager, 8);
+        let cancel = CancellationToken::new();
+        let join = tokio::spawn(task.run(cancel.clone()));
+        (handle, cancel, join)
+    }
+
     #[tokio::test]
-    async fn challenge_success_submits_one_tx_to_game_address() {
+    async fn submit_returns_tx_hash_on_success() {
         let tx_manager = MockTxManager::new(SENDER);
         tx_manager.push_success(TX_HASH);
+        let (handle, cancel, join) = spawn(tx_manager.clone());
 
-        task(tx_manager.clone()).handle(dispute(challenge(2, B256::repeat_byte(0x11)), 0x01)).await;
+        let outcome = handle.submit(dispute(challenge(2, B256::repeat_byte(0x11)), 0x01)).await;
+
+        assert_eq!(outcome.unwrap(), TX_HASH);
+        let calls = tx_manager.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].to, Some(GAME));
+
+        cancel.cancel();
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn submit_returns_reverted_when_status_is_false() {
+        let tx_manager = MockTxManager::new(SENDER);
+        tx_manager.push_revert(TX_HASH);
+        let (handle, cancel, join) = spawn(tx_manager);
+
+        let outcome = handle.submit(dispute(nullify_tee(2, B256::repeat_byte(0x22)), 0x00)).await;
+
+        assert!(matches!(outcome, Err(SubmitError::Reverted(h)) if h == TX_HASH));
+
+        cancel.cancel();
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn submit_returns_tx_manager_when_send_errors() {
+        let tx_manager = MockTxManager::new(SENDER);
+        tx_manager.push_error(TxManagerError::NonceTooLow);
+        let (handle, cancel, join) = spawn(tx_manager);
+
+        let outcome = handle.submit(dispute(nullify_zk(2, B256::repeat_byte(0x33)), 0x01)).await;
+
+        assert!(matches!(outcome, Err(SubmitError::TxManager(TxManagerError::NonceTooLow))));
+
+        cancel.cancel();
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn submit_returns_channel_closed_after_task_shutdown() {
+        let tx_manager = MockTxManager::new(SENDER);
+        let (handle, cancel, join) = spawn(tx_manager);
+        cancel.cancel();
+        join.await.unwrap();
+
+        let outcome = handle.submit(bond(BondAction::Resolve)).await;
+
+        assert!(matches!(outcome, Err(SubmitError::ChannelClosed)));
+    }
+
+    #[tokio::test]
+    async fn bond_submission_carries_bond_calldata() {
+        let tx_manager = MockTxManager::new(SENDER);
+        tx_manager.push_success(TX_HASH);
+        let (handle, cancel, join) = spawn(tx_manager.clone());
+
+        handle.submit(bond(BondAction::UnlockCredit)).await.unwrap();
 
         let calls = tx_manager.calls();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].to, Some(GAME));
-    }
-
-    #[tokio::test]
-    async fn nullify_tee_success_submits_one_tx() {
-        let tx_manager = MockTxManager::new(SENDER);
-        tx_manager.push_success(TX_HASH);
-
-        task(tx_manager.clone())
-            .handle(dispute(nullify_tee(2, B256::repeat_byte(0x22)), 0x00))
-            .await;
-
-        assert_eq!(tx_manager.calls().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn nullify_zk_success_submits_one_tx() {
-        let tx_manager = MockTxManager::new(SENDER);
-        tx_manager.push_success(TX_HASH);
-
-        task(tx_manager.clone())
-            .handle(dispute(nullify_zk(2, B256::repeat_byte(0x33)), 0x01))
-            .await;
-
-        assert_eq!(tx_manager.calls().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn bond_resolve_submits_one_tx_to_game_address() {
-        let tx_manager = MockTxManager::new(SENDER);
-        tx_manager.push_success(TX_HASH);
-
-        task(tx_manager.clone()).handle(bond(BondAction::Resolve)).await;
-
-        let calls = tx_manager.calls();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].to, Some(GAME));
-        assert_eq!(calls[0].tx_data, BondAction::Resolve.to_calldata());
-    }
-
-    #[tokio::test]
-    async fn bond_unlock_credit_submits_claim_credit_calldata() {
-        let tx_manager = MockTxManager::new(SENDER);
-        tx_manager.push_success(TX_HASH);
-
-        task(tx_manager.clone()).handle(bond(BondAction::UnlockCredit)).await;
-
-        let calls = tx_manager.calls();
-        assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].tx_data, BondAction::UnlockCredit.to_calldata());
+
+        cancel.cancel();
+        join.await.unwrap();
     }
 
     #[tokio::test]
-    async fn dispute_tx_data_matches_action_to_calldata() {
+    async fn dispute_tx_data_matches_into_calldata() {
         let tx_manager = MockTxManager::new(SENDER);
         tx_manager.push_success(TX_HASH);
+        let (handle, cancel, join) = spawn(tx_manager.clone());
         let submission = dispute(challenge(2, B256::repeat_byte(0x11)), 0x01);
         let expected = submission.clone().into_calldata();
 
-        task(tx_manager.clone()).handle(submission).await;
+        handle.submit(submission).await.unwrap();
 
         let call = tx_manager.calls().pop().expect("one tx submitted");
         assert_eq!(call.tx_data, expected);
         assert!(call.blobs.is_empty(), "challenger never sends blob txs");
-    }
 
-    #[tokio::test]
-    async fn revert_at_inclusion_does_not_panic() {
-        let tx_manager = MockTxManager::new(SENDER);
-        tx_manager.push_revert(TX_HASH);
-
-        task(tx_manager.clone()).handle(dispute(challenge(2, B256::repeat_byte(0x11)), 0x01)).await;
-
-        assert_eq!(tx_manager.calls().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn tx_manager_error_does_not_panic() {
-        let tx_manager = MockTxManager::new(SENDER);
-        tx_manager.push_error(TxManagerError::NonceTooLow);
-
-        task(tx_manager.clone()).handle(dispute(challenge(2, B256::repeat_byte(0x11)), 0x01)).await;
-
-        assert_eq!(tx_manager.calls().len(), 1);
+        cancel.cancel();
+        join.await.unwrap();
     }
 
     #[tokio::test]
     async fn cancel_token_exits_immediately() {
-        let task = SubmissionTask::new(MockTxManager::new(SENDER));
-        let (_tx, rx) = mpsc::channel(8);
+        let (task, _handle) = SubmissionTask::new(MockTxManager::new(SENDER), 8);
         let cancel = CancellationToken::new();
+        let join = tokio::spawn(task.run(cancel.clone()));
 
-        let handle = tokio::spawn(task.run(rx, cancel.clone()));
         cancel.cancel();
-        handle.await.expect("run must exit cleanly");
+        join.await.expect("run must exit cleanly on cancel");
     }
 
     #[tokio::test]
-    async fn closed_request_channel_exits_cleanly() {
-        let task = SubmissionTask::new(MockTxManager::new(SENDER));
-        let (tx, rx) = mpsc::channel(8);
-        let cancel = CancellationToken::new();
+    async fn dropping_every_handle_exits_run() {
+        let (task, handle) = SubmissionTask::new(MockTxManager::new(SENDER), 8);
+        let join = tokio::spawn(task.run(CancellationToken::new()));
 
-        let handle = tokio::spawn(task.run(rx, cancel));
-        drop(tx);
-        handle.await.expect("run must exit when senders drop");
+        drop(handle);
+        join.await.expect("run must exit when handles drop");
     }
 
     #[tokio::test]
     async fn processes_pending_submission_before_exit() {
         let tx_manager = MockTxManager::new(SENDER);
         tx_manager.push_success(TX_HASH);
-        let task = SubmissionTask::new(tx_manager.clone());
-        let (tx, rx) = mpsc::channel(8);
-        let cancel = CancellationToken::new();
+        let (task, handle) = SubmissionTask::new(tx_manager.clone(), 8);
+        let join = tokio::spawn(task.run(CancellationToken::new()));
 
-        let handle = tokio::spawn(task.run(rx, cancel));
-        tx.send(dispute(challenge(2, B256::repeat_byte(0x11)), 0x01))
-            .await
-            .expect("send must succeed");
-        drop(tx);
-        handle.await.expect("run must exit cleanly after draining");
+        let outcome = handle.submit(dispute(challenge(2, B256::repeat_byte(0x11)), 0x01)).await;
+        assert_eq!(outcome.unwrap(), TX_HASH);
 
+        drop(handle);
+        join.await.expect("run must exit cleanly after draining");
         assert_eq!(tx_manager.calls().len(), 1);
     }
 

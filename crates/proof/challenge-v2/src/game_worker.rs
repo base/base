@@ -1,6 +1,7 @@
 //! Per-game worker: [`run_game_worker`] runs one detect / dispute /
-//! submit pass per spawn. Re-spawn between scan ticks is the pool's
-//! job (driven by [`crate::GameDiscovery`] re-emitting the game).
+//! submit pass per spawn, staying alive until the L1 transaction
+//! confirms or fails. Re-spawn between scan ticks is the pool's job
+//! (driven by [`crate::GameDiscovery`] re-emitting the game).
 
 use std::{sync::Arc, time::Duration};
 
@@ -8,10 +9,10 @@ use alloy_primitives::Address;
 use base_proof_contracts::AggregateVerifierClient;
 use base_zk_client::ZkProofProvider;
 use derive_more::Debug;
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
-use crate::{GameInfo, OutputValidator, Submission, TeeProofProvider, Violation};
+use crate::{GameInfo, OutputValidator, Submission, SubmissionHandle, TeeProofProvider, Violation};
 
 /// Read-only handles and config shared across every game-worker task.
 ///
@@ -78,13 +79,10 @@ pub struct GameWorkerConfig {
 }
 
 /// Runs one detect / dispute / submit pass for `game` and exits.
-/// Each branch logs its outcome; the next iteration is driven by the
-/// scanner re-emitting the game.
-pub async fn run_game_worker(
-    game: GameInfo,
-    deps: Arc<GameWorkerDeps>,
-    submit_tx: mpsc::Sender<Submission>,
-) {
+/// The worker stays alive until the submitted transaction confirms,
+/// reverts or fails; the pool uses that lifetime to deduplicate
+/// re-emissions from the scanner.
+pub async fn run_game_worker(game: GameInfo, deps: Arc<GameWorkerDeps>, handle: SubmissionHandle) {
     let address = game.address;
 
     // Acquire a permit for the detect phase only: detect is RPC-heavy
@@ -115,29 +113,29 @@ pub async fn run_game_worker(
         }
     };
 
-    if submit_tx.send(Submission::Dispute(request)).await.is_err() {
-        warn!(game = %address, "submission channel closed");
-        return;
+    match handle.submit(Submission::Dispute(request)).await {
+        Ok(tx_hash) => info!(game = %address, %tx_hash, "dispute confirmed on L1"),
+        Err(e) => warn!(game = %address, error = %e, "dispute submission failed"),
     }
-
-    info!(game = %address, "dispute request dispatched");
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
+    use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::{
-        DisputeAction, ProvingState,
+        ProvingState, SubmissionTask,
         test_utils::{
             MockAggregateVerifier, MockGameState, MockOutputValidator, MockTeeProofProvider,
-            MockZkProofProvider, addr,
+            MockTxManager, MockZkProofProvider, addr,
         },
     };
 
     const STARTING_BLOCK: u64 = 100;
     const INTERVAL: u64 = 5;
+    const TX_HASH: B256 = B256::repeat_byte(0xAB);
 
     fn root(byte: u8) -> B256 {
         B256::repeat_byte(byte)
@@ -201,6 +199,18 @@ mod tests {
         }
     }
 
+    /// Spawns a [`SubmissionTask`] backed by `tx_manager` and returns
+    /// the handle along with the cancellation token and join handle
+    /// the test needs to tear it down.
+    fn spawn_submission_task(
+        tx_manager: MockTxManager,
+    ) -> (SubmissionHandle, CancellationToken, tokio::task::JoinHandle<()>) {
+        let (task, handle) = SubmissionTask::new(tx_manager, 8);
+        let cancel = CancellationToken::new();
+        let join = tokio::spawn(task.run(cancel.clone()));
+        (handle, cancel, join)
+    }
+
     /// Programs the verifier so the game classifies as `ZkOnly` with
     /// every checkpoint matching the on-chain claim (no violation).
     fn arrange_no_violation(mocks: &Mocks, game: &GameInfo) {
@@ -225,49 +235,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_violation_does_not_send() {
+    async fn no_violation_does_not_submit() {
         let mocks = Mocks::new();
         let game = game_info(vec![root(10), root(11)], ProvingState::ZkOnly);
         arrange_no_violation(&mocks, &game);
-        let (tx, mut rx) = mpsc::channel(4);
+        let tx_manager = MockTxManager::new(addr(0xB2));
+        let (handle, cancel, join) = spawn_submission_task(tx_manager.clone());
 
-        run_game_worker(game, mocks.deps(), tx).await;
+        run_game_worker(game, mocks.deps(), handle).await;
 
-        assert!(rx.try_recv().is_err());
+        assert!(tx_manager.calls().is_empty());
+
+        cancel.cancel();
+        join.await.unwrap();
     }
 
     #[tokio::test]
-    async fn violation_with_successful_proof_sends_request() {
+    async fn violation_with_successful_proof_submits_one_tx() {
         let mocks = Mocks::new();
         let game = game_info(vec![root(10)], ProvingState::ZkOnly);
         arrange_zk_only_violation(&mocks, &game);
-        let (tx, mut rx) = mpsc::channel(4);
+        let tx_manager = MockTxManager::new(addr(0xB2));
+        tx_manager.push_success(TX_HASH);
+        let (handle, cancel, join) = spawn_submission_task(tx_manager.clone());
 
-        run_game_worker(game.clone(), mocks.deps(), tx).await;
+        run_game_worker(game.clone(), mocks.deps(), handle).await;
 
-        let submission = rx.try_recv().expect("a submission was sent");
-        let Submission::Dispute(req) = submission else {
-            panic!("game worker must wrap dispute requests in Submission::Dispute");
-        };
-        assert_eq!(req.game_address, game.address);
-        assert!(matches!(req.action, DisputeAction::NullifyZk { .. }));
+        let calls = tx_manager.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].to, Some(game.address));
+
+        cancel.cancel();
+        join.await.unwrap();
     }
 
     #[tokio::test]
-    async fn validation_error_does_not_send() {
+    async fn validation_error_does_not_submit() {
         let mocks = Mocks::new();
         // Verifier has no entry for this game: its reads return
         // ContractError, surfaced as ValidationError::Contract.
         let game = game_info(vec![root(10)], ProvingState::ZkOnly);
-        let (tx, mut rx) = mpsc::channel(4);
+        let tx_manager = MockTxManager::new(addr(0xB2));
+        let (handle, cancel, join) = spawn_submission_task(tx_manager.clone());
 
-        run_game_worker(game, mocks.deps(), tx).await;
+        run_game_worker(game, mocks.deps(), handle).await;
 
-        assert!(rx.try_recv().is_err());
+        assert!(tx_manager.calls().is_empty());
+
+        cancel.cancel();
+        join.await.unwrap();
     }
 
     #[tokio::test]
-    async fn proof_error_does_not_send() {
+    async fn proof_error_does_not_submit() {
         let mocks = Mocks::new();
         let game = game_info(vec![root(10)], ProvingState::ZkOnly);
         mocks
@@ -278,22 +298,31 @@ mod tests {
         // ZK prover returns a permanent failure.
         mocks.zk.push_prove_ok();
         mocks.zk.push_get_failed(Some("simulated".into()));
-        let (tx, mut rx) = mpsc::channel(4);
+        let tx_manager = MockTxManager::new(addr(0xB2));
+        let (handle, cancel, join) = spawn_submission_task(tx_manager.clone());
 
-        run_game_worker(game, mocks.deps(), tx).await;
+        run_game_worker(game, mocks.deps(), handle).await;
 
-        assert!(rx.try_recv().is_err());
+        assert!(tx_manager.calls().is_empty());
+
+        cancel.cancel();
+        join.await.unwrap();
     }
 
     #[tokio::test]
-    async fn dropped_receiver_does_not_panic() {
+    async fn submission_task_shutdown_does_not_panic() {
         let mocks = Mocks::new();
         let game = game_info(vec![root(10)], ProvingState::ZkOnly);
         arrange_zk_only_violation(&mocks, &game);
-        let (tx, rx) = mpsc::channel(4);
-        drop(rx);
+        // Build the handle but tear the task down right away so the
+        // worker observes ChannelClosed.
+        let (task, handle) = SubmissionTask::new(MockTxManager::new(addr(0xB2)), 8);
+        let cancel = CancellationToken::new();
+        let join = tokio::spawn(task.run(cancel.clone()));
+        cancel.cancel();
+        join.await.unwrap();
 
-        // No panic, returns cleanly after logging the channel-closed warn.
-        run_game_worker(game, mocks.deps(), tx).await;
+        // No panic, returns cleanly after logging the failure.
+        run_game_worker(game, mocks.deps(), handle).await;
     }
 }

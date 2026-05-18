@@ -9,7 +9,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
-use crate::{GameInfo, GameWorkerDeps, Submission, run_game_worker};
+use crate::{GameInfo, GameWorkerDeps, SubmissionHandle, run_game_worker};
 
 /// Spawns one [`run_game_worker`] per active game address.
 #[derive(Debug)]
@@ -19,18 +19,17 @@ pub struct GamePool {
     workers: HashMap<Address, JoinHandle<()>>,
     /// Shared dependencies passed to every worker.
     deps: Arc<GameWorkerDeps>,
-    /// Outbound channel to the [`crate::SubmissionTask`].
-    #[debug(skip)]
-    submit_tx: mpsc::Sender<Submission>,
+    /// Cloned into every spawned worker.
+    handle: SubmissionHandle,
 }
 
 impl GamePool {
     /// Map size above which `maybe_spawn` sweeps finished entries.
     const GC_THRESHOLD: usize = 256;
 
-    /// Builds a pool wired to `deps` and `submit_tx`.
-    pub fn new(deps: Arc<GameWorkerDeps>, submit_tx: mpsc::Sender<Submission>) -> Self {
-        Self { workers: HashMap::new(), deps, submit_tx }
+    /// Builds a pool wired to `deps` and `handle`.
+    pub fn new(deps: Arc<GameWorkerDeps>, handle: SubmissionHandle) -> Self {
+        Self { workers: HashMap::new(), deps, handle }
     }
 
     /// Drains `rx` and spawns one worker per new address.
@@ -63,13 +62,11 @@ impl GamePool {
 
         // No live worker: spawn one. `insert` overwrites and drops any
         // finished handle still sitting in the slot.
-        let handle =
-            tokio::spawn(run_game_worker(game, Arc::clone(&self.deps), self.submit_tx.clone()));
-        self.workers.insert(address, handle);
+        let worker =
+            tokio::spawn(run_game_worker(game, Arc::clone(&self.deps), self.handle.clone()));
+        self.workers.insert(address, worker);
 
-        // GC finished workers to keep the map bounded. Logged so the
-        // legitimate "many live workers" case (a real backlog) can be
-        // told apart from a leak of finished handles.
+        // GC finished workers to keep the map bounded.
         if self.workers.len() > Self::GC_THRESHOLD {
             let before = self.workers.len();
             self.workers.retain(|_, h| !h.is_finished());
@@ -91,15 +88,16 @@ mod tests {
 
     use super::*;
     use crate::{
-        GameWorkerConfig, OutputRootError, OutputValidator, ProvingState,
+        GameWorkerConfig, OutputRootError, OutputValidator, ProvingState, SubmissionTask,
         test_utils::{
             MockAggregateVerifier, MockGameState, MockOutputValidator, MockTeeProofProvider,
-            MockZkProofProvider, addr,
+            MockTxManager, MockZkProofProvider, addr,
         },
     };
 
     const STARTING_BLOCK: u64 = 100;
     const INTERVAL: u64 = 5;
+    const TX_HASH: B256 = B256::repeat_byte(0xAB);
 
     fn root(byte: u8) -> B256 {
         B256::repeat_byte(byte)
@@ -202,8 +200,20 @@ mod tests {
         }
     }
 
-    /// Programs `mocks` so a worker on `game` produces one
-    /// [`DisputeRequest`] (mismatch at index 0, ZK proof succeeds).
+    /// Spawns a [`SubmissionTask`] backed by `tx_manager` and returns
+    /// the handle plus the resources tests need to tear it down.
+    fn spawn_submission_task(
+        tx_manager: MockTxManager,
+    ) -> (SubmissionHandle, CancellationToken, JoinHandle<()>) {
+        let (task, handle) = SubmissionTask::new(tx_manager, 8);
+        let cancel = CancellationToken::new();
+        let join = tokio::spawn(task.run(cancel.clone()));
+        (handle, cancel, join)
+    }
+
+    /// Programs `mocks` so a worker on `address` produces one
+    /// [`crate::DisputeRequest`] (mismatch at index 0, ZK proof
+    /// succeeds).
     fn arrange_violation(mocks: &Mocks, validator: &MockOutputValidator, address: Address) {
         mocks.verifier.set_game(address, MockGameState::in_progress(Address::ZERO, addr(2), 0));
         validator.set(checkpoint_block(0), root(99));
@@ -220,28 +230,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn single_game_spawns_one_worker_that_dispatches_one_request() {
+    async fn single_game_spawns_one_worker_that_submits_one_tx() {
         let mocks = Mocks::new();
         let validator = Arc::new(MockOutputValidator::new());
         let address = addr(0xA1);
         arrange_violation(&mocks, &validator, address);
 
+        let tx_manager = MockTxManager::new(addr(0xB2));
+        tx_manager.push_success(TX_HASH);
+        let (handle, submit_cancel, submit_join) = spawn_submission_task(tx_manager.clone());
+
         let (game_tx, game_rx) = mpsc::channel(4);
-        let (submit_tx, mut submit_rx) = mpsc::channel(4);
         let cancel = CancellationToken::new();
-        let pool = GamePool::new(mocks.deps(validator), submit_tx);
+        let pool = GamePool::new(mocks.deps(validator), handle);
         let pool_handle = tokio::spawn(pool.run(game_rx, cancel.clone()));
 
         game_tx.send(game_info_zk_only(address, vec![root(10)])).await.unwrap();
 
-        let submission = tokio::time::timeout(Duration::from_secs(1), submit_rx.recv())
-            .await
-            .expect("worker must dispatch within timeout")
-            .expect("submit channel must stay open");
-        assert_eq!(submission.game_address(), address);
+        // Wait for the worker to submit and the task to record the call.
+        for _ in 0..64 {
+            if !tx_manager.calls().is_empty() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let calls = tx_manager.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].to, Some(address));
 
         cancel.cancel();
         pool_handle.await.unwrap();
+        submit_cancel.cancel();
+        submit_join.await.unwrap();
     }
 
     #[tokio::test]
@@ -253,28 +273,33 @@ mod tests {
         arrange_violation(&mocks, &validator, address_a);
         arrange_violation(&mocks, &validator, address_b);
 
+        let tx_manager = MockTxManager::new(addr(0xB2));
+        tx_manager.push_success(TX_HASH);
+        tx_manager.push_success(TX_HASH);
+        let (handle, submit_cancel, submit_join) = spawn_submission_task(tx_manager.clone());
+
         let (game_tx, game_rx) = mpsc::channel(4);
-        let (submit_tx, mut submit_rx) = mpsc::channel(4);
         let cancel = CancellationToken::new();
-        let pool = GamePool::new(mocks.deps(validator), submit_tx);
+        let pool = GamePool::new(mocks.deps(validator), handle);
         let pool_handle = tokio::spawn(pool.run(game_rx, cancel.clone()));
 
         game_tx.send(game_info_zk_only(address_a, vec![root(10)])).await.unwrap();
         game_tx.send(game_info_zk_only(address_b, vec![root(10)])).await.unwrap();
 
-        let mut seen = Vec::new();
-        for _ in 0..2 {
-            let submission = tokio::time::timeout(Duration::from_secs(1), submit_rx.recv())
-                .await
-                .expect("two submissions must dispatch")
-                .expect("submit channel must stay open");
-            seen.push(submission.game_address());
+        for _ in 0..128 {
+            if tx_manager.calls().len() >= 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
         }
-        seen.sort();
-        assert_eq!(seen, vec![address_a, address_b]);
+        let mut targets = tx_manager.calls().into_iter().filter_map(|c| c.to).collect::<Vec<_>>();
+        targets.sort();
+        assert_eq!(targets, vec![address_a, address_b]);
 
         cancel.cancel();
         pool_handle.await.unwrap();
+        submit_cancel.cancel();
+        submit_join.await.unwrap();
     }
 
     #[tokio::test]
@@ -291,14 +316,14 @@ mod tests {
         let address = addr(0xA1);
         mocks.verifier.set_game(address, MockGameState::in_progress(Address::ZERO, addr(2), 0));
 
+        let tx_manager = MockTxManager::new(addr(0xB2));
+        let (handle, submit_cancel, submit_join) = spawn_submission_task(tx_manager);
+
         let (game_tx, game_rx) = mpsc::channel(4);
-        let (submit_tx, _submit_rx) = mpsc::channel(4);
         let cancel = CancellationToken::new();
         let validator_handle = Arc::clone(&validator);
-        let pool = GamePool::new(
-            mocks.deps(Arc::clone(&validator) as Arc<dyn OutputValidator>),
-            submit_tx,
-        );
+        let pool =
+            GamePool::new(mocks.deps(Arc::clone(&validator) as Arc<dyn OutputValidator>), handle);
         let pool_handle = tokio::spawn(pool.run(game_rx, cancel.clone()));
 
         // First send: worker spawns, blocks inside the validator.
@@ -319,6 +344,8 @@ mod tests {
         release.notify_waiters();
         cancel.cancel();
         pool_handle.await.unwrap();
+        submit_cancel.cancel();
+        submit_join.await.unwrap();
     }
 
     #[tokio::test]
@@ -328,19 +355,18 @@ mod tests {
         let address = addr(0xA1);
         arrange_no_violation(&mocks, address);
 
+        let tx_manager = MockTxManager::new(addr(0xB2));
+        let (handle, submit_cancel, submit_join) = spawn_submission_task(tx_manager);
+
         let (game_tx, game_rx) = mpsc::channel(4);
-        let (submit_tx, _submit_rx) = mpsc::channel(4);
         let cancel = CancellationToken::new();
         let validator_handle = Arc::clone(&validator);
-        let pool = GamePool::new(
-            mocks.deps(Arc::clone(&validator) as Arc<dyn OutputValidator>),
-            submit_tx,
-        );
+        let pool =
+            GamePool::new(mocks.deps(Arc::clone(&validator) as Arc<dyn OutputValidator>), handle);
         let pool_handle = tokio::spawn(pool.run(game_rx, cancel.clone()));
 
         // First worker: completes after one call to the validator.
         game_tx.send(game_info_zk_only(address, vec![root(10)])).await.unwrap();
-        // Wait for the worker to complete (`is_finished == true`).
         for _ in 0..32 {
             if validator_handle.calls.load(Ordering::SeqCst) >= 1 {
                 break;
@@ -366,31 +392,43 @@ mod tests {
 
         cancel.cancel();
         pool_handle.await.unwrap();
+        submit_cancel.cancel();
+        submit_join.await.unwrap();
     }
 
     #[tokio::test]
     async fn cancel_token_exits_immediately() {
         let mocks = Mocks::new();
         let validator = Arc::new(MockOutputValidator::new());
-        let pool = GamePool::new(mocks.deps(validator), mpsc::channel(1).0);
+        let (handle, submit_cancel, submit_join) =
+            spawn_submission_task(MockTxManager::new(addr(0xB2)));
+        let pool = GamePool::new(mocks.deps(validator), handle);
         let (_game_tx, game_rx) = mpsc::channel(1);
         let cancel = CancellationToken::new();
 
-        let handle = tokio::spawn(pool.run(game_rx, cancel.clone()));
+        let pool_handle = tokio::spawn(pool.run(game_rx, cancel.clone()));
         cancel.cancel();
-        handle.await.expect("run must exit cleanly on cancel");
+        pool_handle.await.expect("run must exit cleanly on cancel");
+
+        submit_cancel.cancel();
+        submit_join.await.unwrap();
     }
 
     #[tokio::test]
     async fn closed_input_channel_exits_cleanly() {
         let mocks = Mocks::new();
         let validator = Arc::new(MockOutputValidator::new());
-        let pool = GamePool::new(mocks.deps(validator), mpsc::channel(1).0);
+        let (handle, submit_cancel, submit_join) =
+            spawn_submission_task(MockTxManager::new(addr(0xB2)));
+        let pool = GamePool::new(mocks.deps(validator), handle);
         let (game_tx, game_rx) = mpsc::channel(1);
         let cancel = CancellationToken::new();
 
-        let handle = tokio::spawn(pool.run(game_rx, cancel));
+        let pool_handle = tokio::spawn(pool.run(game_rx, cancel));
         drop(game_tx);
-        handle.await.expect("run must exit when senders drop");
+        pool_handle.await.expect("run must exit when senders drop");
+
+        submit_cancel.cancel();
+        submit_join.await.unwrap();
     }
 }
