@@ -70,6 +70,22 @@ impl ConductorState {
         self.source_label = label;
     }
 
+    /// Returns the active per-node configs. In `Static` mode this is the
+    /// configured list; in `Discover` mode it is the list synthesised from the
+    /// last `clusterMembership` snapshot. The conductor view uses this to
+    /// dispatch mutations (pause, resume, transfer, …) without re-reading the
+    /// stale `MonitoringConfig.conductors` list, which is `None` in `Discover`.
+    pub fn nodes_config(&self) -> &[ConductorNodeConfig] {
+        &self.nodes_config
+    }
+
+    /// Seeds the per-node configs directly (used in `Discover` mode so the view
+    /// can dispatch mutations against the bootstrap node before the first
+    /// `clusterMembership` snapshot arrives).
+    pub fn set_nodes_config(&mut self, nodes_config: Vec<ConductorNodeConfig>) {
+        self.nodes_config = nodes_config;
+    }
+
     /// Registers the node configs and URL sender used to track leader URL changes.
     ///
     /// After this is called, every `poll` will push the leader's `flashblocks_ws`

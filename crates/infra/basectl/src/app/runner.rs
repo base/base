@@ -163,10 +163,19 @@ pub fn start_background_services(
         // a separate task that would duplicate the conductor_leader RPCs.
         // Discovered peers carry no flashblocks_ws endpoints, so this only
         // applies to statically configured clusters (devnet today).
-        if let ConductorSource::Static(nodes) = &source
-            && nodes.iter().any(|n| n.flashblocks_ws.is_some())
-        {
-            resources.conductor.set_url_sender(nodes.clone(), fb_url_tx);
+        match &source {
+            ConductorSource::Static(nodes) => {
+                if nodes.iter().any(|n| n.flashblocks_ws.is_some()) {
+                    resources.conductor.set_url_sender(nodes.clone(), fb_url_tx);
+                } else {
+                    resources.conductor.set_nodes_config(nodes.clone());
+                }
+            }
+            ConductorSource::Discover { .. } => {
+                if let Some(bootstrap) = source.bootstrap_node() {
+                    resources.conductor.set_nodes_config(vec![bootstrap]);
+                }
+            }
         }
         tokio::spawn(run_conductor_poller(source, conductor_tx));
     }

@@ -306,7 +306,10 @@ impl ConductorView {
 
     /// Spawns the mutation behind a confirmed action and switches to single-flight.
     fn execute(&mut self, action: PendingAction, resources: &Resources) {
-        let Some(ref nodes_cfg) = resources.config.conductors else { return };
+        let nodes_cfg = resources.conductor.nodes_config();
+        if nodes_cfg.is_empty() {
+            return;
+        }
         self.op_pending = true;
         self.close_overlay();
 
@@ -314,12 +317,12 @@ impl ConductorView {
             PendingAction::TransferAny => {
                 let (tx, rx) = mpsc::channel(1);
                 self.op_rx = Some(rx);
-                tokio::spawn(transfer_conductor_leader(nodes_cfg.clone(), None, tx));
+                tokio::spawn(transfer_conductor_leader(nodes_cfg.to_vec(), None, tx));
             }
             PendingAction::TransferTo(target) => {
                 let (tx, rx) = mpsc::channel(1);
                 self.op_rx = Some(rx);
-                tokio::spawn(transfer_conductor_leader(nodes_cfg.clone(), Some(target), tx));
+                tokio::spawn(transfer_conductor_leader(nodes_cfg.to_vec(), Some(target), tx));
             }
             PendingAction::RestartNode(name) => {
                 if let Some(node) = nodes_cfg.iter().find(|n| n.name == name).cloned() {
