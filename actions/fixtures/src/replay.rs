@@ -205,7 +205,9 @@ impl DerivationFixtureReplayer {
                 }
                 StepResult::AdvancedOrigin
                 | StepResult::StepFailed(PipelineErrorKind::Temporary(
-                    PipelineError::NotEnoughData | PipelineError::ChannelReaderEmpty,
+                    PipelineError::Eof
+                    | PipelineError::NotEnoughData
+                    | PipelineError::ChannelReaderEmpty,
                 ))
                 | StepResult::OriginAdvanceErr(PipelineErrorKind::Temporary(
                     PipelineError::Eof | PipelineError::Provider(_),
