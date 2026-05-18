@@ -30,7 +30,9 @@ pub async fn run_app(
     conductor_rpc: Option<Url>,
 ) -> Result<()> {
     let mut config = MonitoringConfig::load(network).await?;
-    if let Some(bootstrap) = conductor_rpc.as_ref() {
+    if config.conductors.is_none()
+        && let Some(bootstrap) = conductor_rpc.as_ref()
+    {
         let detect_rpc = config.detect_rpc_for(Some(bootstrap));
         if let Some(detected) = MonitoringConfig::detect_name_from_rpc(&detect_rpc).await {
             config.name = detected;
@@ -44,19 +46,21 @@ pub async fn run_app(
 
 /// Resolves the active conductor source from CLI flag and config.
 ///
-/// Precedence: CLI `--conductor-rpc` flag > hand-configured `conductors` list >
-/// `discovery.bootstrap_rpc` from config. Returns `None` when no source is
+/// Precedence: hand-configured `conductors` list > CLI `--conductor-rpc` flag >
+/// `discovery.bootstrap_rpc` from config. Static config wins so local devnet
+/// (which ships with a hardcoded 3-node list) isn't accidentally clobbered by
+/// the default `--conductor-rpc` value. Returns `None` when no source is
 /// configured (conductor view will simply show no nodes).
 fn resolve_conductor_source(
     cli_flag: Option<Url>,
     config: &MonitoringConfig,
 ) -> Option<ConductorSource> {
+    if let Some(nodes) = config.conductors.clone() {
+        return Some(ConductorSource::Static(nodes));
+    }
     if let Some(bootstrap) = cli_flag {
         let ports = config.discovery.as_ref().map(|d| d.ports.clone()).unwrap_or_default();
         return Some(ConductorSource::Discover { bootstrap, ports });
-    }
-    if let Some(nodes) = config.conductors.clone() {
-        return Some(ConductorSource::Static(nodes));
     }
     if let Some(d) = config.discovery.as_ref()
         && let Some(bootstrap) = d.bootstrap_rpc.clone()
