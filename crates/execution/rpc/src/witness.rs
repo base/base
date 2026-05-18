@@ -1,6 +1,6 @@
 //! Support for Base-specific witness RPCs.
 
-use std::{fmt::Debug, sync::Arc};
+use std::{fmt::Debug, num::NonZeroUsize, sync::Arc};
 
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
@@ -33,9 +33,9 @@ impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmCo
         provider: Provider,
         task_spawner: Box<dyn TaskSpawner>,
         builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
-        max_concurrent_requests: usize,
+        max_concurrent_requests: NonZeroUsize,
     ) -> Self {
-        let semaphore = Arc::new(Semaphore::new(max_concurrent_requests));
+        let semaphore = Arc::new(Semaphore::new(max_concurrent_requests.get()));
         let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner, semaphore };
         Self { inner: Arc::new(inner) }
     }

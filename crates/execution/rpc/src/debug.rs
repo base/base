@@ -1,6 +1,6 @@
 //! Historical proofs RPC server implementation for `debug_` namespace.
 
-use std::{marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, num::NonZeroUsize, sync::Arc};
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag};
@@ -41,7 +41,10 @@ use crate::{
 };
 
 /// Default maximum number of concurrent Base debug RPC requests.
-pub const DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS: usize = 24;
+pub const DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS: NonZeroUsize = match NonZeroUsize::new(3) {
+    Some(value) => value,
+    None => panic!("default debug max concurrent requests must be non-zero"),
+};
 
 /// Represents the current proofs sync status.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -93,7 +96,7 @@ where
         preimage_store: BaseProofsStorage<Storage>,
         task_spawner: Box<dyn TaskSpawner>,
         evm_config: EvmConfig,
-        max_concurrent_requests: usize,
+        max_concurrent_requests: NonZeroUsize,
     ) -> Self {
         Self {
             inner: Arc::new(DebugApiExtInner::new(
@@ -134,7 +137,7 @@ where
         storage: BaseProofsStorage<P>,
         task_spawner: Box<dyn TaskSpawner>,
         evm_config: EvmConfig,
-        max_concurrent_requests: usize,
+        max_concurrent_requests: NonZeroUsize,
     ) -> Self {
         Self {
             provider,
@@ -143,7 +146,7 @@ where
             eth_api,
             evm_config,
             task_spawner,
-            semaphore: Semaphore::new(max_concurrent_requests),
+            semaphore: Semaphore::new(max_concurrent_requests.get()),
             _attrs: PhantomData,
         }
     }

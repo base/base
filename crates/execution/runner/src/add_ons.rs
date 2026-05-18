@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, num::NonZeroUsize};
 
 use base_execution_payload_builder::{
     Attributes, PayloadPrimitives,
@@ -52,7 +52,7 @@ pub struct BaseAddOns<
     /// Gas limit configuration for the payload builder.
     pub gas_limit_config: GasLimitConfig,
     /// Maximum concurrent debug RPC requests.
-    pub debug_max_concurrent_requests: usize,
+    pub debug_max_concurrent_requests: NonZeroUsize,
 }
 
 impl<N, EthB, PVB, EB, EVB, RpcMiddleware> BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
@@ -66,7 +66,7 @@ where
         rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
         da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
-        debug_max_concurrent_requests: usize,
+        debug_max_concurrent_requests: NonZeroUsize,
     ) -> Self {
         Self { rpc_add_ons, da_config, gas_limit_config, debug_max_concurrent_requests }
     }
@@ -337,7 +337,7 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     /// Gas limit configuration for the payload builder.
     gas_limit_config: Option<GasLimitConfig>,
     /// Maximum concurrent debug RPC requests.
-    debug_max_concurrent_requests: usize,
+    debug_max_concurrent_requests: NonZeroUsize,
     /// Marker for network types.
     _nt: PhantomData<NetworkT>,
     /// Minimum suggested priority fee (tip)
@@ -392,7 +392,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
     /// Configure the maximum number of concurrent Base debug RPC requests.
     pub const fn with_debug_max_concurrent_requests(
         mut self,
-        max_concurrent_requests: usize,
+        max_concurrent_requests: NonZeroUsize,
     ) -> Self {
         self.debug_max_concurrent_requests = max_concurrent_requests;
         self

@@ -2,7 +2,7 @@
 
 //! clap [Args](clap::Args) for Base rollup configuration
 
-use std::{path::PathBuf, time::Duration};
+use std::{num::NonZeroUsize, path::PathBuf, time::Duration};
 
 use base_execution_rpc::debug::DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS;
 use clap::{ValueEnum, builder::ArgPredicate};
@@ -141,7 +141,7 @@ pub struct RollupArgs {
         value_name = "DEBUG_MAX_CONCURRENT_REQUESTS",
         default_value_t = DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS
     )]
-    pub debug_max_concurrent_requests: usize,
+    pub debug_max_concurrent_requests: NonZeroUsize,
 
     /// Enable the Base discv5 protocol identity.
     ///
@@ -315,6 +315,16 @@ mod tests {
             "5",
         ])
         .args;
-        assert_eq!(args.debug_max_concurrent_requests, 5);
+        assert_eq!(args.debug_max_concurrent_requests.get(), 5);
+    }
+
+    #[test]
+    fn test_parse_debug_max_concurrent_requests_rejects_zero() {
+        let result = CommandParser::<RollupArgs>::try_parse_from([
+            "reth",
+            "--debug.max-concurrent-requests",
+            "0",
+        ]);
+        assert!(result.is_err());
     }
 }

@@ -3,6 +3,7 @@
 use std::{
     marker::PhantomData,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    num::NonZeroUsize,
     sync::Arc,
 };
 
@@ -395,7 +396,7 @@ pub struct BaseAddOns<
     /// Gas limit configuration for the payload builder.
     pub gas_limit_config: GasLimitConfig,
     /// Maximum concurrent debug RPC requests.
-    pub debug_max_concurrent_requests: usize,
+    pub debug_max_concurrent_requests: NonZeroUsize,
     /// Sequencer client, configured to forward submitted transactions to sequencer of the given
     /// Base network.
     pub sequencer_url: Option<String>,
@@ -415,7 +416,7 @@ where
         rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
         da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
-        debug_max_concurrent_requests: usize,
+        debug_max_concurrent_requests: NonZeroUsize,
         sequencer_url: Option<String>,
         sequencer_headers: Vec<String>,
         min_suggested_priority_fee: u64,
@@ -703,7 +704,7 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     /// Gas limit configuration for the payload builder.
     gas_limit_config: Option<GasLimitConfig>,
     /// Maximum concurrent debug RPC requests.
-    debug_max_concurrent_requests: usize,
+    debug_max_concurrent_requests: NonZeroUsize,
     /// Marker for network types.
     _nt: PhantomData<NetworkT>,
     /// Minimum suggested priority fee (tip)
@@ -758,7 +759,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
     /// Configure the maximum number of concurrent Base debug RPC requests.
     pub const fn with_debug_max_concurrent_requests(
         mut self,
-        max_concurrent_requests: usize,
+        max_concurrent_requests: NonZeroUsize,
     ) -> Self {
         self.debug_max_concurrent_requests = max_concurrent_requests;
         self
