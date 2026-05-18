@@ -29,9 +29,9 @@ use reth_trie_common::{
     updates::{StorageTrieUpdates, TrieUpdates},
 };
 use rocksdb::{
-    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, CompactionPri,
-    DBCompressionType, DBWithThreadMode, Direction, IteratorMode, MultiThreaded, Options,
-    ReadOptions, SnapshotWithThreadMode, WriteBatch, WriteOptions,
+    BlockBasedIndexType, BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor,
+    CompactionPri, DBCompressionType, DBWithThreadMode, Direction, IteratorMode, MultiThreaded,
+    Options, ReadOptions, SliceTransform, SnapshotWithThreadMode, WriteBatch, WriteOptions,
 };
 use tracing::info;
 
@@ -71,6 +71,7 @@ const DEFAULT_MAX_OPEN_FILES: i32 = -1;
 const DEFAULT_MAX_WRITE_BUFFER_NUMBER: i32 = 3;
 const DEFAULT_TARGET_FILE_SIZE_BASE: u64 = 256 * 1024 * 1024;
 const DEFAULT_WRITE_BUFFER_SIZE: usize = 64 * 1024 * 1024;
+const DEFAULT_BLOOM_BITS_PER_KEY: f64 = 10.0;
 
 /// Compression policy for `RocksDB` proof-history column families.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -542,14 +543,33 @@ impl RocksdbProofsStorage {
         table_options
     }
 
+    fn history_table_options(block_cache: &Cache) -> BlockBasedOptions {
+        let mut table_options = Self::table_options(block_cache);
+        table_options.set_bloom_filter(DEFAULT_BLOOM_BITS_PER_KEY, false);
+        table_options.set_whole_key_filtering(true);
+        table_options.set_optimize_filters_for_memory(true);
+        table_options.set_index_type(BlockBasedIndexType::TwoLevelIndexSearch);
+        table_options.set_partition_filters(true);
+        table_options.set_pin_top_level_index_and_filter(true);
+        table_options
+    }
+
     fn cf_options(
         name: &'static str,
         block_cache: &Cache,
         storage_options: RocksdbProofsStorageOptions,
     ) -> Options {
-        let table_options = Self::table_options(block_cache);
+        let history_prefix_len = Self::history_prefix_len(name);
+        let table_options = if history_prefix_len.is_some() {
+            Self::history_table_options(block_cache)
+        } else {
+            Self::table_options(block_cache)
+        };
         let mut options = Options::default();
         options.set_block_based_table_factory(&table_options);
+        if let Some(prefix_len) = history_prefix_len {
+            options.set_prefix_extractor(SliceTransform::create_fixed_prefix(prefix_len));
+        }
         options.set_level_compaction_dynamic_level_bytes(true);
         options.set_level_zero_file_num_compaction_trigger(
             storage_options.level_zero_file_num_compaction_trigger,
@@ -571,6 +591,24 @@ impl RocksdbProofsStorage {
             );
         }
         options
+    }
+
+    fn history_prefix_len(name: &'static str) -> Option<usize> {
+        match name {
+            <AccountTrieHistory as Table>::NAME => {
+                Some(<AccountTrieHistory as RocksDbHistoryTable>::KEY_LEN)
+            }
+            <StorageTrieHistory as Table>::NAME => {
+                Some(<StorageTrieHistory as RocksDbHistoryTable>::KEY_LEN)
+            }
+            <HashedAccountHistory as Table>::NAME => {
+                Some(<HashedAccountHistory as RocksDbHistoryTable>::KEY_LEN)
+            }
+            <HashedStorageHistory as Table>::NAME => {
+                Some(<HashedStorageHistory as RocksDbHistoryTable>::KEY_LEN)
+            }
+            _ => None,
+        }
     }
 
     const fn column_families() -> [&'static str; 6] {
@@ -728,7 +766,7 @@ impl RocksdbProofsStorage {
         for (key, survivor_block) in cutoff_items {
             let prefix = encode_history_key_prefix::<T>(&key);
             let start_key = encode_history_key::<T>(&key, 0);
-            let read_options = prefix_read_options(&prefix);
+            let read_options = exact_prefix_read_options(&prefix);
             let iter = snapshot.iterator_cf_opt(
                 &cf,
                 read_options,
@@ -2246,7 +2284,7 @@ where
         let cf = self.cf()?;
         let prefix = encode_history_key_prefix::<T>(&key);
         let target = encode_history_key::<T>(&key, self.max_block_number);
-        let read_options = prefix_read_options(&prefix);
+        let read_options = exact_prefix_read_options(&prefix);
         let mut iter = self.snapshot.snapshot().iterator_cf_opt(
             &cf,
             read_options,
@@ -2813,6 +2851,12 @@ fn prefix_read_options(prefix: &[u8]) -> ReadOptions {
     read_options
 }
 
+fn exact_prefix_read_options(prefix: &[u8]) -> ReadOptions {
+    let mut read_options = prefix_read_options(prefix);
+    read_options.set_prefix_same_as_start(true);
+    read_options
+}
+
 fn total_order_read_options() -> ReadOptions {
     let mut read_options = ReadOptions::default();
     read_options.set_total_order_seek(true);
@@ -2900,6 +2944,72 @@ mod tests {
         assert_eq!(options.write_buffer_size, DEFAULT_WRITE_BUFFER_SIZE);
         assert!(options.use_direct_io_for_flush_and_compaction);
         assert_eq!(options.rate_limit_bytes_per_sec, None);
+    }
+
+    #[test]
+    fn history_prefix_lengths_match_encoded_key_prefixes() {
+        let account_path = StoredNibbles(Nibbles::from_nibbles_unchecked([1, 2, 3]));
+        let storage_path = StorageTrieKey::new(
+            B256::repeat_byte(0x01),
+            StoredNibbles(Nibbles::from_nibbles_unchecked([4, 5, 6])),
+        );
+        let hashed_account = B256::repeat_byte(0x02);
+        let hashed_storage =
+            HashedStorageKey::new(B256::repeat_byte(0x03), B256::repeat_byte(0x04));
+
+        assert_eq!(
+            RocksdbProofsStorage::history_prefix_len(<AccountTrieHistory as Table>::NAME),
+            Some(PACKED_NIBBLES_KEY_LEN)
+        );
+        assert_eq!(
+            RocksdbProofsStorage::history_prefix_len(<StorageTrieHistory as Table>::NAME),
+            Some(HASH_KEY_LEN + PACKED_NIBBLES_KEY_LEN)
+        );
+        assert_eq!(
+            RocksdbProofsStorage::history_prefix_len(<HashedAccountHistory as Table>::NAME),
+            Some(HASH_KEY_LEN)
+        );
+        assert_eq!(
+            RocksdbProofsStorage::history_prefix_len(<HashedStorageHistory as Table>::NAME),
+            Some(HASH_KEY_LEN * 2)
+        );
+        assert_eq!(RocksdbProofsStorage::history_prefix_len(<ProofWindow as Table>::NAME), None);
+
+        assert_eq!(
+            encode_history_key_prefix::<AccountTrieHistory>(&account_path).len(),
+            RocksdbProofsStorage::history_prefix_len(<AccountTrieHistory as Table>::NAME).unwrap()
+        );
+        assert_eq!(
+            encode_history_key_prefix::<StorageTrieHistory>(&storage_path).len(),
+            RocksdbProofsStorage::history_prefix_len(<StorageTrieHistory as Table>::NAME).unwrap()
+        );
+        assert_eq!(
+            encode_history_key_prefix::<HashedAccountHistory>(&hashed_account).len(),
+            RocksdbProofsStorage::history_prefix_len(<HashedAccountHistory as Table>::NAME)
+                .unwrap()
+        );
+        assert_eq!(
+            encode_history_key_prefix::<HashedStorageHistory>(&hashed_storage).len(),
+            RocksdbProofsStorage::history_prefix_len(<HashedStorageHistory as Table>::NAME)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn opens_with_history_prefix_filter_options() {
+        let dir = TempDir::new().unwrap();
+        let storage = RocksdbProofsStorage::new_with_options(
+            dir.path(),
+            RocksdbProofsStorageOptions::default(),
+        )
+        .unwrap();
+        let account = B256::repeat_byte(0x55);
+
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+        storage.store_trie_updates(block(1, B256::ZERO), account_update(account, 1)).unwrap();
+
+        assert_eq!(storage.get_latest_block_number().unwrap(), Some((1, B256::repeat_byte(1))));
+        assert_eq!(storage.account_by_hashed_key(account, 1).unwrap().unwrap().nonce, 1);
     }
 
     fn block(number: u64, parent: B256) -> BlockWithParent {
