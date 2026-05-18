@@ -30,33 +30,16 @@ pub async fn run_app(
     conductor_rpc: Option<Url>,
 ) -> Result<()> {
     let mut config = MonitoringConfig::load(network).await?;
-    // When --conductor-rpc is set, detect chain via the bootstrap's EL port so
-    // the badge reflects the cluster the operator pointed at, not the default
-    // public RPC baked into the network preset.
-    let detect_rpc = detect_rpc_for(&config, conductor_rpc.as_ref());
-    if let Some(detected) = MonitoringConfig::detect_name_from_rpc(&detect_rpc).await {
-        config.name = detected;
+    if let Some(bootstrap) = conductor_rpc.as_ref() {
+        let detect_rpc = config.detect_rpc_for(Some(bootstrap));
+        if let Some(detected) = MonitoringConfig::detect_name_from_rpc(&detect_rpc).await {
+            config.name = detected;
+        }
     }
     let mut resources = Resources::new(config.clone());
     start_background_services(&config, &mut resources, conductor_rpc.clone());
     let app = App::new(resources, initial_view, conductor_rpc);
     app.run(create_view).await
-}
-
-/// Returns the URL to use for `eth_chainId` network detection.
-///
-/// When `--conductor-rpc` is set we derive the EL URL from the bootstrap host
-/// using the discovery EL port template (falls back to `config.rpc` if the
-/// resulting URL fails to construct or the EL port is disabled).
-pub fn detect_rpc_for(config: &MonitoringConfig, conductor_rpc: Option<&Url>) -> Url {
-    let Some(bootstrap) = conductor_rpc else { return config.rpc.clone() };
-    let ports = config.discovery.as_ref().map(|d| &d.ports);
-    let el_port = ports.and_then(|p| p.el_rpc).unwrap_or(8545);
-    let mut candidate = bootstrap.clone();
-    if candidate.set_port(Some(el_port)).is_err() {
-        return config.rpc.clone();
-    }
-    candidate
 }
 
 /// Resolves the active conductor source from CLI flag and config.

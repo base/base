@@ -10,10 +10,7 @@ use ratatui::{
 use tokio::sync::oneshot;
 use url::Url;
 
-use super::{
-    Action, Resources, Router, View, ViewId,
-    runner::{detect_rpc_for, start_background_services},
-};
+use super::{Action, Resources, Router, View, ViewId, runner::start_background_services};
 use crate::{
     commands::{COLOR_BASE_BLUE, EVENT_POLL_TIMEOUT},
     config::MonitoringConfig,
@@ -252,19 +249,14 @@ impl App {
         self.pending_network = Some(rx);
         let conductor_rpc = self.conductor_rpc.clone();
         tokio::spawn(async move {
-            let result = match MonitoringConfig::load(&name).await {
-                Ok(mut config) => {
-                    let detect_rpc = detect_rpc_for(&config, conductor_rpc.as_ref());
-                    if let Some(detected) =
-                        MonitoringConfig::detect_name_from_rpc(&detect_rpc).await
-                    {
-                        config.name = detected;
-                    }
-                    Ok(config)
+            let mut load = MonitoringConfig::load(&name).await;
+            if let (Ok(config), Some(bootstrap)) = (load.as_mut(), conductor_rpc.as_ref()) {
+                let detect_rpc = config.detect_rpc_for(Some(bootstrap));
+                if let Some(detected) = MonitoringConfig::detect_name_from_rpc(&detect_rpc).await {
+                    config.name = detected;
                 }
-                Err(e) => Err(e),
-            };
-            let _ = tx.send(result);
+            }
+            let _ = tx.send(load);
         });
     }
 

@@ -332,6 +332,23 @@ impl MonitoringConfig {
         let chain_id = provider.get_chain_id().await.ok()?;
         Self::name_for_chain_id(chain_id).map(str::to_owned)
     }
+
+    /// Returns the URL to use for `eth_chainId` network detection.
+    ///
+    /// When `conductor_rpc` is `Some`, derives the EL URL from the bootstrap
+    /// host and the discovery EL port template, so the badge reflects the
+    /// cluster basectl was pointed at instead of the preset's default RPC.
+    /// Falls back to `self.rpc` when URL construction fails or no bootstrap
+    /// is provided.
+    pub fn detect_rpc_for(&self, conductor_rpc: Option<&Url>) -> Url {
+        let Some(bootstrap) = conductor_rpc else { return self.rpc.clone() };
+        let el_port = self.discovery.as_ref().and_then(|d| d.ports.el_rpc).unwrap_or(8545);
+        let mut candidate = bootstrap.clone();
+        if candidate.set_port(Some(el_port)).is_err() {
+            return self.rpc.clone();
+        }
+        candidate
+    }
 }
 
 const fn default_blob_target() -> u64 {

@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
@@ -1303,20 +1303,23 @@ pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<Cond
 
         let (statuses, new_membership) = tokio::join!(statuses_fut, membership_fut);
 
+        // Send Status first so the UI flushes the statuses keyed to the
+        // current node set before we potentially swap that set out below.
+        if tx.send(ConductorPollUpdate::Status(statuses)).await.is_err() {
+            break;
+        }
+
         if let Some(membership) = new_membership {
             let changed =
                 last_membership.as_ref().is_none_or(|prev| prev.version != membership.version);
             if changed {
-                last_membership = Some(membership.clone());
                 if tx.send(ConductorPollUpdate::Membership(membership.clone())).await.is_err() {
                     break;
                 }
                 if let Some(synthesized) = source.synthesize_nodes(&membership) {
-                    let server_ids_changed = synthesized
-                        .iter()
-                        .map(|n| &n.server_id)
-                        .ne(current_nodes.iter().map(|n| &n.server_id));
-                    if server_ids_changed && !synthesized.is_empty() {
+                    let old_ids: BTreeSet<_> = current_nodes.iter().map(|n| &n.server_id).collect();
+                    let new_ids: BTreeSet<_> = synthesized.iter().map(|n| &n.server_id).collect();
+                    if old_ids != new_ids && !synthesized.is_empty() {
                         current_nodes = synthesized.clone();
                         clients = build_conductor_clients(&current_nodes, RPC_TIMEOUT);
                         if tx
@@ -1328,11 +1331,8 @@ pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<Cond
                         }
                     }
                 }
+                last_membership = Some(membership);
             }
-        }
-
-        if tx.send(ConductorPollUpdate::Status(statuses)).await.is_err() {
-            break;
         }
     }
 }
