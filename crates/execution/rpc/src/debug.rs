@@ -40,6 +40,9 @@ use crate::{
     state::BaseStateProviderFactory,
 };
 
+/// Default maximum number of concurrent Base debug RPC requests.
+pub const DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS: usize = 3;
+
 /// Represents the current proofs sync status.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ProofsSyncStatus {
@@ -90,6 +93,7 @@ where
         preimage_store: BaseProofsStorage<Storage>,
         task_spawner: Box<dyn TaskSpawner>,
         evm_config: EvmConfig,
+        max_concurrent_requests: usize,
     ) -> Self {
         Self {
             inner: Arc::new(DebugApiExtInner::new(
@@ -98,6 +102,7 @@ where
                 preimage_store,
                 task_spawner,
                 evm_config,
+                max_concurrent_requests,
             )),
         }
     }
@@ -129,6 +134,7 @@ where
         storage: BaseProofsStorage<P>,
         task_spawner: Box<dyn TaskSpawner>,
         evm_config: EvmConfig,
+        max_concurrent_requests: usize,
     ) -> Self {
         Self {
             provider,
@@ -137,7 +143,7 @@ where
             eth_api,
             evm_config,
             task_spawner,
-            semaphore: Semaphore::new(3),
+            semaphore: Semaphore::new(max_concurrent_requests),
             _attrs: PhantomData,
         }
     }

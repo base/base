@@ -33,8 +33,9 @@ impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmCo
         provider: Provider,
         task_spawner: Box<dyn TaskSpawner>,
         builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
+        max_concurrent_requests: usize,
     ) -> Self {
-        let semaphore = Arc::new(Semaphore::new(3));
+        let semaphore = Arc::new(Semaphore::new(max_concurrent_requests));
         let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner, semaphore };
         Self { inner: Arc::new(inner) }
     }

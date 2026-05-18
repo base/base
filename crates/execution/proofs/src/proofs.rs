@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use base_execution_exex::BaseProofsExEx;
 use base_execution_rpc::{
-    debug::{DebugApiExt, DebugApiOverrideServer},
+    debug::{DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS, DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
 use base_execution_trie::{BaseProofsStorage, MdbxProofsStorage};
@@ -88,6 +88,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                         storage,
                         Box::new(ctx.node().task_executor().clone()),
                         ctx.node().evm_config().clone(),
+                        DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS,
                     );
                     ctx.modules.replace_configured(api_ext.into_rpc())?;
                     ctx.modules.replace_configured(debug_ext.into_rpc())?;
