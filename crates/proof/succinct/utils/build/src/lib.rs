@@ -1,5 +1,4 @@
-//! Build script for the utils crate.
-
+#![doc = include_str!("../README.md")]
 use sp1_build::{BuildArgs, build_program_with_args};
 
 #[allow(unused)]
