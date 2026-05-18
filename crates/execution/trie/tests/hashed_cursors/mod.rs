@@ -465,3 +465,152 @@ fn test_large_batch_operations<S: BaseProofsStore + BaseProofsInitialStateStore>
 
     Ok(())
 }
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[serial]
+fn test_exact_account_reads_do_not_return_lower_bound_neighbor<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let left_key = B256::repeat_byte(0x10);
+    let missing_key = B256::repeat_byte(0x20);
+    let right_key = B256::repeat_byte(0x30);
+    let left_account = create_test_account_with_values(1, 100, 0xAA);
+    let right_account = create_test_account_with_values(2, 200, 0xBB);
+
+    storage.store_hashed_accounts(vec![
+        (left_key, Some(left_account)),
+        (right_key, Some(right_account)),
+    ])?;
+
+    assert_eq!(storage.account_by_hashed_key(left_key, 100)?, Some(left_account));
+    assert_eq!(storage.account_by_hashed_key(right_key, 100)?, Some(right_account));
+    assert_eq!(storage.account_by_hashed_key(missing_key, 100)?, None);
+
+    Ok(())
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[serial]
+fn test_exact_storage_reads_do_not_return_lower_bound_neighbor<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let hashed_address = B256::repeat_byte(0xA0);
+    let left_key = B256::repeat_byte(0x10);
+    let missing_key = B256::repeat_byte(0x20);
+    let right_key = B256::repeat_byte(0x30);
+
+    storage.store_hashed_storages(
+        hashed_address,
+        vec![(left_key, U256::from(100)), (right_key, U256::from(300))],
+    )?;
+
+    assert_eq!(
+        storage.storage_by_hashed_key(hashed_address, left_key, 100)?,
+        Some(U256::from(100))
+    );
+    assert_eq!(
+        storage.storage_by_hashed_key(hashed_address, right_key, 100)?,
+        Some(U256::from(300))
+    );
+    assert_eq!(storage.storage_by_hashed_key(hashed_address, missing_key, 100)?, None);
+
+    Ok(())
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[serial]
+fn test_exact_reads_hide_deleted_account_and_zero_storage<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let deleted_account_key = B256::repeat_byte(0x40);
+    let live_account_key = B256::repeat_byte(0x50);
+    let hashed_address = B256::repeat_byte(0x60);
+    let zero_slot = B256::repeat_byte(0x70);
+    let live_slot = B256::repeat_byte(0x80);
+    let live_account = create_test_account();
+
+    storage.store_hashed_accounts(vec![
+        (deleted_account_key, None),
+        (live_account_key, Some(live_account)),
+    ])?;
+    storage.store_hashed_storages(
+        hashed_address,
+        vec![(zero_slot, U256::ZERO), (live_slot, U256::from(1))],
+    )?;
+
+    assert_eq!(storage.account_by_hashed_key(deleted_account_key, 100)?, None);
+    assert_eq!(storage.account_by_hashed_key(live_account_key, 100)?, Some(live_account));
+    assert_eq!(storage.storage_by_hashed_key(hashed_address, zero_slot, 100)?, None);
+    assert_eq!(storage.storage_by_hashed_key(hashed_address, live_slot, 100)?, Some(U256::from(1)));
+
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn test_rocksdb_exact_reads_use_supplied_snapshot() -> Result<(), BaseProofsStorageError> {
+    let storage = create_rocksdb_proofs_storage();
+    let account_key = B256::repeat_byte(0x01);
+    let hashed_address = B256::repeat_byte(0x02);
+    let storage_key = B256::repeat_byte(0x03);
+    let account_v1 = create_test_account_with_values(1, 100, 0xAA);
+    let account_v2 = create_test_account_with_values(2, 200, 0xBB);
+
+    let block1 = BlockWithParent::new(B256::ZERO, NumHash::new(1, B256::repeat_byte(0x11)));
+    let mut post_state = HashedPostState::default();
+    post_state.accounts.insert(account_key, Some(account_v1));
+    let mut hashed_storage = HashedStorage::default();
+    hashed_storage.storage.insert(storage_key, U256::from(10));
+    post_state.storages.insert(hashed_address, hashed_storage);
+    storage.store_trie_updates(
+        block1,
+        BlockStateDiff {
+            sorted_trie_updates: TrieUpdatesSorted::default(),
+            sorted_post_state: post_state.into_sorted(),
+        },
+    )?;
+
+    let tx = storage.storage.ro_tx()?;
+
+    let block2 = BlockWithParent::new(block1.block.hash, NumHash::new(2, B256::repeat_byte(0x22)));
+    let mut post_state = HashedPostState::default();
+    post_state.accounts.insert(account_key, Some(account_v2));
+    let mut hashed_storage = HashedStorage::default();
+    hashed_storage.storage.insert(storage_key, U256::from(20));
+    post_state.storages.insert(hashed_address, hashed_storage);
+    storage.store_trie_updates(
+        block2,
+        BlockStateDiff {
+            sorted_trie_updates: TrieUpdatesSorted::default(),
+            sorted_post_state: post_state.into_sorted(),
+        },
+    )?;
+
+    assert_eq!(
+        storage.storage.account_by_hashed_key_with_tx(&tx, account_key, 2)?,
+        Some(account_v1)
+    );
+    assert_eq!(storage.storage.account_by_hashed_key(account_key, 2)?, Some(account_v2));
+    assert_eq!(
+        storage.storage.storage_by_hashed_key_with_tx(&tx, hashed_address, storage_key, 2)?,
+        Some(U256::from(10))
+    );
+    assert_eq!(
+        storage.storage.storage_by_hashed_key(hashed_address, storage_key, 2)?,
+        Some(U256::from(20))
+    );
+
+    Ok(())
+}

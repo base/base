@@ -441,6 +441,59 @@ where
     }
 
     #[inline]
+    fn account_by_hashed_key(
+        &self,
+        hashed_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>> {
+        self.storage.account_by_hashed_key(hashed_key, max_block_number)
+    }
+
+    #[inline]
+    fn account_by_hashed_key_with_tx<'tx, 'db>(
+        &self,
+        tx: &'tx Self::Tx<'db>,
+        hashed_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>>
+    where
+        Self: 'db,
+        'db: 'tx,
+    {
+        self.storage.account_by_hashed_key_with_tx(tx, hashed_key, max_block_number)
+    }
+
+    #[inline]
+    fn storage_by_hashed_key(
+        &self,
+        hashed_address: B256,
+        hashed_storage_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>> {
+        self.storage.storage_by_hashed_key(hashed_address, hashed_storage_key, max_block_number)
+    }
+
+    #[inline]
+    fn storage_by_hashed_key_with_tx<'tx, 'db>(
+        &self,
+        tx: &'tx Self::Tx<'db>,
+        hashed_address: B256,
+        hashed_storage_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>>
+    where
+        Self: 'db,
+        'db: 'tx,
+    {
+        self.storage.storage_by_hashed_key_with_tx(
+            tx,
+            hashed_address,
+            hashed_storage_key,
+            max_block_number,
+        )
+    }
+
+    #[inline]
     fn store_trie_updates(
         &self,
         block_ref: BlockWithParent,
