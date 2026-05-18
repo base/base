@@ -9,9 +9,9 @@ set -eux
 : "${L2_CHAIN_ID:?required}"
 : "${PROOF_REQUEST_TIMEOUT_SECS:=3600}"
 
-ADDITIONAL_ARGS=""
+ADDITIONAL_ARGS=()
 if [ -n "${TEE_PROVER_REGISTRY_ADDRESS:-}" ]; then
-    ADDITIONAL_ARGS="$ADDITIONAL_ARGS --tee-prover-registry-address=$TEE_PROVER_REGISTRY_ADDRESS"
+    ADDITIONAL_ARGS+=(--tee-prover-registry-address="$TEE_PROVER_REGISTRY_ADDRESS")
 fi
 
 exec ./base-prover-nitro-host \
@@ -24,4 +24,4 @@ exec ./base-prover-nitro-host \
     --vsock-cid "$VSOCK_CID" \
     --proof-request-timeout-secs "$PROOF_REQUEST_TIMEOUT_SECS" \
     --enable-experimental-witness-endpoint \
-    $ADDITIONAL_ARGS
+    "${ADDITIONAL_ARGS[@]}"
