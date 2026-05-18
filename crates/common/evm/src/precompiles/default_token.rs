@@ -8,7 +8,7 @@ use revm::precompile::{PrecompileOutput, PrecompileResult};
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 
 /// Canonical address of the DefaultToken precompile.
-pub const ADDRESS: Address = address!("0000000000000000000000000000000000000900");
+pub const ADDRESS: Address = base_common_precompiles::DEFAULT_TOKEN_ADDRESS;
 
 /// EVM entry point for the DefaultToken precompile.
 #[derive(Debug, Default, Clone, Copy)]
