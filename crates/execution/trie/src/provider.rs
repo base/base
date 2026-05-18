@@ -2,7 +2,8 @@
 
 use std::{fmt::Debug, sync::OnceLock};
 
-use alloy_primitives::keccak256;
+use alloy_primitives::{keccak256, map::HashMap};
+use parking_lot::Mutex;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
@@ -43,6 +44,9 @@ pub struct BaseProofsStateProviderRef<'a, Storage: BaseProofsStore> {
 
     /// Request-scoped read transaction for EVM account and storage reads.
     tx: OnceLock<Result<Storage::Tx<'a>, BaseProofsStorageError>>,
+
+    /// Request-scoped cache for hashed account addresses.
+    hashed_addresses: OnceLock<Mutex<HashMap<Address, B256>>>,
 }
 
 impl<'a, Storage: BaseProofsStore> BaseProofsStateProviderRef<'a, Storage> {
@@ -52,7 +56,13 @@ impl<'a, Storage: BaseProofsStore> BaseProofsStateProviderRef<'a, Storage> {
         storage: &'a BaseProofsStorage<Storage>,
         block_number: BlockNumber,
     ) -> Self {
-        Self { latest, storage, block_number, tx: OnceLock::new() }
+        Self {
+            latest,
+            storage,
+            block_number,
+            tx: OnceLock::new(),
+            hashed_addresses: OnceLock::new(),
+        }
     }
 
     fn tx(&self) -> ProviderResult<&Storage::Tx<'a>> {
@@ -60,6 +70,17 @@ impl<'a, Storage: BaseProofsStore> BaseProofsStateProviderRef<'a, Storage> {
             Ok(tx) => Ok(tx),
             Err(error) => Err(error.clone().into()),
         }
+    }
+
+    fn hashed_address(&self, address: Address) -> B256 {
+        let cache = self.hashed_addresses.get_or_init(Default::default);
+        if let Some(hashed_address) = cache.lock().get(&address) {
+            return *hashed_address;
+        }
+
+        let hashed_address = keccak256(address.0);
+        cache.lock().insert(address, hashed_address);
+        hashed_address
     }
 }
 
@@ -201,7 +222,7 @@ impl<'a, Storage: BaseProofsStore> HashedPostStateProvider
 
 impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<'a, Storage> {
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
-        let hashed_key = keccak256(address.0);
+        let hashed_key = self.hashed_address(*address);
         let tx = self.tx()?;
         self.storage
             .account_by_hashed_key_with_tx(tx, hashed_key, self.block_number)
@@ -225,7 +246,12 @@ where
     ) -> ProviderResult<Option<StorageValue>> {
         let tx = self.tx()?;
         self.storage
-            .storage_by_hashed_key_with_tx(tx, keccak256(address.0), hashed_key, self.block_number)
+            .storage_by_hashed_key_with_tx(
+                tx,
+                self.hashed_address(address),
+                hashed_key,
+                self.block_number,
+            )
             .map_err(Into::<ProviderError>::into)
     }
 }
