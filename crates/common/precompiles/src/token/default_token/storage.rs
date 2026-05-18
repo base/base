@@ -4,23 +4,23 @@ use base_precompile_storage::{Handler, Mapping, Result, StorageCtx};
 
 use crate::token::common::TokenAccounting;
 
-/// Canonical precompile address for the DefaultToken (placeholder — replace before deployment).
+/// Canonical precompile address for the `DefaultToken` (placeholder — replace before deployment).
 pub const DEFAULT_TOKEN_ADDRESS: Address = address!("0000000000000000000000000000000000000900");
 
 #[contract(addr = DEFAULT_TOKEN_ADDRESS)]
 pub struct DefaultTokenStorage {
-    pub total_supply: U256,                                     // slot 0
-    pub supply_cap: U256,                                       // slot 1
-    pub balances: Mapping<Address, U256>,                       // slot 2
-    pub allowances: Mapping<Address, Mapping<Address, U256>>,  // slot 3
-    pub paused: U256,                                           // slot 4
-    pub nonces: Mapping<Address, U256>,                         // slot 5
-    pub name: String,                                           // slot 6
-    pub symbol: String,                                         // slot 7
-    pub decimals: u8,                                           // slot 8
-    pub minimum_redeemable: U256,                               // slot 9
-    pub contract_uri: String,                                   // slot 10
-    pub capabilities: U256,                                     // slot 11
+    pub total_supply: U256,                                   // slot 0
+    pub supply_cap: U256,                                     // slot 1
+    pub balances: Mapping<Address, U256>,                     // slot 2
+    pub allowances: Mapping<Address, Mapping<Address, U256>>, // slot 3
+    pub paused: U256,                                         // slot 4
+    pub nonces: Mapping<Address, U256>,                       // slot 5
+    pub name: String,                                         // slot 6
+    pub symbol: String,                                       // slot 7
+    pub decimals: u8,                                         // slot 8
+    pub minimum_redeemable: U256,                             // slot 9
+    pub contract_uri: String,                                 // slot 10
+    pub capabilities: U256,                                   // slot 11
 }
 
 impl TokenAccounting for DefaultTokenStorage {

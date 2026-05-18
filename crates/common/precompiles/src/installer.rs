@@ -54,7 +54,7 @@ mod tests {
 
     #[test]
     fn default_installer_uses_default_precompile_spec() {
-        let installer = BasePrecompileInstaller::<BaseUpgrade>::default();
+        let installer = BasePrecompileInstaller::new(BaseUpgrade::LATEST);
 
         assert_eq!(installer.spec(), BaseUpgrade::LATEST);
     }

@@ -20,7 +20,3 @@ pub trait Token {
     /// Returns the on-chain address of this token contract.
     fn token_address(&self) -> Address;
 }
-
-
-
-

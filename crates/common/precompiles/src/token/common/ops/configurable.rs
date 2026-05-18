@@ -2,7 +2,10 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::{IDefaultToken, common::{CAPABILITY_CAP_MUTABLE, Token}};
+use crate::token::{
+    IDefaultToken,
+    common::{CAPABILITY_CAP_MUTABLE, Token},
+};
 
 /// Mutable configuration operations: supply cap, metadata, and contract URI updates.
 ///
@@ -31,21 +34,29 @@ pub trait Configurable: Token {
         let old = self.accounting().supply_cap()?;
         self.accounting_mut().set_supply_cap(new_cap)?;
         self.accounting_mut().emit_event(
-            IDefaultToken::SupplyCapUpdated { updater: caller, oldSupplyCap: old, newSupplyCap: new_cap }
-                .encode_log_data(),
+            IDefaultToken::SupplyCapUpdated {
+                updater: caller,
+                oldSupplyCap: old,
+                newSupplyCap: new_cap,
+            }
+            .encode_log_data(),
         )
     }
 
     /// Updates the token name. Emits `NameUpdated`.
     fn set_name(&mut self, caller: Address, name: String) -> Result<()> {
         self.accounting_mut().set_name(name.clone())?;
-        self.accounting_mut().emit_event(IDefaultToken::NameUpdated { updater: caller, newName: name }.encode_log_data())
+        self.accounting_mut().emit_event(
+            IDefaultToken::NameUpdated { updater: caller, newName: name }.encode_log_data(),
+        )
     }
 
     /// Updates the token symbol. Emits `SymbolUpdated`.
     fn set_symbol(&mut self, caller: Address, symbol: String) -> Result<()> {
         self.accounting_mut().set_symbol(symbol.clone())?;
-        self.accounting_mut().emit_event(IDefaultToken::SymbolUpdated { updater: caller, newSymbol: symbol }.encode_log_data())
+        self.accounting_mut().emit_event(
+            IDefaultToken::SymbolUpdated { updater: caller, newSymbol: symbol }.encode_log_data(),
+        )
     }
 
     /// Updates the contract URI. Emits `ContractURIUpdated`.

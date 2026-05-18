@@ -8,17 +8,17 @@
 //! [`TokenAccounting`]: crate::token::common::TokenAccounting
 
 mod burnable;
+mod configurable;
 mod mintable;
 mod pausable;
 mod permittable;
 mod redeemable;
-mod configurable;
 mod transferable;
 
 pub use burnable::Burnable;
+pub use configurable::Configurable;
 pub use mintable::Mintable;
 pub use pausable::Pausable;
 pub use permittable::Permittable;
 pub use redeemable::Redeemable;
-pub use configurable::Configurable;
 pub use transferable::Transferable;

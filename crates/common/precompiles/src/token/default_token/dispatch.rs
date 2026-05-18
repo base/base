@@ -3,15 +3,14 @@ use alloy_sol_types::{SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use crate::token::abi::IDefaultToken;
-use crate::token::abi::IDefaultToken::IDefaultTokenCalls as C;
-use crate::token::common::ops::{
-    Burnable, Mintable, Pausable, Permittable, Redeemable, Configurable, Transferable,
-};
-
-use crate::token::common::TokenAccounting;
-
 use super::DefaultToken;
+use crate::token::{
+    abi::{IDefaultToken, IDefaultToken::IDefaultTokenCalls as C},
+    common::{
+        TokenAccounting,
+        ops::{Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, Transferable},
+    },
+};
 
 impl<S: TokenAccounting> DefaultToken<S> {
     /// ABI-dispatches `calldata` to the appropriate `IDefaultToken` handler.
@@ -35,9 +34,7 @@ impl<S: TokenAccounting> DefaultToken<S> {
             C::decimals(_) => U256::from(self.accounting.decimals()?).abi_encode().into(),
             C::totalSupply(_) => self.accounting.total_supply()?.abi_encode().into(),
             C::balanceOf(c) => self.accounting.balance_of(c.account)?.abi_encode().into(),
-            C::allowance(c) => {
-                self.accounting.allowance(c.owner, c.spender)?.abi_encode().into()
-            }
+            C::allowance(c) => self.accounting.allowance(c.owner, c.spender)?.abi_encode().into(),
             C::supplyCap(_) => self.accounting.supply_cap()?.abi_encode().into(),
             C::paused(_) => self.accounting.paused()?.abi_encode().into(),
             C::nonces(c) => self.accounting.nonce(c.owner)?.abi_encode().into(),
@@ -52,9 +49,7 @@ impl<S: TokenAccounting> DefaultToken<S> {
             C::DOMAIN_SEPARATOR(_) => {
                 self.domain_separator(StorageCtx.chain_id())?.abi_encode().into()
             }
-            C::eip712Domain(_) => {
-                self.eip712_domain(StorageCtx.chain_id())?.abi_encode().into()
-            }
+            C::eip712Domain(_) => self.eip712_domain(StorageCtx.chain_id())?.abi_encode().into(),
 
             // --- ERC-20 mutating ---
             C::transfer(c) => {

@@ -2,9 +2,8 @@ use alloy_primitives::{Address, B256, FixedBytes, U256, keccak256};
 use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::IDefaultToken;
-
 use super::Transferable;
+use crate::token::IDefaultToken;
 
 // keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)")
 const PERMIT_TYPEHASH: B256 =
@@ -64,16 +63,15 @@ pub trait Permittable: Transferable {
         let domain_sep = self.domain_separator(chain_id)?;
         let nonce = self.accounting().nonce(owner)?;
 
-        let struct_hash = keccak256(
-            (PERMIT_TYPEHASH, owner, spender, value, nonce, deadline).abi_encode(),
-        );
+        let struct_hash =
+            keccak256((PERMIT_TYPEHASH, owner, spender, value, nonce, deadline).abi_encode());
 
         let mut buf = [0u8; 66];
         buf[0] = 0x19;
         buf[1] = 0x01;
         buf[2..34].copy_from_slice(domain_sep.as_slice());
         buf[34..66].copy_from_slice(struct_hash.as_slice());
-        let hash = keccak256(&buf);
+        let hash = keccak256(buf);
 
         let odd_y_parity = v == 28;
         let sig = alloy_primitives::Signature::from_scalars_and_parity(r, s, odd_y_parity);

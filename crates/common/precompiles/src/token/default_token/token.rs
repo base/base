@@ -1,16 +1,14 @@
 //! `DefaultToken` struct — the concrete B-20 token type.
 
 use alloy_primitives::Address;
-use base_precompile_storage::NativePrecompile;
-use base_precompile_storage::PrecompileStorageProvider;
+use base_precompile_storage::{NativePrecompile, PrecompileStorageProvider};
 use revm::precompile::PrecompileResult;
 
+use super::storage::{DEFAULT_TOKEN_ADDRESS, DefaultTokenStorage};
 use crate::token::common::{
     Token, TokenAccounting,
     ops::{Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, Transferable},
 };
-
-use super::storage::{DEFAULT_TOKEN_ADDRESS, DefaultTokenStorage};
 
 /// EVM precompile for the Default B-20 token variant.
 ///
@@ -33,7 +31,7 @@ impl<S: TokenAccounting> DefaultToken<S> {
     /// Creates a `DefaultToken` backed by the provided storage adapter.
     ///
     /// Use this in tests to inject an in-memory [`TokenAccounting`] implementation.
-    pub fn with_storage(accounting: S) -> Self {
+    pub const fn with_storage(accounting: S) -> Self {
         Self { accounting }
     }
 }
@@ -67,12 +65,12 @@ impl<S: TokenAccounting> Token for DefaultToken<S> {
 // ---------------------------------------------------------------------------
 
 impl<S: TokenAccounting> Transferable for DefaultToken<S> {}
-impl<S: TokenAccounting> Mintable     for DefaultToken<S> {}
-impl<S: TokenAccounting> Burnable     for DefaultToken<S> {}
-impl<S: TokenAccounting> Redeemable   for DefaultToken<S> {}
-impl<S: TokenAccounting> Pausable     for DefaultToken<S> {}
+impl<S: TokenAccounting> Mintable for DefaultToken<S> {}
+impl<S: TokenAccounting> Burnable for DefaultToken<S> {}
+impl<S: TokenAccounting> Redeemable for DefaultToken<S> {}
+impl<S: TokenAccounting> Pausable for DefaultToken<S> {}
 impl<S: TokenAccounting> Configurable for DefaultToken<S> {}
-impl<S: TokenAccounting> Permittable  for DefaultToken<S> {}
+impl<S: TokenAccounting> Permittable for DefaultToken<S> {}
 
 // ---------------------------------------------------------------------------
 // EVM wiring

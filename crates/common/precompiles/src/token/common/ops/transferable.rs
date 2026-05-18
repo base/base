@@ -2,8 +2,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::common::Token;
-use crate::token::IDefaultToken;
+use crate::token::{IDefaultToken, common::Token};
 
 /// ERC-20 transfer, approval, and memo-decorated transfer operations.
 ///
@@ -31,7 +30,8 @@ pub trait Transferable: Token {
         self.accounting_mut().set_balance(from, from_balance - amount)?;
         let to_balance = self.accounting().balance_of(to)?;
         self.accounting_mut().set_balance(to, to_balance + amount)?;
-        self.accounting_mut().emit_event(IDefaultToken::Transfer { from, to, amount }.encode_log_data())
+        self.accounting_mut()
+            .emit_event(IDefaultToken::Transfer { from, to, amount }.encode_log_data())
     }
 
     /// Moves `amount` tokens from `from` to `to` using `spender`'s allowance.
@@ -44,16 +44,16 @@ pub trait Transferable: Token {
         amount: U256,
     ) -> Result<()> {
         if from == Address::ZERO {
-            return Err(BasePrecompileError::revert(IDefaultToken::InvalidSender {
-                sender: from,
-            }));
+            return Err(BasePrecompileError::revert(IDefaultToken::InvalidSender { sender: from }));
         }
         let allowance = self.accounting().allowance(from, spender)?;
         if allowance != U256::MAX {
             if allowance < amount {
-                return Err(BasePrecompileError::revert(
-                    IDefaultToken::InsufficientAllowance { spender, allowance, needed: amount },
-                ));
+                return Err(BasePrecompileError::revert(IDefaultToken::InsufficientAllowance {
+                    spender,
+                    allowance,
+                    needed: amount,
+                }));
             }
             self.accounting_mut().set_allowance(from, spender, allowance - amount)?;
         }
@@ -71,7 +71,8 @@ pub trait Transferable: Token {
             return Err(BasePrecompileError::revert(IDefaultToken::InvalidSpender { spender }));
         }
         self.accounting_mut().set_allowance(owner, spender, amount)?;
-        self.accounting_mut().emit_event(IDefaultToken::Approval { owner, spender, amount }.encode_log_data())
+        self.accounting_mut()
+            .emit_event(IDefaultToken::Approval { owner, spender, amount }.encode_log_data())
     }
 
     /// [`Self::transfer`] followed by a `Memo` event.

@@ -1,4 +1,4 @@
-//! EVM wiring for the DefaultToken precompile.
+//! EVM wiring for the `DefaultToken` precompile.
 
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::Bytes;
@@ -7,7 +7,7 @@ use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
 
 use super::DefaultToken;
 
-/// EVM entry point for the DefaultToken precompile.
+/// EVM entry point for the `DefaultToken` precompile.
 ///
 /// Wraps [`DefaultToken`] dispatch behind a [`DynPrecompile`] suitable for
 /// registration in a [`PrecompilesMap`].

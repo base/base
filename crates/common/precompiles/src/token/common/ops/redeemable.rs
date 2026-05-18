@@ -2,9 +2,8 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::IDefaultToken;
-
 use super::Burnable;
+use crate::token::IDefaultToken;
 
 /// User-initiated redeem (burn with off-chain settlement implication) and related admin.
 ///
@@ -21,7 +20,8 @@ pub trait Redeemable: Burnable {
             }));
         }
         self.burn(caller, amount)?;
-        self.accounting_mut().emit_event(IDefaultToken::Redeemed { holder: caller, amount }.encode_log_data())
+        self.accounting_mut()
+            .emit_event(IDefaultToken::Redeemed { holder: caller, amount }.encode_log_data())
     }
 
     /// [`Self::redeem`] followed by a `Memo` event.

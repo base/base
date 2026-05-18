@@ -2,7 +2,10 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::{IDefaultToken, common::{CAPABILITY_PAUSABLE, Token}};
+use crate::token::{
+    IDefaultToken,
+    common::{CAPABILITY_PAUSABLE, Token},
+};
 
 /// Pause and unpause operations.
 ///
@@ -32,7 +35,8 @@ pub trait Pausable: Token {
         }
         let current = self.accounting().paused()?;
         self.accounting_mut().set_paused(current | vectors)?;
-        self.accounting_mut().emit_event(IDefaultToken::Paused { updater: caller, vectors }.encode_log_data())
+        self.accounting_mut()
+            .emit_event(IDefaultToken::Paused { updater: caller, vectors }.encode_log_data())
     }
 
     /// Clears all paused vectors. Requires `PAUSABLE` capability.
@@ -44,6 +48,7 @@ pub trait Pausable: Token {
             }));
         }
         self.accounting_mut().set_paused(U256::ZERO)?;
-        self.accounting_mut().emit_event(IDefaultToken::Unpaused { updater: caller }.encode_log_data())
+        self.accounting_mut()
+            .emit_event(IDefaultToken::Unpaused { updater: caller }.encode_log_data())
     }
 }

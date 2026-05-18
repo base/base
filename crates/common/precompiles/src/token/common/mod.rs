@@ -1,14 +1,13 @@
 //! Shared business logic for all Base-native token variants.
 
+pub(super) mod ops;
 mod token;
 mod token_accounting;
-pub mod ops;
-
-pub use token::Token;
-pub use token_accounting::TokenAccounting;
-pub use ops::{Burnable, Mintable, Pausable, Permittable, Redeemable, Configurable, Transferable};
 
 use alloy_primitives::U256;
+pub use ops::{Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, Transferable};
+pub use token::Token;
+pub use token_accounting::TokenAccounting;
 
 /// Capability bit: `pause` / `unpause` are enabled on this token.
 pub const CAPABILITY_PAUSABLE: U256 = U256::from_limbs([1, 0, 0, 0]);

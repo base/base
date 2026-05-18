@@ -2,8 +2,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::common::Token;
-use crate::token::IDefaultToken;
+use crate::token::{IDefaultToken, common::Token};
 
 /// Token minting operations.
 ///

@@ -27,7 +27,12 @@ revm.workspace = true
 
 [features]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
-std = [ "alloy-evm/std", "base-common-chains/std", "base-precompile-storage/std", "revm/std" ]
+std = [
+	"alloy-evm/std",
+	"base-common-chains/std",
+	"base-precompile-storage/std",
+	"revm/std",
+]
 bn = [ "revm/bn" ]
 blst = [ "revm/blst" ]
 c-kzg = [ "revm/c-kzg" ]
