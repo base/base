@@ -1,8 +1,6 @@
 //! `DefaultToken` struct — the concrete B-20 token type.
 
 use alloy_primitives::Address;
-use base_precompile_storage::{NativePrecompile, PrecompileStorageProvider};
-use revm::precompile::PrecompileResult;
 
 use super::storage::{DEFAULT_TOKEN_ADDRESS, DefaultTokenStorage};
 use crate::token::common::{
@@ -72,14 +70,3 @@ impl<S: TokenAccounting> Pausable for DefaultToken<S> {}
 impl<S: TokenAccounting> Configurable for DefaultToken<S> {}
 impl<S: TokenAccounting> Permittable for DefaultToken<S> {}
 
-// ---------------------------------------------------------------------------
-// EVM wiring
-// ---------------------------------------------------------------------------
-
-impl<S: TokenAccounting> NativePrecompile for DefaultToken<S> {
-    const ADDRESS: Address = DEFAULT_TOKEN_ADDRESS;
-
-    fn execute(_storage: &mut dyn PrecompileStorageProvider) -> PrecompileResult {
-        todo!("wire calldata once PrecompileStorageProvider exposes it")
-    }
-}
