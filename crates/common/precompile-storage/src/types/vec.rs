@@ -6,7 +6,8 @@
 //! - **Base slot**: Stores the array length
 //! - **Data slots**: Start at `keccak256(len_slot)`; elements packed where possible.
 
-use std::ops::{Index, IndexMut};
+use alloc::vec::Vec;
+use core::ops::{Index, IndexMut};
 
 use alloy_primitives::{Address, U256, keccak256};
 
@@ -137,7 +138,7 @@ where
 {
     /// Creates a new handler for the vector at the given length slot and contract address.
     #[inline]
-    pub fn new(len_slot: U256, address: Address) -> Self {
+    pub const fn new(len_slot: U256, address: Address) -> Self {
         Self { len_slot, address, cache: HandlerCache::new() }
     }
 

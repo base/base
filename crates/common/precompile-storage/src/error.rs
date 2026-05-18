@@ -1,3 +1,6 @@
+use alloc::string::{String, ToString};
+use core::result;
+
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{Panic, PanicKind, SolError};
 use revm::{
@@ -42,7 +45,7 @@ impl From<JournalLoadError<revm::context::ErasedError>> for BasePrecompileError 
 }
 
 /// Result type alias for Base native precompile operations.
-pub type Result<T> = std::result::Result<T, BasePrecompileError>;
+pub type Result<T> = result::Result<T, BasePrecompileError>;
 
 impl BasePrecompileError {
     /// Returns true if this error must be propagated rather than turned into a revert.

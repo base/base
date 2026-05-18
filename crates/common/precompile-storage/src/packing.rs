@@ -12,6 +12,8 @@
 //! - Values are right-aligned within their byte range
 //! - Types smaller than 32 bytes can pack multiple per slot when dimensions align
 
+use alloc::format;
+
 use alloy_primitives::U256;
 
 use crate::{

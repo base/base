@@ -1,4 +1,6 @@
 #![doc = include_str!("../README.md")]
+
+extern crate alloc;
 // Allow macro-generated code inside this crate to use `::base_precompile_storage::` paths.
 extern crate self as base_precompile_storage;
 
@@ -32,7 +34,9 @@ pub use types::{
 mod evm;
 pub use evm::EvmPrecompileStorageProvider;
 
+#[cfg(any(test, feature = "test-utils"))]
 mod hashmap;
+#[cfg(any(test, feature = "test-utils"))]
 pub use hashmap::HashMapStorageProvider;
 #[cfg(any(test, feature = "test-utils"))]
 pub use hashmap::setup_storage;

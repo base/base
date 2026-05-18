@@ -4,7 +4,10 @@
 //! thread-local [`PrecompileStorageProvider`]. All storage operations within
 //! a precompile call must happen inside a [`StorageCtx::enter`] closure.
 
-use std::cell::RefCell;
+use alloc::string::ToString;
+#[cfg(any(test, feature = "test-utils"))]
+use alloc::vec::Vec;
+use core::{cell::RefCell, mem};
 
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 use alloy_sol_types::SolInterface;
@@ -38,7 +41,7 @@ impl StorageCtx {
         // SAFETY: `scoped_tls` ensures the pointer is only accessible within the closure scope.
         // The reference is erased to 'static, but scoped_tls guarantees it never escapes `f`.
         let storage_static: &mut (dyn PrecompileStorageProvider + 'static) =
-            unsafe { std::mem::transmute(storage) };
+            unsafe { mem::transmute(storage) };
         let cell = RefCell::new(storage_static);
         STORAGE.set(&cell, f)
     }
