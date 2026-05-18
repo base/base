@@ -2285,22 +2285,21 @@ where
         let prefix = encode_history_key_prefix::<T>(&key);
         let target = encode_history_key::<T>(&key, self.max_block_number);
         let read_options = exact_prefix_read_options(&prefix);
-        let mut iter = self.snapshot.snapshot().iterator_cf_opt(
-            &cf,
-            read_options,
-            IteratorMode::From(&target, Direction::Reverse),
-        );
-
-        let Some(item) = iter.next() else {
+        let mut iter = self.snapshot.snapshot().raw_iterator_cf_opt(&cf, read_options);
+        iter.seek_for_prev(&target);
+        if !iter.valid() {
+            iter.status().map_err(rocksdb_error)?;
             return Ok(None);
-        };
-        let (raw_key, raw_value) = item.map_err(rocksdb_error)?;
+        }
+
+        let raw_key = iter.key().ok_or(DatabaseError::Decode)?;
         if !raw_key.starts_with(&prefix) {
             return Ok(None);
         }
 
-        let (decoded_key, _) = decode_history_key::<T>(&raw_key)?;
-        let value = T::Value::decompress(&raw_value)?;
+        let (decoded_key, _) = decode_history_key::<T>(raw_key)?;
+        let raw_value = iter.value().ok_or(DatabaseError::Decode)?;
+        let value = T::Value::decompress(raw_value)?;
         Ok(Some((decoded_key, value)))
     }
 
