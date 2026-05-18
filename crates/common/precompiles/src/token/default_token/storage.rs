@@ -2,7 +2,7 @@ use alloc::string::String;
 
 use alloy_primitives::{Address, LogData, U256, address};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
 
 use crate::token::common::TokenAccounting;
 
