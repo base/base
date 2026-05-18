@@ -201,7 +201,9 @@ impl ConductorSource {
     /// in `membership` has an `addr` field that is the raft binary protocol
     /// address (e.g. `op-conductor-1:5051`); the host is extracted and the
     /// JSON-RPC URLs are rebuilt from the supplied port templates. Docker
-    /// container names are hardcoded to the production deployment convention.
+    /// container names are left `None` because the local docker daemon can't
+    /// reach remote peers' containers; restart is also UI-disabled for
+    /// discovered peers.
     pub fn synthesize_nodes(
         &self,
         membership: &base_consensus_rpc::ClusterMembership,
@@ -219,9 +221,9 @@ impl ConductorSource {
                     server_id: srv.id.clone(),
                     raft_addr: srv.addr.clone(),
                     el_rpc: ports.el_rpc.map(|p| peer_url(bootstrap, host, p)),
-                    docker_conductor: Some("conductor".to_string()),
-                    docker_el: Some("execution".to_string()),
-                    docker_cl: Some("consensus".to_string()),
+                    docker_conductor: None,
+                    docker_el: None,
+                    docker_cl: None,
                     flashblocks_ws: None,
                 }
             })
