@@ -12,10 +12,7 @@ use futures::{StreamExt, TryStreamExt, stream};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
-use crate::{
-    game_discovery::{GameInfo, ProvingState},
-    output_validator::{OutputRootError, OutputValidator},
-};
+use crate::{GameInfo, OutputRootError, OutputValidator, ProvingState};
 
 /// A detected dispute-game violation.
 ///

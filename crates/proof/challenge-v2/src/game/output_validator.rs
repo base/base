@@ -15,7 +15,7 @@ use base_proof_rpc::{L2Provider, RpcError};
 use base_protocol::OutputRoot;
 use thiserror::Error;
 
-use crate::account_proof::{AccountProofError, AccountProofVerifier};
+use super::account_proof::{AccountProofError, AccountProofVerifier};
 
 /// Errors returned by [`OutputValidator::compute_output_root`].
 #[derive(Debug, Error)]

@@ -25,8 +25,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
-    DisputeAction, DisputeRequest, GameWorkerDeps, Violation, ViolationKind,
-    tee_proof_provider::TeeProofProvider,
+    DisputeAction, DisputeRequest, GameWorkerDeps, TeeProofProvider, Violation, ViolationKind,
 };
 
 /// Errors that can prevent [`Violation::build_dispute_request`] from emitting a [`DisputeRequest`].

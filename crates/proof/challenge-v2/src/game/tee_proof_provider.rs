@@ -2,9 +2,10 @@
 //!
 //! [`TeeProofProvider`] is the trait the challenger uses to ask its TEE
 //! prover to attest a range of L2 blocks. The fast path for `TeeWrong`
-//! disputes (see `crate::prove`) calls this trait first; the result
-//! (signed root + signature bytes) is wrapped into a TEE-flavored
-//! dispute action when it matches our computed view.
+//! disputes (see [`crate::Violation::build_dispute_request`]) calls
+//! this trait first; the result (signed root + signature bytes) is
+//! wrapped into a TEE-flavored dispute action when it matches our
+//! computed view.
 //!
 //! [`RpcTeeProofProvider`] is the production implementation backed by
 //! an off-chain TEE service exposed via JSON-RPC. It translates the

@@ -6,52 +6,22 @@
 )]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-mod game_discovery;
-pub use game_discovery::{ClassifyError, GameDiscovery, GameInfo, ProvingState};
-
-mod account_proof;
-pub use account_proof::{AccountProofError, AccountProofVerifier};
-
-mod output_validator;
-pub use output_validator::{L2OutputValidator, OutputRootError, OutputValidator};
-
-mod violation;
-pub use violation::{ValidationError, Violation, ViolationKind};
-
-mod tee_proof_provider;
-pub use tee_proof_provider::{
-    RpcTeeProofProvider, TeeProofError, TeeProofProvider, TeeProofResult,
-};
-
-mod prove;
-pub use prove::ProofError;
-
-mod dispute_action;
-pub use dispute_action::{DisputeAction, DisputeRequest};
-
-mod bond_action;
-pub use bond_action::{BondAction, BondRequest};
-
 mod submission;
 pub use submission::{Submission, SubmissionHandle, SubmissionTask, SubmitError};
 
-mod game_worker;
-pub use game_worker::{GameWorkerConfig, GameWorkerDeps, run_game_worker};
+mod game;
+pub use game::{
+    AccountProofError, AccountProofVerifier, ClassifyError, DisputeAction, DisputeRequest,
+    GameDiscovery, GameInfo, GamePool, GameWorkerConfig, GameWorkerDeps, L2OutputValidator,
+    OutputRootError, OutputValidator, ProofError, ProvingState, RpcTeeProofProvider, TeeProofError,
+    TeeProofProvider, TeeProofResult, ValidationError, Violation, ViolationKind, run_game_worker,
+};
 
-mod game_pool;
-pub use game_pool::GamePool;
-
-mod bond_discovery;
-pub use bond_discovery::{BondCandidate, BondDiscovery};
-
-mod delayed_weth_resolver;
-pub use delayed_weth_resolver::{DelayedWETHResolver, L1DelayedWETHResolver};
-
-mod bond_worker;
-pub use bond_worker::{BondError, BondWorkerDeps, run_bond_worker};
-
-mod bond_pool;
-pub use bond_pool::BondPool;
+mod bond;
+pub use bond::{
+    BondAction, BondCandidate, BondDiscovery, BondError, BondPool, BondRequest, BondWorkerDeps,
+    DelayedWETHResolver, L1DelayedWETHResolver, run_bond_worker,
+};
 
 mod cli;
 pub use cli::{ChallengerArgs, Cli};
