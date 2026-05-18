@@ -84,7 +84,11 @@ impl<'a> StorageCtx<'a> {
                 result = Some(f(info));
             })
         })?;
-        result.unwrap()
+        result.unwrap_or_else(|| {
+            Err(BasePrecompileError::Fatal(
+                "with_account_info callback was not invoked".to_string(),
+            ))
+        })
     }
 
     /// Returns the current chain ID.
@@ -233,81 +237,89 @@ use crate::hashmap::HashMapStorageProvider;
 
 #[cfg(any(test, feature = "test-utils"))]
 impl StorageCtx<'_> {
-    #[allow(clippy::mut_from_ref)]
-    fn as_hashmap(&self) -> &mut HashMapStorageProvider {
-        self.with_storage(|s| {
-            // SAFETY: Test code always uses HashMapStorageProvider. The reference is valid
-            // for the duration of the StorageCtx::enter closure.
-            unsafe {
-                extend_lifetime_mut(
-                    &mut *(s as *mut dyn PrecompileStorageProvider as *mut HashMapStorageProvider),
-                )
-            }
+    fn with_hashmap<R>(&self, f: impl FnOnce(&mut HashMapStorageProvider) -> R) -> R {
+        let mut guard = self.storage.borrow_mut();
+        // SAFETY: Test-utils code always uses `HashMapStorageProvider`. The borrow
+        // guard stays alive for the full callback, preserving `RefCell` borrow checks.
+        let provider = unsafe {
+            &mut *(&mut **guard as *mut dyn PrecompileStorageProvider
+                as *mut HashMapStorageProvider)
+        };
+        f(provider)
+    }
+
+    /// Executes a closure with account info from the test storage provider.
+    pub fn with_test_account_info<T>(
+        &self,
+        address: Address,
+        f: impl FnOnce(Option<&AccountInfo>) -> T,
+    ) -> T {
+        self.with_hashmap(|storage| f(storage.get_account_info(address)))
+    }
+
+    /// Executes a closure with emitted events from the test storage provider.
+    pub fn with_events<T>(&self, address: Address, f: impl FnOnce(&[LogData]) -> T) -> T {
+        self.with_hashmap(|storage| {
+            let events = storage.get_events(address);
+            f(events)
         })
     }
 
     /// Returns account info for the given address (test-utils only).
-    pub fn get_account_info(&self, address: Address) -> Option<&AccountInfo> {
-        self.as_hashmap().get_account_info(address)
+    pub fn get_account_info(&self, address: Address) -> Option<AccountInfo> {
+        self.with_test_account_info(address, |account| account.cloned())
     }
 
     /// Returns emitted events for the given address (test-utils only).
-    pub fn get_events(&self, address: Address) -> &Vec<LogData> {
-        self.as_hashmap().get_events(address)
+    pub fn get_events(&self, address: Address) -> Vec<LogData> {
+        self.with_events(address, <[LogData]>::to_vec)
     }
 
     /// Sets the nonce for the given address (test-utils only).
     pub fn set_nonce(&self, address: Address, nonce: u64) {
-        self.as_hashmap().set_nonce(address, nonce)
+        self.with_hashmap(|storage| storage.set_nonce(address, nonce))
     }
 
     /// Overrides the block timestamp (test-utils only).
     pub fn set_timestamp(&self, timestamp: U256) {
-        self.as_hashmap().set_timestamp(timestamp)
+        self.with_hashmap(|storage| storage.set_timestamp(timestamp))
     }
 
     /// Overrides the block beneficiary (test-utils only).
     pub fn set_beneficiary(&self, beneficiary: Address) {
-        self.as_hashmap().set_beneficiary(beneficiary)
+        self.with_hashmap(|storage| storage.set_beneficiary(beneficiary))
     }
 
     /// Overrides the block number (test-utils only).
     pub fn set_block_number(&self, block_number: u64) {
-        self.as_hashmap().set_block_number(block_number)
+        self.with_hashmap(|storage| storage.set_block_number(block_number))
     }
 
     /// Clears all transient storage (test-utils only).
     pub fn clear_transient(&self) {
-        self.as_hashmap().clear_transient()
+        self.with_hashmap(HashMapStorageProvider::clear_transient)
     }
     /// Clears emitted events for the given address (test-utils only).
     pub fn clear_events(&self, address: Address) {
-        self.as_hashmap().clear_events(address);
+        self.with_hashmap(|storage| storage.clear_events(address));
     }
     /// Returns the SLOAD counter (test-utils only).
     pub fn counter_sload(&self) -> u64 {
-        self.as_hashmap().counter_sload()
+        self.with_hashmap(|storage| storage.counter_sload())
     }
     /// Returns the SSTORE counter (test-utils only).
     pub fn counter_sstore(&self) -> u64 {
-        self.as_hashmap().counter_sstore()
+        self.with_hashmap(|storage| storage.counter_sstore())
     }
     /// Resets the SLOAD/SSTORE counters (test-utils only).
     pub fn reset_counters(&self) {
-        self.as_hashmap().reset_counters()
+        self.with_hashmap(HashMapStorageProvider::reset_counters)
     }
 
     /// Returns true if the contract at the given address has non-empty bytecode (test-utils only).
     pub fn has_bytecode(&self, address: Address) -> Result<bool> {
         self.with_account_info(address, |info| Ok(!info.is_empty_code_hash()))
     }
-}
-
-// SAFETY: Caller must ensure the reference remains valid for the extended lifetime.
-#[cfg(any(test, feature = "test-utils"))]
-unsafe fn extend_lifetime_mut<'b, T: ?Sized>(r: &mut T) -> &'b mut T {
-    // SAFETY: Upheld by caller.
-    unsafe { &mut *(r as *mut T) }
 }
 
 #[cfg(test)]

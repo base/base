@@ -103,8 +103,6 @@ pub trait ContractStorage<'a> {
     fn address(&self) -> Address;
     /// Contract storage accessor.
     fn storage(&self) -> crate::storage_ctx::StorageCtx<'a>;
-    /// Contract mutable storage accessor.
-    fn storage_mut(&mut self) -> crate::storage_ctx::StorageCtx<'a>;
 
     /// Returns true if the contract has bytecode deployed at its address.
     fn is_initialized(&self) -> Result<bool> {
