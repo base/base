@@ -21,7 +21,7 @@ use alloy_rpc_types_eth::{
 };
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
-use base_common_consensus::BasePrimitives;
+use base_common_consensus::{BaseBlock, BasePrimitives};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types::Transaction as BaseTransaction;
@@ -39,7 +39,7 @@ use base_execution_payload_builder::{
 };
 use base_execution_txpool::BasePooledTransaction;
 use base_node_core::BaseNode;
-use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
+use base_protocol::{AttributesWithParent, L2BlockInfo};
 use base_test_utils::build_test_genesis;
 use reth_basic_payload_builder::{
     BuildArguments, PayloadBuilder as RethPayloadBuilder, PayloadConfig,
@@ -71,7 +71,7 @@ pub type TestBlockchainProvider = BlockchainProvider<TestNodeTypes>;
 /// Type alias for the noop pool used by the engine client.
 pub type TestPool = NoopTransactionPool<BasePooledTransaction>;
 
-/// A payload built in-process during sequencer mode, waiting to be fetched via `get_payload`.
+/// A payload built in-process during sequencer mode, waiting to be sealed or inserted.
 #[derive(Debug, Clone)]
 pub struct PendingPayload {
     /// The built payload from the production `BasePayloadBuilder`.
@@ -91,8 +91,11 @@ pub struct ActionEngineClientInner {
     chain_spec: Arc<BaseChainSpec>,
     canonical_head: L2BlockInfo,
     executed_headers: HashMap<u64, Header>,
+    executed_infos: HashMap<u64, L2BlockInfo>,
     /// Payloads built via FCU-with-attrs (sequencer mode), keyed by `PayloadId`.
     pending_payloads: HashMap<PayloadId, PendingPayload>,
+    /// Sealed payloads waiting for explicit insertion, keyed by block hash.
+    sealed_payloads: HashMap<B256, PendingPayload>,
     payload_counter: u64,
 }
 
@@ -111,11 +114,9 @@ pub struct ActionEngineClientInner {
 ///
 /// ## Sequencer mode
 ///
-/// When `fork_choice_updated_vX` is called with `payload_attributes`, transactions
-/// are executed via the production builder, a `PayloadId` is returned, and the resulting payload
-/// is stored pending retrieval via `get_payload_vX`. A subsequent `new_payload` call
-/// with the same block is a no-op (the EVM state was already advanced during the
-/// build step), ensuring the builder is not applied twice.
+/// When `fork_choice_updated_vX` is called with `payload_attributes`, a block is built via the
+/// production builder and stored pending retrieval via `get_payload_vX`. The built block is only
+/// committed to the database when it is explicitly inserted.
 ///
 /// [`L2Sequencer`]: crate::L2Sequencer
 #[derive(Clone, Debug)]
@@ -235,7 +236,9 @@ impl ActionEngineClient {
             chain_spec,
             canonical_head,
             executed_headers: HashMap::new(),
+            executed_infos: HashMap::new(),
             pending_payloads: HashMap::new(),
+            sealed_payloads: HashMap::new(),
             payload_counter: 0,
         }));
         Self { inner, rollup_config, block_registry, l1_chain }
@@ -284,10 +287,9 @@ impl ActionEngineClient {
             .is_some_and(|c: reth_primitives_traits::Bytecode| !c.is_empty())
     }
 
-    /// Build a block from the given `BasePayloadAttributes` and commit it to the database,
-    /// returning the `BaseBuiltPayload`.
-    fn build_and_commit(
-        inner: &mut ActionEngineClientInner,
+    /// Build a block from the given `BasePayloadAttributes`, returning the `BaseBuiltPayload`.
+    fn build_payload(
+        inner: &ActionEngineClientInner,
         parent_hash: B256,
         attrs: BasePayloadAttributes,
     ) -> TransportResult<BaseBuiltPayload<BasePrimitives>> {
@@ -347,10 +349,31 @@ impl ActionEngineClient {
             ))
         })?;
 
+        Ok(built)
+    }
+
+    /// Commit a built payload to the database and register its header/state root.
+    fn commit_built_payload(
+        inner: &mut ActionEngineClientInner,
+        registry: &SharedBlockHashRegistry,
+        rollup_config: &RollupConfig,
+        built: BaseBuiltPayload<BasePrimitives>,
+    ) -> TransportResult<(B256, L2BlockInfo)> {
+        let block: BaseBlock = built.block().clone_block();
+        let hdr = block.header.clone();
+        let block_number = hdr.number();
+        let block_hash = block.hash_slow();
+        let state_root = hdr.state_root();
+
+        if let Some(existing) = inner.executed_infos.get(&block_number)
+            && existing.block_info.hash == block_hash
+        {
+            return Ok((block_hash, *existing));
+        }
+
         // Commit the block state to the database so subsequent blocks can build on it.
         if let Some(executed) = built.executed_block() {
             let execution_output = executed.execution_output;
-            let block_number = built.block().header().number();
             let execution_outcome = ExecutionOutcome {
                 bundle: execution_output.state.clone(),
                 receipts: vec![execution_output.result.receipts.clone()],
@@ -400,17 +423,35 @@ impl ActionEngineClient {
                 })?;
         }
 
-        Ok(built)
+        if let Some(expected_root) = registry.get_state_root(block_number) {
+            assert_eq!(
+                state_root, expected_root,
+                "state root mismatch at block {block_number}: computed={state_root}, expected={expected_root}",
+            );
+        }
+
+        registry.insert(block_number, block_hash, Some(state_root));
+
+        let l2_info =
+            L2BlockInfo::from_block_and_genesis(&block, &rollup_config.genesis).map_err(|e| {
+                TransportError::from(TransportErrorKind::custom_str(&format!(
+                    "failed to derive L2 block info: {e}"
+                )))
+            })?;
+        inner.executed_headers.insert(block_number, hdr);
+        inner.executed_infos.insert(block_number, l2_info);
+        Ok((block_hash, l2_info))
     }
 
     /// Execute the transactions in a V1 payload against the production builder, returning the
     /// block hash.
     ///
-    /// If this block was already executed during a `build_payload_inner` call (sequencer mode),
-    /// execution is skipped and the pre-computed hash is returned directly.
+    /// If this block was already committed by the sequencer path, execution is skipped and the
+    /// stored hash is returned directly.
     fn execute_v1_inner(
         inner: &mut ActionEngineClientInner,
         registry: &SharedBlockHashRegistry,
+        rollup_config: &RollupConfig,
         payload: &ExecutionPayloadV1,
     ) -> TransportResult<B256> {
         // Skip re-execution if this block was already built.
@@ -420,8 +461,8 @@ impl ActionEngineClient {
         //
         // In derivation mode (`TestRollupNode`) the payload is constructed with a zeroed
         // `block_hash` placeholder because the engine is expected to fill it in. When we see
-        // B256::ZERO we treat the block-number lookup alone as sufficient — the block was
-        // pre-built by the sequencer and its state is already committed to the DB.
+        // B256::ZERO we treat the block-number lookup alone as sufficient: the sequencer path
+        // already inserted the matching block and committed its state to the DB.
         if let Some(existing) = inner.executed_headers.get(&payload.block_number) {
             let existing_hash = existing.hash_slow();
             if payload.block_hash == B256::ZERO || payload.block_hash == existing_hash {
@@ -449,24 +490,8 @@ impl ActionEngineClient {
             min_base_fee: Some(0),
         };
 
-        let built = Self::build_and_commit(inner, payload.parent_hash, attrs)?;
-        let block = built.block();
-        let hdr = block.header();
-        let state_root = hdr.state_root();
-        let block_hash = block.hash();
-
-        if let Some(expected_root) = registry.get_state_root(payload.block_number) {
-            assert_eq!(
-                state_root, expected_root,
-                "state root mismatch at block {}: computed={}, expected={}",
-                payload.block_number, state_root, expected_root,
-            );
-        }
-
-        // Register the state root in the block registry.
-        registry.insert(payload.block_number, block_hash, Some(state_root));
-
-        inner.executed_headers.insert(payload.block_number, hdr.clone());
+        let built = Self::build_payload(inner, payload.parent_hash, attrs)?;
+        let (block_hash, _) = Self::commit_built_payload(inner, registry, rollup_config, built)?;
         Ok(block_hash)
     }
 
@@ -494,21 +519,13 @@ impl ActionEngineClient {
             return Ok(existing.hash_slow());
         }
 
-        let built = Self::build_and_commit(&mut guard, parent_hash, attrs)?;
-        let block = built.block();
-        let hdr = block.header();
-        let state_root = hdr.state_root();
-        let block_hash = block.hash();
-
-        if let Some(expected_root) = self.block_registry.get_state_root(block_number) {
-            assert_eq!(
-                state_root, expected_root,
-                "state root mismatch at block {block_number}: computed={state_root}, expected={expected_root}",
-            );
-        }
-
-        self.block_registry.insert(block_number, block_hash, Some(state_root));
-        guard.executed_headers.insert(block_number, hdr.clone());
+        let built = Self::build_payload(&guard, parent_hash, attrs)?;
+        let (block_hash, _) = Self::commit_built_payload(
+            &mut guard,
+            &self.block_registry,
+            &self.rollup_config,
+            built,
+        )?;
         Ok(block_hash)
     }
 
@@ -518,25 +535,10 @@ impl ActionEngineClient {
     /// payload is stored in `pending_payloads` for later retrieval via `get_payload_vX`.
     fn build_payload_inner(
         inner: &mut ActionEngineClientInner,
-        registry: &SharedBlockHashRegistry,
         parent_hash: B256,
         attrs: &BasePayloadAttributes,
     ) -> TransportResult<PayloadId> {
-        let built = Self::build_and_commit(inner, parent_hash, attrs.clone())?;
-
-        let block = built.block();
-        let hdr = block.header();
-        let block_number = hdr.number();
-        let state_root = hdr.state_root();
-        let block_hash = block.hash();
-
-        // Register the state root so derivation can validate against it.
-        registry.insert(block_number, block_hash, Some(state_root));
-
-        // Store the full header cloned from the built block so that `hash_slow()` on the stored
-        // entry returns the actual block hash. Storing only a subset of fields would produce a
-        // different hash and break the skip-check in `execute_v1_inner`.
-        inner.executed_headers.insert(block_number, hdr.clone());
+        let built = Self::build_payload(inner, parent_hash, attrs.clone())?;
 
         let id = PayloadId::new(inner.payload_counter.to_le_bytes());
         inner.payload_counter += 1;
@@ -716,19 +718,7 @@ impl EngineClient for ActionEngineClient {
                 if n == guard.canonical_head.block_info.number {
                     Some(guard.canonical_head)
                 } else {
-                    guard.executed_headers.get(&n).map(|h| {
-                        let block_hash = h.hash_slow();
-                        L2BlockInfo {
-                            block_info: BlockInfo {
-                                hash: block_hash,
-                                number: h.number,
-                                parent_hash: h.parent_hash,
-                                timestamp: h.timestamp,
-                            },
-                            l1_origin: Default::default(),
-                            seq_num: 0,
-                        }
-                    })
+                    guard.executed_infos.get(&n).copied()
                 }
             }
             BlockNumberOrTag::Earliest => None,
@@ -744,8 +734,12 @@ impl BaseEngineApi for ActionEngineClient {
         payload: ExecutionPayloadInputV2,
     ) -> TransportResult<PayloadStatus> {
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let block_hash =
-            Self::execute_v1_inner(&mut guard, &self.block_registry, &payload.execution_payload)?;
+        let block_hash = Self::execute_v1_inner(
+            &mut guard,
+            &self.block_registry,
+            &self.rollup_config,
+            &payload.execution_payload,
+        )?;
         Ok(Self::make_valid(block_hash))
     }
 
@@ -758,6 +752,7 @@ impl BaseEngineApi for ActionEngineClient {
         let block_hash = Self::execute_v1_inner(
             &mut guard,
             &self.block_registry,
+            &self.rollup_config,
             &payload.payload_inner.payload_inner,
         )?;
         Ok(Self::make_valid(block_hash))
@@ -772,6 +767,7 @@ impl BaseEngineApi for ActionEngineClient {
         let block_hash = Self::execute_v1_inner(
             &mut guard,
             &self.block_registry,
+            &self.rollup_config,
             &payload.payload_inner.payload_inner.payload_inner,
         )?;
         Ok(Self::make_valid(block_hash))
@@ -786,24 +782,15 @@ impl BaseEngineApi for ActionEngineClient {
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
 
         // Update canonical head if the block is in our executed headers.
-        if let Some(h) = guard.executed_headers.values().find(|h| h.hash_slow() == head).cloned() {
-            let block_hash = head;
-            guard.canonical_head = L2BlockInfo {
-                block_info: BlockInfo {
-                    hash: block_hash,
-                    number: h.number,
-                    parent_hash: h.parent_hash,
-                    timestamp: h.timestamp,
-                },
-                l1_origin: Default::default(),
-                seq_num: 0,
-            };
+        if let Some(h) = guard.executed_headers.values().find(|h| h.hash_slow() == head).cloned()
+            && let Some(info) = guard.executed_infos.get(&h.number)
+        {
+            guard.canonical_head = *info;
         }
 
         // Sequencer mode: build a block from the provided attributes.
         if let Some(ref attrs) = payload_attributes {
-            let payload_id =
-                Self::build_payload_inner(&mut guard, &self.block_registry, head, attrs)?;
+            let payload_id = Self::build_payload_inner(&mut guard, head, attrs)?;
             return Ok(ForkchoiceUpdated {
                 payload_status: Self::make_valid(head),
                 payload_id: Some(payload_id),
@@ -908,13 +895,8 @@ impl SequencerEngineClient for ActionEngineClient {
     ) -> Result<PayloadId, NodeEngineClientError> {
         let parent_hash = attributes.parent.block_info.hash;
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
-        Self::build_payload_inner(
-            &mut guard,
-            &self.block_registry,
-            parent_hash,
-            &attributes.attributes,
-        )
-        .map_err(|e| NodeEngineClientError::RequestError(e.to_string()))
+        Self::build_payload_inner(&mut guard, parent_hash, &attributes.attributes)
+            .map_err(|e| NodeEngineClientError::RequestError(e.to_string()))
     }
 
     async fn get_sealed_payload(
@@ -930,6 +912,7 @@ impl SequencerEngineClient for ActionEngineClient {
         let parent_beacon_block_root = block.header().parent_beacon_block_root();
         let (payload, _sidecar) =
             BaseExecutionPayload::from_block_unchecked(block_hash, &block.clone_block());
+        guard.sealed_payloads.insert(block_hash, pending);
         Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload: payload })
     }
 
@@ -942,24 +925,26 @@ impl SequencerEngineClient for ActionEngineClient {
         let head_hash = v1.block_hash;
 
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
-        Self::execute_v1_inner(&mut guard, &self.block_registry, v1)
-            .map_err(|e| NodeEngineClientError::RequestError(e.to_string()))?;
-
-        // Update canonical head.
-        if let Some(h) =
-            guard.executed_headers.values().find(|h| h.hash_slow() == head_hash).cloned()
-        {
-            guard.canonical_head = L2BlockInfo {
-                block_info: BlockInfo {
-                    hash: head_hash,
-                    number: h.number,
-                    parent_hash: h.parent_hash,
-                    timestamp: h.timestamp,
-                },
-                l1_origin: Default::default(),
-                seq_num: 0,
-            };
-        }
+        let inserted_head = if let Some(pending) = guard.sealed_payloads.remove(&head_hash) {
+            Self::commit_built_payload(
+                &mut guard,
+                &self.block_registry,
+                &self.rollup_config,
+                pending.built,
+            )
+            .map_err(|e| NodeEngineClientError::RequestError(e.to_string()))?
+            .1
+        } else {
+            Self::execute_v1_inner(&mut guard, &self.block_registry, &self.rollup_config, v1)
+                .map_err(|e| NodeEngineClientError::RequestError(e.to_string()))?;
+            guard.executed_infos.get(&v1.block_number).copied().ok_or_else(|| {
+                NodeEngineClientError::ResponseError(format!(
+                    "inserted block info not found for block {}",
+                    v1.block_number,
+                ))
+            })?
+        };
+        guard.canonical_head = inserted_head;
         Ok(guard.canonical_head)
     }
 

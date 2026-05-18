@@ -2791,6 +2791,7 @@ dependencies = [
  "base-consensus-engine",
  "base-consensus-gossip",
  "base-consensus-node",
+ "base-consensus-rpc",
  "base-consensus-safedb",
  "base-execution-chainspec",
  "base-execution-evm",
@@ -5601,6 +5602,16 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+]
+
+[[package]]
+name = "base-snark-e2e"
+version = "0.0.0"
+dependencies = [
+ "base-zk-service",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.23",
 ]
 
 [[package]]
