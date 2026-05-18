@@ -728,10 +728,7 @@ impl RocksdbProofsStorage {
         for (key, survivor_block) in cutoff_items {
             let prefix = encode_history_key_prefix::<T>(&key);
             let start_key = encode_history_key::<T>(&key, 0);
-            let mut read_options = ReadOptions::default();
-            if let Some(upper_bound) = prefix_upper_bound(&prefix) {
-                read_options.set_iterate_upper_bound(upper_bound);
-            }
+            let read_options = prefix_read_options(&prefix);
             let iter = snapshot.iterator_cf_opt(
                 &cf,
                 read_options,
@@ -2249,10 +2246,12 @@ where
         let cf = self.cf()?;
         let prefix = encode_history_key_prefix::<T>(&key);
         let target = encode_history_key::<T>(&key, self.max_block_number);
-        let mut iter = self
-            .snapshot
-            .snapshot()
-            .iterator_cf(&cf, IteratorMode::From(&target, Direction::Reverse));
+        let read_options = prefix_read_options(&prefix);
+        let mut iter = self.snapshot.snapshot().iterator_cf_opt(
+            &cf,
+            read_options,
+            IteratorMode::From(&target, Direction::Reverse),
+        );
 
         let Some(item) = iter.next() else {
             return Ok(None);
@@ -2290,26 +2289,44 @@ where
     }
 
     fn next_live_from(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        self.next_live_candidate(key, false)
+        self.next_live_candidate(key, false, total_order_read_options())
     }
 
     fn next_live_after(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        self.next_live_candidate(key, true)
+        self.next_live_candidate(key, true, total_order_read_options())
+    }
+
+    fn seek_with_prefix(
+        &mut self,
+        key: T::Key,
+        prefix: Vec<u8>,
+    ) -> Result<Option<(T::Key, V)>, DatabaseError> {
+        self.next_live_candidate(key, false, prefix_read_options(&prefix))
+    }
+
+    fn next_with_prefix(&mut self, prefix: Vec<u8>) -> Result<Option<(T::Key, V)>, DatabaseError> {
+        if let Some(key) = self.current_key.clone() {
+            self.next_live_candidate(key, true, prefix_read_options(&prefix))
+        } else {
+            self.next_live_candidate(T::Key::default(), false, prefix_read_options(&prefix))
+        }
     }
 
     fn next_live_candidate(
         &mut self,
         key: T::Key,
         exclusive: bool,
+        read_options: ReadOptions,
     ) -> Result<Option<(T::Key, V)>, DatabaseError> {
         let found = {
             let cf = self.cf()?;
             let start_block = if exclusive { u64::MAX } else { 0 };
             let start_key = encode_history_key::<T>(&key, start_block);
-            let iter = self
-                .snapshot
-                .snapshot()
-                .iterator_cf(&cf, IteratorMode::From(&start_key, Direction::Forward));
+            let iter = self.snapshot.snapshot().iterator_cf_opt(
+                &cf,
+                read_options,
+                IteratorMode::From(&start_key, Direction::Forward),
+            );
             let mut last_candidate = None;
             let mut found = None;
 
@@ -2442,7 +2459,7 @@ impl TrieCursor for RocksdbTrieCursor<'_, StorageTrieHistory> {
         let key = StorageTrieKey::new(address, StoredNibbles(path));
         Ok(self
             .inner
-            .seek(key)?
+            .seek_with_prefix(key, hashed_address_prefix(address))?
             .and_then(|(key, node)| (key.hashed_address == address).then_some((key.path.0, node))))
     }
 
@@ -2455,7 +2472,7 @@ impl TrieCursor for RocksdbTrieCursor<'_, StorageTrieHistory> {
         }
         Ok(self
             .inner
-            .next()?
+            .next_with_prefix(hashed_address_prefix(address))?
             .and_then(|(key, node)| (key.hashed_address == address).then_some((key.path.0, node))))
     }
 
@@ -2505,9 +2522,13 @@ impl HashedCursor for RocksdbStorageCursor<'_> {
 
     fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
         let storage_key = HashedStorageKey::new(self.hashed_address, key);
-        let result = self.inner.seek(storage_key)?.and_then(|(key, value)| {
-            (key.hashed_address == self.hashed_address).then_some((key.hashed_storage_key, value.0))
-        });
+        let result = self
+            .inner
+            .seek_with_prefix(storage_key, hashed_address_prefix(self.hashed_address))?
+            .and_then(|(key, value)| {
+                (key.hashed_address == self.hashed_address)
+                    .then_some((key.hashed_storage_key, value.0))
+            });
 
         if let Some((_, value)) = result
             && value.is_zero()
@@ -2524,10 +2545,13 @@ impl HashedCursor for RocksdbStorageCursor<'_> {
         }
 
         loop {
-            let result = self.inner.next()?.and_then(|(key, value)| {
-                (key.hashed_address == self.hashed_address)
-                    .then_some((key.hashed_storage_key, value.0))
-            });
+            let result = self
+                .inner
+                .next_with_prefix(hashed_address_prefix(self.hashed_address))?
+                .and_then(|(key, value)| {
+                    (key.hashed_address == self.hashed_address)
+                        .then_some((key.hashed_storage_key, value.0))
+                });
 
             let Some((key, value)) = result else {
                 return Ok(None);
@@ -2778,6 +2802,25 @@ fn flatten_and_sort<K: Ord>(map: HashMap<K, u64>) -> Vec<(K, u64)> {
     let mut values: Vec<_> = map.into_iter().collect();
     values.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     values
+}
+
+fn prefix_read_options(prefix: &[u8]) -> ReadOptions {
+    let mut read_options = ReadOptions::default();
+    read_options.set_iterate_lower_bound(prefix.to_vec());
+    if let Some(upper_bound) = prefix_upper_bound(prefix) {
+        read_options.set_iterate_upper_bound(upper_bound);
+    }
+    read_options
+}
+
+fn total_order_read_options() -> ReadOptions {
+    let mut read_options = ReadOptions::default();
+    read_options.set_total_order_seek(true);
+    read_options
+}
+
+fn hashed_address_prefix(hashed_address: B256) -> Vec<u8> {
+    hashed_address.as_slice().to_vec()
 }
 
 fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
