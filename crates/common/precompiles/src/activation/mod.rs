@@ -4,10 +4,7 @@ mod abi;
 pub use abi::IActivationRegistry;
 
 mod storage;
-pub use storage::{
-    ACTIVATION_ADMIN_ADDRESS, ACTIVATION_REGISTRY_ADDRESS, ActivationRegistry,
-    ActivationRegistryStorage, SECURITIES_TOKEN_CREATION,
-};
+pub use storage::{ActivationRegistry, ActivationRegistryStorage};
 
 mod dispatch;
 

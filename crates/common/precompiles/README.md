@@ -25,7 +25,7 @@ known Base precompile set until they are explicitly mapped.
 Starting in Beryl, `BasePrecompileInstaller` also installs the activation registry precompile at
 `0x84530000000000000000000000000000000000ff`. The registry stores runtime feature flags keyed by
 `bytes32`, defaults every feature to inactive, and exposes `isActivated(bytes32)`, `admin()`,
-`activate(bytes32)`, and `deactive(bytes32)`. Only the configured activation admin can mutate
+`activate(bytes32)`, and `deactivate(bytes32)`. Only the configured activation admin can mutate
 feature state, and repeated no-op transitions revert.
 
 ## Usage

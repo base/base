@@ -17,10 +17,7 @@ mod spec;
 pub use spec::BasePrecompileSpec;
 
 mod activation;
-pub use activation::{
-    ACTIVATION_ADMIN_ADDRESS, ACTIVATION_REGISTRY_ADDRESS, ActivationRegistry,
-    ActivationRegistryStorage, IActivationRegistry, SECURITIES_TOKEN_CREATION,
-};
+pub use activation::{ActivationRegistry, ActivationRegistryStorage, IActivationRegistry};
 
 mod bn254_pair;
 

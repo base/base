@@ -39,6 +39,6 @@ sol! {
         function activate(bytes32 feature) external;
 
         /// Deactivates `feature`.
-        function deactive(bytes32 feature) external;
+        function deactivate(bytes32 feature) external;
     }
 }
