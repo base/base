@@ -1,0 +1,23 @@
+[package]
+name = "base-challenger-v2-bin"
+description = "Base Challenger v2 Binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-challenger-v2"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre.workspace = true
+base-cli-utils.workspace = true
+tokio = { workspace = true, features = ["full"] }
+clap = { workspace = true, features = ["derive", "env"] }
+base-challenger-v2 = { workspace = true, features = ["metrics"] }

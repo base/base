@@ -3275,6 +3275,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-challenger-v2-bin"
+version = "0.0.0"
+dependencies = [
+ "base-challenger-v2",
+ "base-cli-utils",
+ "clap",
+ "eyre",
+ "tokio",
+]
+
+[[package]]
 name = "base-cli-utils"
 version = "0.0.0"
 dependencies = [
