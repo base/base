@@ -64,6 +64,12 @@ impl RemoteL2Client {
 #[async_trait]
 impl RemoteClient for RemoteL2Client {
     async fn get_block_number(&self, tag: BlockNumberOrTag) -> Result<u64, RemoteL2ClientError> {
+        if matches!(tag, BlockNumberOrTag::Latest) {
+            return self.provider.get_block_number().await.map_err(|e| {
+                RemoteL2ClientError::FetchBlock { tag: format!("{tag:?}"), source: e }
+            });
+        }
+
         self.get_block_info(tag).await.map(|block| block.number)
     }
 
