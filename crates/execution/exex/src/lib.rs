@@ -246,24 +246,6 @@ where
         self.ctx.notifications.set_without_head();
 
         while let Some(notification) = self.ctx.notifications.try_next().await? {
-            let notification_kind = match &notification {
-                ExExNotification::ChainCommitted { .. } => "committed",
-                ExExNotification::ChainReorged { .. } => "reorged",
-                ExExNotification::ChainReverted { .. } => "reverted",
-            };
-            let committed_tip = notification.committed_chain().map(|chain| chain.tip().number());
-            let committed_blocks = notification.committed_chain().map(|chain| chain.blocks().len());
-            let reverted_tip = notification.reverted_chain().map(|chain| chain.tip().number());
-            let reverted_blocks = notification.reverted_chain().map(|chain| chain.blocks().len());
-            info!(
-                target: "base::exex",
-                notification_kind,
-                committed_tip = ?committed_tip,
-                committed_blocks = ?committed_blocks,
-                reverted_tip = ?reverted_tip,
-                reverted_blocks = ?reverted_blocks,
-                "Received Proof ExEx notification from Reth"
-            );
             self.handle_notification(notification, &sync_target)?;
         }
 
@@ -357,29 +339,16 @@ where
 
         loop {
             let Some(state) = sync_target.take_state() else {
-                info!(target: "base::exex", "Proof sync loop waiting for target");
                 sync_target.notified().await;
-                info!(target: "base::exex", "Proof sync loop woke for target");
                 continue;
             };
 
             match state {
                 SyncTargetState::Revert { revert_to } => {
-                    info!(
-                        target: "base::exex",
-                        revert_to = revert_to.block.number,
-                        "Proof sync loop consumed revert target"
-                    );
                     Self::handle_revert(&storage, collector, revert_to);
                     sync_target.mark_revert_complete(&revert_to);
                 }
                 SyncTargetState::RevertThenSync { revert_to, sync_to } => {
-                    info!(
-                        target: "base::exex",
-                        revert_to = revert_to.block.number,
-                        sync_to,
-                        "Proof sync loop consumed revert then sync target"
-                    );
                     Self::handle_revert(&storage, collector, revert_to);
                     sync_target.mark_revert_complete(&revert_to);
                     Self::sync_forward(
@@ -393,11 +362,6 @@ where
                     .await;
                 }
                 SyncTargetState::SyncUpTo { to } => {
-                    info!(
-                        target: "base::exex",
-                        target = to,
-                        "Proof sync loop consumed sync target"
-                    );
                     Self::sync_forward(
                         &sync_target,
                         &storage,
@@ -457,11 +421,6 @@ where
         loop {
             // Check for higher-priority state (e.g. revert) before processing.
             if sync_target.has_pending_state() {
-                info!(
-                    target: "base::exex",
-                    target,
-                    "Proof sync interrupted by newer pending target"
-                );
                 return;
             }
 
@@ -478,12 +437,6 @@ where
             };
 
             if latest >= target {
-                info!(
-                    target: "base::exex",
-                    latest,
-                    target,
-                    "Proof sync target already reached"
-                );
                 return;
             }
 
@@ -591,11 +544,11 @@ where
 
         if let Some(committed_chain) = notification.committed_chain() {
             let tip = committed_chain.tip().num_hash();
-            info!(
+            debug!(
                 target: "base::exex",
-                finished_height = tip.number,
+                block_number = tip.number,
                 block_hash = ?tip.hash,
-                "Sending FinishedHeight for ExEx notification"
+                "Sending FinishedHeight event"
             );
             self.ctx.events.send(ExExEvent::FinishedHeight(tip))?;
         }
@@ -647,16 +600,7 @@ where
             "Cached notification trie data"
         );
 
-        let tip = new.tip().number();
-        sync_target.update_state(SyncTargetState::SyncUpTo { to: tip });
-        info!(
-            target: "base::exex",
-            tip,
-            total_blocks,
-            cached_count,
-            missing = total_blocks - cached_count,
-            "Queued proof sync target from ExEx notification"
-        );
+        sync_target.update_state(SyncTargetState::SyncUpTo { to: new.tip().number() });
         Ok(())
     }
 
