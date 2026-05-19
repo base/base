@@ -7,8 +7,8 @@ use alloy_sol_types::SolValue;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TokenVariant {
-    /// Default B-20 token.
-    Default = 1,
+    /// B-20 token.
+    B20 = 1,
 }
 
 impl TokenVariant {
@@ -21,13 +21,13 @@ impl TokenVariant {
     /// Variant discriminant returned by `variantOf` when address has no B-20 prefix.
     pub const NONE_DISCRIMINANT: u8 = 0;
 
-    /// Variant discriminant for default B-20 tokens.
-    pub const DEFAULT_DISCRIMINANT: u8 = Self::Default as u8;
+    /// Variant discriminant for B-20 tokens.
+    pub const B20_DISCRIMINANT: u8 = Self::B20 as u8;
 
     /// Returns the supported token variant for `variant`, if any.
     pub const fn from_discriminant(variant: u8) -> Option<Self> {
         match variant {
-            Self::DEFAULT_DISCRIMINANT => Some(Self::Default),
+            Self::B20_DISCRIMINANT => Some(Self::B20),
             _ => None,
         }
     }

@@ -45,10 +45,10 @@ async fn test_b20_factory_create_and_transfer_via_rpc() -> Result<()> {
         admin.address(),
     );
 
-    let token = b20.create_token(TokenVariant::Default, params, salt).await?;
+    let token = b20.create_token(TokenVariant::B20, params, salt).await?;
     b20.wait_for_token_code(token, TX_RECEIPT_TIMEOUT, BLOCK_POLL_INTERVAL).await?;
 
-    assert_eq!(b20.variant_of(token).await?, TokenVariant::Default.discriminant());
+    assert_eq!(b20.variant_of(token).await?, TokenVariant::B20.discriminant());
     assert_eq!(b20.decimals_of(token).await?, TOKEN_DECIMALS);
 
     let admin_balance_before = b20.balance_of(token, admin.address()).await?;
