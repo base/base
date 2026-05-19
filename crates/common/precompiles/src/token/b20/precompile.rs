@@ -5,7 +5,7 @@ use alloy_primitives::Address;
 
 use super::{B20Token, storage::B20TokenStorage};
 use crate::macros::base_precompile;
-use crate::token::Policy;
+use crate::token::PolicyHandle;
 
 /// Entry point for the `B20Token` precompile.
 ///
@@ -22,7 +22,7 @@ impl B20TokenPrecompile {
         base_precompile!(alloc::format!("B20Token@{token_address}"), |ctx, calldata| {
             B20Token::with_storage_and_policy(
                 B20TokenStorage::from_address(token_address, ctx),
-                Policy::new(ctx),
+                PolicyHandle::new(ctx),
             )
             .dispatch(ctx, &calldata)
         })

@@ -5,12 +5,12 @@ use revm::precompile::PrecompileResult;
 
 use super::B20Token;
 use crate::token::{
-    PolicyStorage,
+    Policy,
     abi::{IB20, IB20::IB20Calls as C},
     common::{Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, TokenAccounting, Transferable},
 };
 
-impl<S: TokenAccounting, P: PolicyStorage> B20Token<S, P> {
+impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
     /// ABI-dispatches `calldata` to the appropriate `IB20` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         self.inner(ctx, calldata).into_precompile_result(ctx.gas_used(), |b| b)

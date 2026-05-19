@@ -1,5 +1,4 @@
 //! `TokenAccounting` — the driven port all token storage adapters implement.
-
 use alloc::string::String;
 
 use alloy_primitives::{Address, LogData, U256};

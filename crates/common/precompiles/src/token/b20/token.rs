@@ -3,19 +3,19 @@
 use alloy_primitives::Address;
 
 use super::storage::B20_TOKEN_ADDRESS;
-use crate::{Policy, token::{
-    PolicyStorage,
+use crate::token::{
+    Policy,
     common::{
         Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, Token,
         TokenAccounting, Transferable,
     },
-}};
+};
 
 /// EVM precompile for the Default B-20 token variant.
 ///
 /// The generic `S` lets callers swap in an in-memory [`TokenAccounting`]
 /// implementation for unit tests without touching real EVM storage. The
-/// generic `P` provides the [`PolicyStorage`] implementation consulted on
+/// generic `P` provides the [`Policy`] implementation consulted on
 /// every transfer and mint. In production, [`B20Token::with_storage_and_policy`]
 /// wires in [`B20TokenStorage`] and [`Policy`].
 #[derive(Debug, Clone)]
@@ -24,7 +24,7 @@ pub struct B20Token<S: TokenAccounting, P: Policy> {
     pub(super) policy: P,
 }
 
-impl<S: TokenAccounting, P: PolicyStorage> B20Token<S, P> {
+impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
     /// Creates a `B20Token` backed by the provided storage and policy adapters.
     pub fn with_storage_and_policy(accounting: S, policy: P) -> Self {
         Self { accounting, policy }
@@ -35,7 +35,7 @@ impl<S: TokenAccounting, P: PolicyStorage> B20Token<S, P> {
 // Token: wire the accounting and policy fields, fix the precompile address
 // ---------------------------------------------------------------------------
 
-impl<S: TokenAccounting, P: PolicyStorage> Token for B20Token<S, P> {
+impl<S: TokenAccounting, P: Policy> Token for B20Token<S, P> {
     type Accounting = S;
     type Policy = P;
 
@@ -64,10 +64,10 @@ impl<S: TokenAccounting, P: PolicyStorage> Token for B20Token<S, P> {
 // Capability selection — B20Token opts in to all capabilities
 // ---------------------------------------------------------------------------
 
-impl<S: TokenAccounting, P: PolicyStorage> Transferable for B20Token<S, P> {}
-impl<S: TokenAccounting, P: PolicyStorage> Mintable for B20Token<S, P> {}
-impl<S: TokenAccounting, P: PolicyStorage> Burnable for B20Token<S, P> {}
-impl<S: TokenAccounting, P: PolicyStorage> Redeemable for B20Token<S, P> {}
-impl<S: TokenAccounting, P: PolicyStorage> Pausable for B20Token<S, P> {}
-impl<S: TokenAccounting, P: PolicyStorage> Configurable for B20Token<S, P> {}
-impl<S: TokenAccounting, P: PolicyStorage> Permittable for B20Token<S, P> {}
+impl<S: TokenAccounting, P: Policy> Transferable for B20Token<S, P> {}
+impl<S: TokenAccounting, P: Policy> Mintable for B20Token<S, P> {}
+impl<S: TokenAccounting, P: Policy> Burnable for B20Token<S, P> {}
+impl<S: TokenAccounting, P: Policy> Redeemable for B20Token<S, P> {}
+impl<S: TokenAccounting, P: Policy> Pausable for B20Token<S, P> {}
+impl<S: TokenAccounting, P: Policy> Configurable for B20Token<S, P> {}
+impl<S: TokenAccounting, P: Policy> Permittable for B20Token<S, P> {}

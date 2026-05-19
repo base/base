@@ -3,7 +3,7 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::token::{
-    IB20, PolicyStorage,
+    IB20, Policy,
     common::{Token, TokenAccounting},
 };
 

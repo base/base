@@ -6,7 +6,7 @@ pub use abi::{IB20, IPolicyRegistry, ITokenFactory};
 mod common;
 pub use common::{
     Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, Mintable, Pausable,
-    Permittable, Redeemable, Token, TokenAccounting, Transferable,
+    Permittable, Policy, Redeemable, Token, TokenAccounting, Transferable,
 };
 
 mod b20;
@@ -21,5 +21,5 @@ pub use factory::{
 
 mod policy_registry;
 pub use policy_registry::{
-    POLICY_REGISTRY_ADDRESS, Policy, PolicyRegistryEvm, PolicyRegistryStorage, PolicyStorage,
+    POLICY_REGISTRY_ADDRESS, PolicyHandle, PolicyRegistryEvm,
 };
