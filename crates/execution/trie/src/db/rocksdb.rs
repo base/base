@@ -59,10 +59,10 @@ const DEFAULT_RATE_LIMITER_FAIRNESS: i32 = 10;
 const DEFAULT_RATE_LIMITER_REFILL_PERIOD_US: i64 = 100_000;
 const DEFAULT_MAX_BACKGROUND_JOBS: i32 = 4;
 const DEFAULT_MAX_SUBCOMPACTIONS: u32 = 1;
-const DEFAULT_MAX_OPEN_FILES: i32 = -1;
+const DEFAULT_MAX_OPEN_FILES: i32 = 500;
 const DEFAULT_MAX_WRITE_BUFFER_NUMBER: i32 = 3;
 const DEFAULT_TARGET_FILE_SIZE_BASE: u64 = 256 * 1024 * 1024;
-const DEFAULT_WRITE_BUFFER_SIZE: usize = 64 * 1024 * 1024;
+const DEFAULT_WRITE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
 
 const V2_SCHEMA_VERSION: &[u8] = b"rocksdb-proof-store-v2";
 const V2_SCHEMA_VERSION_KEY: &[u8] = b"schema-version";
@@ -134,6 +134,8 @@ pub struct RocksdbProofsStorageOptions {
     pub max_background_jobs: i32,
     /// Maximum number of subcompactions per compaction.
     pub max_subcompactions: u32,
+    /// Maximum number of files `RocksDB` should keep open. Use `-1` to keep all files open.
+    pub max_open_files: i32,
     /// Maximum total WAL size in bytes.
     pub max_total_wal_size: Option<u64>,
     /// Maximum number of write buffers per column family.
@@ -165,6 +167,7 @@ impl Default for RocksdbProofsStorageOptions {
             level_zero_stop_writes_trigger: DEFAULT_LEVEL_ZERO_STOP_WRITES_TRIGGER,
             max_background_jobs: DEFAULT_MAX_BACKGROUND_JOBS,
             max_subcompactions: DEFAULT_MAX_SUBCOMPACTIONS,
+            max_open_files: DEFAULT_MAX_OPEN_FILES,
             max_total_wal_size: None,
             max_write_buffer_number: DEFAULT_MAX_WRITE_BUFFER_NUMBER,
             write_buffer_size: DEFAULT_WRITE_BUFFER_SIZE,
@@ -591,7 +594,7 @@ impl RocksdbProofsStorage {
         options.set_bytes_per_sync(storage_options.bytes_per_sync);
         options.set_compaction_readahead_size(storage_options.compaction_readahead_size);
         options.set_compaction_pri(CompactionPri::MinOverlappingRatio);
-        options.set_max_open_files(DEFAULT_MAX_OPEN_FILES);
+        options.set_max_open_files(storage_options.max_open_files);
         options.set_max_total_wal_size(Self::max_total_wal_size(storage_options));
         options.set_use_direct_io_for_flush_and_compaction(
             storage_options.use_direct_io_for_flush_and_compaction,
@@ -2704,6 +2707,7 @@ mod tests {
         assert_eq!(options.level_zero_stop_writes_trigger, DEFAULT_LEVEL_ZERO_STOP_WRITES_TRIGGER);
         assert_eq!(options.max_background_jobs, DEFAULT_MAX_BACKGROUND_JOBS);
         assert_eq!(options.max_subcompactions, DEFAULT_MAX_SUBCOMPACTIONS);
+        assert_eq!(options.max_open_files, DEFAULT_MAX_OPEN_FILES);
         assert_eq!(options.max_write_buffer_number, DEFAULT_MAX_WRITE_BUFFER_NUMBER);
         assert_eq!(options.target_file_size_base, DEFAULT_TARGET_FILE_SIZE_BASE);
         assert_eq!(options.write_buffer_size, DEFAULT_WRITE_BUFFER_SIZE);

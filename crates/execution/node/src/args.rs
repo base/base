@@ -21,12 +21,13 @@ const DEFAULT_ROCKSDB_LEVEL_ZERO_FILE_NUM_COMPACTION_TRIGGER: i32 = 4;
 const DEFAULT_ROCKSDB_LEVEL_ZERO_SLOWDOWN_WRITES_TRIGGER: i32 = 20;
 const DEFAULT_ROCKSDB_LEVEL_ZERO_STOP_WRITES_TRIGGER: i32 = 36;
 const DEFAULT_ROCKSDB_MAX_BACKGROUND_JOBS: i32 = 4;
+const DEFAULT_ROCKSDB_MAX_OPEN_FILES: i32 = 500;
 const DEFAULT_ROCKSDB_MAX_SUBCOMPACTIONS: u32 = 1;
 const DEFAULT_ROCKSDB_MAX_WRITE_BUFFER_NUMBER: i32 = 3;
 const DEFAULT_ROCKSDB_RATE_LIMITER_FAIRNESS: i32 = 10;
 const DEFAULT_ROCKSDB_RATE_LIMITER_REFILL_PERIOD_MS: i64 = 100;
 const DEFAULT_ROCKSDB_TARGET_FILE_SIZE_BASE_MIB: u64 = 256;
-const DEFAULT_ROCKSDB_WRITE_BUFFER_SIZE_MIB: u64 = 64;
+const DEFAULT_ROCKSDB_WRITE_BUFFER_SIZE_MIB: u64 = 256;
 
 /// Transaction ordering strategy for the mempool.
 ///
@@ -180,6 +181,16 @@ pub struct ProofsHistoryRocksdbArgs {
     )]
     pub max_subcompactions: u32,
 
+    /// Maximum number of files `RocksDB` should keep open. Set -1 to keep all files open.
+    #[arg(
+        long = "proofs-history.rocksdb.max-open-files",
+        value_name = "PROOFS_HISTORY_ROCKSDB_MAX_OPEN_FILES",
+        default_value_t = DEFAULT_ROCKSDB_MAX_OPEN_FILES,
+        value_parser = clap::value_parser!(i32).range(-1..),
+        hide = true
+    )]
+    pub max_open_files: i32,
+
     /// Maximum total WAL size in `MiB`.
     #[arg(
         long = "proofs-history.rocksdb.max-total-wal-size-mib",
@@ -272,6 +283,7 @@ impl Default for ProofsHistoryRocksdbArgs {
             level_zero_stop_writes_trigger: DEFAULT_ROCKSDB_LEVEL_ZERO_STOP_WRITES_TRIGGER,
             max_background_jobs: DEFAULT_ROCKSDB_MAX_BACKGROUND_JOBS,
             max_subcompactions: DEFAULT_ROCKSDB_MAX_SUBCOMPACTIONS,
+            max_open_files: DEFAULT_ROCKSDB_MAX_OPEN_FILES,
             max_total_wal_size_mib: None,
             max_write_buffer_number: DEFAULT_ROCKSDB_MAX_WRITE_BUFFER_NUMBER,
             target_file_size_base_mib: DEFAULT_ROCKSDB_TARGET_FILE_SIZE_BASE_MIB,
@@ -298,6 +310,7 @@ impl ProofsHistoryRocksdbArgs {
             level_zero_stop_writes_trigger: self.level_zero_stop_writes_trigger,
             max_background_jobs: self.max_background_jobs,
             max_subcompactions: self.max_subcompactions,
+            max_open_files: self.max_open_files,
             max_total_wal_size: self.max_total_wal_size_mib.map(|size| size.saturating_mul(MIB)),
             max_write_buffer_number: self.max_write_buffer_number,
             target_file_size_base: self.target_file_size_base_mib.saturating_mul(MIB),
@@ -673,6 +686,8 @@ mod tests {
             "2",
             "--proofs-history.rocksdb.max-subcompactions",
             "2",
+            "--proofs-history.rocksdb.max-open-files",
+            "256",
             "--proofs-history.rocksdb.max-total-wal-size-mib",
             "1024",
             "--proofs-history.rocksdb.max-write-buffer-number",
@@ -701,6 +716,7 @@ mod tests {
         assert_eq!(options.level_zero_stop_writes_trigger, 64);
         assert_eq!(options.max_background_jobs, 2);
         assert_eq!(options.max_subcompactions, 2);
+        assert_eq!(options.max_open_files, 256);
         assert_eq!(options.max_total_wal_size, Some(1024 * MIB));
         assert_eq!(options.max_write_buffer_number, 4);
         assert_eq!(options.target_file_size_base, 512 * MIB);
