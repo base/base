@@ -4,7 +4,7 @@ use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Handler, Result};
 use revm::state::Bytecode;
 
-use crate::token::{B20Token, B20TokenStorage, TokenAccounting, abi::ITokenFactory};
+use crate::token::{B20Token, B20TokenStorage, Policy, TokenAccounting, abi::ITokenFactory};
 
 /// Singleton precompile address for the `TokenFactory`.
 pub const FACTORY_ADDRESS: Address = address!("b02f000000000000000000000000000000000000");
@@ -144,6 +144,7 @@ impl<'a> TokenFactory<'a> {
         token.capabilities.write(token_params.capabilities)?;
         token.minimum_redeemable.write(token_params.minimumRedeemable)?;
         token.contract_uri.write(token_params.contractURI.clone())?;
+        token.transfer_policy_id.write(1u64)?; // 1 = ALLOW_ALL built-in
 
         if token_params.initialSupply > U256::ZERO {
             if token_params.initialSupplyRecipient.is_zero() {
@@ -154,8 +155,11 @@ impl<'a> TokenFactory<'a> {
         }
 
         for calldata in p.postCreateCalls {
-            B20Token::with_storage(B20TokenStorage::from_address(token_address, self.storage))
-                .inner(self.storage, &calldata)?;
+            B20Token::with_storage_and_policy(
+                B20TokenStorage::from_address(token_address, self.storage),
+                Policy::new(self.storage),
+            )
+            .inner(self.storage, &calldata)?;
         }
 
         self.emit_event(ITokenFactory::TokenCreated {
@@ -201,7 +205,7 @@ mod tests {
 
     use super::*;
     use crate::token::{
-        B20Token, B20TokenStorage, IB20, Mintable, Token, TokenAccounting, Transferable,
+        B20Token, B20TokenStorage, IB20, Mintable, Policy, Token, TokenAccounting, Transferable,
     };
 
     fn token_params(
@@ -250,8 +254,8 @@ mod tests {
         )
     }
 
-    fn token_at<'a>(addr: Address, ctx: StorageCtx<'a>) -> B20Token<B20TokenStorage<'a>> {
-        B20Token::with_storage(B20TokenStorage::from_address(addr, ctx))
+    fn token_at<'a>(addr: Address, ctx: StorageCtx<'a>) -> B20Token<B20TokenStorage<'a>, Policy<'a>> {
+        B20Token::with_storage_and_policy(B20TokenStorage::from_address(addr, ctx), Policy::new(ctx))
     }
 
     #[test]

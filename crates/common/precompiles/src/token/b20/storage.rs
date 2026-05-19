@@ -22,6 +22,7 @@ pub struct B20TokenStorage {
     pub minimum_redeemable: U256,                             // slot 8
     pub contract_uri: String,                                 // slot 9
     pub capabilities: U256,                                   // slot 10
+    pub transfer_policy_id: u64,                             // slot 11
 }
 
 impl<'a> B20TokenStorage<'a> {
@@ -123,6 +124,10 @@ impl TokenAccounting for B20TokenStorage<'_> {
 
     fn capabilities(&self) -> Result<U256> {
         self.capabilities.read()
+    }
+
+    fn transfer_policy_id(&self) -> Result<u64> {
+        self.transfer_policy_id.read()
     }
 
     fn emit_event(&mut self, log: LogData) -> Result<()> {

@@ -1,13 +1,11 @@
 //! Shared business logic for all Base-native token variants.
 
 mod ops;
-mod policy_registry;
 mod token;
 mod token_accounting;
 
 use alloy_primitives::U256;
 pub use ops::{Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, Transferable};
-pub use policy_registry::{NoOpPolicyRegistry, PolicyRegistry};
 pub use token::Token;
 pub use token_accounting::TokenAccounting;
 

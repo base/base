@@ -6,6 +6,7 @@ mod evm;
 pub use evm::PolicyRegistryEvm;
 
 mod policy;
+pub use policy::Policy;
 
 mod storage;
-pub use storage::{POLICY_REGISTRY_ADDRESS, PolicyRegistryStorage};
+pub use storage::{POLICY_REGISTRY_ADDRESS, PolicyRegistryStorage, PolicyStorage};

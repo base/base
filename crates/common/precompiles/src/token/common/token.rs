@@ -1,6 +1,7 @@
 use alloy_primitives::Address;
 
-use super::{PolicyRegistry, TokenAccounting};
+use super::TokenAccounting;
+use crate::token::PolicyStorage;
 
 /// Token identity layer, bridging the storage port to capability traits.
 ///
@@ -23,7 +24,7 @@ pub trait Token {
     /// The concrete storage adapter backing this token.
     type Accounting: TokenAccounting;
     /// The global policy registry precompile backing this token.
-    type Policy: PolicyRegistry;
+    type Policy: PolicyStorage;
 
     /// Returns a shared reference to this token's storage adapter.
     fn accounting(&self) -> &Self::Accounting;

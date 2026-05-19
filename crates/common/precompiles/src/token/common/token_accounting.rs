@@ -82,6 +82,11 @@ pub trait TokenAccounting {
     /// Returns the immutable capability bitfield assigned at creation.
     fn capabilities(&self) -> Result<U256>;
 
+    // --- Policy ---
+
+    /// Returns the policy ID this token consults for transfer authorization.
+    fn transfer_policy_id(&self) -> Result<u64>;
+
     // --- Event emission ---
 
     /// Publishes a pre-encoded EVM event log from this token's address.
