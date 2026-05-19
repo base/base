@@ -1,10 +1,11 @@
 //! `TokenFactory` native precompile — creates B-20 tokens at deterministic prefix-encoded addresses.
 
 mod dispatch;
-mod evm;
-mod storage;
 
+mod evm;
 pub use evm::TokenFactoryEvm;
+
+mod storage;
 pub use storage::{
     DEFAULT_PREFIX, FACTORY_ADDRESS, RESERVED_SIZE, SECURITY_PREFIX, STABLECOIN_PREFIX,
     TokenFactory, VARIANT_DEFAULT, VARIANT_NONE, VARIANT_SECURITY, VARIANT_STABLECOIN,

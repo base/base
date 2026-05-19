@@ -5,6 +5,8 @@
 
 extern crate alloc;
 
+mod macros;
+
 mod provider;
 pub use provider::BasePrecompiles;
 
