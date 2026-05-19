@@ -5,5 +5,7 @@ mod dispatch;
 mod evm;
 pub use evm::PolicyRegistryEvm;
 
+mod policy;
+
 mod storage;
 pub use storage::{POLICY_REGISTRY_ADDRESS, PolicyRegistryStorage};

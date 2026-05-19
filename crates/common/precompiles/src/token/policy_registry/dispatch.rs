@@ -21,7 +21,7 @@ impl PolicyRegistryStorage<'_> {
 
         match IPolicyRegistry::IPolicyRegistryCalls::abi_decode(calldata) {
             Ok(C::helloWorld(_)) => {
-                Ok(IPolicyRegistry::helloWorldCall::abi_encode_returns(&true).into())
+                Ok(IPolicyRegistry::helloWorldCall::abi_encode_returns(&self.hello_world()).into())
             }
             Err(_) => Err(BasePrecompileError::UnknownFunctionSelector(selector)),
         }
