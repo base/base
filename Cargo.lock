@@ -3406,6 +3406,7 @@ dependencies = [
  "base-common-chains",
  "base-precompile-macros",
  "base-precompile-storage",
+ "criterion",
  "revm",
 ]
 
