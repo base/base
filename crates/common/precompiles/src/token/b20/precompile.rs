@@ -4,8 +4,7 @@ use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::Address;
 
 use super::{B20Token, storage::B20TokenStorage};
-use crate::macros::base_precompile;
-use crate::token::PolicyHandle;
+use crate::{macros::base_precompile, token::PolicyHandle};
 
 /// Entry point for the `B20Token` precompile.
 ///

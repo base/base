@@ -9,4 +9,4 @@ mod policy;
 pub use policy::PolicyHandle;
 
 mod storage;
-pub use storage::{POLICY_REGISTRY_ADDRESS};
+pub use storage::POLICY_REGISTRY_ADDRESS;

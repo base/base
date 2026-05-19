@@ -4,17 +4,15 @@
 //! and implements the [`Policy`] trait, separating the authorization
 //! decisions (here) from the raw storage reads (`storage.rs`).
 
-
 use alloy_primitives::Address;
 use base_precompile_storage::{Result, StorageCtx};
 
-use super::storage::{PolicyRegistryStorage};
+use super::storage::PolicyRegistryStorage;
 use crate::token::common::Policy;
 
 pub struct PolicyHandle<'a> {
     inner: PolicyRegistryStorage<'a>,
 }
-
 
 impl<'a> PolicyHandle<'a> {
     /// Creates a `PolicyHandle` backed by the registry storage at its singleton address.

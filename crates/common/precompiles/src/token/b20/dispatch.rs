@@ -7,7 +7,10 @@ use super::B20Token;
 use crate::token::{
     Policy,
     abi::{IB20, IB20::IB20Calls as C},
-    common::{Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, TokenAccounting, Transferable},
+    common::{
+        Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, TokenAccounting,
+        Transferable,
+    },
 };
 
 impl<S: TokenAccounting, P: Policy> B20Token<S, P> {

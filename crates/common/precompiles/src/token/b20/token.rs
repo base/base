@@ -25,7 +25,7 @@ pub struct B20Token<S: TokenAccounting, P: Policy> {
 
 impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
     /// Creates a `B20Token` backed by the provided storage and policy adapters.
-    pub fn with_storage_and_policy(accounting: S, policy: P) -> Self {
+    pub const fn with_storage_and_policy(accounting: S, policy: P) -> Self {
         Self { accounting, policy }
     }
 }

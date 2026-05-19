@@ -83,8 +83,14 @@ impl BaseTokenBenchSetup {
         Self::token_at(ctx, token_address)
     }
 
-    fn token_at<'a>(ctx: StorageCtx<'a>, token_address: Address) -> B20Token<B20TokenStorage<'a>, PolicyHandle<'a>> {
-        B20Token::with_storage_and_policy(B20TokenStorage::from_address(token_address, ctx), PolicyHandle::new(ctx))
+    fn token_at<'a>(
+        ctx: StorageCtx<'a>,
+        token_address: Address,
+    ) -> B20Token<B20TokenStorage<'a>, PolicyHandle<'a>> {
+        B20Token::with_storage_and_policy(
+            B20TokenStorage::from_address(token_address, ctx),
+            PolicyHandle::new(ctx),
+        )
     }
 }
 

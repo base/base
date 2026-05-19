@@ -4,12 +4,11 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use super::storage::PolicyRegistryStorage;
-use crate::token::abi::IPolicyRegistry;
-use crate::token::abi::IPolicyRegistry::IPolicyRegistryCalls as C;
+use crate::token::abi::{IPolicyRegistry, IPolicyRegistry::IPolicyRegistryCalls as C};
 
 impl PolicyRegistryStorage<'_> {
     /// ABI-dispatches `calldata` to the appropriate `IPolicyRegistry` handler.
-    pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+    pub(super) fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         self.inner(calldata).into_precompile_result(ctx.gas_used(), |b| b)
     }
 

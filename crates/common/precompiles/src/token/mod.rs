@@ -20,6 +20,4 @@ pub use factory::{
 };
 
 mod policy_registry;
-pub use policy_registry::{
-    POLICY_REGISTRY_ADDRESS, PolicyHandle, PolicyRegistryEvm,
-};
+pub use policy_registry::{POLICY_REGISTRY_ADDRESS, PolicyHandle, PolicyRegistryEvm};

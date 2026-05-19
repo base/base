@@ -1,4 +1,3 @@
-
 use alloy_primitives::Address;
 use base_precompile_storage::Result;
 
