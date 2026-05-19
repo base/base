@@ -3408,6 +3408,7 @@ dependencies = [
  "base-precompile-storage",
  "criterion",
  "revm",
+ "rstest",
 ]
 
 [[package]]

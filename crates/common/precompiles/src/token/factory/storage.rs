@@ -196,7 +196,7 @@ impl<'a> TokenFactory<'a> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_sol_types::{SolCall, SolError};
+    use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use super::*;
@@ -253,6 +253,31 @@ mod tests {
 
     fn token_at<'a>(addr: Address, ctx: StorageCtx<'a>) -> B20Token<B20TokenStorage<'a>> {
         B20Token::with_storage(B20TokenStorage::from_address(addr, ctx))
+    }
+
+    fn assert_output(output: Bytes, expected: impl AsRef<[u8]>) {
+        assert_eq!(output.as_ref(), expected.as_ref());
+    }
+
+    fn dispatch_factory_success(ctx: StorageCtx<'_>, call: impl SolCall) -> Bytes {
+        let mut factory = TokenFactory::new(ctx);
+        let output = factory.dispatch(ctx, &call.abi_encode()).unwrap();
+        assert!(!output.reverted, "factory call reverted: {:?}", output.bytes);
+        output.bytes
+    }
+
+    fn dispatch_factory_revert(ctx: StorageCtx<'_>, call: impl SolCall) -> Bytes {
+        let mut factory = TokenFactory::new(ctx);
+        let output = factory.dispatch(ctx, &call.abi_encode()).unwrap();
+        assert!(output.reverted, "factory call unexpectedly succeeded");
+        output.bytes
+    }
+
+    fn dispatch_b20_success(ctx: StorageCtx<'_>, token_addr: Address, call: impl SolCall) -> Bytes {
+        let mut token = token_at(token_addr, ctx);
+        let output = token.dispatch(ctx, &call.abi_encode()).unwrap();
+        assert!(!output.reverted, "token call reverted: {:?}", output.bytes);
+        output.bytes
     }
 
     #[test]
@@ -429,6 +454,17 @@ mod tests {
     }
 
     #[test]
+    fn test_is_b20_false_for_non_prefix_address() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let random_addr = Address::repeat_byte(0x42);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let factory = TokenFactory::new(ctx);
+            assert!(!factory.is_b20(random_addr).unwrap());
+        });
+    }
+
+    #[test]
     fn test_transfer_and_mint_lifecycle() {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
@@ -490,6 +526,96 @@ mod tests {
     }
 
     #[test]
+    fn test_factory_dispatch_create_token_predicts_and_initializes_token() {
+        let creator = Address::repeat_byte(0xCA);
+        let salt = B256::repeat_byte(0x31);
+        let (expected_token, _) = compute_b20_address(creator, VARIANT_DEFAULT, 6, salt);
+        let mut params =
+            token_params("Dispatch Token", "DSP", 6, U256::from(1_000u64), U256::from(10_000u64));
+        params.minimumRedeemable = U256::from(25u64);
+        params.contractURI = "ipfs://dispatch".to_string();
+
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(creator);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_output(
+                dispatch_factory_success(
+                    ctx,
+                    ITokenFactory::predictTokenAddressCall {
+                        creator,
+                        variant: VARIANT_DEFAULT,
+                        decimals: 6,
+                        salt,
+                    },
+                ),
+                ITokenFactory::predictTokenAddressCall::abi_encode_returns(&expected_token),
+            );
+
+            assert_output(
+                dispatch_factory_success(
+                    ctx,
+                    create_call(VARIANT_DEFAULT, params, B256::repeat_byte(0x31)),
+                ),
+                ITokenFactory::createTokenCall::abi_encode_returns(&expected_token),
+            );
+            assert!(ctx.has_bytecode(expected_token).unwrap());
+
+            assert_output(
+                dispatch_factory_success(ctx, ITokenFactory::isB20Call { token: expected_token }),
+                ITokenFactory::isB20Call::abi_encode_returns(&true),
+            );
+            assert_output(
+                dispatch_factory_success(
+                    ctx,
+                    ITokenFactory::variantOfCall { token: expected_token },
+                ),
+                ITokenFactory::variantOfCall::abi_encode_returns(&VARIANT_DEFAULT),
+            );
+            assert_output(
+                dispatch_factory_success(
+                    ctx,
+                    ITokenFactory::decimalsOfCall { token: expected_token },
+                ),
+                ITokenFactory::decimalsOfCall::abi_encode_returns(&6u8),
+            );
+
+            assert_output(
+                dispatch_b20_success(ctx, expected_token, IB20::nameCall {}),
+                "Dispatch Token".to_string().abi_encode(),
+            );
+            assert_output(
+                dispatch_b20_success(ctx, expected_token, IB20::symbolCall {}),
+                "DSP".to_string().abi_encode(),
+            );
+            assert_output(
+                dispatch_b20_success(ctx, expected_token, IB20::decimalsCall {}),
+                6u8.abi_encode(),
+            );
+            assert_output(
+                dispatch_b20_success(ctx, expected_token, IB20::totalSupplyCall {}),
+                U256::from(1_000u64).abi_encode(),
+            );
+            assert_output(
+                dispatch_b20_success(
+                    ctx,
+                    expected_token,
+                    IB20::balanceOfCall { account: Address::repeat_byte(0xCD) },
+                ),
+                U256::from(1_000u64).abi_encode(),
+            );
+            assert_output(
+                dispatch_b20_success(ctx, expected_token, IB20::minimumRedeemableCall {}),
+                U256::from(25u64).abi_encode(),
+            );
+            assert_output(
+                dispatch_b20_success(ctx, expected_token, IB20::contractURICall {}),
+                "ipfs://dispatch".to_string().abi_encode(),
+            );
+        });
+    }
+
+    #[test]
     fn test_uninitialized_prefix_token_reverts() {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
@@ -504,6 +630,98 @@ mod tests {
 
             assert!(result.reverted);
             assert_eq!(result.bytes.as_ref(), IB20::Uninitialized {}.abi_encode());
+        });
+    }
+
+    #[test]
+    fn test_b20_dispatch_transfer_approve_transfer_from() {
+        let creator = Address::repeat_byte(0xCA);
+        let alice = Address::repeat_byte(0xCD);
+        let bob = Address::repeat_byte(0xBB);
+        let spender = Address::repeat_byte(0xEE);
+        let charlie = Address::repeat_byte(0xCC);
+        let salt = B256::repeat_byte(0x32);
+        let (token_addr, _) = compute_b20_address(creator, VARIANT_DEFAULT, 18, salt);
+        let params =
+            token_params("Dispatch Token", "DSP", 18, U256::from(1_000u64), U256::MAX);
+
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(creator);
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_output(
+                dispatch_factory_success(ctx, create_call(VARIANT_DEFAULT, params, salt)),
+                ITokenFactory::createTokenCall::abi_encode_returns(&token_addr),
+            );
+        });
+
+        storage.set_caller(alice);
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_output(
+                dispatch_b20_success(
+                    ctx,
+                    token_addr,
+                    IB20::transferCall { to: bob, amount: U256::from(300u64) },
+                ),
+                true.abi_encode(),
+            );
+            assert_output(
+                dispatch_b20_success(
+                    ctx,
+                    token_addr,
+                    IB20::approveCall { spender, amount: U256::from(250u64) },
+                ),
+                true.abi_encode(),
+            );
+        });
+
+        storage.set_caller(spender);
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_output(
+                dispatch_b20_success(
+                    ctx,
+                    token_addr,
+                    IB20::transferFromCall {
+                        from: alice,
+                        to: charlie,
+                        amount: U256::from(200u64),
+                    },
+                ),
+                true.abi_encode(),
+            );
+            assert_output(
+                dispatch_b20_success(ctx, token_addr, IB20::balanceOfCall { account: alice }),
+                U256::from(500u64).abi_encode(),
+            );
+            assert_output(
+                dispatch_b20_success(ctx, token_addr, IB20::balanceOfCall { account: bob }),
+                U256::from(300u64).abi_encode(),
+            );
+            assert_output(
+                dispatch_b20_success(ctx, token_addr, IB20::balanceOfCall { account: charlie }),
+                U256::from(200u64).abi_encode(),
+            );
+            assert_output(
+                dispatch_b20_success(ctx, token_addr, IB20::allowanceCall { owner: alice, spender }),
+                U256::from(50u64).abi_encode(),
+            );
+        });
+    }
+
+    #[test]
+    fn test_factory_dispatch_reverts_with_abi_error() {
+        let creator = Address::repeat_byte(0xCA);
+        let salt = B256::repeat_byte(0x33);
+        let mut params = token_params("Bad Token", "BAD", 18, U256::ZERO, U256::MAX);
+        params.admin = Address::ZERO;
+
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(creator);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_output(
+                dispatch_factory_revert(ctx, create_call(VARIANT_DEFAULT, params, salt)),
+                ITokenFactory::ZeroAddress {}.abi_encode(),
+            );
         });
     }
 }
