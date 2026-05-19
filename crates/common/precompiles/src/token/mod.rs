@@ -1,7 +1,7 @@
 //! Native precompiles for Base-native tokens (B-20).
 
 mod abi;
-pub use abi::{IDefaultToken, ITokenFactory};
+pub use abi::{IB20, ITokenFactory};
 
 mod common;
 pub use common::{
@@ -9,15 +9,12 @@ pub use common::{
     Permittable, Redeemable, Token, TokenAccounting, Transferable,
 };
 
-mod default_token;
-pub use default_token::{
-    DEFAULT_TOKEN_ADDRESS, DefaultToken, DefaultTokenEvm, DefaultTokenStorage,
-};
+mod b20;
+pub use b20::{B20_TOKEN_ADDRESS, B20Token, B20TokenPrecompile, B20TokenStorage};
 
 mod factory;
 pub use factory::{
-    DEFAULT_PREFIX, FACTORY_ADDRESS, RESERVED_SIZE, SECURITY_PREFIX, STABLECOIN_PREFIX,
-    TokenFactory, TokenFactoryEvm, VARIANT_DEFAULT, VARIANT_NONE, VARIANT_SECURITY,
-    VARIANT_STABLECOIN, compute_default_address, compute_security_address,
-    compute_stablecoin_address, has_b20_prefix, variant_of,
+    B20_PREFIX_BYTE, B20_PREFIX_MARKER, CREATE_TOKEN_VERSION, FACTORY_ADDRESS, RESERVED_SIZE,
+    TokenFactory, TokenFactoryPrecompile, VARIANT_DEFAULT, VARIANT_NONE, address_prefix,
+    compute_b20_address, decimals_of, has_b20_prefix, is_supported_variant, variant_of,
 };

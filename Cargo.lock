@@ -8093,6 +8093,7 @@ dependencies = [
  "base-bundle-extension",
  "base-common-genesis",
  "base-common-network",
+ "base-common-precompiles",
  "base-common-rpc-types",
  "base-consensus-disc",
  "base-consensus-gossip",

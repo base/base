@@ -7,7 +7,7 @@ sol! {
     interface ITokenFactory {
         // ── Structs ─────────────────────────────────────────────────────────
 
-        struct CreateDefaultTokenParams {
+        struct B20TokenParams {
             string name;
             string symbol;
             uint8 decimals;
@@ -15,10 +15,17 @@ sol! {
             uint256 capabilities;
             uint256 initialSupply;
             address initialSupplyRecipient;
-            uint64 transferPolicyId;
             uint256 supplyCap;
             uint256 minimumRedeemable;
             string contractURI;
+        }
+
+        struct CreateTokenParams {
+            uint8 version;
+            uint8 variant;
+            bytes requiredParams;
+            bytes optionalParams;
+            bytes[] postCreateCalls;
             bytes32 salt;
         }
 
@@ -36,15 +43,28 @@ sol! {
         /// A required address argument was `address(0)`.
         error ZeroAddress();
 
+        /// `version` is not supported by this factory.
+        error UnsupportedTokenVersion(uint8 version);
+
+        /// `variant` is not supported by this factory.
+        error UnsupportedTokenVariant(uint8 variant);
+
+        /// Optional parameter bytes are reserved for future versions.
+        error UnsupportedOptionalParams();
+
+        /// `requiredParams` could not be decoded for the requested token shape.
+        error InvalidTokenParams();
+
         // ── Events ───────────────────────────────────────────────────────────
 
-        event DefaultTokenCreated(
+        event TokenCreated(
             address indexed token,
             address indexed creator,
             address indexed admin,
+            uint8 variant,
+            uint8 decimals,
             string name,
             string symbol,
-            uint8 decimals,
             uint256 capabilities,
             uint256 initialSupply,
             bytes32 salt
@@ -52,23 +72,21 @@ sol! {
 
         // ── Functions ────────────────────────────────────────────────────────
 
-        /// Creates a Default-variant token at a deterministic address.
-        function createDefault(CreateDefaultTokenParams calldata params) external returns (address token);
+        /// Creates a token at a deterministic address.
+        function createToken(CreateTokenParams calldata params) external returns (address token);
 
-        /// Returns the address a `createDefault` call would produce for `(creator, salt)`.
-        function predictDefaultAddress(address creator, bytes32 salt) external view returns (address);
-
-        /// Returns the address a `createStablecoin` call would produce for `(creator, salt)`.
-        function predictStablecoinAddress(address creator, bytes32 salt) external view returns (address);
-
-        /// Returns the address a `createSecurity` call would produce for `(creator, salt)`.
-        function predictSecurityAddress(address creator, bytes32 salt) external view returns (address);
+        /// Returns the address a `createToken` call would produce.
+        function predictTokenAddress(address creator, uint8 variant, uint8 decimals, bytes32 salt) external view returns (address);
 
         /// Returns `true` if `token` is a deployed B-20 token (correct prefix + code at address).
         function isB20(address token) external view returns (bool);
 
-        /// Returns the variant of `token` (0=NONE, 1=DEFAULT, 2=STABLECOIN, 3=SECURITY).
+        /// Returns the variant of `token` (0=NONE, 1=DEFAULT).
         /// Decoded from the address prefix with no storage read.
         function variantOf(address token) external view returns (uint8);
+
+        /// Returns the decimals encoded in `token`.
+        /// Decoded from the address prefix with no storage read.
+        function decimalsOf(address token) external view returns (uint8);
     }
 }

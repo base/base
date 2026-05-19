@@ -1,9 +1,9 @@
-//! `DefaultToken` struct — the concrete B-20 token type.
+//! `B20Token` struct — the concrete B-20 token type.
 
 use alloy_primitives::Address;
 use base_precompile_storage::StorageCtx;
 
-use super::storage::{DEFAULT_TOKEN_ADDRESS, DefaultTokenStorage};
+use super::storage::{B20_TOKEN_ADDRESS, B20TokenStorage};
 use crate::token::common::{
     Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, Token, TokenAccounting,
     Transferable,
@@ -13,21 +13,21 @@ use crate::token::common::{
 ///
 /// The generic `S` lets callers swap in an in-memory [`TokenAccounting`]
 /// implementation for unit tests without touching real EVM storage. In
-/// production, [`DefaultToken::new`] wires in [`DefaultTokenStorage`].
+/// production, [`B20Token::new`] wires in [`B20TokenStorage`].
 #[derive(Debug, Clone)]
-pub struct DefaultToken<S: TokenAccounting> {
+pub struct B20Token<S: TokenAccounting> {
     pub(super) accounting: S,
 }
 
-impl<'a> DefaultToken<DefaultTokenStorage<'a>> {
-    /// Creates a new `DefaultToken` backed by [`DefaultTokenStorage`].
+impl<'a> B20Token<B20TokenStorage<'a>> {
+    /// Creates a new `B20Token` backed by [`B20TokenStorage`].
     pub fn new(storage: StorageCtx<'a>) -> Self {
-        Self { accounting: DefaultTokenStorage::new(storage) }
+        Self { accounting: B20TokenStorage::new(storage) }
     }
 }
 
-impl<S: TokenAccounting> DefaultToken<S> {
-    /// Creates a `DefaultToken` backed by the provided storage adapter.
+impl<S: TokenAccounting> B20Token<S> {
+    /// Creates a `B20Token` backed by the provided storage adapter.
     ///
     /// Use this in tests to inject an in-memory [`TokenAccounting`] implementation.
     pub const fn with_storage(accounting: S) -> Self {
@@ -39,7 +39,7 @@ impl<S: TokenAccounting> DefaultToken<S> {
 // Token: wire the accounting field and fix the precompile address
 // ---------------------------------------------------------------------------
 
-impl<S: TokenAccounting> Token for DefaultToken<S> {
+impl<S: TokenAccounting> Token for B20Token<S> {
     type Accounting = S;
 
     fn accounting(&self) -> &S {
@@ -51,18 +51,18 @@ impl<S: TokenAccounting> Token for DefaultToken<S> {
     }
 
     fn token_address(&self) -> Address {
-        DEFAULT_TOKEN_ADDRESS
+        B20_TOKEN_ADDRESS
     }
 }
 
 // ---------------------------------------------------------------------------
-// Capability selection — DefaultToken opts in to all capabilities
+// Capability selection — B20Token opts in to all capabilities
 // ---------------------------------------------------------------------------
 
-impl<S: TokenAccounting> Transferable for DefaultToken<S> {}
-impl<S: TokenAccounting> Mintable for DefaultToken<S> {}
-impl<S: TokenAccounting> Burnable for DefaultToken<S> {}
-impl<S: TokenAccounting> Redeemable for DefaultToken<S> {}
-impl<S: TokenAccounting> Pausable for DefaultToken<S> {}
-impl<S: TokenAccounting> Configurable for DefaultToken<S> {}
-impl<S: TokenAccounting> Permittable for DefaultToken<S> {}
+impl<S: TokenAccounting> Transferable for B20Token<S> {}
+impl<S: TokenAccounting> Mintable for B20Token<S> {}
+impl<S: TokenAccounting> Burnable for B20Token<S> {}
+impl<S: TokenAccounting> Redeemable for B20Token<S> {}
+impl<S: TokenAccounting> Pausable for B20Token<S> {}
+impl<S: TokenAccounting> Configurable for B20Token<S> {}
+impl<S: TokenAccounting> Permittable for B20Token<S> {}

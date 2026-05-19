@@ -3,22 +3,22 @@ use alloy_sol_types::{SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::DefaultToken;
+use super::B20Token;
 use crate::token::{
-    abi::{IDefaultToken, IDefaultToken::IDefaultTokenCalls as C},
+    abi::{IB20, IB20::IB20Calls as C},
     common::{
         Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, TokenAccounting,
         Transferable,
     },
 };
 
-impl<S: TokenAccounting> DefaultToken<S> {
-    /// ABI-dispatches `calldata` to the appropriate `IDefaultToken` handler.
+impl<S: TokenAccounting> B20Token<S> {
+    /// ABI-dispatches `calldata` to the appropriate `IB20` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         self.inner(ctx, calldata).into_precompile_result(ctx.gas_used(), |b| b)
     }
 
-    /// Decodes calldata and executes the matching `IDefaultToken` operation.
+    /// Decodes calldata and executes the matching `IB20` operation.
     pub fn inner(
         &mut self,
         ctx: StorageCtx<'_>,
@@ -31,7 +31,7 @@ impl<S: TokenAccounting> DefaultToken<S> {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
         }
         let selector: [u8; 4] = calldata[..4].try_into().unwrap();
-        let call = IDefaultToken::IDefaultTokenCalls::abi_decode(calldata)
+        let call = IB20::IB20Calls::abi_decode(calldata)
             .map_err(|_| BasePrecompileError::UnknownFunctionSelector(selector))?;
 
         let encoded: Bytes = match call {

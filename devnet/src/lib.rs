@@ -10,8 +10,8 @@
 mod utils;
 pub use utils::unique_name;
 
-mod native_erc20;
-pub use native_erc20::NativeErc20Precompile;
+mod b20;
+pub use b20::B20PrecompileClient;
 
 pub mod config;
 pub mod containers;

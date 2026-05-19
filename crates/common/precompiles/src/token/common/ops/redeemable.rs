@@ -3,7 +3,7 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use super::Burnable;
-use crate::token::{IDefaultToken, common::TokenAccounting};
+use crate::token::{IB20, common::TokenAccounting};
 
 /// User-initiated redeem (burn with off-chain settlement implication) and related admin.
 ///
@@ -14,20 +14,20 @@ pub trait Redeemable: Burnable {
     fn redeem(&mut self, caller: Address, amount: U256) -> Result<()> {
         let minimum = self.accounting().minimum_redeemable()?;
         if amount < minimum {
-            return Err(BasePrecompileError::revert(IDefaultToken::MinimumRedeemableNotMet {
+            return Err(BasePrecompileError::revert(IB20::MinimumRedeemableNotMet {
                 amount,
                 minimum,
             }));
         }
         self.burn(caller, amount)?;
         self.accounting_mut()
-            .emit_event(IDefaultToken::Redeemed { holder: caller, amount }.encode_log_data())
+            .emit_event(IB20::Redeemed { holder: caller, amount }.encode_log_data())
     }
 
     /// [`Self::redeem`] followed by a `Memo` event.
     fn redeem_with_memo(&mut self, caller: Address, amount: U256, memo: B256) -> Result<()> {
         self.redeem(caller, amount)?;
-        self.accounting_mut().emit_event(IDefaultToken::Memo { memo }.encode_log_data())
+        self.accounting_mut().emit_event(IB20::Memo { memo }.encode_log_data())
     }
 
     /// Updates the minimum redeemable amount. Emits `MinimumRedeemableUpdated`.
@@ -35,7 +35,7 @@ pub trait Redeemable: Burnable {
         let old = self.accounting().minimum_redeemable()?;
         self.accounting_mut().set_minimum_redeemable(minimum)?;
         self.accounting_mut().emit_event(
-            IDefaultToken::MinimumRedeemableUpdated {
+            IB20::MinimumRedeemableUpdated {
                 updater: caller,
                 oldMinimum: old,
                 newMinimum: minimum,

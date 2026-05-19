@@ -22,11 +22,10 @@ mod bls12_381;
 
 mod token;
 pub use token::{
-    Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, DEFAULT_PREFIX,
-    DEFAULT_TOKEN_ADDRESS, DefaultToken, DefaultTokenEvm, DefaultTokenStorage, FACTORY_ADDRESS,
-    IDefaultToken, ITokenFactory, Mintable, Pausable, Permittable, RESERVED_SIZE, Redeemable,
-    SECURITY_PREFIX, STABLECOIN_PREFIX, Token, TokenAccounting, TokenFactory, TokenFactoryEvm,
-    Transferable, VARIANT_DEFAULT, VARIANT_NONE, VARIANT_SECURITY, VARIANT_STABLECOIN,
-    compute_default_address, compute_security_address, compute_stablecoin_address, has_b20_prefix,
-    variant_of,
+    B20_PREFIX_BYTE, B20_PREFIX_MARKER, B20_TOKEN_ADDRESS, B20Token, B20TokenPrecompile,
+    B20TokenStorage, Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, CREATE_TOKEN_VERSION,
+    Configurable, FACTORY_ADDRESS, IB20, ITokenFactory, Mintable, Pausable, Permittable,
+    RESERVED_SIZE, Redeemable, Token, TokenAccounting, TokenFactory, TokenFactoryPrecompile,
+    Transferable, VARIANT_DEFAULT, VARIANT_NONE, address_prefix, compute_b20_address, decimals_of,
+    has_b20_prefix, is_supported_variant, variant_of,
 };

@@ -5,7 +5,7 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::token::{
-    IDefaultToken,
+    IB20,
     common::{CAPABILITY_CAP_MUTABLE, Token, TokenAccounting},
 };
 
@@ -22,13 +22,13 @@ pub trait Configurable: Token {
     /// Updates the supply cap. Requires `CAP_MUTABLE`. Emits `SupplyCapUpdated`.
     fn set_supply_cap(&mut self, caller: Address, new_cap: U256) -> Result<()> {
         if !self.is_cap_mutable()? {
-            return Err(BasePrecompileError::revert(IDefaultToken::FeatureDisabled {
+            return Err(BasePrecompileError::revert(IB20::FeatureDisabled {
                 capability: CAPABILITY_CAP_MUTABLE,
             }));
         }
         let supply = self.accounting().total_supply()?;
         if new_cap < supply {
-            return Err(BasePrecompileError::revert(IDefaultToken::InvalidSupplyCap {
+            return Err(BasePrecompileError::revert(IB20::InvalidSupplyCap {
                 currentSupply: supply,
                 proposedCap: new_cap,
             }));
@@ -36,34 +36,29 @@ pub trait Configurable: Token {
         let old = self.accounting().supply_cap()?;
         self.accounting_mut().set_supply_cap(new_cap)?;
         self.accounting_mut().emit_event(
-            IDefaultToken::SupplyCapUpdated {
-                updater: caller,
-                oldSupplyCap: old,
-                newSupplyCap: new_cap,
-            }
-            .encode_log_data(),
+            IB20::SupplyCapUpdated { updater: caller, oldSupplyCap: old, newSupplyCap: new_cap }
+                .encode_log_data(),
         )
     }
 
     /// Updates the token name. Emits `NameUpdated`.
     fn set_name(&mut self, caller: Address, name: String) -> Result<()> {
         self.accounting_mut().set_name(name.clone())?;
-        self.accounting_mut().emit_event(
-            IDefaultToken::NameUpdated { updater: caller, newName: name }.encode_log_data(),
-        )
+        self.accounting_mut()
+            .emit_event(IB20::NameUpdated { updater: caller, newName: name }.encode_log_data())
     }
 
     /// Updates the token symbol. Emits `SymbolUpdated`.
     fn set_symbol(&mut self, caller: Address, symbol: String) -> Result<()> {
         self.accounting_mut().set_symbol(symbol.clone())?;
         self.accounting_mut().emit_event(
-            IDefaultToken::SymbolUpdated { updater: caller, newSymbol: symbol }.encode_log_data(),
+            IB20::SymbolUpdated { updater: caller, newSymbol: symbol }.encode_log_data(),
         )
     }
 
     /// Updates the contract URI. Emits `ContractURIUpdated`.
     fn set_contract_uri(&mut self, _caller: Address, uri: String) -> Result<()> {
         self.accounting_mut().set_contract_uri(uri)?;
-        self.accounting_mut().emit_event(IDefaultToken::ContractURIUpdated {}.encode_log_data())
+        self.accounting_mut().emit_event(IB20::ContractURIUpdated {}.encode_log_data())
     }
 }

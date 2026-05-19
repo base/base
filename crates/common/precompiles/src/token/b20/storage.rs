@@ -4,13 +4,13 @@ use alloy_primitives::{Address, LogData, U256, address};
 use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result, StorageCtx};
 
-use crate::token::common::TokenAccounting;
+use crate::token::{common::TokenAccounting, decimals_of};
 
-/// Canonical precompile address for the `DefaultToken` (placeholder — replace before deployment).
-pub const DEFAULT_TOKEN_ADDRESS: Address = address!("0000000000000000000000000000000000000900");
+/// Canonical precompile address for the `B20Token` (placeholder — replace before deployment).
+pub const B20_TOKEN_ADDRESS: Address = address!("0000000000000000000000000000000000000900");
 
-#[contract(addr = DEFAULT_TOKEN_ADDRESS)]
-pub struct DefaultTokenStorage {
+#[contract(addr = B20_TOKEN_ADDRESS)]
+pub struct B20TokenStorage {
     pub total_supply: U256,                                   // slot 0
     pub supply_cap: U256,                                     // slot 1
     pub balances: Mapping<Address, U256>,                     // slot 2
@@ -19,14 +19,13 @@ pub struct DefaultTokenStorage {
     pub nonces: Mapping<Address, U256>,                       // slot 5
     pub name: String,                                         // slot 6
     pub symbol: String,                                       // slot 7
-    pub decimals: u8,                                         // slot 8
-    pub minimum_redeemable: U256,                             // slot 9
-    pub contract_uri: String,                                 // slot 10
-    pub capabilities: U256,                                   // slot 11
+    pub minimum_redeemable: U256,                             // slot 8
+    pub contract_uri: String,                                 // slot 9
+    pub capabilities: U256,                                   // slot 10
 }
 
-impl<'a> DefaultTokenStorage<'a> {
-    /// Creates a `DefaultTokenStorage` instance targeting `addr`.
+impl<'a> B20TokenStorage<'a> {
+    /// Creates a `B20TokenStorage` instance targeting `addr`.
     ///
     /// Used by the factory to initialize token storage at a dynamically computed address.
     pub fn from_address(addr: Address, storage: StorageCtx<'a>) -> Self {
@@ -34,7 +33,7 @@ impl<'a> DefaultTokenStorage<'a> {
     }
 }
 
-impl TokenAccounting for DefaultTokenStorage<'_> {
+impl TokenAccounting for B20TokenStorage<'_> {
     fn balance_of(&self, account: Address) -> Result<U256> {
         self.balances.at(&account).read()
     }
@@ -84,7 +83,7 @@ impl TokenAccounting for DefaultTokenStorage<'_> {
     }
 
     fn decimals(&self) -> Result<u8> {
-        self.decimals.read()
+        Ok(decimals_of(&self.address))
     }
 
     fn paused(&self) -> Result<U256> {
