@@ -27,6 +27,8 @@ base-execution-chainspec.workspace = true
 alloy-chains = { workspace = true, features = ["std"] }
 
 # reth
+reth-discv4.workspace = true
+reth-cli-util.workspace = true
 reth-cli-runner.workspace = true
 
 # cli
@@ -38,6 +40,7 @@ eyre.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true
+tokio-stream.workspace = true
 serde = { workspace = true, features = ["derive"] }
 figment = { workspace = true, features = ["env", "toml"] }
 

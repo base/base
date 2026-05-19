@@ -3,5 +3,6 @@
 mod bootnode;
 mod command;
 pub(crate) use command::BaseCommand;
+mod connect;
 mod rpc;
 mod update;

@@ -3,7 +3,9 @@
 use clap::Subcommand;
 
 use crate::{
-    commands::{bootnode::BootnodeCommand, rpc::RpcCommand, update::UpdateCommand},
+    commands::{
+        bootnode::BootnodeCommand, connect::ConnectCommand, rpc::RpcCommand, update::UpdateCommand,
+    },
     config::ChainResolver,
 };
 
@@ -14,6 +16,9 @@ pub(crate) enum BaseCommand {
     /// Run consensus and execution discovery-only bootnodes.
     #[command(name = "bootnode")]
     Bootnode(Box<BootnodeCommand>),
+    /// Help an execution peer discover the selected chain's bootnodes.
+    #[command(name = "connect")]
+    Connect(Box<ConnectCommand>),
     /// Run the integrated node in RPC mode.
     #[command(name = "rpc")]
     Rpc(Box<RpcCommand>),
@@ -27,6 +32,7 @@ impl BaseCommand {
     pub(crate) fn run(self, chain_resolver: ChainResolver) -> eyre::Result<()> {
         match self {
             Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?),
+            Self::Connect(connect) => (*connect).run(chain_resolver.resolve()?),
             Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?),
             Self::Update(update) => (*update).run(),
         }
