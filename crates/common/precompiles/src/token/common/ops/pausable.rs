@@ -58,7 +58,7 @@ mod tests {
 
     use crate::token::common::{
         CAPABILITY_PAUSABLE, Token,
-        test_utils::{InMemoryTokenAccounting, InMemoryPolicy, TestToken},
+        test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
     };
 
     use super::Pausable;

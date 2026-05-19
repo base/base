@@ -44,7 +44,7 @@ mod tests {
 
     use crate::token::common::{
         Token, TokenAccounting,
-        test_utils::{InMemoryTokenAccounting, InMemoryPolicy, TestToken},
+        test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
     };
 
     use super::Burnable;

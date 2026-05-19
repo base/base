@@ -101,10 +101,10 @@ mod tests {
 
     use crate::token::common::{
         Token, TokenAccounting,
-        test_utils::{InMemoryTokenAccounting, InMemoryPolicy, TestToken},
+        test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
     };
 
-    use super::{Permittable, PERMIT_TYPEHASH};
+    use super::{PERMIT_TYPEHASH, Permittable};
 
     const CHAIN_ID: u64 = 1;
     const SPENDER: Address = Address::repeat_byte(0xbb);
@@ -191,9 +191,11 @@ mod tests {
         let now = U256::from(1000u64);
         let (v, r, s) = sign_permit(&token, owner, SPENDER, U256::from(100u64), deadline);
 
-        assert!(token
-            .permit(CHAIN_ID, now, owner, SPENDER, U256::from(100u64), deadline, v, r, s)
-            .is_err());
+        assert!(
+            token
+                .permit(CHAIN_ID, now, owner, SPENDER, U256::from(100u64), deadline, v, r, s)
+                .is_err()
+        );
     }
 
     #[test]
@@ -222,9 +224,9 @@ mod tests {
         // Sign as `owner` but claim `wrong_owner` — recovered address won't match.
         let (v, r, s) = sign_permit(&token, owner, SPENDER, value, deadline);
 
-        assert!(token
-            .permit(CHAIN_ID, now, wrong_owner, SPENDER, value, deadline, v, r, s)
-            .is_err());
+        assert!(
+            token.permit(CHAIN_ID, now, wrong_owner, SPENDER, value, deadline, v, r, s).is_err()
+        );
     }
 
     #[test]
@@ -239,8 +241,6 @@ mod tests {
         token.permit(CHAIN_ID, now, owner, SPENDER, value, deadline, v, r, s).unwrap();
 
         // Replay the same (v, r, s) — nonce has advanced so the recovered address won't match.
-        assert!(token
-            .permit(CHAIN_ID, now, owner, SPENDER, value, deadline, v, r, s)
-            .is_err());
+        assert!(token.permit(CHAIN_ID, now, owner, SPENDER, value, deadline, v, r, s).is_err());
     }
 }
