@@ -49,7 +49,7 @@ base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 futures.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
-tokio = { workspace = true, features = ["net", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "sync", "net", "time", "macros"] }
 
 # Error
 thiserror.workspace = true
