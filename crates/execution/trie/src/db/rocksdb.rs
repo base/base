@@ -489,9 +489,9 @@ impl RocksdbProofsStorage {
             .map_err(|e| DatabaseError::Other(format!("failed to open RocksDB database: {e}")))?;
 
         let mut write_options = WriteOptions::default();
-        // Proof history is derivable from the canonical chain, so use async WAL writes for
-        // throughput. RocksDB write batches still keep committed updates internally consistent.
-        write_options.set_sync(false);
+        // Proof history writes must be durable once the ExEx emits progress. Keep this hard-coded
+        // rather than threading it through runtime tuning options.
+        write_options.set_sync(true);
 
         Ok(Self {
             db: Arc::new(db),
