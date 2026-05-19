@@ -10,6 +10,7 @@ use std::{
 };
 
 use alloy_provider::{Provider, ProviderBuilder};
+use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{
@@ -28,7 +29,7 @@ use tracing::{info, warn};
 
 use crate::{
     BondDiscovery, BondPool, BondWorkerDeps, ChallengerConfig, DelayedWETHResolver, GameDiscovery,
-    GamePool, GameWorkerConfig, GameWorkerDeps, L1DelayedWETHResolver, L2OutputValidator,
+    GamePool, GameWorkerConfig, GameWorkerDeps, L1DelayedWETHResolver, L2OutputValidator, Metrics,
     OutputValidator, RpcTeeProofProvider, SubmissionTask, TeeProofProvider,
 };
 
@@ -74,12 +75,18 @@ impl ChallengerService {
         // 1. Process-wide bootstrap.
         let _ = rustls::crypto::ring::default_provider().install_default();
         info!(version = env!("CARGO_PKG_VERSION"), "Challenger v2 starting");
+        Metrics::record_startup();
         let cancel = CancellationToken::new();
         let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
 
         // 2. Transaction manager.
         let sender_address = config.signer_config.address();
-        let l1_tx_provider = ProviderBuilder::new().connect_http(config.l1_eth_rpc.clone());
+        let l1_tx_provider = if config.metrics.enabled {
+            let layer = Self::start_balance_monitor(sender_address, cancel.clone());
+            ProviderBuilder::new().layer(layer).connect_http(config.l1_eth_rpc.clone())
+        } else {
+            ProviderBuilder::new().connect_http(config.l1_eth_rpc.clone())
+        };
         let chain_id =
             l1_tx_provider.get_chain_id().await.wrap_err("failed to fetch L1 chain ID")?;
         let tx_manager = SimpleTxManager::new(
@@ -236,5 +243,28 @@ impl ChallengerService {
 
         info!("Service stopped");
         Ok(())
+    }
+
+    /// Builds a [`BalanceMonitorLayer`] for `sender_address` and spawns
+    /// a forwarder that pushes each new balance into the
+    /// `account_balance_wei` gauge.
+    fn start_balance_monitor(
+        sender_address: alloy_primitives::Address,
+        cancel: CancellationToken,
+    ) -> BalanceMonitorLayer {
+        let (layer, mut balance_rx) = BalanceMonitorLayer::new(
+            sender_address,
+            cancel,
+            BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
+        );
+
+        tokio::spawn(async move {
+            while balance_rx.changed().await.is_ok() {
+                Metrics::account_balance_wei().set(f64::from(*balance_rx.borrow_and_update()));
+            }
+        });
+
+        info!(addr = %sender_address, "Balance monitor started");
+        layer
     }
 }

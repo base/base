@@ -19,8 +19,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-    BondAction, BondCandidate, BondRequest, DelayedWETHResolver, Submission, SubmissionHandle,
-    SubmitError,
+    BondAction, BondCandidate, BondRequest, DelayedWETHResolver, Metrics, Submission,
+    SubmissionHandle, SubmitError,
 };
 
 /// Shared deps for every bond-worker task.
@@ -75,6 +75,8 @@ pub async fn run_bond_worker(
     deps: Arc<BondWorkerDeps>,
     cancel: CancellationToken,
 ) {
+    let _in_flight = base_metrics::inflight!(Metrics::bond_workers_in_flight());
+    let _timer = base_metrics::timed!(Metrics::bond_worker_duration_seconds());
     let game = candidate.game_address;
     tokio::select! {
         biased;
@@ -124,6 +126,8 @@ async fn run_pipeline(candidate: BondCandidate, deps: &BondWorkerDeps) -> Result
 /// status, `false` when the game cannot yet be resolved or when our
 /// `resolve()` ran without changing `status`.
 async fn ensure_resolved(game: Address, deps: &BondWorkerDeps) -> Result<bool, BondError> {
+    let _timer = base_metrics::timed!(Metrics::bond_step_duration_seconds(Metrics::STEP_RESOLVE));
+
     if is_resolved(deps.verifier.status(game).await?) {
         return Ok(true);
     }
@@ -141,6 +145,9 @@ async fn ensure_resolved(game: Address, deps: &BondWorkerDeps) -> Result<bool, B
 
 /// Submits `claimCredit()` to unlock the bond. No-op if already unlocked.
 async fn ensure_unlocked(game: Address, deps: &BondWorkerDeps) -> Result<(), BondError> {
+    let _timer =
+        base_metrics::timed!(Metrics::bond_step_duration_seconds(Metrics::STEP_CLAIM_UNLOCKED));
+
     if deps.verifier.bond_unlocked(game).await? {
         return Ok(());
     }
@@ -160,6 +167,8 @@ async fn wait_weth_delay(
     now_secs: u64,
     deps: &BondWorkerDeps,
 ) -> Result<(), BondError> {
+    let _timer = base_metrics::timed!(Metrics::bond_step_duration_seconds(Metrics::STEP_WAIT_WETH));
+
     let delayed_weth = deps.delayed_weth_resolver.resolve(game).await?;
     // `ensure_unlocked` returns only after `bondUnlocked == true`, and
     // `claimCredit()` atomically calls `DELAYED_WETH.unlock` (which
@@ -179,6 +188,9 @@ async fn wait_weth_delay(
 
 /// Submits `claimCredit()` to withdraw the bond. No-op if already claimed.
 async fn ensure_withdrawn(game: Address, deps: &BondWorkerDeps) -> Result<(), BondError> {
+    let _timer =
+        base_metrics::timed!(Metrics::bond_step_duration_seconds(Metrics::STEP_CLAIM_WITHDRAWN));
+
     if deps.verifier.bond_claimed(game).await? {
         return Ok(());
     }
@@ -193,6 +205,8 @@ async fn ensure_withdrawn(game: Address, deps: &BondWorkerDeps) -> Result<(), Bo
 
 /// Submits `closeGame()`. Best-effort: failures are logged and ignored.
 async fn close_game(game: Address, deps: &BondWorkerDeps) {
+    let _timer = base_metrics::timed!(Metrics::bond_step_duration_seconds(Metrics::STEP_CLOSE));
+
     let request = BondRequest { game_address: game, action: BondAction::CloseGame };
     match deps.handle.submit(Submission::Bond(request)).await {
         Ok(tx_hash) => debug!(%game, %tx_hash, "close_game confirmed"),

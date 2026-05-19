@@ -29,6 +29,9 @@ pub use cli::{ChallengerArgs, Cli};
 mod config;
 pub use config::{ChallengerConfig, ConfigError};
 
+mod metrics;
+pub use metrics::Metrics;
+
 mod service;
 pub use service::ChallengerService;
 

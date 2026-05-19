@@ -13,7 +13,9 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::{GameInfo, OutputValidator, Submission, SubmissionHandle, TeeProofProvider, Violation};
+use crate::{
+    GameInfo, Metrics, OutputValidator, Submission, SubmissionHandle, TeeProofProvider, Violation,
+};
 
 /// Read-only handles and config shared across every game-worker task.
 ///
@@ -86,6 +88,8 @@ pub async fn run_game_worker(
     handle: SubmissionHandle,
     cancel: CancellationToken,
 ) {
+    let _in_flight = base_metrics::inflight!(Metrics::game_workers_in_flight());
+    let _timer = base_metrics::timed!(Metrics::game_worker_duration_seconds());
     let address = game.address;
     tokio::select! {
         biased;
@@ -103,8 +107,11 @@ async fn run_inner(game: GameInfo, deps: Arc<GameWorkerDeps>, handle: Submission
     // Acquire a permit for the detect phase only: detect is RPC-heavy
     // (status + prover tuple + per-checkpoint output roots).
     let violation = {
-        let _permit =
-            deps.detect_semaphore.acquire().await.expect("detect_semaphore is never closed");
+        let _permit = {
+            let _waiter = base_metrics::inflight!(Metrics::detect_semaphore_waiters());
+            let _wait_timer = base_metrics::timed!(Metrics::detect_semaphore_wait_seconds());
+            deps.detect_semaphore.acquire().await.expect("detect_semaphore is never closed")
+        };
 
         match Violation::detect(&game, &*deps.validator, &*deps.verifier).await {
             Ok(Some(v)) => v,

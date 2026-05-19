@@ -13,6 +13,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
+use crate::Metrics;
+
 /// A game forwarded to the bond pool for claiming.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BondCandidate {
@@ -84,6 +86,7 @@ impl BondDiscovery {
                 .expect("system clock is before UNIX_EPOCH")
                 .as_secs();
 
+            Metrics::bond_scan_ticks_total().increment(1);
             match self.scan(now_secs).await {
                 Ok(candidates) => {
                     for candidate in candidates {
@@ -92,7 +95,10 @@ impl BondDiscovery {
                         }
                     }
                 }
-                Err(e) => warn!(error = %e, "bond scan failed; will retry next tick"),
+                Err(e) => {
+                    Metrics::bond_scan_errors_total().increment(1);
+                    warn!(error = %e, "bond scan failed; will retry next tick");
+                }
             }
         }
     }
@@ -103,15 +109,23 @@ impl BondDiscovery {
         let game_count = self.factory.game_count().await?;
         if game_count == 0 {
             debug!("factory has no games");
+            Metrics::bonds_inspected().set(0.0);
+            Metrics::bond_candidates().set(0.0);
             return Ok(vec![]);
         }
 
         let start = self.scan_start_index(game_count, now_secs).await?;
         if start >= game_count {
+            Metrics::bonds_inspected().set(0.0);
+            Metrics::bond_candidates().set(0.0);
             return Ok(vec![]);
         }
 
-        Ok(self.scan_range(start, game_count).await)
+        let candidates = self.scan_range(start, game_count).await;
+        Metrics::bonds_inspected().set((game_count - start) as f64);
+        #[allow(clippy::cast_precision_loss)]
+        Metrics::bond_candidates().set(candidates.len() as f64);
+        Ok(candidates)
     }
 
     /// First factory index whose `gameAtIndex.timestamp >= now - max_age`.

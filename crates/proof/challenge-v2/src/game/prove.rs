@@ -25,7 +25,8 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
-    DisputeAction, DisputeRequest, GameWorkerDeps, TeeProofProvider, Violation, ViolationKind,
+    DisputeAction, DisputeRequest, GameWorkerDeps, Metrics, TeeProofProvider, Violation,
+    ViolationKind,
 };
 
 /// Errors that can prevent [`Violation::build_dispute_request`] from emitting a [`DisputeRequest`].
@@ -141,6 +142,10 @@ impl Violation {
         &self,
         tee_prover: &dyn TeeProofProvider,
     ) -> Option<DisputeRequest> {
+        let _in_flight =
+            base_metrics::inflight!(Metrics::proofs_in_flight(Metrics::PROOF_KIND_TEE));
+        let _timer = base_metrics::timed!(Metrics::proof_duration_seconds(Metrics::PROOF_KIND_TEE));
+
         let attestation = match tee_prover
             .prove_range(
                 self.start_block,
@@ -154,6 +159,8 @@ impl Violation {
         {
             Ok(r) => r,
             Err(e) => {
+                Metrics::proofs_total(Metrics::PROOF_KIND_TEE, Metrics::PROOF_STATUS_FAIL)
+                    .increment(1);
                 warn!(
                     game = %self.game_address,
                     error = %e,
@@ -169,6 +176,7 @@ impl Violation {
         // Fall back rather than flip the global TEE killswitch on the
         // basis of a single source we can no longer trust.
         if attestation.signed_root != self.end_root {
+            Metrics::proofs_total(Metrics::PROOF_KIND_TEE, Metrics::PROOF_STATUS_FAIL).increment(1);
             warn!(
                 game = %self.game_address,
                 signed_root = %attestation.signed_root,
@@ -182,6 +190,8 @@ impl Violation {
             match ProofEncoder::encode_dispute_proof_bytes(&attestation.signature_bytes) {
                 Ok(bytes) => bytes,
                 Err(e) => {
+                    Metrics::proofs_total(Metrics::PROOF_KIND_TEE, Metrics::PROOF_STATUS_FAIL)
+                        .increment(1);
                     warn!(
                         game = %self.game_address,
                         error = %e,
@@ -191,6 +201,7 @@ impl Violation {
                 }
             };
 
+        Metrics::proofs_total(Metrics::PROOF_KIND_TEE, Metrics::PROOF_STATUS_OK).increment(1);
         Some(DisputeRequest {
             game_address: self.game_address,
             action: DisputeAction::NullifyTee {
@@ -212,6 +223,9 @@ impl Violation {
     /// and reused across retries so the ZK service can requeue the
     /// existing job instead of starting from scratch.
     async fn request_zk_proof(&self, deps: &GameWorkerDeps) -> Result<Bytes, ProofError> {
+        let _in_flight = base_metrics::inflight!(Metrics::proofs_in_flight(Metrics::PROOF_KIND_ZK));
+        let _timer = base_metrics::timed!(Metrics::proof_duration_seconds(Metrics::PROOF_KIND_ZK));
+
         let session_id = self.zk_session_id();
         let request = ProveBlockRequest {
             start_block_number: self.start_block,
@@ -256,6 +270,8 @@ impl Violation {
                     let mut prefixed = Vec::with_capacity(1 + receipt.len());
                     prefixed.push(PROOF_TYPE_ZK);
                     prefixed.extend_from_slice(&receipt);
+                    Metrics::proofs_total(Metrics::PROOF_KIND_ZK, Metrics::PROOF_STATUS_OK)
+                        .increment(1);
                     info!(
                         game = %self.game_address,
                         attempt,
@@ -276,6 +292,7 @@ impl Violation {
             }
         }
 
+        Metrics::proofs_total(Metrics::PROOF_KIND_ZK, Metrics::PROOF_STATUS_FAIL).increment(1);
         Err(last_err.unwrap_or(ProofError::RetriesExhausted))
     }
 
