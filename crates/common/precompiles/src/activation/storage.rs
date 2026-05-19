@@ -1,20 +1,22 @@
 //! Storage layout and constants for the activation registry.
 
 use alloy_primitives::{Address, B256, Bytes, address, b256};
-use alloy_sol_types::SolEvent as _;
 use base_precompile_macros::contract;
 use base_precompile_storage::{
-    BasePrecompileError, Handler, IntoPrecompileResult, Mapping, Result, StorageCtx,
+    BasePrecompileError, Handler, IntoPrecompileResult, Mapping, Result,
 };
 use revm::precompile::PrecompileResult;
 
 use super::IActivationRegistry;
 
 /// Runtime activation registry for Base-native features.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ActivationRegistry;
+#[contract(addr = ActivationRegistry::ADDRESS)]
+pub struct ActivationRegistry {
+    /// Runtime activation flags keyed by feature id.
+    pub features: Mapping<B256, bool>,
+}
 
-impl ActivationRegistry {
+impl ActivationRegistry<'_> {
     /// Activation registry precompile address.
     pub const ADDRESS: Address = address!("0x84530000000000000000000000000000000000ff");
 
@@ -27,29 +29,15 @@ impl ActivationRegistry {
     /// Security-token factory creation feature id.
     pub const SECURITIES_TOKEN_CREATION: B256 =
         b256!("0x89e4523f0886ce01d76094212ed707081da92a45221e22c15c5689be470db63e");
-}
-
-/// Storage layout for the activation registry.
-#[contract(addr = ActivationRegistry::ADDRESS)]
-pub struct ActivationRegistryStorage {
-    /// Runtime activation flags keyed by feature id.
-    pub features: Mapping<B256, bool>,
-}
-
-impl ActivationRegistry {
-    /// Creates a new activation registry handle.
-    pub const fn new() -> Self {
-        Self
-    }
 
     /// Returns the activation admin.
-    pub const fn admin(self) -> Address {
+    pub const fn admin(&self) -> Address {
         Self::ADMIN
     }
 
     /// Returns true when the feature is activated.
-    pub fn is_activated(self, ctx: StorageCtx<'_>, feature: B256) -> Result<bool> {
-        ActivationRegistryStorage::new(ctx).features.at(&feature).read()
+    pub fn is_activated(&self, feature: B256) -> Result<bool> {
+        self.features.at(&feature).read()
     }
 
     /// Reverts unless the feature is activated.
@@ -57,14 +45,14 @@ impl ActivationRegistry {
     /// Both the activated and deactivated paths return `Ok`; callers must inspect
     /// [`revm::precompile::PrecompileOutput::reverted`] to distinguish an activated feature from an
     /// ABI revert.
-    pub fn assert_activated(self, ctx: StorageCtx<'_>, feature: B256) -> PrecompileResult {
-        self.ensure_activated(ctx, feature)
-            .into_precompile_result(ctx.gas_used(), |()| Bytes::new())
+    pub fn assert_activated(&self, feature: B256) -> PrecompileResult {
+        self.ensure_activated(feature)
+            .into_precompile_result(self.storage.gas_used(), |()| Bytes::new())
     }
 
     /// Returns `Ok(())` when the feature is activated.
-    pub fn ensure_activated(self, ctx: StorageCtx<'_>, feature: B256) -> Result<()> {
-        if self.is_activated(ctx, feature)? {
+    pub fn ensure_activated(&self, feature: B256) -> Result<()> {
+        if self.is_activated(feature)? {
             return Ok(());
         }
 
@@ -72,30 +60,29 @@ impl ActivationRegistry {
     }
 
     /// Activates the feature.
-    pub fn activate(self, ctx: StorageCtx<'_>, feature: B256) -> Result<()> {
-        self.set_activated(ctx, feature, true)
+    pub fn activate(&mut self, feature: B256) -> Result<()> {
+        self.set_activated(feature, true)
     }
 
     /// Deactivates the feature.
-    pub fn deactivate(self, ctx: StorageCtx<'_>, feature: B256) -> Result<()> {
-        self.set_activated(ctx, feature, false)
+    pub fn deactivate(&mut self, feature: B256) -> Result<()> {
+        self.set_activated(feature, false)
     }
 
     /// Sets the feature activation state.
-    pub fn set_activated(self, ctx: StorageCtx<'_>, feature: B256, activated: bool) -> Result<()> {
+    pub fn set_activated(&mut self, feature: B256, activated: bool) -> Result<()> {
         // Keep this guard at the shared mutation boundary so `activate`, `deactivate`, and direct
         // `set_activated` callers all get the same static-call behavior after calldata validation.
-        if ctx.is_static() {
+        if self.storage.is_static() {
             return Err(BasePrecompileError::revert(IActivationRegistry::StaticCallNotAllowed {}));
         }
 
-        let caller = ctx.caller();
+        let caller = self.storage.caller();
         if caller != Self::ADMIN {
             return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
         }
 
-        let mut storage = ActivationRegistryStorage::new(ctx);
-        let current = storage.features.at(&feature).read()?;
+        let current = self.features.at(&feature).read()?;
         if current == activated {
             if activated {
                 return Err(BasePrecompileError::revert(IActivationRegistry::AlreadyActivated {
@@ -109,17 +96,11 @@ impl ActivationRegistry {
         }
 
         if activated {
-            storage.features.at_mut(&feature).write(true)?;
-            ctx.emit_event(
-                Self::ADDRESS,
-                IActivationRegistry::FeatureActivated { feature, caller }.encode_log_data(),
-            )?;
+            self.features.at_mut(&feature).write(true)?;
+            self.emit_event(IActivationRegistry::FeatureActivated { feature, caller })?;
         } else {
-            storage.features.at_mut(&feature).delete()?;
-            ctx.emit_event(
-                Self::ADDRESS,
-                IActivationRegistry::FeatureDeactivated { feature, caller }.encode_log_data(),
-            )?;
+            self.features.at_mut(&feature).delete()?;
+            self.emit_event(IActivationRegistry::FeatureDeactivated { feature, caller })?;
         }
 
         Ok(())
@@ -163,9 +144,12 @@ mod tests {
         storage: &mut HashMapStorageProvider,
         transition: Transition,
     ) -> Result<()> {
-        StorageCtx::enter(storage, |ctx| match transition {
-            Transition::Activate => ActivationRegistry::new().activate(ctx, FEATURE),
-            Transition::Deactivate => ActivationRegistry::new().deactivate(ctx, FEATURE),
+        StorageCtx::enter(storage, |ctx| {
+            let mut registry = ActivationRegistry::new(ctx);
+            match transition {
+                Transition::Activate => registry.activate(FEATURE),
+                Transition::Deactivate => registry.deactivate(FEATURE),
+            }
         })
     }
 
@@ -189,27 +173,25 @@ mod tests {
 
     fn activate_feature(storage: &mut HashMapStorageProvider) -> Result<()> {
         storage.set_caller(ActivationRegistry::ADMIN);
-        StorageCtx::enter(storage, |ctx| ActivationRegistry::new().activate(ctx, FEATURE))
+        StorageCtx::enter(storage, |ctx| ActivationRegistry::new(ctx).activate(FEATURE))
     }
 
     fn deactivate_feature(storage: &mut HashMapStorageProvider) -> Result<()> {
         storage.set_caller(ActivationRegistry::ADMIN);
-        StorageCtx::enter(storage, |ctx| ActivationRegistry::new().deactivate(ctx, FEATURE))
+        StorageCtx::enter(storage, |ctx| ActivationRegistry::new(ctx).deactivate(FEATURE))
     }
 
     fn assert_activated(storage: &mut HashMapStorageProvider, expected: bool) {
         StorageCtx::enter(storage, |ctx| {
             assert_eq!(
-                ActivationRegistry::new()
-                    .is_activated(ctx, FEATURE)
-                    .expect("storage read succeeds"),
+                ActivationRegistry::new(ctx).is_activated(FEATURE).expect("storage read succeeds"),
                 expected
             );
         });
     }
 
     fn assert_activated_output(storage: &mut HashMapStorageProvider) -> PrecompileOutput {
-        StorageCtx::enter(storage, |ctx| ActivationRegistry::new().assert_activated(ctx, FEATURE))
+        StorageCtx::enter(storage, |ctx| ActivationRegistry::new(ctx).assert_activated(FEATURE))
             .expect("activation assertion should not fail fatally")
     }
 

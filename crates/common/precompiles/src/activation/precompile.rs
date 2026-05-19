@@ -5,11 +5,15 @@ use alloy_evm::precompiles::DynPrecompile;
 use super::ActivationRegistry;
 use crate::macros::base_precompile;
 
-impl ActivationRegistry {
+/// Entry point for the activation registry precompile.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ActivationRegistryPrecompile;
+
+impl ActivationRegistryPrecompile {
     /// Creates the EVM precompile wrapper for the activation registry.
-    pub fn create_precompile() -> DynPrecompile {
+    pub fn precompile() -> DynPrecompile {
         base_precompile!("ActivationRegistry", |ctx, calldata| {
-            Self::new().dispatch(ctx, &calldata)
+            ActivationRegistry::new(ctx).dispatch(ctx, &calldata)
         })
     }
 }
