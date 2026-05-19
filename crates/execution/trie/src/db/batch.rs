@@ -46,10 +46,7 @@ impl<'tx> MdbxBatchSession<'tx> {
     }
 
     const fn tx_ref(&self) -> &<DatabaseEnv as Database>::TXMut {
-        match self.tx.as_ref() {
-            Some(tx) => tx,
-            None => panic!("batch session used after commit"),
-        }
+        self.tx.as_ref().expect("batch session used after commit (bug)")
     }
 
     fn dup_cursor<T: Table + DupSort>(&self) -> BaseProofsStorageResult<DupRw<'_, T>> {

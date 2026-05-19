@@ -283,8 +283,10 @@ pub trait BaseProofsBatchSession: Send + Sync + Debug {
 /// Storage that can open a [`BaseProofsBatchSession`] holding a single underlying
 /// transaction across multiple block writes.
 ///
-/// On `Ok` return from the closure the session commits; on `Err` the session aborts and
-/// no writes become visible to subsequent reads.
+/// The MDBX implementation commits atomically on `Ok` and aborts on `Err`, leaving no
+/// writes visible to subsequent reads. The in-memory implementation is a test double
+/// that lacks transactional rollback — partial writes from a failing batch remain
+/// visible. Production code must rely on MDBX semantics.
 pub trait BaseProofsBatchStore: BaseProofsStore {
     /// Session type bound to the active transaction.
     type BatchSession<'a>: BaseProofsBatchSession + 'a
