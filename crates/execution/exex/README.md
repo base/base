@@ -18,9 +18,9 @@ and indexers that query historical state.
 
 ## Solution
 
-The proofs-history `ExEx` implements a **Versioned State Store** that tracks intermediate Merkle
-Patricia Trie nodes tagged by block number. This enables direct lookups of proofs at any
-historical block within a configurable retention window, without reverting state.
+The proofs-history `ExEx` implements a proof-state store that tracks Merkle Patricia Trie nodes,
+hashed accounts, and hashed storage within a configurable retention window. This enables direct
+lookups of proofs at historical blocks without reverting state.
 
 The `ExEx` processes blocks asynchronously, so it adds zero overhead to sync speed and negligible
 tip latency.
@@ -30,12 +30,25 @@ tip latency.
 ```
 base-reth-node
 ├── Standard reth pipeline (sync, EVM, state)
-├── proofs-history ExEx (ingests committed blocks → versioned trie store)
+├── proofs-history ExEx (ingests committed blocks → proofs-history store)
 ├── Pruner task (background, removes data outside retention window)
 └── RPC overrides (eth_getProof, debug_executePayload, debug_executionWitness)
 ```
 
-The versioned store lives in a **separate MDBX database** and maintains four history tables:
+The store lives in a separate proofs-history database. RocksDB is the default backend and uses a
+V2 schema with current-state column families plus before-change history rows. MDBX remains
+available with versioned history tables.
+
+RocksDB V2 maintains these logical column-family groups:
+
+| Group                  | Contents                                                |
+| ---------------------- | ------------------------------------------------------- |
+| Current state          | Latest account/storage leaves and trie branch nodes     |
+| History-before rows    | Values before each block changed a logical key          |
+| `V2BlockChangeSet`     | Block-number ordered index for prune and unwind         |
+| `V2ProofWindow`        | Earliest/latest proofs-history block pointers           |
+
+MDBX maintains four history tables:
 
 | Table                  | Contents                                                |
 | ---------------------- | ------------------------------------------------------- |
@@ -44,8 +57,11 @@ The versioned store lives in a **separate MDBX database** and maintains four his
 | `HashedAccountHistory` | Account leaf data (balance, nonce, etc.), by block      |
 | `HashedStorageHistory` | Storage slot values, versioned by block                 |
 
-A `BlockChangeSet` reverse index enables efficient pruning: given a block number, the pruner
-knows exactly which keys were modified and can delete only those entries.
+A block change-set index enables efficient pruning: given a block number, the pruner knows exactly
+which keys were modified and can delete only those entries.
+
+Legacy RocksDB V1 proofs-history databases are not migrated in place. If a node was using the old
+RocksDB layout, use a fresh `--proofs-history.storage-path` and rebuild the proof history.
 
 ## Usage
 
@@ -68,7 +84,7 @@ debug_proofsSyncStatus → { "earliest": <block>, "latest": <block> }
 ```
 
 Once `latest` tracks the chain tip, `eth_getProof` calls for every block within
-`[earliest, latest]` will be served from the versioned store.
+`[earliest, latest]` will be served from the proofs-history store.
 
 ## Operational Commands
 

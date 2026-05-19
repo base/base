@@ -12,7 +12,7 @@
 use reth_ethereum_primitives as _;
 
 pub mod api;
-pub use api::{BaseProofsInitialStateStore, BaseProofsStore, BlockStateDiff};
+pub use api::{BaseProofsInitialStateStore, BaseProofsStore, BlockStateDiff, ProofWindowRange};
 
 pub mod initialize;
 pub use initialize::InitializationJob;
@@ -24,9 +24,10 @@ pub use in_memory::{
 
 pub mod db;
 pub use db::{
-    MdbxAccountCursor, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor, RocksdbAccountCursor,
-    RocksdbProofsCompression, RocksdbProofsStorage, RocksdbProofsStorageOptions,
-    RocksdbReadSnapshot, RocksdbStorageCursor, RocksdbTrieCursor,
+    AccountTrieDomain, MdbxAccountCursor, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor,
+    RocksDbDomain, RocksdbAccountCursor, RocksdbProofsCompression, RocksdbProofsStorage,
+    RocksdbProofsStorageOptions, RocksdbReadSnapshot, RocksdbStorageCursor, RocksdbTrieCursor,
+    StorageTrieDomain,
 };
 
 pub mod metrics;

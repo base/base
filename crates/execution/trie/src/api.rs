@@ -2,7 +2,7 @@
 
 use std::{fmt::Debug, time::Duration};
 
-use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
+use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
 use auto_impl::auto_impl;
 use derive_more::{AddAssign, Constructor};
@@ -63,6 +63,15 @@ pub struct OperationDurations {
     pub write_duration_seconds: Duration,
 }
 
+/// Inclusive block range covered by proof storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProofWindowRange {
+    /// Earliest block retained in proof storage.
+    pub earliest: NumHash,
+    /// Latest block indexed in proof storage.
+    pub latest: NumHash,
+}
+
 /// Trait for reading trie nodes from the database.
 ///
 /// Only leaf nodes and some branch nodes are stored. The bottom layer of branch nodes
@@ -102,6 +111,26 @@ pub trait BaseProofsStore: Send + Sync + Debug {
 
     /// Get the latest block number and hash that has been stored
     fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>>;
+
+    /// Get the inclusive proof window covered by storage.
+    fn get_proof_window(&self) -> BaseProofsStorageResult<Option<ProofWindowRange>> {
+        let earliest = self.get_earliest_block_number()?;
+        let latest = self.get_latest_block_number()?;
+        match (earliest, latest) {
+            (Some((earliest_number, earliest_hash)), Some((latest_number, latest_hash))) => {
+                Ok(Some(ProofWindowRange {
+                    earliest: NumHash::new(earliest_number, earliest_hash),
+                    latest: NumHash::new(latest_number, latest_hash),
+                }))
+            }
+            (None, None) => Ok(None),
+            _ => Err(reth_db::DatabaseError::Other(
+                "incomplete proof window metadata: earliest and latest must both be present"
+                    .to_owned(),
+            )
+            .into()),
+        }
+    }
 
     /// Get a trie cursor for the storage backend
     fn storage_trie_cursor<'tx>(

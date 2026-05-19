@@ -306,20 +306,18 @@ where
     }
 
     async fn proofs_sync_status(&self) -> RpcResult<ProofsSyncStatus> {
-        let earliest = self
+        let window = self
             .inner
             .storage
-            .get_earliest_block_number()
-            .map_err(|err| internal_rpc_err(err.to_string()))?;
-        let latest = self
-            .inner
-            .storage
-            .get_latest_block_number()
+            .get_proof_window()
             .map_err(|err| internal_rpc_err(err.to_string()))?;
 
-        Ok(ProofsSyncStatus {
-            earliest: earliest.map(|(block_number, _)| block_number),
-            latest: latest.map(|(block_number, _)| block_number),
+        Ok(match window {
+            Some(window) => ProofsSyncStatus {
+                earliest: Some(window.earliest.number),
+                latest: Some(window.latest.number),
+            },
+            None => ProofsSyncStatus { earliest: None, latest: None },
         })
     }
 }

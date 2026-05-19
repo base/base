@@ -272,24 +272,17 @@ where
 
     /// Ensure proofs storage is initialized
     fn ensure_initialized(&self) -> eyre::Result<()> {
-        // Check if proofs storage is initialized
-        let earliest_block_number = match self.storage.get_earliest_block_number()? {
-            Some((n, _)) => n,
+        // Check if proofs storage is initialized.
+        let window = match self.storage.get_proof_window()? {
+            Some(window) => window,
             None => {
                 return Err(eyre::eyre!(
                     "Proofs storage not initialized. Please run 'base-reth-node proofs init --proofs-history.storage-path <PATH>' first."
                 ));
             }
         };
-
-        let latest_block_number = match self.storage.get_latest_block_number()? {
-            Some((n, _)) => n,
-            None => {
-                return Err(eyre::eyre!(
-                    "Proofs storage not initialized. Please run 'base-reth-node proofs init --proofs-history.storage-path <PATH>' first."
-                ));
-            }
-        };
+        let earliest_block_number = window.earliest.number;
+        let latest_block_number = window.latest.number;
 
         // Check if we have accumulated too much history for the configured window.
         // If the gap between what we have and what we want to keep is too large, the auto-pruner
