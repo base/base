@@ -590,7 +590,7 @@ mod tests {
             );
             assert_output(
                 dispatch_b20_success(ctx, expected_token, IB20::decimalsCall {}),
-                6u8.abi_encode(),
+                IB20::decimalsCall::abi_encode_returns(&6u8),
             );
             assert_output(
                 dispatch_b20_success(ctx, expected_token, IB20::totalSupplyCall {}),
@@ -642,8 +642,7 @@ mod tests {
         let charlie = Address::repeat_byte(0xCC);
         let salt = B256::repeat_byte(0x32);
         let (token_addr, _) = compute_b20_address(creator, VARIANT_DEFAULT, 18, salt);
-        let params =
-            token_params("Dispatch Token", "DSP", 18, U256::from(1_000u64), U256::MAX);
+        let params = token_params("Dispatch Token", "DSP", 18, U256::from(1_000u64), U256::MAX);
 
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_caller(creator);
@@ -680,11 +679,7 @@ mod tests {
                 dispatch_b20_success(
                     ctx,
                     token_addr,
-                    IB20::transferFromCall {
-                        from: alice,
-                        to: charlie,
-                        amount: U256::from(200u64),
-                    },
+                    IB20::transferFromCall { from: alice, to: charlie, amount: U256::from(200u64) },
                 ),
                 true.abi_encode(),
             );
@@ -701,7 +696,11 @@ mod tests {
                 U256::from(200u64).abi_encode(),
             );
             assert_output(
-                dispatch_b20_success(ctx, token_addr, IB20::allowanceCall { owner: alice, spender }),
+                dispatch_b20_success(
+                    ctx,
+                    token_addr,
+                    IB20::allowanceCall { owner: alice, spender },
+                ),
                 U256::from(50u64).abi_encode(),
             );
         });
