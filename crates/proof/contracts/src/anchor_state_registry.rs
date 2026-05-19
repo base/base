@@ -130,28 +130,29 @@ impl AnchorStateRegistryContractClient {
 #[async_trait]
 impl AnchorStateRegistryClient for AnchorStateRegistryContractClient {
     async fn anchor_snapshot(&self) -> Result<AnchorSnapshot, ContractError> {
-        let block_number =
-            self.provider.get_block_number().await.map_err(|e| ContractError::Provider {
-                context: "get block number for anchor snapshot failed".into(),
-                source: e,
-            })?;
+        let block_number = self.provider.get_block_number().await.map_err(|e| {
+            ContractError::provider("get block number for anchor snapshot failed", e)
+        })?;
 
         let (anchor, anchor_game) = futures::try_join!(
             async {
-                self.contract.getAnchorRoot().block(block_number.into()).call().await.map_err(|e| {
-                    ContractError::Call { context: "getAnchorRoot failed".into(), source: e }
-                })
+                contract_call!(
+                    self.contract.getAnchorRoot().block(block_number.into()).call(),
+                    "getAnchorRoot failed"
+                )
             },
             async {
-                self.contract.anchorGame().block(block_number.into()).call().await.map_err(|e| {
-                    ContractError::Call { context: "anchorGame failed".into(), source: e }
-                })
+                contract_call!(
+                    self.contract.anchorGame().block(block_number.into()).call(),
+                    "anchorGame failed"
+                )
             },
         )?;
 
-        let l2_block_number: u64 = anchor.l2SequenceNumber.try_into().map_err(|_| {
-            ContractError::Validation("anchor l2SequenceNumber overflows u64".into())
-        })?;
+        let l2_block_number: u64 = anchor
+            .l2SequenceNumber
+            .try_into()
+            .map_err(|_| ContractError::validation("anchor l2SequenceNumber overflows u64"))?;
 
         tracing::info!(
             block_number,

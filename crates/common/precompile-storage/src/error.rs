@@ -1,3 +1,6 @@
+use alloc::string::{String, ToString};
+use core::result;
+
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{Panic, PanicKind, SolError};
 use revm::{
@@ -26,6 +29,11 @@ pub enum BasePrecompileError {
     #[error("Slot overflow")]
     SlotOverflow,
 
+    /// ABI-encoded revert from a contract-defined error (e.g. `InvalidSender`).
+    #[error("Revert")]
+    #[from(skip)]
+    Revert(Bytes),
+
     /// Unrecoverable internal error (e.g. database failure).
     #[error("Fatal precompile error: {0:?}")]
     #[from(skip)]
@@ -42,12 +50,17 @@ impl From<JournalLoadError<revm::context::ErasedError>> for BasePrecompileError 
 }
 
 /// Result type alias for Base native precompile operations.
-pub type Result<T> = std::result::Result<T, BasePrecompileError>;
+pub type Result<T> = result::Result<T, BasePrecompileError>;
 
 impl BasePrecompileError {
     /// Returns true if this error must be propagated rather than turned into a revert.
     pub const fn is_system_error(&self) -> bool {
         matches!(self, Self::OutOfGas | Self::Fatal(_) | Self::Panic(_) | Self::SlotOverflow)
+    }
+
+    /// ABI-encodes a contract-defined error and wraps it as a [`Revert`](Self::Revert).
+    pub fn revert(error: impl SolError) -> Self {
+        Self::Revert(error.abi_encode().into())
     }
 
     /// Creates an arithmetic under/overflow panic error.
@@ -68,6 +81,7 @@ impl BasePrecompileError {
     /// ABI-encodes this error and wraps it as a [`PrecompileResult`] (revert or fatal error).
     pub fn into_precompile_result(self, gas: u64) -> PrecompileResult {
         let bytes: Bytes = match self {
+            Self::Revert(bytes) => bytes,
             Self::Panic(kind) => Panic { code: U256::from(kind as u32) }.abi_encode().into(),
             Self::OutOfGas => {
                 // revm 32.x: OutOfGas is returned as Err, not Ok-Halt

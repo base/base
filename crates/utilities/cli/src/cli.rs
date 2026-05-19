@@ -30,3 +30,24 @@ macro_rules! parse_cli {
         <$cli_type>::from_arg_matches(&matches).expect("Parsing args")
     }};
 }
+
+/// Runs a synchronous Clap CLI as a binary entry point.
+#[macro_export]
+macro_rules! run_cli_main {
+    ($cli_type:ty) => {{
+        $crate::init_common!();
+
+        if let Err(err) = <$cli_type as ::clap::Parser>::parse().run() {
+            eprintln!("Error: {err:?}");
+            ::std::process::exit(1);
+        }
+    }};
+    (async $cli_type:ty) => {{
+        $crate::init_common!();
+
+        if let Err(err) = <$cli_type as ::clap::Parser>::parse().run().await {
+            eprintln!("Error: {err:?}");
+            ::std::process::exit(1);
+        }
+    }};
+}

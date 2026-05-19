@@ -329,12 +329,11 @@ mod tests {
     use base_common_genesis::{HardForkConfig, RollupConfig, SystemConfig};
     use base_protocol::{Batch, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch};
     use tracing::Level;
-    use tracing_subscriber::layer::SubscriberExt;
 
     use crate::{
         AttributesProvider, BatchValidator, NextBatchProvider, OriginAdvancer, PipelineError,
         PipelineErrorKind, PipelineResult, ResetError, StageReset,
-        test_utils::{CollectingLayer, TestNextBatchProvider, TraceStorage},
+        test_utils::TestNextBatchProvider,
     };
 
     #[tokio::test]
@@ -526,10 +525,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_validator_next_batch_sequence_window_expired() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let cfg = Arc::new(RollupConfig { seq_window_size: 5, ..Default::default() });
         let mut mock = TestNextBatchProvider::new(vec![]);
@@ -562,10 +558,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_validator_next_batch_sequence_window_expired_advance_epoch() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let cfg = Arc::new(RollupConfig { seq_window_size: 5, ..Default::default() });
         let mut mock = TestNextBatchProvider::new(vec![]);

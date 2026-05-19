@@ -490,12 +490,11 @@ mod tests {
     use base_common_genesis::{ChainGenesis, HardForkConfig, RollupConfig, SystemConfig};
     use base_protocol::{BatchReader, L1BlockInfoBedrock, L1BlockInfoTx};
     use tracing::Level;
-    use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
     use crate::{
         StageReset,
-        test_utils::{CollectingLayer, TestL2ChainProvider, TestNextBatchProvider, TraceStorage},
+        test_utils::{TestL2ChainProvider, TestNextBatchProvider},
     };
 
     fn new_batch_reader() -> BatchReader {
@@ -884,10 +883,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_holocene_derive_next_batch_future() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         // Construct a future single batch.
         let cfg = Arc::new(RollupConfig {
@@ -1013,10 +1009,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_next_batch_missing_origin() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let mut reader = new_batch_reader();
         let payload_block_hash =

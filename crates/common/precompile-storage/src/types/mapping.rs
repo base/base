@@ -1,7 +1,7 @@
 //! Type-safe wrapper for EVM storage mappings (hash-based key-value storage).
 
-use std::{
-    hash::Hash,
+use core::{
+    marker::PhantomData,
     ops::{Index, IndexMut},
 };
 
@@ -12,19 +12,33 @@ use crate::{
     types::HandlerCache,
 };
 
-/// Type-safe access wrapper for EVM storage mappings.
+/// Marker type for EVM storage mappings.
 #[derive(Debug, Clone)]
 pub struct Mapping<K, V: StorableType> {
-    base_slot: U256,
-    address: Address,
-    cache: HandlerCache<K, V::Handler>,
+    _key: PhantomData<K>,
+    _value: PhantomData<V>,
 }
 
-impl<K, V: StorableType> Mapping<K, V> {
+/// Type-safe access wrapper for EVM storage mappings.
+#[derive(Debug, Clone)]
+pub struct MappingHandler<'a, K, V: StorableType> {
+    base_slot: U256,
+    address: Address,
+    storage: crate::StorageCtx<'a>,
+    cache: HandlerCache<K, V::Handler<'a>>,
+}
+
+impl<K, V: StorableType> Default for Mapping<K, V> {
+    fn default() -> Self {
+        Self { _key: PhantomData, _value: PhantomData }
+    }
+}
+
+impl<'a, K, V: StorableType> MappingHandler<'a, K, V> {
     /// Creates a new mapping with the given base slot and contract address.
     #[inline]
-    pub fn new(base_slot: U256, address: Address) -> Self {
-        Self { base_slot, address, cache: HandlerCache::new() }
+    pub const fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
+        Self { base_slot, address, storage, cache: HandlerCache::new() }
     }
 
     /// Returns the base storage slot for this mapping.
@@ -34,55 +48,50 @@ impl<K, V: StorableType> Mapping<K, V> {
     }
 
     /// Returns a handler for the given key (immutable access, cached).
-    pub fn at(&self, key: &K) -> &V::Handler
+    pub fn at(&self, key: &K) -> &V::Handler<'a>
     where
-        K: StorageKey + Hash + Eq + Clone,
+        K: StorageKey + Eq + Clone + Ord,
     {
-        let (base_slot, address) = (self.base_slot, self.address);
-        self.cache
-            .get_or_insert(key, || V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address))
+        let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
+        self.cache.get_or_insert(key, || {
+            V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address, storage)
+        })
     }
 
     /// Returns a mutable handler for the given key (mutable access, cached).
-    pub fn at_mut(&mut self, key: &K) -> &mut V::Handler
+    pub fn at_mut(&mut self, key: &K) -> &mut V::Handler<'a>
     where
-        K: StorageKey + Hash + Eq + Clone,
+        K: StorageKey + Eq + Clone + Ord,
     {
-        let (base_slot, address) = (self.base_slot, self.address);
+        let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
         self.cache.get_or_insert_mut(key, || {
-            V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address)
+            V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address, storage)
         })
     }
 }
 
-impl<K, V: StorableType> Default for Mapping<K, V> {
-    fn default() -> Self {
-        Self::new(U256::ZERO, Address::ZERO)
-    }
-}
-
-impl<K, V: StorableType> Index<K> for Mapping<K, V>
+impl<'a, K, V: StorableType> Index<K> for MappingHandler<'a, K, V>
 where
-    K: StorageKey + Hash + Eq + Clone,
+    K: StorageKey + Eq + Clone + Ord,
 {
-    type Output = V::Handler;
+    type Output = V::Handler<'a>;
 
     fn index(&self, key: K) -> &Self::Output {
-        let (base_slot, address) = (self.base_slot, self.address);
+        let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
         self.cache.get_or_insert(&key, || {
-            V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address)
+            V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address, storage)
         })
     }
 }
 
-impl<K, V: StorableType> IndexMut<K> for Mapping<K, V>
+impl<'a, K, V: StorableType> IndexMut<K> for MappingHandler<'a, K, V>
 where
-    K: StorageKey + Hash + Eq + Clone,
+    K: StorageKey + Eq + Clone + Ord,
 {
     fn index_mut(&mut self, key: K) -> &mut Self::Output {
-        let (base_slot, address) = (self.base_slot, self.address);
+        let (base_slot, address, storage) = (self.base_slot, self.address, self.storage);
         self.cache.get_or_insert_mut(&key, || {
-            V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address)
+            V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address, storage)
         })
     }
 }
@@ -92,10 +101,15 @@ where
     V: StorableType,
 {
     const LAYOUT: Layout = Layout::Slots(1);
-    type Handler = Self;
+    type Handler<'a> = MappingHandler<'a, K, V>;
 
-    fn handle(slot: U256, _ctx: LayoutCtx, address: Address) -> Self::Handler {
-        Self::new(slot, address)
+    fn handle<'a>(
+        slot: U256,
+        _ctx: LayoutCtx,
+        address: Address,
+        storage: crate::StorageCtx<'a>,
+    ) -> Self::Handler<'a> {
+        MappingHandler::new(slot, address, storage)
     }
 }
 
@@ -141,15 +155,18 @@ mod tests {
     fn test_mapping_basic_properties() {
         let address = Address::from([0x10; 20]);
         let base_slot = U256::from(1u64);
-        let mapping = Mapping::<Address, U256>::new(base_slot, address);
+        let (mut storage, _) = crate::hashmap::setup_storage();
+        crate::StorageCtx::enter(&mut storage, |ctx| {
+            let mapping = MappingHandler::<Address, U256>::new(base_slot, address, ctx);
 
-        let key = Address::from([0x20; 20]);
-        let slot1 = &mapping[key];
-        let slot2 = &mapping[key];
-        assert_eq!(slot1.slot(), slot2.slot());
+            let key = Address::from([0x20; 20]);
+            let slot1 = &mapping[key];
+            let slot2 = &mapping[key];
+            assert_eq!(slot1.slot(), slot2.slot());
 
-        let key1 = Address::from([0x21; 20]);
-        let key2 = Address::from([0x22; 20]);
-        assert_ne!(mapping[key1].slot(), mapping[key2].slot());
+            let key1 = Address::from([0x21; 20]);
+            let key2 = Address::from([0x22; 20]);
+            assert_ne!(mapping[key1].slot(), mapping[key2].slot());
+        });
     }
 }

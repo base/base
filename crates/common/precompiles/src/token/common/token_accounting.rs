@@ -1,0 +1,89 @@
+//! `TokenAccounting` — the driven port all token storage adapters implement.
+
+use alloc::string::String;
+
+use alloy_primitives::{Address, LogData, U256};
+use base_precompile_storage::Result;
+
+/// Outbound port: all data reads and writes the core business logic requires.
+///
+/// Each token variant's `#[contract]` storage struct implements this trait.
+/// Capability trait default implementations only depend on this interface, never on EVM storage
+/// directly.
+pub trait TokenAccounting {
+    // --- Balances ---
+
+    /// Returns the token balance of `account`.
+    fn balance_of(&self, account: Address) -> Result<U256>;
+    /// Overwrites the token balance of `account`.
+    fn set_balance(&mut self, account: Address, balance: U256) -> Result<()>;
+
+    // --- Allowances ---
+
+    /// Returns the allowance granted by `owner` to `spender`.
+    fn allowance(&self, owner: Address, spender: Address) -> Result<U256>;
+    /// Overwrites the allowance granted by `owner` to `spender`.
+    fn set_allowance(&mut self, owner: Address, spender: Address, amount: U256) -> Result<()>;
+
+    // --- Supply ---
+
+    /// Returns the total token supply currently in circulation.
+    fn total_supply(&self) -> Result<U256>;
+    /// Overwrites the total supply.
+    fn set_total_supply(&mut self, supply: U256) -> Result<()>;
+    /// Returns the maximum total supply enforced on mint.
+    fn supply_cap(&self) -> Result<U256>;
+    /// Overwrites the supply cap.
+    fn set_supply_cap(&mut self, cap: U256) -> Result<()>;
+
+    // --- Metadata ---
+
+    /// Returns the token name.
+    fn name(&self) -> Result<String>;
+    /// Overwrites the token name.
+    fn set_name(&mut self, name: String) -> Result<()>;
+    /// Returns the token symbol.
+    fn symbol(&self) -> Result<String>;
+    /// Overwrites the token symbol.
+    fn set_symbol(&mut self, symbol: String) -> Result<()>;
+    /// Returns the number of decimal places.
+    fn decimals(&self) -> Result<u8>;
+
+    // --- Pause ---
+
+    /// Returns the current paused-vector bitmask.
+    fn paused(&self) -> Result<U256>;
+    /// Overwrites the paused-vector bitmask.
+    fn set_paused(&mut self, vectors: U256) -> Result<()>;
+
+    // --- Permit nonces ---
+
+    /// Returns the current EIP-2612 permit nonce for `owner`.
+    fn nonce(&self, owner: Address) -> Result<U256>;
+    /// Increments the EIP-2612 permit nonce for `owner` by one.
+    fn increment_nonce(&mut self, owner: Address) -> Result<()>;
+
+    // --- Redeem ---
+
+    /// Returns the minimum amount that may be redeemed in a single call.
+    fn minimum_redeemable(&self) -> Result<U256>;
+    /// Overwrites the minimum redeemable amount.
+    fn set_minimum_redeemable(&mut self, minimum: U256) -> Result<()>;
+
+    // --- Contract URI ---
+
+    /// Returns the off-chain metadata URI for this token (ERC-7572).
+    fn contract_uri(&self) -> Result<String>;
+    /// Overwrites the contract URI.
+    fn set_contract_uri(&mut self, uri: String) -> Result<()>;
+
+    // --- Capabilities ---
+
+    /// Returns the immutable capability bitfield assigned at creation.
+    fn capabilities(&self) -> Result<U256>;
+
+    // --- Event emission ---
+
+    /// Publishes a pre-encoded EVM event log from this token's address.
+    fn emit_event(&mut self, log: LogData) -> Result<()>;
+}

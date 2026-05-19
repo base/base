@@ -3,15 +3,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-use clap::Parser as _;
-
 mod cli;
 
 fn main() {
-    base_cli_utils::init_common!();
-
-    if let Err(err) = cli::Cli::parse().run() {
-        eprintln!("Error: {err:?}");
-        std::process::exit(1);
-    }
+    base_cli_utils::run_cli_main!(cli::Cli);
 }

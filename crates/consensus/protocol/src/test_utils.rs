@@ -100,6 +100,11 @@ impl TraceStorage {
             .collect()
     }
 
+    /// Locks the storage and returns the collected traces.
+    pub fn lock(&self) -> spin::MutexGuard<'_, Vec<(Level, String)>> {
+        self.0.lock()
+    }
+
     /// Returns if the storage is empty.
     pub fn is_empty(&self) -> bool {
         self.0.lock().is_empty()
@@ -129,4 +134,19 @@ impl<S: Subscriber> Layer<S> for CollectingLayer {
         let mut storage = self.storage.0.lock();
         storage.push((level, message));
     }
+}
+
+/// Installs a temporary tracing subscriber that captures events into [`TraceStorage`].
+#[macro_export]
+macro_rules! capture_traces {
+    () => {{
+        let trace_store = $crate::test_utils::TraceStorage::default();
+        let layer = $crate::test_utils::CollectingLayer::new(trace_store.clone());
+        let subscriber = ::tracing_subscriber::layer::SubscriberExt::with(
+            ::tracing_subscriber::Registry::default(),
+            layer,
+        );
+        let guard = ::tracing::subscriber::set_default(subscriber);
+        (trace_store, guard)
+    }};
 }
