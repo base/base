@@ -97,16 +97,16 @@ pub struct DriverConfig {
 pub struct PendingTask {
     /// Originating instance ID — recorded only for logging.
     pub instance_id: String,
-    /// Signer address whose registration this task owns. Used by
-    /// [`RegistrationDriver::reconcile_proof_tasks`] to match in-flight
-    /// tasks against the latest registerable set.
+    /// Signer address whose registration this task owns. Used by the
+    /// driver's per-cycle reconcile pass to match in-flight tasks against
+    /// the latest registerable set.
     pub signer: Address,
     /// Cooperative cancel handle for this single task.
     pub cancel: CancellationToken,
 }
 
-/// Aggregate output of [`RegistrationDriver::discover_and_resolve`] —
-/// the per-cycle snapshot consumed by the spawn-and-reap loop.
+/// Aggregate output of the driver's per-cycle `discover_and_resolve` pass —
+/// the snapshot consumed by the spawn-and-reap loop.
 #[derive(Debug, Default)]
 pub struct DiscoveryResolution {
     /// Instances eligible for registration this cycle, with their derived
@@ -238,15 +238,15 @@ where
     /// by `pending`:
     ///
     /// 1. **Reap** — drain any task that finished since the previous
-    ///    cycle ([`Self::reap_finished_tasks`]).
+    ///    cycle (`reap_finished_tasks`).
     /// 2. **Discover & resolve** — produce a [`DiscoveryResolution`]
-    ///    snapshot ([`Self::discover_and_resolve`]).
+    ///    snapshot (`discover_and_resolve`).
     /// 3. **Reconcile** — cancel in-flight tasks for vanished /
     ///    ineligible signers, spawn new tasks for registerable signers
-    ///    that are not already in-flight ([`Self::reconcile_proof_tasks`]).
+    ///    that are not already in-flight (`reconcile_proof_tasks`).
     /// 4. **Orphan dereg** — when the snapshot's `ok_to_dereg` is set,
     ///    run a single deregistration pass over signers no longer backed
-    ///    by an active instance ([`Self::run_orphan_dereg`]).
+    ///    by an active instance (`run_orphan_dereg`).
     /// 5. **Sleep** — wait `poll_interval` or until cancelled.
     ///
     /// # Cancellation
@@ -254,7 +254,7 @@ where
     /// On shutdown every `PendingTask::cancel` is fired; `abort_all` is
     /// then used as a backstop, and tasks are awaited via
     /// `join_next_with_id` so each terminal outcome flows through
-    /// [`Self::apply_join_outcome`] — keeping the proof-task metrics
+    /// `apply_join_outcome` — keeping the proof-task metrics
     /// consistent.
     ///
     /// # Why `Arc<Self>`
@@ -845,11 +845,11 @@ where
     ///   [`DriverConfig::unhealthy_registration_window`]);
     /// - the CRL check confirmed revocation for the instance's chain.
     ///
-    /// This is the shared resolution path used by
-    /// [`Self::discover_and_resolve`]. It performs the same per-instance
-    /// work as the first half of [`Self::process_instance`] minus the
-    /// `try_register` loop, so the [`Self::run`] pipeline can spawn
-    /// registration tasks separately from discovery.
+    /// This is the shared resolution path used by `discover_and_resolve`.
+    /// It performs the same per-instance work as the first half of the
+    /// legacy `process_instance` helper minus the `try_register` loop,
+    /// so the [`Self::run`] pipeline can spawn registration tasks
+    /// separately from discovery.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<ResolveOutcome> {
         let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
         let mut addresses = Vec::with_capacity(public_keys.len());
@@ -927,9 +927,10 @@ where
     /// Runs one discovery cycle and resolves every instance into the
     /// [`DiscoveryResolution`] consumed by the spawn-and-reap loop.
     ///
-    /// Like [`Self::step`], this fans out per-instance resolution work
-    /// concurrently (bounded by [`DriverConfig::max_concurrency`]) and
-    /// breaks out on cancellation. Unlike `step`, no registration
+    /// Like the legacy synchronous `step` helper, this fans out
+    /// per-instance resolution work concurrently (bounded by
+    /// [`DriverConfig::max_concurrency`]) and breaks out on
+    /// cancellation. Unlike `step`, no registration
     /// transactions are submitted here — the [`Self::run`] loop spawns a
     /// dedicated task per registerable signer instead, so that long
     /// Boundless proofs do not block the next discovery cycle.
@@ -1028,9 +1029,9 @@ where
     ///
     /// Loads on-chain signers, computes the orphan set
     /// (`registered \ active`), and deregisters each in sequence with a
-    /// ghost-entry guard. Mirrors the trailing half of [`Self::step`] —
-    /// extracted so the [`Self::run`] pipeline can invoke it independently
-    /// of the concurrent registration path.
+    /// ghost-entry guard. Mirrors the trailing half of the legacy
+    /// synchronous `step` helper — extracted so the [`Self::run`] pipeline
+    /// can invoke it independently of the concurrent registration path.
     async fn run_orphan_dereg(&self, active_signers: &HashSet<Address>) -> Result<()> {
         let registered_signers = self.registry.get_registered_signers().await?;
         if let Err(e) = self.deregister_orphans(active_signers, &registered_signers).await {

@@ -11,9 +11,12 @@ to detect new Nitro enclave instances, fetches their attestation documents via
 
 ## Modules
 
-- **`config`** — [`RegistrarConfig`] runtime config struct, [`BoundlessConfig`],
-  and [`SigningConfig`] for L1 transaction signing.
+- **`config`** — [`RegistrarConfig`] runtime config struct and
+  [`BoundlessConfig`]. L1 transaction signing is delegated to the
+  `base-tx-manager` crate (`TxManagerConfig` + `SignerConfig`).
 - **`error`** — [`RegistrarError`] enum covering all failure modes.
 - **`prover`** — [`ProverClient`] JSON-RPC client for polling prover signer endpoints.
-- **`traits`** — [`InstanceDiscovery`] and [`AttestationProofProvider`] trait definitions.
+- **`traits`** — [`InstanceDiscovery`] trait definition. Attestation-proof
+  generation is provided by the `base-proof-tee-nitro-attestation-prover` crate
+  (`AttestationProofProvider` trait).
 - **`types`** — Core domain types: [`ProverInstance`], [`RegisteredSigner`].
