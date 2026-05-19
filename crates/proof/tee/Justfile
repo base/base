@@ -93,8 +93,8 @@ build-host-inline OUT_DIR PROFILE='maxperf':
 # Stage 1 of the enclave build: produce the static enclave binary (musl) and
 # the linuxkit init+user ramdisks. Must run in a musl-capable environment
 # (alpine + musl-dev). BOOTSTRAP_DIR must contain the AWS Nitro SDK bootstrap
-# artifacts (bzImage, bzImage.config, init, nsm.ko, nitro-cli-config,
-# nitro-enclaves-allocator). OUT_DIR receives the binary + ramdisk images.
+# artifacts; this recipe specifically reads `init` and `nsm.ko` (referenced by
+# the linuxkit ramdisk YAMLs). OUT_DIR receives the binary + ramdisk images.
 build-enclave-binary-and-ramdisks BOOTSTRAP_DIR OUT_DIR:
     #!/usr/bin/env bash
     set -euxo pipefail
@@ -144,8 +144,12 @@ build-enclave-binary-and-ramdisks BOOTSTRAP_DIR OUT_DIR:
 # assemble eif.bin from the ramdisks + bootstrap kernel, build nitro-cli (from
 # aws-nitro-enclaves-cli) and apply our config patch, and stage the runtime
 # bundle. STAGE1_DIR must contain init-ramdisk-initrd.img and
-# user-ramdisk-initrd.img (from build-enclave-binary-and-ramdisks). BOOTSTRAP_DIR
-# is the AWS Nitro SDK bootstrap artifacts. OUT_DIR receives the runtime files.
+# user-ramdisk-initrd.img (from build-enclave-binary-and-ramdisks).
+# BOOTSTRAP_DIR is the AWS Nitro SDK bootstrap artifacts; this recipe reads
+# `bzImage` and `bzImage.config` for the eif_build kernel inputs. The runtime
+# helpers `nitro-cli-config` and `nitro-enclaves-allocator` are NOT sourced
+# from BOOTSTRAP_DIR — they come from the pinned nitro-cli repo's bootstrap/
+# subdirectory after we clone and patch it below, then are copied into OUT_DIR.
 # Must run in a glibc environment with cargo + git + pkg-config + libssl-dev.
 build-enclave-eif-and-cli STAGE1_DIR BOOTSTRAP_DIR OUT_DIR:
     #!/usr/bin/env bash
