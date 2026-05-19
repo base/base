@@ -46,7 +46,8 @@ use crate::{
     },
     workload::{
         AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload, Erc20Payload,
-        OsakaPayload, PrecompilePayload, TransferPayload, UniswapV3Payload, WorkloadGenerator,
+        KeyStream, OsakaPayload, PrecompilePayload, SeededRng, TransferPayload, UniswapV3Payload,
+        WorkloadGenerator,
     },
 };
 
@@ -56,6 +57,8 @@ const SUBMIT_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(200);
 const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(200);
 const TXPOOL_CLEAR_CONCURRENCY: usize = 64;
+const FRESH_RECIPIENT_RNG_SALT: u64 = 0x6672_6573_685f_7263; // "fresh_rc"
+
 /// Executes load tests by generating and submitting transactions at a target rate.
 pub struct LoadRunner {
     pub(super) config: LoadConfig,
@@ -77,6 +80,8 @@ pub struct LoadRunner {
     last_funds_low: bool,
     funder_address: Option<String>,
     sender_addresses: Vec<String>,
+    recipient_keys: Option<KeyStream>,
+    recipient_rng: SeededRng,
 }
 
 impl LoadRunner {
@@ -133,6 +138,37 @@ impl LoadRunner {
             "load runner created"
         );
 
+        let recipient_keys = if config.fresh_recipient_ratio > 0.0 {
+            let offset =
+                config.sender_offset.checked_add(config.account_count).ok_or_else(|| {
+                    BaselineError::Config("sender_offset + account_count overflows usize".into())
+                })?;
+            let stream = if let Some(mnemonic) = &config.mnemonic {
+                let stream = KeyStream::from_mnemonic(mnemonic.clone(), offset)?;
+                info!(
+                    fresh_recipient_ratio = config.fresh_recipient_ratio,
+                    recipient_offset = offset,
+                    "fresh-recipient mode enabled; recover addresses with \
+                     AccountPool::from_mnemonic(mnemonic, n, recipient_offset)",
+                );
+                stream
+            } else {
+                let stream = KeyStream::from_seed(config.seed, offset);
+                info!(
+                    seed = config.seed,
+                    fresh_recipient_ratio = config.fresh_recipient_ratio,
+                    recipient_offset = offset,
+                    "fresh-recipient mode enabled; recover addresses with \
+                     AccountPool::with_offset(seed, n, recipient_offset)",
+                );
+                stream
+            };
+            Some(stream)
+        } else {
+            None
+        };
+        let recipient_rng = SeededRng::new(config.seed.wrapping_add(FRESH_RECIPIENT_RNG_SALT));
+
         Ok(Self {
             config,
             config_summary: None,
@@ -153,7 +189,33 @@ impl LoadRunner {
             last_funds_low: false,
             funder_address: None,
             sender_addresses,
+            recipient_keys,
+            recipient_rng,
         })
+    }
+
+    /// Returns instructions for recovering recipients generated in fresh-recipient mode.
+    pub fn recovery_message(&self) -> Option<String> {
+        self.recipient_keys.as_ref().map(KeyStream::recovery_message)
+    }
+
+    /// Returns the number of fresh recipient keys generated so far.
+    pub fn fresh_recipient_count(&self) -> Option<u64> {
+        self.recipient_keys.as_ref().map(KeyStream::generated_count)
+    }
+
+    fn select_recipient(&mut self, sender_pool_recipient: Address) -> Result<Address> {
+        let Some(recipient_keys) = self.recipient_keys.as_mut() else {
+            return Ok(sender_pool_recipient);
+        };
+
+        if self.config.fresh_recipient_ratio >= 1.0
+            || self.recipient_rng.random::<f64>() < self.config.fresh_recipient_ratio
+        {
+            Ok(recipient_keys.next_signer()?.address())
+        } else {
+            Ok(sender_pool_recipient)
+        }
     }
 
     /// Sets the funder wallet address for inclusion in live snapshots.
@@ -1234,7 +1296,8 @@ impl LoadRunner {
 
                 let from = account.address;
                 let to_idx = (current_account_idx + 1) % account_count;
-                let to = self.accounts.accounts()[to_idx].address;
+                let sender_pool_recipient = self.accounts.accounts()[to_idx].address;
+                let to = self.select_recipient(sender_pool_recipient)?;
 
                 let tx_request = self.generator.generate_payload(from, to)?;
 
@@ -1424,11 +1487,16 @@ impl LoadRunner {
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
 
-        Ok(self.collector.summarize(
+        let mut summary = self.collector.summarize(
             last_confirmed_at,
             self.config.duration,
             self.config_summary.clone(),
-        ))
+        );
+        summary.fresh_recipient_count = self.fresh_recipient_count();
+        if let Some(fresh_recipient_count) = summary.fresh_recipient_count {
+            info!(fresh_recipient_count, "fresh recipient generation complete");
+        }
+        Ok(summary)
     }
 
     fn build_snapshot(

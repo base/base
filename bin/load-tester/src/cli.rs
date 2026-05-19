@@ -230,6 +230,11 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     let mut runner = LoadRunner::new(load_config.clone())?;
     runner.set_config_summary(config_summary.clone());
 
+    if let Some(recovery_message) = runner.recovery_message() {
+        println!("{recovery_message}");
+        println!();
+    }
+
     // Install signal handling before any long-running work so shutdown can
     // stop the run loop and still drain funded accounts.
     let stop_flag = runner.stop_flag();

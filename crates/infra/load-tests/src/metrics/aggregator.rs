@@ -83,6 +83,7 @@ impl<'a> MetricsAggregator<'a> {
             gas: Self::compute_gas(self.transactions),
             block_range,
             top_failure_reasons,
+            fresh_recipient_count: None,
         }
     }
 
@@ -392,6 +393,9 @@ pub struct MetricsSummary {
     pub block_range: BlockRange,
     /// Top failure reasons sorted by count descending (max 3).
     pub top_failure_reasons: Vec<(String, u64)>,
+    /// Number of fresh recipient keys generated during the run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fresh_recipient_count: Option<u64>,
 }
 
 impl MetricsSummary {
