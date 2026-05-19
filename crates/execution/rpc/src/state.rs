@@ -46,19 +46,16 @@ where
         let historical_provider =
             self.eth_api.state_at_block_id(block_id).await.map_err(ProviderError::other)?;
 
-        let (Some((latest_block_number, _)), Some((earliest_block_number, _))) = (
-            self.preimage_store
-                .get_latest_block_number()
-                .map_err(|e| ProviderError::Database(e.into()))?,
-            self.preimage_store
-                .get_earliest_block_number()
-                .map_err(|e| ProviderError::Database(e.into()))?,
-        ) else {
+        let Some(window) = self
+            .preimage_store
+            .get_proof_window()
+            .map_err(|e| ProviderError::Database(e.into()))?
+        else {
             // if no earliest block, db is empty, return error
             return Err(ProviderError::StateForNumberNotFound(block_number));
         };
 
-        if block_number < earliest_block_number || block_number > latest_block_number {
+        if block_number < window.earliest.number || block_number > window.latest.number {
             return Err(ProviderError::StateForNumberNotFound(block_number));
         }
 

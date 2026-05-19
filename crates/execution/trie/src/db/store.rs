@@ -45,6 +45,7 @@ pub struct MdbxProofsStorage {
     env: DatabaseEnv,
 }
 
+#[derive(Debug)]
 struct ProofWindowValue {
     earliest: NumHash,
     latest: NumHash,
@@ -81,12 +82,17 @@ impl MdbxProofsStorage {
         &self,
         tx: &impl DbTx,
     ) -> BaseProofsStorageResult<Option<(u64, B256)>> {
-        let block = self.inner_get_block_number_hash(tx, ProofWindowKey::LatestBlock)?;
-        if block.is_some() {
-            return Ok(block);
+        self.inner_get_block_number_hash(tx, ProofWindowKey::LatestBlock)
+    }
+
+    fn inner_get_append_parent_hash(&self, tx: &impl DbTx) -> BaseProofsStorageResult<B256> {
+        if let Some((_, hash)) = self.inner_get_latest_block_number_hash(tx)? {
+            return Ok(hash);
         }
 
-        self.inner_get_block_number_hash(tx, ProofWindowKey::EarliestBlock)
+        Ok(self
+            .inner_get_block_number_hash(tx, ProofWindowKey::EarliestBlock)?
+            .map_or(B256::ZERO, |(_, hash)| hash))
     }
 
     fn inner_get_block_number_hash(
@@ -112,7 +118,12 @@ impl MdbxProofsStorage {
 
         let latest = match cursor.seek_exact(ProofWindowKey::LatestBlock)? {
             Some((_, val)) => NumHash::new(val.number(), *val.hash()),
-            None => earliest,
+            None => {
+                return Err(DatabaseError::Other(
+                    "incomplete MDBX proof window metadata: missing latest block".to_owned(),
+                )
+                .into());
+            }
         };
 
         Ok(Some(ProofWindowValue { earliest, latest }))
@@ -593,8 +604,7 @@ impl MdbxProofsStorage {
         let block_number = block_ref.block.number;
 
         // Check the latest stored block is the parent of the incoming block
-        let latest_block_hash =
-            self.inner_get_latest_block_number_hash(tx)?.map_or(B256::ZERO, |(_num, hash)| hash);
+        let latest_block_hash = self.inner_get_append_parent_hash(tx)?;
 
         if latest_block_hash != block_ref.parent {
             return Err(BaseProofsStorageError::OutOfOrder {
@@ -1156,7 +1166,11 @@ impl BaseProofsInitialStateStore for MdbxProofsStorage {
 
     fn commit_initial_state(&self) -> BaseProofsStorageResult<BlockNumHash> {
         let anchor = self.get_initial_state_anchor()?.ok_or(NoBlocksFound)?;
-        self.set_earliest_block_number(anchor.number, anchor.hash)?;
+        self.env.update(|tx| {
+            Self::inner_set_earliest_block_number(tx, anchor.number, anchor.hash)?;
+            Self::inner_set_latest_block_number(tx, anchor.number, anchor.hash)?;
+            Ok::<(), DatabaseError>(())
+        })??;
         Ok(anchor)
     }
 }
@@ -1859,11 +1873,15 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let store = MdbxProofsStorage::new(dir.path()).expect("env");
 
-        // set latest to some hash H1
+        // Set a complete proof window to some hash H1.
         let existing_block = BlockWithParent::new(B256::random(), NumHash::new(1, B256::random()));
         store
-            .set_earliest_block_number(existing_block.block.number, existing_block.block.hash)
-            .expect("set");
+            .set_initial_state_anchor(BlockNumHash::new(
+                existing_block.block.number,
+                existing_block.block.hash,
+            ))
+            .expect("set anchor");
+        store.commit_initial_state().expect("commit init");
 
         // incoming block whose parent != existing latest
         let bad_parent = B256::from([0xFF; 32]);
@@ -3310,13 +3328,11 @@ mod tests {
         let updated = store.get_earliest_block_number().expect("get updated earliest");
         assert_eq!(updated, Some((new_block_number, new_hash)));
 
-        // Verify that latest_block falls back to earliest when not set
+        // Latest is strict metadata and is not inferred from earliest.
         let latest = store.get_latest_block_number().expect("get latest");
-        assert_eq!(
-            latest,
-            Some((new_block_number, new_hash)),
-            "Latest block should fall back to earliest when not explicitly set"
-        );
+        assert_eq!(latest, None);
+        let error = store.inner_get_proof_window(&store.env.tx().unwrap()).unwrap_err();
+        assert!(error.to_string().contains("incomplete MDBX proof window metadata"), "{error}");
     }
 
     #[test]

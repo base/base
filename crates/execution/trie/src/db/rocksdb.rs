@@ -1,23 +1,22 @@
 //! `RocksDB` implementation of proofs storage.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt,
     marker::PhantomData,
     ops::{Bound, RangeBounds},
     path::Path,
     sync::Arc,
-    time::Instant,
 };
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
-use alloy_primitives::{B256, U256, map::HashMap};
+use alloy_primitives::{B256, U256};
 #[cfg(feature = "metrics")]
 use metrics::Label;
 use parking_lot::{Mutex, RwLock};
 use reth_db::{
     DatabaseError,
-    table::{Compress, Decompress, DupSort, Encode, Table},
+    table::{Compress, Decompress},
 };
 use reth_primitives_traits::Account;
 use reth_trie::{
@@ -33,24 +32,17 @@ use rocksdb::{
     DBCompressionType, DBWithThreadMode, Direction, IteratorMode, MultiThreaded, Options,
     ReadOptions, SnapshotWithThreadMode, WriteBatch, WriteOptions,
 };
-use tracing::info;
 
-use super::{BlockNumberHash, ProofWindow, ProofWindowKey};
+use super::{BlockNumberHash, ProofWindowKey};
 use crate::{
     BaseProofsStorageError,
     BaseProofsStorageError::NoBlocksFound,
     BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,
     api::{BaseProofsInitialStateStore, InitialStateAnchor, InitialStateStatus, WriteCounts},
-    db::{
-        AccountTrieHistory, BlockChangeSet, ChangeSet, HashedAccountHistory, HashedStorageHistory,
-        HashedStorageKey, IntoKV, MaybeDeleted, StorageTrieHistory, StorageTrieKey, StorageValue,
-        VersionedValue,
-    },
+    db::{ChangeSet, HashedStorageKey, MaybeDeleted, StorageTrieKey, StorageValue},
 };
 
 type RocksDb = DBWithThreadMode<MultiThreaded>;
-type RocksDbLatestVersionResult<T> =
-    Result<Option<(<T as Table>::Key, <T as Table>::Value)>, DatabaseError>;
 
 const HASH_KEY_LEN: usize = 32;
 const PACKED_NIBBLES_KEY_LEN: usize = 33;
@@ -71,6 +63,30 @@ const DEFAULT_MAX_OPEN_FILES: i32 = -1;
 const DEFAULT_MAX_WRITE_BUFFER_NUMBER: i32 = 3;
 const DEFAULT_TARGET_FILE_SIZE_BASE: u64 = 256 * 1024 * 1024;
 const DEFAULT_WRITE_BUFFER_SIZE: usize = 64 * 1024 * 1024;
+
+const V2_SCHEMA_VERSION: &[u8] = b"rocksdb-proof-store-v2";
+const V2_SCHEMA_VERSION_KEY: &[u8] = b"schema-version";
+
+const CF_METADATA: &str = "V2Metadata";
+const CF_PROOF_WINDOW: &str = "V2ProofWindow";
+const CF_BLOCK_CHANGE_SET: &str = "V2BlockChangeSet";
+const CF_ACCOUNT_TRIE: &str = "V2AccountTrie";
+const CF_STORAGE_TRIE: &str = "V2StorageTrie";
+const CF_HASHED_ACCOUNTS: &str = "V2HashedAccounts";
+const CF_HASHED_STORAGE: &str = "V2HashedStorage";
+const CF_ACCOUNT_TRIE_HISTORY: &str = "V2AccountTrieHistory";
+const CF_STORAGE_TRIE_HISTORY: &str = "V2StorageTrieHistory";
+const CF_HASHED_ACCOUNT_HISTORY: &str = "V2HashedAccountHistory";
+const CF_HASHED_STORAGE_HISTORY: &str = "V2HashedStorageHistory";
+
+const LEGACY_COLUMN_FAMILIES: &[&str] = &[
+    "AccountTrieHistory",
+    "StorageTrieHistory",
+    "HashedAccountHistory",
+    "HashedStorageHistory",
+    "ProofWindow",
+    "BlockChangeSet",
+];
 
 /// Compression policy for `RocksDB` proof-history column families.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -114,7 +130,7 @@ pub struct RocksdbProofsStorageOptions {
     pub level_zero_slowdown_writes_trigger: i32,
     /// Number of L0 files that stops writes.
     pub level_zero_stop_writes_trigger: i32,
-    /// Maximum number of `RocksDB` background jobs.
+    /// Maximum `RocksDB` background jobs.
     pub max_background_jobs: i32,
     /// Maximum number of subcompactions per compaction.
     pub max_subcompactions: u32,
@@ -171,86 +187,132 @@ impl RocksdbProofsStorageOptions {
     }
 }
 
-trait RocksDbHistoryTable: Table + DupSort<SubKey = u64> {
-    /// Fixed encoded table-key length before the block-number suffix.
+/// Logical key/value domain stored by the RocksDB V2 schema.
+pub trait RocksDbDomain {
+    /// Logical key type for the domain.
+    type Key: Clone + Default + Ord + Eq;
+    /// Stored value type for the domain.
+    type Value: Clone + Compress + Decompress;
+
+    /// Column family that stores the latest value for each key.
+    const CURRENT_CF: &'static str;
+    /// Column family that stores before-change historical values.
+    const HISTORY_CF: &'static str;
+    /// Encoded logical-key length, excluding the history block suffix.
     const KEY_LEN: usize;
 
-    /// Encodes the table key prefix used before the block-number suffix.
-    fn encode_history_key_prefix(key: &Self::Key) -> Vec<u8>;
+    /// Encodes a logical key into RocksDB's lexicographic byte ordering.
+    fn encode_key(key: &Self::Key) -> Vec<u8>;
+    /// Decodes a logical key from RocksDB's lexicographic byte ordering.
+    fn decode_key(raw_key: &[u8]) -> Result<Self::Key, DatabaseError>;
+}
 
-    /// Decodes the table key prefix used before the block-number suffix.
-    fn decode_history_key_prefix(raw_key: &[u8]) -> Result<Self::Key, DatabaseError>;
+/// Account trie branch-node domain.
+#[derive(Debug)]
+pub struct AccountTrieDomain;
+/// Storage trie branch-node domain.
+#[derive(Debug)]
+pub struct StorageTrieDomain;
+/// Hashed account leaf domain.
+struct HashedAccountDomain;
+/// Hashed storage leaf domain.
+struct HashedStorageDomain;
+
+impl RocksDbDomain for AccountTrieDomain {
+    type Key = StoredNibbles;
+    type Value = BranchNodeCompact;
+
+    const CURRENT_CF: &'static str = CF_ACCOUNT_TRIE;
+    const HISTORY_CF: &'static str = CF_ACCOUNT_TRIE_HISTORY;
+    const KEY_LEN: usize = PACKED_NIBBLES_KEY_LEN;
+
+    fn encode_key(key: &Self::Key) -> Vec<u8> {
+        encode_packed_nibbles(&key.0).to_vec()
+    }
+
+    fn decode_key(raw_key: &[u8]) -> Result<Self::Key, DatabaseError> {
+        decode_packed_nibbles(raw_key).map(StoredNibbles)
+    }
+}
+
+impl RocksDbDomain for StorageTrieDomain {
+    type Key = StorageTrieKey;
+    type Value = BranchNodeCompact;
+
+    const CURRENT_CF: &'static str = CF_STORAGE_TRIE;
+    const HISTORY_CF: &'static str = CF_STORAGE_TRIE_HISTORY;
+    const KEY_LEN: usize = HASH_KEY_LEN + PACKED_NIBBLES_KEY_LEN;
+
+    fn encode_key(key: &Self::Key) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(Self::KEY_LEN);
+        encoded.extend_from_slice(key.hashed_address.as_slice());
+        encoded.extend_from_slice(&encode_packed_nibbles(&key.path.0));
+        encoded
+    }
+
+    fn decode_key(raw_key: &[u8]) -> Result<Self::Key, DatabaseError> {
+        if raw_key.len() != Self::KEY_LEN {
+            return Err(DatabaseError::Decode);
+        }
+        let hashed_address = B256::from_slice(&raw_key[..HASH_KEY_LEN]);
+        let path = StoredNibbles(decode_packed_nibbles(&raw_key[HASH_KEY_LEN..])?);
+        Ok(StorageTrieKey::new(hashed_address, path))
+    }
+}
+
+impl RocksDbDomain for HashedAccountDomain {
+    type Key = B256;
+    type Value = Account;
+
+    const CURRENT_CF: &'static str = CF_HASHED_ACCOUNTS;
+    const HISTORY_CF: &'static str = CF_HASHED_ACCOUNT_HISTORY;
+    const KEY_LEN: usize = HASH_KEY_LEN;
+
+    fn encode_key(key: &Self::Key) -> Vec<u8> {
+        key.as_slice().to_vec()
+    }
+
+    fn decode_key(raw_key: &[u8]) -> Result<Self::Key, DatabaseError> {
+        if raw_key.len() != Self::KEY_LEN {
+            return Err(DatabaseError::Decode);
+        }
+        Ok(B256::from_slice(raw_key))
+    }
+}
+
+impl RocksDbDomain for HashedStorageDomain {
+    type Key = HashedStorageKey;
+    type Value = StorageValue;
+
+    const CURRENT_CF: &'static str = CF_HASHED_STORAGE;
+    const HISTORY_CF: &'static str = CF_HASHED_STORAGE_HISTORY;
+    const KEY_LEN: usize = HASH_KEY_LEN * 2;
+
+    fn encode_key(key: &Self::Key) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(Self::KEY_LEN);
+        encoded.extend_from_slice(key.hashed_address.as_slice());
+        encoded.extend_from_slice(key.hashed_storage_key.as_slice());
+        encoded
+    }
+
+    fn decode_key(raw_key: &[u8]) -> Result<Self::Key, DatabaseError> {
+        if raw_key.len() != Self::KEY_LEN {
+            return Err(DatabaseError::Decode);
+        }
+        Ok(HashedStorageKey::new(
+            B256::from_slice(&raw_key[..HASH_KEY_LEN]),
+            B256::from_slice(&raw_key[HASH_KEY_LEN..]),
+        ))
+    }
 }
 
 /// `RocksDB` implementation of [`BaseProofsStore`].
 pub struct RocksdbProofsStorage {
     db: Arc<RocksDb>,
     write_options: WriteOptions,
-    // Serializes append-only writers that read LatestBlock before writing LatestBlock + 1.
     append_lock: Mutex<()>,
-    // Serializes prune plans that assume a stable EarliestBlock across prepare and commit.
     prune_lock: Mutex<()>,
-    // Append and prune share read access. History rewrites take write access.
     history_gate: RwLock<()>,
-}
-
-/// Preprocessed prune plan for a target block number.
-#[derive(Debug, Clone)]
-struct RocksdbPrunePlan {
-    earliest_block: u64,
-    earliest_hash: B256,
-    acc_survivors: Vec<(StoredNibbles, u64)>,
-    storage_survivors: Vec<(StorageTrieKey, u64)>,
-    hashed_acc_survivors: Vec<(B256, u64)>,
-    hashed_storage_survivors: Vec<(HashedStorageKey, u64)>,
-}
-
-impl RocksdbPrunePlan {
-    const fn total_survivors(&self) -> usize {
-        self.acc_survivors.len()
-            + self.storage_survivors.len()
-            + self.hashed_acc_survivors.len()
-            + self.hashed_storage_survivors.len()
-    }
-}
-
-/// Preprocessed delete work for a prune commit.
-#[derive(Debug, Clone)]
-struct RocksdbPreparedPrune {
-    expected_earliest_block: u64,
-    expected_earliest_hash: B256,
-    target_block: u64,
-    target_hash: B256,
-    deletes: RocksdbPreparedHistoryDeletes,
-    counts: WriteCounts,
-}
-
-/// Raw history keys to delete during a prune commit.
-#[derive(Debug, Default, Clone)]
-struct RocksdbPreparedHistoryDeletes {
-    account_trie: Vec<Vec<u8>>,
-    storage_trie: Vec<Vec<u8>>,
-    hashed_account: Vec<Vec<u8>>,
-    hashed_storage: Vec<Vec<u8>>,
-}
-
-impl RocksdbPreparedHistoryDeletes {
-    const fn total(&self) -> usize {
-        self.account_trie.len()
-            + self.storage_trie.len()
-            + self.hashed_account.len()
-            + self.hashed_storage.len()
-    }
-}
-
-/// Preprocessed delete work for a prune range.
-#[derive(Debug, Default)]
-struct RocksdbHistoryDeleteBatch {
-    block_numbers: Vec<u64>,
-    account_trie: Vec<(<AccountTrieHistory as Table>::Key, u64)>,
-    storage_trie: Vec<(<StorageTrieHistory as Table>::Key, u64)>,
-    hashed_account: Vec<(<HashedAccountHistory as Table>::Key, u64)>,
-    hashed_storage: Vec<(<HashedStorageHistory as Table>::Key, u64)>,
 }
 
 /// Request-scoped read snapshot for [`RocksdbProofsStorage`].
@@ -264,41 +326,107 @@ pub struct RocksdbReadSnapshot<'db> {
     snapshot: SnapshotWithThreadMode<'db, RocksDb>,
 }
 
-/// Cursor over `RocksDB` versioned history rows.
-struct RocksdbVersionedCursor<'db, T: Table + DupSort> {
+struct RocksdbV2Cursor<'db, D: RocksDbDomain> {
     snapshot: Arc<RocksdbReadSnapshot<'db>>,
     max_block_number: u64,
-    current_key: Option<T::Key>,
-    _table: PhantomData<T>,
+    current_key: Option<D::Key>,
+    _domain: PhantomData<D>,
 }
 
 /// `RocksDB` implementation of [`TrieCursor`].
-pub struct RocksdbTrieCursor<'db, T: Table + DupSort> {
-    inner: RocksdbVersionedCursor<'db, T>,
+pub struct RocksdbTrieCursor<'db, D: RocksDbDomain> {
+    inner: RocksdbV2Cursor<'db, D>,
     hashed_address: Option<B256>,
 }
 
 /// `RocksDB` implementation of [`HashedCursor`] for storage state.
 pub struct RocksdbStorageCursor<'db> {
-    inner: RocksdbVersionedCursor<'db, HashedStorageHistory>,
+    inner: RocksdbV2Cursor<'db, HashedStorageDomain>,
     hashed_address: B256,
 }
 
 /// `RocksDB` implementation of [`HashedCursor`] for account state.
 pub struct RocksdbAccountCursor<'db> {
-    inner: RocksdbVersionedCursor<'db, HashedAccountHistory>,
-}
-
-#[derive(Debug, Default)]
-struct RocksdbReplacementState {
-    storage_trie: BTreeMap<StorageTrieKey, Option<BranchNodeCompact>>,
-    hashed_storage: BTreeMap<HashedStorageKey, Option<StorageValue>>,
+    inner: RocksdbV2Cursor<'db, HashedAccountDomain>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct ProofWindowValue {
     earliest: NumHash,
     latest: NumHash,
+}
+
+#[derive(Debug, Default, Clone)]
+struct PreparedDeletes {
+    account_trie: Vec<Vec<u8>>,
+    storage_trie: Vec<Vec<u8>>,
+    hashed_account: Vec<Vec<u8>>,
+    hashed_storage: Vec<Vec<u8>>,
+    block_change_sets: Vec<u64>,
+    counts: WriteCounts,
+}
+
+#[derive(Debug, Default)]
+struct ReplacementOverlay {
+    account_trie: BTreeMap<StoredNibbles, Option<BranchNodeCompact>>,
+    storage_trie: BTreeMap<StorageTrieKey, Option<BranchNodeCompact>>,
+    hashed_account: BTreeMap<B256, Option<Account>>,
+    hashed_storage: BTreeMap<HashedStorageKey, Option<StorageValue>>,
+}
+
+trait ReplacementDomain: RocksDbDomain {
+    fn overlay_ref(overlay: &ReplacementOverlay) -> &BTreeMap<Self::Key, Option<Self::Value>>;
+    fn overlay_mut(
+        overlay: &mut ReplacementOverlay,
+    ) -> &mut BTreeMap<Self::Key, Option<Self::Value>>;
+}
+
+impl ReplacementDomain for AccountTrieDomain {
+    fn overlay_ref(overlay: &ReplacementOverlay) -> &BTreeMap<Self::Key, Option<Self::Value>> {
+        &overlay.account_trie
+    }
+
+    fn overlay_mut(
+        overlay: &mut ReplacementOverlay,
+    ) -> &mut BTreeMap<Self::Key, Option<Self::Value>> {
+        &mut overlay.account_trie
+    }
+}
+
+impl ReplacementDomain for StorageTrieDomain {
+    fn overlay_ref(overlay: &ReplacementOverlay) -> &BTreeMap<Self::Key, Option<Self::Value>> {
+        &overlay.storage_trie
+    }
+
+    fn overlay_mut(
+        overlay: &mut ReplacementOverlay,
+    ) -> &mut BTreeMap<Self::Key, Option<Self::Value>> {
+        &mut overlay.storage_trie
+    }
+}
+
+impl ReplacementDomain for HashedAccountDomain {
+    fn overlay_ref(overlay: &ReplacementOverlay) -> &BTreeMap<Self::Key, Option<Self::Value>> {
+        &overlay.hashed_account
+    }
+
+    fn overlay_mut(
+        overlay: &mut ReplacementOverlay,
+    ) -> &mut BTreeMap<Self::Key, Option<Self::Value>> {
+        &mut overlay.hashed_account
+    }
+}
+
+impl ReplacementDomain for HashedStorageDomain {
+    fn overlay_ref(overlay: &ReplacementOverlay) -> &BTreeMap<Self::Key, Option<Self::Value>> {
+        &overlay.hashed_storage
+    }
+
+    fn overlay_mut(
+        overlay: &mut ReplacementOverlay,
+    ) -> &mut BTreeMap<Self::Key, Option<Self::Value>> {
+        &mut overlay.hashed_storage
+    }
 }
 
 impl fmt::Debug for RocksdbProofsStorage {
@@ -338,20 +466,20 @@ impl fmt::Debug for RocksdbReadSnapshot<'_> {
     }
 }
 
-impl<T> fmt::Debug for RocksdbVersionedCursor<'_, T>
+impl<D> fmt::Debug for RocksdbV2Cursor<'_, D>
 where
-    T: Table + DupSort,
+    D: RocksDbDomain,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RocksdbVersionedCursor")
+        f.debug_struct("RocksdbV2Cursor")
             .field("max_block_number", &self.max_block_number)
             .finish_non_exhaustive()
     }
 }
 
-impl<T> fmt::Debug for RocksdbTrieCursor<'_, T>
+impl<D> fmt::Debug for RocksdbTrieCursor<'_, D>
 where
-    T: Table + DupSort,
+    D: RocksDbDomain,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RocksdbTrieCursor")
@@ -374,89 +502,6 @@ impl fmt::Debug for RocksdbAccountCursor<'_> {
     }
 }
 
-impl RocksdbReplacementState {
-    fn storage_trie_wipe_entries(
-        &self,
-        storage: &RocksdbProofsStorage,
-        base_block_number: u64,
-        hashed_address: B256,
-    ) -> BaseProofsStorageResult<BTreeMap<Nibbles, Option<BranchNodeCompact>>> {
-        let mut entries = BTreeMap::new();
-        let mut cursor = storage.storage_trie_cursor(hashed_address, base_block_number)?;
-
-        while let Some((path, _)) = cursor.next()? {
-            entries.insert(path, None);
-        }
-
-        for (key, value) in &self.storage_trie {
-            if key.hashed_address != hashed_address {
-                continue;
-            }
-
-            let path = key.path.0;
-            if value.is_some() {
-                entries.insert(path, None);
-            } else {
-                entries.remove(&path);
-            }
-        }
-
-        Ok(entries)
-    }
-
-    fn apply_storage_trie_entries(
-        &mut self,
-        hashed_address: B256,
-        entries: impl IntoIterator<Item = (Nibbles, Option<BranchNodeCompact>)>,
-    ) {
-        for (path, node) in entries {
-            self.storage_trie
-                .insert(StorageTrieKey::new(hashed_address, StoredNibbles::from(path)), node);
-        }
-    }
-
-    fn hashed_storage_wipe_entries(
-        &self,
-        storage: &RocksdbProofsStorage,
-        base_block_number: u64,
-        hashed_address: B256,
-    ) -> BaseProofsStorageResult<BTreeMap<B256, Option<StorageValue>>> {
-        let mut entries = BTreeMap::new();
-        let mut cursor = storage.storage_hashed_cursor(hashed_address, base_block_number)?;
-
-        while let Some((slot, _)) = cursor.next()? {
-            entries.insert(slot, None);
-        }
-
-        for (key, value) in &self.hashed_storage {
-            if key.hashed_address != hashed_address {
-                continue;
-            }
-
-            if let Some(value) = value
-                && !value.0.is_zero()
-            {
-                entries.insert(key.hashed_storage_key, None);
-            } else {
-                entries.remove(&key.hashed_storage_key);
-            }
-        }
-
-        Ok(entries)
-    }
-
-    fn apply_hashed_storage_entries(
-        &mut self,
-        hashed_address: B256,
-        entries: impl IntoIterator<Item = (B256, Option<StorageValue>)>,
-    ) {
-        for (hashed_storage_key, value) in entries {
-            self.hashed_storage
-                .insert(HashedStorageKey::new(hashed_address, hashed_storage_key), value);
-        }
-    }
-}
-
 impl RocksdbProofsStorage {
     /// Creates a new [`RocksdbProofsStorage`] instance with the given path.
     pub fn new(path: &Path) -> Result<Self, BaseProofsStorageError> {
@@ -468,6 +513,8 @@ impl RocksdbProofsStorage {
         path: &Path,
         storage_options: RocksdbProofsStorageOptions,
     ) -> Result<Self, BaseProofsStorageError> {
+        Self::ensure_no_legacy_rocksdb(path)?;
+
         let block_cache = Cache::new_lru_cache(storage_options.block_cache_size);
         let db_options = Self::db_options(&block_cache, storage_options);
         let descriptors = Self::column_families().into_iter().map(|name| {
@@ -477,17 +524,60 @@ impl RocksdbProofsStorage {
             .map_err(|e| DatabaseError::Other(format!("failed to open RocksDB database: {e}")))?;
 
         let mut write_options = WriteOptions::default();
-        // Proof history is derivable from the canonical chain, so use async WAL writes for
-        // throughput. RocksDB write batches still keep committed updates internally consistent.
         write_options.set_sync(false);
 
-        Ok(Self {
+        let storage = Self {
             db: Arc::new(db),
             write_options,
             append_lock: Mutex::new(()),
             prune_lock: Mutex::new(()),
             history_gate: RwLock::new(()),
-        })
+        };
+        storage.ensure_schema_marker()?;
+        Ok(storage)
+    }
+
+    fn ensure_no_legacy_rocksdb(path: &Path) -> BaseProofsStorageResult<()> {
+        if !path.exists() {
+            return Ok(());
+        }
+
+        let options = Options::default();
+        let column_families = match RocksDb::list_cf(&options, path) {
+            Ok(column_families) => column_families,
+            Err(_) => return Ok(()),
+        };
+
+        let has_legacy = column_families
+            .iter()
+            .any(|cf| LEGACY_COLUMN_FAMILIES.iter().any(|legacy| cf == legacy));
+        if has_legacy {
+            return Err(DatabaseError::Other(
+                "found a legacy RocksDB proof-history database. RocksDB proof-history now uses \
+                 the V2 schema; rebuild proofs history with a fresh --proofs-history.storage-path"
+                    .to_owned(),
+            )
+            .into());
+        }
+
+        Ok(())
+    }
+
+    fn ensure_schema_marker(&self) -> BaseProofsStorageResult<()> {
+        let cf = self.cf(CF_METADATA)?;
+        match self.db.get_cf(&cf, V2_SCHEMA_VERSION_KEY).map_err(rocksdb_error)? {
+            Some(value) if value.as_slice() == V2_SCHEMA_VERSION => Ok(()),
+            Some(_) => {
+                Err(DatabaseError::Other("unsupported RocksDB proofs schema version".to_owned())
+                    .into())
+            }
+            None => {
+                let mut batch = WriteBatch::default();
+                batch.put_cf(&cf, V2_SCHEMA_VERSION_KEY, V2_SCHEMA_VERSION);
+                self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
+                Ok(())
+            }
+        }
     }
 
     fn db_options(block_cache: &Cache, storage_options: RocksdbProofsStorageOptions) -> Options {
@@ -550,7 +640,7 @@ impl RocksdbProofsStorage {
         options.set_max_write_buffer_number(storage_options.max_write_buffer_number);
         options.set_target_file_size_base(storage_options.target_file_size_base);
         options.set_write_buffer_size(storage_options.write_buffer_size);
-        if name == <ProofWindow as Table>::NAME {
+        if name == CF_METADATA || name == CF_PROOF_WINDOW {
             options.set_compression_type(DBCompressionType::None);
             options.set_bottommost_compression_type(DBCompressionType::None);
         } else {
@@ -562,14 +652,19 @@ impl RocksdbProofsStorage {
         options
     }
 
-    const fn column_families() -> [&'static str; 6] {
+    const fn column_families() -> [&'static str; 11] {
         [
-            <AccountTrieHistory as Table>::NAME,
-            <StorageTrieHistory as Table>::NAME,
-            <HashedAccountHistory as Table>::NAME,
-            <HashedStorageHistory as Table>::NAME,
-            <ProofWindow as Table>::NAME,
-            <BlockChangeSet as Table>::NAME,
+            CF_METADATA,
+            CF_PROOF_WINDOW,
+            CF_BLOCK_CHANGE_SET,
+            CF_ACCOUNT_TRIE,
+            CF_STORAGE_TRIE,
+            CF_HASHED_ACCOUNTS,
+            CF_HASHED_STORAGE,
+            CF_ACCOUNT_TRIE_HISTORY,
+            CF_STORAGE_TRIE_HISTORY,
+            CF_HASHED_ACCOUNT_HISTORY,
+            CF_HASHED_STORAGE_HISTORY,
         ]
     }
 
@@ -580,518 +675,47 @@ impl RocksdbProofsStorage {
             .map_err(Into::into)
     }
 
-    fn put_table<T: Table>(
+    fn put_proof_window(
         &self,
         batch: &mut WriteBatch,
-        key: T::Key,
-        value: &T::Value,
+        key: ProofWindowKey,
+        block_number: u64,
+        hash: B256,
     ) -> BaseProofsStorageResult<()> {
-        let cf = self.cf(T::NAME)?;
-        batch.put_cf(&cf, encode_table_key::<T>(key), encode_table_value::<T>(value));
-        Ok(())
-    }
-
-    fn get_table<T: Table>(&self, key: T::Key) -> BaseProofsStorageResult<Option<T::Value>> {
-        let cf = self.cf(T::NAME)?;
-        self.db
-            .get_cf(&cf, encode_table_key::<T>(key))
-            .map_err(rocksdb_error)?
-            .map(|value| T::Value::decompress(&value).map_err(Into::into))
-            .transpose()
-    }
-
-    fn get_table_from_snapshot<T: Table>(
-        &self,
-        snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
-        key: T::Key,
-    ) -> BaseProofsStorageResult<Option<T::Value>> {
-        let cf = self.cf(T::NAME)?;
-        snapshot
-            .get_cf(&cf, encode_table_key::<T>(key))
-            .map_err(rocksdb_error)?
-            .map(|value| T::Value::decompress(&value).map_err(Into::into))
-            .transpose()
-    }
-
-    fn persist_history_batch<T, I, V>(
-        &self,
-        batch: &mut WriteBatch,
-        block_number: u64,
-        items: I,
-        append_mode: bool,
-    ) -> BaseProofsStorageResult<Vec<T::Key>>
-    where
-        T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
-        T: RocksDbHistoryTable,
-        T::Key: Clone,
-        I: IntoIterator,
-        I::Item: IntoKV<T>,
-    {
-        let cf = self.cf(T::NAME)?;
-        let mut keys = Vec::<T::Key>::new();
-        let mut pairs = Vec::<(T::Key, T::Value)>::new();
-
-        for item in items {
-            let (key, value) = item.into_kv(block_number);
-            keys.push(key.clone());
-            pairs.push((key, value));
-        }
-
-        if append_mode {
-            for (key, value) in pairs {
-                batch.put_cf(
-                    &cf,
-                    encode_history_key::<T>(&key, value.block_number),
-                    encode_table_value::<T>(&value),
-                );
-            }
-            return Ok(keys);
-        }
-
-        for (key, value) in pairs {
-            batch.delete_cf(&cf, encode_history_key::<T>(&key, 0));
-            if value.value.0.is_some() {
-                batch.put_cf(
-                    &cf,
-                    encode_history_key::<T>(&key, 0),
-                    encode_table_value::<T>(&value),
-                );
-            }
-        }
-
-        Ok(keys)
-    }
-
-    fn delete_dup_sorted<T, I, V>(
-        &self,
-        batch: &mut WriteBatch,
-        items: I,
-    ) -> BaseProofsStorageResult<()>
-    where
-        T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
-        T: RocksDbHistoryTable,
-        T::Key: Clone,
-        I: IntoIterator<Item = (T::Key, u64)>,
-    {
-        let cf = self.cf(T::NAME)?;
-        for (key, block_number) in items {
-            batch.delete_cf(&cf, encode_history_key::<T>(&key, block_number));
-        }
-        Ok(())
-    }
-
-    fn collect_history_preceding_deletes<T, V>(
-        &self,
-        snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
-        cutoff_items: Vec<(T::Key, u64)>,
-    ) -> BaseProofsStorageResult<Vec<Vec<u8>>>
-    where
-        T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
-        T: RocksDbHistoryTable,
-        T::Key: Clone + Ord,
-        T::Value: Decompress,
-    {
-        let started = Instant::now();
-        let cutoff_items_len = cutoff_items.len();
-        info!(
-            target: "trie::pruner",
-            table = T::NAME,
-            cutoff_items = cutoff_items_len,
-            "Collecting RocksDB proof storage prune deletes",
+        let cf = self.cf(CF_PROOF_WINDOW)?;
+        batch.put_cf(
+            &cf,
+            encode_proof_window_key(key),
+            encode_value(&BlockNumberHash::new(block_number, hash)),
         );
-        if cutoff_items.is_empty() {
-            info!(
-                target: "trie::pruner",
-                table = T::NAME,
-                cutoff_items = cutoff_items_len,
-                deletes = 0usize,
-                elapsed = ?started.elapsed(),
-                "Collected RocksDB proof storage prune deletes",
-            );
-            return Ok(Vec::new());
-        }
-
-        let cf = self.cf(T::NAME)?;
-        let mut deletes = Vec::new();
-
-        for (key, survivor_block) in cutoff_items {
-            let prefix = encode_history_key_prefix::<T>(&key);
-            let start_key = encode_history_key::<T>(&key, 0);
-            let mut read_options = ReadOptions::default();
-            if let Some(upper_bound) = prefix_upper_bound(&prefix) {
-                read_options.set_iterate_upper_bound(upper_bound);
-            }
-            let iter = snapshot.iterator_cf_opt(
-                &cf,
-                read_options,
-                IteratorMode::From(&start_key, Direction::Forward),
-            );
-
-            for item in iter {
-                let (raw_key, raw_value) = item.map_err(rocksdb_error)?;
-                if !raw_key.starts_with(&prefix) {
-                    break;
-                }
-
-                let (_, block_number) = decode_history_key::<T>(&raw_key)?;
-                if block_number >= survivor_block {
-                    let value = T::Value::decompress(&raw_value)?;
-                    if block_number == survivor_block && value.value.0.is_none() {
-                        deletes.push(raw_key.to_vec());
-                    }
-                    break;
-                }
-
-                deletes.push(raw_key.to_vec());
-            }
-        }
-
-        info!(
-            target: "trie::pruner",
-            table = T::NAME,
-            cutoff_items = cutoff_items_len,
-            deletes = deletes.len(),
-            elapsed = ?started.elapsed(),
-            "Collected RocksDB proof storage prune deletes",
-        );
-
-        Ok(deletes)
-    }
-
-    fn delete_raw_history_keys<T>(
-        &self,
-        batch: &mut WriteBatch,
-        keys: Vec<Vec<u8>>,
-    ) -> BaseProofsStorageResult<()>
-    where
-        T: Table,
-    {
-        let cf = self.cf(T::NAME)?;
-        for key in keys {
-            batch.delete_cf(&cf, key);
-        }
         Ok(())
-    }
-
-    fn wipe_and_overlay<T, Next, I, K, VV, V>(
-        &self,
-        batch: &mut WriteBatch,
-        block_number: u64,
-        hashed_address: B256,
-        mut next: Next,
-        new_entries: I,
-    ) -> BaseProofsStorageResult<Vec<T::Key>>
-    where
-        T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
-        T: RocksDbHistoryTable,
-        Next: FnMut() -> BaseProofsStorageResult<Option<(K, VV)>>,
-        I: IntoIterator<Item = (K, Option<V>)>,
-        (B256, K, Option<V>): IntoKV<T>,
-        T::Key: Clone,
-        K: Ord,
-    {
-        let cf = self.cf(T::NAME)?;
-        let mut merged: BTreeMap<K, Option<V>> = BTreeMap::new();
-        while let Some((key, _)) = next()? {
-            merged.insert(key, None);
-        }
-        for (key, value) in new_entries {
-            merged.insert(key, value);
-        }
-
-        let mut keys = Vec::with_capacity(merged.len());
-        for (key, value) in merged {
-            let db_key: T::Key = (hashed_address, key, Option::<V>::None).into_key();
-            let db_value: T::Value = VersionedValue { block_number, value: MaybeDeleted(value) };
-            batch.put_cf(
-                &cf,
-                encode_history_key::<T>(&db_key, block_number),
-                encode_table_value::<T>(&db_value),
-            );
-            keys.push(db_key);
-        }
-
-        Ok(keys)
-    }
-
-    fn store_trie_updates_for_block(
-        &self,
-        batch: &mut WriteBatch,
-        block_number: u64,
-        block_state_diff: BlockStateDiff,
-        append_mode: bool,
-    ) -> BaseProofsStorageResult<ChangeSet> {
-        let BlockStateDiff { sorted_trie_updates, sorted_post_state } = block_state_diff;
-
-        let storage_trie_len = sorted_trie_updates.storage_tries_ref().len();
-        let hashed_storage_len = sorted_post_state.storages.len();
-
-        let account_trie_keys = self.persist_history_batch::<AccountTrieHistory, _, _>(
-            batch,
-            block_number,
-            sorted_trie_updates.account_nodes_ref().iter().cloned(),
-            append_mode,
-        )?;
-        let hashed_account_keys = self.persist_history_batch::<HashedAccountHistory, _, _>(
-            batch,
-            block_number,
-            sorted_post_state.accounts.iter().copied(),
-            append_mode,
-        )?;
-
-        let mut storage_trie_keys = Vec::with_capacity(storage_trie_len);
-        for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
-            if nodes.is_deleted && append_mode {
-                let mut cursor =
-                    self.storage_trie_cursor(*hashed_address, block_number.saturating_sub(1))?;
-                let keys = self.wipe_and_overlay::<StorageTrieHistory, _, _, _, _, _>(
-                    batch,
-                    block_number,
-                    *hashed_address,
-                    || Ok(cursor.next()?),
-                    nodes.storage_nodes_ref().iter().cloned(),
-                )?;
-                storage_trie_keys.extend(keys);
-                continue;
-            }
-
-            let keys = self.persist_history_batch::<StorageTrieHistory, _, _>(
-                batch,
-                block_number,
-                nodes
-                    .storage_nodes_ref()
-                    .iter()
-                    .cloned()
-                    .map(|(path, node)| (*hashed_address, path, node)),
-                append_mode,
-            )?;
-            storage_trie_keys.extend(keys);
-        }
-
-        let mut hashed_storage_keys = Vec::with_capacity(hashed_storage_len);
-        for (hashed_address, storage) in sorted_post_state.storages {
-            if append_mode && storage.is_wiped() {
-                let mut cursor =
-                    self.storage_hashed_cursor(hashed_address, block_number.saturating_sub(1))?;
-                let keys = self.wipe_and_overlay::<HashedStorageHistory, _, _, _, _, _>(
-                    batch,
-                    block_number,
-                    hashed_address,
-                    || Ok(cursor.next()?),
-                    storage
-                        .storage_slots_ref()
-                        .iter()
-                        .map(|(slot, value)| (*slot, Some(StorageValue(*value)))),
-                )?;
-                hashed_storage_keys.extend(keys);
-                continue;
-            }
-
-            let keys = self.persist_history_batch::<HashedStorageHistory, _, _>(
-                batch,
-                block_number,
-                storage
-                    .storage_slots_ref()
-                    .iter()
-                    .map(|(key, value)| (hashed_address, *key, Some(StorageValue(*value)))),
-                append_mode,
-            )?;
-            hashed_storage_keys.extend(keys);
-        }
-
-        Ok(ChangeSet {
-            account_trie_keys,
-            storage_trie_keys,
-            hashed_account_keys,
-            hashed_storage_keys,
-        })
-    }
-
-    fn store_trie_updates_append_only(
-        &self,
-        batch: &mut WriteBatch,
-        block_ref: BlockWithParent,
-        block_state_diff: BlockStateDiff,
-    ) -> BaseProofsStorageResult<WriteCounts> {
-        let block_number = block_ref.block.number;
-        // This DB read intentionally assumes `batch` has no pending `LatestBlock` update. RocksDB
-        // reads do not observe uncommitted `WriteBatch` entries.
-        let latest_block_hash =
-            self.get_latest_block_number_hash()?.map_or(B256::ZERO, |(_, hash)| hash);
-
-        if latest_block_hash != block_ref.parent {
-            return Err(BaseProofsStorageError::OutOfOrder {
-                block_number,
-                parent_block_hash: block_ref.parent,
-                latest_block_hash,
-            });
-        }
-
-        let change_set =
-            self.store_trie_updates_for_block(batch, block_number, block_state_diff, true)?;
-        self.put_table::<BlockChangeSet>(batch, block_number, &change_set)?;
-        self.put_proof_window(
-            batch,
-            ProofWindowKey::LatestBlock,
-            block_number,
-            block_ref.block.hash,
-        )?;
-
-        Ok(WriteCounts {
-            account_trie_updates_written_total: change_set.account_trie_keys.len() as u64,
-            storage_trie_updates_written_total: change_set.storage_trie_keys.len() as u64,
-            hashed_accounts_written_total: change_set.hashed_account_keys.len() as u64,
-            hashed_storages_written_total: change_set.hashed_storage_keys.len() as u64,
-        })
-    }
-
-    fn store_replacement_trie_updates_append_only(
-        &self,
-        batch: &mut WriteBatch,
-        base_block_number: u64,
-        replacement_state: &mut RocksdbReplacementState,
-        block_ref: BlockWithParent,
-        block_state_diff: BlockStateDiff,
-    ) -> BaseProofsStorageResult<WriteCounts> {
-        let block_number = block_ref.block.number;
-        let change_set = self.store_replacement_trie_updates_for_block(
-            batch,
-            base_block_number,
-            replacement_state,
-            block_number,
-            block_state_diff,
-        )?;
-
-        self.put_table::<BlockChangeSet>(batch, block_number, &change_set)?;
-        self.put_proof_window(
-            batch,
-            ProofWindowKey::LatestBlock,
-            block_number,
-            block_ref.block.hash,
-        )?;
-
-        Ok(WriteCounts {
-            account_trie_updates_written_total: change_set.account_trie_keys.len() as u64,
-            storage_trie_updates_written_total: change_set.storage_trie_keys.len() as u64,
-            hashed_accounts_written_total: change_set.hashed_account_keys.len() as u64,
-            hashed_storages_written_total: change_set.hashed_storage_keys.len() as u64,
-        })
-    }
-
-    fn store_replacement_trie_updates_for_block(
-        &self,
-        batch: &mut WriteBatch,
-        base_block_number: u64,
-        replacement_state: &mut RocksdbReplacementState,
-        block_number: u64,
-        block_state_diff: BlockStateDiff,
-    ) -> BaseProofsStorageResult<ChangeSet> {
-        let BlockStateDiff { sorted_trie_updates, sorted_post_state } = block_state_diff;
-
-        let storage_trie_len = sorted_trie_updates.storage_tries_ref().len();
-        let hashed_storage_len = sorted_post_state.storages.len();
-
-        let account_trie_keys = self.persist_history_batch::<AccountTrieHistory, _, _>(
-            batch,
-            block_number,
-            sorted_trie_updates.account_nodes_ref().iter().cloned(),
-            true,
-        )?;
-        let hashed_account_keys = self.persist_history_batch::<HashedAccountHistory, _, _>(
-            batch,
-            block_number,
-            sorted_post_state.accounts.iter().copied(),
-            true,
-        )?;
-
-        let mut storage_trie_keys = Vec::with_capacity(storage_trie_len);
-        for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
-            let storage_entries = if nodes.is_deleted {
-                let mut entries = replacement_state.storage_trie_wipe_entries(
-                    self,
-                    base_block_number,
-                    *hashed_address,
-                )?;
-                for (path, node) in nodes.storage_nodes_ref().iter().cloned() {
-                    entries.insert(path, node);
-                }
-                entries.into_iter().collect::<Vec<_>>()
-            } else {
-                nodes.storage_nodes_ref().to_vec()
-            };
-
-            let keys = self.persist_history_batch::<StorageTrieHistory, _, _>(
-                batch,
-                block_number,
-                storage_entries.iter().cloned().map(|(path, node)| (*hashed_address, path, node)),
-                true,
-            )?;
-            replacement_state.apply_storage_trie_entries(*hashed_address, storage_entries);
-            storage_trie_keys.extend(keys);
-        }
-
-        let mut hashed_storage_keys = Vec::with_capacity(hashed_storage_len);
-        for (hashed_address, storage) in sorted_post_state.storages {
-            let storage_entries = if storage.is_wiped() {
-                let mut entries = replacement_state.hashed_storage_wipe_entries(
-                    self,
-                    base_block_number,
-                    hashed_address,
-                )?;
-                for (slot, value) in storage.storage_slots_ref() {
-                    entries.insert(*slot, Some(StorageValue(*value)));
-                }
-                entries.into_iter().collect::<Vec<_>>()
-            } else {
-                storage
-                    .storage_slots_ref()
-                    .iter()
-                    .map(|(key, value)| (*key, Some(StorageValue(*value))))
-                    .collect::<Vec<_>>()
-            };
-
-            let keys = self.persist_history_batch::<HashedStorageHistory, _, _>(
-                batch,
-                block_number,
-                storage_entries.iter().map(|(key, value)| (hashed_address, *key, *value)),
-                true,
-            )?;
-            replacement_state.apply_hashed_storage_entries(hashed_address, storage_entries);
-            hashed_storage_keys.extend(keys);
-        }
-
-        Ok(ChangeSet {
-            account_trie_keys,
-            storage_trie_keys,
-            hashed_account_keys,
-            hashed_storage_keys,
-        })
     }
 
     fn get_block_number_hash(
         &self,
         key: ProofWindowKey,
     ) -> BaseProofsStorageResult<Option<(u64, B256)>> {
-        Ok(self.get_table::<ProofWindow>(key)?.map(|value| (value.number(), *value.hash())))
-    }
-
-    fn get_block_number_hash_from_snapshot(
-        &self,
-        snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
-        key: ProofWindowKey,
-    ) -> BaseProofsStorageResult<Option<(u64, B256)>> {
+        let cf = self.cf(CF_PROOF_WINDOW)?;
         Ok(self
-            .get_table_from_snapshot::<ProofWindow>(snapshot, key)?
-            .map(|value| (value.number(), *value.hash())))
+            .db
+            .get_cf(&cf, encode_proof_window_key(key))
+            .map_err(rocksdb_error)?
+            .map(|value| BlockNumberHash::decompress(&value).map(|v| (v.number(), *v.hash())))
+            .transpose()?)
     }
 
     fn get_latest_block_number_hash(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
-        let block = self.get_block_number_hash(ProofWindowKey::LatestBlock)?;
-        if block.is_some() {
-            return Ok(block);
+        self.get_block_number_hash(ProofWindowKey::LatestBlock)
+    }
+
+    fn get_append_parent_hash(&self) -> BaseProofsStorageResult<B256> {
+        if let Some((_, hash)) = self.get_latest_block_number_hash()? {
+            return Ok(hash);
         }
 
-        self.get_block_number_hash(ProofWindowKey::EarliestBlock)
+        Ok(self
+            .get_block_number_hash(ProofWindowKey::EarliestBlock)?
+            .map_or(B256::ZERO, |(_, hash)| hash))
     }
 
     fn get_proof_window(&self) -> BaseProofsStorageResult<Option<ProofWindowValue>> {
@@ -1101,222 +725,193 @@ impl RocksdbProofsStorage {
             return Ok(None);
         };
 
-        let latest = self.get_block_number_hash(ProofWindowKey::LatestBlock)?.map_or_else(
-            || NumHash::new(earliest_number, earliest_hash),
-            |(number, hash)| NumHash::new(number, hash),
-        );
+        let Some((latest_number, latest_hash)) =
+            self.get_block_number_hash(ProofWindowKey::LatestBlock)?
+        else {
+            return Err(DatabaseError::Other(
+                "incomplete RocksDB proof window metadata: missing latest block".to_owned(),
+            )
+            .into());
+        };
 
         Ok(Some(ProofWindowValue {
             earliest: NumHash::new(earliest_number, earliest_hash),
-            latest,
+            latest: NumHash::new(latest_number, latest_hash),
         }))
     }
 
-    fn put_proof_window(
+    fn get_initial_state_anchor(&self) -> BaseProofsStorageResult<Option<BlockNumHash>> {
+        Ok(self
+            .get_block_number_hash(ProofWindowKey::InitialStateAnchor)?
+            .map(|(number, hash)| BlockNumHash { number, hash }))
+    }
+
+    fn get_latest_current_key<D: RocksDbDomain>(&self) -> BaseProofsStorageResult<Option<D::Key>> {
+        let cf = self.cf(D::CURRENT_CF)?;
+        let mut iter = self.db.iterator_cf(&cf, IteratorMode::End);
+        let Some(item) = iter.next() else {
+            return Ok(None);
+        };
+        let (raw_key, _) = item.map_err(rocksdb_error)?;
+        D::decode_key(&raw_key).map(Some).map_err(Into::into)
+    }
+
+    fn read_current<D: RocksDbDomain>(
+        &self,
+        key: &D::Key,
+    ) -> BaseProofsStorageResult<Option<D::Value>> {
+        let cf = self.cf(D::CURRENT_CF)?;
+        self.db
+            .get_cf(&cf, D::encode_key(key))
+            .map_err(rocksdb_error)?
+            .map(|value| D::Value::decompress(&value).map_err(Into::into))
+            .transpose()
+    }
+
+    fn read_current_from_snapshot<D: RocksDbDomain>(
+        &self,
+        snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
+        key: &D::Key,
+    ) -> BaseProofsStorageResult<Option<D::Value>> {
+        let cf = self.cf(D::CURRENT_CF)?;
+        snapshot
+            .get_cf(&cf, D::encode_key(key))
+            .map_err(rocksdb_error)?
+            .map(|value| D::Value::decompress(&value).map_err(Into::into))
+            .transpose()
+    }
+
+    fn read_history_exact<D: RocksDbDomain>(
+        &self,
+        snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
+        key: &D::Key,
+        block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Option<D::Value>>> {
+        let cf = self.cf(D::HISTORY_CF)?;
+        snapshot
+            .get_cf(&cf, encode_history_key::<D>(key, block_number))
+            .map_err(rocksdb_error)?
+            .map(|value| {
+                MaybeDeleted::<D::Value>::decompress(&value)
+                    .map(|value| value.0)
+                    .map_err(Into::into)
+            })
+            .transpose()
+    }
+
+    fn value_at<D: RocksDbDomain>(
+        &self,
+        snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
+        key: &D::Key,
+        block_number: u64,
+    ) -> BaseProofsStorageResult<Option<D::Value>> {
+        if let Some(next_block) = block_number.checked_add(1)
+            && let Some(value) = self.next_history_value::<D>(snapshot, key, next_block)?
+        {
+            return Ok(value);
+        }
+
+        self.read_current_from_snapshot::<D>(snapshot, key)
+    }
+
+    fn next_history_value<D: RocksDbDomain>(
+        &self,
+        snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
+        key: &D::Key,
+        min_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Option<D::Value>>> {
+        let cf = self.cf(D::HISTORY_CF)?;
+        let prefix = D::encode_key(key);
+        let start_key = encode_history_key::<D>(key, min_block_number);
+        let mut read_options = ReadOptions::default();
+        if let Some(upper_bound) = prefix_upper_bound(&prefix) {
+            read_options.set_iterate_upper_bound(upper_bound);
+        }
+        let mut iter = snapshot.iterator_cf_opt(
+            &cf,
+            read_options,
+            IteratorMode::From(&start_key, Direction::Forward),
+        );
+        let Some(item) = iter.next() else {
+            return Ok(None);
+        };
+        let (raw_key, raw_value) = item.map_err(rocksdb_error)?;
+        if !raw_key.starts_with(&prefix) {
+            return Ok(None);
+        }
+        Ok(Some(MaybeDeleted::<D::Value>::decompress(&raw_value)?.0))
+    }
+
+    fn put_current<D: RocksDbDomain>(
         &self,
         batch: &mut WriteBatch,
-        key: ProofWindowKey,
-        block_number: u64,
-        hash: B256,
+        key: &D::Key,
+        value: &D::Value,
     ) -> BaseProofsStorageResult<()> {
-        self.put_table::<ProofWindow>(batch, key, &BlockNumberHash::new(block_number, hash))
-    }
-
-    fn set_earliest_block_number_hash(
-        &self,
-        block_number: u64,
-        hash: B256,
-    ) -> BaseProofsStorageResult<()> {
-        let _guard = self.history_gate.write();
-        self.set_earliest_block_number_hash_unlocked(block_number, hash)
-    }
-
-    fn set_earliest_block_number_hash_unlocked(
-        &self,
-        block_number: u64,
-        hash: B256,
-    ) -> BaseProofsStorageResult<()> {
-        let mut batch = WriteBatch::default();
-        self.put_proof_window(&mut batch, ProofWindowKey::EarliestBlock, block_number, hash)?;
-        self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
+        let cf = self.cf(D::CURRENT_CF)?;
+        batch.put_cf(&cf, D::encode_key(key), encode_value(value));
         Ok(())
     }
 
-    fn calculate_prune_plan(
-        &self,
-        snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
-        target_block: u64,
-    ) -> BaseProofsStorageResult<Option<RocksdbPrunePlan>> {
-        let started = Instant::now();
-        info!(
-            target: "trie::pruner",
-            target_block,
-            "Calculating RocksDB proof storage prune plan",
-        );
-        let Some((earliest, earliest_hash)) =
-            self.get_block_number_hash_from_snapshot(snapshot, ProofWindowKey::EarliestBlock)?
-        else {
-            info!(
-                target: "trie::pruner",
-                target_block,
-                elapsed = ?started.elapsed(),
-                "Skipped RocksDB proof storage prune plan because earliest block is missing",
-            );
-            return Ok(None);
-        };
-
-        if earliest >= target_block {
-            info!(
-                target: "trie::pruner",
-                earliest_block = earliest,
-                target_block,
-                elapsed = ?started.elapsed(),
-                "Skipped RocksDB proof storage prune plan because target is not newer",
-            );
-            return Ok(None);
-        }
-
-        let mut acc_candidates: HashMap<StoredNibbles, u64> = HashMap::default();
-        let mut storage_candidates: HashMap<StorageTrieKey, u64> = HashMap::default();
-        let mut hashed_acc_candidates: HashMap<B256, u64> = HashMap::default();
-        let mut hashed_storage_candidates: HashMap<HashedStorageKey, u64> = HashMap::default();
-
-        for (block_number, change_set) in
-            self.iter_change_sets_from_snapshot(snapshot, (earliest + 1)..=target_block)?
-        {
-            for key in change_set.account_trie_keys {
-                acc_candidates
-                    .entry(key)
-                    .and_modify(|current| *current = (*current).max(block_number))
-                    .or_insert(block_number);
-            }
-            for key in change_set.storage_trie_keys {
-                storage_candidates
-                    .entry(key)
-                    .and_modify(|current| *current = (*current).max(block_number))
-                    .or_insert(block_number);
-            }
-            for key in change_set.hashed_account_keys {
-                hashed_acc_candidates
-                    .entry(key)
-                    .and_modify(|current| *current = (*current).max(block_number))
-                    .or_insert(block_number);
-            }
-            for key in change_set.hashed_storage_keys {
-                hashed_storage_candidates
-                    .entry(key)
-                    .and_modify(|current| *current = (*current).max(block_number))
-                    .or_insert(block_number);
-            }
-        }
-
-        let plan = RocksdbPrunePlan {
-            earliest_block: earliest,
-            earliest_hash,
-            acc_survivors: flatten_and_sort(acc_candidates),
-            storage_survivors: flatten_and_sort(storage_candidates),
-            hashed_acc_survivors: flatten_and_sort(hashed_acc_candidates),
-            hashed_storage_survivors: flatten_and_sort(hashed_storage_candidates),
-        };
-
-        info!(
-            target: "trie::pruner",
-            earliest_block = plan.earliest_block,
-            target_block,
-            account_trie_survivors = plan.acc_survivors.len(),
-            storage_trie_survivors = plan.storage_survivors.len(),
-            hashed_account_survivors = plan.hashed_acc_survivors.len(),
-            hashed_storage_survivors = plan.hashed_storage_survivors.len(),
-            total_survivors = plan.total_survivors(),
-            elapsed = ?started.elapsed(),
-            "Calculated RocksDB proof storage prune plan",
-        );
-
-        Ok(Some(plan))
-    }
-
-    fn collect_history_ranged(
-        &self,
-        block_range: impl RangeBounds<u64>,
-    ) -> BaseProofsStorageResult<RocksdbHistoryDeleteBatch> {
-        let mut history = RocksdbHistoryDeleteBatch::default();
-
-        for (block_number, change_set) in self.iter_change_sets(block_range)? {
-            history.block_numbers.push(block_number);
-            history
-                .account_trie
-                .extend(change_set.account_trie_keys.into_iter().map(|key| (key, block_number)));
-            history
-                .storage_trie
-                .extend(change_set.storage_trie_keys.into_iter().map(|key| (key, block_number)));
-            history
-                .hashed_account
-                .extend(change_set.hashed_account_keys.into_iter().map(|key| (key, block_number)));
-            history
-                .hashed_storage
-                .extend(change_set.hashed_storage_keys.into_iter().map(|key| (key, block_number)));
-        }
-
-        history.account_trie.sort_by(|(k1, b1), (k2, b2)| k1.cmp(k2).then_with(|| b1.cmp(b2)));
-        history.storage_trie.sort_by(|(k1, b1), (k2, b2)| k1.cmp(k2).then_with(|| b1.cmp(b2)));
-        history.hashed_account.sort_by(|(k1, b1), (k2, b2)| k1.cmp(k2).then_with(|| b1.cmp(b2)));
-        history.hashed_storage.sort_by(|(k1, b1), (k2, b2)| k1.cmp(k2).then_with(|| b1.cmp(b2)));
-
-        Ok(history)
-    }
-
-    fn delete_history_ranged(
+    fn delete_current<D: RocksDbDomain>(
         &self,
         batch: &mut WriteBatch,
-        history: RocksdbHistoryDeleteBatch,
-    ) -> BaseProofsStorageResult<WriteCounts> {
-        let cf = self.cf(<BlockChangeSet as Table>::NAME)?;
-        for block_number in &history.block_numbers {
-            batch.delete_cf(&cf, encode_block_number(*block_number));
-        }
-
-        let RocksdbHistoryDeleteBatch {
-            block_numbers: _,
-            account_trie,
-            storage_trie,
-            hashed_account,
-            hashed_storage,
-        } = history;
-        let counts = WriteCounts {
-            account_trie_updates_written_total: account_trie.len() as u64,
-            storage_trie_updates_written_total: storage_trie.len() as u64,
-            hashed_accounts_written_total: hashed_account.len() as u64,
-            hashed_storages_written_total: hashed_storage.len() as u64,
-        };
-
-        self.delete_dup_sorted::<AccountTrieHistory, _, _>(batch, account_trie)?;
-        self.delete_dup_sorted::<StorageTrieHistory, _, _>(batch, storage_trie)?;
-        self.delete_dup_sorted::<HashedAccountHistory, _, _>(batch, hashed_account)?;
-        self.delete_dup_sorted::<HashedStorageHistory, _, _>(batch, hashed_storage)?;
-
-        Ok(counts)
+        key: &D::Key,
+    ) -> BaseProofsStorageResult<()> {
+        let cf = self.cf(D::CURRENT_CF)?;
+        batch.delete_cf(&cf, D::encode_key(key));
+        Ok(())
     }
 
-    fn iter_change_sets(
+    fn put_history<D: RocksDbDomain>(
         &self,
-        block_range: impl RangeBounds<u64>,
-    ) -> BaseProofsStorageResult<Vec<(u64, ChangeSet)>> {
-        let cf = self.cf(<BlockChangeSet as Table>::NAME)?;
-        let start = range_start(&block_range);
-        let start_key = encode_block_number(start);
-        let iter = self.db.iterator_cf(&cf, IteratorMode::From(&start_key, Direction::Forward));
-        let mut rows = Vec::new();
+        batch: &mut WriteBatch,
+        key: &D::Key,
+        block_number: u64,
+        value: Option<D::Value>,
+    ) -> BaseProofsStorageResult<()> {
+        let cf = self.cf(D::HISTORY_CF)?;
+        batch.put_cf(
+            &cf,
+            encode_history_key::<D>(key, block_number),
+            encode_value(&MaybeDeleted(value)),
+        );
+        Ok(())
+    }
 
-        for item in iter {
-            let (raw_key, raw_value) = item.map_err(rocksdb_error)?;
-            let block_number = decode_block_number(&raw_key)?;
-            if !block_range.contains(&block_number) {
-                break;
-            }
-            rows.push((block_number, ChangeSet::decompress(&raw_value)?));
-        }
+    fn delete_history<D: RocksDbDomain>(
+        &self,
+        batch: &mut WriteBatch,
+        key: &D::Key,
+        block_number: u64,
+    ) -> BaseProofsStorageResult<()> {
+        let cf = self.cf(D::HISTORY_CF)?;
+        batch.delete_cf(&cf, encode_history_key::<D>(key, block_number));
+        Ok(())
+    }
 
-        Ok(rows)
+    fn put_change_set(
+        &self,
+        batch: &mut WriteBatch,
+        block_number: u64,
+        change_set: &ChangeSet,
+    ) -> BaseProofsStorageResult<()> {
+        let cf = self.cf(CF_BLOCK_CHANGE_SET)?;
+        batch.put_cf(&cf, encode_block_number(block_number), encode_value(change_set));
+        Ok(())
+    }
+
+    fn get_change_set_from_snapshot(
+        &self,
+        snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
+        block_number: u64,
+    ) -> BaseProofsStorageResult<Option<ChangeSet>> {
+        let cf = self.cf(CF_BLOCK_CHANGE_SET)?;
+        snapshot
+            .get_cf(&cf, encode_block_number(block_number))
+            .map_err(rocksdb_error)?
+            .map(|value| ChangeSet::decompress(&value).map_err(Into::into))
+            .transpose()
     }
 
     fn iter_change_sets_from_snapshot(
@@ -1324,7 +919,7 @@ impl RocksdbProofsStorage {
         snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
         block_range: impl RangeBounds<u64>,
     ) -> BaseProofsStorageResult<Vec<(u64, ChangeSet)>> {
-        let cf = self.cf(<BlockChangeSet as Table>::NAME)?;
+        let cf = self.cf(CF_BLOCK_CHANGE_SET)?;
         let start = range_start(&block_range);
         let start_key = encode_block_number(start);
         let iter = snapshot.iterator_cf(&cf, IteratorMode::From(&start_key, Direction::Forward));
@@ -1342,234 +937,533 @@ impl RocksdbProofsStorage {
         Ok(rows)
     }
 
-    fn prepare_prune(
+    fn scan_current_prefix<D: RocksDbDomain>(
         &self,
-        new_earliest_block_ref: BlockWithParent,
-    ) -> BaseProofsStorageResult<Option<RocksdbPreparedPrune>> {
-        let started = Instant::now();
-        let requested_target = new_earliest_block_ref.block.number;
-        info!(
-            target: "trie::pruner",
-            requested_target,
-            "Preparing RocksDB proof storage prune",
-        );
-        let snapshot = self.db.snapshot();
-        let Some((earliest_block, earliest_hash)) =
-            self.get_block_number_hash_from_snapshot(&snapshot, ProofWindowKey::EarliestBlock)?
-        else {
-            info!(
-                target: "trie::pruner",
-                requested_target,
-                elapsed = ?started.elapsed(),
-                "Skipped RocksDB proof storage prune because earliest block is missing",
-            );
-            return Ok(None);
-        };
-
-        let (latest_block, latest_hash) = self
-            .get_block_number_hash_from_snapshot(&snapshot, ProofWindowKey::LatestBlock)?
-            .unwrap_or((earliest_block, earliest_hash));
-
-        // Bound the prune to rows visible in this snapshot. Appends may commit while pruning, but
-        // they must always land above this effective target.
-        let (target_block, target_hash) = if requested_target > latest_block {
-            (latest_block, latest_hash)
-        } else {
-            (requested_target, new_earliest_block_ref.block.hash)
-        };
-
-        info!(
-            target: "trie::pruner",
-            earliest_block,
-            latest_block,
-            requested_target,
-            target_block,
-            clamped_to_latest = requested_target > latest_block,
-            "Calculated RocksDB proof storage prune target",
-        );
-
-        if earliest_block >= target_block {
-            info!(
-                target: "trie::pruner",
-                earliest_block,
-                target_block,
-                elapsed = ?started.elapsed(),
-                "Skipped RocksDB proof storage prune because target is not newer",
-            );
-            return Ok(None);
+        prefix: &[u8],
+    ) -> BaseProofsStorageResult<Vec<(D::Key, D::Value)>> {
+        let cf = self.cf(D::CURRENT_CF)?;
+        let mut read_options = ReadOptions::default();
+        if let Some(upper_bound) = prefix_upper_bound(prefix) {
+            read_options.set_iterate_upper_bound(upper_bound);
         }
-
-        let Some(plan) = self.calculate_prune_plan(&snapshot, target_block)? else {
-            return Ok(None);
-        };
-
-        let account_trie = self.collect_history_preceding_deletes::<AccountTrieHistory, _>(
-            &snapshot,
-            plan.acc_survivors,
-        )?;
-        let storage_trie = self.collect_history_preceding_deletes::<StorageTrieHistory, _>(
-            &snapshot,
-            plan.storage_survivors,
-        )?;
-        let hashed_account = self.collect_history_preceding_deletes::<HashedAccountHistory, _>(
-            &snapshot,
-            plan.hashed_acc_survivors,
-        )?;
-        let hashed_storage = self.collect_history_preceding_deletes::<HashedStorageHistory, _>(
-            &snapshot,
-            plan.hashed_storage_survivors,
-        )?;
-
-        let counts = WriteCounts {
-            account_trie_updates_written_total: account_trie.len() as u64,
-            storage_trie_updates_written_total: storage_trie.len() as u64,
-            hashed_accounts_written_total: hashed_account.len() as u64,
-            hashed_storages_written_total: hashed_storage.len() as u64,
-        };
-
-        info!(
-            target: "trie::pruner",
-            expected_earliest_block = plan.earliest_block,
-            target_block,
-            account_trie_deletes = account_trie.len(),
-            storage_trie_deletes = storage_trie.len(),
-            hashed_account_deletes = hashed_account.len(),
-            hashed_storage_deletes = hashed_storage.len(),
-            total_deletes = counts.account_trie_updates_written_total
-                + counts.storage_trie_updates_written_total
-                + counts.hashed_accounts_written_total
-                + counts.hashed_storages_written_total,
-            elapsed = ?started.elapsed(),
-            "Prepared RocksDB proof storage prune",
+        let iter = self.db.iterator_cf_opt(
+            &cf,
+            read_options,
+            IteratorMode::From(prefix, Direction::Forward),
         );
-
-        Ok(Some(RocksdbPreparedPrune {
-            expected_earliest_block: plan.earliest_block,
-            expected_earliest_hash: plan.earliest_hash,
-            target_block,
-            target_hash,
-            deletes: RocksdbPreparedHistoryDeletes {
-                account_trie,
-                storage_trie,
-                hashed_account,
-                hashed_storage,
-            },
-            counts,
-        }))
+        let mut rows = Vec::new();
+        for item in iter {
+            let (raw_key, raw_value) = item.map_err(rocksdb_error)?;
+            if !raw_key.starts_with(prefix) {
+                break;
+            }
+            rows.push((D::decode_key(&raw_key)?, D::Value::decompress(&raw_value)?));
+        }
+        Ok(rows)
     }
 
-    fn commit_prepared_prune(
+    fn scan_current_prefix_with_overlay<D: ReplacementDomain>(
         &self,
-        prepared: RocksdbPreparedPrune,
+        prefix: &[u8],
+        overlay: &ReplacementOverlay,
+    ) -> BaseProofsStorageResult<Vec<(D::Key, D::Value)>> {
+        let mut rows = self
+            .scan_current_prefix::<D>(prefix)?
+            .into_iter()
+            .map(|(key, value)| (key, Some(value)))
+            .collect::<BTreeMap<_, _>>();
+
+        for (key, value) in D::overlay_ref(overlay) {
+            if D::encode_key(key).starts_with(prefix) {
+                rows.insert(key.clone(), value.clone());
+            }
+        }
+
+        Ok(rows.into_iter().filter_map(|(key, value)| value.map(|value| (key, value))).collect())
+    }
+
+    fn record_update<D: RocksDbDomain>(
+        &self,
+        batch: &mut WriteBatch,
+        block_number: u64,
+        key: D::Key,
+        value: Option<D::Value>,
+        seen: &mut BTreeSet<D::Key>,
+    ) -> BaseProofsStorageResult<bool> {
+        if seen.insert(key.clone()) {
+            let before = self.read_current::<D>(&key)?;
+            self.put_history::<D>(batch, &key, block_number, before)?;
+        }
+
+        match value {
+            Some(value) => self.put_current::<D>(batch, &key, &value)?,
+            None => self.delete_current::<D>(batch, &key)?,
+        }
+
+        Ok(true)
+    }
+
+    fn record_update_with_overlay<D: ReplacementDomain>(
+        &self,
+        batch: &mut WriteBatch,
+        block_number: u64,
+        key: D::Key,
+        value: Option<D::Value>,
+        seen: &mut BTreeSet<D::Key>,
+        overlay: &mut ReplacementOverlay,
+    ) -> BaseProofsStorageResult<bool> {
+        if seen.insert(key.clone()) {
+            let before = match D::overlay_ref(overlay).get(&key) {
+                Some(value) => value.clone(),
+                None => self.read_current::<D>(&key)?,
+            };
+            self.put_history::<D>(batch, &key, block_number, before)?;
+        }
+
+        match &value {
+            Some(value) => self.put_current::<D>(batch, &key, value)?,
+            None => self.delete_current::<D>(batch, &key)?,
+        }
+        D::overlay_mut(overlay).insert(key, value);
+
+        Ok(true)
+    }
+
+    fn store_trie_updates_for_block(
+        &self,
+        batch: &mut WriteBatch,
+        block_number: u64,
+        block_state_diff: BlockStateDiff,
+    ) -> BaseProofsStorageResult<ChangeSet> {
+        self.store_trie_updates_for_block_inner(batch, block_number, block_state_diff, None)
+    }
+
+    fn store_trie_updates_for_block_with_overlay(
+        &self,
+        batch: &mut WriteBatch,
+        block_number: u64,
+        block_state_diff: BlockStateDiff,
+        overlay: &mut ReplacementOverlay,
+    ) -> BaseProofsStorageResult<ChangeSet> {
+        self.store_trie_updates_for_block_inner(
+            batch,
+            block_number,
+            block_state_diff,
+            Some(overlay),
+        )
+    }
+
+    fn store_trie_updates_for_block_inner(
+        &self,
+        batch: &mut WriteBatch,
+        block_number: u64,
+        block_state_diff: BlockStateDiff,
+        mut overlay: Option<&mut ReplacementOverlay>,
+    ) -> BaseProofsStorageResult<ChangeSet> {
+        let BlockStateDiff { sorted_trie_updates, sorted_post_state } = block_state_diff;
+
+        let mut account_trie_keys = BTreeSet::new();
+        let mut storage_trie_keys = BTreeSet::new();
+        let mut hashed_account_keys = BTreeSet::new();
+        let mut hashed_storage_keys = BTreeSet::new();
+
+        for (path, node) in sorted_trie_updates.account_nodes_ref().iter().cloned() {
+            let key = StoredNibbles::from(path);
+            if let Some(overlay) = overlay.as_mut() {
+                self.record_update_with_overlay::<AccountTrieDomain>(
+                    batch,
+                    block_number,
+                    key,
+                    node,
+                    &mut account_trie_keys,
+                    overlay,
+                )?;
+            } else {
+                self.record_update::<AccountTrieDomain>(
+                    batch,
+                    block_number,
+                    key,
+                    node,
+                    &mut account_trie_keys,
+                )?;
+            }
+        }
+
+        for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
+            if nodes.is_deleted {
+                let prefix = storage_prefix(*hashed_address);
+                let wiped = if let Some(overlay) = overlay.as_ref() {
+                    self.scan_current_prefix_with_overlay::<StorageTrieDomain>(&prefix, overlay)?
+                } else {
+                    self.scan_current_prefix::<StorageTrieDomain>(&prefix)?
+                };
+                for (key, _) in wiped {
+                    if let Some(overlay) = overlay.as_mut() {
+                        self.record_update_with_overlay::<StorageTrieDomain>(
+                            batch,
+                            block_number,
+                            key,
+                            None,
+                            &mut storage_trie_keys,
+                            overlay,
+                        )?;
+                    } else {
+                        self.record_update::<StorageTrieDomain>(
+                            batch,
+                            block_number,
+                            key,
+                            None,
+                            &mut storage_trie_keys,
+                        )?;
+                    }
+                }
+            }
+
+            for (path, node) in nodes.storage_nodes_ref().iter().cloned() {
+                let key = StorageTrieKey::new(*hashed_address, StoredNibbles::from(path));
+                if let Some(overlay) = overlay.as_mut() {
+                    self.record_update_with_overlay::<StorageTrieDomain>(
+                        batch,
+                        block_number,
+                        key,
+                        node,
+                        &mut storage_trie_keys,
+                        overlay,
+                    )?;
+                } else {
+                    self.record_update::<StorageTrieDomain>(
+                        batch,
+                        block_number,
+                        key,
+                        node,
+                        &mut storage_trie_keys,
+                    )?;
+                }
+            }
+        }
+
+        for (hashed_address, account) in sorted_post_state.accounts.iter().copied() {
+            if let Some(overlay) = overlay.as_mut() {
+                self.record_update_with_overlay::<HashedAccountDomain>(
+                    batch,
+                    block_number,
+                    hashed_address,
+                    account,
+                    &mut hashed_account_keys,
+                    overlay,
+                )?;
+            } else {
+                self.record_update::<HashedAccountDomain>(
+                    batch,
+                    block_number,
+                    hashed_address,
+                    account,
+                    &mut hashed_account_keys,
+                )?;
+            }
+        }
+
+        for (hashed_address, storage) in sorted_post_state.storages {
+            if storage.is_wiped() {
+                let prefix = storage_prefix(hashed_address);
+                let wiped = if let Some(overlay) = overlay.as_ref() {
+                    self.scan_current_prefix_with_overlay::<HashedStorageDomain>(&prefix, overlay)?
+                } else {
+                    self.scan_current_prefix::<HashedStorageDomain>(&prefix)?
+                };
+                for (key, _) in wiped {
+                    if let Some(overlay) = overlay.as_mut() {
+                        self.record_update_with_overlay::<HashedStorageDomain>(
+                            batch,
+                            block_number,
+                            key,
+                            None,
+                            &mut hashed_storage_keys,
+                            overlay,
+                        )?;
+                    } else {
+                        self.record_update::<HashedStorageDomain>(
+                            batch,
+                            block_number,
+                            key,
+                            None,
+                            &mut hashed_storage_keys,
+                        )?;
+                    }
+                }
+            }
+
+            for (hashed_storage_key, value) in storage.storage_slots_ref() {
+                let key = HashedStorageKey::new(hashed_address, *hashed_storage_key);
+                let value = (!value.is_zero()).then_some(StorageValue(*value));
+                if let Some(overlay) = overlay.as_mut() {
+                    self.record_update_with_overlay::<HashedStorageDomain>(
+                        batch,
+                        block_number,
+                        key,
+                        value,
+                        &mut hashed_storage_keys,
+                        overlay,
+                    )?;
+                } else {
+                    self.record_update::<HashedStorageDomain>(
+                        batch,
+                        block_number,
+                        key,
+                        value,
+                        &mut hashed_storage_keys,
+                    )?;
+                }
+            }
+        }
+
+        Ok(ChangeSet {
+            account_trie_keys: account_trie_keys.into_iter().collect(),
+            storage_trie_keys: storage_trie_keys.into_iter().collect(),
+            hashed_account_keys: hashed_account_keys.into_iter().collect(),
+            hashed_storage_keys: hashed_storage_keys.into_iter().collect(),
+        })
+    }
+
+    fn store_trie_updates_append_only(
+        &self,
+        batch: &mut WriteBatch,
+        block_ref: BlockWithParent,
+        block_state_diff: BlockStateDiff,
     ) -> BaseProofsStorageResult<WriteCounts> {
-        let started = Instant::now();
-        let RocksdbPreparedPrune {
-            expected_earliest_block,
-            expected_earliest_hash,
-            target_block,
-            target_hash,
-            deletes,
-            counts,
-        } = prepared;
-        info!(
-            target: "trie::pruner",
-            expected_earliest_block,
-            target_block,
-            account_trie_deletes = deletes.account_trie.len(),
-            storage_trie_deletes = deletes.storage_trie.len(),
-            hashed_account_deletes = deletes.hashed_account.len(),
-            hashed_storage_deletes = deletes.hashed_storage.len(),
-            total_deletes = deletes.total(),
-            "Committing RocksDB proof storage prune",
-        );
-        let expected_earliest = Some((expected_earliest_block, expected_earliest_hash));
-        let current_earliest = self.get_block_number_hash(ProofWindowKey::EarliestBlock)?;
-        if current_earliest != expected_earliest {
-            info!(
-                target: "trie::pruner",
-                current_earliest = ?current_earliest,
-                expected_earliest = ?expected_earliest,
-                target_block,
-                elapsed = ?started.elapsed(),
-                "skipping stale prune plan"
-            );
-            return Ok(WriteCounts::default());
+        let block_number = block_ref.block.number;
+        let latest_block_hash = self.get_append_parent_hash()?;
+
+        if latest_block_hash != block_ref.parent {
+            return Err(BaseProofsStorageError::OutOfOrder {
+                block_number,
+                parent_block_hash: block_ref.parent,
+                latest_block_hash,
+            });
         }
 
-        let mut batch = WriteBatch::default();
-
-        self.delete_raw_history_keys::<AccountTrieHistory>(&mut batch, deletes.account_trie)?;
-        self.delete_raw_history_keys::<StorageTrieHistory>(&mut batch, deletes.storage_trie)?;
-        self.delete_raw_history_keys::<HashedAccountHistory>(&mut batch, deletes.hashed_account)?;
-        self.delete_raw_history_keys::<HashedStorageHistory>(&mut batch, deletes.hashed_storage)?;
-
-        let cf = self.cf(<BlockChangeSet as Table>::NAME)?;
-        let start = encode_block_number(expected_earliest_block.saturating_add(1));
-        if let Some(end_block) = target_block.checked_add(1) {
-            batch.delete_range_cf(&cf, start, encode_block_number(end_block));
-        } else {
-            batch.delete_range_cf(&cf, start, encode_block_number(u64::MAX));
-            batch.delete_cf(&cf, encode_block_number(u64::MAX));
-        }
-
+        let change_set =
+            self.store_trie_updates_for_block(batch, block_number, block_state_diff)?;
+        self.put_change_set(batch, block_number, &change_set)?;
         self.put_proof_window(
-            &mut batch,
-            ProofWindowKey::EarliestBlock,
-            target_block,
-            target_hash,
+            batch,
+            ProofWindowKey::LatestBlock,
+            block_number,
+            block_ref.block.hash,
         )?;
 
-        info!(
-            target: "trie::pruner",
-            expected_earliest_block,
-            target_block,
-            elapsed = ?started.elapsed(),
-            "Writing RocksDB proof storage prune batch",
-        );
-        self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
-        info!(
-            target: "trie::pruner",
-            expected_earliest_block,
-            target_block,
-            account_trie_deletes = counts.account_trie_updates_written_total,
-            storage_trie_deletes = counts.storage_trie_updates_written_total,
-            hashed_account_deletes = counts.hashed_accounts_written_total,
-            hashed_storage_deletes = counts.hashed_storages_written_total,
-            total_deletes = counts.account_trie_updates_written_total
-                + counts.storage_trie_updates_written_total
-                + counts.hashed_accounts_written_total
-                + counts.hashed_storages_written_total,
-            elapsed = ?started.elapsed(),
-            "Committed RocksDB proof storage prune",
-        );
+        Ok(WriteCounts {
+            account_trie_updates_written_total: change_set.account_trie_keys.len() as u64,
+            storage_trie_updates_written_total: change_set.storage_trie_keys.len() as u64,
+            hashed_accounts_written_total: change_set.hashed_account_keys.len() as u64,
+            hashed_storages_written_total: change_set.hashed_storage_keys.len() as u64,
+        })
+    }
+
+    fn prepare_history_deletes(
+        &self,
+        block_range: impl RangeBounds<u64>,
+    ) -> BaseProofsStorageResult<PreparedDeletes> {
+        let snapshot = self.db.snapshot();
+        let mut deletes = PreparedDeletes::default();
+        let mut account_trie_keys = BTreeSet::new();
+        let mut storage_trie_keys = BTreeSet::new();
+        let mut hashed_account_keys = BTreeSet::new();
+        let mut hashed_storage_keys = BTreeSet::new();
+
+        for (block_number, change_set) in
+            self.iter_change_sets_from_snapshot(&snapshot, block_range)?
+        {
+            deletes.block_change_sets.push(block_number);
+            account_trie_keys.extend(change_set.account_trie_keys.iter().cloned());
+            storage_trie_keys.extend(change_set.storage_trie_keys.iter().cloned());
+            hashed_account_keys.extend(change_set.hashed_account_keys.iter().cloned());
+            hashed_storage_keys.extend(change_set.hashed_storage_keys.iter().cloned());
+            deletes.account_trie.extend(
+                change_set
+                    .account_trie_keys
+                    .iter()
+                    .map(|key| encode_history_key::<AccountTrieDomain>(key, block_number)),
+            );
+            deletes.storage_trie.extend(
+                change_set
+                    .storage_trie_keys
+                    .iter()
+                    .map(|key| encode_history_key::<StorageTrieDomain>(key, block_number)),
+            );
+            deletes.hashed_account.extend(
+                change_set
+                    .hashed_account_keys
+                    .iter()
+                    .map(|key| encode_history_key::<HashedAccountDomain>(key, block_number)),
+            );
+            deletes.hashed_storage.extend(
+                change_set
+                    .hashed_storage_keys
+                    .iter()
+                    .map(|key| encode_history_key::<HashedStorageDomain>(key, block_number)),
+            );
+        }
+
+        deletes.counts = WriteCounts {
+            account_trie_updates_written_total: account_trie_keys.len() as u64,
+            storage_trie_updates_written_total: storage_trie_keys.len() as u64,
+            hashed_accounts_written_total: hashed_account_keys.len() as u64,
+            hashed_storages_written_total: hashed_storage_keys.len() as u64,
+        };
+
+        Ok(deletes)
+    }
+
+    fn apply_history_deletes(
+        &self,
+        batch: &mut WriteBatch,
+        deletes: PreparedDeletes,
+    ) -> BaseProofsStorageResult<WriteCounts> {
+        let counts = deletes.counts.clone();
+
+        self.delete_raw_history_keys::<AccountTrieDomain>(batch, deletes.account_trie)?;
+        self.delete_raw_history_keys::<StorageTrieDomain>(batch, deletes.storage_trie)?;
+        self.delete_raw_history_keys::<HashedAccountDomain>(batch, deletes.hashed_account)?;
+        self.delete_raw_history_keys::<HashedStorageDomain>(batch, deletes.hashed_storage)?;
+
+        let cf = self.cf(CF_BLOCK_CHANGE_SET)?;
+        for block_number in deletes.block_change_sets {
+            batch.delete_cf(&cf, encode_block_number(block_number));
+        }
+
         Ok(counts)
     }
 
-    fn get_initial_state_anchor(&self) -> BaseProofsStorageResult<Option<BlockNumHash>> {
-        Ok(self.get_table::<ProofWindow>(ProofWindowKey::InitialStateAnchor)?.map(Into::into))
+    fn delete_raw_history_keys<D: RocksDbDomain>(
+        &self,
+        batch: &mut WriteBatch,
+        keys: Vec<Vec<u8>>,
+    ) -> BaseProofsStorageResult<()> {
+        let cf = self.cf(D::HISTORY_CF)?;
+        for key in keys {
+            batch.delete_cf(&cf, key);
+        }
+        Ok(())
     }
 
-    fn get_latest_history_key<T>(&self) -> BaseProofsStorageResult<Option<T::Key>>
-    where
-        T: RocksDbHistoryTable,
-    {
-        let cf = self.cf(T::NAME)?;
-        let mut iter = self.db.iterator_cf(&cf, IteratorMode::End);
-        let Some(item) = iter.next() else {
-            return Ok(None);
-        };
-        let (raw_key, _) = item.map_err(rocksdb_error)?;
-        decode_history_key::<T>(&raw_key).map(|(key, _)| Some(key)).map_err(Into::into)
+    fn restore_domain_value<D: RocksDbDomain>(
+        &self,
+        batch: &mut WriteBatch,
+        snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
+        key: &D::Key,
+        block_number: u64,
+    ) -> BaseProofsStorageResult<Option<D::Value>> {
+        let before =
+            self.read_history_exact::<D>(snapshot, key, block_number)?.ok_or_else(|| {
+                DatabaseError::Other(format!(
+                    "missing RocksDB V2 history row for unwind at block {block_number}"
+                ))
+            })?;
+
+        match &before {
+            Some(value) => self.put_current::<D>(batch, key, value)?,
+            None => self.delete_current::<D>(batch, key)?,
+        }
+        self.delete_history::<D>(batch, key, block_number)?;
+        Ok(before)
+    }
+
+    fn restore_blocks_descending(
+        &self,
+        batch: &mut WriteBatch,
+        from_block: u64,
+        to_block_inclusive: u64,
+    ) -> BaseProofsStorageResult<()> {
+        self.restore_blocks_descending_inner(batch, from_block, to_block_inclusive, None)
+    }
+
+    fn restore_blocks_descending_with_overlay(
+        &self,
+        batch: &mut WriteBatch,
+        from_block: u64,
+        to_block_inclusive: u64,
+        overlay: &mut ReplacementOverlay,
+    ) -> BaseProofsStorageResult<()> {
+        self.restore_blocks_descending_inner(batch, from_block, to_block_inclusive, Some(overlay))
+    }
+
+    fn restore_blocks_descending_inner(
+        &self,
+        batch: &mut WriteBatch,
+        from_block: u64,
+        to_block_inclusive: u64,
+        mut overlay: Option<&mut ReplacementOverlay>,
+    ) -> BaseProofsStorageResult<()> {
+        if from_block > to_block_inclusive {
+            return Ok(());
+        }
+
+        let snapshot = self.db.snapshot();
+        let mut change_sets =
+            self.iter_change_sets_from_snapshot(&snapshot, from_block..=to_block_inclusive)?;
+        change_sets.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+
+        let change_set_cf = self.cf(CF_BLOCK_CHANGE_SET)?;
+        for (block_number, change_set) in change_sets {
+            for key in &change_set.account_trie_keys {
+                let before = self.restore_domain_value::<AccountTrieDomain>(
+                    batch,
+                    &snapshot,
+                    key,
+                    block_number,
+                )?;
+                if let Some(overlay) = overlay.as_mut() {
+                    overlay.account_trie.insert(key.clone(), before);
+                }
+            }
+            for key in &change_set.storage_trie_keys {
+                let before = self.restore_domain_value::<StorageTrieDomain>(
+                    batch,
+                    &snapshot,
+                    key,
+                    block_number,
+                )?;
+                if let Some(overlay) = overlay.as_mut() {
+                    overlay.storage_trie.insert(key.clone(), before);
+                }
+            }
+            for key in &change_set.hashed_account_keys {
+                let before = self.restore_domain_value::<HashedAccountDomain>(
+                    batch,
+                    &snapshot,
+                    key,
+                    block_number,
+                )?;
+                if let Some(overlay) = overlay.as_mut() {
+                    overlay.hashed_account.insert(*key, before);
+                }
+            }
+            for key in &change_set.hashed_storage_keys {
+                let before = self.restore_domain_value::<HashedStorageDomain>(
+                    batch,
+                    &snapshot,
+                    key,
+                    block_number,
+                )?;
+                if let Some(overlay) = overlay.as_mut() {
+                    overlay.hashed_storage.insert(key.clone(), before);
+                }
+            }
+            batch.delete_cf(&change_set_cf, encode_block_number(block_number));
+        }
+
+        Ok(())
     }
 }
 
 impl BaseProofsStore for RocksdbProofsStorage {
     type StorageTrieCursor<'tx>
-        = RocksdbTrieCursor<'tx, StorageTrieHistory>
+        = RocksdbTrieCursor<'tx, StorageTrieDomain>
     where
         Self: 'tx;
     type AccountTrieCursor<'tx>
-        = RocksdbTrieCursor<'tx, AccountTrieHistory>
+        = RocksdbTrieCursor<'tx, AccountTrieDomain>
     where
         Self: 'tx;
     type StorageCursor<'tx>
@@ -1602,9 +1496,7 @@ impl BaseProofsStore for RocksdbProofsStorage {
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>> {
-        // Standalone cursor factories intentionally create independent snapshots. Use `ro_tx` and
-        // the `*_with_tx` factories when multiple cursors need one consistent view.
-        Ok(RocksdbTrieCursor::<StorageTrieHistory>::new(
+        Ok(RocksdbTrieCursor::<StorageTrieDomain>::new(
             self.db.as_ref(),
             max_block_number,
             Some(hashed_address),
@@ -1615,7 +1507,7 @@ impl BaseProofsStore for RocksdbProofsStorage {
         &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>> {
-        Ok(RocksdbTrieCursor::<AccountTrieHistory>::new(self.db.as_ref(), max_block_number, None))
+        Ok(RocksdbTrieCursor::<AccountTrieDomain>::new(self.db.as_ref(), max_block_number, None))
     }
 
     fn storage_hashed_cursor<'tx>(
@@ -1643,7 +1535,7 @@ impl BaseProofsStore for RocksdbProofsStorage {
         Self: 'db,
         'db: 'tx,
     {
-        Ok(RocksdbTrieCursor::<StorageTrieHistory>::new_with_snapshot(
+        Ok(RocksdbTrieCursor::<StorageTrieDomain>::new_with_snapshot(
             Arc::clone(tx),
             max_block_number,
             Some(hashed_address),
@@ -1659,7 +1551,7 @@ impl BaseProofsStore for RocksdbProofsStorage {
         Self: 'db,
         'db: 'tx,
     {
-        Ok(RocksdbTrieCursor::<AccountTrieHistory>::new_with_snapshot(
+        Ok(RocksdbTrieCursor::<AccountTrieDomain>::new_with_snapshot(
             Arc::clone(tx),
             max_block_number,
             None,
@@ -1712,103 +1604,52 @@ impl BaseProofsStore for RocksdbProofsStorage {
     fn fetch_trie_updates(&self, block_number: u64) -> BaseProofsStorageResult<BlockStateDiff> {
         let snapshot = self.db.snapshot();
         let change_set = self
-            .get_table_from_snapshot::<BlockChangeSet>(&snapshot, block_number)?
+            .get_change_set_from_snapshot(&snapshot, block_number)?
             .ok_or(BaseProofsStorageError::NoChangeSetForBlock(block_number))?;
 
         let mut trie_updates = TrieUpdates::default();
         for key in change_set.account_trie_keys {
-            let entry = match get_history_exact::<AccountTrieHistory, _>(
-                &snapshot,
-                &self.db,
-                key.clone(),
-                block_number,
-            )? {
-                Some(value) if value.block_number == block_number => value.value.0,
-                _ => {
-                    return Err(BaseProofsStorageError::MissingAccountTrieHistory(
-                        key.0,
-                        block_number,
-                    ));
+            match self.value_at::<AccountTrieDomain>(&snapshot, &key, block_number)? {
+                Some(value) => {
+                    trie_updates.account_nodes.insert(key.0, value);
                 }
-            };
-
-            if let Some(value) = entry {
-                trie_updates.account_nodes.insert(key.0, value);
-            } else {
-                trie_updates.removed_nodes.insert(key.0);
+                None => {
+                    trie_updates.removed_nodes.insert(key.0);
+                }
             }
         }
 
         for key in change_set.storage_trie_keys {
-            let entry = match get_history_exact::<StorageTrieHistory, _>(
-                &snapshot,
-                &self.db,
-                key.clone(),
-                block_number,
-            )? {
-                Some(value) if value.block_number == block_number => value.value.0,
-                _ => {
-                    return Err(BaseProofsStorageError::MissingStorageTrieHistory(
-                        key.hashed_address,
-                        key.path.0,
-                        block_number,
-                    ));
-                }
-            };
-
             let storage_updates = trie_updates
                 .storage_tries
                 .entry(key.hashed_address)
                 .or_insert_with(StorageTrieUpdates::default);
-            if let Some(value) = entry {
-                storage_updates.storage_nodes.insert(key.path.0, value);
-            } else {
-                storage_updates.removed_nodes.insert(key.path.0);
+            match self.value_at::<StorageTrieDomain>(&snapshot, &key, block_number)? {
+                Some(value) => {
+                    storage_updates.storage_nodes.insert(key.path.0, value);
+                }
+                None => {
+                    storage_updates.removed_nodes.insert(key.path.0);
+                }
             }
         }
 
         let mut post_state = HashedPostState::with_capacity(change_set.hashed_account_keys.len());
         for key in change_set.hashed_account_keys {
-            let entry = match get_history_exact::<HashedAccountHistory, _>(
-                &snapshot,
-                &self.db,
-                key,
-                block_number,
-            )? {
-                Some(value) if value.block_number == block_number => value.value.0,
-                _ => {
-                    return Err(BaseProofsStorageError::MissingHashedAccountHistory(
-                        key,
-                        block_number,
-                    ));
-                }
-            };
-            post_state.accounts.insert(key, entry);
+            let value = self.value_at::<HashedAccountDomain>(&snapshot, &key, block_number)?;
+            post_state.accounts.insert(key, value);
         }
 
         for key in change_set.hashed_storage_keys {
-            let entry = match get_history_exact::<HashedStorageHistory, _>(
-                &snapshot,
-                &self.db,
-                key.clone(),
-                block_number,
-            )? {
-                Some(value) if value.block_number == block_number => value.value.0,
-                _ => {
-                    return Err(BaseProofsStorageError::MissingHashedStorageHistory {
-                        hashed_address: key.hashed_address,
-                        hashed_storage_key: key.hashed_storage_key,
-                        block_number,
-                    });
-                }
-            };
-
-            let storage = post_state.storages.entry(key.hashed_address).or_default();
-            if let Some(value) = entry {
-                storage.storage.insert(key.hashed_storage_key, value.0);
-            } else {
-                storage.storage.insert(key.hashed_storage_key, U256::ZERO);
-            }
+            let value = self
+                .value_at::<HashedStorageDomain>(&snapshot, &key, block_number)?
+                .map_or(U256::ZERO, |value| value.0);
+            post_state
+                .storages
+                .entry(key.hashed_address)
+                .or_default()
+                .storage
+                .insert(key.hashed_storage_key, value);
         }
 
         Ok(BlockStateDiff {
@@ -1821,37 +1662,36 @@ impl BaseProofsStore for RocksdbProofsStorage {
         &self,
         new_earliest_block_ref: BlockWithParent,
     ) -> BaseProofsStorageResult<WriteCounts> {
-        let started = Instant::now();
-        info!(
-            target: "trie::pruner",
-            target_block = new_earliest_block_ref.block.number,
-            "Acquiring RocksDB proof storage prune locks",
-        );
         let _prune_guard = self.prune_lock.lock();
         let _history_guard = self.history_gate.read();
-        info!(
-            target: "trie::pruner",
-            target_block = new_earliest_block_ref.block.number,
-            elapsed = ?started.elapsed(),
-            "Acquired RocksDB proof storage prune locks",
-        );
-        let Some(prepared) = self.prepare_prune(new_earliest_block_ref)? else {
-            info!(
-                target: "trie::pruner",
-                target_block = new_earliest_block_ref.block.number,
-                elapsed = ?started.elapsed(),
-                "No RocksDB proof storage prune work prepared",
-            );
+
+        let Some((earliest, _)) = self.get_block_number_hash(ProofWindowKey::EarliestBlock)? else {
+            return Ok(WriteCounts::default());
+        };
+        let Some((latest, latest_hash)) = self.get_latest_block_number_hash()? else {
             return Ok(WriteCounts::default());
         };
 
-        let counts = self.commit_prepared_prune(prepared)?;
-        info!(
-            target: "trie::pruner",
-            target_block = new_earliest_block_ref.block.number,
-            elapsed = ?started.elapsed(),
-            "Finished RocksDB proof storage prune request",
-        );
+        let (target_block, target_hash) = if new_earliest_block_ref.block.number > latest {
+            (latest, latest_hash)
+        } else {
+            (new_earliest_block_ref.block.number, new_earliest_block_ref.block.hash)
+        };
+
+        if earliest >= target_block {
+            return Ok(WriteCounts::default());
+        }
+
+        let deletes = self.prepare_history_deletes((earliest + 1)..=target_block)?;
+        let mut batch = WriteBatch::default();
+        let counts = self.apply_history_deletes(&mut batch, deletes)?;
+        self.put_proof_window(
+            &mut batch,
+            ProofWindowKey::EarliestBlock,
+            target_block,
+            target_hash,
+        )?;
+        self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
         Ok(counts)
     }
 
@@ -1872,12 +1712,8 @@ impl BaseProofsStore for RocksdbProofsStorage {
             });
         }
 
-        // Keep collection and deletion under the same exclusive history gate so another history
-        // rewrite cannot change the proof window or history rows between choosing keys and
-        // committing the batch.
-        let history_to_delete = self.collect_history_ranged(to.block.number..)?;
         let mut batch = WriteBatch::default();
-        self.delete_history_ranged(&mut batch, history_to_delete)?;
+        self.restore_blocks_descending(&mut batch, to.block.number, proof_window.latest.number)?;
         self.put_proof_window(
             &mut batch,
             ProofWindowKey::LatestBlock,
@@ -1908,15 +1744,23 @@ impl BaseProofsStore for RocksdbProofsStorage {
             latest_block_hash = block_with_parent.block.hash;
         }
 
+        let _append_guard = self.append_lock.lock();
         let _guard = self.history_gate.write();
-        let history_to_delete = if let Some(start_block) = latest_common_block.number.checked_add(1)
-        {
-            self.collect_history_ranged(start_block..)?
-        } else {
-            RocksdbHistoryDeleteBatch::default()
-        };
+        let current_latest = self.get_latest_block_number_hash()?.map(|(number, _)| number);
         let mut batch = WriteBatch::default();
-        self.delete_history_ranged(&mut batch, history_to_delete)?;
+        let mut overlay = ReplacementOverlay::default();
+        if let Some(current_latest) = current_latest
+            && let Some(first_removed) = latest_common_block.number.checked_add(1)
+            && first_removed <= current_latest
+        {
+            self.restore_blocks_descending_with_overlay(
+                &mut batch,
+                first_removed,
+                current_latest,
+                &mut overlay,
+            )?;
+        }
+
         self.put_proof_window(
             &mut batch,
             ProofWindowKey::LatestBlock,
@@ -1924,14 +1768,20 @@ impl BaseProofsStore for RocksdbProofsStorage {
             latest_common_block.hash,
         )?;
 
-        let mut replacement_state = RocksdbReplacementState::default();
         for (block_with_parent, diff) in blocks_to_add {
-            self.store_replacement_trie_updates_append_only(
+            let block_number = block_with_parent.block.number;
+            let change_set = self.store_trie_updates_for_block_with_overlay(
                 &mut batch,
-                latest_common_block.number,
-                &mut replacement_state,
-                block_with_parent,
+                block_number,
                 diff,
+                &mut overlay,
+            )?;
+            self.put_change_set(&mut batch, block_number, &change_set)?;
+            self.put_proof_window(
+                &mut batch,
+                ProofWindowKey::LatestBlock,
+                block_number,
+                block_with_parent.block.hash,
             )?;
         }
 
@@ -1944,7 +1794,11 @@ impl BaseProofsStore for RocksdbProofsStorage {
         block_number: u64,
         hash: B256,
     ) -> BaseProofsStorageResult<()> {
-        self.set_earliest_block_number_hash(block_number, hash)
+        let _guard = self.history_gate.write();
+        let mut batch = WriteBatch::default();
+        self.put_proof_window(&mut batch, ProofWindowKey::EarliestBlock, block_number, hash)?;
+        self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
+        Ok(())
     }
 }
 
@@ -1963,10 +1817,10 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
             } else {
                 InitialStateStatus::InProgress
             },
-            latest_account_trie_key: self.get_latest_history_key::<AccountTrieHistory>()?,
-            latest_storage_trie_key: self.get_latest_history_key::<StorageTrieHistory>()?,
-            latest_hashed_account_key: self.get_latest_history_key::<HashedAccountHistory>()?,
-            latest_hashed_storage_key: self.get_latest_history_key::<HashedStorageHistory>()?,
+            latest_account_trie_key: self.get_latest_current_key::<AccountTrieDomain>()?,
+            latest_storage_trie_key: self.get_latest_current_key::<StorageTrieDomain>()?,
+            latest_hashed_account_key: self.get_latest_current_key::<HashedAccountDomain>()?,
+            latest_hashed_storage_key: self.get_latest_current_key::<HashedStorageDomain>()?,
         })
     }
 
@@ -1977,10 +1831,11 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         }
 
         let mut batch = WriteBatch::default();
-        self.put_table::<ProofWindow>(
+        self.put_proof_window(
             &mut batch,
             ProofWindowKey::InitialStateAnchor,
-            &anchor.into(),
+            anchor.number,
+            anchor.hash,
         )?;
         self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
         Ok(())
@@ -1998,12 +1853,13 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         account_nodes.sort_by_key(|(key, _)| *key);
         let _guard = self.history_gate.write();
         let mut batch = WriteBatch::default();
-        self.persist_history_batch::<AccountTrieHistory, _, _>(
-            &mut batch,
-            0,
-            account_nodes.into_iter(),
-            true,
-        )?;
+        for (path, node) in account_nodes {
+            let key = StoredNibbles::from(path);
+            match node {
+                Some(node) => self.put_current::<AccountTrieDomain>(&mut batch, &key, &node)?,
+                None => self.delete_current::<AccountTrieDomain>(&mut batch, &key)?,
+            }
+        }
         self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
         Ok(())
     }
@@ -2021,12 +1877,13 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         storage_nodes.sort_by_key(|(key, _)| *key);
         let _guard = self.history_gate.write();
         let mut batch = WriteBatch::default();
-        self.persist_history_batch::<StorageTrieHistory, _, _>(
-            &mut batch,
-            0,
-            storage_nodes.into_iter().map(|(path, node)| (hashed_address, path, node)),
-            true,
-        )?;
+        for (path, node) in storage_nodes {
+            let key = StorageTrieKey::new(hashed_address, StoredNibbles::from(path));
+            match node {
+                Some(node) => self.put_current::<StorageTrieDomain>(&mut batch, &key, &node)?,
+                None => self.delete_current::<StorageTrieDomain>(&mut batch, &key)?,
+            }
+        }
         self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
         Ok(())
     }
@@ -2043,12 +1900,14 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         accounts.sort_by_key(|(key, _)| *key);
         let _guard = self.history_gate.write();
         let mut batch = WriteBatch::default();
-        self.persist_history_batch::<HashedAccountHistory, _, _>(
-            &mut batch,
-            0,
-            accounts.into_iter(),
-            true,
-        )?;
+        for (key, account) in accounts {
+            match account {
+                Some(account) => {
+                    self.put_current::<HashedAccountDomain>(&mut batch, &key, &account)?
+                }
+                None => self.delete_current::<HashedAccountDomain>(&mut batch, &key)?,
+            }
+        }
         self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
         Ok(())
     }
@@ -2066,14 +1925,14 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         storages.sort_by_key(|(key, _)| *key);
         let _guard = self.history_gate.write();
         let mut batch = WriteBatch::default();
-        self.persist_history_batch::<HashedStorageHistory, _, _>(
-            &mut batch,
-            0,
-            storages
-                .into_iter()
-                .map(|(key, value)| (hashed_address, key, Some(StorageValue(value)))),
-            true,
-        )?;
+        for (hashed_storage_key, value) in storages {
+            let key = HashedStorageKey::new(hashed_address, hashed_storage_key);
+            if value.is_zero() {
+                self.delete_current::<HashedStorageDomain>(&mut batch, &key)?;
+            } else {
+                self.put_current::<HashedStorageDomain>(&mut batch, &key, &StorageValue(value))?;
+            }
+        }
         self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
         Ok(())
     }
@@ -2081,7 +1940,15 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
     fn commit_initial_state(&self) -> BaseProofsStorageResult<BlockNumHash> {
         let _guard = self.history_gate.write();
         let anchor = self.get_initial_state_anchor()?.ok_or(NoBlocksFound)?;
-        self.set_earliest_block_number_hash_unlocked(anchor.number, anchor.hash)?;
+        let mut batch = WriteBatch::default();
+        self.put_proof_window(
+            &mut batch,
+            ProofWindowKey::EarliestBlock,
+            anchor.number,
+            anchor.hash,
+        )?;
+        self.put_proof_window(&mut batch, ProofWindowKey::LatestBlock, anchor.number, anchor.hash)?;
+        self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
         Ok(anchor)
     }
 }
@@ -2168,14 +2035,10 @@ impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {
 #[cfg(not(feature = "metrics"))]
 impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {}
 
-impl<'db, T, V> RocksdbVersionedCursor<'db, T>
+impl<'db, D> RocksdbV2Cursor<'db, D>
 where
-    T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
-    T: RocksDbHistoryTable,
-    T::Key: Clone + Default + Ord,
-    T::Value: Decompress,
+    D: RocksDbDomain,
 {
-    /// Creates a cursor over a `RocksDB` history column family.
     fn new(db: &'db RocksDb, max_block_number: u64) -> Self {
         let snapshot = Arc::new(RocksdbReadSnapshot::new(db));
         Self::new_with_snapshot(snapshot, max_block_number)
@@ -2185,22 +2048,40 @@ where
         snapshot: Arc<RocksdbReadSnapshot<'db>>,
         max_block_number: u64,
     ) -> Self {
-        Self { snapshot, max_block_number, current_key: None, _table: PhantomData }
+        Self { snapshot, max_block_number, current_key: None, _domain: PhantomData }
     }
 
-    fn cf(&self) -> Result<Arc<BoundColumnFamily<'_>>, DatabaseError> {
-        self.snapshot.cf(T::NAME)
+    fn cf(&self, name: &'static str) -> Result<Arc<BoundColumnFamily<'_>>, DatabaseError> {
+        self.snapshot.cf(name)
     }
 
-    fn latest_version_for_key(&self, key: T::Key) -> RocksDbLatestVersionResult<T> {
-        let cf = self.cf()?;
-        let prefix = encode_history_key_prefix::<T>(&key);
-        let target = encode_history_key::<T>(&key, self.max_block_number);
-        let mut iter = self
-            .snapshot
+    fn read_current(&self, key: &D::Key) -> Result<Option<D::Value>, DatabaseError> {
+        let cf = self.cf(D::CURRENT_CF)?;
+        self.snapshot
             .snapshot()
-            .iterator_cf(&cf, IteratorMode::From(&target, Direction::Reverse));
+            .get_cf(&cf, D::encode_key(key))
+            .map_err(rocksdb_error)?
+            .map(|value| D::Value::decompress(&value))
+            .transpose()
+    }
 
+    fn next_history_value(
+        &self,
+        key: &D::Key,
+        min_block_number: u64,
+    ) -> Result<Option<Option<D::Value>>, DatabaseError> {
+        let cf = self.cf(D::HISTORY_CF)?;
+        let prefix = D::encode_key(key);
+        let start_key = encode_history_key::<D>(key, min_block_number);
+        let mut read_options = ReadOptions::default();
+        if let Some(upper_bound) = prefix_upper_bound(&prefix) {
+            read_options.set_iterate_upper_bound(upper_bound);
+        }
+        let mut iter = self.snapshot.snapshot().iterator_cf_opt(
+            &cf,
+            read_options,
+            IteratorMode::From(&start_key, Direction::Forward),
+        );
         let Some(item) = iter.next() else {
             return Ok(None);
         };
@@ -2208,84 +2089,100 @@ where
         if !raw_key.starts_with(&prefix) {
             return Ok(None);
         }
-
-        let (decoded_key, _) = decode_history_key::<T>(&raw_key)?;
-        let value = T::Value::decompress(&raw_value)?;
-        Ok(Some((decoded_key, value)))
+        Ok(Some(MaybeDeleted::<D::Value>::decompress(&raw_value)?.0))
     }
 
-    fn seek_exact(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        self.current_key = Some(key.clone());
-        if let Some((latest_key, latest_value)) = self.latest_version_for_key(key)?
-            && let MaybeDeleted(Some(value)) = latest_value.value
+    fn value_at(&self, key: &D::Key) -> Result<Option<D::Value>, DatabaseError> {
+        if let Some(next_block) = self.max_block_number.checked_add(1)
+            && let Some(value) = self.next_history_value(key, next_block)?
         {
-            return Ok(Some((latest_key, value)));
+            return Ok(value);
         }
-        Ok(None)
+        self.read_current(key)
     }
 
-    fn seek(&mut self, start_key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        self.next_live_from(start_key)
+    fn seek_exact(&mut self, key: D::Key) -> Result<Option<(D::Key, D::Value)>, DatabaseError> {
+        self.current_key = Some(key.clone());
+        Ok(self.value_at(&key)?.map(|value| (key, value)))
     }
 
-    fn next(&mut self) -> Result<Option<(T::Key, V)>, DatabaseError> {
+    fn seek(&mut self, start_key: D::Key) -> Result<Option<(D::Key, D::Value)>, DatabaseError> {
+        self.next_live_candidate(start_key, false)
+    }
+
+    fn next(&mut self) -> Result<Option<(D::Key, D::Value)>, DatabaseError> {
         if let Some(key) = self.current_key.clone() {
-            self.next_live_after(key)
+            self.next_live_candidate(key, true)
         } else {
-            self.next_live_from(T::Key::default())
+            self.next_live_candidate(D::Key::default(), false)
         }
-    }
-
-    fn next_live_from(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        self.next_live_candidate(key, false)
-    }
-
-    fn next_live_after(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        self.next_live_candidate(key, true)
     }
 
     fn next_live_candidate(
         &mut self,
-        key: T::Key,
-        exclusive: bool,
-    ) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        let found = {
-            let cf = self.cf()?;
-            let start_block = if exclusive { u64::MAX } else { 0 };
-            let start_key = encode_history_key::<T>(&key, start_block);
-            let iter = self
-                .snapshot
-                .snapshot()
-                .iterator_cf(&cf, IteratorMode::From(&start_key, Direction::Forward));
-            let mut last_candidate = None;
-            let mut found = None;
+        mut key: D::Key,
+        mut exclusive: bool,
+    ) -> Result<Option<(D::Key, D::Value)>, DatabaseError> {
+        loop {
+            let current_key = self.next_current_key(&key, exclusive)?;
+            let history_key = self.next_history_key(&key, exclusive)?;
+            let Some(candidate) = min_option_key(current_key, history_key) else {
+                self.current_key = None;
+                return Ok(None);
+            };
 
-            for item in iter {
-                let (raw_key, _) = item.map_err(rocksdb_error)?;
-                let (candidate, _) = decode_history_key::<T>(&raw_key)?;
-                let before_start = if exclusive { candidate <= key } else { candidate < key };
-                if before_start || last_candidate.as_ref() == Some(&candidate) {
-                    continue;
-                }
-
-                last_candidate = Some(candidate.clone());
-                if let Some((live_key, latest_value)) = self.latest_version_for_key(candidate)?
-                    && let MaybeDeleted(Some(value)) = latest_value.value
-                {
-                    found = Some((live_key, value));
-                    break;
-                }
+            if let Some(value) = self.value_at(&candidate)? {
+                self.current_key = Some(candidate.clone());
+                return Ok(Some((candidate, value)));
             }
 
-            found
-        };
-
-        if let Some((key, value)) = found {
-            self.current_key = Some(key.clone());
-            return Ok(Some((key, value)));
+            key = candidate;
+            exclusive = true;
         }
+    }
 
-        self.current_key = None;
+    fn next_current_key(
+        &self,
+        key: &D::Key,
+        exclusive: bool,
+    ) -> Result<Option<D::Key>, DatabaseError> {
+        let cf = self.cf(D::CURRENT_CF)?;
+        let start_key = D::encode_key(key);
+        let iter = self
+            .snapshot
+            .snapshot()
+            .iterator_cf(&cf, IteratorMode::From(&start_key, Direction::Forward));
+        for item in iter {
+            let (raw_key, _) = item.map_err(rocksdb_error)?;
+            let candidate = D::decode_key(&raw_key)?;
+            if exclusive && candidate <= *key {
+                continue;
+            }
+            return Ok(Some(candidate));
+        }
+        Ok(None)
+    }
+
+    fn next_history_key(
+        &self,
+        key: &D::Key,
+        exclusive: bool,
+    ) -> Result<Option<D::Key>, DatabaseError> {
+        let cf = self.cf(D::HISTORY_CF)?;
+        let start_block = if exclusive { u64::MAX } else { 0 };
+        let start_key = encode_history_key::<D>(key, start_block);
+        let iter = self
+            .snapshot
+            .snapshot()
+            .iterator_cf(&cf, IteratorMode::From(&start_key, Direction::Forward));
+        for item in iter {
+            let (raw_key, _) = item.map_err(rocksdb_error)?;
+            let (candidate, _) = decode_history_key::<D>(&raw_key)?;
+            if exclusive && candidate <= *key {
+                continue;
+            }
+            return Ok(Some(candidate));
+        }
         Ok(None)
     }
 
@@ -2294,10 +2191,10 @@ where
     }
 }
 
-impl<'db> RocksdbTrieCursor<'db, AccountTrieHistory> {
+impl<'db> RocksdbTrieCursor<'db, AccountTrieDomain> {
     /// Creates a `RocksDB` trie cursor.
     pub fn new(db: &'db RocksDb, max_block_number: u64, hashed_address: Option<B256>) -> Self {
-        Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
+        Self { inner: RocksdbV2Cursor::new(db, max_block_number), hashed_address }
     }
 
     const fn new_with_snapshot(
@@ -2306,16 +2203,16 @@ impl<'db> RocksdbTrieCursor<'db, AccountTrieHistory> {
         hashed_address: Option<B256>,
     ) -> Self {
         Self {
-            inner: RocksdbVersionedCursor::new_with_snapshot(snapshot, max_block_number),
+            inner: RocksdbV2Cursor::new_with_snapshot(snapshot, max_block_number),
             hashed_address,
         }
     }
 }
 
-impl<'db> RocksdbTrieCursor<'db, StorageTrieHistory> {
+impl<'db> RocksdbTrieCursor<'db, StorageTrieDomain> {
     /// Creates a `RocksDB` trie cursor.
     pub fn new(db: &'db RocksDb, max_block_number: u64, hashed_address: Option<B256>) -> Self {
-        Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
+        Self { inner: RocksdbV2Cursor::new(db, max_block_number), hashed_address }
     }
 
     const fn new_with_snapshot(
@@ -2324,13 +2221,13 @@ impl<'db> RocksdbTrieCursor<'db, StorageTrieHistory> {
         hashed_address: Option<B256>,
     ) -> Self {
         Self {
-            inner: RocksdbVersionedCursor::new_with_snapshot(snapshot, max_block_number),
+            inner: RocksdbV2Cursor::new_with_snapshot(snapshot, max_block_number),
             hashed_address,
         }
     }
 }
 
-impl TrieCursor for RocksdbTrieCursor<'_, AccountTrieHistory> {
+impl TrieCursor for RocksdbTrieCursor<'_, AccountTrieDomain> {
     fn seek_exact(
         &mut self,
         path: Nibbles,
@@ -2364,7 +2261,7 @@ impl TrieCursor for RocksdbTrieCursor<'_, AccountTrieHistory> {
     }
 }
 
-impl TrieCursor for RocksdbTrieCursor<'_, StorageTrieHistory> {
+impl TrieCursor for RocksdbTrieCursor<'_, StorageTrieDomain> {
     fn seek_exact(
         &mut self,
         path: Nibbles,
@@ -2373,10 +2270,14 @@ impl TrieCursor for RocksdbTrieCursor<'_, StorageTrieHistory> {
             return Ok(None);
         };
         let key = StorageTrieKey::new(address, StoredNibbles(path));
-        Ok(self
-            .inner
-            .seek_exact(key)?
-            .and_then(|(key, node)| (key.hashed_address == address).then_some((key.path.0, node))))
+        Ok(self.inner.seek_exact(key)?.and_then(|(key, node)| {
+            if key.hashed_address == address {
+                Some((key.path.0, node))
+            } else {
+                self.inner.current_key = None;
+                None
+            }
+        }))
     }
 
     fn seek(
@@ -2387,10 +2288,14 @@ impl TrieCursor for RocksdbTrieCursor<'_, StorageTrieHistory> {
             return Ok(None);
         };
         let key = StorageTrieKey::new(address, StoredNibbles(path));
-        Ok(self
-            .inner
-            .seek(key)?
-            .and_then(|(key, node)| (key.hashed_address == address).then_some((key.path.0, node))))
+        Ok(self.inner.seek(key)?.and_then(|(key, node)| {
+            if key.hashed_address == address {
+                Some((key.path.0, node))
+            } else {
+                self.inner.current_key = None;
+                None
+            }
+        }))
     }
 
     fn next(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
@@ -2400,10 +2305,14 @@ impl TrieCursor for RocksdbTrieCursor<'_, StorageTrieHistory> {
         if !self.inner.is_positioned() {
             return self.seek(Nibbles::default());
         }
-        Ok(self
-            .inner
-            .next()?
-            .and_then(|(key, node)| (key.hashed_address == address).then_some((key.path.0, node))))
+        Ok(self.inner.next()?.and_then(|(key, node)| {
+            if key.hashed_address == address {
+                Some((key.path.0, node))
+            } else {
+                self.inner.current_key = None;
+                None
+            }
+        }))
     }
 
     fn current(&mut self) -> Result<Option<Nibbles>, DatabaseError> {
@@ -2422,7 +2331,7 @@ impl TrieCursor for RocksdbTrieCursor<'_, StorageTrieHistory> {
     }
 }
 
-impl TrieStorageCursor for RocksdbTrieCursor<'_, StorageTrieHistory> {
+impl TrieStorageCursor for RocksdbTrieCursor<'_, StorageTrieDomain> {
     fn set_hashed_address(&mut self, hashed_address: B256) {
         self.hashed_address = Some(hashed_address);
         self.inner.current_key = None;
@@ -2432,7 +2341,7 @@ impl TrieStorageCursor for RocksdbTrieCursor<'_, StorageTrieHistory> {
 impl<'db> RocksdbStorageCursor<'db> {
     /// Creates a `RocksDB` storage cursor.
     pub fn new(db: &'db RocksDb, max_block_number: u64, hashed_address: B256) -> Self {
-        Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
+        Self { inner: RocksdbV2Cursor::new(db, max_block_number), hashed_address }
     }
 
     const fn new_with_snapshot(
@@ -2441,8 +2350,30 @@ impl<'db> RocksdbStorageCursor<'db> {
         hashed_address: B256,
     ) -> Self {
         Self {
-            inner: RocksdbVersionedCursor::new_with_snapshot(snapshot, max_block_number),
+            inner: RocksdbV2Cursor::new_with_snapshot(snapshot, max_block_number),
             hashed_address,
+        }
+    }
+
+    fn next_matching_storage(
+        &mut self,
+        mut candidate: Option<(HashedStorageKey, StorageValue)>,
+    ) -> Result<Option<(B256, U256)>, DatabaseError> {
+        loop {
+            let Some((key, value)) = candidate else {
+                return Ok(None);
+            };
+
+            if key.hashed_address != self.hashed_address {
+                self.inner.current_key = None;
+                return Ok(None);
+            }
+
+            if !value.0.is_zero() {
+                return Ok(Some((key.hashed_storage_key, value.0)));
+            }
+
+            candidate = self.inner.next()?;
         }
     }
 }
@@ -2452,17 +2383,8 @@ impl HashedCursor for RocksdbStorageCursor<'_> {
 
     fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
         let storage_key = HashedStorageKey::new(self.hashed_address, key);
-        let result = self.inner.seek(storage_key)?.and_then(|(key, value)| {
-            (key.hashed_address == self.hashed_address).then_some((key.hashed_storage_key, value.0))
-        });
-
-        if let Some((_, value)) = result
-            && value.is_zero()
-        {
-            return self.next();
-        }
-
-        Ok(result)
+        let candidate = self.inner.seek(storage_key)?;
+        self.next_matching_storage(candidate)
     }
 
     fn next(&mut self) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
@@ -2470,20 +2392,8 @@ impl HashedCursor for RocksdbStorageCursor<'_> {
             return self.seek(B256::ZERO);
         }
 
-        loop {
-            let result = self.inner.next()?.and_then(|(key, value)| {
-                (key.hashed_address == self.hashed_address)
-                    .then_some((key.hashed_storage_key, value.0))
-            });
-
-            let Some((key, value)) = result else {
-                return Ok(None);
-            };
-            if value.is_zero() {
-                continue;
-            }
-            return Ok(Some((key, value)));
-        }
+        let candidate = self.inner.next()?;
+        self.next_matching_storage(candidate)
     }
 
     fn reset(&mut self) {
@@ -2505,14 +2415,14 @@ impl HashedStorageCursor for RocksdbStorageCursor<'_> {
 impl<'db> RocksdbAccountCursor<'db> {
     /// Creates a `RocksDB` account cursor.
     pub fn new(db: &'db RocksDb, max_block_number: u64) -> Self {
-        Self { inner: RocksdbVersionedCursor::new(db, max_block_number) }
+        Self { inner: RocksdbV2Cursor::new(db, max_block_number) }
     }
 
     const fn new_with_snapshot(
         snapshot: Arc<RocksdbReadSnapshot<'db>>,
         max_block_number: u64,
     ) -> Self {
-        Self { inner: RocksdbVersionedCursor::new_with_snapshot(snapshot, max_block_number) }
+        Self { inner: RocksdbV2Cursor::new_with_snapshot(snapshot, max_block_number) }
     }
 }
 
@@ -2536,134 +2446,31 @@ fn rocksdb_error(error: rocksdb::Error) -> DatabaseError {
     DatabaseError::Other(error.to_string())
 }
 
-fn encode_table_key<T: Table>(key: T::Key) -> Vec<u8> {
-    key.encode().as_ref().to_vec()
-}
-
-fn encode_table_value<T: Table>(value: &T::Value) -> Vec<u8> {
-    let mut encoded = <T::Value as Compress>::Compressed::default();
+fn encode_value<T: Compress>(value: &T) -> Vec<u8> {
+    let mut encoded = <T as Compress>::Compressed::default();
     value.compress_to_buf(&mut encoded);
     encoded.into()
 }
 
-fn encode_history_key<T>(key: &T::Key, block_number: u64) -> Vec<u8>
-where
-    T: RocksDbHistoryTable,
-{
-    let mut encoded = encode_history_key_prefix::<T>(key);
+fn encode_proof_window_key(key: ProofWindowKey) -> [u8; 1] {
+    [key as u8]
+}
+
+fn encode_history_key<D: RocksDbDomain>(key: &D::Key, block_number: u64) -> Vec<u8> {
+    let mut encoded = D::encode_key(key);
     encoded.extend_from_slice(&block_number.to_be_bytes());
     encoded
 }
 
-fn encode_history_key_prefix<T>(key: &T::Key) -> Vec<u8>
-where
-    T: RocksDbHistoryTable,
-{
-    T::encode_history_key_prefix(key)
-}
-
-fn decode_history_key<T>(raw_key: &[u8]) -> Result<(T::Key, u64), DatabaseError>
-where
-    T: RocksDbHistoryTable,
-{
-    if raw_key.len() != T::KEY_LEN + BLOCK_NUMBER_KEY_LEN {
+fn decode_history_key<D: RocksDbDomain>(raw_key: &[u8]) -> Result<(D::Key, u64), DatabaseError> {
+    if raw_key.len() != D::KEY_LEN + BLOCK_NUMBER_KEY_LEN {
         return Err(DatabaseError::Decode);
     }
-    let split = T::KEY_LEN;
-    let key = T::decode_history_key_prefix(&raw_key[..split])?;
+    let split = D::KEY_LEN;
+    let key = D::decode_key(&raw_key[..split])?;
     let block_number =
         u64::from_be_bytes(raw_key[split..].try_into().map_err(|_| DatabaseError::Decode)?);
     Ok((key, block_number))
-}
-
-fn get_history_exact<T, V>(
-    snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
-    db: &Arc<RocksDb>,
-    key: T::Key,
-    block_number: u64,
-) -> BaseProofsStorageResult<Option<T::Value>>
-where
-    T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
-    T::Key: Clone,
-    T::Value: Decompress,
-    T: RocksDbHistoryTable,
-{
-    let cf = db.cf_handle(T::NAME).ok_or_else(|| {
-        DatabaseError::Other(format!("missing RocksDB column family {}", T::NAME))
-    })?;
-    snapshot
-        .get_cf(&cf, encode_history_key::<T>(&key, block_number))
-        .map_err(rocksdb_error)?
-        .map(|value| T::Value::decompress(&value).map_err(Into::into))
-        .transpose()
-}
-
-impl RocksDbHistoryTable for AccountTrieHistory {
-    const KEY_LEN: usize = PACKED_NIBBLES_KEY_LEN;
-
-    fn encode_history_key_prefix(key: &Self::Key) -> Vec<u8> {
-        encode_packed_nibbles(&key.0).to_vec()
-    }
-
-    fn decode_history_key_prefix(raw_key: &[u8]) -> Result<Self::Key, DatabaseError> {
-        decode_packed_nibbles(raw_key).map(StoredNibbles)
-    }
-}
-
-impl RocksDbHistoryTable for StorageTrieHistory {
-    const KEY_LEN: usize = HASH_KEY_LEN + PACKED_NIBBLES_KEY_LEN;
-
-    fn encode_history_key_prefix(key: &Self::Key) -> Vec<u8> {
-        let mut encoded = Vec::with_capacity(Self::KEY_LEN);
-        encoded.extend_from_slice(key.hashed_address.as_slice());
-        encoded.extend_from_slice(&encode_packed_nibbles(&key.path.0));
-        encoded
-    }
-
-    fn decode_history_key_prefix(raw_key: &[u8]) -> Result<Self::Key, DatabaseError> {
-        if raw_key.len() != Self::KEY_LEN {
-            return Err(DatabaseError::Decode);
-        }
-        let hashed_address = B256::from_slice(&raw_key[..HASH_KEY_LEN]);
-        let path = StoredNibbles(decode_packed_nibbles(&raw_key[HASH_KEY_LEN..])?);
-        Ok(StorageTrieKey::new(hashed_address, path))
-    }
-}
-
-impl RocksDbHistoryTable for HashedAccountHistory {
-    const KEY_LEN: usize = HASH_KEY_LEN;
-
-    fn encode_history_key_prefix(key: &Self::Key) -> Vec<u8> {
-        key.as_slice().to_vec()
-    }
-
-    fn decode_history_key_prefix(raw_key: &[u8]) -> Result<Self::Key, DatabaseError> {
-        if raw_key.len() != Self::KEY_LEN {
-            return Err(DatabaseError::Decode);
-        }
-        Ok(B256::from_slice(raw_key))
-    }
-}
-
-impl RocksDbHistoryTable for HashedStorageHistory {
-    const KEY_LEN: usize = HASH_KEY_LEN * 2;
-
-    fn encode_history_key_prefix(key: &Self::Key) -> Vec<u8> {
-        let mut encoded = Vec::with_capacity(Self::KEY_LEN);
-        encoded.extend_from_slice(key.hashed_address.as_slice());
-        encoded.extend_from_slice(key.hashed_storage_key.as_slice());
-        encoded
-    }
-
-    fn decode_history_key_prefix(raw_key: &[u8]) -> Result<Self::Key, DatabaseError> {
-        if raw_key.len() != Self::KEY_LEN {
-            return Err(DatabaseError::Decode);
-        }
-        Ok(HashedStorageKey::new(
-            B256::from_slice(&raw_key[..HASH_KEY_LEN]),
-            B256::from_slice(&raw_key[HASH_KEY_LEN..]),
-        ))
-    }
 }
 
 fn encode_packed_nibbles(nibbles: &Nibbles) -> [u8; PACKED_NIBBLES_KEY_LEN] {
@@ -2721,12 +2528,6 @@ fn range_start(range: &impl RangeBounds<u64>) -> u64 {
     }
 }
 
-fn flatten_and_sort<K: Ord>(map: HashMap<K, u64>) -> Vec<(K, u64)> {
-    let mut values: Vec<_> = map.into_iter().collect();
-    values.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-    values
-}
-
 fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
     let mut upper_bound = prefix.to_vec();
     for index in (0..upper_bound.len()).rev() {
@@ -2740,22 +2541,126 @@ fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
+fn storage_prefix(hashed_address: B256) -> [u8; HASH_KEY_LEN] {
+    hashed_address.0
+}
+
+fn min_option_key<K: Ord>(left: Option<K>, right: Option<K>) -> Option<K> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{Arc, mpsc},
-        thread,
-        time::Duration,
-    };
-
+    use reth_trie::HashedStorage;
     use tempfile::TempDir;
 
     use super::*;
 
-    fn temp_storage() -> (Arc<RocksdbProofsStorage>, TempDir) {
+    fn temp_storage() -> (RocksdbProofsStorage, TempDir) {
         let dir = TempDir::new().unwrap();
-        let storage = Arc::new(RocksdbProofsStorage::new(dir.path()).unwrap());
+        let storage = RocksdbProofsStorage::new(dir.path()).unwrap();
         (storage, dir)
+    }
+
+    fn block(parent: B256, number: u64, hash_byte: u8) -> BlockWithParent {
+        BlockWithParent::new(parent, NumHash::new(number, B256::repeat_byte(hash_byte)))
+    }
+
+    fn branch(hash_byte: u8) -> BranchNodeCompact {
+        BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(hash_byte)))
+    }
+
+    fn account(nonce: u64) -> Account {
+        Account {
+            nonce,
+            balance: U256::from(nonce * 100),
+            bytecode_hash: Some(B256::repeat_byte(nonce as u8)),
+        }
+    }
+
+    fn full_diff(
+        account_path: Nibbles,
+        account_node: Option<BranchNodeCompact>,
+        hashed_address: B256,
+        storage_path: Nibbles,
+        storage_node: Option<BranchNodeCompact>,
+        hashed_account: Option<Account>,
+        hashed_storage_key: B256,
+        hashed_storage_value: U256,
+    ) -> BlockStateDiff {
+        let mut trie_updates = TrieUpdates::default();
+        match account_node {
+            Some(account_node) => {
+                trie_updates.account_nodes.insert(account_path, account_node);
+            }
+            None => {
+                trie_updates.removed_nodes.insert(account_path);
+            }
+        }
+
+        let storage_updates = trie_updates.storage_tries.entry(hashed_address).or_default();
+        match storage_node {
+            Some(storage_node) => {
+                storage_updates.storage_nodes.insert(storage_path, storage_node);
+            }
+            None => {
+                storage_updates.removed_nodes.insert(storage_path);
+            }
+        }
+
+        let mut post_state = HashedPostState::default();
+        post_state.accounts.insert(hashed_address, hashed_account);
+        post_state
+            .storages
+            .entry(hashed_address)
+            .or_default()
+            .storage
+            .insert(hashed_storage_key, hashed_storage_value);
+
+        BlockStateDiff {
+            sorted_trie_updates: trie_updates.into_sorted(),
+            sorted_post_state: post_state.into_sorted(),
+        }
+    }
+
+    fn account_diff(hashed_address: B256, account: Option<Account>) -> BlockStateDiff {
+        let mut post_state = HashedPostState::default();
+        post_state.accounts.insert(hashed_address, account);
+
+        BlockStateDiff {
+            sorted_trie_updates: TrieUpdates::default().into_sorted(),
+            sorted_post_state: post_state.into_sorted(),
+        }
+    }
+
+    fn storage_diff(hashed_address: B256, hashed_storage_key: B256, value: U256) -> BlockStateDiff {
+        let mut post_state = HashedPostState::default();
+        post_state
+            .storages
+            .entry(hashed_address)
+            .or_default()
+            .storage
+            .insert(hashed_storage_key, value);
+
+        BlockStateDiff {
+            sorted_trie_updates: TrieUpdates::default().into_sorted(),
+            sorted_post_state: post_state.into_sorted(),
+        }
+    }
+
+    fn wiped_storage_diff(hashed_address: B256) -> BlockStateDiff {
+        let mut post_state = HashedPostState::default();
+        post_state.storages.insert(hashed_address, HashedStorage::new(true));
+
+        BlockStateDiff {
+            sorted_trie_updates: TrieUpdates::default().into_sorted(),
+            sorted_post_state: post_state.into_sorted(),
+        }
     }
 
     #[test]
@@ -2806,32 +2711,6 @@ mod tests {
         assert_eq!(options.rate_limit_bytes_per_sec, None);
     }
 
-    fn block(number: u64, parent: B256) -> BlockWithParent {
-        BlockWithParent {
-            parent,
-            block: BlockNumHash {
-                number,
-                hash: if number == 0 { B256::ZERO } else { B256::repeat_byte(number as u8) },
-            },
-        }
-    }
-
-    fn account_update(address: B256, nonce: u64) -> BlockStateDiff {
-        let mut post_state = HashedPostState::default();
-        post_state.accounts.insert(address, Some(Account { nonce, ..Default::default() }));
-
-        BlockStateDiff {
-            sorted_trie_updates: TrieUpdates::default().into_sorted(),
-            sorted_post_state: post_state.into_sorted(),
-        }
-    }
-
-    fn assert_completes(rx: mpsc::Receiver<BaseProofsStorageResult<()>>) {
-        rx.recv_timeout(Duration::from_secs(2))
-            .expect("operation should complete")
-            .expect("operation should succeed");
-    }
-
     #[test]
     fn packed_nibbles_round_trip() {
         let nibbles = Nibbles::from_nibbles_unchecked([0, 1, 0, 2, 15, 0, 3]);
@@ -2847,10 +2726,13 @@ mod tests {
             vec![],
             vec![0],
             vec![0, 0],
+            vec![0, 0, 15],
             vec![0, 1],
+            vec![0, 15],
             vec![1],
             vec![1, 0],
             vec![1, 1],
+            vec![1, 15],
             vec![2],
             vec![15],
             vec![15, 15],
@@ -2869,182 +2751,598 @@ mod tests {
     }
 
     #[test]
-    fn hashed_history_keys_preserve_full_byte_ordering() {
-        let keys = [B256::ZERO, B256::repeat_byte(2), B256::repeat_byte(255)];
+    fn packed_nibbles_preserve_exhaustive_short_lexicographic_order() {
+        let mut keys = Vec::new();
+        for len in 0..=3 {
+            let total = 16usize.pow(len);
+            for mut value in 0..total {
+                let mut nibbles = vec![0; len as usize];
+                for nibble in nibbles.iter_mut().rev() {
+                    *nibble = (value & 0x0f) as u8;
+                    value >>= 4;
+                }
+                keys.push(Nibbles::from_nibbles_unchecked(nibbles));
+            }
+        }
 
-        for left in keys {
-            for right in keys {
+        let mut logical = keys.clone();
+        logical.sort();
+        let mut encoded = keys;
+        encoded.sort_by_key(encode_packed_nibbles);
+
+        assert_eq!(encoded, logical);
+    }
+
+    #[test]
+    fn storage_trie_domain_key_order_matches_logical_address_then_path_order() {
+        let addr_1 = B256::repeat_byte(0x10);
+        let addr_2 = B256::repeat_byte(0x20);
+        let keys = [
+            StorageTrieKey::new(addr_1, StoredNibbles(Nibbles::default())),
+            StorageTrieKey::new(addr_1, StoredNibbles(Nibbles::from_nibbles_unchecked([0]))),
+            StorageTrieKey::new(addr_1, StoredNibbles(Nibbles::from_nibbles_unchecked([0, 0, 15]))),
+            StorageTrieKey::new(addr_1, StoredNibbles(Nibbles::from_nibbles_unchecked([0, 1]))),
+            StorageTrieKey::new(addr_1, StoredNibbles(Nibbles::from_nibbles_unchecked([1]))),
+            StorageTrieKey::new(addr_2, StoredNibbles(Nibbles::default())),
+        ];
+
+        for left in &keys {
+            for right in &keys {
                 assert_eq!(
-                    left.cmp(&right),
-                    encode_history_key_prefix::<HashedAccountHistory>(&left)
-                        .cmp(&encode_history_key_prefix::<HashedAccountHistory>(&right))
+                    left.cmp(right),
+                    StorageTrieDomain::encode_key(left).cmp(&StorageTrieDomain::encode_key(right))
                 );
             }
         }
     }
 
     #[test]
-    fn packed_nibbles_reject_invalid_padding() {
-        let mut encoded = encode_packed_nibbles(&Nibbles::from_nibbles_unchecked([1, 2, 3]));
-        encoded[HASH_KEY_LEN - 1] = 1;
-        assert!(decode_packed_nibbles(&encoded).is_err());
-
-        let mut encoded = encode_packed_nibbles(&Nibbles::from_nibbles_unchecked([1]));
-        encoded[0] |= 1;
-        assert!(decode_packed_nibbles(&encoded).is_err());
-    }
-
-    #[test]
-    fn append_can_run_while_prune_holds_history_read_gate() {
-        let (storage, _dir) = temp_storage();
-        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
-
-        let _prune_guard = storage.prune_lock.lock();
-        let _history_guard = storage.history_gate.read();
-        let (tx, rx) = mpsc::channel();
-        let task_storage = Arc::clone(&storage);
-
-        thread::spawn(move || {
-            let result = task_storage
-                .store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default())
-                .map(|_| ());
-            tx.send(result).unwrap();
-        });
-
-        assert_completes(rx);
-        assert_eq!(storage.get_latest_block_number().unwrap(), Some((1, B256::repeat_byte(1))));
-    }
-
-    #[test]
-    fn exclusive_history_gate_blocks_append() {
-        let (storage, _dir) = temp_storage();
-        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
-
-        let history_guard = storage.history_gate.write();
-        let (tx, rx) = mpsc::channel();
-        let task_storage = Arc::clone(&storage);
-
-        thread::spawn(move || {
-            let result = task_storage
-                .store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default())
-                .map(|_| ());
-            tx.send(result).unwrap();
-        });
-
-        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
-        drop(history_guard);
-        assert_completes(rx);
-    }
-
-    #[test]
-    fn append_lock_serializes_append_writers() {
-        let (storage, _dir) = temp_storage();
-        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
-
-        let append_guard = storage.append_lock.lock();
-        let (tx, rx) = mpsc::channel();
-        let task_storage = Arc::clone(&storage);
-
-        thread::spawn(move || {
-            let result = task_storage
-                .store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default())
-                .map(|_| ());
-            tx.send(result).unwrap();
-        });
-
-        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
-        drop(append_guard);
-        assert_completes(rx);
-    }
-
-    #[test]
-    fn prune_history_read_gate_blocks_history_rewrite() {
-        let (storage, _dir) = temp_storage();
-        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
-
-        let _prune_guard = storage.prune_lock.lock();
-        let history_guard = storage.history_gate.read();
-        let (tx, rx) = mpsc::channel();
-        let task_storage = Arc::clone(&storage);
-
-        thread::spawn(move || {
-            let result = task_storage.replace_updates(BlockNumHash::new(0, B256::ZERO), vec![]);
-            tx.send(result).unwrap();
-        });
-
-        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
-        drop(history_guard);
-        assert_completes(rx);
-    }
-
-    #[test]
-    fn append_during_prepared_prune_preserves_latest_block() {
-        let (storage, _dir) = temp_storage();
-        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
-        storage.store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default()).unwrap();
-        storage
-            .store_trie_updates(block(2, B256::repeat_byte(1)), BlockStateDiff::default())
-            .unwrap();
-
-        let _prune_guard = storage.prune_lock.lock();
-        let _history_guard = storage.history_gate.read();
-        let prepared =
-            storage.prepare_prune(block(1, B256::ZERO)).unwrap().expect("prepared prune");
-
-        storage
-            .store_trie_updates(block(3, B256::repeat_byte(2)), BlockStateDiff::default())
-            .unwrap();
-        storage.commit_prepared_prune(prepared).unwrap();
-
-        assert_eq!(storage.get_earliest_block_number().unwrap(), Some((1, B256::repeat_byte(1))));
-        assert_eq!(storage.get_latest_block_number().unwrap(), Some((3, B256::repeat_byte(3))));
-        let latest_diff = storage.fetch_trie_updates(3).unwrap();
-        assert!(latest_diff.sorted_trie_updates.account_nodes_ref().is_empty());
-        assert!(latest_diff.sorted_trie_updates.storage_tries_ref().is_empty());
-        assert!(latest_diff.sorted_post_state.accounts.is_empty());
-        assert!(latest_diff.sorted_post_state.storages.is_empty());
-    }
-
-    #[test]
-    fn append_inside_requested_prune_range_survives() {
-        let (storage, _dir) = temp_storage();
-        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
-
-        let address = B256::repeat_byte(0xAA);
-        storage.store_trie_updates(block(1, B256::ZERO), account_update(address, 1)).unwrap();
-        storage
-            .store_trie_updates(block(2, B256::repeat_byte(1)), account_update(address, 2))
-            .unwrap();
-
-        let _prune_guard = storage.prune_lock.lock();
-        let _history_guard = storage.history_gate.read();
-        let prepared = storage
-            .prepare_prune(block(10, B256::repeat_byte(2)))
-            .unwrap()
-            .expect("prepared prune");
-
-        storage
-            .store_trie_updates(block(3, B256::repeat_byte(2)), account_update(address, 3))
-            .unwrap();
-        let counts = storage.commit_prepared_prune(prepared).unwrap();
-
-        assert_eq!(counts.hashed_accounts_written_total, 1);
-        assert_eq!(counts.account_trie_updates_written_total, 0);
-        assert_eq!(counts.storage_trie_updates_written_total, 0);
-        assert_eq!(counts.hashed_storages_written_total, 0);
-        assert_eq!(storage.get_earliest_block_number().unwrap(), Some((2, B256::repeat_byte(2))));
-        assert_eq!(storage.get_latest_block_number().unwrap(), Some((3, B256::repeat_byte(3))));
-
-        let latest_diff = storage.fetch_trie_updates(3).unwrap();
-        assert_eq!(
-            &latest_diff.sorted_post_state.accounts[..],
-            &[(address, Some(Account { nonce: 3, ..Default::default() }))]
+    fn history_key_orders_by_logical_key_then_block_suffix() {
+        let short = StoredNibbles(Nibbles::from_nibbles_unchecked([5]));
+        let long = StoredNibbles(Nibbles::from_nibbles_unchecked([1, 5]));
+        assert!(
+            encode_history_key::<AccountTrieDomain>(&long, 0)
+                < encode_history_key::<AccountTrieDomain>(&short, 0)
+        );
+        assert!(
+            encode_history_key::<AccountTrieDomain>(&short, 1)
+                < encode_history_key::<AccountTrieDomain>(&short, 2)
         );
 
-        let mut cursor = storage.account_hashed_cursor(3).unwrap();
+        let address = B256::repeat_byte(0x44);
+        let short = StorageTrieKey::new(address, short);
+        let long = StorageTrieKey::new(address, long);
+        assert!(
+            encode_history_key::<StorageTrieDomain>(&long, 0)
+                < encode_history_key::<StorageTrieDomain>(&short, 0)
+        );
+        assert!(
+            encode_history_key::<StorageTrieDomain>(&short, 1)
+                < encode_history_key::<StorageTrieDomain>(&short, 2)
+        );
+    }
+
+    #[test]
+    fn opens_empty_v2_database() {
+        let dir = TempDir::new().unwrap();
+        let storage = RocksdbProofsStorage::new(dir.path()).unwrap();
+        assert!(storage.get_earliest_block_number().unwrap().is_none());
+        let cf = storage.cf(CF_METADATA).unwrap();
+        let version =
+            storage.db.get_cf(&cf, V2_SCHEMA_VERSION_KEY).map_err(rocksdb_error).unwrap().unwrap();
+        assert_eq!(version.as_slice(), V2_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn opening_legacy_v1_database_requires_rebuild() {
+        let dir = TempDir::new().unwrap();
+        let mut options = Options::default();
+        options.create_if_missing(true);
+        options.create_missing_column_families(true);
+        let descriptors = LEGACY_COLUMN_FAMILIES
+            .iter()
+            .map(|name| ColumnFamilyDescriptor::new(*name, Options::default()));
+        let db = RocksDb::open_cf_descriptors(&options, dir.path(), descriptors).unwrap();
+        drop(db);
+
+        let error = RocksdbProofsStorage::new(dir.path()).unwrap_err();
+        assert!(error.to_string().contains("legacy RocksDB proof-history database"), "{error}");
+    }
+
+    #[test]
+    fn opening_mixed_legacy_and_v2_database_requires_rebuild() {
+        let dir = TempDir::new().unwrap();
+        let mut options = Options::default();
+        options.create_if_missing(true);
+        options.create_missing_column_families(true);
+        let descriptors = [CF_METADATA, "ProofWindow"]
+            .into_iter()
+            .map(|name| ColumnFamilyDescriptor::new(name, Options::default()));
+        let db = RocksDb::open_cf_descriptors(&options, dir.path(), descriptors).unwrap();
+        drop(db);
+
+        let error = RocksdbProofsStorage::new(dir.path()).unwrap_err();
+        assert!(error.to_string().contains("legacy RocksDB proof-history database"), "{error}");
+    }
+
+    #[test]
+    fn opening_database_with_unknown_v2_schema_version_fails() {
+        let dir = TempDir::new().unwrap();
+        let mut options = Options::default();
+        options.create_if_missing(true);
+        options.create_missing_column_families(true);
+        let descriptors = RocksdbProofsStorage::column_families()
+            .into_iter()
+            .map(|name| ColumnFamilyDescriptor::new(name, Options::default()));
+        let db = RocksDb::open_cf_descriptors(&options, dir.path(), descriptors).unwrap();
+        let cf = db.cf_handle(CF_METADATA).unwrap();
+        db.put_cf(&cf, V2_SCHEMA_VERSION_KEY, b"unknown-version").unwrap();
+        drop(cf);
+        drop(db);
+
+        let error = RocksdbProofsStorage::new(dir.path()).unwrap_err();
+        assert!(error.to_string().contains("unsupported RocksDB proofs schema version"), "{error}");
+    }
+
+    #[test]
+    fn incomplete_proof_window_metadata_is_rejected() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number(42, B256::repeat_byte(0x42)).unwrap();
+
         assert_eq!(
-            cursor.seek(address).unwrap(),
-            Some((address, Account { nonce: 3, ..Default::default() }))
+            storage.get_earliest_block_number().unwrap(),
+            Some((42, B256::repeat_byte(0x42)))
+        );
+        assert_eq!(storage.get_latest_block_number().unwrap(), None);
+        let error = storage.get_proof_window().unwrap_err();
+        assert!(error.to_string().contains("incomplete RocksDB proof window metadata"), "{error}");
+    }
+
+    #[test]
+    fn v2_append_writes_current_state_and_history_before_rows() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number(0, B256::ZERO).unwrap();
+
+        let account_path = Nibbles::from_nibbles_unchecked([1, 2, 3]);
+        let storage_path = Nibbles::from_nibbles_unchecked([4, 5, 6]);
+        let hashed_address = B256::repeat_byte(0xAA);
+        let hashed_storage_key = B256::repeat_byte(0xBB);
+        let account_key = StoredNibbles(account_path);
+        let storage_key = StorageTrieKey::new(hashed_address, StoredNibbles(storage_path));
+        let hashed_storage = HashedStorageKey::new(hashed_address, hashed_storage_key);
+
+        let block_1 = block(B256::ZERO, 1, 1);
+        let block_2 = block(block_1.block.hash, 2, 2);
+        let account_1 = account(1);
+        let account_2 = account(2);
+        let account_node_1 = branch(0x11);
+        let account_node_2 = branch(0x22);
+        let storage_node_1 = branch(0x33);
+        let storage_node_2 = branch(0x44);
+
+        storage
+            .store_trie_updates(
+                block_1,
+                full_diff(
+                    account_path,
+                    Some(account_node_1.clone()),
+                    hashed_address,
+                    storage_path,
+                    Some(storage_node_1.clone()),
+                    Some(account_1),
+                    hashed_storage_key,
+                    U256::from(111),
+                ),
+            )
+            .unwrap();
+        storage
+            .store_trie_updates(
+                block_2,
+                full_diff(
+                    account_path,
+                    Some(account_node_2.clone()),
+                    hashed_address,
+                    storage_path,
+                    Some(storage_node_2.clone()),
+                    Some(account_2),
+                    hashed_storage_key,
+                    U256::from(222),
+                ),
+            )
+            .unwrap();
+
+        assert_eq!(
+            storage.read_current::<AccountTrieDomain>(&account_key).unwrap(),
+            Some(account_node_2.clone())
+        );
+        assert_eq!(
+            storage.read_current::<StorageTrieDomain>(&storage_key).unwrap(),
+            Some(storage_node_2.clone())
+        );
+        assert_eq!(
+            storage.read_current::<HashedAccountDomain>(&hashed_address).unwrap(),
+            Some(account_2)
+        );
+        assert_eq!(
+            storage.read_current::<HashedStorageDomain>(&hashed_storage).unwrap(),
+            Some(StorageValue(U256::from(222)))
+        );
+
+        let snapshot = storage.db.snapshot();
+        assert_eq!(
+            storage.read_history_exact::<AccountTrieDomain>(&snapshot, &account_key, 1).unwrap(),
+            Some(None)
+        );
+        assert_eq!(
+            storage.read_history_exact::<AccountTrieDomain>(&snapshot, &account_key, 2).unwrap(),
+            Some(Some(account_node_1.clone()))
+        );
+        assert_eq!(
+            storage.read_history_exact::<StorageTrieDomain>(&snapshot, &storage_key, 2).unwrap(),
+            Some(Some(storage_node_1.clone()))
+        );
+        assert_eq!(
+            storage
+                .read_history_exact::<HashedAccountDomain>(&snapshot, &hashed_address, 2)
+                .unwrap(),
+            Some(Some(account_1))
+        );
+        assert_eq!(
+            storage
+                .read_history_exact::<HashedStorageDomain>(&snapshot, &hashed_storage, 2)
+                .unwrap(),
+            Some(Some(StorageValue(U256::from(111))))
+        );
+
+        assert_eq!(
+            storage.value_at::<HashedAccountDomain>(&snapshot, &hashed_address, 1).unwrap(),
+            Some(account_1)
+        );
+        assert_eq!(
+            storage.value_at::<HashedStorageDomain>(&snapshot, &hashed_storage, 1).unwrap(),
+            Some(StorageValue(U256::from(111)))
+        );
+    }
+
+    #[test]
+    fn initial_state_writes_current_state_without_history_or_changesets() {
+        let (storage, _dir) = temp_storage();
+        let anchor = BlockNumHash::new(10, B256::repeat_byte(0x10));
+        let account_path = Nibbles::from_nibbles_unchecked([1, 0]);
+        let storage_path = Nibbles::from_nibbles_unchecked([2, 0]);
+        let hashed_address = B256::repeat_byte(0xA1);
+        let hashed_storage_key = B256::repeat_byte(0xB1);
+        let account_node = branch(0x10);
+        let storage_node = branch(0x20);
+        let account = account(7);
+
+        storage.set_initial_state_anchor(anchor).unwrap();
+        storage.store_account_branches(vec![(account_path, Some(account_node.clone()))]).unwrap();
+        storage
+            .store_storage_branches(
+                hashed_address,
+                vec![(storage_path, Some(storage_node.clone()))],
+            )
+            .unwrap();
+        storage.store_hashed_accounts(vec![(hashed_address, Some(account))]).unwrap();
+        storage
+            .store_hashed_storages(hashed_address, vec![(hashed_storage_key, U256::from(77))])
+            .unwrap();
+        storage.commit_initial_state().unwrap();
+
+        let account_key = StoredNibbles(account_path);
+        let storage_key = StorageTrieKey::new(hashed_address, StoredNibbles(storage_path));
+        let hashed_storage = HashedStorageKey::new(hashed_address, hashed_storage_key);
+        let snapshot = storage.db.snapshot();
+
+        assert_eq!(storage.get_earliest_block_number().unwrap(), Some((10, anchor.hash)));
+        assert_eq!(storage.get_latest_block_number().unwrap(), Some((10, anchor.hash)));
+        assert_eq!(
+            storage.read_current::<AccountTrieDomain>(&account_key).unwrap(),
+            Some(account_node)
+        );
+        assert_eq!(
+            storage.read_current::<StorageTrieDomain>(&storage_key).unwrap(),
+            Some(storage_node)
+        );
+        assert_eq!(
+            storage.read_current::<HashedAccountDomain>(&hashed_address).unwrap(),
+            Some(account)
+        );
+        assert_eq!(
+            storage.read_current::<HashedStorageDomain>(&hashed_storage).unwrap(),
+            Some(StorageValue(U256::from(77)))
+        );
+        assert_eq!(
+            storage
+                .read_history_exact::<HashedAccountDomain>(&snapshot, &hashed_address, 10)
+                .unwrap(),
+            None
+        );
+        assert!(storage.get_change_set_from_snapshot(&snapshot, 10).unwrap().is_none());
+    }
+
+    #[test]
+    fn prune_deletes_exact_history_and_changeset_rows_without_rewriting_current_state() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number(0, B256::ZERO).unwrap();
+
+        let hashed_address = B256::repeat_byte(0xC1);
+        let block_1 = block(B256::ZERO, 1, 1);
+        let block_2 = block(block_1.block.hash, 2, 2);
+        let block_3 = block(block_2.block.hash, 3, 3);
+        let account_1 = account(1);
+        let account_2 = account(2);
+        let account_3 = account(3);
+
+        storage.store_trie_updates(block_1, account_diff(hashed_address, Some(account_1))).unwrap();
+        storage.store_trie_updates(block_2, account_diff(hashed_address, Some(account_2))).unwrap();
+        storage.store_trie_updates(block_3, account_diff(hashed_address, Some(account_3))).unwrap();
+
+        let snapshot = storage.db.snapshot();
+        assert!(storage.get_change_set_from_snapshot(&snapshot, 1).unwrap().is_some());
+        assert_eq!(
+            storage
+                .read_history_exact::<HashedAccountDomain>(&snapshot, &hashed_address, 2)
+                .unwrap(),
+            Some(Some(account_1))
+        );
+        assert_eq!(
+            storage
+                .read_history_exact::<HashedAccountDomain>(&snapshot, &hashed_address, 3)
+                .unwrap(),
+            Some(Some(account_2))
+        );
+
+        let counts = storage.prune_earliest_state(block_2).unwrap();
+        assert_eq!(counts.hashed_accounts_written_total, 1);
+
+        let snapshot = storage.db.snapshot();
+        assert!(storage.get_change_set_from_snapshot(&snapshot, 1).unwrap().is_none());
+        assert!(storage.get_change_set_from_snapshot(&snapshot, 2).unwrap().is_none());
+        assert!(storage.get_change_set_from_snapshot(&snapshot, 3).unwrap().is_some());
+        assert_eq!(
+            storage
+                .read_history_exact::<HashedAccountDomain>(&snapshot, &hashed_address, 1)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            storage
+                .read_history_exact::<HashedAccountDomain>(&snapshot, &hashed_address, 2)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            storage
+                .read_history_exact::<HashedAccountDomain>(&snapshot, &hashed_address, 3)
+                .unwrap(),
+            Some(Some(account_2))
+        );
+        assert_eq!(
+            storage.read_current::<HashedAccountDomain>(&hashed_address).unwrap(),
+            Some(account_3)
+        );
+        assert_eq!(
+            storage.value_at::<HashedAccountDomain>(&snapshot, &hashed_address, 2).unwrap(),
+            Some(account_2)
+        );
+    }
+
+    #[test]
+    fn prune_boundary_keeps_adjacent_keys_and_later_history_rows_in_every_domain() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number(0, B256::ZERO).unwrap();
+
+        let address_1 = B256::repeat_byte(0xA1);
+        let address_2 = B256::repeat_byte(0xA2);
+        let slot_1 = B256::repeat_byte(0xB1);
+        let slot_2 = B256::repeat_byte(0xB2);
+        let account_path_1 = Nibbles::from_nibbles_unchecked([1]);
+        let account_path_2 = Nibbles::from_nibbles_unchecked([1, 0]);
+        let storage_path_1 = Nibbles::from_nibbles_unchecked([2]);
+        let storage_path_2 = Nibbles::from_nibbles_unchecked([2, 0]);
+
+        let block_1 = block(B256::ZERO, 1, 1);
+        let block_2 = block(block_1.block.hash, 2, 2);
+        let block_3 = block(block_2.block.hash, 3, 3);
+        let account_node_1 = branch(0x11);
+        let account_node_2 = branch(0x12);
+        let storage_node_1 = branch(0x21);
+        let storage_node_2 = branch(0x22);
+        let account_1 = account(1);
+        let account_2 = account(2);
+
+        storage
+            .store_trie_updates(
+                block_1,
+                full_diff(
+                    account_path_1,
+                    Some(account_node_1.clone()),
+                    address_1,
+                    storage_path_1,
+                    Some(storage_node_1.clone()),
+                    Some(account_1),
+                    slot_1,
+                    U256::from(11),
+                ),
+            )
+            .unwrap();
+        storage
+            .store_trie_updates(
+                block_2,
+                full_diff(
+                    account_path_1,
+                    Some(branch(0x13)),
+                    address_1,
+                    storage_path_1,
+                    Some(branch(0x23)),
+                    Some(account(3)),
+                    slot_1,
+                    U256::from(33),
+                ),
+            )
+            .unwrap();
+        storage
+            .store_trie_updates(
+                block_3,
+                full_diff(
+                    account_path_2,
+                    Some(account_node_2.clone()),
+                    address_2,
+                    storage_path_2,
+                    Some(storage_node_2.clone()),
+                    Some(account_2),
+                    slot_2,
+                    U256::from(22),
+                ),
+            )
+            .unwrap();
+
+        storage.prune_earliest_state(block_2).unwrap();
+
+        let snapshot = storage.db.snapshot();
+        let account_key_1 = StoredNibbles(account_path_1);
+        let account_key_2 = StoredNibbles(account_path_2);
+        let storage_key_1 = StorageTrieKey::new(address_1, StoredNibbles(storage_path_1));
+        let storage_key_2 = StorageTrieKey::new(address_2, StoredNibbles(storage_path_2));
+        let hashed_storage_1 = HashedStorageKey::new(address_1, slot_1);
+        let hashed_storage_2 = HashedStorageKey::new(address_2, slot_2);
+
+        assert_eq!(
+            storage.read_history_exact::<AccountTrieDomain>(&snapshot, &account_key_1, 2).unwrap(),
+            None
+        );
+        assert_eq!(
+            storage.read_history_exact::<StorageTrieDomain>(&snapshot, &storage_key_1, 2).unwrap(),
+            None
+        );
+        assert_eq!(
+            storage.read_history_exact::<HashedAccountDomain>(&snapshot, &address_1, 2).unwrap(),
+            None
+        );
+        assert_eq!(
+            storage
+                .read_history_exact::<HashedStorageDomain>(&snapshot, &hashed_storage_1, 2)
+                .unwrap(),
+            None
+        );
+
+        assert_eq!(
+            storage.read_history_exact::<AccountTrieDomain>(&snapshot, &account_key_2, 3).unwrap(),
+            Some(None)
+        );
+        assert_eq!(
+            storage.read_history_exact::<StorageTrieDomain>(&snapshot, &storage_key_2, 3).unwrap(),
+            Some(None)
+        );
+        assert_eq!(
+            storage.read_history_exact::<HashedAccountDomain>(&snapshot, &address_2, 3).unwrap(),
+            Some(None)
+        );
+        assert_eq!(
+            storage
+                .read_history_exact::<HashedStorageDomain>(&snapshot, &hashed_storage_2, 3)
+                .unwrap(),
+            Some(None)
+        );
+    }
+
+    #[test]
+    fn unwind_restores_current_state_and_removes_unwound_history_rows() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number(0, B256::ZERO).unwrap();
+
+        let hashed_address = B256::repeat_byte(0xD1);
+        let block_1 = block(B256::ZERO, 1, 1);
+        let block_2 = block(block_1.block.hash, 2, 2);
+        let block_3 = block(block_2.block.hash, 3, 3);
+        let account_1 = account(1);
+        let account_2 = account(2);
+        let account_3 = account(3);
+
+        storage.store_trie_updates(block_1, account_diff(hashed_address, Some(account_1))).unwrap();
+        storage.store_trie_updates(block_2, account_diff(hashed_address, Some(account_2))).unwrap();
+        storage.store_trie_updates(block_3, account_diff(hashed_address, Some(account_3))).unwrap();
+
+        storage.unwind_history(block_3).unwrap();
+
+        let snapshot = storage.db.snapshot();
+        assert_eq!(storage.get_latest_block_number().unwrap(), Some((2, block_2.block.hash)));
+        assert_eq!(
+            storage.read_current::<HashedAccountDomain>(&hashed_address).unwrap(),
+            Some(account_2)
+        );
+        assert!(storage.get_change_set_from_snapshot(&snapshot, 3).unwrap().is_none());
+        assert!(storage.get_change_set_from_snapshot(&snapshot, 2).unwrap().is_some());
+        assert_eq!(
+            storage
+                .read_history_exact::<HashedAccountDomain>(&snapshot, &hashed_address, 3)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            storage
+                .read_history_exact::<HashedAccountDomain>(&snapshot, &hashed_address, 2)
+                .unwrap(),
+            Some(Some(account_1))
+        );
+    }
+
+    #[test]
+    fn replace_updates_records_history_for_in_batch_storage_wipe() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number(0, B256::ZERO).unwrap();
+
+        let hashed_address = B256::repeat_byte(0xE1);
+        let hashed_storage_key = B256::repeat_byte(0xE2);
+        let storage_key = HashedStorageKey::new(hashed_address, hashed_storage_key);
+        let block_1 = block(B256::ZERO, 1, 1);
+        let old_block_2 = block(block_1.block.hash, 2, 2);
+        let replacement_block_2 = block(block_1.block.hash, 2, 0x12);
+        let replacement_block_3 = block(replacement_block_2.block.hash, 3, 0x13);
+
+        storage
+            .store_trie_updates(block_1, account_diff(hashed_address, Some(account(1))))
+            .unwrap();
+        storage
+            .store_trie_updates(old_block_2, account_diff(hashed_address, Some(account(2))))
+            .unwrap();
+
+        storage
+            .replace_updates(
+                block_1.block,
+                vec![
+                    (
+                        replacement_block_2,
+                        storage_diff(hashed_address, hashed_storage_key, U256::from(222)),
+                    ),
+                    (replacement_block_3, wiped_storage_diff(hashed_address)),
+                ],
+            )
+            .unwrap();
+
+        let snapshot = storage.db.snapshot();
+        assert_eq!(
+            storage.get_latest_block_number().unwrap(),
+            Some((3, replacement_block_3.block.hash))
+        );
+        assert_eq!(storage.read_current::<HashedStorageDomain>(&storage_key).unwrap(), None);
+        assert_eq!(
+            storage.read_history_exact::<HashedStorageDomain>(&snapshot, &storage_key, 2).unwrap(),
+            Some(None)
+        );
+        assert_eq!(
+            storage.read_history_exact::<HashedStorageDomain>(&snapshot, &storage_key, 3).unwrap(),
+            Some(Some(StorageValue(U256::from(222))))
+        );
+        assert_eq!(
+            storage.value_at::<HashedStorageDomain>(&snapshot, &storage_key, 2).unwrap(),
+            Some(StorageValue(U256::from(222)))
+        );
+        assert_eq!(
+            storage.value_at::<HashedStorageDomain>(&snapshot, &storage_key, 3).unwrap(),
+            None
         );
     }
 }

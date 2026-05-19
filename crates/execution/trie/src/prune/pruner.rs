@@ -49,20 +49,13 @@ where
     H: BlockHashReader,
 {
     fn run_inner(&self) -> BaseProofStoragePrunerResult {
-        let latest_block_opt = self.provider.get_latest_block_number()?;
-        if latest_block_opt.is_none() {
-            trace!(target: "trie::pruner", "No latest blocks in the proof storage");
+        let Some(window) = self.provider.get_proof_window()? else {
+            trace!(target: "trie::pruner", "No blocks in the proof storage");
             return Ok(PrunerOutput::default());
-        }
+        };
 
-        let earliest_block_opt = self.provider.get_earliest_block_number()?;
-        if earliest_block_opt.is_none() {
-            trace!(target: "trie::pruner", "No earliest blocks in the proof storage");
-            return Ok(PrunerOutput::default());
-        }
-
-        let latest_block = latest_block_opt.unwrap().0;
-        let earliest_block = earliest_block_opt.unwrap().0;
+        let latest_block = window.latest.number;
+        let earliest_block = window.earliest.number;
 
         let target_earliest_block = self.target_earliest_block(latest_block);
         info!(
@@ -590,7 +583,7 @@ mod tests {
         assert_eq!(out, PrunerOutput::default(), "should early-return default output");
     }
 
-    // The earliest block is None, but the latest block exists -> early return default.
+    // The earliest block is None, but the latest block exists -> incomplete metadata is rejected.
     #[tokio::test]
     async fn run_inner_earliest_none_real_db() {
         let dir = TempDir::new().unwrap();
@@ -609,8 +602,9 @@ mod tests {
 
         let block_hash_reader = MockBlockHashReader::new();
         let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 1, 1000);
-        let out = pruner.run_inner().expect("ok");
-        assert_eq!(out, PrunerOutput::default(), "should early-return default output");
+        let error = pruner.run_inner().unwrap_err();
+        let error = format!("{error:?}");
+        assert!(error.contains("incomplete proof window metadata"), "{error}");
     }
 
     // interval < min_block_interval -> "Nothing to prune" path; default output.
