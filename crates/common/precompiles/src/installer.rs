@@ -59,9 +59,8 @@ mod tests {
     use revm::precompile::{bn254, secp256r1};
     use rstest::rstest;
 
-    use crate::token::{FACTORY_ADDRESS, compute_default_address};
-
     use super::*;
+    use crate::token::{FACTORY_ADDRESS, compute_default_address};
 
     #[test]
     fn installer_preserves_base_precompile_set() {
