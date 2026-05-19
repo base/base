@@ -12,7 +12,8 @@ use reth_trie::{hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFacto
 
 use crate::{
     BaseProofsHashedAccountCursor, BaseProofsHashedStorageCursor, BaseProofsStorage,
-    BaseProofsStore, BaseProofsTrieCursor, api::BaseProofsBatchSession,
+    BaseProofsStore, BaseProofsTrieCursor,
+    api::BaseProofsBatchSession,
     cursor::{
         BaseProofsHashedAccountCursor as RawHashedAccountCursor,
         BaseProofsHashedStorageCursor as RawHashedStorageCursor,

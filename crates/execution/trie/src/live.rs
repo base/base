@@ -309,8 +309,7 @@ where
                         last_block_number = block_with_parent.block.number;
                     }
                     BatchBlock::Execute(block) => {
-                        let counts =
-                            self.execute_one_in_session(session, &block, earliest)?;
+                        let counts = self.execute_one_in_session(session, &block, earliest)?;
                         total_writes += counts;
                         block_count += 1;
                         last_block_number = block.number();
@@ -350,10 +349,8 @@ where
     where
         S: BaseProofsBatchSession,
     {
-        let latest_in_session = session
-            .get_latest_block_number()?
-            .ok_or(BaseProofsStorageError::NoBlocksFound)?
-            .0;
+        let latest_in_session =
+            session.get_latest_block_number()?.ok_or(BaseProofsStorageError::NoBlocksFound)?.0;
 
         let parent_block_number = block.number() - 1;
         if parent_block_number < earliest {

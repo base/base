@@ -99,11 +99,7 @@ impl BaseProofsBatchSession for MdbxBatchSession<'_> {
         &self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'_>> {
-        Ok(MdbxTrieCursor::new(
-            self.dup_cursor::<AccountTrieHistory>()?,
-            max_block_number,
-            None,
-        ))
+        Ok(MdbxTrieCursor::new(self.dup_cursor::<AccountTrieHistory>()?, max_block_number, None))
     }
 
     fn storage_hashed_cursor(
