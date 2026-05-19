@@ -2,10 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::{
-    IB20,
-    common::{CAPABILITY_PAUSABLE, Token, TokenAccounting},
-};
+use crate::{CAPABILITY_PAUSABLE, IB20, Token, TokenAccounting};
 
 /// Pause and unpause operations.
 ///

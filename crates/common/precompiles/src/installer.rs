@@ -37,8 +37,8 @@ impl<S: BasePrecompileSpec> BasePrecompileInstaller<S> {
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
             precompiles.set_precompile_lookup(b20_lookup);
             precompiles.extend_precompiles(core::iter::once((
-                crate::token::POLICY_REGISTRY_ADDRESS,
-                crate::token::PolicyRegistryEvm::precompile(),
+                crate::POLICY_REGISTRY_ADDRESS,
+                crate::PolicyRegistryEvm::precompile(),
             )));
 
             precompiles.extend_precompiles(core::iter::once((
@@ -52,13 +52,11 @@ impl<S: BasePrecompileSpec> BasePrecompileInstaller<S> {
 // Function pointer (not a closure) satisfies the HRTB `for<'a> Fn(&'a Address) -> Option<DynPrecompile>`
 // required by `set_precompile_lookup`.
 fn b20_lookup(address: &Address) -> Option<DynPrecompile> {
-    if *address == crate::token::TokenFactory::ADDRESS {
-        Some(crate::token::TokenFactoryPrecompile::precompile())
+    if *address == crate::TokenFactory::ADDRESS {
+        Some(crate::TokenFactoryPrecompile::precompile())
     } else {
-        crate::token::TokenVariant::from_address(*address).map(|variant| match variant {
-            crate::token::TokenVariant::B20 => {
-                crate::token::B20TokenPrecompile::create_precompile(*address)
-            }
+        crate::TokenVariant::from_address(*address).map(|variant| match variant {
+            crate::TokenVariant::B20 => crate::B20TokenPrecompile::create_precompile(*address),
         })
     }
 }
@@ -76,7 +74,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::token::{TokenFactory, TokenVariant};
+    use crate::{TokenFactory, TokenVariant};
 
     #[test]
     fn installer_preserves_base_precompile_set() {

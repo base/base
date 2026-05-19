@@ -4,10 +4,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::{
-    IB20,
-    common::{CAPABILITY_CAP_MUTABLE, Token, TokenAccounting},
-};
+use crate::{CAPABILITY_CAP_MUTABLE, IB20, Token, TokenAccounting};
 
 /// Mutable configuration operations: supply cap, metadata, and contract URI updates.
 ///

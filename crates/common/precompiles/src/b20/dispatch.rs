@@ -3,14 +3,13 @@ use alloy_sol_types::{SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::B20Token;
-use crate::token::{
-    Policy,
+use super::{
+    B20Token,
     abi::{IB20, IB20::IB20Calls as C},
-    common::{
-        Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, TokenAccounting,
-        Transferable,
-    },
+};
+use crate::{
+    Burnable, Configurable, Mintable, Pausable, Permittable, Policy, Redeemable, TokenAccounting,
+    Transferable,
 };
 
 impl<S: TokenAccounting, P: Policy> B20Token<S, P> {

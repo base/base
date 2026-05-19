@@ -3,7 +3,7 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use super::Burnable;
-use crate::token::{IB20, common::TokenAccounting};
+use crate::{IB20, TokenAccounting};
 
 /// User-initiated redeem (burn with off-chain settlement implication) and related admin.
 ///

@@ -2,12 +2,9 @@
 
 use alloy_primitives::Address;
 
-use crate::token::{
-    Policy,
-    common::{
-        Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, Token,
-        TokenAccounting, Transferable,
-    },
+use crate::{
+    Burnable, Configurable, Mintable, Pausable, Permittable, Policy, Redeemable, Token,
+    TokenAccounting, Transferable,
 };
 
 /// EVM precompile for the B-20 token variant.
@@ -15,8 +12,9 @@ use crate::token::{
 /// The generic `S` lets callers swap in an in-memory [`TokenAccounting`]
 /// implementation for unit tests without touching real EVM storage. The
 /// generic `P` provides the [`Policy`] implementation consulted on
-/// every transfer and mint. In production, [`B20Token::with_storage_and_policy`]
-/// wires in [`B20TokenStorage`] and [`Policy`].
+/// every transfer and mint. In production,
+/// [`B20Token::with_storage_and_policy`] wires in [`crate::B20TokenStorage`]
+/// and [`Policy`].
 #[derive(Debug, Clone)]
 pub struct B20Token<S: TokenAccounting, P: Policy> {
     pub(super) accounting: S,

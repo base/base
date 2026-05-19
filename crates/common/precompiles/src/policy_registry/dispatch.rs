@@ -3,8 +3,10 @@ use alloy_sol_types::{SolCall, SolInterface};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::storage::PolicyRegistryStorage;
-use crate::token::abi::{IPolicyRegistry, IPolicyRegistry::IPolicyRegistryCalls as C};
+use super::{
+    abi::{IPolicyRegistry, IPolicyRegistry::IPolicyRegistryCalls as C},
+    storage::PolicyRegistryStorage,
+};
 
 impl PolicyRegistryStorage<'_> {
     /// ABI-dispatches `calldata` to the appropriate `IPolicyRegistry` handler.
