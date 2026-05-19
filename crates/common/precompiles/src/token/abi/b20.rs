@@ -20,6 +20,7 @@ sol! {
         error InvalidSigner(address signer, address owner);
         error FeatureDisabled(uint256 capability);
         error MinimumRedeemableNotMet(uint256 amount, uint256 minimum);
+        error Uninitialized();
 
         // Events
         event Transfer(address indexed from, address indexed to, uint256 amount);

@@ -11,6 +11,12 @@ use base_precompile_storage::Result;
 /// Capability trait default implementations only depend on this interface, never on EVM storage
 /// directly.
 pub trait TokenAccounting {
+    /// Returns the on-chain address backing this token's storage.
+    fn token_address(&self) -> Address;
+
+    /// Returns whether marker bytecode is deployed at this token's address.
+    fn is_initialized(&self) -> Result<bool>;
+
     // --- Balances ---
 
     /// Returns the token balance of `account`.

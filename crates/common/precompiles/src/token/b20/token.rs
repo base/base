@@ -3,7 +3,7 @@
 use alloy_primitives::Address;
 use base_precompile_storage::StorageCtx;
 
-use super::storage::{B20_TOKEN_ADDRESS, B20TokenStorage};
+use super::storage::B20TokenStorage;
 use crate::token::common::{
     Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, Token, TokenAccounting,
     Transferable,
@@ -13,7 +13,8 @@ use crate::token::common::{
 ///
 /// The generic `S` lets callers swap in an in-memory [`TokenAccounting`]
 /// implementation for unit tests without touching real EVM storage. In
-/// production, [`B20Token::new`] wires in [`B20TokenStorage`].
+/// production, the storage adapter is bound to the address selected by the
+/// dynamic precompile lookup.
 #[derive(Debug, Clone)]
 pub struct B20Token<S: TokenAccounting> {
     pub(super) accounting: S,
@@ -36,7 +37,7 @@ impl<S: TokenAccounting> B20Token<S> {
 }
 
 // ---------------------------------------------------------------------------
-// Token: wire the accounting field and fix the precompile address
+// Token: wire the accounting field and dynamic token address
 // ---------------------------------------------------------------------------
 
 impl<S: TokenAccounting> Token for B20Token<S> {
@@ -51,7 +52,7 @@ impl<S: TokenAccounting> Token for B20Token<S> {
     }
 
     fn token_address(&self) -> Address {
-        B20_TOKEN_ADDRESS
+        self.accounting.token_address()
     }
 }
 

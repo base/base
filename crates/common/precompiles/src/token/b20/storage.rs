@@ -2,7 +2,9 @@ use alloc::string::String;
 
 use alloy_primitives::{Address, LogData, U256, address};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result, StorageCtx};
+use base_precompile_storage::{
+    BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
+};
 
 use crate::token::{common::TokenAccounting, decimals_of};
 
@@ -34,6 +36,14 @@ impl<'a> B20TokenStorage<'a> {
 }
 
 impl TokenAccounting for B20TokenStorage<'_> {
+    fn token_address(&self) -> Address {
+        ContractStorage::address(self)
+    }
+
+    fn is_initialized(&self) -> Result<bool> {
+        ContractStorage::is_initialized(self)
+    }
+
     fn balance_of(&self, account: Address) -> Result<U256> {
         self.balances.at(&account).read()
     }

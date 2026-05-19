@@ -196,12 +196,13 @@ impl<'a> TokenFactory<'a> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_sol_types::SolCall;
+    use alloy_sol_types::{SolCall, SolError};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use super::*;
     use crate::token::{
-        B20Token, B20TokenStorage, IB20, Mintable, Token, TokenAccounting, Transferable,
+        B20Token, B20TokenStorage, IB20, Mintable, Permittable, Token, TokenAccounting,
+        Transferable,
     };
 
     fn token_params(
@@ -451,6 +452,58 @@ mod tests {
             assert_eq!(token.accounting().balance_of(alice).unwrap(), U256::from(900u64));
             assert_eq!(token.accounting().balance_of(bob).unwrap(), U256::from(300u64));
             assert_eq!(token.accounting().total_supply().unwrap(), U256::from(1_200u64));
+        });
+    }
+
+    #[test]
+    fn test_token_identity_uses_dynamic_address() {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = TokenFactory::new(ctx);
+            let first = factory
+                .create_token(Address::repeat_byte(0xCA), default_call(B256::repeat_byte(0x07)))
+                .unwrap();
+            let second = factory
+                .create_token(Address::repeat_byte(0xCA), default_call(B256::repeat_byte(0x08)))
+                .unwrap();
+
+            assert_ne!(first, second);
+
+            let first_token = token_at(first, ctx);
+            let second_token = token_at(second, ctx);
+
+            assert_eq!(first_token.token_address(), first);
+            assert_eq!(second_token.token_address(), second);
+
+            let (_, _, _, _, first_domain_address, _, _) =
+                first_token.eip712_domain(ctx.chain_id()).unwrap();
+            let (_, _, _, _, second_domain_address, _, _) =
+                second_token.eip712_domain(ctx.chain_id()).unwrap();
+
+            assert_eq!(first_domain_address, first);
+            assert_eq!(second_domain_address, second);
+            assert_ne!(
+                first_token.domain_separator(ctx.chain_id()).unwrap(),
+                second_token.domain_separator(ctx.chain_id()).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn test_uninitialized_prefix_token_reverts() {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let caller = Address::repeat_byte(0xCA);
+            let (token_addr, lower_bytes) =
+                compute_b20_address(caller, VARIANT_DEFAULT, 18, B256::repeat_byte(0x09));
+            assert!(lower_bytes >= RESERVED_SIZE);
+            assert!(!ctx.has_bytecode(token_addr).unwrap());
+
+            let mut token = token_at(token_addr, ctx);
+            let result = token.dispatch(ctx, &IB20::nameCall {}.abi_encode()).unwrap();
+
+            assert!(result.reverted);
+            assert_eq!(result.bytes.as_ref(), IB20::Uninitialized {}.abi_encode());
         });
     }
 }
