@@ -12,7 +12,7 @@ use reth_db::{
 };
 
 use crate::{
-    BaseProofsStorageResult, BlockStateDiff,
+    BaseProofsStorageError, BaseProofsStorageResult, BlockStateDiff,
     api::{BaseProofsBatchSession, WriteCounts},
     db::{
         AccountTrieHistory, HashedAccountHistory, HashedStorageHistory, MdbxAccountCursor,
@@ -45,12 +45,12 @@ impl<'tx> MdbxBatchSession<'tx> {
         Ok(())
     }
 
-    const fn tx_ref(&self) -> &<DatabaseEnv as Database>::TXMut {
-        self.tx.as_ref().expect("batch session used after commit (bug)")
+    fn tx_ref(&self) -> BaseProofsStorageResult<&<DatabaseEnv as Database>::TXMut> {
+        self.tx.as_ref().ok_or(BaseProofsStorageError::BatchSessionClosed)
     }
 
     fn dup_cursor<T: Table + DupSort>(&self) -> BaseProofsStorageResult<DupRw<'_, T>> {
-        Ok(self.tx_ref().cursor_dup_read::<T>()?)
+        Ok(self.tx_ref()?.cursor_dup_read::<T>()?)
     }
 }
 
@@ -73,11 +73,11 @@ impl BaseProofsBatchSession for MdbxBatchSession<'_> {
         Self: 'a;
 
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
-        self.storage.inner_get_earliest_block_number_hash(self.tx_ref())
+        self.storage.inner_get_earliest_block_number_hash(self.tx_ref()?)
     }
 
     fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
-        self.storage.inner_get_latest_block_number_hash(self.tx_ref())
+        self.storage.inner_get_latest_block_number_hash(self.tx_ref()?)
     }
 
     fn storage_trie_cursor(
@@ -123,7 +123,6 @@ impl BaseProofsBatchSession for MdbxBatchSession<'_> {
         block_ref: BlockWithParent,
         block_state_diff: BlockStateDiff,
     ) -> BaseProofsStorageResult<WriteCounts> {
-        let tx = self.tx.as_ref().expect("batch session used after commit");
-        self.storage.store_trie_updates_append_only(tx, block_ref, block_state_diff)
+        self.storage.store_trie_updates_append_only(self.tx_ref()?, block_ref, block_state_diff)
     }
 }
