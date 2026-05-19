@@ -447,8 +447,8 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let caller = Address::repeat_byte(0xCA);
             let (token_addr, lower_bytes) =
-                compute_b20_address(caller, VARIANT_DEFAULT, 18, B256::repeat_byte(0x09));
-            assert!(lower_bytes >= RESERVED_SIZE);
+                TokenVariant::Default.compute_address(caller, 18, B256::repeat_byte(0x09));
+            assert!(lower_bytes >= TokenFactory::RESERVED_SIZE);
             assert!(!ctx.has_bytecode(token_addr).unwrap());
 
             let mut token = token_at(token_addr, ctx);
