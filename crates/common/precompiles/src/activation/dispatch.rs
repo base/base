@@ -15,7 +15,7 @@ use super::{
 impl ActivationRegistry {
     /// ABI-dispatches activation registry calldata.
     pub fn dispatch(self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        match self.inner(ctx, calldata) {
+        match self.handle_call(ctx, calldata) {
             Ok(output) => Ok(output),
             Err(error) => ctx.error_result(error),
         }
@@ -160,8 +160,8 @@ impl ActivationRegistry {
         }
     }
 
-    /// Runs the decoded activation registry call.
-    pub fn inner(self, ctx: StorageCtx<'_>, calldata: &[u8]) -> Result<PrecompileOutput> {
+    /// Handles the decoded activation registry call.
+    pub fn handle_call(self, ctx: StorageCtx<'_>, calldata: &[u8]) -> Result<PrecompileOutput> {
         let call = Self::decode_call(calldata)?;
 
         match call {

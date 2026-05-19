@@ -1,11 +1,11 @@
 //! Precompile entry point for the activation registry.
 
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
-use alloy_sol_types::SolError as _;
+use alloy_primitives::Bytes;
 use base_precompile_storage::{EvmPrecompileStorageProvider, StorageCtx};
 use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
 
-use super::{ActivationRegistry, IActivationRegistry};
+use super::ActivationRegistry;
 
 impl ActivationRegistry {
     /// Creates the EVM precompile wrapper for the activation registry.
@@ -16,15 +16,13 @@ impl ActivationRegistry {
     /// Executes the activation registry precompile.
     pub fn run(input: PrecompileInput<'_>) -> PrecompileResult {
         if !input.is_direct_call() {
-            // No gas charged: the call type is invalid before any work is performed.
-            return Ok(PrecompileOutput::new_reverted(
-                0,
-                IActivationRegistry::DelegateCallNotAllowed {}.abi_encode().into(),
-            ));
+            // Match the shared `base_precompile!` wrapper: invalid call types revert before
+            // any work is performed, with no gas charged and no diagnostic revert data.
+            return Ok(PrecompileOutput::new_reverted(0, Bytes::new()));
         }
 
-        let data = input.data;
+        let data: Bytes = input.data.to_vec().into();
         let mut storage = EvmPrecompileStorageProvider::new(input);
-        StorageCtx::enter(&mut storage, |ctx| Self::new().dispatch(ctx, data))
+        StorageCtx::enter(&mut storage, |ctx| Self::new().dispatch(ctx, &data))
     }
 }

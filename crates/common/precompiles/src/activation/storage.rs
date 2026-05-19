@@ -10,7 +10,8 @@ pub const ACTIVATION_REGISTRY_ADDRESS: Address =
 
 /// Temporary activation admin address.
 ///
-/// Replace this with the final Base-controlled activation signer before deployment.
+/// Replace this with the final Base-controlled activation signer before deployment. The admin is
+/// protocol configuration: changing it after deployment requires a coordinated binary upgrade.
 pub const ACTIVATION_ADMIN_ADDRESS: Address =
     address!("0xcb00000000000000000000000000000000000000");
 

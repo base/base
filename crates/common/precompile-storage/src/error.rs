@@ -88,6 +88,9 @@ impl BasePrecompileError {
     }
 
     /// ABI-encodes this error and wraps it as a [`PrecompileResult`] (revert or fatal error).
+    ///
+    /// Internal dispatch diagnostics use compact, non-ABI revert data: unknown selectors return the
+    /// raw selector bytes, and decode failures return `selector || utf8_error_string`.
     pub fn into_precompile_result(self, gas: u64) -> PrecompileResult {
         let bytes: Bytes = match self {
             Self::Revert(bytes) => bytes,
