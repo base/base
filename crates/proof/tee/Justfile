@@ -10,6 +10,9 @@ eif_build_commit := "483114f1da3bad913ad1fb7d5c00dadacc6cbae6"
 nitro_cli_repo := "https://github.com/aws/aws-nitro-enclaves-cli.git"
 # v1.3.3
 nitro_cli_commit := "afb7264b477ad241922236dd61f1730154212034"
+# Linuxkit version required by build-enclave-binary-and-ramdisks. Pinned here
+# because ramdisk content varies by linuxkit version, which would change PCR0.
+linuxkit_required_version := "1.8.2"
 
 # Default recipe to display help information
 default:
@@ -65,7 +68,8 @@ build-enclave *args="":
 # Expected environment:
 #   build-host-inline:                rust toolchain + libclang/pkg-config/mold/protobuf-compiler
 #   build-enclave-binary-and-ramdisks (alpine/musl): rust + musl-dev + openssl-libs-static
-#                                                    + clang/mold/protobuf-dev/linuxkit
+#                                                    + clang/mold/protobuf-dev
+#                                                    + linuxkit v1.8.2 (PCR0-affecting; pinned via linuxkit_required_version, asserted in recipe)
 #   build-enclave-eif-and-cli         (debian/glibc): rust + git + pkg-config + libssl-dev
 
 # Build the nitro host binary inline. Outputs the binary and runtime entrypoint
@@ -105,6 +109,15 @@ build-enclave-binary-and-ramdisks BOOTSTRAP_DIR OUT_DIR:
     export OPENSSL_STATIC=1
     export OPENSSL_LIB_DIR=/usr/lib
     export OPENSSL_INCLUDE_DIR=/usr/include
+
+    # Reproducibility: ramdisk content depends on the linuxkit version, so any
+    # mismatch would change PCR0. Refuse to proceed if the wrong version is on PATH.
+    LK_REQUIRED="{{ linuxkit_required_version }}"
+    LK_ACTUAL="$(linuxkit version 2>&1 | awk '/^version:/ {print $2; exit} /^linuxkit version/ {print $3; exit}' | sed 's/^v//')"
+    if [ "$LK_ACTUAL" != "$LK_REQUIRED" ]; then
+        echo "ERROR: linuxkit version mismatch (required v$LK_REQUIRED, found '${LK_ACTUAL:-unknown}'). Install the pinned version for PCR0 reproducibility." >&2
+        exit 1
+    fi
 
     # 1. Compile the static enclave binary.
     cargo build --release --locked --target x86_64-unknown-linux-musl \
