@@ -47,6 +47,8 @@ impl<Block: BlockEnvironment> TryIntoTxEnv<BaseRevm<TxEnv>, Block> for BaseTrans
             base: self.as_ref().clone().try_into_tx_env(evm_env)?,
             enveloped_tx: Some(Bytes::new()),
             deposit: Default::default(),
+            aa_nonce_key: None,
+            eip8130: None,
         })
     }
 }

@@ -14,7 +14,7 @@ use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope, Predeploys};
-use base_common_evm::{BaseHaltReason, L1BlockInfo, ensure_create2_deployer};
+use base_common_evm::{BaseHaltReason, L1BlockInfo, ensure_aa_predeploys, ensure_create2_deployer};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
 use base_execution_rpc::BaseReceiptBuilder as BaseRpcReceiptBuilder;
@@ -177,6 +177,8 @@ where
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
 
         ensure_create2_deployer(spec, self.pending_block.timestamp, self.evm.db_mut())
+            .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
+        ensure_aa_predeploys(spec, self.pending_block.timestamp, self.evm.db_mut())
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
 
         Ok(())

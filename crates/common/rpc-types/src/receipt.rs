@@ -1,6 +1,9 @@
 //! Receipt types for RPC
 
+use alloc::vec::Vec;
+
 use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
+use alloy_primitives::Address;
 use alloy_rpc_types_eth::Log;
 use alloy_serde::OtherFields;
 use base_common_consensus::{
@@ -19,6 +22,12 @@ pub struct BaseTransactionReceipt {
     /// L1 block info of the transaction.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
+    /// EIP-8130 gas payer for AA transactions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer: Option<Address>,
+    /// EIP-8130 phase statuses for AA transactions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_statuses: Option<Vec<bool>>,
 }
 
 impl alloy_network_primitives::ReceiptResponse for BaseTransactionReceipt {
@@ -236,6 +245,9 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
             }
             BaseReceipt::Eip7702(receipt) => {
                 Self::Eip7702(convert_standard_receipt(receipt, logs_bloom))
+            }
+            BaseReceipt::Eip8130(receipt) => {
+                Self::Eip8130(convert_standard_receipt(receipt.inner, logs_bloom))
             }
             BaseReceipt::Deposit(receipt) => {
                 let consensus_logs = receipt.inner.logs.into_iter().map(|log| log.inner).collect();

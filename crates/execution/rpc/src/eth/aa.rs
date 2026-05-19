@@ -7,7 +7,7 @@
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, U256};
-use base_alloy_consensus::{NONCE_MANAGER_ADDRESS, nonce_slot};
+use base_common_consensus::{NONCE_MANAGER_ADDRESS, nonce_slot};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use reth_storage_api::StateProviderFactory;

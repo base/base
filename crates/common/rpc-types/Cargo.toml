@@ -100,6 +100,6 @@ reth = [
 	"dep:base-common-evm",
 	"dep:reth-rpc-convert",
 	"dep:revm",
-	"base-alloy-consensus/evm",
+	"base-common-consensus/evm",
 	"std",
 ]

@@ -59,4 +59,4 @@ pub use types::{
 };
 
 mod transaction;
-pub use transaction::{TxValidationError, is_eip8130_tx, validate_eip8130_tx, validate_tx};
+pub use transaction::{TxValidationError, validate_tx};

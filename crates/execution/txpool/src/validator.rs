@@ -7,8 +7,10 @@ use std::{
 };
 
 use alloy_consensus::{BlockHeader, Transaction};
+use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::U256;
 use base_common_chains::Upgrades;
+use base_common_consensus::{AA_TX_TYPE_ID, BaseTxEnvelope};
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use parking_lot::RwLock;
@@ -23,6 +25,7 @@ use reth_transaction_pool::{
     EthPoolTransaction, EthTransactionValidator, TransactionOrigin, TransactionValidationOutcome,
     TransactionValidator,
     error::{InvalidPoolTransactionError, PoolTransactionError},
+    validate::ValidTransaction,
 };
 
 use crate::BasePooledTx;
@@ -199,6 +202,41 @@ where
                 transaction,
                 InvalidTransactionError::TxTypeNotSupported.into(),
             );
+        }
+
+        // Reth's generic validator does not understand Base's custom 0x7b AA tx type.
+        // Admit it through a lightweight Base-specific path once Azul is active.
+        if transaction.ty() == AA_TX_TYPE_ID {
+            if !self.chain_spec().is_azul_active_at_timestamp(self.block_timestamp()) {
+                return TransactionValidationOutcome::Invalid(
+                    transaction,
+                    InvalidTransactionError::TxTypeNotSupported.into(),
+                );
+            }
+
+            let encoded = transaction.encoded_2718();
+            let tx = match BaseTxEnvelope::decode_2718_exact(encoded.as_ref()) {
+                Ok(BaseTxEnvelope::Eip8130(tx)) => tx,
+                _ => {
+                    return TransactionValidationOutcome::Invalid(
+                        transaction,
+                        InvalidTransactionError::TxTypeNotSupported.into(),
+                    );
+                }
+            };
+
+            let nonce_sequence = tx.inner().nonce_sequence;
+
+            return TransactionValidationOutcome::Valid {
+                // Balance checks for AA txs are enforced downstream; use max to avoid
+                // accidentally rejecting valid txs in this compatibility path.
+                balance: U256::MAX,
+                state_nonce: nonce_sequence,
+                transaction: ValidTransaction::Valid(transaction),
+                propagate: true,
+                bytecode_hash: None,
+                authorities: None,
+            };
         }
 
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);

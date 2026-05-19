@@ -131,9 +131,15 @@ const FALLBACK_PRIORITY_FEE_PER_GAS = 1_000_000n; // 0.001 gwei
 const ESTIMATE_GAS_BUFFER_BPS = 12_000n; // +20%
 const ESTIMATE_GAS_MIN_HEADROOM = 30_000n;
 
-const SENDER_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
-const PAYER_KEY  = '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a';
-const DELEGATE_KEY = '0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a';
+const SENDER_KEY =
+  process.env.SENDER_KEY ||
+  '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
+const PAYER_KEY =
+  process.env.PAYER_KEY ||
+  '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a';
+const DELEGATE_KEY =
+  process.env.DELEGATE_KEY ||
+  '0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a';
 
 const CONFIG_CHANGE_TYPEHASH = keccak256(
   toHex('SignedOwnerChanges(address account,uint64 chainId,uint64 sequence,OwnerChange[] ownerChanges)OwnerChange(uint8 changeType,address verifier,bytes32 ownerId,uint8 scope)')
@@ -147,12 +153,21 @@ const PROBE_ABI = [
 // ─────────────────────────────────────────────────
 // CLI Parsing
 // ─────────────────────────────────────────────────
+function parseBigIntArg(rawValue, flagName) {
+  try {
+    return BigInt(rawValue);
+  } catch (err) {
+    throw new Error(`Invalid ${flagName} value "${rawValue}": ${err.message}`);
+  }
+}
+
 function parseArgs() {
   const args = process.argv.slice(2);
   const opts = {
     mode: 'probe',
     probeAddr: process.env.PROBE_ADDR || '0x8464135c8F25Da09e49BC8782676a84730C318bC',
     rpc: process.env.L2_RPC || 'http://localhost:7545',
+    nonceKey: process.env.AA_NONCE_KEY ? parseBigIntArg(process.env.AA_NONCE_KEY, 'AA_NONCE_KEY') : 0n,
     trace: true,
   };
 
@@ -160,6 +175,7 @@ function parseArgs() {
     const arg = args[i];
     if (arg === '--probe')     { opts.probeAddr = args[++i]; continue; }
     if (arg === '--rpc')       { opts.rpc = args[++i]; continue; }
+    if (arg === '--nonce-key') { opts.nonceKey = parseBigIntArg(args[++i], '--nonce-key'); continue; }
     if (arg === '--no-trace')  { opts.trace = false; continue; }
     if (!arg.startsWith('-'))  { opts.mode = arg; }
   }
@@ -176,6 +192,9 @@ console.log(`Mode:   ${opts.mode}`);
 console.log(`Sender: ${account.address}`);
 console.log(`RPC:    ${opts.rpc}`);
 console.log(`Chain:  ${L2_CHAIN_ID}`);
+if (opts.mode === 'probe') {
+  console.log(`Nonce key: ${opts.nonceKey}`);
+}
 
 // ─────────────────────────────────────────────────
 // Helpers
@@ -277,24 +296,8 @@ async function deployExternalStaticcallVerifier(ownerId) {
   );
 }
 
-async function getAaNonce() {
-  const innerHash = keccak256(
-    concat([
-      padHex(account.address.toLowerCase(), { size: 32, dir: 'left' }),
-      padHex('0x1', { size: 32, dir: 'left' }),
-    ])
-  );
-  const nonceSlot = keccak256(
-    concat([
-      padHex('0x0', { size: 32, dir: 'left' }),
-      innerHash,
-    ])
-  );
-  const hex = await client.getStorageAt({
-    address: NONCE_MANAGER_ADDRESS,
-    slot: nonceSlot,
-  });
-  return BigInt(hex);
+async function getAaNonce(nonceKey = opts.nonceKey, address = account.address) {
+  return getAaNonceViaRpc(address, nonceKey);
 }
 
 async function getAaNonceViaRpc(address, nonceKey = 0n) {
@@ -639,8 +642,8 @@ function baseTxFields(
 async function runProbe() {
   console.log(`\nProbe:  ${opts.probeAddr}`);
 
-  const nonce = await getAaNonce();
-  console.log(`AA nonce (key=0): ${nonce}`);
+  const nonce = await getAaNonce(opts.nonceKey);
+  console.log(`AA nonce (key=${opts.nonceKey}): ${nonce}`);
 
   const probeCalldata = encodeFunctionData({ abi: PROBE_ABI, functionName: 'probe' });
   console.log(`probe() calldata: ${probeCalldata}`);
@@ -649,7 +652,7 @@ async function runProbe() {
     [[encodeAddress(opts.probeAddr), probeCalldata]],
   ];
 
-  const unsigned = baseTxFields(nonce, callsRlp);
+  const unsigned = baseTxFields(nonce, callsRlp, [], null, { nonceKey: opts.nonceKey });
   const { receipt } = await signAndSend(unsigned, { trace: opts.trace });
 
   console.log('\n--- Checking owner_id ---');

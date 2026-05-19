@@ -25,7 +25,7 @@ use revm::{
 
 use crate::{
     BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTxEnv, BaseTxResult,
-    DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
+    DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon, ensure_aa_predeploys,
 };
 
 /// Block executor for Base.
@@ -141,6 +141,12 @@ where
         // so we can safely assume that this will always be triggered upon the transition and that
         // the above check for empty blocks will never be hit on Base chains.
         canyon::ensure_create2_deployer(
+            &self.spec,
+            self.evm.block().timestamp().saturating_to(),
+            self.evm.db_mut(),
+        )
+        .map_err(BlockExecutionError::other)?;
+        ensure_aa_predeploys(
             &self.spec,
             self.evm.block().timestamp().saturating_to(),
             self.evm.db_mut(),

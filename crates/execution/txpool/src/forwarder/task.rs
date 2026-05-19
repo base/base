@@ -17,8 +17,8 @@ use tracing::{debug, error, info, trace, warn};
 
 use super::{config::ForwarderConfig, metrics::ForwarderMetrics};
 use crate::{
-    Eip8130WireMetadata, ValidatedTransaction,
-    transaction::{BundleTransaction, OpPooledTx},
+    ValidatedTransaction,
+    transaction::{BasePooledTx, BundleTransaction},
 };
 
 /// Sliding window rate limiter that tracks request timestamps.
@@ -97,7 +97,7 @@ pub struct Forwarder<T: PoolTransaction> {
 
 impl<T> Forwarder<T>
 where
-    T: PoolTransaction + BundleTransaction + OpPooledTx,
+    T: PoolTransaction + BundleTransaction + BasePooledTx,
     <T as PoolTransaction>::Consensus: Encodable2718,
 {
     /// Creates a new forwarder for a single builder endpoint.
@@ -181,26 +181,13 @@ where
                 let min_timestamp = tx.transaction.min_timestamp_millis();
                 let max_timestamp = tx.transaction.max_timestamp_millis();
 
-                let aa_metadata = tx.transaction.get_aa_metadata().map(|m| Eip8130WireMetadata {
-                    nonce_key: m.nonce_key,
-                    nonce_sequence: m.nonce_sequence,
-                    payer: m.payer,
-                    invalidation_slots: m
-                        .invalidation_keys
-                        .iter()
-                        .map(|k| (k.address, k.slot))
-                        .collect(),
-                    verifier_passed: m.verifier_passed,
-                    expiry: m.expiry,
-                });
-
                 self.buffer.push(ValidatedTransaction {
                     sender,
                     raw,
                     target_block_number,
                     min_timestamp,
                     max_timestamp,
-                    aa_metadata,
+                    aa_metadata: None,
                 });
                 ForwarderMetrics::buffer_size(Arc::clone(&self.url_label))
                     .set(self.buffer.len() as f64);

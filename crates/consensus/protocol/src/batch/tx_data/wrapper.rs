@@ -3,7 +3,7 @@
 use alloy_consensus::{Sealable, Transaction};
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::{Bytes, Decodable, Encodable};
-use base_alloy_consensus::{OpTxEnvelope, OpTxType};
+use base_common_consensus::{BaseTxEnvelope, OpTxType};
 
 use crate::{
     SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
@@ -63,12 +63,12 @@ impl Decodable for SpanBatchTransactionData {
     }
 }
 
-impl TryFrom<&OpTxEnvelope> for SpanBatchTransactionData {
+impl TryFrom<&BaseTxEnvelope> for SpanBatchTransactionData {
     type Error = SpanBatchError;
 
-    fn try_from(tx_envelope: &OpTxEnvelope) -> Result<Self, Self::Error> {
+    fn try_from(tx_envelope: &BaseTxEnvelope) -> Result<Self, Self::Error> {
         match tx_envelope {
-            OpTxEnvelope::Legacy(s) => {
+            BaseTxEnvelope::Legacy(s) => {
                 let s = s.tx();
                 Ok(Self::Legacy(SpanBatchLegacyTransactionData {
                     value: s.value,
@@ -76,7 +76,7 @@ impl TryFrom<&OpTxEnvelope> for SpanBatchTransactionData {
                     data: Bytes::from(s.input().to_vec()),
                 }))
             }
-            OpTxEnvelope::Eip2930(s) => {
+            BaseTxEnvelope::Eip2930(s) => {
                 let s = s.tx();
                 Ok(Self::Eip2930(SpanBatchEip2930TransactionData {
                     value: s.value,
@@ -85,7 +85,7 @@ impl TryFrom<&OpTxEnvelope> for SpanBatchTransactionData {
                     access_list: s.access_list.clone(),
                 }))
             }
-            OpTxEnvelope::Eip1559(s) => {
+            BaseTxEnvelope::Eip1559(s) => {
                 let s = s.tx();
                 Ok(Self::Eip1559(SpanBatchEip1559TransactionData {
                     value: s.value,
@@ -95,7 +95,7 @@ impl TryFrom<&OpTxEnvelope> for SpanBatchTransactionData {
                     access_list: s.access_list.clone(),
                 }))
             }
-            OpTxEnvelope::Eip7702(s) => {
+            BaseTxEnvelope::Eip7702(s) => {
                 let s = s.tx();
                 Ok(Self::Eip7702(SpanBatchEip7702TransactionData {
                     value: s.value,
@@ -106,7 +106,7 @@ impl TryFrom<&OpTxEnvelope> for SpanBatchTransactionData {
                     authorization_list: s.authorization_list.clone(),
                 }))
             }
-            OpTxEnvelope::Eip8130(s) => {
+            BaseTxEnvelope::Eip8130(s) => {
                 let s = s.inner();
                 Ok(Self::Eip8130(SpanBatchEip8130TransactionData {
                     from: s.from.unwrap_or_default(),
@@ -162,7 +162,7 @@ impl SpanBatchTransactionData {
     }
 
     /// Converts the [`SpanBatchTransactionData`] into a transaction envelope.
-    pub fn to_tx_envelope(
+    pub fn to_signed_tx(
         &self,
         nonce: u64,
         gas: u64,
@@ -170,9 +170,9 @@ impl SpanBatchTransactionData {
         chain_id: u64,
         signature: Signature,
         is_protected: bool,
-    ) -> Result<OpTxEnvelope, SpanBatchError> {
+    ) -> Result<BaseTxEnvelope, SpanBatchError> {
         Ok(match self {
-            Self::Legacy(data) => OpTxEnvelope::Legacy(data.to_signed_tx(
+            Self::Legacy(data) => BaseTxEnvelope::Legacy(data.to_signed_tx(
                 nonce,
                 gas,
                 to,
@@ -181,10 +181,10 @@ impl SpanBatchTransactionData {
                 is_protected,
             )?),
             Self::Eip2930(data) => {
-                OpTxEnvelope::Eip2930(data.to_signed_tx(nonce, gas, to, chain_id, signature)?)
+                BaseTxEnvelope::Eip2930(data.to_signed_tx(nonce, gas, to, chain_id, signature)?)
             }
             Self::Eip1559(data) => {
-                OpTxEnvelope::Eip1559(data.to_signed_tx(nonce, gas, to, chain_id, signature)?)
+                BaseTxEnvelope::Eip1559(data.to_signed_tx(nonce, gas, to, chain_id, signature)?)
             }
             Self::Eip7702(data) => {
                 let Some(addr) = to else {
@@ -192,10 +192,10 @@ impl SpanBatchTransactionData {
                         SpanDecodingError::InvalidTransactionData,
                     ));
                 };
-                OpTxEnvelope::Eip7702(data.to_signed_tx(nonce, gas, addr, chain_id, signature)?)
+                BaseTxEnvelope::Eip7702(data.to_signed_tx(nonce, gas, addr, chain_id, signature)?)
             }
             Self::Eip8130(data) => {
-                OpTxEnvelope::Eip8130(data.to_tx(nonce, gas, chain_id)?.seal_slow())
+                BaseTxEnvelope::Eip8130(data.to_tx(nonce, gas, chain_id)?.seal_slow())
             }
         })
     }

@@ -4,9 +4,10 @@ use std::fmt::Debug;
 
 use alloy_consensus::{BlockHeader, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
+use alloy_primitives::Address;
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTransaction};
+use base_common_consensus::{BaseEip8130Transaction, BaseReceipt, BaseTransaction};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields};
 use base_execution_evm::RethL1BlockInfo;
@@ -45,7 +46,7 @@ impl<Provider> BaseReceiptConverter<Provider> {
 
 impl<Provider, N> ReceiptConverter<N> for BaseReceiptConverter<Provider>
 where
-    N: NodePrimitives<SignedTx: BaseTransaction, Receipt = BaseReceipt>,
+    N: NodePrimitives<SignedTx: BaseEip8130Transaction + BaseTransaction, Receipt = BaseReceipt>,
     Provider:
         BlockReader<Block = N::Block> + ChainSpecProvider<ChainSpec: Upgrades> + Debug + 'static,
 {
@@ -276,6 +277,10 @@ pub struct BaseReceiptBuilder {
     pub core_receipt: TransactionReceipt<ReceiptWithBloom<BaseReceipt<Log>>>,
     /// Additional Base receipt fields.
     pub receipt_fields: TransactionReceiptFields,
+    /// EIP-8130 payer for AA transaction receipts.
+    pub payer: Option<Address>,
+    /// EIP-8130 phase statuses for AA transaction receipts.
+    pub phase_statuses: Option<Vec<bool>>,
 }
 
 impl BaseReceiptBuilder {
@@ -286,11 +291,15 @@ impl BaseReceiptBuilder {
         l1_block_info: &mut base_common_evm::L1BlockInfo,
     ) -> Result<Self, BaseEthApiError>
     where
-        N: NodePrimitives<SignedTx: BaseTransaction, Receipt = BaseReceipt>,
+        N: NodePrimitives<
+                SignedTx: BaseEip8130Transaction + BaseTransaction,
+                Receipt = BaseReceipt,
+            >,
     {
         let timestamp = input.meta.timestamp;
         let block_number = input.meta.block_number;
         let tx_signed = *input.tx.inner();
+        let signer = Address(*input.tx.signer());
         let mut core_receipt = build_receipt(input, None, |receipt, next_log_index, meta| {
             let map_logs = move |receipt: alloy_consensus::Receipt| {
                 let Receipt { status, cumulative_gas_used, logs } = receipt;
@@ -302,6 +311,12 @@ impl BaseReceiptBuilder {
                 BaseReceipt::Eip2930(receipt) => BaseReceipt::Eip2930(map_logs(receipt)),
                 BaseReceipt::Eip1559(receipt) => BaseReceipt::Eip1559(map_logs(receipt)),
                 BaseReceipt::Eip7702(receipt) => BaseReceipt::Eip7702(map_logs(receipt)),
+                BaseReceipt::Eip8130(receipt) => {
+                    BaseReceipt::Eip8130(base_common_consensus::Eip8130Receipt {
+                        inner: map_logs(receipt.inner),
+                        phase_statuses: receipt.phase_statuses,
+                    })
+                }
                 BaseReceipt::Deposit(receipt) => BaseReceipt::Deposit(receipt.map_inner(map_logs)),
             };
             mapped_receipt.into_with_bloom()
@@ -326,17 +341,36 @@ impl BaseReceiptBuilder {
             .l1_block_info(chain_spec, tx_signed, l1_block_info)?
             .build();
 
-        Ok(Self { core_receipt, receipt_fields })
+        let (payer, phase_statuses) = tx_signed
+            .as_eip8130()
+            .map(|tx| {
+                let inner = tx.inner();
+                let payer = inner.payer.unwrap_or(signer);
+                let phase_statuses = match &core_receipt.inner.receipt {
+                    BaseReceipt::Eip8130(receipt) if !receipt.phase_statuses.is_empty() => {
+                        receipt.phase_statuses.clone()
+                    }
+                    _ => inner
+                        .calls
+                        .iter()
+                        .map(|phase| !phase.is_empty() && core_receipt.inner.status())
+                        .collect(),
+                };
+                (Some(payer), Some(phase_statuses))
+            })
+            .unwrap_or((None, None));
+
+        Ok(Self { core_receipt, receipt_fields, payer, phase_statuses })
     }
 
     /// Builds [`BaseTransactionReceipt`] by combining core L1 receipt fields and additional Base
     /// receipt fields.
     pub fn build(self) -> BaseTransactionReceipt {
-        let Self { core_receipt: inner, receipt_fields } = self;
+        let Self { core_receipt: inner, receipt_fields, payer, phase_statuses } = self;
 
         let TransactionReceiptFields { l1_block_info, .. } = receipt_fields;
 
-        BaseTransactionReceipt { inner, l1_block_info }
+        BaseTransactionReceipt { inner, l1_block_info, payer, phase_statuses }
     }
 }
 

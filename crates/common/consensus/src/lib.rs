@@ -18,15 +18,13 @@ pub use reth_compat::{BaseBlockBody, BasePrimitives, CompactTxDeposit, DepositRe
 mod receipts;
 pub use receipts::{
     BaseReceipt, BaseReceiptEnvelope, BaseTxReceipt, DepositReceipt, DepositReceiptWithBloom,
+    Eip8130Receipt,
 };
 
 mod transaction;
 #[cfg(feature = "serde")]
 pub use transaction::serde_deposit_tx_rpc;
-pub use transaction::{
-    BasePooledTransaction, BaseTransaction, BaseTransactionInfo, BaseTxEnvelope,
-    BaseTypedTransaction, DEPOSIT_TX_TYPE_ID, DepositInfo, DepositTransaction, OpTxType, TxDeposit,
-};
+pub use transaction::*;
 
 mod extra;
 pub use extra::{EIP1559ParamEncoder, EIP1559ParamError, HoloceneExtraData, JovianExtraData};

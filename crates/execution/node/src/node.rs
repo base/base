@@ -24,6 +24,7 @@ use base_execution_rpc::{
     MinerApiExtServer,
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::BaseEthApiBuilder,
+    eth::aa::{TransactionCountOverrideImpl, TransactionCountOverrideServer},
     miner::BaseMinerExtApi,
     witness::BaseDebugWitnessApi,
 };
@@ -589,6 +590,7 @@ where
             ctx.node.provider().clone(),
             ctx.node.evm_config().clone(),
         );
+        let provider = ctx.node.provider().clone();
         // Install additional rollup-specific RPC methods.
         let debug_ext = BaseDebugWitnessApi::<_, _, _, Attrs>::new(
             ctx.node.provider().clone(),
@@ -603,6 +605,11 @@ where
                     container;
 
                 modules.merge_if_module_configured(RethRpcModule::Eth, eth_config.into_rpc())?;
+                // Override `eth_getTransactionCount` so the optional `nonceKey` argument
+                // can read EIP-8130 2D nonces from NonceManager storage.
+                modules.replace_configured(
+                    TransactionCountOverrideImpl::new(provider.clone()).into_rpc(),
+                )?;
 
                 debug!(target: "reth::cli", "Installing debug payload witness rpc endpoint");
                 modules.merge_if_module_configured(RethRpcModule::Debug, debug_ext.into_rpc())?;

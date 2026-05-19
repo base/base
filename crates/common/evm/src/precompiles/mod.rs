@@ -1,5 +1,16 @@
 //! Base precompile provider integration.
 
+use alloc::string::ToString;
+
+use base_common_consensus::{
+    INonceManager, NONCE_MANAGER_ADDRESS, TX_CONTEXT_ADDRESS, TxContextValues, handle_tx_context,
+    nonce_slot,
+};
+use revm::precompile::{PrecompileError, PrecompileId, PrecompileOutput, PrecompileResult};
+
+use alloy_evm::precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap};
+use alloy_sol_types::{SolCall, SolType, sol_data};
+
 use crate::BaseSpecId;
 
 /// Base precompile installer for the Base EVM spec.
@@ -7,6 +18,99 @@ pub type BasePrecompileInstaller = base_common_precompiles::BasePrecompileInstal
 
 /// Base precompile provider for the Base EVM spec.
 pub type BasePrecompiles = base_common_precompiles::BasePrecompiles<BaseSpecId>;
+
+#[cfg(feature = "std")]
+std::thread_local! {
+    static EIP8130_TX_CONTEXT: core::cell::RefCell<Option<TxContextValues>> =
+        const { core::cell::RefCell::new(None) };
+}
+
+/// Installs Base precompiles and extends the map with EIP-8130 AA precompiles.
+pub fn install_base_precompiles(spec: BaseSpecId) -> PrecompilesMap {
+    let mut precompiles = BasePrecompileInstaller::new(spec).install();
+    extend_base_precompiles(&mut precompiles);
+    precompiles
+}
+
+/// Adds EIP-8130 AA precompiles to a [`PrecompilesMap`].
+pub fn extend_base_precompiles(precompiles: &mut PrecompilesMap) {
+    precompiles.extend_precompiles([
+        (NONCE_MANAGER_ADDRESS, nonce_manager_precompile()),
+        (TX_CONTEXT_ADDRESS, tx_context_precompile()),
+    ]);
+}
+
+/// Sets the transaction context exposed by the EIP-8130 TxContext precompile.
+pub fn set_eip8130_tx_context(values: Option<TxContextValues>) {
+    #[cfg(feature = "std")]
+    EIP8130_TX_CONTEXT.with(|ctx| *ctx.borrow_mut() = values);
+
+    #[cfg(not(feature = "std"))]
+    let _ = values;
+}
+
+/// Clears the transaction context exposed by the EIP-8130 TxContext precompile.
+pub fn clear_eip8130_tx_context() {
+    set_eip8130_tx_context(None);
+}
+
+fn get_eip8130_tx_context() -> Option<TxContextValues> {
+    #[cfg(feature = "std")]
+    {
+        EIP8130_TX_CONTEXT.with(|ctx| ctx.borrow().clone())
+    }
+
+    #[cfg(not(feature = "std"))]
+    {
+        None
+    }
+}
+
+fn nonce_manager_precompile() -> DynPrecompile {
+    DynPrecompile::new_stateful(PrecompileId::custom("base-eip8130-nonce-manager"), |input| {
+        run_nonce_manager_precompile(input)
+    })
+}
+
+fn tx_context_precompile() -> DynPrecompile {
+    DynPrecompile::new_stateful(PrecompileId::custom("base-eip8130-tx-context"), |input| {
+        run_tx_context_precompile(input)
+    })
+}
+
+fn run_nonce_manager_precompile(mut input: PrecompileInput<'_>) -> PrecompileResult {
+    let call = INonceManager::getNonceCall::abi_decode(input.data)
+        .map_err(|_| PrecompileError::other("invalid NonceManager input"))?;
+    let nonce_key = call.nonceKey.into();
+    let slot = nonce_slot(call.account, nonce_key);
+    let value = input
+        .internals
+        .sload(NONCE_MANAGER_ADDRESS, slot.into())
+        .map_err(|err| PrecompileError::other(err.to_string()))?
+        .data
+        .to::<u64>();
+    let output = <sol_data::Uint<64>>::abi_encode(&value).into();
+    precompile_output(input.gas, base_common_consensus::NONCE_MANAGER_GAS, output)
+}
+
+fn run_tx_context_precompile(input: PrecompileInput<'_>) -> PrecompileResult {
+    let values = get_eip8130_tx_context().unwrap_or_default();
+    match handle_tx_context(&values, input.data) {
+        Ok((gas_used, output)) => precompile_output(input.gas, gas_used, output),
+        Err(error) => Ok(PrecompileOutput::new_reverted(0, error.to_string().into_bytes().into())),
+    }
+}
+
+fn precompile_output(
+    gas_limit: u64,
+    gas_used: u64,
+    output: revm::primitives::Bytes,
+) -> PrecompileResult {
+    if gas_used > gas_limit {
+        return Err(PrecompileError::OutOfGas);
+    }
+    Ok(PrecompileOutput::new(gas_used, output))
+}
 
 #[cfg(test)]
 mod tests {

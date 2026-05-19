@@ -9,7 +9,7 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::transaction::{BundleTransaction, OpPooledTx};
+use crate::transaction::{BasePooledTx, BundleTransaction};
 
 mod config;
 pub use config::ForwarderConfig;
@@ -40,7 +40,7 @@ impl SpawnedForwarder {
         executor: &TaskExecutor,
     ) -> Self
     where
-        T: PoolTransaction + BundleTransaction + OpPooledTx + 'static,
+        T: PoolTransaction + BundleTransaction + BasePooledTx + 'static,
         <T as PoolTransaction>::Consensus: alloy_eips::Encodable2718,
     {
         let cancel = CancellationToken::new();

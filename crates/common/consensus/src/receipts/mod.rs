@@ -9,7 +9,7 @@ mod deposit;
 pub use deposit::{DepositReceipt, DepositReceiptWithBloom};
 
 mod receipt;
-pub use receipt::BaseReceipt;
+pub use receipt::{BaseReceipt, Eip8130Receipt};
 
 /// Bincode-compatible serde implementations for receipt types.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]

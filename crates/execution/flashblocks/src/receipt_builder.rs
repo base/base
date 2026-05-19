@@ -5,7 +5,9 @@
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt, OpTxType};
+use base_common_consensus::{
+    BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip8130Receipt, OpTxType,
+};
 use reth_evm::Evm;
 use revm::{Database, context::result::ExecutionResult};
 
@@ -117,6 +119,13 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
                 OpTxType::Eip2930 => BaseReceipt::Eip2930(receipt),
                 OpTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
                 OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
+                OpTxType::Eip8130 => BaseReceipt::Eip8130(Eip8130Receipt {
+                    inner: receipt,
+                    phase_statuses: result
+                        .output()
+                        .map(|output| output.iter().map(|status| *status != 0).collect())
+                        .unwrap_or_default(),
+                }),
                 OpTxType::Deposit => unreachable!(),
             })
         }

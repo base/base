@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
-use base_alloy_consensus::{AccountChangeEntry, Call, TxEip8130};
+use base_common_consensus::{AccountChangeEntry, Call, TxEip8130};
 
 use crate::{SpanBatchError, SpanDecodingError};
 

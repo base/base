@@ -1,6 +1,6 @@
 use alloy_consensus::{Eip658Value, Receipt};
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
-use base_common_consensus::{BaseReceipt, BaseTransactionSigned, OpTxType};
+use base_common_consensus::{BaseReceipt, BaseTransactionSigned, Eip8130Receipt, OpTxType};
 use base_common_evm::BaseReceiptBuilder;
 use reth_evm::Evm;
 
@@ -21,6 +21,15 @@ impl BaseReceiptBuilder for BaseRethReceiptBuilder {
         match ctx.tx_type {
             OpTxType::Deposit => Err(ctx),
             ty => {
+                let phase_statuses = if ty == OpTxType::Eip8130 {
+                    ctx.result
+                        .output()
+                        .map(|output| output.iter().map(|status| *status != 0).collect())
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+
                 let receipt = Receipt {
                     // Success flag was added in `EIP-658: Embedding transaction status code in
                     // receipts`.
@@ -34,6 +43,9 @@ impl BaseReceiptBuilder for BaseRethReceiptBuilder {
                     OpTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
                     OpTxType::Eip2930 => BaseReceipt::Eip2930(receipt),
                     OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
+                    OpTxType::Eip8130 => {
+                        BaseReceipt::Eip8130(Eip8130Receipt { inner: receipt, phase_statuses })
+                    }
                     OpTxType::Deposit => unreachable!(),
                 })
             }

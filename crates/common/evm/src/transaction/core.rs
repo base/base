@@ -4,7 +4,7 @@ use alloc::vec;
 
 use alloy_eips::Encodable2718;
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, tx::IntoTxEnv};
-use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+use base_common_consensus::{AA_TX_TYPE_ID, BaseTxEnvelope, TxDeposit};
 use revm::{
     context::TxEnv,
     context_interface::transaction::Transaction,
@@ -12,7 +12,10 @@ use revm::{
     primitives::{Address, B256, Bytes, TxKind, U256},
 };
 
-use crate::{BaseTransactionBuilder, BaseTxTr, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts};
+use crate::{
+    BaseTransactionBuilder, BaseTxTr, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
+    Eip8130Parts,
+};
 
 /// Base transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,6 +31,10 @@ pub struct BaseTransaction<T: Transaction> {
     pub enveloped_tx: Option<Bytes>,
     /// Deposit transaction parts.
     pub deposit: DepositTransactionParts,
+    /// EIP-8130 nonce lane key.
+    pub aa_nonce_key: Option<U256>,
+    /// EIP-8130 execution metadata.
+    pub eip8130: Option<Eip8130Parts>,
 }
 
 impl<T: Transaction> AsRef<T> for BaseTransaction<T> {
@@ -39,7 +46,13 @@ impl<T: Transaction> AsRef<T> for BaseTransaction<T> {
 impl<T: Transaction> BaseTransaction<T> {
     /// Create a new Base transaction.
     pub fn new(base: T) -> Self {
-        Self { base, enveloped_tx: None, deposit: DepositTransactionParts::default() }
+        Self {
+            base,
+            enveloped_tx: None,
+            deposit: DepositTransactionParts::default(),
+            aa_nonce_key: None,
+            eip8130: None,
+        }
     }
 }
 
@@ -56,6 +69,8 @@ impl Default for BaseTransaction<TxEnv> {
             base: TxEnv::default(),
             enveloped_tx: Some(vec![0x00].into()),
             deposit: DepositTransactionParts::default(),
+            aa_nonce_key: None,
+            eip8130: None,
         }
     }
 }
@@ -182,6 +197,14 @@ impl<T: Transaction> BaseTxTr for BaseTransaction<T> {
     fn is_system_transaction(&self) -> bool {
         self.deposit.is_system_transaction
     }
+
+    fn aa_nonce_key(&self) -> Option<U256> {
+        self.aa_nonce_key
+    }
+
+    fn eip8130_parts(&self) -> Option<&Eip8130Parts> {
+        self.eip8130.as_ref()
+    }
 }
 
 impl<T> IntoTxEnv<Self> for BaseTransaction<T>
@@ -226,21 +249,48 @@ impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction<TxEnv> {
                 base: TxEnv::from_recovered_tx(tx.tx(), caller),
                 enveloped_tx: Some(encoded),
                 deposit: Default::default(),
+                aa_nonce_key: None,
+                eip8130: None,
             },
             BaseTxEnvelope::Eip1559(tx) => Self {
                 base: TxEnv::from_recovered_tx(tx.tx(), caller),
                 enveloped_tx: Some(encoded),
                 deposit: Default::default(),
+                aa_nonce_key: None,
+                eip8130: None,
             },
             BaseTxEnvelope::Eip2930(tx) => Self {
                 base: TxEnv::from_recovered_tx(tx.tx(), caller),
                 enveloped_tx: Some(encoded),
                 deposit: Default::default(),
+                aa_nonce_key: None,
+                eip8130: None,
             },
             BaseTxEnvelope::Eip7702(tx) => Self {
                 base: TxEnv::from_recovered_tx(tx.tx(), caller),
                 enveloped_tx: Some(encoded),
                 deposit: Default::default(),
+                aa_nonce_key: None,
+                eip8130: None,
+            },
+            BaseTxEnvelope::Eip8130(tx) => Self {
+                base: TxEnv::builder()
+                    .tx_type(Some(AA_TX_TYPE_ID))
+                    .caller(caller)
+                    .chain_id(Some(tx.inner().chain_id))
+                    .nonce(tx.inner().nonce_sequence)
+                    .gas_limit(tx.inner().gas_limit)
+                    .gas_price(tx.inner().max_fee_per_gas)
+                    .gas_priority_fee(Some(tx.inner().max_priority_fee_per_gas))
+                    .kind(TxKind::Call(caller))
+                    .value(U256::ZERO)
+                    .data(Bytes::new())
+                    .build()
+                    .expect("EIP-8130 TxEnv fields are valid"),
+                enveloped_tx: Some(encoded),
+                deposit: Default::default(),
+                aa_nonce_key: Some(tx.inner().nonce_key),
+                eip8130: Some(Eip8130Parts::from_tx(tx.inner(), caller)),
             },
             BaseTxEnvelope::Deposit(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
         }
@@ -262,7 +312,7 @@ impl FromTxWithEncoded<TxDeposit> for BaseTransaction<TxEnv> {
             mint: Some(tx.mint),
             is_system_transaction: tx.is_system_transaction,
         };
-        Self { base, enveloped_tx: Some(encoded), deposit }
+        Self { base, enveloped_tx: Some(encoded), deposit, aa_nonce_key: None, eip8130: None }
     }
 }
 

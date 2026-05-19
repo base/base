@@ -11,7 +11,7 @@ use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
-use base_common_consensus::OpTxType;
+use base_common_consensus::{BaseTxEnvelope, OpTxType};
 use base_common_evm::{BaseHaltReason, BaseTxResult};
 use base_common_flashblocks::Flashblock;
 use base_common_network::Base;
@@ -462,6 +462,20 @@ impl PendingBlocks {
         self.transaction_count.get(&address).copied().unwrap_or_else(|| U256::from(0))
     }
 
+    /// Returns the count of pending EIP-8130 transactions for `(address, nonce_key)`.
+    pub fn get_aa_nonce_delta(&self, address: Address, nonce_key: U256) -> u64 {
+        self.transactions
+            .iter()
+            .filter(|tx| {
+                tx.from() == address
+                    && matches!(
+                        tx.as_ref(),
+                        BaseTxEnvelope::Eip8130(inner) if inner.inner().nonce_key == nonce_key
+                    )
+            })
+            .count() as u64
+    }
+
     /// Returns the balance for an address in pending state.
     pub fn get_balance(&self, address: Address) -> Option<U256> {
         self.account_balances.get(&address).copied()
@@ -610,6 +624,10 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
 
     fn get_transaction_count(&self, address: Address) -> U256 {
         self.as_ref().map(|pb| pb.get_transaction_count(address)).unwrap_or_else(|| U256::from(0))
+    }
+
+    fn get_aa_nonce_delta(&self, address: Address, nonce_key: U256) -> u64 {
+        self.as_ref().map(|pb| pb.get_aa_nonce_delta(address, nonce_key)).unwrap_or(0)
     }
 
     fn get_block(&self, full: bool) -> Option<RpcBlock<Base>> {

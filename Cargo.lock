@@ -3290,6 +3290,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-serde",
  "alloy-signer",
+ "alloy-sol-types",
  "arbitrary",
  "bincode 2.0.1",
  "bytes",
@@ -4596,6 +4597,7 @@ dependencies = [
  "eyre",
  "futures",
  "humantime",
+ "reth-chain-state",
  "reth-chainspec",
  "reth-codecs",
  "reth-consensus",
@@ -4632,6 +4634,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-stream",
  "tracing",
 ]
 

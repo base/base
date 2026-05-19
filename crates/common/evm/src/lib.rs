@@ -19,14 +19,19 @@ pub use l1block::L1BlockInfo;
 mod transaction;
 pub use transaction::{
     BaseTransaction, BaseTransactionBuilder, BaseTransactionError, BaseTxTr, BuildError,
-    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
+    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, Eip8130Call, Eip8130CodePlacement,
+    Eip8130Parts, Eip8130SequenceUpdate, Eip8130StorageWrite, account_address, create_bytecode,
+    sequence_update,
 };
 
 mod handler;
-pub use handler::{BaseHandler, IsTxError};
+pub use handler::{BaseHandler, IsTxError, delegation_code};
 
 mod precompiles;
-pub use precompiles::{BasePrecompileInstaller, BasePrecompiles};
+pub use precompiles::{
+    BasePrecompileInstaller, BasePrecompiles, clear_eip8130_tx_context, extend_base_precompiles,
+    install_base_precompiles, set_eip8130_tx_context,
+};
 
 mod api;
 pub use api::{BaseContext, BaseContextTr, BaseError, Builder, DefaultBase};

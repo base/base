@@ -19,6 +19,7 @@ alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
+alloy-sol-types.workspace = true
 
 # compat
 alloy-network = { workspace = true, optional = true }
@@ -118,3 +119,4 @@ reth = [
 	"serde-bincode-compat",
 	"std",
 ]
+native-verifier = []

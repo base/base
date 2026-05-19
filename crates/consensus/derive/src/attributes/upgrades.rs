@@ -7,8 +7,8 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::Bytes;
-use base_consensus_genesis::RollupConfig;
-use base_consensus_upgrades::{Hardfork, Hardforks};
+use base_common_genesis::RollupConfig;
+use base_consensus_upgrades::{Upgrade, Upgrades};
 
 /// Canonical derivation-side construction of hardfork upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]
@@ -27,27 +27,27 @@ impl UpgradeTransactions {
         if rollup_config.is_ecotone_active(next_timestamp)
             && !rollup_config.is_ecotone_active(parent_timestamp)
         {
-            upgrade_transactions.extend(Hardforks::ECOTONE.txs());
+            upgrade_transactions.extend(Upgrades::ECOTONE.txs());
         }
         if rollup_config.is_fjord_active(next_timestamp)
             && !rollup_config.is_fjord_active(parent_timestamp)
         {
-            upgrade_transactions.extend(Hardforks::FJORD.txs());
+            upgrade_transactions.extend(Upgrades::FJORD.txs());
         }
         if rollup_config.is_isthmus_active(next_timestamp)
             && !rollup_config.is_isthmus_active(parent_timestamp)
         {
-            upgrade_transactions.extend(Hardforks::ISTHMUS.txs());
+            upgrade_transactions.extend(Upgrades::ISTHMUS.txs());
         }
         if rollup_config.is_jovian_active(next_timestamp)
             && !rollup_config.is_jovian_active(parent_timestamp)
         {
-            upgrade_transactions.extend(Hardforks::JOVIAN.txs());
+            upgrade_transactions.extend(Upgrades::JOVIAN.txs());
         }
-        if rollup_config.is_base_v1_active(next_timestamp)
-            && !rollup_config.is_base_v1_active(parent_timestamp)
+        if rollup_config.is_base_azul_active(next_timestamp)
+            && !rollup_config.is_base_azul_active(parent_timestamp)
         {
-            upgrade_transactions.extend(Hardforks::BASE_V1.txs());
+            upgrade_transactions.extend(Upgrades::BASE_V1.txs());
         }
 
         upgrade_transactions

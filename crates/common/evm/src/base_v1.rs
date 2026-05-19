@@ -1,7 +1,10 @@
 use alloy_evm::Database;
 use alloy_primitives::{Address, Bytes};
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{NONCE_MANAGER_ADDRESS, TX_CONTEXT_ADDRESS};
+use base_common_chains::Upgrades;
+use base_common_consensus::{
+    ACCOUNT_CONFIG_ADDRESS, NONCE_MANAGER_ADDRESS, TX_CONTEXT_ADDRESS,
+    is_account_config_known_deployed, mark_account_config_deployed,
+};
 use revm::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 
 /// Precompile addresses that need stub bytecode to prevent EIP-161 cleanup.
@@ -30,14 +33,14 @@ const AA_STUB_BYTECODE: &[u8] = &[0xFE];
 /// This mirrors `ensure_create2_deployer` for Canyon: code is set directly
 /// via `DatabaseCommit` on the first block where the fork is active.
 pub fn ensure_aa_predeploys<DB>(
-    chain_spec: impl BaseUpgrades,
+    chain_spec: impl Upgrades,
     timestamp: u64,
     db: &mut DB,
 ) -> Result<(), DB::Error>
 where
     DB: Database + DatabaseCommit,
 {
-    if !chain_spec.is_base_v1_active_at_timestamp(timestamp) {
+    if !chain_spec.is_azul_active_at_timestamp(timestamp) && !is_account_config_deployed(db)? {
         return Ok(());
     }
 
@@ -71,6 +74,25 @@ where
     Ok(())
 }
 
+fn is_account_config_deployed<DB>(db: &mut DB) -> Result<bool, DB::Error>
+where
+    DB: Database,
+{
+    if is_account_config_known_deployed() {
+        return Ok(true);
+    }
+
+    let deployed = db
+        .basic(ACCOUNT_CONFIG_ADDRESS)?
+        .is_some_and(|info| info.code_hash != revm::primitives::KECCAK_EMPTY);
+
+    if deployed {
+        mark_account_config_deployed();
+    }
+
+    Ok(deployed)
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
@@ -78,8 +100,8 @@ mod tests {
 
     use super::*;
 
-    fn devnet_spec() -> base_alloy_chains::BaseChainUpgrades {
-        base_alloy_chains::BaseChainUpgrades::devnet()
+    fn devnet_spec() -> base_common_chains::ChainUpgrades {
+        base_common_chains::ChainUpgrades::devnet()
     }
 
     fn make_db() -> revm::database::State<InMemoryDB> {
@@ -119,7 +141,7 @@ mod tests {
     #[test]
     fn no_op_when_fork_inactive() {
         let mut db = make_db();
-        let spec = base_alloy_chains::BaseChainUpgrades::mainnet();
+        let spec = base_common_chains::ChainUpgrades::mainnet();
 
         ensure_aa_predeploys(&spec, 0, &mut db).unwrap();
 

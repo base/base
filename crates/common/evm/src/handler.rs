@@ -1,17 +1,22 @@
 //! Handler related to Base chain
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 
 use base_common_chains::BaseUpgrade;
-use base_common_consensus::Predeploys;
+use base_common_consensus::{
+    AA_TX_TYPE_ID, ACCOUNT_CONFIG_ADDRESS, NONCE_MANAGER_ADDRESS, Predeploys, TxContextValues,
+    nonce_slot, write_sequence,
+};
 use revm::{
+    bytecode::Bytecode,
     context::{
         LocalContextTr,
         journaled_state::{JournalCheckpoint, account::JournaledAccountTr},
         result::InvalidTransaction,
     },
     context_interface::{
-        Block, Cfg, ContextTr, JournalTr, Transaction,
+        Block, Cfg, ContextTr, Database, JournalTr, Transaction,
         context::ContextError,
+        journaled_state::JournalLoadError,
         result::{EVMError, ExecutionResult, FromStringError},
     },
     handler::{
@@ -22,12 +27,17 @@ use revm::{
         pre_execution::{calculate_caller_fee, validate_account_nonce_and_code_with_components},
     },
     inspector::{Inspector, InspectorEvmTr, InspectorHandler},
-    interpreter::{Gas, interpreter::EthInterpreter, interpreter_action::FrameInit},
-    primitives::{U256, hardfork::SpecId},
+    interpreter::{
+        CallInput, CallInputs, CallOutcome, CallScheme, CallValue, FrameInput, Gas,
+        InitialAndFloorGas, InstructionResult, InterpreterResult, SharedMemory,
+        interpreter::EthInterpreter, interpreter_action::FrameInit,
+    },
+    primitives::{Address, B256, Bytes, U256, hardfork::SpecId},
 };
 
 use crate::{
-    BaseContextTr, BaseHaltReason, L1BlockInfo,
+    BaseContextTr, BaseHaltReason, Eip8130Call, Eip8130Parts, L1BlockInfo,
+    precompiles::{clear_eip8130_tx_context, set_eip8130_tx_context},
     transaction::{BaseTransactionError, BaseTxTr, DEPOSIT_TRANSACTION_TYPE},
 };
 
@@ -49,6 +59,57 @@ impl<EVM, ERROR, FRAME> BaseHandler<EVM, ERROR, FRAME> {
 impl<EVM, ERROR, FRAME> Default for BaseHandler<EVM, ERROR, FRAME> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<EVM, ERROR, FRAME> BaseHandler<EVM, ERROR, FRAME>
+where
+    EVM: EvmTr<Context: BaseContextTr, Frame = FRAME>,
+    ERROR: EvmTrError<EVM> + From<BaseTransactionError> + FromStringError + IsTxError,
+    FRAME: FrameTr<FrameResult = FrameResult, FrameInit = FrameInit>,
+{
+    fn execute_eip8130_calls(
+        &mut self,
+        evm: &mut EVM,
+        parts: &Eip8130Parts,
+        gas_limit: u64,
+    ) -> Result<FrameResult, ERROR> {
+        let mut remaining_gas = gas_limit;
+        let mut refunded_gas = 0;
+        let mut any_call = false;
+        let mut any_success = false;
+        let mut last_result = InstructionResult::Return;
+        let mut phase_statuses = Vec::with_capacity(parts.call_phases.len());
+
+        for phase in &parts.call_phases {
+            let mut phase_success = !phase.is_empty();
+            for call in phase {
+                any_call = true;
+                let frame_input =
+                    eip8130_call_frame::<EVM, ERROR>(evm, parts.sender, call, remaining_gas)?;
+                let frame_result = <Self as Handler>::run_exec_loop(self, evm, frame_input)?;
+                let interpreter_result = frame_result.interpreter_result();
+                remaining_gas = interpreter_result.gas.remaining();
+                refunded_gas += interpreter_result.gas.refunded();
+                last_result = interpreter_result.result;
+
+                if interpreter_result.result.is_ok() {
+                    any_success = true;
+                } else {
+                    phase_success = false;
+                }
+            }
+
+            if phase_success {
+                any_success = true;
+            }
+            phase_statuses.push(phase_success);
+        }
+
+        let result = if any_success || !any_call { InstructionResult::Return } else { last_result };
+        let output = phase_statuses.into_iter().map(u8::from).collect::<Vec<_>>().into();
+
+        Ok(eip8130_aggregate_result(gas_limit, remaining_gas, refunded_gas, result, output))
     }
 }
 
@@ -139,19 +200,136 @@ where
             return Ok(());
         }
 
+        let is_aa = tx.tx_type() == AA_TX_TYPE_ID
+            || tx
+                .enveloped_tx()
+                .and_then(|bytes| bytes.first())
+                .is_some_and(|tx_type| *tx_type == AA_TX_TYPE_ID);
+        let eip8130_parts = tx.eip8130_parts().cloned();
+        if let Some(parts) = &eip8130_parts {
+            set_eip8130_tx_context(Some(TxContextValues {
+                sender: parts.sender,
+                payer: parts.payer,
+                owner_id: parts.owner_id,
+                gas_limit: tx.gas_limit(),
+                max_cost: U256::from(tx.gas_limit()) * U256::from(tx.max_fee_per_gas()),
+                calls: parts
+                    .call_phases
+                    .iter()
+                    .map(|phase| phase.iter().map(|call| (call.to, call.data.clone())).collect())
+                    .collect(),
+            }));
+        } else {
+            clear_eip8130_tx_context();
+        }
+
         // L1 block info is stored in the context for later use.
         // and it will be reloaded from the database if it is not for the current block.
         if chain.l2_block != Some(block.number()) {
             *chain = L1BlockInfo::try_fetch(journal.db_mut(), block.number(), spec)?;
         }
 
-        let mut caller_account = journal.load_account_with_code_mut(tx.caller())?.data;
+        if is_aa {
+            let nonce_key = tx.aa_nonce_key().unwrap_or_default();
+            let slot = nonce_slot(tx.caller(), nonce_key);
+            let tx_nonce = tx.nonce();
+            let mut nonce_manager = journal.load_account_mut(NONCE_MANAGER_ADDRESS)?.data;
+            let state_nonce = match nonce_manager.sload(slot.into(), false) {
+                Ok(state) => state.data.present_value().to::<u64>(),
+                Err(JournalLoadError::ColdLoadSkipped) => tx_nonce,
+                Err(JournalLoadError::DBError(err)) => {
+                    return Err(ERROR::from_string(format!("failed to load AA nonce slot: {err}")));
+                }
+            };
 
-        // validates account nonce and code
-        validate_account_nonce_and_code_with_components(&caller_account.account().info, tx, cfg)?;
+            if tx_nonce < state_nonce {
+                return Err(
+                    InvalidTransaction::NonceTooLow { tx: tx_nonce, state: state_nonce }.into()
+                );
+            }
+            if tx_nonce > state_nonce {
+                return Err(
+                    InvalidTransaction::NonceTooHigh { tx: tx_nonce, state: state_nonce }.into()
+                );
+            }
+
+            // Bump the 2D nonce lane at admission time so RPC `nonce_key` reads advance once
+            // the AA transaction is accepted for execution.
+            match nonce_manager.sstore(
+                slot.into(),
+                U256::from(state_nonce.saturating_add(1)),
+                false,
+            ) {
+                Ok(_) | Err(JournalLoadError::ColdLoadSkipped) => {}
+                Err(JournalLoadError::DBError(err)) => {
+                    return Err(ERROR::from_string(format!(
+                        "failed to write AA nonce slot: {err}"
+                    )));
+                }
+            }
+        }
+
+        if let Some(parts) = &eip8130_parts {
+            for write in parts.pre_writes.iter().chain(parts.config_writes.iter()) {
+                let mut account = journal.load_account_mut(write.address)?.data;
+                match account.sstore(write.slot.into(), write.value, false) {
+                    Ok(_) | Err(JournalLoadError::ColdLoadSkipped) => {}
+                    Err(JournalLoadError::DBError(err)) => {
+                        return Err(ERROR::from_string(format!(
+                            "failed to apply AA storage write: {err}"
+                        )));
+                    }
+                }
+            }
+
+            for sequence in &parts.sequence_updates {
+                let mut account = journal.load_account_mut(ACCOUNT_CONFIG_ADDRESS)?.data;
+                let current = match account.sload(sequence.slot.into(), false) {
+                    Ok(state) => state.data.present_value(),
+                    Err(JournalLoadError::ColdLoadSkipped) => U256::ZERO,
+                    Err(JournalLoadError::DBError(err)) => {
+                        return Err(ERROR::from_string(format!(
+                            "failed to load AA sequence slot: {err}"
+                        )));
+                    }
+                };
+                let updated = write_sequence(current, sequence.is_multichain, sequence.new_value);
+                match account.sstore(sequence.slot.into(), updated, false) {
+                    Ok(_) | Err(JournalLoadError::ColdLoadSkipped) => {}
+                    Err(JournalLoadError::DBError(err)) => {
+                        return Err(ERROR::from_string(format!(
+                            "failed to write AA sequence slot: {err}"
+                        )));
+                    }
+                }
+            }
+
+            for code_placement in &parts.code_placements {
+                let mut account = journal.load_account_with_code_mut(code_placement.address)?.data;
+                account.set_code_and_hash_slow(Bytecode::new_raw(code_placement.code.clone()));
+            }
+
+            if let Some(target) = parts.delegation_target {
+                let mut account = journal.load_account_with_code_mut(parts.sender)?.data;
+                account.set_code_and_hash_slow(delegation_code(target));
+            }
+        }
+
+        let fee_payer = eip8130_parts.as_ref().map_or(tx.caller(), |parts| parts.payer);
+        let mut fee_payer_account = journal.load_account_with_code_mut(fee_payer)?.data;
+
+        // EIP-8130 transactions use NonceManager lanes (nonce_key/nonce_sequence) instead of
+        // the sender account nonce; skip legacy account-nonce validation in this compatibility path.
+        if !is_aa {
+            validate_account_nonce_and_code_with_components(
+                &fee_payer_account.account().info,
+                tx,
+                cfg,
+            )?;
+        }
 
         // check additional cost and deduct it from the caller's balances
-        let mut balance = caller_account.account().info.balance;
+        let mut balance = fee_payer_account.account().info.balance;
 
         if !cfg.is_fee_charge_disabled() {
             let Some(additional_cost) = chain.tx_cost_with_tx(tx, spec) else {
@@ -172,12 +350,30 @@ where
         let balance = calculate_caller_fee(balance, tx, block, cfg)?;
 
         // make changes to the account
-        caller_account.set_balance(balance);
-        if tx.kind().is_call() {
-            caller_account.bump_nonce();
+        fee_payer_account.set_balance(balance);
+        if tx.kind().is_call() && !is_aa {
+            fee_payer_account.bump_nonce();
         }
 
         Ok(())
+    }
+
+    fn execution(
+        &mut self,
+        evm: &mut Self::Evm,
+        init_and_floor_gas: &InitialAndFloorGas,
+    ) -> Result<FrameResult, Self::Error> {
+        let gas_limit = evm.ctx().tx().gas_limit() - init_and_floor_gas.initial_gas;
+        let Some(parts) = evm.ctx().tx().eip8130_parts().cloned() else {
+            let first_frame_input = self.first_frame_input(evm, gas_limit)?;
+            let mut frame_result = self.run_exec_loop(evm, first_frame_input)?;
+            self.last_frame_result(evm, &mut frame_result)?;
+            return Ok(frame_result);
+        };
+
+        let mut frame_result = self.execute_eip8130_calls(evm, &parts, gas_limit)?;
+        self.last_frame_result(evm, &mut frame_result)?;
+        Ok(frame_result)
     }
 
     fn last_frame_result(
@@ -226,7 +422,13 @@ where
             additional_refund = evm.ctx().chain().operator_fee_refund(frame_result.gas(), spec);
         }
 
-        reimburse_caller(evm.ctx(), frame_result.gas(), additional_refund).map_err(From::from)
+        let aa_payer = evm.ctx().tx().eip8130_parts().map(|parts| parts.payer);
+        if let Some(payer) = aa_payer {
+            reimburse_account(evm.ctx(), payer, frame_result.gas(), additional_refund)
+                .map_err(From::from)
+        } else {
+            reimburse_caller(evm.ctx(), frame_result.gas(), additional_refund).map_err(From::from)
+        }
     }
 
     fn refund(
@@ -323,6 +525,7 @@ where
         evm.ctx().chain_mut().clear_tx_l1_cost();
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
+        clear_eip8130_tx_context();
 
         Ok(exec_result)
     }
@@ -373,6 +576,7 @@ where
         evm.ctx().chain_mut().clear_tx_l1_cost();
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
+        clear_eip8130_tx_context();
 
         output
     }
@@ -388,6 +592,110 @@ where
     ERROR: EvmTrError<EVM> + From<BaseTransactionError> + FromStringError + IsTxError,
 {
     type IT = EthInterpreter;
+}
+
+fn eip8130_call_frame<EVM, ERROR>(
+    evm: &mut EVM,
+    caller: Address,
+    call: &Eip8130Call,
+    gas_limit: u64,
+) -> Result<FrameInit, ERROR>
+where
+    EVM: EvmTr<Context: BaseContextTr>,
+    ERROR: EvmTrError<EVM>,
+{
+    let memory = {
+        let ctx = evm.ctx_mut();
+        let mut memory = SharedMemory::new_with_buffer(ctx.local().shared_memory_buffer().clone());
+        memory.set_memory_limit(ctx.cfg().memory_limit());
+        memory
+    };
+
+    Ok(FrameInit {
+        depth: 0,
+        memory,
+        frame_input: FrameInput::Call(Box::new(CallInputs {
+            input: CallInput::Bytes(call.data.clone()),
+            gas_limit,
+            target_address: call.to,
+            bytecode_address: call.to,
+            known_bytecode: eip8130_known_bytecode::<EVM, ERROR>(evm, call.to)?,
+            caller,
+            value: CallValue::Transfer(call.value),
+            scheme: CallScheme::Call,
+            is_static: false,
+            return_memory_offset: 0..0,
+        })),
+    })
+}
+
+fn eip8130_known_bytecode<EVM, ERROR>(
+    evm: &mut EVM,
+    address: Address,
+) -> Result<Option<(B256, Bytecode)>, ERROR>
+where
+    EVM: EvmTr<Context: BaseContextTr>,
+    ERROR: EvmTrError<EVM>,
+{
+    let delegated_address = {
+        let account = &evm.ctx_mut().journal_mut().load_account_with_code(address)?.info;
+        if let Some(Bytecode::Eip7702(eip7702_bytecode)) = &account.code {
+            Some(eip7702_bytecode.delegated_address)
+        } else {
+            return Ok(Some((account.code_hash(), account.code.clone().unwrap_or_default())));
+        }
+    };
+
+    if let Some(delegated_address) = delegated_address {
+        let account = &evm.ctx_mut().journal_mut().load_account_with_code(delegated_address)?.info;
+        return Ok(Some((account.code_hash(), account.code.clone().unwrap_or_default())));
+    }
+
+    Ok(None)
+}
+
+fn eip8130_aggregate_result(
+    gas_limit: u64,
+    remaining_gas: u64,
+    refunded_gas: i64,
+    result: InstructionResult,
+    output: Bytes,
+) -> FrameResult {
+    let mut gas = Gas::new(gas_limit);
+    let spent = gas_limit.saturating_sub(remaining_gas);
+    let recorded = gas.record_cost(spent);
+    debug_assert!(recorded);
+    gas.record_refund(refunded_gas);
+
+    FrameResult::Call(CallOutcome::new(InterpreterResult { result, output, gas }, 0..0))
+}
+
+fn reimburse_account<CTX: ContextTr>(
+    context: &mut CTX,
+    account: Address,
+    gas: &Gas,
+    additional_refund: U256,
+) -> Result<(), <CTX::Db as Database>::Error> {
+    let basefee = context.block().basefee() as u128;
+    let effective_gas_price = context.tx().effective_gas_price(basefee);
+    let refund = U256::from(
+        effective_gas_price.saturating_mul((gas.remaining() + gas.refunded() as u64) as u128),
+    ) + additional_refund;
+
+    context.journal_mut().load_account_mut(account)?.incr_balance(refund);
+    Ok(())
+}
+
+/// Builds an EIP-7702 delegation designation bytecode for an AA delegation change.
+pub fn delegation_code(target: Address) -> Bytecode {
+    if target.is_zero() {
+        return Bytecode::default();
+    }
+
+    let mut code = Vec::with_capacity(23);
+    code.extend_from_slice(&[0xef, 0x01, 0x00]);
+    code.extend_from_slice(target.as_slice());
+    Bytecode::new_raw(Bytes::from(code))
 }
 
 #[cfg(test)]

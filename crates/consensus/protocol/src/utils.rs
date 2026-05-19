@@ -2,10 +2,10 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{Transaction, TxType, Typed2718};
+use alloy_consensus::{Transaction, Typed2718};
 use alloy_primitives::{B256, U256};
 use alloy_rlp::{Buf, Header};
-use base_common_consensus::{BaseBlock, HoloceneExtraData, JovianExtraData};
+use base_common_consensus::{BaseBlock, HoloceneExtraData, JovianExtraData, OpTxType};
 use base_common_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
@@ -97,7 +97,7 @@ fn encode_scalar(blob_base_fee_scalar: u32, base_fee_scalar: u32) -> U256 {
 }
 
 /// Reads transaction data from a reader.
-pub fn read_tx_data(r: &mut &[u8]) -> Result<(Vec<u8>, TxType), SpanBatchError> {
+pub fn read_tx_data(r: &mut &[u8]) -> Result<(Vec<u8>, OpTxType), SpanBatchError> {
     let mut tx_data = Vec::new();
     let first_byte =
         *r.first().ok_or(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))?;

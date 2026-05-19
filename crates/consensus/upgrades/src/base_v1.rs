@@ -19,10 +19,9 @@ use alloc::{string::String, vec::Vec};
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex};
-use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
-use base_protocol::Deployers;
+use base_common_consensus::{Deployers, TxDeposit, UpgradeDepositSource};
 
-use crate::Hardfork;
+use crate::Upgrade;
 
 /// The Base V1 network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]
@@ -232,7 +231,7 @@ impl BaseV1 {
     }
 }
 
-impl Hardfork for BaseV1 {
+impl Upgrade for BaseV1 {
     fn txs(&self) -> impl Iterator<Item = Bytes> + '_ {
         Self::deposits().map(|tx| {
             let mut encoded = Vec::new();
