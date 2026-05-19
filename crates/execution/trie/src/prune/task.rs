@@ -14,7 +14,7 @@ const PRUNE_BATCH_SIZE: u64 = 200;
 #[derive(Debug)]
 pub struct BaseProofStoragePrunerTask<P, H> {
     pruner: BaseProofStoragePruner<P, H>,
-    min_block_interval: u64,
+    retention_blocks: u64,
     task_run_interval: Duration,
 }
 
@@ -27,23 +27,19 @@ where
     pub const fn new(
         provider: BaseProofsStorage<P>,
         hash_reader: H,
-        min_block_interval: u64,
+        retention_blocks: u64,
         task_run_interval: Duration,
     ) -> Self {
-        let pruner = BaseProofStoragePruner::new(
-            provider,
-            hash_reader,
-            min_block_interval,
-            PRUNE_BATCH_SIZE,
-        );
-        Self { pruner, min_block_interval, task_run_interval }
+        let pruner =
+            BaseProofStoragePruner::new(provider, hash_reader, retention_blocks, PRUNE_BATCH_SIZE);
+        Self { pruner, retention_blocks, task_run_interval }
     }
 
     /// Run forever (until `cancel`), executing one prune pass per `task_run_interval`.
     pub async fn run(self, mut signal: GracefulShutdown) {
         info!(
             target: "trie::pruner_task",
-            min_block_interval = self.min_block_interval,
+            retention_blocks = self.retention_blocks,
             interval_secs = self.task_run_interval.as_secs(),
             "Starting pruner task"
         );
