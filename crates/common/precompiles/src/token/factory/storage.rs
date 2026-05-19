@@ -394,10 +394,7 @@ mod tests {
 
             let token = factory.create_token(caller, b20_call(salt)).unwrap();
             assert!(factory.is_b20(token).unwrap());
-            assert_eq!(
-                factory.variant_of_token(token).unwrap(),
-                TokenVariant::B20.discriminant()
-            );
+            assert_eq!(factory.variant_of_token(token).unwrap(), TokenVariant::B20.discriminant());
         });
     }
 
@@ -422,11 +419,7 @@ mod tests {
             let token_addr = factory
                 .create_token(
                     Address::repeat_byte(0xCA),
-                    create_call(
-                        TokenVariant::B20.discriminant(),
-                        params,
-                        B256::repeat_byte(0x12),
-                    ),
+                    create_call(TokenVariant::B20.discriminant(), params, B256::repeat_byte(0x12)),
                 )
                 .unwrap();
 
@@ -507,11 +500,7 @@ mod tests {
             assert_output(
                 dispatch_factory_success(
                     ctx,
-                    create_call(
-                        TokenVariant::B20_DISCRIMINANT,
-                        params,
-                        B256::repeat_byte(0x31),
-                    ),
+                    create_call(TokenVariant::B20_DISCRIMINANT, params, B256::repeat_byte(0x31)),
                 ),
                 ITokenFactory::createTokenCall::abi_encode_returns(&expected_token),
             );
@@ -526,9 +515,7 @@ mod tests {
                     ctx,
                     ITokenFactory::variantOfCall { token: expected_token },
                 ),
-                ITokenFactory::variantOfCall::abi_encode_returns(
-                    &TokenVariant::B20_DISCRIMINANT,
-                ),
+                ITokenFactory::variantOfCall::abi_encode_returns(&TokenVariant::B20_DISCRIMINANT),
             );
             assert_output(
                 dispatch_factory_success(
