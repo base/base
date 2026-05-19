@@ -22,6 +22,12 @@ Isthmus adds the Prague BLS12-381 precompiles with Base-specific limits, and Jov
 variable-input bn254 and BLS12-381 limits. Azul, Beryl, and newer Base upgrades inherit the latest
 known Base precompile set until they are explicitly mapped.
 
+Starting in Beryl, `BasePrecompileInstaller` also installs the activation registry precompile at
+`0x84530000000000000000000000000000000000ff`. The registry stores runtime feature flags keyed by
+`bytes32`, defaults every feature to disabled, and exposes `isEnabled(bytes32)`,
+`enable(bytes32)`, `disable(bytes32)`, and `activationAdmin()`. Only the configured activation admin
+can mutate feature state, and repeated no-op transitions revert.
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:
