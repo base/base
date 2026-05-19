@@ -1,6 +1,6 @@
 use alloc::string::String;
 
-use alloy_primitives::{Address, LogData, U256, address};
+use alloy_primitives::{Address, LogData, U256};
 use base_precompile_macros::contract;
 use base_precompile_storage::{
     BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
@@ -8,10 +8,7 @@ use base_precompile_storage::{
 
 use crate::token::{TokenVariant, common::TokenAccounting};
 
-/// Canonical precompile address for the `B20Token` (placeholder — replace before deployment).
-pub const B20_TOKEN_ADDRESS: Address = address!("0000000000000000000000000000000000000900");
-
-#[contract(addr = B20_TOKEN_ADDRESS)]
+#[contract]
 pub struct B20TokenStorage {
     pub total_supply: U256,                                   // slot 0
     pub supply_cap: U256,                                     // slot 1
