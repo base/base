@@ -5,7 +5,7 @@ use alloy_sol_types::{SolCall, SolInterface};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::storage::{TokenFactory, compute_b20_address};
+use super::{storage::TokenFactory, variant::TokenVariant};
 use crate::token::abi::ITokenFactory;
 
 impl<'a> TokenFactory<'a> {
@@ -33,8 +33,12 @@ impl<'a> TokenFactory<'a> {
                 Ok(ITokenFactory::createTokenCall::abi_encode_returns(&token).into())
             }
             Ok(ITokenFactory::ITokenFactoryCalls::predictTokenAddress(call)) => {
-                let (addr, _) =
-                    compute_b20_address(call.creator, call.variant, call.decimals, call.salt);
+                let (addr, _) = TokenVariant::compute_address_for_discriminant(
+                    call.creator,
+                    call.variant,
+                    call.decimals,
+                    call.salt,
+                );
                 Ok(ITokenFactory::predictTokenAddressCall::abi_encode_returns(&addr).into())
             }
             Ok(ITokenFactory::ITokenFactoryCalls::isB20(call)) => {

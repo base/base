@@ -45,15 +45,14 @@ impl<S: BasePrecompileSpec> BasePrecompileInstaller<S> {
 // Function pointer (not a closure) satisfies the HRTB `for<'a> Fn(&'a Address) -> Option<DynPrecompile>`
 // required by `set_precompile_lookup`.
 fn b20_lookup(address: &Address) -> Option<DynPrecompile> {
-    if *address == crate::token::FACTORY_ADDRESS {
+    if *address == crate::token::TokenFactory::ADDRESS {
         Some(crate::token::TokenFactoryPrecompile::precompile())
     } else {
-        match crate::token::variant_of(address) {
-            crate::token::VARIANT_DEFAULT => {
-                Some(crate::token::B20TokenPrecompile::create_precompile(*address))
+        crate::token::TokenVariant::from_address(*address).map(|variant| match variant {
+            crate::token::TokenVariant::B20 => {
+                crate::token::B20TokenPrecompile::create_precompile(*address)
             }
-            _ => None,
-        }
+        })
     }
 }
 
@@ -64,7 +63,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::token::{FACTORY_ADDRESS, VARIANT_DEFAULT, compute_b20_address};
+    use crate::token::{TokenFactory, TokenVariant};
 
     #[test]
     fn installer_preserves_base_precompile_set() {
@@ -86,14 +85,13 @@ mod tests {
     #[case::beryl(BaseUpgrade::Beryl, true)]
     fn installer_routes_b20_precompiles_by_fork(#[case] spec: BaseUpgrade, #[case] expected: bool) {
         let precompiles = BasePrecompileInstaller::new(spec).install();
-        let (token, _) = compute_b20_address(
+        let (token, _) = TokenVariant::B20.compute_address(
             Address::repeat_byte(0x11),
-            VARIANT_DEFAULT,
             18,
             B256::repeat_byte(0x22),
         );
 
-        assert_eq!(precompiles.get(&FACTORY_ADDRESS).is_some(), expected);
+        assert_eq!(precompiles.get(&TokenFactory::ADDRESS).is_some(), expected);
         assert_eq!(precompiles.get(&token).is_some(), expected);
         assert!(precompiles.get(&Address::repeat_byte(0x42)).is_none());
     }

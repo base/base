@@ -7,12 +7,13 @@ use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_network::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_protocol::BlockInfo;
 use thiserror::Error;
 use url::Url;
 
-/// Error type for [`DelegateL2Client`] operations.
+/// Error type for [`RemoteL2Client`] operations.
 #[derive(Debug, Error)]
-pub enum DelegateL2ClientError {
+pub enum RemoteL2ClientError {
     /// Failed to fetch block from L2 EL.
     #[error("failed to fetch block at {tag}: {source}")]
     FetchBlock {
@@ -27,29 +28,33 @@ pub enum DelegateL2ClientError {
     BlockNotFound(String),
 }
 
-/// Trait for fetching L2 block data from a source node.
+/// Trait for fetching L2 block data from the remote node.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
-pub trait L2SourceClient: Debug + Send + Sync {
+pub trait RemoteClient: Debug + Send + Sync {
     /// Fetches the block number at the given tag.
-    async fn get_block_number(&self, tag: BlockNumberOrTag) -> Result<u64, DelegateL2ClientError>;
+    async fn get_block_number(&self, tag: BlockNumberOrTag) -> Result<u64, RemoteL2ClientError>;
+
+    /// Fetches the block info at the given tag.
+    async fn get_block_info(&self, tag: BlockNumberOrTag)
+    -> Result<BlockInfo, RemoteL2ClientError>;
 
     /// Fetches a block by number and converts it to an [`BaseExecutionPayloadEnvelope`].
     async fn get_payload_by_number(
         &self,
         number: u64,
-    ) -> Result<BaseExecutionPayloadEnvelope, DelegateL2ClientError>;
+    ) -> Result<BaseExecutionPayloadEnvelope, RemoteL2ClientError>;
 }
 
 /// Client that polls a source L2 execution layer node for block data and
 /// converts blocks into [`BaseExecutionPayloadEnvelope`] for engine insertion.
 #[derive(Debug, Clone)]
-pub struct DelegateL2Client {
+pub struct RemoteL2Client {
     provider: RootProvider<Base>,
 }
 
-impl DelegateL2Client {
-    /// Creates a new [`DelegateL2Client`] from a source L2 node URL.
+impl RemoteL2Client {
+    /// Creates a new [`RemoteL2Client`] from a source L2 node URL.
     pub fn new(url: Url) -> Self {
         let provider = RootProvider::<Base>::new_http(url);
         Self { provider }
@@ -57,29 +62,42 @@ impl DelegateL2Client {
 }
 
 #[async_trait]
-impl L2SourceClient for DelegateL2Client {
-    async fn get_block_number(&self, tag: BlockNumberOrTag) -> Result<u64, DelegateL2ClientError> {
+impl RemoteClient for RemoteL2Client {
+    async fn get_block_number(&self, tag: BlockNumberOrTag) -> Result<u64, RemoteL2ClientError> {
+        if matches!(tag, BlockNumberOrTag::Latest) {
+            return self.provider.get_block_number().await.map_err(|e| {
+                RemoteL2ClientError::FetchBlock { tag: format!("{tag:?}"), source: e }
+            });
+        }
+
+        self.get_block_info(tag).await.map(|block| block.number)
+    }
+
+    async fn get_block_info(
+        &self,
+        tag: BlockNumberOrTag,
+    ) -> Result<BlockInfo, RemoteL2ClientError> {
         let block = self
             .provider
             .get_block_by_number(tag)
             .await
-            .map_err(|e| DelegateL2ClientError::FetchBlock { tag: format!("{tag:?}"), source: e })?
-            .ok_or_else(|| DelegateL2ClientError::BlockNotFound(format!("{tag:?}")))?;
+            .map_err(|e| RemoteL2ClientError::FetchBlock { tag: format!("{tag:?}"), source: e })?
+            .ok_or_else(|| RemoteL2ClientError::BlockNotFound(format!("{tag:?}")))?;
 
-        Ok(block.header.number)
+        Ok(BlockInfo::from(&block))
     }
 
     async fn get_payload_by_number(
         &self,
         number: u64,
-    ) -> Result<BaseExecutionPayloadEnvelope, DelegateL2ClientError> {
+    ) -> Result<BaseExecutionPayloadEnvelope, RemoteL2ClientError> {
         let rpc_block = self
             .provider
             .get_block_by_number(number.into())
             .full()
             .await
-            .map_err(|e| DelegateL2ClientError::FetchBlock { tag: format!("{number}"), source: e })?
-            .ok_or_else(|| DelegateL2ClientError::BlockNotFound(format!("{number}")))?;
+            .map_err(|e| RemoteL2ClientError::FetchBlock { tag: format!("{number}"), source: e })?
+            .ok_or_else(|| RemoteL2ClientError::BlockNotFound(format!("{number}")))?;
 
         let block_hash = rpc_block.header.hash;
         let parent_beacon_block_root = rpc_block.header.parent_beacon_block_root;
