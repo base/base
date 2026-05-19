@@ -455,12 +455,7 @@ where
                 Vec::with_capacity((end - latest) as usize);
             for block_num in (latest + 1)..=end {
                 let cached = sync_target.take(block_num);
-                match Self::build_batch_entry(
-                    block_num,
-                    cached,
-                    provider,
-                    verification_interval,
-                ) {
+                match Self::build_batch_entry(block_num, cached, provider, verification_interval) {
                     Ok(entry) => batch.push(entry),
                     Err(e) => {
                         error!(target: "base::exex", block_number = block_num, error = ?e, "Preparing block for batch failed");
