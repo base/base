@@ -12,9 +12,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_network::Base;
-use base_common_precompiles::{
-    CREATE_TOKEN_VERSION, FACTORY_ADDRESS, IB20, ITokenFactory, compute_b20_address,
-};
+use base_common_precompiles::{IB20, ITokenFactory, TokenFactory, TokenVariant};
 use base_common_rpc_types::BaseTransactionRequest;
 use eyre::{Result, WrapErr, ensure};
 use tokio::time::{sleep, timeout};
@@ -110,28 +108,33 @@ impl<'a> B20PrecompileClient<'a> {
     /// Creates a B-20 token through the factory and returns the deterministic token address.
     pub async fn create_token(
         &self,
-        variant: u8,
+        variant: TokenVariant,
         params: ITokenFactory::B20TokenParams,
         salt: B256,
     ) -> Result<Address> {
         let token = self.predict_token_address(variant, params.decimals, salt);
         let call = ITokenFactory::createTokenCall {
             params: ITokenFactory::CreateTokenParams {
-                version: CREATE_TOKEN_VERSION,
-                variant,
+                version: TokenFactory::CREATE_TOKEN_VERSION,
+                variant: variant.discriminant(),
                 requiredParams: params.abi_encode().into(),
                 optionalParams: Bytes::new(),
                 postCreateCalls: Vec::new(),
                 salt,
             },
         };
-        self.send_call(FACTORY_ADDRESS, call, "create B-20 token").await?;
+        self.send_call(TokenFactory::ADDRESS, call, "create B-20 token").await?;
         Ok(token)
     }
 
     /// Computes the token address a factory creation call will use.
-    pub fn predict_token_address(&self, variant: u8, decimals: u8, salt: B256) -> Address {
-        compute_b20_address(self.signer.address(), variant, decimals, salt).0
+    pub fn predict_token_address(
+        &self,
+        variant: TokenVariant,
+        decimals: u8,
+        salt: B256,
+    ) -> Address {
+        variant.compute_address(self.signer.address(), decimals, salt).0
     }
 
     /// Waits for a created token address to return non-empty bytecode.
@@ -163,14 +166,16 @@ impl<'a> B20PrecompileClient<'a> {
 
     /// Reads the variant encoded in a token address via the factory.
     pub async fn variant_of(&self, token: Address) -> Result<u8> {
-        let output = self.call(FACTORY_ADDRESS, ITokenFactory::variantOfCall { token }).await?;
+        let output =
+            self.call(TokenFactory::ADDRESS, ITokenFactory::variantOfCall { token }).await?;
         ITokenFactory::variantOfCall::abi_decode_returns(output.as_ref())
             .wrap_err("Failed to decode variantOf")
     }
 
     /// Reads the decimals encoded in a token address via the factory.
     pub async fn decimals_of(&self, token: Address) -> Result<u8> {
-        let output = self.call(FACTORY_ADDRESS, ITokenFactory::decimalsOfCall { token }).await?;
+        let output =
+            self.call(TokenFactory::ADDRESS, ITokenFactory::decimalsOfCall { token }).await?;
         ITokenFactory::decimalsOfCall::abi_decode_returns(output.as_ref())
             .wrap_err("Failed to decode decimalsOf")
     }

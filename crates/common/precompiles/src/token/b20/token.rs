@@ -10,7 +10,7 @@ use crate::token::{
     },
 };
 
-/// EVM precompile for the Default B-20 token variant.
+/// EVM precompile for the B-20 token variant.
 ///
 /// The generic `S` lets callers swap in an in-memory [`TokenAccounting`]
 /// implementation for unit tests without touching real EVM storage. The

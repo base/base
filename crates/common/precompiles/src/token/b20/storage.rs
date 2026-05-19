@@ -6,7 +6,7 @@ use base_precompile_storage::{
     BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
 };
 
-use crate::token::{common::TokenAccounting, decimals_of};
+use crate::token::{TokenVariant, common::TokenAccounting};
 
 /// Canonical precompile address for the `B20Token` (placeholder — replace before deployment).
 pub const B20_TOKEN_ADDRESS: Address = address!("0000000000000000000000000000000000000900");
@@ -93,7 +93,7 @@ impl TokenAccounting for B20TokenStorage<'_> {
     }
 
     fn decimals(&self) -> Result<u8> {
-        Ok(decimals_of(&self.address))
+        Ok(TokenVariant::decimals_of(self.address).unwrap_or(0))
     }
 
     fn paused(&self) -> Result<U256> {

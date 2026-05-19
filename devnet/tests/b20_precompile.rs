@@ -6,7 +6,7 @@ use alloy_primitives::{B256, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use base_common_network::Base;
-use base_common_precompiles::VARIANT_DEFAULT;
+use base_common_precompiles::TokenVariant;
 use devnet::{
     B20PrecompileClient, Devnet, DevnetBuilder,
     config::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6},
@@ -45,10 +45,10 @@ async fn test_b20_factory_create_and_transfer_via_rpc() -> Result<()> {
         admin.address(),
     );
 
-    let token = b20.create_token(VARIANT_DEFAULT, params, salt).await?;
+    let token = b20.create_token(TokenVariant::B20, params, salt).await?;
     b20.wait_for_token_code(token, TX_RECEIPT_TIMEOUT, BLOCK_POLL_INTERVAL).await?;
 
-    assert_eq!(b20.variant_of(token).await?, VARIANT_DEFAULT);
+    assert_eq!(b20.variant_of(token).await?, TokenVariant::B20.discriminant());
     assert_eq!(b20.decimals_of(token).await?, TOKEN_DECIMALS);
 
     let admin_balance_before = b20.balance_of(token, admin.address()).await?;
