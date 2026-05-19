@@ -21,46 +21,46 @@ impl ActivationRegistry {
         }
     }
 
-    /// Returns true when the feature is enabled.
-    pub fn is_enabled(self, ctx: StorageCtx<'_>, feature: B256) -> Result<bool> {
+    /// Returns true when the feature is activated.
+    pub fn is_activated(self, ctx: StorageCtx<'_>, feature: B256) -> Result<bool> {
         ActivationRegistryStorage::new(ctx).features.at(&feature).read()
     }
 
-    /// Reverts unless the feature is enabled.
+    /// Reverts unless the feature is activated.
     ///
-    /// Both the enabled and disabled paths return `Ok`; callers must inspect
-    /// [`PrecompileOutput::reverted`] to distinguish an enabled feature from an ABI revert.
-    pub fn assert_enabled(self, ctx: StorageCtx<'_>, feature: B256) -> PrecompileResult {
-        match self.is_enabled(ctx, feature) {
+    /// Both the activated and deactivated paths return `Ok`; callers must inspect
+    /// [`PrecompileOutput::reverted`] to distinguish an activated feature from an ABI revert.
+    pub fn assert_activated(self, ctx: StorageCtx<'_>, feature: B256) -> PrecompileResult {
+        match self.is_activated(ctx, feature) {
             Ok(true) => Ok(ctx.success_output(Bytes::new())),
             Ok(false) => Ok(ctx.abi_revert(
-                IActivationRegistry::IActivationRegistryErrors::FeatureNotEnabled(
-                    IActivationRegistry::FeatureNotEnabled { feature },
+                IActivationRegistry::IActivationRegistryErrors::FeatureNotActivated(
+                    IActivationRegistry::FeatureNotActivated { feature },
                 ),
             )),
             Err(error) => ctx.error_result(error),
         }
     }
 
-    /// Enables the feature.
-    pub fn enable(self, ctx: StorageCtx<'_>, feature: B256) -> Result<PrecompileOutput> {
-        self.set_enabled(ctx, feature, true)
+    /// Activates the feature.
+    pub fn activate(self, ctx: StorageCtx<'_>, feature: B256) -> Result<PrecompileOutput> {
+        self.set_activated(ctx, feature, true)
     }
 
-    /// Disables the feature.
-    pub fn disable(self, ctx: StorageCtx<'_>, feature: B256) -> Result<PrecompileOutput> {
-        self.set_enabled(ctx, feature, false)
+    /// Deactivates the feature.
+    pub fn deactive(self, ctx: StorageCtx<'_>, feature: B256) -> Result<PrecompileOutput> {
+        self.set_activated(ctx, feature, false)
     }
 
-    /// Sets the feature state.
-    pub fn set_enabled(
+    /// Sets the feature activation state.
+    pub fn set_activated(
         self,
         ctx: StorageCtx<'_>,
         feature: B256,
-        enabled: bool,
+        activated: bool,
     ) -> Result<PrecompileOutput> {
-        // Keep this guard at the shared mutation boundary so `enable`, `disable`, and direct
-        // `set_enabled` callers all get the same static-call behavior after calldata validation.
+        // Keep this guard at the shared mutation boundary so `activate`, `deactive`, and direct
+        // `set_activated` callers all get the same static-call behavior after calldata validation.
         if ctx.is_static() {
             return Ok(ctx.abi_revert(
                 IActivationRegistry::IActivationRegistryErrors::StaticCallNotAllowed(
@@ -80,30 +80,30 @@ impl ActivationRegistry {
 
         let mut storage = ActivationRegistryStorage::new(ctx);
         let current = storage.features.at(&feature).read()?;
-        if current == enabled {
-            let error = if enabled {
-                IActivationRegistry::IActivationRegistryErrors::AlreadyEnabled(
-                    IActivationRegistry::AlreadyEnabled { feature },
+        if current == activated {
+            let error = if activated {
+                IActivationRegistry::IActivationRegistryErrors::AlreadyActivated(
+                    IActivationRegistry::AlreadyActivated { feature },
                 )
             } else {
-                IActivationRegistry::IActivationRegistryErrors::AlreadyDisabled(
-                    IActivationRegistry::AlreadyDisabled { feature },
+                IActivationRegistry::IActivationRegistryErrors::AlreadyDeactivated(
+                    IActivationRegistry::AlreadyDeactivated { feature },
                 )
             };
             return Ok(ctx.abi_revert(error));
         }
 
-        if enabled {
+        if activated {
             storage.features.at_mut(&feature).write(true)?;
             ctx.emit_event(
                 ACTIVATION_REGISTRY_ADDRESS,
-                IActivationRegistry::FeatureEnabled { feature, caller }.encode_log_data(),
+                IActivationRegistry::FeatureActivated { feature, caller }.encode_log_data(),
             )?;
         } else {
             storage.features.at_mut(&feature).delete()?;
             ctx.emit_event(
                 ACTIVATION_REGISTRY_ADDRESS,
-                IActivationRegistry::FeatureDisabled { feature, caller }.encode_log_data(),
+                IActivationRegistry::FeatureDeactivated { feature, caller }.encode_log_data(),
             )?;
         }
 
@@ -128,33 +128,33 @@ impl ActivationRegistry {
         // Match selectors explicitly so unknown selectors remain distinct from known selectors
         // whose arguments fail ABI decoding.
         match selector {
-            IActivationRegistry::isEnabledCall::SELECTOR => {
-                IActivationRegistry::isEnabledCall::abi_decode(calldata)
-                    .map(IActivationRegistry::IActivationRegistryCalls::isEnabled)
+            IActivationRegistry::isActivatedCall::SELECTOR => {
+                IActivationRegistry::isActivatedCall::abi_decode(calldata)
+                    .map(IActivationRegistry::IActivationRegistryCalls::isActivated)
                     .map_err(|error| BasePrecompileError::AbiDecodeFailed {
                         selector,
                         error: error.to_string(),
                     })
             }
-            IActivationRegistry::enableCall::SELECTOR => {
-                IActivationRegistry::enableCall::abi_decode(calldata)
-                    .map(IActivationRegistry::IActivationRegistryCalls::enable)
+            IActivationRegistry::activateCall::SELECTOR => {
+                IActivationRegistry::activateCall::abi_decode(calldata)
+                    .map(IActivationRegistry::IActivationRegistryCalls::activate)
                     .map_err(|error| BasePrecompileError::AbiDecodeFailed {
                         selector,
                         error: error.to_string(),
                     })
             }
-            IActivationRegistry::disableCall::SELECTOR => {
-                IActivationRegistry::disableCall::abi_decode(calldata)
-                    .map(IActivationRegistry::IActivationRegistryCalls::disable)
+            IActivationRegistry::deactiveCall::SELECTOR => {
+                IActivationRegistry::deactiveCall::abi_decode(calldata)
+                    .map(IActivationRegistry::IActivationRegistryCalls::deactive)
                     .map_err(|error| BasePrecompileError::AbiDecodeFailed {
                         selector,
                         error: error.to_string(),
                     })
             }
-            IActivationRegistry::activationAdminCall::SELECTOR => {
-                IActivationRegistry::activationAdminCall::abi_decode(calldata)
-                    .map(IActivationRegistry::IActivationRegistryCalls::activationAdmin)
+            IActivationRegistry::adminCall::SELECTOR => {
+                IActivationRegistry::adminCall::abi_decode(calldata)
+                    .map(IActivationRegistry::IActivationRegistryCalls::admin)
                     .map_err(|error| BasePrecompileError::AbiDecodeFailed {
                         selector,
                         error: error.to_string(),
@@ -169,25 +169,21 @@ impl ActivationRegistry {
         let call = Self::decode_call(calldata)?;
 
         match call {
-            IActivationRegistry::IActivationRegistryCalls::isEnabled(call) => {
-                let enabled = self.is_enabled(ctx, call.feature)?;
+            IActivationRegistry::IActivationRegistryCalls::isActivated(call) => {
+                let activated = self.is_activated(ctx, call.feature)?;
                 Ok(ctx.success_output(
-                    IActivationRegistry::isEnabledCall::abi_encode_returns(&enabled).into(),
+                    IActivationRegistry::isActivatedCall::abi_encode_returns(&activated).into(),
                 ))
             }
-            IActivationRegistry::IActivationRegistryCalls::enable(call) => {
-                self.enable(ctx, call.feature)
+            IActivationRegistry::IActivationRegistryCalls::activate(call) => {
+                self.activate(ctx, call.feature)
             }
-            IActivationRegistry::IActivationRegistryCalls::disable(call) => {
-                self.disable(ctx, call.feature)
+            IActivationRegistry::IActivationRegistryCalls::deactive(call) => {
+                self.deactive(ctx, call.feature)
             }
-            IActivationRegistry::IActivationRegistryCalls::activationAdmin(_) => Ok(ctx
-                .success_output(
-                    IActivationRegistry::activationAdminCall::abi_encode_returns(
-                        &self.activation_admin(),
-                    )
-                    .into(),
-                )),
+            IActivationRegistry::IActivationRegistryCalls::admin(_) => Ok(ctx.success_output(
+                IActivationRegistry::adminCall::abi_encode_returns(&self.admin()).into(),
+            )),
         }
     }
 }
@@ -212,65 +208,65 @@ mod tests {
             .expect("precompile execution should not fail fatally")
     }
 
-    fn assert_enabled(storage: &mut HashMapStorageProvider, expected: bool) {
+    fn assert_activated(storage: &mut HashMapStorageProvider, expected: bool) {
         StorageCtx::enter(storage, |ctx| {
             assert_eq!(
                 ActivationRegistry::new()
-                    .is_enabled(ctx, SECURITIES_TOKEN_CREATION)
+                    .is_activated(ctx, SECURITIES_TOKEN_CREATION)
                     .expect("storage read succeeds"),
                 expected
             );
         });
     }
 
-    fn enable_feature(storage: &mut HashMapStorageProvider) -> PrecompileOutput {
+    fn activate_feature(storage: &mut HashMapStorageProvider) -> PrecompileOutput {
         let calldata =
-            IActivationRegistry::enableCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
+            IActivationRegistry::activateCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
         execute_with(storage, ACTIVATION_ADMIN_ADDRESS, calldata.into())
     }
 
-    fn disable_feature(storage: &mut HashMapStorageProvider) -> PrecompileOutput {
+    fn deactive_feature(storage: &mut HashMapStorageProvider) -> PrecompileOutput {
         let calldata =
-            IActivationRegistry::disableCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
+            IActivationRegistry::deactiveCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
         execute_with(storage, ACTIVATION_ADMIN_ADDRESS, calldata.into())
     }
 
     #[test]
-    fn feature_is_disabled_by_default() {
+    fn feature_is_inactive_by_default() {
         let mut storage = HashMapStorageProvider::new(1);
 
-        assert_enabled(&mut storage, false);
+        assert_activated(&mut storage, false);
     }
 
     #[test]
-    fn activation_admin_can_enable_feature() {
+    fn admin_can_activate_feature() {
         let mut storage = HashMapStorageProvider::new(1);
 
-        let output = enable_feature(&mut storage);
+        let output = activate_feature(&mut storage);
 
         assert!(!output.reverted);
-        assert_enabled(&mut storage, true);
+        assert_activated(&mut storage, true);
         assert_eq!(storage.get_events(ACTIVATION_REGISTRY_ADDRESS).len(), 1);
     }
 
     #[test]
-    fn unauthorized_caller_cannot_enable_feature() {
+    fn unauthorized_caller_cannot_activate_feature() {
         let mut storage = HashMapStorageProvider::new(1);
         let caller = address!("0x0000000000000000000000000000000000000001");
         let calldata =
-            IActivationRegistry::enableCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
+            IActivationRegistry::activateCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
 
         let output = execute_with(&mut storage, caller, calldata.into());
 
         assert!(output.reverted);
-        assert_enabled(&mut storage, false);
+        assert_activated(&mut storage, false);
     }
 
     #[test]
-    fn enabled_feature_cannot_be_enabled_again() {
+    fn activated_feature_cannot_be_activated_again() {
         let mut storage = HashMapStorageProvider::new(1);
         let calldata: Bytes =
-            IActivationRegistry::enableCall { feature: SECURITIES_TOKEN_CREATION }
+            IActivationRegistry::activateCall { feature: SECURITIES_TOKEN_CREATION }
                 .abi_encode()
                 .into();
 
@@ -279,142 +275,143 @@ mod tests {
 
         assert!(!first.reverted);
         assert!(second.reverted);
-        assert_enabled(&mut storage, true);
+        assert_activated(&mut storage, true);
     }
 
     #[test]
-    fn activation_admin_can_disable_feature() {
+    fn admin_can_deactive_feature() {
         let mut storage = HashMapStorageProvider::new(1);
 
-        let first = enable_feature(&mut storage);
-        let second = disable_feature(&mut storage);
+        let first = activate_feature(&mut storage);
+        let second = deactive_feature(&mut storage);
 
         assert!(!first.reverted);
         assert!(!second.reverted);
-        assert_enabled(&mut storage, false);
+        assert_activated(&mut storage, false);
         assert_eq!(storage.get_events(ACTIVATION_REGISTRY_ADDRESS).len(), 2);
     }
 
     #[test]
-    fn disabled_feature_can_be_reenabled() {
+    fn deactivated_feature_can_be_reactivated() {
         let mut storage = HashMapStorageProvider::new(1);
 
-        let first = enable_feature(&mut storage);
-        let second = disable_feature(&mut storage);
-        let third = enable_feature(&mut storage);
+        let first = activate_feature(&mut storage);
+        let second = deactive_feature(&mut storage);
+        let third = activate_feature(&mut storage);
 
         assert!(!first.reverted);
         assert!(!second.reverted);
         assert!(!third.reverted);
-        assert_enabled(&mut storage, true);
+        assert_activated(&mut storage, true);
         assert_eq!(storage.get_events(ACTIVATION_REGISTRY_ADDRESS).len(), 3);
     }
 
     #[test]
-    fn disabled_feature_cannot_be_disabled_again() {
+    fn deactivated_feature_cannot_be_deactivated_again() {
         let mut storage = HashMapStorageProvider::new(1);
 
-        let output = disable_feature(&mut storage);
+        let output = deactive_feature(&mut storage);
 
         assert!(output.reverted);
-        assert_enabled(&mut storage, false);
+        assert_activated(&mut storage, false);
         assert_eq!(storage.get_events(ACTIVATION_REGISTRY_ADDRESS).len(), 0);
     }
 
     #[test]
-    fn unauthorized_caller_cannot_disable_feature() {
+    fn unauthorized_caller_cannot_deactive_feature() {
         let mut storage = HashMapStorageProvider::new(1);
         let caller = address!("0x0000000000000000000000000000000000000001");
         let calldata =
-            IActivationRegistry::disableCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
+            IActivationRegistry::deactiveCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
 
-        enable_feature(&mut storage);
+        activate_feature(&mut storage);
         let output = execute_with(&mut storage, caller, calldata.into());
 
         assert!(output.reverted);
-        assert_enabled(&mut storage, true);
+        assert_activated(&mut storage, true);
     }
 
     #[test]
-    fn static_call_cannot_enable_feature() {
+    fn static_call_cannot_activate_feature() {
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_static(true);
         let calldata =
-            IActivationRegistry::enableCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
+            IActivationRegistry::activateCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
 
         let output = execute_with(&mut storage, ACTIVATION_ADMIN_ADDRESS, calldata.into());
 
         assert!(output.reverted);
-        assert_enabled(&mut storage, false);
+        assert_activated(&mut storage, false);
     }
 
     #[test]
-    fn static_call_cannot_disable_feature() {
+    fn static_call_cannot_deactive_feature() {
         let mut storage = HashMapStorageProvider::new(1);
-        enable_feature(&mut storage);
+        activate_feature(&mut storage);
         storage.set_static(true);
         let calldata =
-            IActivationRegistry::disableCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
+            IActivationRegistry::deactiveCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
 
         let output = execute_with(&mut storage, ACTIVATION_ADMIN_ADDRESS, calldata.into());
 
         assert!(output.reverted);
-        assert_enabled(&mut storage, true);
+        assert_activated(&mut storage, true);
     }
 
     #[test]
     fn view_call_returns_activation_state() {
         let mut storage = HashMapStorageProvider::new(1);
-        let calldata =
-            IActivationRegistry::isEnabledCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
+        let calldata = IActivationRegistry::isActivatedCall { feature: SECURITIES_TOKEN_CREATION }
+            .abi_encode();
 
         let output = execute_with(&mut storage, Address::ZERO, calldata.into());
-        let enabled = IActivationRegistry::isEnabledCall::abi_decode_returns(&output.bytes)
+        let activated = IActivationRegistry::isActivatedCall::abi_decode_returns(&output.bytes)
             .expect("return data decodes");
 
         assert!(!output.reverted);
-        assert!(!enabled);
+        assert!(!activated);
     }
 
     #[test]
-    fn view_call_reflects_disabled_state_after_enable() {
+    fn view_call_reflects_activated_state() {
         let mut storage = HashMapStorageProvider::new(1);
-        let calldata =
-            IActivationRegistry::isEnabledCall { feature: SECURITIES_TOKEN_CREATION }.abi_encode();
+        let calldata = IActivationRegistry::isActivatedCall { feature: SECURITIES_TOKEN_CREATION }
+            .abi_encode();
 
-        enable_feature(&mut storage);
-        let enabled_output = execute_with(&mut storage, Address::ZERO, calldata.clone().into());
-        let enabled = IActivationRegistry::isEnabledCall::abi_decode_returns(&enabled_output.bytes)
-            .expect("return data decodes");
-        disable_feature(&mut storage);
-        let disabled_output = execute_with(&mut storage, Address::ZERO, calldata.into());
-        let disabled =
-            IActivationRegistry::isEnabledCall::abi_decode_returns(&disabled_output.bytes)
+        activate_feature(&mut storage);
+        let activated_output = execute_with(&mut storage, Address::ZERO, calldata.clone().into());
+        let activated =
+            IActivationRegistry::isActivatedCall::abi_decode_returns(&activated_output.bytes)
+                .expect("return data decodes");
+        deactive_feature(&mut storage);
+        let deactivated_output = execute_with(&mut storage, Address::ZERO, calldata.into());
+        let deactivated =
+            IActivationRegistry::isActivatedCall::abi_decode_returns(&deactivated_output.bytes)
                 .expect("return data decodes");
 
-        assert!(!enabled_output.reverted);
-        assert!(enabled);
-        assert!(!disabled_output.reverted);
-        assert!(!disabled);
+        assert!(!activated_output.reverted);
+        assert!(activated);
+        assert!(!deactivated_output.reverted);
+        assert!(!deactivated);
     }
 
     #[test]
-    fn assert_enabled_reverts_after_disable() {
+    fn assert_activated_reverts_after_deactive() {
         let mut storage = HashMapStorageProvider::new(1);
 
-        enable_feature(&mut storage);
-        let enabled_output = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistry::new().assert_enabled(ctx, SECURITIES_TOKEN_CREATION)
+        activate_feature(&mut storage);
+        let activated_output = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistry::new().assert_activated(ctx, SECURITIES_TOKEN_CREATION)
         })
-        .expect("feature should be enabled");
-        disable_feature(&mut storage);
-        let disabled_output = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistry::new().assert_enabled(ctx, SECURITIES_TOKEN_CREATION)
+        .expect("feature should be activated");
+        deactive_feature(&mut storage);
+        let deactivated_output = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistry::new().assert_activated(ctx, SECURITIES_TOKEN_CREATION)
         })
-        .expect("disabled feature should return an ABI revert");
+        .expect("deactivated feature should return an ABI revert");
 
-        assert!(!enabled_output.reverted);
-        assert!(disabled_output.reverted);
+        assert!(!activated_output.reverted);
+        assert!(deactivated_output.reverted);
     }
 
     #[test]
@@ -429,7 +426,7 @@ mod tests {
     #[test]
     fn malformed_known_selector_returns_decode_error() {
         let Err(error) =
-            ActivationRegistry::decode_call(&IActivationRegistry::isEnabledCall::SELECTOR)
+            ActivationRegistry::decode_call(&IActivationRegistry::isActivatedCall::SELECTOR)
         else {
             panic!("arguments are missing");
         };
@@ -437,16 +434,16 @@ mod tests {
         assert!(matches!(
             error,
             BasePrecompileError::AbiDecodeFailed {
-                selector: IActivationRegistry::isEnabledCall::SELECTOR,
+                selector: IActivationRegistry::isActivatedCall::SELECTOR,
                 ..
             }
         ));
     }
 
     #[test]
-    fn malformed_disable_selector_returns_decode_error() {
+    fn malformed_deactive_selector_returns_decode_error() {
         let Err(error) =
-            ActivationRegistry::decode_call(&IActivationRegistry::disableCall::SELECTOR)
+            ActivationRegistry::decode_call(&IActivationRegistry::deactiveCall::SELECTOR)
         else {
             panic!("arguments are missing");
         };
@@ -454,7 +451,7 @@ mod tests {
         assert!(matches!(
             error,
             BasePrecompileError::AbiDecodeFailed {
-                selector: IActivationRegistry::disableCall::SELECTOR,
+                selector: IActivationRegistry::deactiveCall::SELECTOR,
                 ..
             }
         ));

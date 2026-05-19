@@ -37,7 +37,7 @@ impl ActivationRegistry {
     }
 
     /// Returns the activation admin.
-    pub const fn activation_admin(self) -> Address {
+    pub const fn admin(self) -> Address {
         ACTIVATION_ADMIN_ADDRESS
     }
 }
