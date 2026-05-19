@@ -4,12 +4,16 @@
 //! and implements the [`Policy`] trait, separating the authorization
 //! decisions (here) from the raw storage reads (`storage.rs`).
 
+use core::fmt;
+
 use alloy_primitives::Address;
 use base_precompile_storage::{Result, StorageCtx};
 
 use super::storage::PolicyRegistryStorage;
 use crate::token::common::Policy;
 
+/// Wraps [`PolicyRegistryStorage`] and implements the [`Policy`] trait,
+/// separating authorization decisions from raw storage reads.
 pub struct PolicyHandle<'a> {
     inner: PolicyRegistryStorage<'a>,
 }
@@ -21,8 +25,14 @@ impl<'a> PolicyHandle<'a> {
     }
 }
 
+impl fmt::Debug for PolicyHandle<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PolicyHandle").finish_non_exhaustive()
+    }
+}
+
 impl<'a> Policy for PolicyHandle<'a> {
-    fn is_authorized(&self, _policy_id: u64, _account: Address) -> Result<bool> {
-        Ok(true)
+    fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
+        self.inner.is_authorized(policy_id, account)
     }
 }

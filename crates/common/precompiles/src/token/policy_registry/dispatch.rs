@@ -8,11 +8,11 @@ use crate::token::abi::{IPolicyRegistry, IPolicyRegistry::IPolicyRegistryCalls a
 
 impl PolicyRegistryStorage<'_> {
     /// ABI-dispatches `calldata` to the appropriate `IPolicyRegistry` handler.
-    pub(super) fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+    pub(super) fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         self.inner(calldata).into_precompile_result(ctx.gas_used(), |b| b)
     }
 
-    fn inner(&mut self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
+    fn inner(&self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
         if calldata.len() < 4 {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
         }

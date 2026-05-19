@@ -1,4 +1,3 @@
-
 //! Policy trait — the outward-facing interface tokens consult for authorization decisions.
 
 use alloy_primitives::Address;
