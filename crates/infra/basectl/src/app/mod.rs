@@ -7,7 +7,9 @@ mod core;
 pub use core::App;
 
 mod resources;
-pub use resources::{ConductorState, DaState, FlashState, ProofsState, Resources, ValidatorState};
+pub use resources::{
+    ConductorState, DaState, FlashState, ProofsState, Resources, SourceLabel, ValidatorState,
+};
 
 mod router;
 pub use router::{Router, ViewId};

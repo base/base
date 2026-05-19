@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use base_common_chains::{ChainConfig, rollup_config};
 use base_common_genesis::RollupConfig;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 use url::Url;
 
 /// Configuration for proof system monitoring (proposer + dispute games).
@@ -81,6 +82,174 @@ pub struct ConductorNodeConfig {
     pub flashblocks_ws: Option<Url>,
 }
 
+/// Conductor cluster discovery configuration.
+///
+/// When set, basectl can bootstrap a conductor cluster view from a single
+/// RPC endpoint by calling `conductor_clusterMembership` and synthesising
+/// per-peer `ConductorNodeConfig` entries via [`DiscoveryPorts`] templates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveryConfig {
+    /// Bootstrap conductor RPC URL.
+    ///
+    /// basectl will hit this URL first to learn the live raft membership and
+    /// then poll all discovered peers. May be overridden by `--conductor-rpc`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_rpc: Option<Url>,
+    /// Port templates used when rebuilding per-peer JSON-RPC URLs from the
+    /// raft binary protocol addresses returned by `conductor_clusterMembership`.
+    #[serde(default)]
+    pub ports: DiscoveryPorts,
+}
+
+/// Port templates used to derive per-peer JSON-RPC URLs from raft addresses.
+///
+/// `conductor_clusterMembership` returns each peer's *raft binary protocol*
+/// address (e.g. `op-conductor-1:5051`), not its JSON-RPC URL. basectl extracts
+/// the host and rebuilds JSON-RPC URLs for each service using these ports.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveryPorts {
+    /// Conductor JSON-RPC port (default 5545).
+    #[serde(default = "default_conductor_rpc_port")]
+    pub conductor_rpc: u16,
+    /// Consensus-layer JSON-RPC port (default 7545).
+    #[serde(default = "default_cl_rpc_port")]
+    pub cl_rpc: u16,
+    /// Execution-layer JSON-RPC port (default 8545). When `None`, EL data is
+    /// not polled for discovered peers and shows as `—` in the UI.
+    #[serde(default = "default_el_rpc_port", skip_serializing_if = "Option::is_none")]
+    pub el_rpc: Option<u16>,
+}
+
+impl Default for DiscoveryPorts {
+    fn default() -> Self {
+        Self {
+            conductor_rpc: default_conductor_rpc_port(),
+            cl_rpc: default_cl_rpc_port(),
+            el_rpc: default_el_rpc_port(),
+        }
+    }
+}
+
+const fn default_conductor_rpc_port() -> u16 {
+    5545
+}
+
+const fn default_cl_rpc_port() -> u16 {
+    7545
+}
+
+const fn default_el_rpc_port() -> Option<u16> {
+    Some(8545)
+}
+
+/// Origin of the conductor cluster node list used by the poller.
+///
+/// `Static` is the original behaviour: the YAML/devnet config enumerates every
+/// node up front. `Discover` bootstraps from a single conductor RPC URL and
+/// rebuilds the peer list each tick from `conductor_clusterMembership`.
+#[derive(Debug, Clone)]
+pub enum ConductorSource {
+    /// Hand-configured node list (devnet, custom YAML).
+    Static(Vec<ConductorNodeConfig>),
+    /// Bootstrap from a single conductor RPC and derive peers via port templates.
+    Discover {
+        /// Bootstrap conductor RPC URL.
+        bootstrap: Url,
+        /// Port templates for rebuilding per-peer JSON-RPC URLs.
+        ports: DiscoveryPorts,
+    },
+}
+
+impl ConductorSource {
+    /// Returns `true` if this source bootstraps from a single RPC.
+    pub const fn is_discover(&self) -> bool {
+        matches!(self, Self::Discover { .. })
+    }
+
+    /// Returns an ephemeral single-node config for the bootstrap URL.
+    ///
+    /// Used on the very first poll cycle of a `Discover` source, before
+    /// `conductor_clusterMembership` has returned anything. Once membership
+    /// is known, [`ConductorSource::synthesize_nodes`] takes over.
+    pub fn bootstrap_node(&self) -> Option<ConductorNodeConfig> {
+        match self {
+            Self::Static(_) => None,
+            Self::Discover { bootstrap, ports } => {
+                let host = bootstrap.host_str().unwrap_or("localhost");
+                let cl_rpc = peer_url(bootstrap, host, ports.cl_rpc);
+                let el_rpc = ports.el_rpc.map(|p| peer_url(bootstrap, host, p));
+                Some(ConductorNodeConfig {
+                    name: "local".to_string(),
+                    conductor_rpc: bootstrap.clone(),
+                    cl_rpc,
+                    server_id: "local".to_string(),
+                    raft_addr: String::new(),
+                    el_rpc,
+                    docker_conductor: None,
+                    docker_el: None,
+                    docker_cl: None,
+                    flashblocks_ws: None,
+                })
+            }
+        }
+    }
+
+    /// Synthesises per-peer `ConductorNodeConfig` entries from raft membership.
+    ///
+    /// Returns `None` for [`ConductorSource::Static`] (those nodes are already
+    /// fully configured). For [`ConductorSource::Discover`], each `ServerInfo`
+    /// in `membership` has an `addr` field that is the raft binary protocol
+    /// address (e.g. `op-conductor-1:5051`); the host is extracted and the
+    /// JSON-RPC URLs are rebuilt from the supplied port templates. Docker
+    /// container names are left `None` because the local docker daemon can't
+    /// reach remote peers' containers; restart is also UI-disabled for
+    /// discovered peers.
+    pub fn synthesize_nodes(
+        &self,
+        membership: &base_consensus_rpc::ClusterMembership,
+    ) -> Option<Vec<ConductorNodeConfig>> {
+        let Self::Discover { bootstrap, ports } = self else { return None };
+        let nodes = membership
+            .servers
+            .iter()
+            .map(|srv| {
+                let host = srv.addr.split(':').next().unwrap_or(srv.addr.as_str());
+                ConductorNodeConfig {
+                    name: srv.id.clone(),
+                    conductor_rpc: peer_url(bootstrap, host, ports.conductor_rpc),
+                    cl_rpc: peer_url(bootstrap, host, ports.cl_rpc),
+                    server_id: srv.id.clone(),
+                    raft_addr: srv.addr.clone(),
+                    el_rpc: ports.el_rpc.map(|p| peer_url(bootstrap, host, p)),
+                    docker_conductor: None,
+                    docker_el: None,
+                    docker_cl: None,
+                    flashblocks_ws: None,
+                }
+            })
+            .collect();
+        Some(nodes)
+    }
+}
+
+/// Builds a peer JSON-RPC URL by string interpolation against `bootstrap`'s scheme.
+///
+/// Falls back to a clone of `bootstrap` and logs a warning if the resulting
+/// URL fails to parse (e.g. an unexpected host shape coming back from raft).
+/// Returning `bootstrap` is a safer default than panicking — the poll will
+/// just hit the bootstrap node twice, which is visible to the operator.
+fn peer_url(bootstrap: &Url, host: &str, port: u16) -> Url {
+    let scheme = bootstrap.scheme();
+    let candidate = format!("{scheme}://{host}:{port}");
+    match Url::parse(&candidate) {
+        Ok(url) => url,
+        Err(error) => {
+            warn!(host = %host, port = port, error = %error, "discovered peer host failed url parse; falling back to bootstrap");
+            bootstrap.clone()
+        }
+    }
+}
+
 /// Monitoring configuration for a chain watched by basectl.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringConfig {
@@ -110,6 +279,12 @@ pub struct MonitoringConfig {
     /// HA conductor cluster nodes, if this chain runs an op-conductor setup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conductors: Option<Vec<ConductorNodeConfig>>,
+    /// Bootstrap configuration for runtime conductor cluster discovery.
+    ///
+    /// Used when `conductors` is `None` (or the operator passes
+    /// `--conductor-rpc`) to derive the peer list from a single bootstrap RPC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery: Option<DiscoveryConfig>,
     /// Validator (non-sequencing) nodes to monitor alongside the conductor cluster.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validators: Option<Vec<ValidatorNodeConfig>>,
@@ -136,6 +311,46 @@ impl MonitoringConfig {
             _ => None,
         }
     }
+
+    /// Returns the basectl display name for a known Base chain ID.
+    ///
+    /// Maps 8453/84532/763360 to `"mainnet"`/`"sepolia"`/`"zeronet"` so the
+    /// network badge agrees with what `-c` accepts on the CLI.
+    pub const fn name_for_chain_id(chain_id: u64) -> Option<&'static str> {
+        match chain_id {
+            8453 => Some("mainnet"),
+            84532 => Some("sepolia"),
+            763360 => Some("zeronet"),
+            _ => None,
+        }
+    }
+
+    /// Detects the live network name by calling `eth_chainId` on the L2 RPC.
+    ///
+    /// Returns the basectl-style name (e.g. `"mainnet"`) for known Base chain
+    /// IDs, or `None` when the RPC is unreachable or the chain ID is unknown.
+    pub async fn detect_name_from_rpc(rpc: &Url) -> Option<String> {
+        let provider = ProviderBuilder::new().connect(rpc.as_str()).await.ok()?;
+        let chain_id = provider.get_chain_id().await.ok()?;
+        Self::name_for_chain_id(chain_id).map(str::to_owned)
+    }
+
+    /// Returns the URL to use for `eth_chainId` network detection.
+    ///
+    /// When `conductor_rpc` is `Some`, derives the EL URL from the bootstrap
+    /// host and the discovery EL port template, so the badge reflects the
+    /// cluster basectl was pointed at instead of the preset's default RPC.
+    /// Falls back to `self.rpc` when URL construction fails or no bootstrap
+    /// is provided.
+    pub fn detect_rpc_for(&self, conductor_rpc: Option<&Url>) -> Url {
+        let Some(bootstrap) = conductor_rpc else { return self.rpc.clone() };
+        let el_port = self.discovery.as_ref().and_then(|d| d.ports.el_rpc).unwrap_or(8545);
+        let mut candidate = bootstrap.clone();
+        if candidate.set_port(Some(el_port)).is_err() {
+            return self.rpc.clone();
+        }
+        candidate
+    }
 }
 
 const fn default_blob_target() -> u64 {
@@ -155,6 +370,7 @@ struct MonitoringConfigOverride {
     batcher_address: Option<Address>,
     l1_blob_target: Option<u64>,
     conductors: Option<Vec<ConductorNodeConfig>>,
+    discovery: Option<DiscoveryConfig>,
     validators: Option<Vec<ValidatorNodeConfig>>,
     proofs: Option<ProofsConfig>,
 }
@@ -197,6 +413,10 @@ impl MonitoringConfig {
             batcher_address: Some("0x5050F69a9786F081509234F1a7F4684b5E5b76C9".parse().unwrap()),
             l1_blob_target: 14,
             conductors: None,
+            discovery: Some(DiscoveryConfig {
+                bootstrap_rpc: None,
+                ports: DiscoveryPorts::default(),
+            }),
             validators: None,
             proofs: None,
         }
@@ -215,6 +435,10 @@ impl MonitoringConfig {
             batcher_address: Some("0xfc56E7272EEBBBA5bC6c544e159483C4a38f8bA3".parse().unwrap()),
             l1_blob_target: 14,
             conductors: None,
+            discovery: Some(DiscoveryConfig {
+                bootstrap_rpc: None,
+                ports: DiscoveryPorts::default(),
+            }),
             validators: None,
             proofs: None,
         }
@@ -295,6 +519,7 @@ impl MonitoringConfig {
                     docker_cl: Some("base-rpc".to_string()),
                 },
             ]),
+            discovery: None,
             proofs: None,
         }
     }
@@ -409,6 +634,7 @@ impl MonitoringConfig {
             batcher_address: overrides.batcher_address.or(base.batcher_address),
             l1_blob_target: overrides.l1_blob_target.unwrap_or(base.l1_blob_target),
             conductors: overrides.conductors.or(base.conductors),
+            discovery: overrides.discovery.or(base.discovery),
             validators: overrides.validators.or(base.validators),
             proofs: overrides.proofs.or(base.proofs),
         })

@@ -1,16 +1,17 @@
-use std::io::Write;
+use std::{io::Write, time::Instant};
 
 use anyhow::Result;
 use base_common_flashblocks::Flashblock;
 use base_common_genesis::SystemConfig;
 use tokio::sync::{mpsc, watch};
+use url::Url;
 
-use super::{App, Resources, ViewId, views::create_view};
+use super::{App, Resources, SourceLabel, ViewId, views::create_view};
 use crate::{
-    config::MonitoringConfig,
+    config::{ConductorSource, MonitoringConfig},
     l1_client::fetch_full_system_config,
     rpc::{
-        BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, L1BlockInfo, L1ConnectionMode,
+        BacklogFetchResult, BlockDaInfo, ConductorPollUpdate, L1BlockInfo, L1ConnectionMode,
         ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
         fetch_initial_backlog_with_progress, run_block_fetcher, run_conductor_poller,
         run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher, run_proofs_poller,
@@ -20,12 +21,53 @@ use crate::{
 };
 
 /// Launches the TUI application starting from the specified view and network.
-pub async fn run_app(initial_view: ViewId, network: &str) -> Result<()> {
-    let config = MonitoringConfig::load(network).await?;
+///
+/// `conductor_rpc` is the optional `--conductor-rpc` CLI override; when set it
+/// forces the conductor source into `Discover` mode regardless of config.
+pub async fn run_app(
+    initial_view: ViewId,
+    network: &str,
+    conductor_rpc: Option<Url>,
+) -> Result<()> {
+    let mut config = MonitoringConfig::load(network).await?;
+    if config.conductors.is_none()
+        && let Some(bootstrap) = conductor_rpc.as_ref()
+    {
+        let detect_rpc = config.detect_rpc_for(Some(bootstrap));
+        if let Some(detected) = MonitoringConfig::detect_name_from_rpc(&detect_rpc).await {
+            config.name = detected;
+        }
+    }
     let mut resources = Resources::new(config.clone());
-    start_background_services(&config, &mut resources);
-    let app = App::new(resources, initial_view);
+    start_background_services(&config, &mut resources, conductor_rpc.clone());
+    let app = App::new(resources, initial_view, conductor_rpc);
     app.run(create_view).await
+}
+
+/// Resolves the active conductor source from CLI flag and config.
+///
+/// Precedence: hand-configured `conductors` list > CLI `--conductor-rpc` flag >
+/// `discovery.bootstrap_rpc` from config. Static config wins so local devnet
+/// (which ships with a hardcoded 3-node list) isn't accidentally clobbered by
+/// the default `--conductor-rpc` value. Returns `None` when no source is
+/// configured (conductor view will simply show no nodes).
+fn resolve_conductor_source(
+    cli_flag: Option<Url>,
+    config: &MonitoringConfig,
+) -> Option<ConductorSource> {
+    if let Some(nodes) = config.conductors.clone() {
+        return Some(ConductorSource::Static(nodes));
+    }
+    if let Some(bootstrap) = cli_flag {
+        let ports = config.discovery.as_ref().map(|d| d.ports.clone()).unwrap_or_default();
+        return Some(ConductorSource::Discover { bootstrap, ports });
+    }
+    if let Some(d) = config.discovery.as_ref()
+        && let Some(bootstrap) = d.bootstrap_rpc.clone()
+    {
+        return Some(ConductorSource::Discover { bootstrap, ports: d.ports.clone() });
+    }
+    None
 }
 
 /// Starts all background data-fetching services, wiring their channels into `resources`.
@@ -34,7 +76,11 @@ pub async fn run_app(initial_view: ViewId, network: &str) -> Result<()> {
 /// safe-head polling, system config fetching, conductor polling, validator polling,
 /// and proof monitoring. All tasks communicate back through channels stored in
 /// `resources`.
-pub fn start_background_services(config: &MonitoringConfig, resources: &mut Resources) {
+pub fn start_background_services(
+    config: &MonitoringConfig,
+    resources: &mut Resources,
+    conductor_rpc: Option<Url>,
+) {
     let (fb_tx, fb_rx) = mpsc::channel::<TimestampedFlashblock>(100);
     let (da_fb_tx, da_fb_rx) = mpsc::channel::<Flashblock>(100);
     let (sync_tx, sync_rx) = mpsc::channel::<u64>(10);
@@ -106,17 +152,36 @@ pub fn start_background_services(config: &MonitoringConfig, resources: &mut Reso
         }
     });
 
-    if let Some(conductor_nodes) = config.conductors.clone() {
-        let (conductor_tx, conductor_rx) = mpsc::channel::<Vec<ConductorNodeStatus>>(4);
+    if let Some(source) = resolve_conductor_source(conductor_rpc, config) {
+        let (conductor_tx, conductor_rx) = mpsc::channel::<ConductorPollUpdate>(8);
         resources.conductor.set_channel(conductor_rx);
-        tokio::spawn(run_conductor_poller(conductor_nodes.clone(), conductor_tx));
-
+        resources.conductor.set_source_label(match &source {
+            ConductorSource::Static(_) => SourceLabel::Static,
+            ConductorSource::Discover { bootstrap, .. } => SourceLabel::Discovered {
+                bootstrap: bootstrap.clone(),
+                last_refresh: Instant::now(),
+            },
+        });
         // Wire the URL sender into ConductorState so that the existing
         // conductor poll (200 ms) drives flashblocks URL changes instead of
         // a separate task that would duplicate the conductor_leader RPCs.
-        if conductor_nodes.iter().any(|n| n.flashblocks_ws.is_some()) {
-            resources.conductor.set_url_sender(conductor_nodes, fb_url_tx);
+        // Discovered peers carry no flashblocks_ws endpoints, so this only
+        // applies to statically configured clusters (devnet today).
+        match &source {
+            ConductorSource::Static(nodes) => {
+                if nodes.iter().any(|n| n.flashblocks_ws.is_some()) {
+                    resources.conductor.set_url_sender(nodes.clone(), fb_url_tx);
+                } else {
+                    resources.conductor.set_nodes_config(nodes.clone());
+                }
+            }
+            ConductorSource::Discover { .. } => {
+                if let Some(bootstrap) = source.bootstrap_node() {
+                    resources.conductor.set_nodes_config(vec![bootstrap]);
+                }
+            }
         }
+        tokio::spawn(run_conductor_poller(source, conductor_tx));
     }
 
     if let Some(validator_nodes) = config.validators.clone() {

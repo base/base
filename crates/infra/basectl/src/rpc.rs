@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
@@ -11,7 +11,8 @@ use base_common_consensus::BaseTxEnvelope;
 use base_common_flashblocks::Flashblock;
 use base_common_network::Base;
 use base_consensus_rpc::{
-    AdminApiClient, BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient,
+    AdminApiClient, BaseP2PApiClient, ClusterMembership, ConductorApiClient, RollupNodeApiClient,
+    ServerSuffrage,
 };
 use futures::{StreamExt, stream};
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
@@ -21,7 +22,7 @@ use tracing::warn;
 use url::Url;
 
 use crate::{
-    config::{ConductorNodeConfig, ProofsConfig, ValidatorNodeConfig},
+    config::{ConductorNodeConfig, ConductorSource, ProofsConfig, ValidatorNodeConfig},
     tui::Toast,
 };
 
@@ -731,6 +732,17 @@ pub struct ConductorNodeStatus {
     pub el_syncing: Option<bool>,
     /// Number of connected EL devp2p peers from `net_peerCount`. `None` if not configured.
     pub el_peer_count: Option<u32>,
+
+    // ── Cluster membership ───────────────────────────────────────────────
+    /// Raft suffrage (Voter/Nonvoter) reported for this node by the most recent
+    /// `conductor_clusterMembership` snapshot, looked up by `server_id`. `None`
+    /// when membership has not yet been observed or this node is not present.
+    pub suffrage: Option<ServerSuffrage>,
+    /// Whether this node was synthesised from `conductor_clusterMembership`
+    /// (i.e. the active source is `Discover`). Used by the UI to gate actions
+    /// like "Restart containers" that only make sense when basectl runs on the
+    /// same host as the docker daemon.
+    pub discovered: bool,
 }
 
 /// Finds the current Raft leader and transfers leadership.
@@ -1096,32 +1108,46 @@ pub async fn unpause_sequencer_node(
     let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
 }
 
-/// Polls all conductor nodes every 200 ms and forwards status snapshots.
-///
-/// Builds one pair of HTTP clients per node (conductor RPC + CL RPC) before
-/// entering the loop so connection setup cost is paid only once. Each poll
-/// fires all per-node requests concurrently via [`futures::future::join_all`].
-/// Any individual RPC that times out or errors yields `None` for that field —
-/// the node is shown as offline when `is_leader` is `None`.
-pub async fn run_conductor_poller(
-    nodes: Vec<ConductorNodeConfig>,
-    tx: mpsc::Sender<Vec<ConductorNodeStatus>>,
-) {
-    const POLL_INTERVAL: Duration = Duration::from_millis(200);
-    const RPC_TIMEOUT: Duration = Duration::from_millis(500);
+/// Updates emitted by [`run_conductor_poller`] on every poll cycle.
+#[derive(Debug, Clone)]
+pub enum ConductorPollUpdate {
+    /// Latest per-node status snapshot.
+    Status(Vec<ConductorNodeStatus>),
+    /// Raft cluster membership reported by one of the polled nodes. Emitted
+    /// only when the membership `version` advances. Wrapped in `Arc` so the
+    /// poller and the UI state share the snapshot without deep-copying the
+    /// server list on every change.
+    Membership(Arc<ClusterMembership>),
+    /// New peer list synthesised from a `Discover` source after a membership
+    /// change. Subscribers may use this to update displayed config (e.g.
+    /// flashblocks URL routing) without restarting the poller.
+    NodeListRefreshed(Vec<ConductorNodeConfig>),
+}
 
-    let clients: Vec<(String, _, _, _)> = nodes
-        .into_iter()
+type ConductorClientTuple = (
+    String,
+    String,
+    jsonrpsee::http_client::HttpClient,
+    jsonrpsee::http_client::HttpClient,
+    Option<jsonrpsee::http_client::HttpClient>,
+);
+
+fn build_conductor_clients(
+    nodes: &[ConductorNodeConfig],
+    timeout: Duration,
+) -> Vec<ConductorClientTuple> {
+    nodes
+        .iter()
         .filter_map(|node| {
             let conductor_client = HttpClientBuilder::default()
-                .request_timeout(RPC_TIMEOUT)
+                .request_timeout(timeout)
                 .build(node.conductor_rpc.as_str())
                 .inspect_err(|e| {
                     warn!(error = %e, node = %node.name, "failed to build conductor HTTP client");
                 })
                 .ok()?;
             let cl_client = HttpClientBuilder::default()
-                .request_timeout(RPC_TIMEOUT)
+                .request_timeout(timeout)
                 .build(node.cl_rpc.as_str())
                 .inspect_err(|e| {
                     warn!(error = %e, node = %node.name, "failed to build CL HTTP client");
@@ -1129,16 +1155,49 @@ pub async fn run_conductor_poller(
                 .ok()?;
             let el_client = node.el_rpc.as_ref().and_then(|url| {
                 HttpClientBuilder::default()
-                    .request_timeout(RPC_TIMEOUT)
+                    .request_timeout(timeout)
                     .build(url.as_str())
                     .inspect_err(|e| {
                         warn!(error = %e, node = %node.name, "failed to build EL HTTP client");
                     })
                     .ok()
             });
-            Some((node.name, conductor_client, cl_client, el_client))
+            Some((
+                node.name.clone(),
+                node.server_id.clone(),
+                conductor_client,
+                cl_client,
+                el_client,
+            ))
         })
-        .collect();
+        .collect()
+}
+
+/// Polls every conductor in the active source every 200 ms and forwards updates.
+///
+/// Builds one pair of HTTP clients per node (conductor RPC + CL RPC) so connection
+/// setup cost is paid only once per node lifetime. Each poll fires all per-node
+/// requests concurrently via [`futures::future::join_all`]; any individual RPC that
+/// times out or errors yields `None` for that field — the node is shown as offline
+/// when `is_leader` is `None`.
+///
+/// On every tick the poller also calls `conductor_clusterMembership` on one node
+/// (round-robin) and, when the membership version advances, emits a `Membership`
+/// update. For `Discover` sources, the synthesised peer list is rebuilt from the
+/// new membership and the per-node clients are recreated in place.
+pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<ConductorPollUpdate>) {
+    const POLL_INTERVAL: Duration = Duration::from_millis(200);
+    const RPC_TIMEOUT: Duration = Duration::from_millis(500);
+
+    let discovered = source.is_discover();
+
+    let mut current_nodes: Vec<ConductorNodeConfig> = match &source {
+        ConductorSource::Static(nodes) => nodes.clone(),
+        ConductorSource::Discover { .. } => source.bootstrap_node().into_iter().collect(),
+    };
+    let mut clients = build_conductor_clients(&current_nodes, RPC_TIMEOUT);
+    let mut last_membership: Option<Arc<ClusterMembership>> = None;
+    let mut membership_round_robin: usize = 0;
 
     let mut interval = tokio::time::interval(POLL_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -1146,8 +1205,23 @@ pub async fn run_conductor_poller(
     loop {
         interval.tick().await;
 
-        let statuses = futures::future::join_all(clients.iter().map(
-            |(name, conductor_client, cl_client, el_client)| async move {
+        let membership_target = if clients.is_empty() {
+            None
+        } else {
+            let idx = membership_round_robin % clients.len();
+            membership_round_robin = membership_round_robin.wrapping_add(1);
+            Some(idx)
+        };
+
+        let membership_fut = async {
+            let idx = membership_target?;
+            let (_, _, conductor_client, _, _) = &clients[idx];
+            ConductorApiClient::conductor_cluster_membership(conductor_client).await.ok()
+        };
+
+        let membership_for_lookup = last_membership.as_ref();
+        let statuses_fut = futures::future::join_all(clients.iter().map(
+            |(name, server_id, conductor_client, cl_client, el_client)| async move {
                 // Fire all RPCs concurrently so a single timed-out node does not
                 // stall the poll for the full sum of all call timeouts (11 × 500 ms).
                 let (
@@ -1201,6 +1275,9 @@ pub async fn run_conductor_poller(
                 );
 
                 let sync = sync.ok();
+                let suffrage = membership_for_lookup
+                    .and_then(|m| m.servers.iter().find(|s| s.id == *server_id))
+                    .map(|s| s.suffrage);
                 ConductorNodeStatus {
                     name: name.clone(),
                     is_leader: is_leader.ok(),
@@ -1220,13 +1297,46 @@ pub async fn run_conductor_poller(
                     el_block: el_block_r,
                     el_syncing: el_syncing_r,
                     el_peer_count: el_peers_r,
+                    suffrage,
+                    discovered,
                 }
             },
-        ))
-        .await;
+        ));
 
-        if tx.send(statuses).await.is_err() {
+        let (statuses, new_membership) = tokio::join!(statuses_fut, membership_fut);
+
+        // Send Status first so the UI flushes the statuses keyed to the
+        // current node set before we potentially swap that set out below.
+        if tx.send(ConductorPollUpdate::Status(statuses)).await.is_err() {
             break;
+        }
+
+        if let Some(membership) = new_membership {
+            let changed =
+                last_membership.as_ref().is_none_or(|prev| prev.version != membership.version);
+            if changed {
+                let membership = Arc::new(membership);
+                if tx.send(ConductorPollUpdate::Membership(Arc::clone(&membership))).await.is_err()
+                {
+                    break;
+                }
+                if let Some(synthesized) = source.synthesize_nodes(&membership) {
+                    let old_ids: BTreeSet<_> = current_nodes.iter().map(|n| &n.server_id).collect();
+                    let new_ids: BTreeSet<_> = synthesized.iter().map(|n| &n.server_id).collect();
+                    if old_ids != new_ids && !synthesized.is_empty() {
+                        current_nodes = synthesized.clone();
+                        clients = build_conductor_clients(&current_nodes, RPC_TIMEOUT);
+                        if tx
+                            .send(ConductorPollUpdate::NodeListRefreshed(synthesized))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+                last_membership = Some(membership);
+            }
         }
     }
 }

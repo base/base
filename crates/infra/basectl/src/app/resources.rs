@@ -1,15 +1,21 @@
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    sync::Arc,
+    time::Instant,
+};
 
 use base_common_flashblocks::Flashblock;
 use base_common_genesis::SystemConfig;
+use base_consensus_rpc::ClusterMembership;
 use tokio::sync::{mpsc, watch};
+use url::Url;
 
 use crate::{
     commands::{DaTracker, FlashblockEntry, LoadingState},
     config::{ConductorNodeConfig, MonitoringConfig},
     rpc::{
-        BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, L1BlockInfo, L1ConnectionMode,
-        ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
+        BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, ConductorPollUpdate, L1BlockInfo,
+        L1ConnectionMode, ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
     },
     tui::ToastState,
 };
@@ -17,26 +23,69 @@ use crate::{
 const MAX_FLASH_BLOCKS: usize = 30;
 const MAX_RECENT_DA_FLASHBLOCK_IDS: usize = 512;
 
+/// Origin label for the conductor cluster node list, surfaced in the TUI.
+#[derive(Debug, Clone, Default)]
+pub enum SourceLabel {
+    /// Hand-configured node list (devnet, custom YAML).
+    #[default]
+    Static,
+    /// Bootstrapped from a single conductor RPC and refreshed from raft membership.
+    Discovered {
+        /// Bootstrap conductor RPC URL.
+        bootstrap: Url,
+        /// Wall-clock time of the most recent successful membership refresh.
+        last_refresh: Instant,
+    },
+}
+
 /// State for HA conductor cluster monitoring.
 #[derive(Debug, Default)]
 pub struct ConductorState {
     /// Most recent status snapshot for each conductor node.
     pub nodes: Vec<ConductorNodeStatus>,
     /// Original per-node configs, used to look up each node's `flashblocks_ws` URL.
+    /// In `Discover` mode this is rebuilt every time the poller emits a
+    /// `NodeListRefreshed` update.
     nodes_config: Vec<ConductorNodeConfig>,
-    rx: Option<mpsc::Receiver<Vec<ConductorNodeStatus>>>,
+    rx: Option<mpsc::Receiver<ConductorPollUpdate>>,
     /// Sender half of the flashblocks URL watch channel.  When set, `poll`
     /// derives the current leader's flashblocks endpoint from the polled
     /// status and pushes a new value whenever the leader changes.  This
     /// removes the need for a separate `run_conductor_leader_url_tracker`
     /// task that would duplicate the `conductor_leader` RPC calls.
     fb_url_tx: Option<watch::Sender<String>>,
+    /// Most recent raft cluster membership snapshot. Shared by `Arc` with the
+    /// poller so a membership change is a single allocation, not a deep copy.
+    pub cluster_membership: Option<Arc<ClusterMembership>>,
+    /// Whether the active node list comes from a static config or live discovery.
+    pub source_label: SourceLabel,
 }
 
 impl ConductorState {
-    /// Sets the channel for receiving conductor status updates.
-    pub fn set_channel(&mut self, rx: mpsc::Receiver<Vec<ConductorNodeStatus>>) {
+    /// Sets the channel for receiving conductor poll updates.
+    pub fn set_channel(&mut self, rx: mpsc::Receiver<ConductorPollUpdate>) {
         self.rx = Some(rx);
+    }
+
+    /// Sets the source label (static vs discovered) for UI display.
+    pub fn set_source_label(&mut self, label: SourceLabel) {
+        self.source_label = label;
+    }
+
+    /// Returns the active per-node configs. In `Static` mode this is the
+    /// configured list; in `Discover` mode it is the list synthesised from the
+    /// last `clusterMembership` snapshot. The conductor view uses this to
+    /// dispatch mutations (pause, resume, transfer, …) without re-reading the
+    /// stale `MonitoringConfig.conductors` list, which is `None` in `Discover`.
+    pub fn nodes_config(&self) -> &[ConductorNodeConfig] {
+        &self.nodes_config
+    }
+
+    /// Seeds the per-node configs directly (used in `Discover` mode so the view
+    /// can dispatch mutations against the bootstrap node before the first
+    /// `clusterMembership` snapshot arrives).
+    pub fn set_nodes_config(&mut self, nodes_config: Vec<ConductorNodeConfig>) {
+        self.nodes_config = nodes_config;
     }
 
     /// Registers the node configs and URL sender used to track leader URL changes.
@@ -52,13 +101,21 @@ impl ConductorState {
         self.fb_url_tx = Some(tx);
     }
 
-    /// Drains the latest status snapshot from the background poller, then
+    /// Drains all pending poll updates, keeping the most recent values, then
     /// pushes the leader's flashblocks URL into the watch channel if it changed.
     pub fn poll(&mut self) {
         let Some(ref mut rx) = self.rx else { return };
-        // Drain all pending updates, keeping only the most recent snapshot.
-        while let Ok(statuses) = rx.try_recv() {
-            self.nodes = statuses;
+        while let Ok(update) = rx.try_recv() {
+            match update {
+                ConductorPollUpdate::Status(statuses) => self.nodes = statuses,
+                ConductorPollUpdate::Membership(m) => {
+                    self.cluster_membership = Some(m);
+                    if let SourceLabel::Discovered { last_refresh, .. } = &mut self.source_label {
+                        *last_refresh = Instant::now();
+                    }
+                }
+                ConductorPollUpdate::NodeListRefreshed(nodes) => self.nodes_config = nodes,
+            }
         }
         self.push_leader_url();
     }

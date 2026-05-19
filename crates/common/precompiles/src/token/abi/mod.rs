@@ -1,7 +1,7 @@
 //! ABI types for the token precompile domain.
 
-mod default_token;
-pub use default_token::IDefaultToken;
+mod b20;
+pub use b20::IB20;
 
 mod factory;
 pub use factory::ITokenFactory;

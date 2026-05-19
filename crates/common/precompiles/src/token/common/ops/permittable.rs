@@ -5,7 +5,7 @@ use alloy_sol_types::SolValue;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use super::Transferable;
-use crate::token::{IDefaultToken, common::TokenAccounting};
+use crate::token::{IB20, common::TokenAccounting};
 
 /// ERC-5267 `eip712Domain()` return tuple: (fields, name, version, chainId, verifyingContract, salt, extensions).
 pub(super) type Eip712Domain = (FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>);
@@ -22,7 +22,7 @@ pub trait Permittable: Transferable {
     /// Computes the EIP-712 domain separator for this token.
     ///
     /// Domain: `(chainId, verifyingContract)` only — `name` and `version`
-    /// are intentionally empty per the `IDefaultToken` spec.
+    /// are intentionally empty per the `IB20` spec.
     fn domain_separator(&self, chain_id: u64) -> Result<B256> {
         let domain_type = b"EIP712Domain(uint256 chainId,address verifyingContract)";
         let type_hash: B256 = keccak256(domain_type);
@@ -59,7 +59,7 @@ pub trait Permittable: Transferable {
         s: B256,
     ) -> Result<()> {
         if now > deadline {
-            return Err(BasePrecompileError::revert(IDefaultToken::ExpiredSignature { deadline }));
+            return Err(BasePrecompileError::revert(IB20::ExpiredSignature { deadline }));
         }
 
         let domain_sep = self.domain_separator(chain_id)?;
@@ -78,14 +78,11 @@ pub trait Permittable: Transferable {
         let odd_y_parity = v == 28;
         let sig = alloy_primitives::Signature::from_scalars_and_parity(r, s, odd_y_parity);
         let recovered = sig.recover_address_from_prehash(&hash).map_err(|_| {
-            BasePrecompileError::revert(IDefaultToken::InvalidSigner {
-                signer: Address::ZERO,
-                owner,
-            })
+            BasePrecompileError::revert(IB20::InvalidSigner { signer: Address::ZERO, owner })
         })?;
 
         if recovered != owner {
-            return Err(BasePrecompileError::revert(IDefaultToken::InvalidSigner {
+            return Err(BasePrecompileError::revert(IB20::InvalidSigner {
                 signer: recovered,
                 owner,
             }));

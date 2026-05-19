@@ -1,0 +1,528 @@
+//! Benchmarks for Base-native token and token-factory precompile logic.
+
+use std::hint::black_box;
+
+use alloy_primitives::{Address, B256, U256};
+use base_common_precompiles::{
+    Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, DefaultToken,
+    DefaultTokenStorage, ITokenFactory, Mintable, Pausable, Token, TokenAccounting, TokenFactory,
+    Transferable, compute_default_address, compute_security_address, compute_stablecoin_address,
+};
+use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+use criterion::{Criterion, criterion_group, criterion_main};
+
+struct BaseTokenBenchSetup;
+
+impl BaseTokenBenchSetup {
+    const fn admin() -> Address {
+        Address::repeat_byte(0xad)
+    }
+
+    const fn caller() -> Address {
+        Address::repeat_byte(0xca)
+    }
+
+    const fn initial_supply_recipient() -> Address {
+        Address::repeat_byte(0xcd)
+    }
+
+    fn default_params(
+        name: &str,
+        symbol: &str,
+        salt: B256,
+    ) -> ITokenFactory::CreateDefaultTokenParams {
+        ITokenFactory::CreateDefaultTokenParams {
+            name: name.to_string(),
+            symbol: symbol.to_string(),
+            decimals: 18,
+            admin: Self::admin(),
+            capabilities: CAPABILITY_PAUSABLE | CAPABILITY_CAP_MUTABLE,
+            initialSupply: U256::ZERO,
+            initialSupplyRecipient: Self::initial_supply_recipient(),
+            transferPolicyId: 1,
+            supplyCap: U256::MAX,
+            minimumRedeemable: U256::ZERO,
+            contractURI: "ipfs://base-token".to_string(),
+            salt,
+        }
+    }
+
+    fn create_default(
+        ctx: StorageCtx<'_>,
+        caller: Address,
+        params: ITokenFactory::CreateDefaultTokenParams,
+    ) -> Address {
+        let mut factory = TokenFactory::new(ctx);
+        factory.create_default(caller, ITokenFactory::createDefaultCall { params }).unwrap()
+    }
+
+    fn create_token<'a>(
+        ctx: StorageCtx<'a>,
+        salt: B256,
+        initial_supply: U256,
+    ) -> DefaultToken<DefaultTokenStorage<'a>> {
+        let mut params = Self::default_params("BaseToken", "BASE", salt);
+        params.initialSupply = initial_supply;
+        params.supplyCap = U256::MAX;
+        params.minimumRedeemable = U256::ONE;
+
+        let token_address = Self::create_default(ctx, Self::caller(), params);
+        Self::token_at(ctx, token_address)
+    }
+
+    fn token_at<'a>(
+        ctx: StorageCtx<'a>,
+        token_address: Address,
+    ) -> DefaultToken<DefaultTokenStorage<'a>> {
+        DefaultToken::with_storage(DefaultTokenStorage::from_address(token_address, ctx))
+    }
+}
+
+fn base_token_metadata(c: &mut Criterion) {
+    c.bench_function("base_token_name", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x01), U256::ZERO);
+
+            b.iter(|| {
+                let token = black_box(&token);
+                let result = token.accounting().name().unwrap();
+                black_box(result);
+            });
+        });
+    });
+
+    c.bench_function("base_token_symbol", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x02), U256::ZERO);
+
+            b.iter(|| {
+                let token = black_box(&token);
+                let result = token.accounting().symbol().unwrap();
+                black_box(result);
+            });
+        });
+    });
+
+    c.bench_function("base_token_decimals", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x03), U256::ZERO);
+
+            b.iter(|| {
+                let token = black_box(&token);
+                let result = token.accounting().decimals().unwrap();
+                black_box(result);
+            });
+        });
+    });
+
+    c.bench_function("base_token_contract_uri", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x04), U256::ZERO);
+
+            b.iter(|| {
+                let token = black_box(&token);
+                let result = token.accounting().contract_uri().unwrap();
+                black_box(result);
+            });
+        });
+    });
+}
+
+fn base_token_view(c: &mut Criterion) {
+    c.bench_function("base_token_total_supply", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = BaseTokenBenchSetup::create_token(
+                ctx,
+                B256::repeat_byte(0x05),
+                U256::from(1_000u64),
+            );
+
+            b.iter(|| {
+                let token = black_box(&token);
+                let result = token.accounting().total_supply().unwrap();
+                black_box(result);
+            });
+        });
+    });
+
+    c.bench_function("base_token_balance_of", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let account = BaseTokenBenchSetup::initial_supply_recipient();
+            let token = BaseTokenBenchSetup::create_token(
+                ctx,
+                B256::repeat_byte(0x06),
+                U256::from(1_000u64),
+            );
+
+            b.iter(|| {
+                let token = black_box(&token);
+                let account = black_box(account);
+                let result = token.accounting().balance_of(account).unwrap();
+                black_box(result);
+            });
+        });
+    });
+
+    c.bench_function("base_token_allowance", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let owner = Address::repeat_byte(0x01);
+            let spender = Address::repeat_byte(0x02);
+            let mut token =
+                BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x07), U256::ZERO);
+            token.approve(owner, spender, U256::from(500u64)).unwrap();
+
+            b.iter(|| {
+                let token = black_box(&token);
+                let owner = black_box(owner);
+                let spender = black_box(spender);
+                let result = token.accounting().allowance(owner, spender).unwrap();
+                black_box(result);
+            });
+        });
+    });
+
+    c.bench_function("base_token_supply_cap", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x08), U256::ZERO);
+
+            b.iter(|| {
+                let token = black_box(&token);
+                let result = token.accounting().supply_cap().unwrap();
+                black_box(result);
+            });
+        });
+    });
+
+    c.bench_function("base_token_paused", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x09), U256::ZERO);
+
+            b.iter(|| {
+                let token = black_box(&token);
+                let result = token.accounting().paused().unwrap();
+                black_box(result);
+            });
+        });
+    });
+
+    c.bench_function("base_token_capabilities", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x0a), U256::ZERO);
+
+            b.iter(|| {
+                let token = black_box(&token);
+                let result = token.accounting().capabilities().unwrap();
+                black_box(result);
+            });
+        });
+    });
+
+    c.bench_function("base_token_minimum_redeemable", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x0b), U256::ZERO);
+
+            b.iter(|| {
+                let token = black_box(&token);
+                let result = token.accounting().minimum_redeemable().unwrap();
+                black_box(result);
+            });
+        });
+    });
+}
+
+fn base_token_mutate(c: &mut Criterion) {
+    c.bench_function("base_token_mint", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let user = Address::repeat_byte(0x01);
+            let mut token =
+                BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x0c), U256::ZERO);
+
+            b.iter(|| {
+                let token = black_box(&mut token);
+                let user = black_box(user);
+                token.mint(user, U256::ONE).unwrap();
+            });
+        });
+    });
+
+    c.bench_function("base_token_burn", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let holder = BaseTokenBenchSetup::initial_supply_recipient();
+            let mut token = BaseTokenBenchSetup::create_token(
+                ctx,
+                B256::repeat_byte(0x0d),
+                U256::from(u128::MAX),
+            );
+
+            b.iter(|| {
+                let token = black_box(&mut token);
+                let holder = black_box(holder);
+                token.burn(holder, U256::ONE).unwrap();
+            });
+        });
+    });
+
+    c.bench_function("base_token_approve", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let owner = Address::repeat_byte(0x01);
+            let spender = Address::repeat_byte(0x02);
+            let mut token =
+                BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x0e), U256::ZERO);
+
+            b.iter(|| {
+                let token = black_box(&mut token);
+                let owner = black_box(owner);
+                let spender = black_box(spender);
+                token.approve(owner, spender, U256::from(500u64)).unwrap();
+            });
+        });
+    });
+
+    c.bench_function("base_token_transfer", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let from = BaseTokenBenchSetup::initial_supply_recipient();
+            let to = Address::repeat_byte(0x02);
+            let mut token = BaseTokenBenchSetup::create_token(
+                ctx,
+                B256::repeat_byte(0x0f),
+                U256::from(u128::MAX),
+            );
+
+            b.iter(|| {
+                let token = black_box(&mut token);
+                let from = black_box(from);
+                token.transfer(from, to, U256::ONE).unwrap();
+            });
+        });
+    });
+
+    c.bench_function("base_token_transfer_from", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let owner = BaseTokenBenchSetup::initial_supply_recipient();
+            let spender = Address::repeat_byte(0x02);
+            let recipient = Address::repeat_byte(0x03);
+            let mut token = BaseTokenBenchSetup::create_token(
+                ctx,
+                B256::repeat_byte(0x10),
+                U256::from(u128::MAX),
+            );
+            token.approve(owner, spender, U256::MAX).unwrap();
+
+            b.iter(|| {
+                let token = black_box(&mut token);
+                let spender = black_box(spender);
+                token.transfer_from(spender, owner, recipient, U256::ONE).unwrap();
+            });
+        });
+    });
+
+    c.bench_function("base_token_transfer_with_memo", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let from = BaseTokenBenchSetup::initial_supply_recipient();
+            let to = Address::repeat_byte(0x02);
+            let memo = B256::repeat_byte(0x42);
+            let mut token = BaseTokenBenchSetup::create_token(
+                ctx,
+                B256::repeat_byte(0x11),
+                U256::from(u128::MAX),
+            );
+
+            b.iter(|| {
+                let token = black_box(&mut token);
+                let from = black_box(from);
+                token.transfer_with_memo(from, to, U256::ONE, memo).unwrap();
+            });
+        });
+    });
+
+    c.bench_function("base_token_transfer_from_with_memo", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let owner = BaseTokenBenchSetup::initial_supply_recipient();
+            let spender = Address::repeat_byte(0x02);
+            let recipient = Address::repeat_byte(0x03);
+            let memo = B256::repeat_byte(0x43);
+            let mut token = BaseTokenBenchSetup::create_token(
+                ctx,
+                B256::repeat_byte(0x12),
+                U256::from(u128::MAX),
+            );
+            token.approve(owner, spender, U256::MAX).unwrap();
+
+            b.iter(|| {
+                let token = black_box(&mut token);
+                let spender = black_box(spender);
+                token.transfer_from_with_memo(spender, owner, recipient, U256::ONE, memo).unwrap();
+            });
+        });
+    });
+
+    c.bench_function("base_token_pause", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let admin = BaseTokenBenchSetup::admin();
+            let mut token =
+                BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x13), U256::ZERO);
+
+            b.iter(|| {
+                let token = black_box(&mut token);
+                let admin = black_box(admin);
+                token.pause(admin, U256::ONE).unwrap();
+            });
+        });
+    });
+
+    c.bench_function("base_token_unpause", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let admin = BaseTokenBenchSetup::admin();
+            let mut token =
+                BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x14), U256::ZERO);
+            token.pause(admin, U256::ONE).unwrap();
+
+            b.iter(|| {
+                let token = black_box(&mut token);
+                let admin = black_box(admin);
+                token.unpause(admin).unwrap();
+            });
+        });
+    });
+
+    c.bench_function("base_token_set_supply_cap", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let admin = BaseTokenBenchSetup::admin();
+            let mut token = BaseTokenBenchSetup::create_token(
+                ctx,
+                B256::repeat_byte(0x15),
+                U256::from(1_000u64),
+            );
+
+            b.iter(|| {
+                let token = black_box(&mut token);
+                let admin = black_box(admin);
+                token.set_supply_cap(admin, U256::from(10_000u64)).unwrap();
+            });
+        });
+    });
+}
+
+fn base_token_factory_mutate(c: &mut Criterion) {
+    c.bench_function("base_token_factory_create_default", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let caller = BaseTokenBenchSetup::caller();
+            let mut counter = 0u64;
+
+            b.iter(|| {
+                counter += 1;
+                let salt = B256::from(U256::from(counter));
+                let params = BaseTokenBenchSetup::default_params("FactoryToken", "FACT", salt);
+                let token = BaseTokenBenchSetup::create_default(ctx, caller, params);
+                black_box(token);
+            });
+        });
+    });
+}
+
+fn base_token_factory_view(c: &mut Criterion) {
+    c.bench_function("base_token_factory_predict_default_address", |b| {
+        let caller = BaseTokenBenchSetup::caller();
+        let salt = B256::repeat_byte(0x21);
+
+        b.iter(|| {
+            let caller = black_box(caller);
+            let salt = black_box(salt);
+            let result = compute_default_address(caller, salt);
+            black_box(result);
+        });
+    });
+
+    c.bench_function("base_token_factory_predict_stablecoin_address", |b| {
+        let caller = BaseTokenBenchSetup::caller();
+        let salt = B256::repeat_byte(0x22);
+
+        b.iter(|| {
+            let caller = black_box(caller);
+            let salt = black_box(salt);
+            let result = compute_stablecoin_address(caller, salt);
+            black_box(result);
+        });
+    });
+
+    c.bench_function("base_token_factory_predict_security_address", |b| {
+        let caller = BaseTokenBenchSetup::caller();
+        let salt = B256::repeat_byte(0x23);
+
+        b.iter(|| {
+            let caller = black_box(caller);
+            let salt = black_box(salt);
+            let result = compute_security_address(caller, salt);
+            black_box(result);
+        });
+    });
+
+    c.bench_function("base_token_factory_is_b20", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let params = BaseTokenBenchSetup::default_params(
+                "FactoryToken",
+                "FACT",
+                B256::repeat_byte(0x24),
+            );
+            let token_address =
+                BaseTokenBenchSetup::create_default(ctx, BaseTokenBenchSetup::caller(), params);
+            let factory = TokenFactory::new(ctx);
+
+            b.iter(|| {
+                let factory = black_box(&factory);
+                let token_address = black_box(token_address);
+                let result = factory.is_b20(token_address).unwrap();
+                black_box(result);
+            });
+        });
+    });
+
+    c.bench_function("base_token_factory_variant_of", |b| {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let factory = TokenFactory::new(ctx);
+            let (token_address, _) =
+                compute_default_address(BaseTokenBenchSetup::caller(), B256::repeat_byte(0x25));
+
+            b.iter(|| {
+                let factory = black_box(&factory);
+                let token_address = black_box(token_address);
+                let result = factory.variant_of_token(token_address).unwrap();
+                black_box(result);
+            });
+        });
+    });
+}
+
+criterion_group!(
+    benches,
+    base_token_metadata,
+    base_token_view,
+    base_token_mutate,
+    base_token_factory_mutate,
+    base_token_factory_view,
+);
+criterion_main!(benches);

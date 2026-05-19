@@ -1,10 +1,10 @@
-//! ABI definition for the `IDefaultToken` interface.
+//! ABI definition for the `IB20` interface.
 
 use alloy_sol_types::sol;
 
 sol! {
     #[derive(Debug, PartialEq, Eq)]
-    interface IDefaultToken {
+    interface IB20 {
         // Errors
         error ContractPaused(uint256 pausedVector);
         error InsufficientAllowance(address spender, uint256 allowance, uint256 needed);

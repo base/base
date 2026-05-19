@@ -3,7 +3,7 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::token::{
-    IDefaultToken,
+    IB20,
     common::{CAPABILITY_PAUSABLE, Token, TokenAccounting},
 };
 
@@ -26,29 +26,28 @@ pub trait Pausable: Token {
     /// Emits `Paused(caller, vectors)`.
     fn pause(&mut self, caller: Address, vectors: U256) -> Result<()> {
         if vectors == U256::ZERO {
-            return Err(BasePrecompileError::revert(IDefaultToken::InvalidAmount {}));
+            return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
         }
         if !self.is_pausable()? {
-            return Err(BasePrecompileError::revert(IDefaultToken::FeatureDisabled {
+            return Err(BasePrecompileError::revert(IB20::FeatureDisabled {
                 capability: CAPABILITY_PAUSABLE,
             }));
         }
         let current = self.accounting().paused()?;
         self.accounting_mut().set_paused(current | vectors)?;
         self.accounting_mut()
-            .emit_event(IDefaultToken::Paused { updater: caller, vectors }.encode_log_data())
+            .emit_event(IB20::Paused { updater: caller, vectors }.encode_log_data())
     }
 
     /// Clears all paused vectors. Requires `PAUSABLE` capability.
     /// Emits `Unpaused(caller)`.
     fn unpause(&mut self, caller: Address) -> Result<()> {
         if !self.is_pausable()? {
-            return Err(BasePrecompileError::revert(IDefaultToken::FeatureDisabled {
+            return Err(BasePrecompileError::revert(IB20::FeatureDisabled {
                 capability: CAPABILITY_PAUSABLE,
             }));
         }
         self.accounting_mut().set_paused(U256::ZERO)?;
-        self.accounting_mut()
-            .emit_event(IDefaultToken::Unpaused { updater: caller }.encode_log_data())
+        self.accounting_mut().emit_event(IB20::Unpaused { updater: caller }.encode_log_data())
     }
 }

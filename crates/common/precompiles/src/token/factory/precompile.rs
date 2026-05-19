@@ -1,15 +1,15 @@
-//! EVM entry point for the `TokenFactory` precompile.
+//! Precompile entry point for the `TokenFactory`.
 
 use alloy_evm::precompiles::DynPrecompile;
 
 use super::storage::TokenFactory;
 use crate::macros::base_precompile;
 
-/// EVM entry point for the `TokenFactory` precompile.
+/// Entry point for the `TokenFactory` precompile.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct TokenFactoryEvm;
+pub struct TokenFactoryPrecompile;
 
-impl TokenFactoryEvm {
+impl TokenFactoryPrecompile {
     /// Returns a [`DynPrecompile`] registerable with a [`PrecompilesMap`].
     pub fn precompile() -> DynPrecompile {
         base_precompile!("TokenFactory", |ctx, calldata| {

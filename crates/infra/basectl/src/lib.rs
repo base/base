@@ -4,8 +4,8 @@ mod app;
 pub use app::{
     Action, ActionMenuItem, App, CommandCenterView, ConductorState, ConductorView, ConfigView,
     ConfirmButton, DaMonitorView, DaState, FlashState, FlashblocksView, HomeView, Overlay,
-    PendingAction, ProofsState, ProofsView, Resources, Router, TransactionPane, UpgradesView,
-    ValidatorState, View, ViewId, create_view, run_app, run_flashblocks_json,
+    PendingAction, ProofsState, ProofsView, Resources, Router, SourceLabel, TransactionPane,
+    UpgradesView, ValidatorState, View, ViewId, create_view, run_app, run_flashblocks_json,
     start_background_services,
 };
 
@@ -22,7 +22,10 @@ pub use commands::{
 };
 
 mod config;
-pub use config::{ConductorNodeConfig, MonitoringConfig, ProofsConfig, ValidatorNodeConfig};
+pub use config::{
+    ConductorNodeConfig, ConductorSource, DiscoveryConfig, DiscoveryPorts, MonitoringConfig,
+    ProofsConfig, ValidatorNodeConfig,
+};
 
 mod l1_client;
 pub use l1_client::fetch_full_system_config;
@@ -30,14 +33,14 @@ pub use l1_client::fetch_full_system_config;
 mod rpc;
 pub use rpc::{
     BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, ConductorNodeStatus,
-    InitialBacklog, L1BlockInfo, L1ConnectionMode, LatestProposal, PausedPeers, ProofsSnapshot,
-    TimestampedFlashblock, TxSummary, ValidatorNodeStatus, conductor_pause_node,
-    conductor_resume_node, decode_flashblock_transactions, fetch_block_transactions,
-    fetch_initial_backlog_with_progress, fetch_safe_and_latest, pause_sequencer_node,
-    restart_conductor_node, run_block_fetcher, run_conductor_poller, run_flashblock_ws,
-    run_flashblock_ws_timestamped, run_l1_blob_watcher, run_proofs_poller, run_safe_head_poller,
-    run_validator_poller, start_sequencer_node, stop_sequencer_node, transfer_conductor_leader,
-    unpause_sequencer_node,
+    ConductorPollUpdate, InitialBacklog, L1BlockInfo, L1ConnectionMode, LatestProposal,
+    PausedPeers, ProofsSnapshot, TimestampedFlashblock, TxSummary, ValidatorNodeStatus,
+    conductor_pause_node, conductor_resume_node, decode_flashblock_transactions,
+    fetch_block_transactions, fetch_initial_backlog_with_progress, fetch_safe_and_latest,
+    pause_sequencer_node, restart_conductor_node, run_block_fetcher, run_conductor_poller,
+    run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher, run_proofs_poller,
+    run_safe_head_poller, run_validator_poller, start_sequencer_node, stop_sequencer_node,
+    transfer_conductor_leader, unpause_sequencer_node,
 };
 
 mod tui;
