@@ -1,9 +1,9 @@
 use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, U256};
-use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
+use alloy_signer_local::PrivateKeySigner;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
-use crate::utils::{BaselineError, Result};
+use crate::{utils::Result, workload::KeyStream};
 
 /// An account with funding and signing capability.
 #[derive(Debug, Clone)]
@@ -65,48 +65,24 @@ impl AccountPool {
 
     /// Creates a new pool of accounts, skipping the first `offset` accounts.
     pub fn with_offset(seed: u64, count: usize, offset: usize) -> Result<Self> {
-        let mut rng = StdRng::seed_from_u64(seed);
-        let mut accounts = Vec::with_capacity(count);
-
-        for _ in 0..offset {
-            let mut skip_bytes = [0u8; 32];
-            rng.fill(&mut skip_bytes);
-        }
-
-        for _ in 0..count {
-            let mut key_bytes = [0u8; 32];
-            rng.fill(&mut key_bytes);
-
-            let signer = PrivateKeySigner::from_bytes(&key_bytes.into()).map_err(|e| {
-                BaselineError::Account { address: Address::ZERO, message: e.to_string() }
-            })?;
-
-            accounts.push(FundedAccount::new(signer));
-        }
-
-        Ok(Self { accounts, rng })
+        let mut stream = KeyStream::from_seed(seed, offset);
+        let accounts = Self::collect_accounts(&mut stream, count)?;
+        Ok(Self { accounts, rng: StdRng::seed_from_u64(seed) })
     }
 
     /// Creates a pool of accounts derived from a mnemonic phrase.
     pub fn from_mnemonic(mnemonic: &str, count: usize, offset: usize) -> Result<Self> {
+        let mut stream = KeyStream::from_mnemonic(mnemonic, offset)?;
+        let accounts = Self::collect_accounts(&mut stream, count)?;
+        Ok(Self { accounts, rng: StdRng::seed_from_u64(0) })
+    }
+
+    fn collect_accounts(stream: &mut KeyStream, count: usize) -> Result<Vec<FundedAccount>> {
         let mut accounts = Vec::with_capacity(count);
-
-        for i in 0..count {
-            let index = u32::try_from(offset + i).map_err(|_| {
-                BaselineError::Config(format!("mnemonic index {} exceeds u32::MAX", offset + i))
-            })?;
-            let signer = MnemonicBuilder::<English>::default()
-                .phrase(mnemonic)
-                .index(index)
-                .map_err(|e| BaselineError::Config(format!("invalid mnemonic index {index}: {e}")))?
-                .build()
-                .map_err(|e| BaselineError::Config(format!("failed to derive key: {e}")))?;
-
-            accounts.push(FundedAccount::new(signer));
+        for _ in 0..count {
+            accounts.push(FundedAccount::new(stream.next_signer()?));
         }
-
-        let rng = StdRng::seed_from_u64(0);
-        Ok(Self { accounts, rng })
+        Ok(accounts)
     }
 
     /// Returns the number of accounts in the pool.

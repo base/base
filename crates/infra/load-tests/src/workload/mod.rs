@@ -6,6 +6,9 @@ pub use accounts::{AccountPool, FundedAccount};
 mod seeded;
 pub use seeded::SeededRng;
 
+mod key_stream;
+pub use key_stream::KeyStream;
+
 mod payloads;
 pub use payloads::{
     AerodromeClPayload, B20TransferPayload, CalldataPayload, Erc20Payload, OsakaPayload, Payload,
