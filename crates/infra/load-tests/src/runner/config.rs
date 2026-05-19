@@ -222,6 +222,9 @@ pub struct LoadConfig {
     pub max_gas_price: u128,
     /// Builder flashblocks broadcast WebSocket endpoint.
     pub flashblocks_ws: Url,
+    /// Fraction of transactions that draw a fresh recipient address instead of cycling through
+    /// the sender pool. Used to drive account-trie fan-out for account-create workloads.
+    pub fresh_recipient_ratio: f64,
 }
 
 impl LoadConfig {
@@ -246,6 +249,7 @@ impl LoadConfig {
             batch_timeout: Duration::from_millis(50),
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: "ws://localhost:7111".parse().expect("valid default flashblocks_ws"),
+            fresh_recipient_ratio: 0.0,
         }
     }
 
@@ -271,6 +275,11 @@ impl LoadConfig {
         }
         if self.batch_size == 0 {
             return Err(BaselineError::Config("batch_size must be > 0".into()));
+        }
+        if !(0.0..=1.0).contains(&self.fresh_recipient_ratio) {
+            return Err(BaselineError::Config(
+                "fresh_recipient_ratio must be between 0.0 and 1.0".into(),
+            ));
         }
         if self.transactions.is_empty() {
             return Err(BaselineError::Config("transactions must not be empty".into()));

@@ -32,6 +32,7 @@ impl<'a> MetricsAggregator<'a> {
         throughput_samples: &[ThroughputSample],
         config: Option<ConfigSummary>,
         receipt_coverage: ReceiptCoverage,
+        fresh_recipient_count: Option<u64>,
     ) -> MetricsSummary {
         let mut top_failure_reasons: Vec<(String, u64)> =
             submission.failure_reasons.iter().map(|(k, v)| (k.clone(), *v)).collect();
@@ -61,6 +62,7 @@ impl<'a> MetricsAggregator<'a> {
             block_range,
             top_failure_reasons,
             receipt_coverage,
+            fresh_recipient_count,
         }
     }
 
@@ -245,6 +247,9 @@ pub struct MetricsSummary {
     /// Coverage of the end-of-run receipt pass. Signals whether gas and revert
     /// metrics are complete or partial.
     pub receipt_coverage: ReceiptCoverage,
+    /// Number of fresh recipient keys generated during the run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fresh_recipient_count: Option<u64>,
 }
 
 impl MetricsSummary {

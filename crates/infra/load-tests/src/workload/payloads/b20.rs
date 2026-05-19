@@ -64,6 +64,10 @@ impl Payload for B20TransferPayload {
         "b20"
     }
 
+    fn uses_runner_recipient(&self) -> bool {
+        true
+    }
+
     fn generate(&self, rng: &mut SeededRng, from: Address, to: Address) -> TransactionRequest {
         let amount = if self.min_amount == self.max_amount {
             self.min_amount

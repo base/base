@@ -86,6 +86,10 @@ impl Payload for AerodromeClPayload {
         "aerodrome_cl"
     }
 
+    fn uses_runner_recipient(&self) -> bool {
+        false
+    }
+
     fn generate(&self, rng: &mut SeededRng, from: Address, _to: Address) -> TransactionRequest {
         let (input, output, min_amount, max_amount) = if rng.random::<bool>() {
             (self.token_in, self.token_out, self.min_amount, self.max_amount)

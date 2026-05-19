@@ -178,6 +178,16 @@ impl MetricsCollector {
         wall_clock_duration: Duration,
         config: Option<ConfigSummary>,
     ) -> MetricsSummary {
+        self.summarize_with_fresh_recipient_count(wall_clock_duration, config, None)
+    }
+
+    /// Generates a summary with optional fresh-recipient generation metadata.
+    pub fn summarize_with_fresh_recipient_count(
+        &self,
+        wall_clock_duration: Duration,
+        config: Option<ConfigSummary>,
+        fresh_recipient_count: Option<u64>,
+    ) -> MetricsSummary {
         let aggregator = MetricsAggregator::new(&self.transactions);
         aggregator.summarize(
             wall_clock_duration,
@@ -189,6 +199,7 @@ impl MetricsCollector {
             &self.throughput_samples,
             config,
             self.receipt_coverage,
+            fresh_recipient_count,
         )
     }
 
