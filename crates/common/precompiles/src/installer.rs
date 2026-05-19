@@ -1,10 +1,7 @@
-use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
-use alloy_primitives::Address;
+use alloy_evm::precompiles::PrecompilesMap;
 use base_common_chains::BaseUpgrade;
 
-use crate::{
-    ActivationRegistry, ActivationRegistryPrecompile, BasePrecompileSpec, BasePrecompiles,
-};
+use crate::{ActivationRegistryPrecompile, BasePrecompileSpec, BasePrecompiles};
 
 /// Installs the full Base precompile set for a given spec.
 #[derive(Debug, Clone, Copy)]
@@ -35,29 +32,11 @@ impl<S: BasePrecompileSpec> BasePrecompileInstaller<S> {
     /// Installs Base-specific dynamic precompiles into an existing [`PrecompilesMap`].
     pub fn install_into(self, precompiles: &mut PrecompilesMap) {
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
-            precompiles.set_precompile_lookup(b20_lookup);
-            precompiles.extend_precompiles(core::iter::once((
-                crate::POLICY_REGISTRY_ADDRESS,
-                crate::PolicyRegistryEvm::precompile(),
-            )));
-
-            precompiles.extend_precompiles(core::iter::once((
-                ActivationRegistry::ADDRESS,
-                ActivationRegistryPrecompile::precompile(),
-            )));
+            crate::TokenFactoryPrecompile::install(precompiles);
+            crate::B20TokenPrecompile::install(precompiles);
+            crate::PolicyRegistryEvm::install(precompiles);
+            ActivationRegistryPrecompile::install(precompiles);
         }
-    }
-}
-
-// Function pointer (not a closure) satisfies the HRTB `for<'a> Fn(&'a Address) -> Option<DynPrecompile>`
-// required by `set_precompile_lookup`.
-fn b20_lookup(address: &Address) -> Option<DynPrecompile> {
-    if *address == crate::TokenFactory::ADDRESS {
-        Some(crate::TokenFactoryPrecompile::precompile())
-    } else {
-        crate::TokenVariant::from_address(*address).map(|variant| match variant {
-            crate::TokenVariant::B20 => crate::B20TokenPrecompile::create_precompile(*address),
-        })
     }
 }
 
@@ -69,12 +48,12 @@ impl<S: BasePrecompileSpec> Default for BasePrecompileInstaller<S> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
+    use alloy_primitives::{Address, B256};
     use revm::precompile::{bn254, secp256r1};
     use rstest::rstest;
 
     use super::*;
-    use crate::{TokenFactory, TokenVariant};
+    use crate::{ActivationRegistry, TokenFactory, TokenVariant};
 
     #[test]
     fn installer_preserves_base_precompile_set() {
