@@ -42,12 +42,11 @@ pub trait Burnable: Token {
 mod tests {
     use alloy_primitives::{Address, U256};
 
+    use super::Burnable;
     use crate::token::common::{
         Token, TokenAccounting,
         test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
     };
-
-    use super::Burnable;
 
     const ALICE: Address = Address::repeat_byte(0xaa);
 

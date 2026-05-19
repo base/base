@@ -99,12 +99,11 @@ mod tests {
     use alloy_sol_types::SolValue;
     use k256::ecdsa::SigningKey;
 
+    use super::{PERMIT_TYPEHASH, Permittable};
     use crate::token::common::{
         Token, TokenAccounting,
         test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
     };
-
-    use super::{PERMIT_TYPEHASH, Permittable};
 
     const CHAIN_ID: u64 = 1;
     const SPENDER: Address = Address::repeat_byte(0xbb);

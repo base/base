@@ -49,12 +49,11 @@ pub trait Redeemable: Burnable {
 mod tests {
     use alloy_primitives::{Address, U256};
 
+    use super::Redeemable;
     use crate::token::common::{
         Token, TokenAccounting,
         test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
     };
-
-    use super::Redeemable;
 
     const CALLER: Address = Address::repeat_byte(0xaa);
 

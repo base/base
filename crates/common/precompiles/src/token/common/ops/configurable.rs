@@ -67,12 +67,11 @@ pub trait Configurable: Token {
 mod tests {
     use alloy_primitives::{Address, U256};
 
+    use super::Configurable;
     use crate::token::common::{
         CAPABILITY_CAP_MUTABLE, Token, TokenAccounting,
         test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
     };
-
-    use super::Configurable;
 
     const CALLER: Address = Address::repeat_byte(0xaa);
 

@@ -107,12 +107,11 @@ pub trait Transferable: Token {
 mod tests {
     use alloy_primitives::{Address, U256};
 
+    use super::Transferable;
     use crate::token::common::{
         Token, TokenAccounting,
         test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
     };
-
-    use super::Transferable;
 
     const ALICE: Address = Address::repeat_byte(0xaa);
     const BOB: Address = Address::repeat_byte(0xbb);

@@ -56,12 +56,11 @@ pub trait Pausable: Token {
 mod tests {
     use alloy_primitives::{Address, U256};
 
+    use super::Pausable;
     use crate::token::common::{
         CAPABILITY_PAUSABLE, Token,
         test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
     };
-
-    use super::Pausable;
 
     const CALLER: Address = Address::repeat_byte(0xaa);
     const VECTOR_1: U256 = U256::from_limbs([1, 0, 0, 0]);
