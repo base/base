@@ -1,10 +1,12 @@
 //! `B20Token` native precompile — the core B-20 token implementation.
 
 mod dispatch;
-mod precompile;
-mod storage;
-mod token;
 
+mod precompile;
 pub use precompile::B20TokenPrecompile;
+
+mod storage;
 pub use storage::{B20_TOKEN_ADDRESS, B20TokenStorage};
+
+mod token;
 pub use token::B20Token;

@@ -22,10 +22,8 @@ mod bls12_381;
 
 mod token;
 pub use token::{
-    B20_PREFIX_BYTE, B20_PREFIX_MARKER, B20_TOKEN_ADDRESS, B20Token, B20TokenPrecompile,
-    B20TokenStorage, Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, CREATE_TOKEN_VERSION,
-    Configurable, FACTORY_ADDRESS, IB20, ITokenFactory, Mintable, Pausable, Permittable,
-    RESERVED_SIZE, Redeemable, Token, TokenAccounting, TokenFactory, TokenFactoryPrecompile,
-    Transferable, VARIANT_DEFAULT, VARIANT_NONE, address_prefix, compute_b20_address, decimals_of,
-    has_b20_prefix, is_supported_variant, variant_of,
+    B20_TOKEN_ADDRESS, B20Token, B20TokenPrecompile, B20TokenStorage, Burnable,
+    CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, IB20, ITokenFactory, Mintable,
+    Pausable, Permittable, Redeemable, Token, TokenAccounting, TokenFactory,
+    TokenFactoryPrecompile, TokenVariant, Transferable,
 };
