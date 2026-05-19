@@ -6,8 +6,8 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::SolValue;
 use base_common_precompiles::{
     B20Token, B20TokenStorage, Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE,
-    CREATE_TOKEN_VERSION, Configurable, ITokenFactory, Mintable, Pausable, Token, TokenAccounting,
-    TokenFactory, Transferable, VARIANT_DEFAULT, compute_b20_address,
+    CREATE_TOKEN_VERSION, Configurable, ITokenFactory, Mintable, Pausable, PolicyHandle, Token,
+    TokenAccounting, TokenFactory, Transferable, VARIANT_DEFAULT, compute_b20_address,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -75,7 +75,7 @@ impl BaseTokenBenchSetup {
         ctx: StorageCtx<'a>,
         salt: B256,
         initial_supply: U256,
-    ) -> B20Token<B20TokenStorage<'a>> {
+    ) -> B20Token<B20TokenStorage<'a>, PolicyHandle<'a>> {
         let mut params = Self::token_params("BaseToken", "BASE", 18, initial_supply);
         params.minimumRedeemable = U256::ONE;
 
@@ -83,8 +83,8 @@ impl BaseTokenBenchSetup {
         Self::token_at(ctx, token_address)
     }
 
-    fn token_at<'a>(ctx: StorageCtx<'a>, token_address: Address) -> B20Token<B20TokenStorage<'a>> {
-        B20Token::with_storage(B20TokenStorage::from_address(token_address, ctx))
+    fn token_at<'a>(ctx: StorageCtx<'a>, token_address: Address) -> B20Token<B20TokenStorage<'a>, PolicyHandle<'a>> {
+        B20Token::with_storage_and_policy(B20TokenStorage::from_address(token_address, ctx), PolicyHandle::new(ctx))
     }
 }
 
