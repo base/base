@@ -59,6 +59,8 @@ impl ActivationRegistry {
         feature: B256,
         enabled: bool,
     ) -> Result<PrecompileOutput> {
+        // Keep this guard at the shared mutation boundary so `enable`, `disable`, and direct
+        // `set_enabled` callers all get the same static-call behavior after calldata validation.
         if ctx.is_static() {
             return Ok(ctx.abi_revert(
                 IActivationRegistry::IActivationRegistryErrors::StaticCallNotAllowed(
@@ -123,6 +125,8 @@ impl ActivationRegistry {
             return Err(BasePrecompileError::UnknownFunctionSelector(selector));
         }
 
+        // Match selectors explicitly so unknown selectors remain distinct from known selectors
+        // whose arguments fail ABI decoding.
         match selector {
             IActivationRegistry::isEnabledCall::SELECTOR => {
                 IActivationRegistry::isEnabledCall::abi_decode(calldata)
