@@ -27,9 +27,12 @@ use crate::{
     BaseProofsStorageError,
     BaseProofsStorageError::NoBlocksFound,
     BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,
-    api::{BaseProofsInitialStateStore, InitialStateAnchor, InitialStateStatus, WriteCounts},
+    api::{
+        BaseProofsBatchStore, BaseProofsInitialStateStore, InitialStateAnchor, InitialStateStatus,
+        WriteCounts,
+    },
     db::{
-        MdbxAccountCursor, MdbxStorageCursor, MdbxTrieCursor,
+        MdbxAccountCursor, MdbxBatchSession, MdbxStorageCursor, MdbxTrieCursor,
         cursor::Dup,
         models::{
             AccountTrieHistory, BlockChangeSet, ChangeSet, HashedAccountHistory,
@@ -77,7 +80,7 @@ impl MdbxProofsStorage {
         Ok(Self { env })
     }
 
-    fn inner_get_latest_block_number_hash(
+    pub(crate) fn inner_get_latest_block_number_hash(
         &self,
         tx: &impl DbTx,
     ) -> BaseProofsStorageResult<Option<(u64, B256)>> {
@@ -86,6 +89,13 @@ impl MdbxProofsStorage {
             return Ok(block);
         }
 
+        self.inner_get_block_number_hash(tx, ProofWindowKey::EarliestBlock)
+    }
+
+    pub(crate) fn inner_get_earliest_block_number_hash(
+        &self,
+        tx: &impl DbTx,
+    ) -> BaseProofsStorageResult<Option<(u64, B256)>> {
         self.inner_get_block_number_hash(tx, ProofWindowKey::EarliestBlock)
     }
 
@@ -582,7 +592,7 @@ impl MdbxProofsStorage {
 
     /// Append-only writer for a block: validates parent, persists diff (soft-delete=true),
     /// records a `BlockChangeSet`, and advances `ProofWindow::LatestBlock`.
-    fn store_trie_updates_append_only(
+    pub(crate) fn store_trie_updates_append_only(
         &self,
         tx: &<DatabaseEnv as Database>::TXMut,
         block_ref: BlockWithParent,
@@ -1025,6 +1035,28 @@ impl BaseProofsStore for MdbxProofsStorage {
         hash: B256,
     ) -> BaseProofsStorageResult<()> {
         self.set_earliest_block_number_hash(block_number, hash)
+    }
+}
+
+impl BaseProofsBatchStore for MdbxProofsStorage {
+    type BatchSession<'a>
+        = MdbxBatchSession<'a>
+    where
+        Self: 'a;
+
+    fn with_batch_session<R, F>(&self, f: F) -> BaseProofsStorageResult<R>
+    where
+        F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>,
+    {
+        let tx = self.env.tx_mut()?;
+        let mut session = MdbxBatchSession::new(self, tx);
+        match f(&mut session) {
+            Ok(result) => {
+                session.commit()?;
+                Ok(result)
+            }
+            Err(err) => Err(err),
+        }
     }
 }
 
