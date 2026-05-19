@@ -2,7 +2,6 @@
 
 use alloy_primitives::Address;
 
-use super::storage::B20_TOKEN_ADDRESS;
 use crate::token::{
     Policy,
     common::{
@@ -32,7 +31,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
 }
 
 // ---------------------------------------------------------------------------
-// Token: wire the accounting and policy fields, fix the precompile address
+// Token: wire the accounting and policy fields, dynamic token address
 // ---------------------------------------------------------------------------
 
 impl<S: TokenAccounting, P: Policy> Token for B20Token<S, P> {
@@ -56,7 +55,7 @@ impl<S: TokenAccounting, P: Policy> Token for B20Token<S, P> {
     }
 
     fn token_address(&self) -> Address {
-        B20_TOKEN_ADDRESS
+        self.accounting.token_address()
     }
 }
 

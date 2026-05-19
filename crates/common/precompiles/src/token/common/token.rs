@@ -10,11 +10,10 @@ use super::{Policy as PolicyTrait, TokenAccounting};
 ///   read and write state without the 22-method delegation block.
 /// - Accessors to the global policy registry ([`Self::policy`] /
 ///   [`Self::policy_mut`]) for policy decisions shared across all tokens.
-/// - [`Self::token_address`], the fixed on-chain address of this token.
+/// - [`Self::token_address`], the on-chain address of this token.
 ///
 /// All capability traits extend `Token`. Implement it on a token struct by
-/// wiring the `accounting` and `policy` fields and providing the precompile
-/// address.
+/// wiring the `accounting` and `policy` fields and delegating address identity to the backing storage.
 ///
 /// The associated types `Accounting` and `Policy` are resolved at compile
 /// time, so all storage and policy calls in the capability traits are

@@ -183,6 +183,7 @@ mod tests {
         precompile::{PrecompileError, Precompiles, bls12_381_const, bn254, modexp, secp256r1},
         primitives::eip7823,
     };
+    use rstest::rstest;
 
     use super::*;
     use crate::{bls12_381, bn254_pair};
@@ -287,24 +288,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_get_jovian_precompile_at_max_input_len() {
-        assert_jovian_input_limits_accept_max(BaseUpgrade::Jovian);
+    #[rstest]
+    #[case::jovian(BaseUpgrade::Jovian)]
+    #[case::azul(BaseUpgrade::Azul)]
+    fn test_get_precompile_at_max_input_len(#[case] spec: BaseUpgrade) {
+        assert_jovian_input_limits_accept_max(spec);
     }
 
-    #[test]
-    fn test_get_jovian_precompile_with_bad_input_len() {
-        assert_jovian_input_limits(BaseUpgrade::Jovian);
-    }
-
-    #[test]
-    fn test_get_azul_precompile_at_max_input_len() {
-        assert_jovian_input_limits_accept_max(BaseUpgrade::Azul);
-    }
-
-    #[test]
-    fn test_get_azul_precompile_with_bad_input_len() {
-        assert_jovian_input_limits(BaseUpgrade::Azul);
+    #[rstest]
+    #[case::jovian(BaseUpgrade::Jovian)]
+    #[case::azul(BaseUpgrade::Azul)]
+    fn test_get_precompile_with_bad_input_len(#[case] spec: BaseUpgrade) {
+        assert_jovian_input_limits(spec);
     }
 
     #[test]
@@ -406,20 +401,17 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_modexp_eip7823_each_field_rejects() {
-        let over = eip7823::INPUT_SIZE_LIMIT + 1;
-
+    #[rstest]
+    #[case::base_len(eip7823::INPUT_SIZE_LIMIT + 1, 0, 1)]
+    #[case::exp_len(0, eip7823::INPUT_SIZE_LIMIT + 1, 1)]
+    #[case::mod_len(0, 0, eip7823::INPUT_SIZE_LIMIT + 1)]
+    fn test_modexp_eip7823_each_field_rejects(
+        #[case] base_len: usize,
+        #[case] exp_len: usize,
+        #[case] mod_len: usize,
+    ) {
         assert!(matches!(
-            modexp::osaka_run(&modexp_input(over, 0, 1), u64::MAX),
-            Err(PrecompileError::ModexpEip7823LimitSize)
-        ));
-        assert!(matches!(
-            modexp::osaka_run(&modexp_input(0, over, 1), u64::MAX),
-            Err(PrecompileError::ModexpEip7823LimitSize)
-        ));
-        assert!(matches!(
-            modexp::osaka_run(&modexp_input(0, 0, over), u64::MAX),
+            modexp::osaka_run(&modexp_input(base_len, exp_len, mod_len), u64::MAX),
             Err(PrecompileError::ModexpEip7823LimitSize)
         ));
     }

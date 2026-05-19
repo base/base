@@ -2,11 +2,12 @@
 
 use std::hint::black_box;
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_sol_types::SolValue;
 use base_common_precompiles::{
-    Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, DefaultToken,
-    DefaultTokenStorage, ITokenFactory, Mintable, Pausable, Token, TokenAccounting, TokenFactory,
-    Transferable, compute_default_address, compute_security_address, compute_stablecoin_address,
+    B20Token, B20TokenStorage, Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE,
+    CREATE_TOKEN_VERSION, Configurable, ITokenFactory, Mintable, Pausable, Token, TokenAccounting,
+    TokenFactory, Transferable, VARIANT_DEFAULT, compute_b20_address,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -26,55 +27,64 @@ impl BaseTokenBenchSetup {
         Address::repeat_byte(0xcd)
     }
 
-    fn default_params(
+    fn token_params(
         name: &str,
         symbol: &str,
-        salt: B256,
-    ) -> ITokenFactory::CreateDefaultTokenParams {
-        ITokenFactory::CreateDefaultTokenParams {
+        decimals: u8,
+        initial_supply: U256,
+    ) -> ITokenFactory::B20TokenParams {
+        ITokenFactory::B20TokenParams {
             name: name.to_string(),
             symbol: symbol.to_string(),
-            decimals: 18,
+            decimals,
             admin: Self::admin(),
             capabilities: CAPABILITY_PAUSABLE | CAPABILITY_CAP_MUTABLE,
-            initialSupply: U256::ZERO,
+            initialSupply: initial_supply,
             initialSupplyRecipient: Self::initial_supply_recipient(),
-            transferPolicyId: 1,
             supplyCap: U256::MAX,
             minimumRedeemable: U256::ZERO,
             contractURI: "ipfs://base-token".to_string(),
-            salt,
         }
     }
 
-    fn create_default(
+    fn create_b20(
         ctx: StorageCtx<'_>,
         caller: Address,
-        params: ITokenFactory::CreateDefaultTokenParams,
+        params: ITokenFactory::B20TokenParams,
+        salt: B256,
     ) -> Address {
         let mut factory = TokenFactory::new(ctx);
-        factory.create_default(caller, ITokenFactory::createDefaultCall { params }).unwrap()
+        factory
+            .create_token(
+                caller,
+                ITokenFactory::createTokenCall {
+                    params: ITokenFactory::CreateTokenParams {
+                        version: CREATE_TOKEN_VERSION,
+                        variant: VARIANT_DEFAULT,
+                        requiredParams: params.abi_encode().into(),
+                        optionalParams: Bytes::new(),
+                        postCreateCalls: Vec::new(),
+                        salt,
+                    },
+                },
+            )
+            .unwrap()
     }
 
     fn create_token<'a>(
         ctx: StorageCtx<'a>,
         salt: B256,
         initial_supply: U256,
-    ) -> DefaultToken<DefaultTokenStorage<'a>> {
-        let mut params = Self::default_params("BaseToken", "BASE", salt);
-        params.initialSupply = initial_supply;
-        params.supplyCap = U256::MAX;
+    ) -> B20Token<B20TokenStorage<'a>> {
+        let mut params = Self::token_params("BaseToken", "BASE", 18, initial_supply);
         params.minimumRedeemable = U256::ONE;
 
-        let token_address = Self::create_default(ctx, Self::caller(), params);
+        let token_address = Self::create_b20(ctx, Self::caller(), params, salt);
         Self::token_at(ctx, token_address)
     }
 
-    fn token_at<'a>(
-        ctx: StorageCtx<'a>,
-        token_address: Address,
-    ) -> DefaultToken<DefaultTokenStorage<'a>> {
-        DefaultToken::with_storage(DefaultTokenStorage::from_address(token_address, ctx))
+    fn token_at<'a>(ctx: StorageCtx<'a>, token_address: Address) -> B20Token<B20TokenStorage<'a>> {
+        B20Token::with_storage(B20TokenStorage::from_address(token_address, ctx))
     }
 }
 
@@ -425,7 +435,7 @@ fn base_token_mutate(c: &mut Criterion) {
 }
 
 fn base_token_factory_mutate(c: &mut Criterion) {
-    c.bench_function("base_token_factory_create_default", |b| {
+    c.bench_function("base_token_factory_create_b20", |b| {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let caller = BaseTokenBenchSetup::caller();
@@ -434,8 +444,9 @@ fn base_token_factory_mutate(c: &mut Criterion) {
             b.iter(|| {
                 counter += 1;
                 let salt = B256::from(U256::from(counter));
-                let params = BaseTokenBenchSetup::default_params("FactoryToken", "FACT", salt);
-                let token = BaseTokenBenchSetup::create_default(ctx, caller, params);
+                let params =
+                    BaseTokenBenchSetup::token_params("FactoryToken", "FACT", 18, U256::ZERO);
+                let token = BaseTokenBenchSetup::create_b20(ctx, caller, params, salt);
                 black_box(token);
             });
         });
@@ -443,38 +454,38 @@ fn base_token_factory_mutate(c: &mut Criterion) {
 }
 
 fn base_token_factory_view(c: &mut Criterion) {
-    c.bench_function("base_token_factory_predict_default_address", |b| {
+    c.bench_function("base_token_factory_predict_b20_address_18_decimals", |b| {
         let caller = BaseTokenBenchSetup::caller();
         let salt = B256::repeat_byte(0x21);
 
         b.iter(|| {
             let caller = black_box(caller);
             let salt = black_box(salt);
-            let result = compute_default_address(caller, salt);
+            let result = compute_b20_address(caller, VARIANT_DEFAULT, 18, salt);
             black_box(result);
         });
     });
 
-    c.bench_function("base_token_factory_predict_stablecoin_address", |b| {
+    c.bench_function("base_token_factory_predict_b20_address_6_decimals", |b| {
         let caller = BaseTokenBenchSetup::caller();
         let salt = B256::repeat_byte(0x22);
 
         b.iter(|| {
             let caller = black_box(caller);
             let salt = black_box(salt);
-            let result = compute_stablecoin_address(caller, salt);
+            let result = compute_b20_address(caller, VARIANT_DEFAULT, 6, salt);
             black_box(result);
         });
     });
 
-    c.bench_function("base_token_factory_predict_security_address", |b| {
+    c.bench_function("base_token_factory_predict_b20_address_0_decimals", |b| {
         let caller = BaseTokenBenchSetup::caller();
         let salt = B256::repeat_byte(0x23);
 
         b.iter(|| {
             let caller = black_box(caller);
             let salt = black_box(salt);
-            let result = compute_security_address(caller, salt);
+            let result = compute_b20_address(caller, VARIANT_DEFAULT, 0, salt);
             black_box(result);
         });
     });
@@ -482,13 +493,13 @@ fn base_token_factory_view(c: &mut Criterion) {
     c.bench_function("base_token_factory_is_b20", |b| {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
-            let params = BaseTokenBenchSetup::default_params(
-                "FactoryToken",
-                "FACT",
+            let params = BaseTokenBenchSetup::token_params("FactoryToken", "FACT", 18, U256::ZERO);
+            let token_address = BaseTokenBenchSetup::create_b20(
+                ctx,
+                BaseTokenBenchSetup::caller(),
+                params,
                 B256::repeat_byte(0x24),
             );
-            let token_address =
-                BaseTokenBenchSetup::create_default(ctx, BaseTokenBenchSetup::caller(), params);
             let factory = TokenFactory::new(ctx);
 
             b.iter(|| {
@@ -504,8 +515,12 @@ fn base_token_factory_view(c: &mut Criterion) {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let factory = TokenFactory::new(ctx);
-            let (token_address, _) =
-                compute_default_address(BaseTokenBenchSetup::caller(), B256::repeat_byte(0x25));
+            let (token_address, _) = compute_b20_address(
+                BaseTokenBenchSetup::caller(),
+                VARIANT_DEFAULT,
+                18,
+                B256::repeat_byte(0x25),
+            );
 
             b.iter(|| {
                 let factory = black_box(&factory);

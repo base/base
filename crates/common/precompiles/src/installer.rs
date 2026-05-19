@@ -59,9 +59,12 @@ fn b20_lookup(address: &Address) -> Option<DynPrecompile> {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::B256;
     use revm::precompile::{bn254, secp256r1};
+    use rstest::rstest;
 
     use super::*;
+    use crate::token::{FACTORY_ADDRESS, VARIANT_DEFAULT, compute_b20_address};
 
     #[test]
     fn installer_preserves_base_precompile_set() {
@@ -76,5 +79,22 @@ mod tests {
         let installer = BasePrecompileInstaller::new(BaseUpgrade::LATEST);
 
         assert_eq!(installer.spec(), BaseUpgrade::LATEST);
+    }
+
+    #[rstest]
+    #[case::azul(BaseUpgrade::Azul, false)]
+    #[case::beryl(BaseUpgrade::Beryl, true)]
+    fn installer_routes_b20_precompiles_by_fork(#[case] spec: BaseUpgrade, #[case] expected: bool) {
+        let precompiles = BasePrecompileInstaller::new(spec).install();
+        let (token, _) = compute_b20_address(
+            Address::repeat_byte(0x11),
+            VARIANT_DEFAULT,
+            18,
+            B256::repeat_byte(0x22),
+        );
+
+        assert_eq!(precompiles.get(&FACTORY_ADDRESS).is_some(), expected);
+        assert_eq!(precompiles.get(&token).is_some(), expected);
+        assert!(precompiles.get(&Address::repeat_byte(0x42)).is_none());
     }
 }
