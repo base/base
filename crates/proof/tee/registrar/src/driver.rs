@@ -5,7 +5,12 @@
 //! to L1 via the [`TxManager`]. Also detects orphaned on-chain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
-use std::{collections::HashSet, error::Error, fmt, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    sync::Arc,
+    time::Duration,
+};
 
 use alloy_primitives::{Address, Bytes, FixedBytes, hex};
 use alloy_sol_types::SolCall;
@@ -15,8 +20,9 @@ use base_proof_tee_nitro_verifier::AttestationReport;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::StreamExt;
 use rand::random;
+use tokio::task::{self, JoinSet};
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, error, info, info_span, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient, ProverClient,
@@ -80,6 +86,59 @@ pub struct DriverConfig {
     pub crl: CrlConfig,
 }
 
+/// State for a proof-generation task currently in-flight in the
+/// [`RegistrationDriver::run`] spawn-and-reap loop.
+///
+/// `cancel` is a child of [`DriverConfig::cancel`]. Firing it asks the
+/// task to terminate cooperatively at the next checkpoint (proof-gen,
+/// retry sleep, before tx send) — the task always returns `Ok(())`
+/// when it observes the cancel, never an error.
+#[derive(Debug)]
+pub struct PendingTask {
+    /// Originating instance ID — recorded only for logging.
+    pub instance_id: String,
+    /// Signer address whose registration this task owns. Used by
+    /// [`RegistrationDriver::reconcile_proof_tasks`] to match in-flight
+    /// tasks against the latest registerable set.
+    pub signer: Address,
+    /// Cooperative cancel handle for this single task.
+    pub cancel: CancellationToken,
+}
+
+/// Aggregate output of [`RegistrationDriver::discover_and_resolve`] —
+/// the per-cycle snapshot consumed by the spawn-and-reap loop.
+#[derive(Debug, Default)]
+pub struct DiscoveryResolution {
+    /// Instances eligible for registration this cycle, with their derived
+    /// signer addresses and the matching pre-fetched attestation blobs
+    /// (one per enclave on the instance). Instances whose certificates
+    /// were confirmed revoked by the CRL check are filtered out.
+    pub registerable: Vec<(ProverInstance, Vec<Address>, Vec<Vec<u8>>)>,
+    /// All signers contributed by *reachable* instances, regardless of
+    /// register-eligibility. Used to protect draining/unhealthy
+    /// instances from premature orphan deregistration.
+    pub active_signers: HashSet<Address>,
+    /// Number of discovered instances that responded to discovery RPCs.
+    pub reachable_count: usize,
+    /// Total instances returned by discovery (reachable + unreachable).
+    pub total_count: usize,
+    /// Whether the cycle satisfies both the majority guard
+    /// (`reachable * 2 > total`) and the cancellation policy
+    /// (token not cancelled). Always `true` when `total_count` is zero.
+    pub ok_to_dereg: bool,
+}
+
+/// Per-instance result of address resolution and registration-eligibility
+/// gating. `attestations` is `Some` only when the instance is registerable
+/// and its CRL check did not flag revocation; otherwise it is `None` and
+/// the caller skips registration but still uses `addresses` for the
+/// active-signer set.
+#[derive(Debug)]
+struct ResolveOutcome {
+    addresses: Vec<Address>,
+    attestations: Option<Vec<Vec<u8>>>,
+}
+
 /// Core registration loop tying together discovery, attestation polling,
 /// ZK proof generation, and on-chain submission.
 ///
@@ -111,11 +170,11 @@ impl<D, P, R, T, S> fmt::Debug for RegistrationDriver<D, P, R, T, S> {
 
 impl<D, P, R, T, S> RegistrationDriver<D, P, R, T, S>
 where
-    D: InstanceDiscovery,
-    P: AttestationProofProvider,
-    R: RegistryClient,
-    T: TxManager,
-    S: SignerClient,
+    D: InstanceDiscovery + 'static,
+    P: AttestationProofProvider + 'static,
+    R: RegistryClient + 'static,
+    T: TxManager + 'static,
+    S: SignerClient + 'static,
 {
     /// Creates a new registration driver.
     ///
@@ -171,37 +230,107 @@ where
 
     /// Runs the registration loop until cancelled.
     ///
-    /// Runs `step()` immediately on startup, then waits `poll_interval` between
-    /// subsequent ticks. Individual instance failures are logged and skipped —
-    /// the loop continues with the next instance.
-    pub async fn run(&self) -> Result<()> {
+    /// # Pipeline
+    ///
+    /// Each cycle is non-blocking with respect to in-flight proof
+    /// generation. Discovery, reconcile, and orphan cleanup all execute
+    /// in the foreground; proofs run in dedicated `JoinSet` tasks owned
+    /// by `pending`:
+    ///
+    /// 1. **Reap** — drain any task that finished since the previous
+    ///    cycle ([`Self::reap_finished_tasks`]).
+    /// 2. **Discover & resolve** — produce a [`DiscoveryResolution`]
+    ///    snapshot ([`Self::discover_and_resolve`]).
+    /// 3. **Reconcile** — cancel in-flight tasks for vanished /
+    ///    ineligible signers, spawn new tasks for registerable signers
+    ///    that are not already in-flight ([`Self::reconcile_proof_tasks`]).
+    /// 4. **Orphan dereg** — when the snapshot's `ok_to_dereg` is set,
+    ///    run a single deregistration pass over signers no longer backed
+    ///    by an active instance ([`Self::run_orphan_dereg`]).
+    /// 5. **Sleep** — wait `poll_interval` or until cancelled.
+    ///
+    /// # Cancellation
+    ///
+    /// On shutdown every `PendingTask::cancel` is fired; `abort_all` is
+    /// then used as a backstop, and tasks are awaited via
+    /// `join_next_with_id` so each terminal outcome flows through
+    /// [`Self::apply_join_outcome`] — keeping the proof-task metrics
+    /// consistent.
+    ///
+    /// # Why `Arc<Self>`
+    ///
+    /// Each spawned proof task owns an `Arc<Self>` clone so the cycle
+    /// loop can continue to mutate `pending` and `tasks` while proofs
+    /// run for tens of minutes. The driver is therefore consumed by
+    /// value here; callers wrap construction in
+    /// `Arc::new(RegistrationDriver::new(...)?)`.
+    pub async fn run(self: Arc<Self>) -> Result<()> {
         info!(
             poll_interval = ?self.config.poll_interval,
             registry = %self.config.registry_address,
             "starting registration driver"
         );
 
+        let mut tasks: JoinSet<Result<()>> = JoinSet::new();
+        let mut pending: HashMap<task::Id, PendingTask> = HashMap::new();
+
         loop {
-            if let Err(e) = self.step().await {
-                warn!(error = %e, "registration step failed");
-                RegistrarMetrics::processing_errors_total().increment(1);
+            Self::reap_finished_tasks(&mut tasks, &mut pending);
+
+            match self.discover_and_resolve().await {
+                Ok(resolution) => {
+                    self.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+                    RegistrarMetrics::proof_tasks_pending().set(pending.len() as f64);
+
+                    if resolution.ok_to_dereg && !self.config.cancel.is_cancelled() {
+                        if let Err(e) =
+                            self.run_orphan_dereg(&resolution.active_signers).await
+                        {
+                            warn!(error = %e, "orphan deregistration pass failed");
+                            RegistrarMetrics::processing_errors_total().increment(1);
+                        }
+                    } else if !resolution.ok_to_dereg {
+                        debug!(
+                            reachable = resolution.reachable_count,
+                            total = resolution.total_count,
+                            "skipping orphan deregistration this cycle"
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "discovery cycle failed");
+                    RegistrarMetrics::processing_errors_total().increment(1);
+                }
             }
 
             tokio::select! {
+                biased;
                 () = self.config.cancel.cancelled() => {
-                    info!("registration driver received shutdown signal");
+                    info!(
+                        pending = pending.len(),
+                        "registration driver received shutdown signal"
+                    );
                     break;
                 }
                 () = tokio::time::sleep(self.config.poll_interval) => {}
             }
         }
 
+        Self::drain_proof_tasks(&mut tasks, &mut pending).await;
+
         info!("registration driver stopped");
         Ok(())
     }
 
-    /// Single registration cycle: discover → resolve addresses → register →
-    /// deregister orphans.
+    /// Synchronous single-cycle equivalent of [`Self::run`]: discover →
+    /// resolve addresses → register → deregister orphans.
+    ///
+    /// Retained as a test helper for the synchronous-cycle test suite
+    /// (calldata accounting, majority guard, draining/unhealthy
+    /// behaviour). The production path is [`Self::run`], which spawns
+    /// proof generation into a `JoinSet` so discovery is never blocked
+    /// behind a long-running proof.
+    #[cfg(test)]
     async fn step(&self) -> Result<()> {
         let instances = self.discovery.discover_instances().await?;
         RegistrarMetrics::discovery_success_total().increment(1);
@@ -356,6 +485,11 @@ where
     /// was needed or succeeded, so the caller can build the active signer set.
     /// Registration failures are logged but do not prevent the addresses from
     /// being returned.
+    ///
+    /// Used only by [`Self::step`]; the [`Self::run`] pipeline performs
+    /// the same per-instance work via [`Self::resolve_instance`] +
+    /// per-signer spawned tasks ([`Self::run_proof_task`]).
+    #[cfg(test)]
     async fn process_instance(&self, instance: &ProverInstance) -> Result<Vec<Address>> {
         let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
         let mut addresses = Vec::with_capacity(public_keys.len());
@@ -458,12 +592,21 @@ where
         }
 
         for (idx, &signer_address) in addresses.iter().enumerate() {
-            if let Err(e) =
-                self.try_register(instance, signer_address, idx, &all_attestations[idx]).await
+            if let Err(e) = self
+                .try_register(
+                    instance,
+                    signer_address,
+                    idx,
+                    &all_attestations[idx],
+                    &self.config.cancel,
+                )
+                .await
             {
-                error!(
+                tracing::error!(
                     error = %e,
-                    error_source = e.source().map(|s| s.to_string()).unwrap_or_default(),
+                    error_source = std::error::Error::source(&e)
+                        .map(std::string::ToString::to_string)
+                        .unwrap_or_default(),
                     error_debug = ?e,
                     signer = %signer_address,
                     enclave_index = idx,
@@ -496,6 +639,7 @@ where
         signer_address: Address,
         enclave_index: usize,
         attestation_bytes: &[u8],
+        signer_cancel: &CancellationToken,
     ) -> Result<()> {
         if self.registry.is_registered(signer_address).await? {
             debug!(signer = %signer_address, "already registered, skipping");
@@ -504,7 +648,7 @@ where
 
         // Check cancellation before the most expensive operation (proof generation
         // can take minutes via Boundless).
-        if self.config.cancel.is_cancelled() {
+        if signer_cancel.is_cancelled() {
             debug!("shutdown requested, skipping proof generation");
             return Ok(());
         }
@@ -516,14 +660,28 @@ where
             "generating proof for unregistered signer"
         );
 
-        let proof = self
-            .proof_provider
-            .generate_proof_for_signer(attestation_bytes, signer_address)
-            .await?;
+        // Cooperative cancel-safety around the long-running proof.
+        //
+        // `signer_cancel` is a child of the driver's global cancel token,
+        // so a process-wide shutdown or a `reconcile_proof_tasks` decision
+        // (instance vanished / no longer registerable) both reach us here.
+        // Biased select! checks the token first to bound wake latency.
+        let proof = tokio::select! {
+            biased;
+            () = signer_cancel.cancelled() => {
+                debug!(
+                    signer = %signer_address,
+                    instance = %instance.instance_id,
+                    "task cancelled during proof generation"
+                );
+                return Ok(());
+            }
+            res = self.proof_provider.generate_proof_for_signer(attestation_bytes, signer_address) => res?,
+        };
 
         // Check cancellation before submitting the transaction — avoid starting
         // new on-chain work if shutdown is in progress.
-        if self.config.cancel.is_cancelled() {
+        if signer_cancel.is_cancelled() {
             debug!("shutdown requested, skipping transaction submission");
             return Ok(());
         }
@@ -570,7 +728,12 @@ where
         let receipt = loop {
             // Check cancellation at the top of each iteration to avoid
             // starting new on-chain work after shutdown is requested.
-            if self.config.cancel.is_cancelled() {
+            //
+            // IMPORTANT: we never wrap `tx_manager.send()` itself in a
+            // `select!` against `signer_cancel` — dropping `send()` after
+            // nonce acquisition but before broadcast leaves a nonce gap
+            // (see `NonceGuard::Drop` which does not roll back).
+            if signer_cancel.is_cancelled() {
                 debug!("shutdown requested, aborting tx submission");
                 return Ok(());
             }
@@ -636,7 +799,8 @@ where
                     // Cancellation-aware delay: abort immediately if
                     // shutdown is requested during the retry wait.
                     tokio::select! {
-                        () = self.config.cancel.cancelled() => {
+                        biased;
+                        () = signer_cancel.cancelled() => {
                             debug!("shutdown requested during retry delay");
                             return Err(RegistrarError::from(e));
                         }
@@ -665,6 +829,404 @@ where
         RegistrarMetrics::registrations_total().increment(1);
 
         Ok(())
+    }
+
+    /// Resolves the signer addresses for a single instance and decides
+    /// whether registration should be attempted this cycle.
+    ///
+    /// Always returns `addresses` so the caller can track the instance's
+    /// signers in the active set (protecting them from orphan
+    /// deregistration even when registration is skipped). The
+    /// `attestations` field is `Some` only when registration should be
+    /// attempted; it is `None` when:
+    ///
+    /// - the instance is not register-eligible (e.g. `Draining`, or
+    ///   `Unhealthy` outside the
+    ///   [`DriverConfig::unhealthy_registration_window`]);
+    /// - the CRL check confirmed revocation for the instance's chain.
+    ///
+    /// This is the shared resolution path used by
+    /// [`Self::discover_and_resolve`]. It performs the same per-instance
+    /// work as the first half of [`Self::process_instance`] minus the
+    /// `try_register` loop, so the [`Self::run`] pipeline can spawn
+    /// registration tasks separately from discovery.
+    async fn resolve_instance(&self, instance: &ProverInstance) -> Result<ResolveOutcome> {
+        let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
+        let mut addresses = Vec::with_capacity(public_keys.len());
+        for public_key in &public_keys {
+            addresses.push(ProverClient::derive_address(public_key)?);
+        }
+
+        if addresses.is_empty() {
+            return Ok(ResolveOutcome { addresses, attestations: None });
+        }
+
+        if !instance.health_status.should_register() {
+            if !self.is_recently_launched_unhealthy(instance) {
+                debug!(
+                    status = ?instance.health_status,
+                    instance = %instance.instance_id,
+                    "instance not registerable, skipping registration"
+                );
+                return Ok(ResolveOutcome { addresses, attestations: None });
+            }
+            info!(
+                instance = %instance.instance_id,
+                launch_time = ?instance.launch_time,
+                window = ?self.config.unhealthy_registration_window,
+                "unhealthy instance recently launched, attempting registration"
+            );
+        }
+
+        let nonce: [u8; 32] = random();
+        info!(
+            nonce = %hex::encode(nonce),
+            instance = %instance.instance_id,
+            "requesting attestations with nonce"
+        );
+        let all_attestations = self
+            .signer_client
+            .signer_attestation(&instance.endpoint, None, Some(nonce.to_vec()))
+            .await?;
+
+        if all_attestations.len() < addresses.len() {
+            return Err(RegistrarError::ProverClient {
+                instance: instance.endpoint.to_string(),
+                source: format!(
+                    "expected {} attestations but got {}",
+                    addresses.len(),
+                    all_attestations.len()
+                )
+                .into(),
+            });
+        }
+
+        if self.config.crl.enabled {
+            match self.check_and_revoke_crls(&all_attestations[0], instance).await {
+                Ok(true) => {
+                    warn!(
+                        instance = %instance.instance_id,
+                        "certificate revoked, skipping registration for this instance"
+                    );
+                    return Ok(ResolveOutcome { addresses, attestations: None });
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        instance = %instance.instance_id,
+                        "CRL check failed (fail-open, proceeding with registration)"
+                    );
+                }
+            }
+        }
+
+        Ok(ResolveOutcome { addresses, attestations: Some(all_attestations) })
+    }
+
+    /// Runs one discovery cycle and resolves every instance into the
+    /// [`DiscoveryResolution`] consumed by the spawn-and-reap loop.
+    ///
+    /// Like [`Self::step`], this fans out per-instance resolution work
+    /// concurrently (bounded by [`DriverConfig::max_concurrency`]) and
+    /// breaks out on cancellation. Unlike `step`, no registration
+    /// transactions are submitted here — the [`Self::run`] loop spawns a
+    /// dedicated task per registerable signer instead, so that long
+    /// Boundless proofs do not block the next discovery cycle.
+    ///
+    /// The returned `ok_to_dereg` flag bakes in both the majority guard
+    /// (`reachable * 2 > total`) and the cancellation policy (token not
+    /// cancelled). The empty-discovery case sets it to `true` so legitimate
+    /// fleet drains still let orphan cleanup proceed.
+    async fn discover_and_resolve(self: &Arc<Self>) -> Result<DiscoveryResolution> {
+        let instances = self.discovery.discover_instances().await?;
+        RegistrarMetrics::discovery_success_total().increment(1);
+
+        if !instances.is_empty() {
+            let registerable_count =
+                instances.iter().filter(|i| i.health_status.should_register()).count();
+            info!(
+                total = instances.len(),
+                registerable = registerable_count,
+                "discovered prover instances"
+            );
+        }
+
+        let total_count = instances.len();
+        let mut active_signers: HashSet<Address> = HashSet::new();
+        let mut reachable_count = 0usize;
+        let mut registerable: Vec<(ProverInstance, Vec<Address>, Vec<Vec<u8>>)> = Vec::new();
+
+        let concurrency = self.config.max_concurrency.max(1);
+        let mut futs = futures::stream::iter(instances.into_iter().map(|instance| {
+            let driver = Arc::clone(self);
+            let span = info_span!(
+                "resolve_instance",
+                instance_id = %instance.instance_id,
+                endpoint = %instance.endpoint,
+                health = ?instance.health_status,
+            );
+            async move {
+                let result = driver.resolve_instance(&instance).await;
+                (instance, result)
+            }
+            .instrument(span)
+        }))
+        .buffer_unordered(concurrency);
+
+        loop {
+            tokio::select! {
+                biased;
+                () = self.config.cancel.cancelled() => {
+                    debug!("shutdown requested during instance resolution");
+                    break;
+                }
+                maybe_result = futs.next() => {
+                    let Some((instance, result)) = maybe_result else { break };
+                    match result {
+                        Ok(outcome) => {
+                            reachable_count += 1;
+                            for addr in &outcome.addresses {
+                                active_signers.insert(*addr);
+                            }
+                            if let Some(attestations) = outcome.attestations {
+                                registerable.push((instance, outcome.addresses, attestations));
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                instance = %instance.instance_id,
+                                endpoint = %instance.endpoint,
+                                "failed to resolve instance"
+                            );
+                            RegistrarMetrics::processing_errors_total().increment(1);
+                        }
+                    }
+                }
+            }
+        }
+
+        let ok_to_dereg = if self.config.cancel.is_cancelled() {
+            false
+        } else if total_count == 0 {
+            true
+        } else {
+            reachable_count.saturating_mul(2) > total_count
+        };
+
+        Ok(DiscoveryResolution {
+            registerable,
+            active_signers,
+            reachable_count,
+            total_count,
+            ok_to_dereg,
+        })
+    }
+
+    /// Drives the orphan-deregistration pass.
+    ///
+    /// Loads on-chain signers, computes the orphan set
+    /// (`registered \ active`), and deregisters each in sequence with a
+    /// ghost-entry guard. Mirrors the trailing half of [`Self::step`] —
+    /// extracted so the [`Self::run`] pipeline can invoke it independently
+    /// of the concurrent registration path.
+    async fn run_orphan_dereg(&self, active_signers: &HashSet<Address>) -> Result<()> {
+        let registered_signers = self.registry.get_registered_signers().await?;
+        if let Err(e) = self.deregister_orphans(active_signers, &registered_signers).await {
+            warn!(error = %e, "failed to deregister orphan signers");
+            RegistrarMetrics::processing_errors_total().increment(1);
+        }
+        Ok(())
+    }
+
+    /// Reconciles the in-flight `pending` set against this cycle's
+    /// `resolution`.
+    ///
+    /// Two passes:
+    ///
+    /// 1. **Cancel pass** — any task whose `signer` is no longer in the
+    ///    current registerable set is cooperatively cancelled. The
+    ///    `PendingTask::cancel` token fires; the task itself observes it
+    ///    at its next checkpoint (proof generation, retry sleep, pre-send)
+    ///    and exits with `Ok(())`. The entry stays in `pending` until the
+    ///    join arrives (handled by [`Self::reap_finished_tasks`]) so the
+    ///    same signer is not re-spawned in the same cycle.
+    /// 2. **Spawn pass** — any registerable `(instance, signer)` not
+    ///    currently in-flight is spawned into the `JoinSet`. Each spawn
+    ///    creates a fresh child token from [`DriverConfig::cancel`] so
+    ///    the parent shutdown still propagates.
+    ///
+    /// Transient task failures are not re-spawned this cycle: a tracking
+    /// entry remains until reaped, at which point the next cycle will
+    /// observe the empty in-flight set and respawn naturally if the
+    /// signer is still registerable.
+    fn reconcile_proof_tasks(
+        self: &Arc<Self>,
+        resolution: &DiscoveryResolution,
+        tasks: &mut JoinSet<Result<()>>,
+        pending: &mut HashMap<task::Id, PendingTask>,
+    ) {
+        let mut wanted: HashSet<Address> = HashSet::new();
+        for (_, addrs, _) in &resolution.registerable {
+            for addr in addrs {
+                wanted.insert(*addr);
+            }
+        }
+
+        // Cancel-pass: any in-flight task whose signer is no longer wanted.
+        for task in pending.values() {
+            if !wanted.contains(&task.signer) && !task.cancel.is_cancelled() {
+                info!(
+                    signer = %task.signer,
+                    instance = %task.instance_id,
+                    "cancelling proof task: signer no longer registerable"
+                );
+                task.cancel.cancel();
+                RegistrarMetrics::proof_tasks_cancelled().increment(1);
+            }
+        }
+
+        let in_flight: HashSet<Address> = pending.values().map(|t| t.signer).collect();
+
+        // Spawn-pass: any wanted signer not currently in-flight.
+        for (instance, addresses, attestations) in &resolution.registerable {
+            for (idx, &signer) in addresses.iter().enumerate() {
+                if in_flight.contains(&signer) {
+                    continue;
+                }
+                let signer_cancel = self.config.cancel.child_token();
+                let driver = Arc::clone(self);
+                let instance_owned = instance.clone();
+                let attestation = attestations[idx].clone();
+                let task_cancel = signer_cancel.clone();
+                let instance_id = instance.instance_id.clone();
+
+                let handle = tasks.spawn(async move {
+                    driver.run_proof_task(instance_owned, signer, idx, attestation, task_cancel).await
+                });
+                let id = handle.id();
+                pending.insert(
+                    id,
+                    PendingTask { instance_id, signer, cancel: signer_cancel },
+                );
+                RegistrarMetrics::proof_tasks_spawned().increment(1);
+            }
+        }
+    }
+
+    /// Spawned-task body: wraps [`Self::try_register`] with task-scoped
+    /// cancellation. Always returns `Ok(())` on cooperative cancel; only
+    /// genuine failures propagate as `Err`.
+    async fn run_proof_task(
+        self: Arc<Self>,
+        instance: ProverInstance,
+        signer: Address,
+        enclave_index: usize,
+        attestation_bytes: Vec<u8>,
+        signer_cancel: CancellationToken,
+    ) -> Result<()> {
+        self.try_register(&instance, signer, enclave_index, &attestation_bytes, &signer_cancel)
+            .await
+    }
+
+    /// Drains every task that has already finished from `tasks`,
+    /// removing the matching entry from `pending` and updating metrics
+    /// via [`Self::apply_join_outcome`].
+    ///
+    /// Non-blocking: returns once `try_join_next_with_id` yields
+    /// `None`. Called at the top of each [`Self::run`] cycle so the
+    /// in-flight gauge tracks reality before the next reconcile.
+    fn reap_finished_tasks(
+        tasks: &mut JoinSet<Result<()>>,
+        pending: &mut HashMap<task::Id, PendingTask>,
+    ) {
+        while let Some(joined) = tasks.try_join_next_with_id() {
+            Self::apply_join_outcome(Some(joined), pending);
+        }
+    }
+
+    /// Consumes one `JoinSet` outcome and updates `pending` + metrics.
+    ///
+    /// Handles all three termination paths:
+    /// - successful completion (`Ok((id, Ok(())))`),
+    /// - inner error (`Ok((id, Err(_)))`),
+    /// - join error (panic or external abort) — looked up via
+    ///   [`tokio::task::JoinError::id`] so we can still drop the
+    ///   matching `PendingTask`.
+    ///
+    /// Returns silently when `joined` is `None` so the caller's
+    /// `try_join_next_with_id` loop can use it unconditionally.
+    fn apply_join_outcome(
+        joined: Option<std::result::Result<(task::Id, Result<()>), tokio::task::JoinError>>,
+        pending: &mut HashMap<task::Id, PendingTask>,
+    ) {
+        let Some(result) = joined else { return };
+        RegistrarMetrics::proof_tasks_completed().increment(1);
+        match result {
+            Ok((id, inner)) => {
+                let removed = pending.remove(&id);
+                match inner {
+                    Ok(()) => {
+                        debug!(
+                            task_id = ?id,
+                            signer = ?removed.as_ref().map(|t| t.signer),
+                            instance = ?removed.as_ref().map(|t| t.instance_id.as_str()),
+                            "proof task completed"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            task_id = ?id,
+                            error = %e,
+                            signer = ?removed.as_ref().map(|t| t.signer),
+                            instance = ?removed.as_ref().map(|t| t.instance_id.as_str()),
+                            "proof task failed"
+                        );
+                        RegistrarMetrics::processing_errors_total().increment(1);
+                    }
+                }
+            }
+            Err(join_err) => {
+                let id = join_err.id();
+                let removed = pending.remove(&id);
+                warn!(
+                    task_id = ?id,
+                    error = %join_err,
+                    signer = ?removed.as_ref().map(|t| t.signer),
+                    instance = ?removed.as_ref().map(|t| t.instance_id.as_str()),
+                    "proof task join error (panic or abort)"
+                );
+                RegistrarMetrics::processing_errors_total().increment(1);
+            }
+        }
+    }
+
+    /// Cancels every pending task, awaits them, and updates `pending`
+    /// via [`Self::apply_join_outcome`]. Used only at shutdown — see
+    /// [`Self::run`].
+    ///
+    /// `JoinSet::abort_all` is layered on top of cooperative cancel as
+    /// a backstop: if a task is wedged in a non-cancel-aware path
+    /// (e.g. blocking inside a third-party future), abort wakes it.
+    /// The cooperative path is always preferred so cancel-safe
+    /// checkpoints take effect first.
+    async fn drain_proof_tasks(
+        tasks: &mut JoinSet<Result<()>>,
+        pending: &mut HashMap<task::Id, PendingTask>,
+    ) {
+        for task in pending.values() {
+            task.cancel.cancel();
+        }
+        tasks.abort_all();
+        // NOTE: we drain through `join_next_with_id` (not
+        // `JoinSet::shutdown`) so each terminal outcome flows through
+        // `apply_join_outcome` — keeping the `pending` map and the
+        // proof-task metrics consistent at shutdown.
+        while let Some(joined) = tasks.join_next_with_id().await {
+            Self::apply_join_outcome(Some(joined), pending);
+        }
+        RegistrarMetrics::proof_tasks_pending().set(0.0);
     }
 
     /// Checks the attestation's intermediate certificates against the
@@ -1540,7 +2102,7 @@ mod tests {
 
     /// Builds a driver for tx retry tests with configurable proof provider,
     /// tx manager, and registry.
-    fn retry_driver<P: AttestationProofProvider>(
+    fn retry_driver<P: AttestationProofProvider + 'static>(
         signer_client: MockSignerClient,
         registry: DynamicRegistry,
         tx: FailingTxManager,
