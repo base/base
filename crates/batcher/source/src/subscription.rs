@@ -3,7 +3,7 @@
 use base_common_consensus::BaseBlock;
 use futures::stream::BoxStream;
 
-use crate::SourceError;
+use crate::{KeepAliveSubscription, PendingSubscription, SourceError, StreamSubscription};
 
 /// A source of an unsafe-block stream that may hold ancillary resources.
 ///
@@ -20,4 +20,22 @@ pub trait BlockSubscription: Send {
     ///
     /// Must be called at most once; implementors may panic on a second call.
     fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>>;
+}
+
+impl BlockSubscription for StreamSubscription<BaseBlock> {
+    fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>> {
+        Self::take_stream(self)
+    }
+}
+
+impl BlockSubscription for KeepAliveSubscription<BaseBlock> {
+    fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>> {
+        Self::take_stream(self)
+    }
+}
+
+impl BlockSubscription for PendingSubscription<BaseBlock> {
+    fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>> {
+        Self::take_stream(self)
+    }
 }

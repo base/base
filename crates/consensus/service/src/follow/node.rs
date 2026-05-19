@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
@@ -34,6 +34,7 @@ where
     l2_source: RemoteL2Client,
     proofs_enabled: bool,
     proofs_max_blocks_ahead: u64,
+    insert_delay: Duration,
     rpc_builder: RpcBuilder,
 }
 
@@ -50,6 +51,7 @@ where
         rpc_builder: RpcBuilder,
         proofs_enabled: bool,
         proofs_max_blocks_ahead: u64,
+        insert_delay: Duration,
     ) -> Self {
         Self {
             config,
@@ -59,6 +61,7 @@ where
             rpc_builder,
             proofs_enabled,
             proofs_max_blocks_ahead,
+            insert_delay,
         }
     }
 
@@ -110,6 +113,7 @@ where
             cancellation.clone(),
             latest,
             proof_gate,
+            self.insert_delay,
         );
 
         let mut tasks = tokio::task::JoinSet::new();

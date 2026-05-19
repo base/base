@@ -31,6 +31,20 @@ nitro-local *args:
         --logs.stdout.format json \
         {{ args }}
 
+# Build the nitro host Docker image (full runtime image)
+build-host *args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd ../../..
+    DOCKER_BUILDKIT=1 docker build --platform linux/amd64 {{ args }} -f etc/docker/Dockerfile.nitro-host -t base-prover-nitro-host .
+
+# Build the nitro enclave Docker image (full runtime image with EIF, nitro-cli, allocator, entrypoint)
+build-enclave *args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd ../../..
+    DOCKER_BUILDKIT=1 docker build --platform linux/amd64 {{ args }} -f etc/docker/Dockerfile.nitro-enclave -t base-prover-nitro-enclave .
+
 # Print config hashes for all supported chains
 config-hashes:
     cargo test -p base-enclave print_real_config_hashes -- --nocapture --ignored

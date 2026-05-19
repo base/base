@@ -1,6 +1,6 @@
 //! Reusable consensus follow-node arguments and launch helpers.
 
-use std::sync::Arc;
+use std::{num::ParseIntError, sync::Arc, time::Duration};
 
 use alloy_provider::{Provider, RootProvider};
 use base_cli_utils::{LogConfig, RuntimeManager};
@@ -108,6 +108,17 @@ pub struct ConsensusFollowNodeConfigArgs {
     )]
     pub proofs_max_blocks_ahead: u64,
 
+    /// Delay after each successful source payload insert, in milliseconds.
+    #[arg(
+        long = "follow.insert-delay-ms",
+        default_value = "0",
+        value_parser = |arg: &str| -> Result<Duration, ParseIntError> {
+            Ok(Duration::from_millis(arg.parse()?))
+        },
+        env = "BASE_NODE_FOLLOW_INSERT_DELAY_MS"
+    )]
+    pub insert_delay: Duration,
+
     /// RPC CLI arguments.
     #[command(flatten)]
     pub rpc_flags: RpcArgs,
@@ -170,6 +181,7 @@ impl ConsensusFollowNodeArgs {
             rpc_builder,
             self.config.proofs,
             self.config.proofs_max_blocks_ahead,
+            self.config.insert_delay,
         ))
     }
 

@@ -10,7 +10,8 @@
 //! - Base slot: stores `length * 2 + 1` (bit 0 = 1 indicates long string)
 //! - Data slots: stored at `keccak256(main_slot) + i` for each 32-byte chunk
 
-use std::marker::PhantomData;
+use alloc::{format, string::String, vec::Vec};
+use core::marker::PhantomData;
 
 use alloy_primitives::{Address, Bytes, U256, keccak256};
 
@@ -23,45 +24,56 @@ use crate::{
 impl StorableType for Bytes {
     const LAYOUT: Layout = Layout::Slots(1);
     const IS_DYNAMIC: bool = true;
-    type Handler = BytesLikeHandler<Self>;
-    fn handle(slot: U256, _ctx: LayoutCtx, address: Address) -> Self::Handler {
-        BytesLikeHandler::new(slot, address)
+    type Handler<'a> = BytesLikeHandler<'a, Self>;
+    fn handle<'a>(
+        slot: U256,
+        _ctx: LayoutCtx,
+        address: Address,
+        storage: crate::StorageCtx<'a>,
+    ) -> Self::Handler<'a> {
+        BytesLikeHandler::new(slot, address, storage)
     }
 }
 
 impl StorableType for String {
     const LAYOUT: Layout = Layout::Slots(1);
     const IS_DYNAMIC: bool = true;
-    type Handler = BytesLikeHandler<Self>;
-    fn handle(slot: U256, _ctx: LayoutCtx, address: Address) -> Self::Handler {
-        BytesLikeHandler::new(slot, address)
+    type Handler<'a> = BytesLikeHandler<'a, Self>;
+    fn handle<'a>(
+        slot: U256,
+        _ctx: LayoutCtx,
+        address: Address,
+        storage: crate::StorageCtx<'a>,
+    ) -> Self::Handler<'a> {
+        BytesLikeHandler::new(slot, address, storage)
     }
 }
 
 /// Handler for bytes-like types providing efficient length queries.
 #[derive(Debug, Clone)]
-pub struct BytesLikeHandler<T> {
+pub struct BytesLikeHandler<'a, T> {
     base_slot: U256,
     address: Address,
+    storage: crate::StorageCtx<'a>,
     _ty: PhantomData<T>,
 }
 
-impl<T: Storable> BytesLikeHandler<T> {
+impl<'a, T: Storable> BytesLikeHandler<'a, T> {
     /// Creates a new handler for the bytes-like value at the given base slot.
     #[inline]
-    pub const fn new(base_slot: U256, address: Address) -> Self {
-        Self { base_slot, address, _ty: PhantomData }
+    pub const fn new(base_slot: U256, address: Address, storage: crate::StorageCtx<'a>) -> Self {
+        Self { base_slot, address, storage, _ty: PhantomData }
     }
 
     #[inline]
-    const fn as_slot(&self) -> Slot<T> {
-        Slot::new(self.base_slot, self.address)
+    const fn as_slot(&self) -> Slot<'a, T> {
+        Slot::new(self.base_slot, self.address, self.storage)
     }
 
     /// Returns the byte length without loading all data (reads only the base slot).
     #[inline]
     pub fn len(&self) -> Result<usize> {
-        let base_value = Slot::<U256>::new(self.base_slot, self.address).read()?;
+        let base_value = Slot::<U256>::new(self.base_slot, self.address, self.storage).read()?;
         let is_long = is_long_string(base_value);
         calc_string_length(base_value, is_long)
     }
@@ -73,7 +85,7 @@ impl<T: Storable> BytesLikeHandler<T> {
     }
 }
 
-impl<T: Storable> Handler<T> for BytesLikeHandler<T> {
+impl<T: Storable> Handler<T> for BytesLikeHandler<'_, T> {
     #[inline]
     fn read(&self) -> Result<T> {
         self.as_slot().read()
@@ -358,8 +370,8 @@ mod tests {
         #[test]
         fn test_short_strings(s in arb_short_string(), base_slot in arb_safe_slot()) {
             let (mut storage, address) = setup_storage();
-            StorageCtx::enter(&mut storage, || {
-                let mut slot = BytesLikeHandler::<String>::new(base_slot, address);
+            StorageCtx::enter(&mut storage, |ctx| {
+                let mut slot = BytesLikeHandler::<String>::new(base_slot, address, ctx);
                 slot.write(s.clone()).unwrap();
                 let loaded = slot.read().unwrap();
                 prop_assert_eq!(&s, &loaded);
@@ -373,8 +385,8 @@ mod tests {
         #[test]
         fn test_long_strings(s in arb_long_string(), base_slot in arb_safe_slot()) {
             let (mut storage, address) = setup_storage();
-            StorageCtx::enter(&mut storage, || {
-                let mut slot = BytesLikeHandler::<String>::new(base_slot, address);
+            StorageCtx::enter(&mut storage, |ctx| {
+                let mut slot = BytesLikeHandler::<String>::new(base_slot, address, ctx);
                 slot.write(s.clone()).unwrap();
                 let loaded = slot.read().unwrap();
                 prop_assert_eq!(&s, &loaded);
@@ -388,8 +400,8 @@ mod tests {
         #[test]
         fn test_short_bytes(b in arb_short_bytes(), base_slot in arb_safe_slot()) {
             let (mut storage, address) = setup_storage();
-            StorageCtx::enter(&mut storage, || {
-                let mut slot = BytesLikeHandler::<Bytes>::new(base_slot, address);
+            StorageCtx::enter(&mut storage, |ctx| {
+                let mut slot = BytesLikeHandler::<Bytes>::new(base_slot, address, ctx);
                 slot.write(b.clone()).unwrap();
                 let loaded = slot.read().unwrap();
                 prop_assert_eq!(&b, &loaded);
@@ -400,8 +412,8 @@ mod tests {
         #[test]
         fn test_long_bytes(b in arb_long_bytes(), base_slot in arb_safe_slot()) {
             let (mut storage, address) = setup_storage();
-            StorageCtx::enter(&mut storage, || {
-                let mut slot = BytesLikeHandler::<Bytes>::new(base_slot, address);
+            StorageCtx::enter(&mut storage, |ctx| {
+                let mut slot = BytesLikeHandler::<Bytes>::new(base_slot, address, ctx);
                 slot.write(b.clone()).unwrap();
                 let loaded = slot.read().unwrap();
                 prop_assert_eq!(&b, &loaded);
@@ -412,8 +424,8 @@ mod tests {
         #[test]
         fn test_32byte_strings(s in arb_32byte_string(), base_slot in arb_safe_slot()) {
             let (mut storage, address) = setup_storage();
-            StorageCtx::enter(&mut storage, || {
-                let mut slot = BytesLikeHandler::<String>::new(base_slot, address);
+            StorageCtx::enter(&mut storage, |ctx| {
+                let mut slot = BytesLikeHandler::<String>::new(base_slot, address, ctx);
                 slot.write(s.clone()).unwrap();
                 let loaded = slot.read().unwrap();
                 prop_assert_eq!(&s, &loaded);

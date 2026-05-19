@@ -16,16 +16,15 @@ workspace = true
 # alloy
 alloy-evm.workspace = true
 alloy-primitives.workspace = true
-alloy-sol-types = { workspace = true, features = ["std"] }
+alloy-sol-types.workspace = true
 
 # revm
 revm.workspace = true
 
 # base
-base-precompile-macros = { path = "../precompile-macros" }
+base-precompile-macros.workspace = true
 
 # misc
-scoped-tls.workspace = true
 thiserror.workspace = true
 derive_more = { workspace = true, features = ["from", "try_into"] }
 
@@ -47,4 +46,4 @@ std = [
 	"revm/std",
 	"thiserror/std",
 ]
-test-utils = []
+test-utils = [ "std" ]

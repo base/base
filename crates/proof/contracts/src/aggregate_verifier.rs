@@ -335,29 +335,14 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
         let (root_claim, l2_seq, parent_address) = futures::try_join!(
-            async {
-                contract.rootClaim().call().await.map_err(|e| ContractError::Call {
-                    context: "rootClaim failed".into(),
-                    source: e,
-                })
-            },
-            async {
-                contract.l2SequenceNumber().call().await.map_err(|e| ContractError::Call {
-                    context: "l2SequenceNumber failed".into(),
-                    source: e,
-                })
-            },
-            async {
-                contract.parentAddress().call().await.map_err(|e| ContractError::Call {
-                    context: "parentAddress failed".into(),
-                    source: e,
-                })
-            },
+            async { contract_call!(contract.rootClaim().call(), "rootClaim failed") },
+            async { contract_call!(contract.l2SequenceNumber().call(), "l2SequenceNumber failed") },
+            async { contract_call!(contract.parentAddress().call(), "parentAddress failed") },
         )?;
 
         let l2_block_number: u64 = l2_seq
             .try_into()
-            .map_err(|_| ContractError::Validation("l2SequenceNumber overflows u64".into()))?;
+            .map_err(|_| ContractError::validation("l2SequenceNumber overflows u64"))?;
 
         Ok(GameInfo { root_claim, l2_block_number, parent_address })
     }
@@ -366,14 +351,10 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        let raw: u8 = contract
-            .status()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "status failed".into(), source: e })?;
+        let raw: u8 = contract_call!(contract.status().call(), "status failed")?;
 
         GameStatus::try_from(raw).map_err(|unknown| {
-            ContractError::Validation(format!(
+            ContractError::validation(format!(
                 "game {game_address} returned unrecognized status {unknown}"
             ))
         })
@@ -383,64 +364,49 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        contract
-            .zkProver()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "zkProver failed".into(), source: e })
+        contract_call!(contract.zkProver().call(), "zkProver failed")
     }
 
     async fn tee_prover(&self, game_address: Address) -> Result<Address, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        contract
-            .teeProver()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "teeProver failed".into(), source: e })
+        contract_call!(contract.teeProver().call(), "teeProver failed")
     }
 
     async fn starting_block_number(&self, game_address: Address) -> Result<u64, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        let block_u256: U256 = contract.startingBlockNumber().call().await.map_err(|e| {
-            ContractError::Call { context: "startingBlockNumber failed".into(), source: e }
-        })?;
+        let block_u256: U256 =
+            contract_call!(contract.startingBlockNumber().call(), "startingBlockNumber failed")?;
 
         block_u256
             .try_into()
-            .map_err(|_| ContractError::Validation("startingBlockNumber overflows u64".into()))
+            .map_err(|_| ContractError::validation("startingBlockNumber overflows u64"))
     }
 
     async fn l1_head(&self, game_address: Address) -> Result<B256, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        contract
-            .l1Head()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "l1Head failed".into(), source: e })
+        contract_call!(contract.l1Head().call(), "l1Head failed")
     }
 
     async fn read_block_interval(&self, impl_address: Address) -> Result<u64, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(impl_address, &self.provider);
-        let interval_u256: U256 = contract.BLOCK_INTERVAL().call().await.map_err(|e| {
-            ContractError::Call { context: "BLOCK_INTERVAL failed".into(), source: e }
-        })?;
+        let interval_u256: U256 =
+            contract_call!(contract.BLOCK_INTERVAL().call(), "BLOCK_INTERVAL failed")?;
 
         let interval: u64 = interval_u256
             .try_into()
-            .map_err(|_| ContractError::Validation("BLOCK_INTERVAL overflows u64".into()))?;
+            .map_err(|_| ContractError::validation("BLOCK_INTERVAL overflows u64"))?;
 
         // Also validated at startup in main.rs; duplicated here for defense-in-depth.
         if interval < 2 {
-            return Err(ContractError::Validation(
-                "BLOCK_INTERVAL must be at least 2 (single-block proposals are not supported)"
-                    .into(),
+            return Err(ContractError::validation(
+                "BLOCK_INTERVAL must be at least 2 (single-block proposals are not supported)",
             ));
         }
 
@@ -453,22 +419,17 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
     ) -> Result<u64, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(impl_address, &self.provider);
-        let interval_u256: U256 =
-            contract.INTERMEDIATE_BLOCK_INTERVAL().call().await.map_err(|e| {
-                ContractError::Call {
-                    context: "INTERMEDIATE_BLOCK_INTERVAL failed".into(),
-                    source: e,
-                }
-            })?;
+        let interval_u256: U256 = contract_call!(
+            contract.INTERMEDIATE_BLOCK_INTERVAL().call(),
+            "INTERMEDIATE_BLOCK_INTERVAL failed"
+        )?;
 
-        let interval: u64 = interval_u256.try_into().map_err(|_| {
-            ContractError::Validation("INTERMEDIATE_BLOCK_INTERVAL overflows u64".into())
-        })?;
+        let interval: u64 = interval_u256
+            .try_into()
+            .map_err(|_| ContractError::validation("INTERMEDIATE_BLOCK_INTERVAL overflows u64"))?;
 
         if interval == 0 {
-            return Err(ContractError::Validation(
-                "INTERMEDIATE_BLOCK_INTERVAL cannot be 0".into(),
-            ));
+            return Err(ContractError::validation("INTERMEDIATE_BLOCK_INTERVAL cannot be 0"));
         }
 
         Ok(interval)
@@ -481,12 +442,13 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        let raw: Bytes = contract.intermediateOutputRoots().call().await.map_err(|e| {
-            ContractError::Call { context: "intermediateOutputRoots failed".into(), source: e }
-        })?;
+        let raw: Bytes = contract_call!(
+            contract.intermediateOutputRoots().call(),
+            "intermediateOutputRoots failed"
+        )?;
 
         if !raw.len().is_multiple_of(32) {
-            return Err(ContractError::Validation(format!(
+            return Err(ContractError::validation(format!(
                 "intermediateOutputRoots length {} is not a multiple of 32",
                 raw.len()
             )));
@@ -505,10 +467,10 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        let root =
-            contract.intermediateOutputRoot(U256::from(index)).call().await.map_err(|e| {
-                ContractError::Call { context: "intermediateOutputRoot failed".into(), source: e }
-            })?;
+        let root = contract_call!(
+            contract.intermediateOutputRoot(U256::from(index)).call(),
+            "intermediateOutputRoot failed"
+        )?;
 
         Ok(root)
     }
@@ -517,18 +479,13 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        let value: U256 =
-            contract.counteredByIntermediateRootIndexPlusOne().call().await.map_err(|e| {
-                ContractError::Call {
-                    context: "counteredByIntermediateRootIndexPlusOne failed".into(),
-                    source: e,
-                }
-            })?;
+        let value: U256 = contract_call!(
+            contract.counteredByIntermediateRootIndexPlusOne().call(),
+            "counteredByIntermediateRootIndexPlusOne failed"
+        )?;
 
         value.try_into().map_err(|_| {
-            ContractError::Validation(
-                "counteredByIntermediateRootIndexPlusOne overflows u64".into(),
-            )
+            ContractError::validation("counteredByIntermediateRootIndexPlusOne overflows u64")
         })
     }
 
@@ -536,108 +493,70 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        contract
-            .gameOver()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "gameOver failed".into(), source: e })
+        contract_call!(contract.gameOver().call(), "gameOver failed")
     }
 
     async fn resolved_at(&self, game_address: Address) -> Result<u64, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        contract
-            .resolvedAt()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "resolvedAt failed".into(), source: e })
+        contract_call!(contract.resolvedAt().call(), "resolvedAt failed")
     }
 
     async fn bond_recipient(&self, game_address: Address) -> Result<Address, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        contract
-            .bondRecipient()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "bondRecipient failed".into(), source: e })
+        contract_call!(contract.bondRecipient().call(), "bondRecipient failed")
     }
 
     async fn bond_unlocked(&self, game_address: Address) -> Result<bool, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        contract
-            .bondUnlocked()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "bondUnlocked failed".into(), source: e })
+        contract_call!(contract.bondUnlocked().call(), "bondUnlocked failed")
     }
 
     async fn bond_claimed(&self, game_address: Address) -> Result<bool, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        contract
-            .bondClaimed()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "bondClaimed failed".into(), source: e })
+        contract_call!(contract.bondClaimed().call(), "bondClaimed failed")
     }
 
     async fn expected_resolution(&self, game_address: Address) -> Result<u64, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        contract.expectedResolution().call().await.map_err(|e| ContractError::Call {
-            context: "expectedResolution failed".into(),
-            source: e,
-        })
+        contract_call!(contract.expectedResolution().call(), "expectedResolution failed")
     }
 
     async fn proof_count(&self, game_address: Address) -> Result<u8, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        contract
-            .proofCount()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "proofCount failed".into(), source: e })
+        contract_call!(contract.proofCount().call(), "proofCount failed")
     }
 
     async fn created_at(&self, game_address: Address) -> Result<u64, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        contract
-            .createdAt()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "createdAt failed".into(), source: e })
+        contract_call!(contract.createdAt().call(), "createdAt failed")
     }
 
     async fn delayed_weth(&self, game_address: Address) -> Result<Address, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        contract
-            .DELAYED_WETH()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "DELAYED_WETH failed".into(), source: e })
+        contract_call!(contract.DELAYED_WETH().call(), "DELAYED_WETH failed")
     }
 
     async fn anchor_state_registry(&self, game_address: Address) -> Result<Address, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        contract.anchorStateRegistry().call().await.map_err(|e| ContractError::Call {
-            context: "anchorStateRegistry failed".into(),
-            source: e,
-        })
+        contract_call!(contract.anchorStateRegistry().call(), "anchorStateRegistry failed")
     }
 
     async fn is_game_finalized(
@@ -648,10 +567,7 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         let contract =
             IAnchorStateRegistry::IAnchorStateRegistryInstance::new(asr_address, &self.provider);
 
-        contract.isGameFinalized(game_address).call().await.map_err(|e| ContractError::Call {
-            context: "isGameFinalized failed".into(),
-            source: e,
-        })
+        contract_call!(contract.isGameFinalized(game_address).call(), "isGameFinalized failed")
     }
 
     async fn anchor_preflight(
@@ -664,39 +580,28 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
 
         let (blacklisted, retired, respected, paused, anchor) = futures::try_join!(
             async {
-                contract.isGameBlacklisted(game_address).call().await.map_err(|e| {
-                    ContractError::Call { context: "isGameBlacklisted failed".into(), source: e }
-                })
+                contract_call!(
+                    contract.isGameBlacklisted(game_address).call(),
+                    "isGameBlacklisted failed"
+                )
             },
             async {
-                contract.isGameRetired(game_address).call().await.map_err(|e| ContractError::Call {
-                    context: "isGameRetired failed".into(),
-                    source: e,
-                })
+                contract_call!(contract.isGameRetired(game_address).call(), "isGameRetired failed")
             },
             async {
-                contract.isGameRespected(game_address).call().await.map_err(|e| {
-                    ContractError::Call { context: "isGameRespected failed".into(), source: e }
-                })
+                contract_call!(
+                    contract.isGameRespected(game_address).call(),
+                    "isGameRespected failed"
+                )
             },
-            async {
-                contract
-                    .paused()
-                    .call()
-                    .await
-                    .map_err(|e| ContractError::Call { context: "paused failed".into(), source: e })
-            },
-            async {
-                contract.getAnchorRoot().call().await.map_err(|e| ContractError::Call {
-                    context: "getAnchorRoot failed".into(),
-                    source: e,
-                })
-            },
+            async { contract_call!(contract.paused().call(), "paused failed") },
+            async { contract_call!(contract.getAnchorRoot().call(), "getAnchorRoot failed") },
         )?;
 
-        let l2_block_number: u64 = anchor.l2SequenceNumber.try_into().map_err(|_| {
-            ContractError::Validation("anchor l2SequenceNumber overflows u64".into())
-        })?;
+        let l2_block_number: u64 = anchor
+            .l2SequenceNumber
+            .try_into()
+            .map_err(|_| ContractError::validation("anchor l2SequenceNumber overflows u64"))?;
 
         Ok(AnchorPreflight {
             blacklisted,

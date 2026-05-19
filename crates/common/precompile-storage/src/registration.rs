@@ -23,8 +23,8 @@ use crate::provider::PrecompileStorageProvider;
 /// impl NativePrecompile for MyPrecompile {
 ///     const ADDRESS: Address = MY_PRECOMPILE_ADDRESS;
 ///     fn execute(storage: &mut dyn PrecompileStorageProvider) -> PrecompileResult {
-///         StorageCtx::enter(storage, || {
-///             let pc = MyPrecompile::new();
+///         StorageCtx::enter(storage, |ctx| {
+///             let pc = MyPrecompile::new(ctx);
 ///             // dispatch calldata ...
 ///         })
 ///     }

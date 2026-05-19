@@ -5,6 +5,8 @@
 //! It is constructed inside each native precompile's `run()` function and passed to
 //! [`StorageCtx::enter`] so that `#[contract]`-generated storage types read/write real EVM state.
 
+use alloc::string::ToString;
+
 use alloy_evm::precompiles::PrecompileInput;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use revm::{

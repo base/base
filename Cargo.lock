@@ -2791,6 +2791,7 @@ dependencies = [
  "base-consensus-engine",
  "base-consensus-gossip",
  "base-consensus-node",
+ "base-consensus-rpc",
  "base-consensus-safedb",
  "base-execution-chainspec",
  "base-execution-evm",
@@ -3400,7 +3401,11 @@ name = "base-common-precompiles"
 version = "0.0.0"
 dependencies = [
  "alloy-evm",
+ "alloy-primitives",
+ "alloy-sol-types",
  "base-common-chains",
+ "base-precompile-macros",
+ "base-precompile-storage",
  "revm",
 ]
 
@@ -4703,7 +4708,6 @@ dependencies = [
  "derive_more 2.1.1",
  "proptest",
  "revm",
- "scoped-tls",
  "thiserror 2.0.18",
 ]
 
@@ -5599,6 +5603,16 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+]
+
+[[package]]
+name = "base-snark-e2e"
+version = "0.0.0"
+dependencies = [
+ "base-zk-service",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.23",
 ]
 
 [[package]]

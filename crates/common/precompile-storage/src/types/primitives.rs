@@ -22,9 +22,14 @@ base_precompile_macros::storable_alloy_bytes!();
 
 impl StorableType for bool {
     const LAYOUT: Layout = Layout::Bytes(1);
-    type Handler = Slot<Self>;
-    fn handle(slot: U256, ctx: LayoutCtx, address: Address) -> Self::Handler {
-        Slot::new_with_ctx(slot, ctx, address)
+    type Handler<'a> = Slot<'a, Self>;
+    fn handle<'a>(
+        slot: U256,
+        ctx: LayoutCtx,
+        address: Address,
+        storage: crate::StorageCtx<'a>,
+    ) -> Self::Handler<'a> {
+        Slot::new_with_ctx(slot, ctx, address, storage)
     }
 }
 
@@ -53,9 +58,14 @@ impl StorageKey for bool {
 
 impl StorableType for Address {
     const LAYOUT: Layout = Layout::Bytes(20);
-    type Handler = Slot<Self>;
-    fn handle(slot: U256, ctx: LayoutCtx, address: Address) -> Self::Handler {
-        Slot::new_with_ctx(slot, ctx, address)
+    type Handler<'a> = Slot<'a, Self>;
+    fn handle<'a>(
+        slot: U256,
+        ctx: LayoutCtx,
+        address: Address,
+        storage: crate::StorageCtx<'a>,
+    ) -> Self::Handler<'a> {
+        Slot::new_with_ctx(slot, ctx, address, storage)
     }
 }
 
@@ -120,8 +130,8 @@ mod tests {
         #[test]
         fn test_address(addr in arb_address(), base_slot in arb_safe_slot()) {
             let (mut storage, address) = setup_storage();
-            StorageCtx::enter(&mut storage, || {
-                let mut slot = Address::handle(base_slot, LayoutCtx::FULL, address);
+            StorageCtx::enter(&mut storage, |ctx| {
+                let mut slot = Address::handle(base_slot, LayoutCtx::FULL, address, ctx);
 
                 slot.write(addr).unwrap();
                 let loaded = slot.read().unwrap();
@@ -140,8 +150,8 @@ mod tests {
         #[test]
         fn test_bool_values(b in any::<bool>(), base_slot in arb_safe_slot()) {
             let (mut storage, address) = setup_storage();
-            StorageCtx::enter(&mut storage, || {
-                let mut slot = bool::handle(base_slot, LayoutCtx::FULL, address);
+            StorageCtx::enter(&mut storage, |ctx| {
+                let mut slot = bool::handle(base_slot, LayoutCtx::FULL, address, ctx);
 
                 slot.write(b).unwrap();
                 let loaded = slot.read().unwrap();

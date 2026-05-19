@@ -27,6 +27,7 @@ pub(super) struct FollowRuntime<Local, Remote, Gate> {
     cancellation: CancellationToken,
     follow_from_block: L2BlockInfo,
     proof_gate: Gate,
+    insert_delay: Duration,
 }
 
 impl<Local, Remote, Gate> FollowRuntime<Local, Remote, Gate>
@@ -42,8 +43,9 @@ where
         cancellation: CancellationToken,
         follow_from_block: L2BlockInfo,
         proof_gate: Gate,
+        insert_delay: Duration,
     ) -> Self {
-        Self { local, source, engine, cancellation, follow_from_block, proof_gate }
+        Self { local, source, engine, cancellation, follow_from_block, proof_gate, insert_delay }
     }
 
     async fn run_ordered_insert_loop<GateInner: ProofGate>(
@@ -52,6 +54,7 @@ where
         mut blocks_to_insert_rx: mpsc::Receiver<PrefetchedPayload>,
         start_block: u64,
         proof_gate: &mut GateInner,
+        insert_delay: Duration,
     ) -> Result<(), FollowError> {
         let mut current_block = start_block;
 
@@ -75,6 +78,15 @@ where
 
             info!(target: "follow", block = current_block, "Inserting source payload");
             engine.insert_payload(payload).await?;
+            if !insert_delay.is_zero() {
+                debug!(
+                    target: "follow",
+                    block = current_block,
+                    delay = ?insert_delay,
+                    "Sleeping after source payload insert"
+                );
+                time::sleep(insert_delay).await;
+            }
             current_block = current_block.saturating_add(1);
         }
     }
@@ -191,6 +203,7 @@ where
             blocks_to_insert_rx,
             next_insert,
             &mut self.proof_gate,
+            self.insert_delay,
         );
         let safety_loop = Self::run_update_safe_finalized_heads_loop(
             Arc::clone(&self.local),
@@ -386,6 +399,7 @@ mod tests {
             blocks_to_insert_rx,
             1,
             &mut proof_gate,
+            Duration::ZERO,
         )
         .await
         .expect_err("closed channel");
@@ -412,11 +426,43 @@ mod tests {
             blocks_to_insert_rx,
             1,
             &mut proof_gate,
+            Duration::ZERO,
         )
         .await
         .expect_err("error");
 
         assert!(matches!(error, FollowError::OutOfOrderPayload { actual: 2, expected: 1 }));
+    }
+
+    #[tokio::test]
+    async fn ordered_insertion_applies_configured_insert_delay() {
+        let engine = Arc::new(RecordingEngine {
+            inserted: Mutex::new(Vec::new()),
+            labels: Mutex::new(Vec::new()),
+            delay: Duration::ZERO,
+        });
+        let mut proof_gate = NoopProofGate;
+        let (blocks_to_insert_tx, blocks_to_insert_rx) = mpsc::channel(PREFETCH_WINDOW);
+        blocks_to_insert_tx.send(payload(1)).await.expect("send 1");
+        blocks_to_insert_tx.send(payload(2)).await.expect("send 2");
+        drop(blocks_to_insert_tx);
+
+        let engine_for_loop: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+        let started = Instant::now();
+        let error = FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::run_ordered_insert_loop(
+            engine_for_loop,
+            CancellationToken::new(),
+            blocks_to_insert_rx,
+            1,
+            &mut proof_gate,
+            Duration::from_millis(20),
+        )
+        .await
+        .expect_err("closed channel");
+
+        assert!(matches!(error, FollowError::BlocksToInsertChannelClosed));
+        assert_eq!(*engine.inserted.lock().await, vec![1, 2]);
+        assert!(started.elapsed() >= Duration::from_millis(40));
     }
 
     #[tokio::test]
@@ -492,6 +538,7 @@ mod tests {
             cancellation.clone(),
             block_info(0),
             proof_gate,
+            Duration::ZERO,
         );
         let handle = tokio::spawn(async move { runtime.start().await });
 
@@ -579,6 +626,7 @@ mod tests {
             cancellation.clone(),
             block_info(0),
             NoopProofGate,
+            Duration::ZERO,
         );
         let started = Instant::now();
         let handle = tokio::spawn(async move { runtime.start().await });

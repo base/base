@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1
+
+# Builds base-prover-nitro-host — the JSON-RPC server that forwards proving
+# requests to the Nitro Enclave over vsock.
+
+# --- Builder ---
+FROM --platform=linux/amd64 rust:1.93-trixie@sha256:51c04d7a2b38418ba23ecbfb373c40d3bd493dec1ddfae00ab5669527320195e AS builder
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      git libclang-dev pkg-config curl build-essential mold protobuf-compiler && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY . .
+
+ARG PROFILE=maxperf
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=prover-nitro-host-target,sharing=locked \
+    cargo build --profile $PROFILE --locked --package base-prover-nitro-host --bin base-prover-nitro-host && \
+    cp target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/base-prover-nitro-host ./base-prover-nitro-host
+
+# --- Runtime ---
+FROM --platform=linux/amd64 debian:trixie-slim@sha256:1d3c811171a08a5adaa4a163fbafd96b61b87aa871bbc7aa15431ac275d3d430
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd -r -m -s /sbin/nologin base
+
+WORKDIR /app
+COPY --from=builder /app/base-prover-nitro-host ./
+COPY etc/docker/nitro-host/entrypoint.sh ./entrypoint.sh
+
+USER base
+
+ENTRYPOINT ["./entrypoint.sh"]

@@ -51,6 +51,7 @@ base-tx-manager.workspace = true
 base-batcher-core.workspace = true
 base-common-chains.workspace = true
 base-execution-evm.workspace = true
+base-consensus-rpc.workspace = true
 base-consensus-node.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
