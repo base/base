@@ -42,3 +42,69 @@ pub trait Mintable: Token {
         self.accounting_mut().emit_event(IB20::Memo { memo }.encode_log_data())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, U256};
+
+    use crate::token::{
+        B20Token,
+        common::{
+            Token, TokenAccounting,
+            test_utils::{InMemoryPolicy, InMemoryTokenAccounting},
+        },
+    };
+
+    use super::Mintable;
+
+    const ALICE: Address = Address::repeat_byte(0xaa);
+
+    fn make_token() -> B20Token<InMemoryTokenAccounting, InMemoryPolicy> {
+        B20Token::with_storage_and_policy(
+            InMemoryTokenAccounting::new(Address::repeat_byte(1)),
+            InMemoryPolicy::new(),
+        )
+    }
+
+    #[test]
+    fn mint_increases_balance_and_total_supply() {
+        let mut token = make_token();
+        token.mint(ALICE, U256::from(100u64)).unwrap();
+
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(100u64));
+        assert_eq!(token.accounting().events.len(), 1);
+    }
+
+    #[test]
+    fn mint_to_zero_address_reverts() {
+        let mut token = make_token();
+        assert!(token.mint(Address::ZERO, U256::from(1u64)).is_err());
+    }
+
+    #[test]
+    fn mint_beyond_supply_cap_reverts() {
+        let mut token = make_token();
+        token.accounting_mut().supply_cap = U256::from(50u64);
+        assert!(token.mint(ALICE, U256::from(51u64)).is_err());
+    }
+
+    #[test]
+    fn mint_up_to_supply_cap_succeeds() {
+        let mut token = make_token();
+        token.accounting_mut().supply_cap = U256::from(100u64);
+        token.mint(ALICE, U256::from(100u64)).unwrap();
+
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(100u64));
+    }
+
+    #[test]
+    fn mint_accumulates_across_calls() {
+        let mut token = make_token();
+        token.mint(ALICE, U256::from(40u64)).unwrap();
+        token.mint(ALICE, U256::from(60u64)).unwrap();
+
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(100u64));
+    }
+}

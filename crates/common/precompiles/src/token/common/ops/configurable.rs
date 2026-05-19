@@ -62,3 +62,81 @@ pub trait Configurable: Token {
         self.accounting_mut().emit_event(IB20::ContractURIUpdated {}.encode_log_data())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, U256};
+
+    use crate::token::{
+        B20Token,
+        common::{
+            CAPABILITY_CAP_MUTABLE, Token, TokenAccounting,
+            test_utils::{InMemoryPolicy, InMemoryTokenAccounting},
+        },
+    };
+
+    use super::Configurable;
+
+    const CALLER: Address = Address::repeat_byte(0xaa);
+
+    fn make_token(caps: U256) -> B20Token<InMemoryTokenAccounting, InMemoryPolicy> {
+        let mut acc = InMemoryTokenAccounting::new(Address::repeat_byte(1));
+        acc.capabilities = caps;
+        B20Token::with_storage_and_policy(acc, InMemoryPolicy::new())
+    }
+
+    #[test]
+    fn is_cap_mutable_reflects_capability_bit() {
+        assert!(make_token(CAPABILITY_CAP_MUTABLE).is_cap_mutable().unwrap());
+        assert!(!make_token(U256::ZERO).is_cap_mutable().unwrap());
+    }
+
+    #[test]
+    fn set_supply_cap_updates_cap_and_emits_event() {
+        let mut token = make_token(CAPABILITY_CAP_MUTABLE);
+        token.set_supply_cap(CALLER, U256::from(500u64)).unwrap();
+
+        assert_eq!(token.accounting().supply_cap().unwrap(), U256::from(500u64));
+        assert_eq!(token.accounting().events.len(), 1);
+    }
+
+    #[test]
+    fn set_supply_cap_below_current_supply_reverts() {
+        let mut token = make_token(CAPABILITY_CAP_MUTABLE);
+        token.accounting_mut().total_supply = U256::from(100u64);
+        assert!(token.set_supply_cap(CALLER, U256::from(99u64)).is_err());
+    }
+
+    #[test]
+    fn set_supply_cap_without_capability_reverts() {
+        let mut token = make_token(U256::ZERO);
+        assert!(token.set_supply_cap(CALLER, U256::from(1000u64)).is_err());
+    }
+
+    #[test]
+    fn set_name_round_trips_and_emits_event() {
+        let mut token = make_token(U256::ZERO);
+        token.set_name(CALLER, "MyToken".into()).unwrap();
+
+        assert_eq!(token.accounting().name().unwrap(), "MyToken");
+        assert_eq!(token.accounting().events.len(), 1);
+    }
+
+    #[test]
+    fn set_symbol_round_trips_and_emits_event() {
+        let mut token = make_token(U256::ZERO);
+        token.set_symbol(CALLER, "MTK".into()).unwrap();
+
+        assert_eq!(token.accounting().symbol().unwrap(), "MTK");
+        assert_eq!(token.accounting().events.len(), 1);
+    }
+
+    #[test]
+    fn set_contract_uri_round_trips_and_emits_event() {
+        let mut token = make_token(U256::ZERO);
+        token.set_contract_uri(CALLER, "ipfs://abc".into()).unwrap();
+
+        assert_eq!(token.accounting().contract_uri().unwrap(), "ipfs://abc");
+        assert_eq!(token.accounting().events.len(), 1);
+    }
+}
