@@ -99,54 +99,25 @@ pub(crate) const JOVIAN_PAIRING: Precompile = Precompile::new(
 #[cfg(test)]
 mod tests {
     use revm::{precompile::PrecompileError, primitives::Bytes};
+    use rstest::rstest;
 
     use super::*;
 
-    #[test]
-    fn test_g1_msm_isthmus_max_size() {
-        let input = Bytes::from(vec![0u8; ISTHMUS_G1_MSM_MAX_INPUT_SIZE + 1]);
+    #[rstest]
+    #[case::g1_msm_isthmus(ISTHMUS_G1_MSM, ISTHMUS_G1_MSM_MAX_INPUT_SIZE, 260_000)]
+    #[case::g1_msm_jovian(JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE, u64::MAX)]
+    #[case::g2_msm_isthmus(ISTHMUS_G2_MSM, ISTHMUS_G2_MSM_MAX_INPUT_SIZE, 260_000)]
+    #[case::g2_msm_jovian(JOVIAN_G2_MSM, JOVIAN_G2_MSM_MAX_INPUT_SIZE, u64::MAX)]
+    #[case::pairing_isthmus(ISTHMUS_PAIRING, ISTHMUS_PAIRING_MAX_INPUT_SIZE, 260_000)]
+    #[case::pairing_jovian(JOVIAN_PAIRING, JOVIAN_PAIRING_MAX_INPUT_SIZE, u64::MAX)]
+    fn test_max_size_rejects_oversized_input(
+        #[case] precompile: Precompile,
+        #[case] max_input_size: usize,
+        #[case] gas_limit: u64,
+    ) {
+        let input = Bytes::from(vec![0u8; max_input_size + 1]);
         assert!(
-            matches!(ISTHMUS_G1_MSM.execute(&input, 260_000), Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
-        );
-    }
-
-    #[test]
-    fn test_g1_msm_jovian_max_size() {
-        let input = Bytes::from(vec![0u8; JOVIAN_G1_MSM_MAX_INPUT_SIZE + 1]);
-        assert!(
-            matches!(JOVIAN_G1_MSM.execute(&input, u64::MAX), Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
-        );
-    }
-
-    #[test]
-    fn test_g2_msm_isthmus_max_size() {
-        let input = Bytes::from(vec![0u8; ISTHMUS_G2_MSM_MAX_INPUT_SIZE + 1]);
-        assert!(
-            matches!(ISTHMUS_G2_MSM.execute(&input, 260_000), Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
-        );
-    }
-
-    #[test]
-    fn test_g2_msm_jovian_max_size() {
-        let input = Bytes::from(vec![0u8; JOVIAN_G2_MSM_MAX_INPUT_SIZE + 1]);
-        assert!(
-            matches!(JOVIAN_G2_MSM.execute(&input, u64::MAX), Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
-        );
-    }
-
-    #[test]
-    fn test_pairing_isthmus_max_size() {
-        let input = Bytes::from(vec![0u8; ISTHMUS_PAIRING_MAX_INPUT_SIZE + 1]);
-        assert!(
-            matches!(ISTHMUS_PAIRING.execute(&input, 260_000), Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
-        );
-    }
-
-    #[test]
-    fn test_pairing_jovian_max_size() {
-        let input = Bytes::from(vec![0u8; JOVIAN_PAIRING_MAX_INPUT_SIZE + 1]);
-        assert!(
-            matches!(JOVIAN_PAIRING.execute(&input, u64::MAX), Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
+            matches!(precompile.execute(&input, gas_limit), Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
         );
     }
 }
