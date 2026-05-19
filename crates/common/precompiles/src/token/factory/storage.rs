@@ -481,7 +481,7 @@ mod tests {
     fn test_factory_dispatch_create_token_predicts_and_initializes_token() {
         let creator = Address::repeat_byte(0xCA);
         let salt = B256::repeat_byte(0x31);
-        let (expected_token, _) = compute_b20_address(creator, VARIANT_DEFAULT, 6, salt);
+        let (expected_token, _) = TokenVariant::Default.compute_address(creator, 6, salt);
         let mut params =
             token_params("Dispatch Token", "DSP", 6, U256::from(1_000u64), U256::from(10_000u64));
         params.minimumRedeemable = U256::from(25u64);
@@ -496,7 +496,7 @@ mod tests {
                     ctx,
                     ITokenFactory::predictTokenAddressCall {
                         creator,
-                        variant: VARIANT_DEFAULT,
+                        variant: TokenVariant::DEFAULT_DISCRIMINANT,
                         decimals: 6,
                         salt,
                     },
@@ -507,7 +507,11 @@ mod tests {
             assert_output(
                 dispatch_factory_success(
                     ctx,
-                    create_call(VARIANT_DEFAULT, params, B256::repeat_byte(0x31)),
+                    create_call(
+                        TokenVariant::DEFAULT_DISCRIMINANT,
+                        params,
+                        B256::repeat_byte(0x31),
+                    ),
                 ),
                 ITokenFactory::createTokenCall::abi_encode_returns(&expected_token),
             );
@@ -522,7 +526,9 @@ mod tests {
                     ctx,
                     ITokenFactory::variantOfCall { token: expected_token },
                 ),
-                ITokenFactory::variantOfCall::abi_encode_returns(&VARIANT_DEFAULT),
+                ITokenFactory::variantOfCall::abi_encode_returns(
+                    &TokenVariant::DEFAULT_DISCRIMINANT,
+                ),
             );
             assert_output(
                 dispatch_factory_success(
@@ -593,14 +599,17 @@ mod tests {
         let spender = Address::repeat_byte(0xEE);
         let charlie = Address::repeat_byte(0xCC);
         let salt = B256::repeat_byte(0x32);
-        let (token_addr, _) = compute_b20_address(creator, VARIANT_DEFAULT, 18, salt);
+        let (token_addr, _) = TokenVariant::Default.compute_address(creator, 18, salt);
         let params = token_params("Dispatch Token", "DSP", 18, U256::from(1_000u64), U256::MAX);
 
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_caller(creator);
         StorageCtx::enter(&mut storage, |ctx| {
             assert_output(
-                dispatch_factory_success(ctx, create_call(VARIANT_DEFAULT, params, salt)),
+                dispatch_factory_success(
+                    ctx,
+                    create_call(TokenVariant::DEFAULT_DISCRIMINANT, params, salt),
+                ),
                 ITokenFactory::createTokenCall::abi_encode_returns(&token_addr),
             );
         });
@@ -670,7 +679,10 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             assert_output(
-                dispatch_factory_revert(ctx, create_call(VARIANT_DEFAULT, params, salt)),
+                dispatch_factory_revert(
+                    ctx,
+                    create_call(TokenVariant::DEFAULT_DISCRIMINANT, params, salt),
+                ),
                 ITokenFactory::ZeroAddress {}.abi_encode(),
             );
         });
