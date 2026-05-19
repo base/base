@@ -44,12 +44,11 @@ fn b20_lookup(address: &Address) -> Option<DynPrecompile> {
     if *address == crate::token::TokenFactory::ADDRESS {
         Some(crate::token::TokenFactoryPrecompile::precompile())
     } else {
-        match crate::token::TokenVariant::from_address(*address) {
-            Some(crate::token::TokenVariant::Default) => {
-                Some(crate::token::B20TokenPrecompile::create_precompile(*address))
+        crate::token::TokenVariant::from_address(*address).map(|variant| match variant {
+            crate::token::TokenVariant::Default => {
+                crate::token::B20TokenPrecompile::create_precompile(*address)
             }
-            None => None,
-        }
+        })
     }
 }
 
