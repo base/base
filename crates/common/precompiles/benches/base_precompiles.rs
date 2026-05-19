@@ -6,8 +6,8 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::SolValue;
 use base_common_precompiles::{
     B20Token, B20TokenStorage, Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE,
-    CREATE_TOKEN_VERSION, Configurable, ITokenFactory, Mintable, Pausable, Token,
-    TokenAccounting, TokenFactory, Transferable, VARIANT_DEFAULT, compute_b20_address,
+    CREATE_TOKEN_VERSION, Configurable, ITokenFactory, Mintable, Pausable, Token, TokenAccounting,
+    TokenFactory, Transferable, VARIANT_DEFAULT, compute_b20_address,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -493,8 +493,7 @@ fn base_token_factory_view(c: &mut Criterion) {
     c.bench_function("base_token_factory_is_b20", |b| {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
-            let params =
-                BaseTokenBenchSetup::token_params("FactoryToken", "FACT", 18, U256::ZERO);
+            let params = BaseTokenBenchSetup::token_params("FactoryToken", "FACT", 18, U256::ZERO);
             let token_address = BaseTokenBenchSetup::create_b20(
                 ctx,
                 BaseTokenBenchSetup::caller(),
