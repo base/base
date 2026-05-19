@@ -34,6 +34,10 @@ impl<S: BasePrecompileSpec> BasePrecompileInstaller<S> {
     pub fn install_into(self, precompiles: &mut PrecompilesMap) {
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
             precompiles.set_precompile_lookup(b20_lookup);
+            precompiles.extend_precompiles(core::iter::once((
+                crate::token::POLICY_REGISTRY_ADDRESS,
+                crate::token::PolicyRegistryEvm::precompile(),
+            )));
         }
     }
 }

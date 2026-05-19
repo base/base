@@ -1,12 +1,13 @@
 //! Native precompiles for Base-native tokens (B-20).
 
 mod abi;
-pub use abi::{IDefaultToken, ITokenFactory};
+pub use abi::{IDefaultToken, IPolicyRegistry, ITokenFactory};
 
 mod common;
 pub use common::{
-    Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, Mintable, Pausable,
-    Permittable, Redeemable, Token, TokenAccounting, Transferable,
+    Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, Mintable,
+    NoOpPolicyRegistry, Pausable, Permittable, PolicyRegistry, Redeemable, Token, TokenAccounting,
+    Transferable,
 };
 
 mod default_token;
@@ -21,3 +22,6 @@ pub use factory::{
     VARIANT_STABLECOIN, compute_default_address, compute_security_address,
     compute_stablecoin_address, has_b20_prefix, variant_of,
 };
+
+mod policy_registry;
+pub use policy_registry::{POLICY_REGISTRY_ADDRESS, PolicyRegistryEvm, PolicyRegistryStorage};

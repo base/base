@@ -24,9 +24,10 @@ mod token;
 pub use token::{
     Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, DEFAULT_PREFIX,
     DEFAULT_TOKEN_ADDRESS, DefaultToken, DefaultTokenEvm, DefaultTokenStorage, FACTORY_ADDRESS,
-    IDefaultToken, ITokenFactory, Mintable, Pausable, Permittable, RESERVED_SIZE, Redeemable,
-    SECURITY_PREFIX, STABLECOIN_PREFIX, Token, TokenAccounting, TokenFactory, TokenFactoryEvm,
-    Transferable, VARIANT_DEFAULT, VARIANT_NONE, VARIANT_SECURITY, VARIANT_STABLECOIN,
-    compute_default_address, compute_security_address, compute_stablecoin_address, has_b20_prefix,
-    variant_of,
+    IDefaultToken, IPolicyRegistry, ITokenFactory, Mintable, NoOpPolicyRegistry, Pausable,
+    Permittable, POLICY_REGISTRY_ADDRESS, PolicyRegistry, PolicyRegistryEvm, PolicyRegistryStorage,
+    RESERVED_SIZE, Redeemable, SECURITY_PREFIX, STABLECOIN_PREFIX, Token, TokenAccounting,
+    TokenFactory, TokenFactoryEvm, Transferable, VARIANT_DEFAULT, VARIANT_NONE, VARIANT_SECURITY,
+    VARIANT_STABLECOIN, compute_default_address, compute_security_address,
+    compute_stablecoin_address, has_b20_prefix, variant_of,
 };
