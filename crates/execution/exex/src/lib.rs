@@ -26,8 +26,8 @@ use tokio::task;
 use tracing::{debug, error, info};
 
 // Safety threshold for maximum blocks to prune automatically on startup.
-// If the required prune exceeds this, the node will error out and require manual pruning. Default
-// is 1000 blocks.
+// If the required prune exceeds this, the node logs a warning that manual pruning may be needed.
+// Default is 1000 blocks.
 const MAX_PRUNE_BLOCKS_STARTUP: u64 = 1000;
 
 /// How many blocks to process in a single sync turn before yielding.
@@ -280,13 +280,12 @@ where
         if target_earliest > earliest_block_number {
             let blocks_to_prune = target_earliest - earliest_block_number;
             if blocks_to_prune > MAX_PRUNE_BLOCKS_STARTUP {
-                return Err(eyre::eyre!(
-                    "Configuration requires pruning {} blocks, which exceeds the safety threshold of {}. \
-                     Huge prune operations can stall the node. \
-                     Please run 'base-reth-node proofs prune' manually before starting the node.",
+                error!(
+                    target: "base::exex",
                     blocks_to_prune,
-                    MAX_PRUNE_BLOCKS_STARTUP
-                ));
+                    safety_threshold = MAX_PRUNE_BLOCKS_STARTUP,
+                    "Configuration requires pruning more blocks than the startup safety threshold; huge prune operations can stall the node. Consider running 'base-reth-node proofs prune' manually."
+                );
             }
         }
 
@@ -1043,7 +1042,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_initialized_errors_when_prune_exceeds_threshold() {
+    async fn ensure_initialized_logs_when_prune_exceeds_threshold() {
         // MDBX proofs storage
         let dir = tempdir_path();
         let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
@@ -1067,7 +1066,7 @@ mod tests {
             reth_exex_test_utils::test_exex_context().await.expect("exex test context");
 
         let exex = build_test_exex(ctx, proofs.clone());
-        let _ = exex.ensure_initialized().expect_err("should return error");
+        exex.ensure_initialized().expect("should log and continue");
     }
 
     #[tokio::test]
