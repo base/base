@@ -1,106 +1,18 @@
+//! ABI dispatch and state transitions for the activation registry.
+
 use alloc::string::ToString;
 
-use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
-use alloy_primitives::{Address, B256, Bytes, address, b256};
-use alloy_sol_types::{SolCall, SolError as _, SolEvent as _, sol};
-use base_precompile_macros::contract;
-use base_precompile_storage::{
-    BasePrecompileError, EvmPrecompileStorageProvider, Handler, Mapping, Result, StorageCtx,
+use alloy_primitives::{B256, Bytes};
+use alloy_sol_types::{SolCall, SolEvent as _};
+use base_precompile_storage::{BasePrecompileError, Handler, Result, StorageCtx};
+use revm::precompile::{PrecompileOutput, PrecompileResult};
+
+use super::{
+    ACTIVATION_ADMIN_ADDRESS, ACTIVATION_REGISTRY_ADDRESS, ActivationRegistry,
+    ActivationRegistryStorage, IActivationRegistry,
 };
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
-
-/// Activation registry precompile address.
-pub const ACTIVATION_REGISTRY_ADDRESS: Address =
-    address!("0x84530000000000000000000000000000000000ff");
-
-/// Temporary activation admin address.
-///
-/// Replace this with the final Base-controlled activation signer before deployment.
-pub const ACTIVATION_ADMIN_ADDRESS: Address =
-    address!("0xcb00000000000000000000000000000000000000");
-
-/// Security-token factory creation feature id.
-pub const SECURITIES_TOKEN_CREATION: B256 =
-    b256!("0x89e4523f0886ce01d76094212ed707081da92a45221e22c15c5689be470db63e");
-
-sol! {
-    /// Activation registry ABI.
-    interface IActivationRegistry {
-        /// Emitted when a feature is enabled.
-        event FeatureEnabled(bytes32 indexed feature, address indexed caller);
-
-        /// Emitted when a feature is disabled.
-        event FeatureDisabled(bytes32 indexed feature, address indexed caller);
-
-        /// Caller is not authorized to enable features.
-        error Unauthorized(address caller);
-
-        /// Feature is already enabled.
-        error AlreadyEnabled(bytes32 feature);
-
-        /// Feature is already disabled.
-        error AlreadyDisabled(bytes32 feature);
-
-        /// Feature is not enabled.
-        error FeatureNotEnabled(bytes32 feature);
-
-        /// Precompile cannot be executed via delegatecall or callcode.
-        error DelegateCallNotAllowed();
-
-        /// State-mutating call was attempted in a static context.
-        error StaticCallNotAllowed();
-
-        /// Returns true when `feature` is enabled.
-        function isEnabled(bytes32 feature) external view returns (bool);
-
-        /// Enables `feature`.
-        function enable(bytes32 feature) external;
-
-        /// Disables `feature`.
-        function disable(bytes32 feature) external;
-
-        /// Returns the activation admin.
-        function activationAdmin() external view returns (address);
-    }
-}
-
-/// Storage layout for the activation registry.
-#[contract(addr = ACTIVATION_REGISTRY_ADDRESS)]
-pub struct ActivationRegistryStorage {
-    /// Runtime activation flags keyed by feature id.
-    pub features: Mapping<B256, bool>,
-}
-
-/// Runtime activation registry for Base-native features.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ActivationRegistry;
 
 impl ActivationRegistry {
-    /// Creates a new activation registry handle.
-    pub const fn new() -> Self {
-        Self
-    }
-
-    /// Creates the EVM precompile wrapper for the activation registry.
-    pub fn create_precompile() -> DynPrecompile {
-        DynPrecompile::new_stateful(PrecompileId::Custom("ActivationRegistry".into()), Self::run)
-    }
-
-    /// Executes the activation registry precompile.
-    pub fn run(input: PrecompileInput<'_>) -> PrecompileResult {
-        if !input.is_direct_call() {
-            // No gas charged: the call type is invalid before any work is performed.
-            return Ok(PrecompileOutput::new_reverted(
-                0,
-                IActivationRegistry::DelegateCallNotAllowed {}.abi_encode().into(),
-            ));
-        }
-
-        let data = input.data;
-        let mut storage = EvmPrecompileStorageProvider::new(input);
-        StorageCtx::enter(&mut storage, |ctx| Self::new().dispatch(ctx, data))
-    }
-
     /// ABI-dispatches activation registry calldata.
     pub fn dispatch(self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         match self.inner(ctx, calldata) {
@@ -196,11 +108,6 @@ impl ActivationRegistry {
         Ok(ctx.success_output(Bytes::new()))
     }
 
-    /// Returns the activation admin.
-    pub const fn activation_admin(self) -> Address {
-        ACTIVATION_ADMIN_ADDRESS
-    }
-
     /// Returns the calldata selector, padding short calldata with zeroes.
     pub fn calldata_selector(calldata: &[u8]) -> [u8; 4] {
         let mut selector = [0u8; 4];
@@ -283,9 +190,13 @@ impl ActivationRegistry {
 
 #[cfg(test)]
 mod tests {
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+    use alloy_primitives::{Address, Bytes, address};
+    use alloy_sol_types::SolCall;
+    use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
+    use revm::precompile::PrecompileOutput;
 
     use super::*;
+    use crate::SECURITIES_TOKEN_CREATION;
 
     fn execute_with(
         storage: &mut HashMapStorageProvider,
