@@ -15,8 +15,8 @@ pub const POLICY_REGISTRY_ADDRESS: Address = address!("b030000000000000000000000
 ///
 /// Slots are append-only — never reorder across hardforks.
 #[contract(addr = POLICY_REGISTRY_ADDRESS)]
-pub struct PolicyRegistryStorage {              // slot 2
-    pub members:               Mapping<u64, Mapping<Address, bool>>, // slot 3                 // slot 6
+pub struct PolicyRegistryStorage {
+    pub members: Mapping<u64, Mapping<Address, bool>>, // slot 0
 }
 
 impl PolicyStorage for PolicyRegistryStorage<'_> {
