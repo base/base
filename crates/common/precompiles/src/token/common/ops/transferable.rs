@@ -3,7 +3,7 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::token::{
-    IB20, Policy,
+    IB20,
     common::{Token, TokenAccounting},
 };
 
@@ -19,10 +19,6 @@ pub trait Transferable: Token {
         }
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
-        }
-        let policy_id = self.accounting().transfer_policy_id()?;
-        if !self.policy().is_authorized(policy_id, from)? {
-            return Err(BasePrecompileError::revert(IB20::Unauthorized {}));
         }
         let from_balance = self.accounting().balance_of(from)?;
         if from_balance < amount {

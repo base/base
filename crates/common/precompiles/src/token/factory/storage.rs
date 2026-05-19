@@ -144,7 +144,6 @@ impl<'a> TokenFactory<'a> {
         token.capabilities.write(token_params.capabilities)?;
         token.minimum_redeemable.write(token_params.minimumRedeemable)?;
         token.contract_uri.write(token_params.contractURI.clone())?;
-        token.transfer_policy_id.write(1u64)?; // 1 = ALLOW_ALL built-in
 
         if token_params.initialSupply > U256::ZERO {
             if token_params.initialSupplyRecipient.is_zero() {
