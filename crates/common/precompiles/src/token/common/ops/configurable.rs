@@ -67,22 +67,19 @@ pub trait Configurable: Token {
 mod tests {
     use alloy_primitives::{Address, U256};
 
-    use crate::token::{
-        B20Token,
-        common::{
-            CAPABILITY_CAP_MUTABLE, Token, TokenAccounting,
-            test_utils::{InMemoryPolicy, InMemoryTokenAccounting},
-        },
+    use crate::token::common::{
+        CAPABILITY_CAP_MUTABLE, Token, TokenAccounting,
+        test_utils::{InMemoryTokenAccounting, InMemoryPolicy, TestToken},
     };
 
     use super::Configurable;
 
     const CALLER: Address = Address::repeat_byte(0xaa);
 
-    fn make_token(caps: U256) -> B20Token<InMemoryTokenAccounting, InMemoryPolicy> {
+    fn make_token(caps: U256) -> TestToken {
         let mut acc = InMemoryTokenAccounting::new(Address::repeat_byte(1));
         acc.capabilities = caps;
-        B20Token::with_storage_and_policy(acc, InMemoryPolicy::new())
+        TestToken::with_storage_and_policy(acc, InMemoryPolicy::new())
     }
 
     #[test]

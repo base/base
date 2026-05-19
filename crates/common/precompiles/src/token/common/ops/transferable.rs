@@ -107,12 +107,9 @@ pub trait Transferable: Token {
 mod tests {
     use alloy_primitives::{Address, U256};
 
-    use crate::token::{
-        B20Token,
-        common::{
-            Token, TokenAccounting,
-            test_utils::{InMemoryPolicy, InMemoryTokenAccounting},
-        },
+    use crate::token::common::{
+        Token, TokenAccounting,
+        test_utils::{InMemoryTokenAccounting, InMemoryPolicy, TestToken},
     };
 
     use super::Transferable;
@@ -121,8 +118,8 @@ mod tests {
     const BOB: Address = Address::repeat_byte(0xbb);
     const SPENDER: Address = Address::repeat_byte(0xcc);
 
-    fn make_token() -> B20Token<InMemoryTokenAccounting, InMemoryPolicy> {
-        B20Token::with_storage_and_policy(
+    fn make_token() -> TestToken {
+        TestToken::with_storage_and_policy(
             InMemoryTokenAccounting::new(Address::repeat_byte(1)),
             InMemoryPolicy::new(),
         )

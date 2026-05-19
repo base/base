@@ -44,3 +44,78 @@ pub trait Redeemable: Burnable {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, U256};
+
+    use crate::token::common::{
+        Token, TokenAccounting,
+        test_utils::{InMemoryTokenAccounting, InMemoryPolicy, TestToken},
+    };
+
+    use super::Redeemable;
+
+    const CALLER: Address = Address::repeat_byte(0xaa);
+
+    fn make_token() -> TestToken {
+        TestToken::with_storage_and_policy(
+            InMemoryTokenAccounting::new(Address::repeat_byte(1)),
+            InMemoryPolicy::new(),
+        )
+    }
+
+    #[test]
+    fn redeem_burns_balance_and_emits_transfer_and_redeemed() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(CALLER, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(100u64);
+
+        token.redeem(CALLER, U256::from(50u64)).unwrap();
+
+        assert_eq!(token.accounting().balance_of(CALLER).unwrap(), U256::from(50u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(50u64));
+        // burn emits Transfer, redeem emits Redeemed on top
+        assert_eq!(token.accounting().events.len(), 2);
+    }
+
+    #[test]
+    fn redeem_below_minimum_reverts() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(CALLER, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(100u64);
+        token.accounting_mut().minimum_redeemable = U256::from(10u64);
+
+        assert!(token.redeem(CALLER, U256::from(5u64)).is_err());
+    }
+
+    #[test]
+    fn redeem_at_exact_minimum_succeeds() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(CALLER, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(100u64);
+        token.accounting_mut().minimum_redeemable = U256::from(10u64);
+
+        token.redeem(CALLER, U256::from(10u64)).unwrap();
+
+        assert_eq!(token.accounting().balance_of(CALLER).unwrap(), U256::from(90u64));
+    }
+
+    #[test]
+    fn redeem_insufficient_balance_reverts() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(CALLER, U256::from(5u64));
+        token.accounting_mut().total_supply = U256::from(5u64);
+
+        assert!(token.redeem(CALLER, U256::from(10u64)).is_err());
+    }
+
+    #[test]
+    fn set_minimum_redeemable_updates_and_emits_event() {
+        let mut token = make_token();
+        token.set_minimum_redeemable(CALLER, U256::from(25u64)).unwrap();
+
+        assert_eq!(token.accounting().minimum_redeemable().unwrap(), U256::from(25u64));
+        assert_eq!(token.accounting().events.len(), 1);
+    }
+}

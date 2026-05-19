@@ -8,7 +8,12 @@ use std::collections::HashMap;
 use alloy_primitives::{Address, LogData, U256};
 use base_precompile_storage::Result;
 
-use crate::token::common::{Policy, TokenAccounting};
+use crate::token::{B20Token, common::{Policy, TokenAccounting}};
+
+/// Convenience alias: [`B20Token`] wired with both in-memory fakes.
+///
+/// Use this in unit tests instead of spelling out the full generic each time.
+pub type TestToken = B20Token<InMemoryTokenAccounting, InMemoryPolicy>;
 
 /// HashMap-backed [`TokenAccounting`] for unit tests.
 ///

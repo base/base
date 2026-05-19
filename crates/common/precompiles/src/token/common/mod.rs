@@ -13,7 +13,7 @@ pub use policy::Policy;
 pub use token::Token;
 pub use token_accounting::TokenAccounting;
 #[cfg(any(test, feature = "test-utils"))]
-pub use test_utils::{InMemoryPolicy, InMemoryTokenAccounting};
+pub use test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken};
 /// Capability bit: `pause` / `unpause` are enabled on this token.
 pub const CAPABILITY_PAUSABLE: U256 = U256::from_limbs([1, 0, 0, 0]);
 
