@@ -87,8 +87,15 @@ impl SnapshotUploader {
         Self { client, bucket, prefix }
     }
 
+    /// Lists remote static files with their sizes. Call once and pass the result
+    /// to both `generate_manifest` (for skip ranges) and `upload` (for diff).
+    pub async fn list_remote_static_files(&self) -> Result<HashMap<String, u64>> {
+        self.list_remote_objects(&self.static_files_prefix()).await
+    }
+
     /// Uploads snapshot artifacts with diff-based optimization.
     ///
+    /// `remote_static_files` is the pre-fetched listing from `list_remote_static_files`.
     /// Static file chunks go to `{prefix}/static_files/` and are skipped if the
     /// remote object already exists with the same size. State, rocksdb, and
     /// manifest go to `{prefix}/{date}/` and are always re-uploaded.
@@ -98,6 +105,7 @@ impl SnapshotUploader {
         output_dir: &Path,
         files: &[PathBuf],
         timestamp: u64,
+        remote_static_files: &HashMap<String, u64>,
     ) -> Result<String> {
         let static_prefix = self.static_files_prefix();
         let run_prefix = self.run_prefix(timestamp);
@@ -109,8 +117,6 @@ impl SnapshotUploader {
             bucket = %self.bucket,
             "uploading snapshot artifacts"
         );
-
-        let remote_static_files = self.list_remote_objects(&static_prefix).await?;
 
         let manifest_path = output_dir.join("manifest.json");
         let mut static_uploads = Vec::new();

@@ -94,19 +94,25 @@ impl<C: ContainerManager> Snapshotter<C> {
 
         let run_output_dir = create_run_output_dir(&self.config.output_dir, run_timestamp)?;
 
+        let remote_static_files = self.uploader.list_remote_static_files().await?;
+
+        info!(remote_files = remote_static_files.len(), "fetched remote static file listing");
+
         let source_datadir = self.config.source_datadir.clone();
         let output_dir_for_gen = run_output_dir.clone();
         let chain_id = self.config.chain_id;
         let block = self.config.block;
         let blocks_per_file = self.config.blocks_per_file;
+        let remote_for_gen = remote_static_files.clone();
 
         let files = tokio::task::spawn_blocking(move || {
-            SnapshotGenerator::generate(
+            SnapshotGenerator::generate_manifest(
                 &source_datadir,
                 &output_dir_for_gen,
                 chain_id,
                 block,
                 blocks_per_file,
+                &remote_for_gen,
             )
         })
         .await
@@ -118,7 +124,7 @@ impl<C: ContainerManager> Snapshotter<C> {
         }
 
         self.uploader
-            .upload(&run_output_dir, &files, run_timestamp)
+            .upload(&run_output_dir, &files, run_timestamp, &remote_static_files)
             .await
             .context("snapshot upload failed")?;
 

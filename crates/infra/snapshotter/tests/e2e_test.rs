@@ -1,13 +1,16 @@
 //! E2E tests for the snapshotter upload flow using `MinIO`.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
 
 use anyhow::Result;
 use async_trait::async_trait;
-use base_snapshotter::{ContainerManager, DockerContainerManager, SnapshotUploader};
+use base_snapshotter::{
+    ContainerManager, DockerContainerManager, SnapshotGenerator, SnapshotUploader,
+};
 use bollard::{
     Docker,
     models::ContainerCreateBody,
@@ -179,7 +182,9 @@ async fn upload_artifacts_to_minio() -> Result<()> {
     let output_dir = tmp.path().join("output");
     let files = create_fake_snapshot(&output_dir, 1_000_000)?;
 
-    let upload_prefix = uploader.upload(&output_dir, &files, 1_700_000_000).await?;
+    let upload_prefix = uploader
+        .upload(&output_dir, &files, 1_700_000_000, &std::collections::HashMap::new())
+        .await?;
     assert_eq!(upload_prefix, "mainnet/1700000000", "run prefix should be date-based");
 
     let s3 = &harness.storage_client;
@@ -234,7 +239,9 @@ async fn upload_with_empty_prefix() -> Result<()> {
     let output_dir = tmp.path().join("output");
     let files = create_fake_snapshot(&output_dir, 100)?;
 
-    let upload_prefix = uploader.upload(&output_dir, &files, 1_700_000_000).await?;
+    let upload_prefix = uploader
+        .upload(&output_dir, &files, 1_700_000_000, &std::collections::HashMap::new())
+        .await?;
     assert_eq!(upload_prefix, "1700000000", "empty prefix should produce bare date");
 
     let s3 = &harness.storage_client;
@@ -324,7 +331,9 @@ async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
         .collect();
     files.sort_unstable();
 
-    let upload_prefix = uploader.upload(&output_dir, &files, 1_700_000_000).await?;
+    let remote_listing = uploader.list_remote_static_files().await?;
+    let upload_prefix =
+        uploader.upload(&output_dir, &files, 1_700_000_000, &remote_listing).await?;
     assert_eq!(upload_prefix, "diff-test/1700000000");
 
     // Verify AlwaysUpload: mdbx + rocksdb in date dir
@@ -358,6 +367,91 @@ async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
     let manifest_body = get_object_bytes(s3, bucket, "diff-test/1700000000/manifest.json").await?;
     let parsed: serde_json::Value = serde_json::from_slice(&manifest_body)?;
     assert_eq!(parsed["block"], 1_000_000, "manifest should be in date dir");
+
+    Ok(())
+}
+
+/// E2E test: creates a real datadir with mdbx + static files, skips compression
+/// for a finalized chunk range, and verifies only the tip chunk is compressed.
+#[tokio::test]
+#[serial]
+async fn selective_compression_skips_finalized_chunks() -> Result<()> {
+    // Create a real datadir with mdbx + 4 header chunk ranges
+    // block=2M, bpf=500k → 4 chunks, tip=chunk3, buffer=2 → skip chunk 0
+    let source = tempfile::tempdir()?;
+    let db_dir = source.path().join("db");
+    std::fs::create_dir_all(&db_dir)?;
+    std::fs::write(db_dir.join("mdbx.dat"), b"test-state-data")?;
+
+    let sf_dir = source.path().join("static_files");
+    std::fs::create_dir_all(&sf_dir)?;
+    for component in [
+        "headers",
+        "transactions",
+        "transaction-senders",
+        "receipts",
+        "account-change-sets",
+        "storage-change-sets",
+    ] {
+        for i in 0..4u64 {
+            let start = i * 500_000;
+            let end = (i + 1) * 500_000 - 1;
+            std::fs::write(sf_dir.join(format!("static_file_{component}_{start}_{end}")), b"data")?;
+        }
+    }
+
+    // Simulate all chunked components existing remotely for range 0-499999
+    let chunk_components = [
+        "headers",
+        "transactions",
+        "transaction_senders",
+        "receipts",
+        "account_changesets",
+        "storage_changesets",
+    ];
+    let mut remote: HashMap<String, u64> = HashMap::new();
+    for component in chunk_components {
+        remote.insert(format!("{component}-0-499999.tar.zst"), 0);
+    }
+
+    let output = tempfile::tempdir()?;
+    let files = SnapshotGenerator::generate_manifest(
+        source.path(),
+        output.path(),
+        8453,
+        Some(2_000_000),
+        Some(500_000),
+        &remote,
+    )?;
+
+    let filenames: Vec<String> = files
+        .iter()
+        .filter_map(|f| f.file_name().map(|n| n.to_string_lossy().to_string()))
+        .collect();
+
+    // Skipped range: chunk 0 should NOT be compressed (all components exist remotely)
+    for component in chunk_components {
+        assert!(
+            !filenames.contains(&format!("{component}-0-499999.tar.zst")),
+            "{component} finalized range should not produce an archive"
+        );
+    }
+
+    // Buffer + tip ranges: should be compressed
+    for component in chunk_components {
+        assert!(
+            filenames.contains(&format!("{component}-500000-999999.tar.zst")),
+            "{component} tip range should produce an archive"
+        );
+    }
+
+    // Always-upload: state + manifest
+    assert!(filenames.contains(&"state.tar.zst".to_string()), "state should always be produced");
+    assert!(filenames.contains(&"manifest.json".to_string()), "manifest should always be produced");
+
+    // Verify tip archive is a valid compressed file (not empty)
+    let tip_path = output.path().join("headers-500000-999999.tar.zst");
+    assert!(std::fs::metadata(&tip_path)?.len() > 0, "tip archive should not be empty");
 
     Ok(())
 }
@@ -407,7 +501,9 @@ async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
         output_dir.join("state.tar.zst"),
     ];
 
-    let upload_prefix = uploader.upload(&output_dir, &files, 1_700_000_000).await?;
+    let upload_prefix = uploader
+        .upload(&output_dir, &files, 1_700_000_000, &std::collections::HashMap::new())
+        .await?;
     assert_eq!(upload_prefix, "overwrite-test/1700000000");
 
     // Verify new state in new date dir
@@ -535,7 +631,9 @@ async fn e2e_stop_upload_restart_real_container() -> Result<()> {
         harness.bucket_name.clone(),
         "e2e-test".to_string(),
     );
-    let upload_prefix = uploader.upload(&output_dir, &files, 1_700_000_000).await?;
+    let upload_prefix = uploader
+        .upload(&output_dir, &files, 1_700_000_000, &std::collections::HashMap::new())
+        .await?;
 
     let manifest_body = get_object_bytes(
         &harness.storage_client,
