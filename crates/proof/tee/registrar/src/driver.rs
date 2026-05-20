@@ -375,7 +375,6 @@ where
             // reconcile to skip spawning a replacement on transient
             // failure (audit finding #9).
             Self::reap_finished_tasks(&mut tasks, &mut pending);
-            RegistrarMetrics::proof_tasks_pending().set(pending.len() as f64);
 
             match self.discover_and_resolve().await {
                 Ok(resolution) => {
@@ -395,7 +394,6 @@ where
                     if !self.config.cancel.is_cancelled() {
                         self.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
                     }
-                    RegistrarMetrics::proof_tasks_pending().set(pending.len() as f64);
 
                     if resolution.ok_to_dereg && !self.config.cancel.is_cancelled() {
                         if let Err(e) =
@@ -415,12 +413,16 @@ where
                 Err(e) => {
                     warn!(error = %e, "discovery cycle failed");
                     RegistrarMetrics::processing_errors_total().increment(1);
-                    // Keep the in-flight gauge consistent even when
-                    // discovery fails — reap above already updated
-                    // `pending.len()`, so we re-publish for monitors.
-                    RegistrarMetrics::proof_tasks_pending().set(pending.len() as f64);
                 }
             }
+
+            // Publish the in-flight gauge once per cycle, after every
+            // path that could mutate `pending` has run. `pending.len()`
+            // is stable across the sleep below — finished tasks
+            // accumulate in the `JoinSet` but only enter `pending` via
+            // reconcile / leave it via reap — so a single update here
+            // is observationally equivalent to one per state change.
+            RegistrarMetrics::proof_tasks_pending().set(pending.len() as f64);
 
             tokio::select! {
                 biased;
@@ -1195,22 +1197,23 @@ where
                         active_signers.insert(*addr);
                     }
                     if let Some(attestations) = outcome.attestations {
-                        // Constructor validates address/attestation
-                        // length invariants; `resolve_instance` already
-                        // checked the same condition with a richer
-                        // `ProverClient` error, so a failure here would
-                        // only indicate a future caller regression and
-                        // is propagated as a generic `Config` error.
-                        match RegisterableSigner::new(instance, outcome.addresses, attestations) {
-                            Ok(entry) => registerable.push(entry),
-                            Err(e) => {
-                                warn!(
-                                    error = %e,
-                                    "rejecting registerable entry that failed invariant check"
-                                );
-                                RegistrarMetrics::processing_errors_total().increment(1);
-                            }
-                        }
+                        // `resolve_instance` already enforced both
+                        // `RegisterableSigner` invariants (non-empty
+                        // addresses, `attestations.len() >=
+                        // addresses.len()`) with richer per-instance
+                        // errors, so the constructor here is an
+                        // assertion: a failure would mean an upstream
+                        // regression rather than recoverable input.
+                        registerable.push(
+                            RegisterableSigner::new(
+                                instance,
+                                outcome.addresses,
+                                attestations,
+                            )
+                            .expect(
+                                "resolve_instance validated RegisterableSigner invariants",
+                            ),
+                        );
                     }
                 }
                 Err(e) => {
