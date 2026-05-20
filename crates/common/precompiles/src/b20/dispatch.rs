@@ -23,7 +23,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
             Ok(true) => {}
             Ok(false) => {
                 return BasePrecompileError::revert(IB20::Uninitialized {})
-                    .into_precompile_result(ctx.gas_used())
+                    .into_precompile_result(ctx.gas_used());
             }
             Err(e) => return e.into_precompile_result(ctx.gas_used()),
         }
