@@ -2,9 +2,9 @@
 
 mod op_succinct;
 pub use op_succinct::{
-    ClusterBackend as OpSuccinctClusterBackend, MockBackend as OpSuccinctMockBackend,
-    NetworkBackend as OpSuccinctNetworkBackend, OpSuccinctProvider,
-    WitnessParams as OpSuccinctWitnessParams,
+    ClusterBackend as OpSuccinctClusterBackend, DryRunBackend as OpSuccinctDryRunBackend,
+    MockBackend as OpSuccinctMockBackend, NetworkBackend as OpSuccinctNetworkBackend,
+    OpSuccinctProvider, WitnessParams as OpSuccinctWitnessParams,
 };
 
 mod traits;

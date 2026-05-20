@@ -3,6 +3,9 @@
 mod cluster;
 pub use cluster::ClusterBackend;
 
+mod dry_run;
+pub use dry_run::DryRunBackend;
+
 mod mock;
 pub use mock::MockBackend;
 
