@@ -564,10 +564,7 @@ impl Cli {
         ready.store(true, Ordering::SeqCst);
 
         let cancel_guard = cancel.clone().drop_guard();
-        // Arc-wrap: `RegistrationDriver::run` consumes `Arc<Self>` so it
-        // can clone the handle into every spawned proof task while the
-        // foreground cycle continues to reconcile pending tasks.
-        let driver = Arc::new(RegistrationDriver::new(
+        let driver = RegistrationDriver::new(
             discovery,
             proof_provider,
             registry,
@@ -575,7 +572,7 @@ impl Cli {
             signer_client,
             driver_config,
             nitro_verifier,
-        )?);
+        )?;
         let driver_result = driver.run().await;
         drop(cancel_guard);
 

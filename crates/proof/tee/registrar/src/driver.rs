@@ -108,6 +108,68 @@ pub struct PendingTask {
     pub cancel: CancellationToken,
 }
 
+/// A prover instance that passed all per-cycle gates and is ready to
+/// have a proof task spawned per derived signer address.
+///
+/// Replaces the earlier 3-tuple `(ProverInstance, Vec<Address>,
+/// Vec<Vec<u8>>)` whose unnamed positional fields made the
+/// `attestations[idx]` indexing contract invisible at the call site.
+///
+/// # Invariants (enforced by [`Self::new`])
+///
+/// - `addresses` is non-empty. An instance with zero signer addresses is
+///   not registerable and must never appear here — `discover_and_resolve`
+///   filters such instances out before constructing this type.
+/// - `attestations.len() >= addresses.len()`. The driver's spawn pass
+///   reads `attestations[idx]` for each `idx in 0..addresses.len()`, so
+///   the attestations vector must cover every signer. Extra trailing
+///   attestations are tolerated (some prover endpoints return additional
+///   enclave attestations beyond the active signer count).
+#[derive(Debug, Clone)]
+pub struct RegisterableSigner {
+    /// Source prover instance, retained so per-signer log lines and
+    /// `PendingTask::instance_id` can attribute the spawned task.
+    pub instance: ProverInstance,
+    /// Signer addresses derived from the instance's enclave public keys.
+    /// Each address gets its own spawned proof task.
+    pub addresses: Vec<Address>,
+    /// Pre-fetched attestation blobs aligned with `addresses` for the
+    /// first `addresses.len()` entries.
+    pub attestations: Vec<Vec<u8>>,
+}
+
+impl RegisterableSigner {
+    /// Constructs a `RegisterableSigner`, returning [`RegistrarError::Config`]
+    /// if the invariants documented on the type are not satisfied.
+    ///
+    /// In normal driver operation `discover_and_resolve` already filters
+    /// empty-address instances and validates `attestations.len() >=
+    /// addresses.len()` (returning a more specific `ProverClient` error),
+    /// so this constructor's checks are defence-in-depth — they catch
+    /// callers (notably tests) that build resolutions by hand.
+    pub fn new(
+        instance: ProverInstance,
+        addresses: Vec<Address>,
+        attestations: Vec<Vec<u8>>,
+    ) -> Result<Self> {
+        if addresses.is_empty() {
+            return Err(RegistrarError::Config(format!(
+                "RegisterableSigner: instance {} has no signer addresses",
+                instance.instance_id
+            )));
+        }
+        if attestations.len() < addresses.len() {
+            return Err(RegistrarError::Config(format!(
+                "RegisterableSigner: instance {} has {} attestations for {} signers",
+                instance.instance_id,
+                attestations.len(),
+                addresses.len()
+            )));
+        }
+        Ok(Self { instance, addresses, attestations })
+    }
+}
+
 /// Aggregate output of the driver's per-cycle `discover_and_resolve` pass —
 /// the snapshot consumed by the spawn-and-reap loop.
 #[derive(Debug, Default)]
@@ -116,7 +178,7 @@ pub struct DiscoveryResolution {
     /// signer addresses and the matching pre-fetched attestation blobs
     /// (one per enclave on the instance). Instances whose certificates
     /// were confirmed revoked by the CRL check are filtered out.
-    pub registerable: Vec<(ProverInstance, Vec<Address>, Vec<Vec<u8>>)>,
+    pub registerable: Vec<RegisterableSigner>,
     /// All signers contributed by *reachable* instances, regardless of
     /// register-eligibility. Used to protect draining/unhealthy
     /// instances from premature orphan deregistration.
@@ -140,9 +202,13 @@ pub struct DiscoveryResolution {
 /// the caller skips registration but still uses `addresses` for the
 /// active-signer set.
 #[derive(Debug)]
-struct ResolveOutcome {
-    addresses: Vec<Address>,
-    attestations: Option<Vec<Vec<u8>>>,
+pub struct ResolveOutcome {
+    /// Signer addresses derived from the instance's enclave public keys.
+    pub addresses: Vec<Address>,
+    /// Pre-fetched attestation blobs when the instance is register-eligible
+    /// this cycle; `None` when registration is being skipped (health
+    /// status, CRL revocation, shutdown).
+    pub attestations: Option<Vec<Vec<u8>>>,
 }
 
 /// Core registration loop tying together discovery, attestation polling,
@@ -274,14 +340,26 @@ where
     /// `JoinSet::abort_all` is deliberately **not** used — see
     /// [`Self::drain_proof_tasks`] for the nonce-gap rationale.
     ///
-    /// # Why `Arc<Self>`
+    /// # Ownership
     ///
-    /// Each spawned proof task owns an `Arc<Self>` clone so the cycle
-    /// loop can continue to mutate `pending` and `tasks` while proofs
-    /// run for tens of minutes. The driver is therefore consumed by
-    /// value here; callers wrap construction in
-    /// `Arc::new(RegistrationDriver::new(...)?)`.
-    pub async fn run(self: Arc<Self>) -> Result<()> {
+    /// Consumes `self` by value so the API matches every other long-lived
+    /// `*_service::run` in the workspace. Internally the driver is wrapped
+    /// in an [`Arc`] and the spawned proof tasks each hold a clone — see
+    /// [`Self::run_arc`] for the underlying loop and the rationale for the
+    /// shared ownership.
+    pub async fn run(self) -> Result<()> {
+        Arc::new(self).run_arc().await
+    }
+
+    /// Underlying registration loop that powers [`Self::run`].
+    ///
+    /// Takes `self: Arc<Self>` directly because each spawned proof task
+    /// owns an `Arc<Self>` clone so the cycle loop can continue to mutate
+    /// `pending` and `tasks` while proofs run for tens of minutes. Tests
+    /// that need to inspect driver state from outside the task can call
+    /// this method directly with their own `Arc` clone; production code
+    /// uses [`Self::run`].
+    pub async fn run_arc(self: Arc<Self>) -> Result<()> {
         info!(
             poll_interval = ?self.config.poll_interval,
             registry = %self.config.registry_address,
@@ -1085,7 +1163,7 @@ where
         let total_count = instances.len();
         let mut active_signers: HashSet<Address> = HashSet::new();
         let mut reachable_count = 0usize;
-        let mut registerable: Vec<(ProverInstance, Vec<Address>, Vec<Vec<u8>>)> = Vec::new();
+        let mut registerable: Vec<RegisterableSigner> = Vec::new();
 
         let concurrency = self.config.max_concurrency.max(1);
         let mut futs = futures::stream::iter(instances.into_iter().map(|instance| {
@@ -1117,7 +1195,22 @@ where
                         active_signers.insert(*addr);
                     }
                     if let Some(attestations) = outcome.attestations {
-                        registerable.push((instance, outcome.addresses, attestations));
+                        // Constructor validates address/attestation
+                        // length invariants; `resolve_instance` already
+                        // checked the same condition with a richer
+                        // `ProverClient` error, so a failure here would
+                        // only indicate a future caller regression and
+                        // is propagated as a generic `Config` error.
+                        match RegisterableSigner::new(instance, outcome.addresses, attestations) {
+                            Ok(entry) => registerable.push(entry),
+                            Err(e) => {
+                                warn!(
+                                    error = %e,
+                                    "rejecting registerable entry that failed invariant check"
+                                );
+                                RegistrarMetrics::processing_errors_total().increment(1);
+                            }
+                        }
                     }
                 }
                 Err(e) => {
@@ -1193,8 +1286,8 @@ where
         pending: &mut HashMap<task::Id, PendingTask>,
     ) {
         let mut wanted: HashSet<Address> = HashSet::new();
-        for (_, addrs, _) in &resolution.registerable {
-            for addr in addrs {
+        for entry in &resolution.registerable {
+            for addr in &entry.addresses {
                 wanted.insert(*addr);
             }
         }
@@ -1218,17 +1311,17 @@ where
         let mut in_flight: HashSet<Address> = pending.values().map(|t| t.signer).collect();
 
         // Spawn-pass: any wanted signer not currently in-flight.
-        for (instance, addresses, attestations) in &resolution.registerable {
-            for (idx, &signer) in addresses.iter().enumerate() {
+        for entry in &resolution.registerable {
+            for (idx, &signer) in entry.addresses.iter().enumerate() {
                 if !in_flight.insert(signer) {
                     continue;
                 }
                 let signer_cancel = self.config.cancel.child_token();
                 let driver = Arc::clone(self);
-                let instance_owned = instance.clone();
-                let attestation = attestations[idx].clone();
+                let instance_owned = entry.instance.clone();
+                let attestation = entry.attestations[idx].clone();
                 let task_cancel = signer_cancel.clone();
-                let instance_id = instance.instance_id.clone();
+                let instance_id = entry.instance.instance_id.clone();
 
                 let handle = tasks.spawn(async move {
                     driver.run_proof_task(instance_owned, signer, idx, attestation, task_cancel).await
@@ -2331,8 +2424,9 @@ mod tests {
     }
 
     /// Proof provider that parks every call on a shared cancel token
-    /// until the test releases it, while tracking call/in-flight/peak
-    /// counts.
+    /// until the test releases it, while tracking call and in-flight
+    /// counts (see [`GatedProofHandles::call_count`] and
+    /// [`GatedProofHandles::in_flight`]).
     ///
     /// Cancel-safe: the await on `release.cancelled()` is itself
     /// cancellable, so when the outer `try_register`'s biased `select!`
@@ -2491,11 +2585,14 @@ mod tests {
             Self { driver, cancel, discovery, proof: proof_handles, tx }
         }
 
-        /// Spawns `driver.clone().run()` on the current runtime,
-        /// returning the `JoinHandle` so the test can await shutdown.
+        /// Spawns the registration loop on the current runtime, returning
+        /// the `JoinHandle` so the test can await shutdown. Uses
+        /// [`RegistrationDriver::run_arc`] (rather than the value-API
+        /// `run`) so the harness can keep its own `Arc<RegistrationDriver>`
+        /// for state inspection.
         fn spawn_run(&self) -> tokio::task::JoinHandle<Result<()>> {
             let driver = Arc::clone(&self.driver);
-            tokio::spawn(driver.run())
+            tokio::spawn(driver.run_arc())
         }
 
         /// Cancels the harness, awaits its run handle inside
@@ -2650,7 +2747,10 @@ mod tests {
             let inst = instance(ep, InstanceHealthStatus::Healthy);
             let addr = ProverClient::derive_address(&public_key_from_private(key)).unwrap();
             active_signers.insert(addr);
-            registerable.push((inst, vec![addr], vec![b"gated-attestation".to_vec()]));
+            registerable.push(
+                RegisterableSigner::new(inst, vec![addr], vec![b"gated-attestation".to_vec()])
+                    .expect("test fixture satisfies RegisterableSigner invariants"),
+            );
         }
         let total = kept.len();
         DiscoveryResolution {

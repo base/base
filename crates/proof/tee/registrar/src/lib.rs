@@ -20,7 +20,7 @@ mod driver;
 pub use driver::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DiscoveryResolution, DriverConfig,
-    OnchainRevocationCheck, PendingTask, RegistrationDriver,
+    OnchainRevocationCheck, PendingTask, RegisterableSigner, RegistrationDriver, ResolveOutcome,
 };
 
 mod error;
