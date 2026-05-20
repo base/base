@@ -10,7 +10,7 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
-use base_common_precompiles::{IB20, ITokenFactory, TokenFactory, TokenVariant};
+use base_common_precompiles::{IB20, ITokenFactory, TokenFactoryStorage, TokenVariant};
 use base_precompile_storage::StorageKey;
 use base_test_utils::Account;
 
@@ -141,7 +141,7 @@ impl BerylTestEnv {
     /// Creates a transaction that calls the B-20 token factory.
     pub(crate) fn create_b20_token_tx(&self) -> BaseTxEnvelope {
         self.create_tx(
-            TxKind::Call(TokenFactory::ADDRESS),
+            TxKind::Call(TokenFactoryStorage::ADDRESS),
             Bytes::from(self.create_b20_token_call().abi_encode()),
             Self::B20_GAS_LIMIT,
         )
@@ -361,7 +361,7 @@ impl BerylTestEnv {
     fn create_b20_token_call(&self) -> ITokenFactory::createTokenCall {
         ITokenFactory::createTokenCall {
             params: ITokenFactory::CreateTokenParams {
-                version: TokenFactory::CREATE_TOKEN_VERSION,
+                version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
                 variant: TokenVariant::B20.discriminant(),
                 requiredParams: self.b20_token_params().abi_encode().into(),
                 optionalParams: Bytes::new(),

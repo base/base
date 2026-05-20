@@ -12,8 +12,8 @@ use revm::{
 };
 
 use crate::{
-    ActivationRegistryPrecompile, B20TokenPrecompile, BasePrecompileSpec, PolicyRegistryEvm,
-    TokenFactoryPrecompile, bls12_381, bn254_pair,
+    ActivationRegistry, B20TokenPrecompile, BasePrecompileSpec, PolicyRegistry, TokenFactory,
+    bls12_381, bn254_pair,
 };
 
 /// Base precompile provider.
@@ -150,10 +150,10 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     pub fn install(self) -> PrecompilesMap {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
-            TokenFactoryPrecompile::install(&mut precompiles);
+            TokenFactory::install(&mut precompiles);
             B20TokenPrecompile::install(&mut precompiles);
-            PolicyRegistryEvm::install(&mut precompiles);
-            ActivationRegistryPrecompile::install(&mut precompiles);
+            PolicyRegistry::install(&mut precompiles);
+            ActivationRegistry::install(&mut precompiles);
         }
         precompiles
     }
@@ -213,7 +213,9 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{ActivationRegistry, TokenFactory, TokenVariant, bls12_381, bn254_pair};
+    use crate::{
+        ActivationRegistryStorage, TokenFactoryStorage, TokenVariant, bls12_381, bn254_pair,
+    };
 
     type TestPrecompiles = BasePrecompiles<BaseUpgrade>;
 
@@ -510,7 +512,7 @@ mod tests {
             B256::repeat_byte(0x22),
         );
 
-        assert_eq!(precompiles.get(&TokenFactory::ADDRESS).is_some(), expected);
+        assert_eq!(precompiles.get(&TokenFactoryStorage::ADDRESS).is_some(), expected);
         assert_eq!(precompiles.get(&token).is_some(), expected);
         assert!(precompiles.get(&Address::repeat_byte(0x42)).is_none());
     }
@@ -519,13 +521,13 @@ mod tests {
     fn activation_registry_is_not_installed_before_beryl() {
         let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Azul).install();
 
-        assert!(precompiles.get(&ActivationRegistry::ADDRESS).is_none());
+        assert!(precompiles.get(&ActivationRegistryStorage::ADDRESS).is_none());
     }
 
     #[test]
     fn activation_registry_is_installed_at_beryl() {
         let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Beryl).install();
 
-        assert!(precompiles.get(&ActivationRegistry::ADDRESS).is_some());
+        assert!(precompiles.get(&ActivationRegistryStorage::ADDRESS).is_some());
     }
 }

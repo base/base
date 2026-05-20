@@ -6,7 +6,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::SolValue;
 use base_common_precompiles::{
     B20Token, B20TokenStorage, Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable,
-    ITokenFactory, Mintable, Pausable, PolicyHandle, Token, TokenAccounting, TokenFactory,
+    ITokenFactory, Mintable, Pausable, PolicyHandle, Token, TokenAccounting, TokenFactoryStorage,
     TokenVariant, Transferable,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
@@ -55,7 +55,7 @@ impl BaseTokenBenchSetup {
     ) -> Address {
         let call = ITokenFactory::createTokenCall {
             params: ITokenFactory::CreateTokenParams {
-                version: TokenFactory::CREATE_TOKEN_VERSION,
+                version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
                 variant: TokenVariant::B20.discriminant(),
                 requiredParams: params.abi_encode().into(),
                 optionalParams: Bytes::new(),
@@ -63,7 +63,7 @@ impl BaseTokenBenchSetup {
                 salt,
             },
         };
-        let mut factory = TokenFactory::new(ctx);
+        let mut factory = TokenFactoryStorage::new(ctx);
         factory.create_token(caller, call).unwrap()
     }
 
@@ -502,7 +502,7 @@ fn base_token_factory_view(c: &mut Criterion) {
                 params,
                 B256::repeat_byte(0x24),
             );
-            let factory = TokenFactory::new(ctx);
+            let factory = TokenFactoryStorage::new(ctx);
 
             b.iter(|| {
                 let factory = black_box(&factory);
@@ -516,7 +516,7 @@ fn base_token_factory_view(c: &mut Criterion) {
     c.bench_function("base_token_factory_variant_of", |b| {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
-            let factory = TokenFactory::new(ctx);
+            let factory = TokenFactoryStorage::new(ctx);
             let (token_address, _) = TokenVariant::B20.compute_address(
                 BaseTokenBenchSetup::caller(),
                 18,

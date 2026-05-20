@@ -5,10 +5,9 @@ use alloy_sol_types::{SolCall, SolInterface};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{storage::TokenFactory, variant::TokenVariant};
-use crate::ITokenFactory;
+use crate::{ITokenFactory, TokenFactoryStorage, TokenVariant};
 
-impl<'a> TokenFactory<'a> {
+impl<'a> TokenFactoryStorage<'a> {
     /// ABI-dispatches `calldata` to the appropriate `ITokenFactory` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         let result = self.inner(ctx, calldata);

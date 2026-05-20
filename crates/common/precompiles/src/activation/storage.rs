@@ -7,18 +7,20 @@ use base_precompile_storage::{
 };
 use revm::precompile::PrecompileResult;
 
-use super::IActivationRegistry;
+use crate::IActivationRegistry;
+
+const ACTIVATION_REGISTRY_ADDRESS: Address = address!("0x84530000000000000000000000000000000000ff");
 
 /// Runtime activation registry for Base-native features.
-#[contract(addr = ActivationRegistry::ADDRESS)]
-pub struct ActivationRegistry {
+#[contract(addr = ACTIVATION_REGISTRY_ADDRESS)]
+pub struct ActivationRegistryStorage {
     /// Runtime activation flags keyed by feature id.
     pub features: Mapping<B256, bool>,
 }
 
-impl ActivationRegistry<'_> {
+impl ActivationRegistryStorage<'_> {
     /// Activation registry precompile address.
-    pub const ADDRESS: Address = address!("0x84530000000000000000000000000000000000ff");
+    pub const ADDRESS: Address = ACTIVATION_REGISTRY_ADDRESS;
 
     /// Temporary activation admin address.
     ///
@@ -116,7 +118,7 @@ mod tests {
 
     use super::*;
 
-    const FEATURE: B256 = ActivationRegistry::SECURITIES_TOKEN_CREATION;
+    const FEATURE: B256 = ActivationRegistryStorage::SECURITIES_TOKEN_CREATION;
 
     #[derive(Debug, Clone, Copy)]
     enum Transition {
@@ -145,7 +147,7 @@ mod tests {
         transition: Transition,
     ) -> Result<()> {
         StorageCtx::enter(storage, |ctx| {
-            let mut registry = ActivationRegistry::new(ctx);
+            let mut registry = ActivationRegistryStorage::new(ctx);
             match transition {
                 Transition::Activate => registry.activate(FEATURE),
                 Transition::Deactivate => registry.deactivate(FEATURE),
@@ -162,7 +164,7 @@ mod tests {
     fn set_invalid_context(storage: &mut HashMapStorageProvider, context: InvalidContext) {
         match context {
             InvalidContext::Static => {
-                storage.set_caller(ActivationRegistry::ADMIN);
+                storage.set_caller(ActivationRegistryStorage::ADMIN);
                 storage.set_static(true);
             }
             InvalidContext::Unauthorized => {
@@ -172,27 +174,31 @@ mod tests {
     }
 
     fn activate_feature(storage: &mut HashMapStorageProvider) -> Result<()> {
-        storage.set_caller(ActivationRegistry::ADMIN);
-        StorageCtx::enter(storage, |ctx| ActivationRegistry::new(ctx).activate(FEATURE))
+        storage.set_caller(ActivationRegistryStorage::ADMIN);
+        StorageCtx::enter(storage, |ctx| ActivationRegistryStorage::new(ctx).activate(FEATURE))
     }
 
     fn deactivate_feature(storage: &mut HashMapStorageProvider) -> Result<()> {
-        storage.set_caller(ActivationRegistry::ADMIN);
-        StorageCtx::enter(storage, |ctx| ActivationRegistry::new(ctx).deactivate(FEATURE))
+        storage.set_caller(ActivationRegistryStorage::ADMIN);
+        StorageCtx::enter(storage, |ctx| ActivationRegistryStorage::new(ctx).deactivate(FEATURE))
     }
 
     fn assert_activated(storage: &mut HashMapStorageProvider, expected: bool) {
         StorageCtx::enter(storage, |ctx| {
             assert_eq!(
-                ActivationRegistry::new(ctx).is_activated(FEATURE).expect("storage read succeeds"),
+                ActivationRegistryStorage::new(ctx)
+                    .is_activated(FEATURE)
+                    .expect("storage read succeeds"),
                 expected
             );
         });
     }
 
     fn assert_activated_output(storage: &mut HashMapStorageProvider) -> PrecompileOutput {
-        StorageCtx::enter(storage, |ctx| ActivationRegistry::new(ctx).assert_activated(FEATURE))
-            .expect("activation assertion should not fail fatally")
+        StorageCtx::enter(storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).assert_activated(FEATURE)
+        })
+        .expect("activation assertion should not fail fatally")
     }
 
     #[test]
@@ -208,15 +214,15 @@ mod tests {
 
         activate_feature(&mut storage).unwrap();
         assert_activated(&mut storage, true);
-        assert_eq!(storage.get_events(ActivationRegistry::ADDRESS).len(), 1);
+        assert_eq!(storage.get_events(ActivationRegistryStorage::ADDRESS).len(), 1);
 
         deactivate_feature(&mut storage).unwrap();
         assert_activated(&mut storage, false);
-        assert_eq!(storage.get_events(ActivationRegistry::ADDRESS).len(), 2);
+        assert_eq!(storage.get_events(ActivationRegistryStorage::ADDRESS).len(), 2);
 
         activate_feature(&mut storage).unwrap();
         assert_activated(&mut storage, true);
-        assert_eq!(storage.get_events(ActivationRegistry::ADDRESS).len(), 3);
+        assert_eq!(storage.get_events(ActivationRegistryStorage::ADDRESS).len(), 3);
     }
 
     #[rstest]

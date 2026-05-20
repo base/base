@@ -5,10 +5,10 @@ mod dispatch;
 pub use abi::ITokenFactory;
 
 mod precompile;
-pub use precompile::TokenFactoryPrecompile;
+pub use precompile::TokenFactory;
 
 mod storage;
-pub use storage::TokenFactory;
+pub use storage::TokenFactoryStorage;
 
 mod variant;
 pub use variant::TokenVariant;

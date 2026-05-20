@@ -2,8 +2,7 @@ use alloy_primitives::{Address, address};
 use base_precompile_macros::contract;
 use base_precompile_storage::{Handler, Mapping, Result};
 
-/// Singleton precompile address for the `PolicyRegistry`.
-pub const POLICY_REGISTRY_ADDRESS: Address = address!("b030000000000000000000000000000000000000");
+const POLICY_REGISTRY_ADDRESS: Address = address!("b030000000000000000000000000000000000000");
 
 /// Storage layout for the `PolicyRegistry` precompile.
 ///
@@ -14,6 +13,9 @@ pub struct PolicyRegistryStorage {
 }
 
 impl PolicyRegistryStorage<'_> {
+    /// Singleton precompile address for the `PolicyRegistry`.
+    pub const ADDRESS: Address = POLICY_REGISTRY_ADDRESS;
+
     /// Returns `true` if `account` is authorized to send tokens under `policy_id`.
     pub(super) fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
         self.members.at(&policy_id).at(&account).read()
