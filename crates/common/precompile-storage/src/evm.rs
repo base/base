@@ -104,9 +104,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
             self.deduct_gas(self.gas_params.create_cost())?;
             // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
             let num_words = code_len.div_ceil(32) as u64;
-            self.deduct_gas(
-                KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)),
-            )?;
+            self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
             // TODO: also charge create_state_gas + code_deposit_state_gas (Amsterdam EIP-8037)
             // once GasParams upgrades to context-interface v17.
         }
@@ -194,8 +192,8 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         if self.is_static {
             return Err(BasePrecompileError::StaticCallViolation);
         }
-        let cost = LOG
-            + self.gas_params.log_cost(event.topics().len() as u8, event.data.len() as u64);
+        let cost =
+            LOG + self.gas_params.log_cost(event.topics().len() as u8, event.data.len() as u64);
         self.deduct_gas(cost)?;
         self.internals.log(Log { address, data: event });
         Ok(())
