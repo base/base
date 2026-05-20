@@ -1346,7 +1346,7 @@ mod tests {
         let genesis = serde_json::from_value(genesis).expect("valid genesis");
         let inner =
             ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
-        let chain_spec = Arc::new(BaseChainSpec { inner });
+        let chain_spec = Arc::new(BaseChainSpec::from(inner));
         let parent_header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
         let parent = Arc::new(SealedHeader::seal_slow(parent_header));
 

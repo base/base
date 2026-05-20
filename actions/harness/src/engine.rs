@@ -192,6 +192,11 @@ impl ActionEngineClient {
         } else {
             genesis.config.extra_fields.insert("base".to_string(), base.into());
         }
+        // Generated harness genesis specs use the funded test account as the activation admin.
+        genesis.config.extra_fields.insert(
+            "activationAdminAddress".to_string(),
+            serde_json::json!(crate::TEST_ACCOUNT_ADDRESS),
+        );
 
         genesis
     }

@@ -5,7 +5,7 @@ use alloy_consensus::{BlockHeader, Header, proofs::storage_root_unhashed};
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
 use derive_more::{Constructor, Deref, Into};
@@ -72,7 +72,11 @@ impl GenesisInfo {
 #[derive(Debug, Clone, Deref, Into, Constructor, PartialEq, Eq)]
 pub struct BaseChainSpec {
     /// [`ChainSpec`].
+    #[deref]
     pub inner: ChainSpec,
+    /// Activation registry admin address.
+    #[deref(ignore)]
+    pub activation_admin_address: Option<Address>,
 }
 
 impl BaseChainSpec {
@@ -179,6 +183,7 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
                 prune_delete_limit: cfg.prune_delete_limit,
                 ..Default::default()
             },
+            activation_admin_address: cfg.activation_admin_address,
         })
     }
 }
@@ -281,12 +286,17 @@ impl Upgrades for BaseChainSpec {
     fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition {
         self.fork(fork)
     }
+
+    fn activation_admin_address(&self) -> Option<Address> {
+        self.activation_admin_address
+    }
 }
 
 impl From<Genesis> for BaseChainSpec {
     fn from(genesis: Genesis) -> Self {
         let base_genesis_info = GenesisInfo::extract_from(&genesis);
         let genesis_info = base_genesis_info.base_chain_info.genesis_info.unwrap_or_default();
+        let activation_admin_address = genesis_info.activation_admin_address;
 
         // Block-based hardforks in canonical fork ID order.
         let hardfork_opts = [
@@ -367,13 +377,14 @@ impl From<Genesis> for BaseChainSpec {
                 base_fee_params: base_genesis_info.base_fee_params,
                 ..Default::default()
             },
+            activation_admin_address,
         }
     }
 }
 
 impl From<ChainSpec> for BaseChainSpec {
     fn from(value: ChainSpec) -> Self {
-        Self { inner: value }
+        Self { inner: value, activation_admin_address: None }
     }
 }
 
@@ -389,7 +400,7 @@ mod tests {
     use alloy_consensus::proofs::storage_root_unhashed;
     use alloy_genesis::{ChainConfig as AlloyChainConfig, Genesis};
     use alloy_hardforks::Hardfork;
-    use alloy_primitives::{B256, U256, b256};
+    use alloy_primitives::{B256, U256, address, b256};
     use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
     use base_common_rpc_types::FeeInfo;
     use reth_chainspec::{
@@ -581,6 +592,27 @@ mod tests {
         );
         let base_fee = base_mainnet_spec.next_block_base_fee(genesis, genesis.timestamp).unwrap();
         assert_eq!(base_fee, 980000000);
+    }
+
+    #[test]
+    fn activation_admin_is_unset_by_default() {
+        assert_eq!(BaseChainSpec::mainnet().activation_admin_address(), None);
+        assert_eq!(
+            BaseChainSpec::from_genesis(Genesis::default()).activation_admin_address(),
+            None
+        );
+    }
+
+    #[test]
+    fn activation_admin_can_be_read_from_genesis() {
+        let mut genesis = Genesis::default();
+        let admin = address!("0xcb00000000000000000000000000000000000000");
+        genesis
+            .config
+            .extra_fields
+            .insert("activationAdminAddress".to_string(), serde_json::json!(admin));
+
+        assert_eq!(BaseChainSpec::from_genesis(genesis).activation_admin_address(), Some(admin));
     }
 
     #[test]

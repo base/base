@@ -1,5 +1,6 @@
 //! Base types for genesis data.
 
+use alloy_primitives::Address;
 use alloy_serde::OtherFields;
 use serde::de::Error;
 
@@ -69,6 +70,9 @@ pub struct GenesisInfo {
     /// Base-specific hardfork activation times.
     #[serde(default)]
     pub base: HardforkInfo,
+    /// Activation registry admin address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation_admin_address: Option<Address>,
 }
 
 impl GenesisInfo {
@@ -152,6 +156,7 @@ mod tests {
                 isthmus_time: None,
                 jovian_time: None,
                 base: HardforkInfo { azul: Some(14), beryl: Some(16) },
+                activation_admin_address: None,
             }
         );
     }
@@ -217,6 +222,7 @@ mod tests {
                     isthmus_time: None,
                     jovian_time: None,
                     base: HardforkInfo { azul: Some(14), beryl: Some(16) },
+                    activation_admin_address: None,
                 }),
                 base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,
@@ -242,6 +248,7 @@ mod tests {
                     isthmus_time: None,
                     jovian_time: None,
                     base: HardforkInfo { azul: Some(14), beryl: Some(16) },
+                    activation_admin_address: None,
                 }),
                 base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,
@@ -285,6 +292,7 @@ mod tests {
                     isthmus_time: Some(0),
                     jovian_time: Some(0),
                     base: HardforkInfo::default(),
+                    activation_admin_address: None,
                 }),
                 base_fee_info: None,
             }

@@ -14,7 +14,7 @@ mod spec;
 pub use spec::BasePrecompileSpec;
 
 mod activation;
-pub use activation::{ActivationRegistry, ActivationRegistryPrecompile, IActivationRegistry};
+pub use activation::{ActivationRegistry, ActivationRegistryStorage, IActivationRegistry};
 
 mod bn254_pair;
 
@@ -32,9 +32,7 @@ mod b20;
 pub use b20::{B20Token, B20TokenPrecompile, B20TokenStorage, IB20};
 
 mod factory;
-pub use factory::{ITokenFactory, TokenFactory, TokenFactoryPrecompile, TokenVariant};
+pub use factory::{ITokenFactory, TokenFactory, TokenFactoryStorage, TokenVariant};
 
-mod policy_registry;
-pub use policy_registry::{
-    IPolicyRegistry, POLICY_REGISTRY_ADDRESS, PolicyHandle, PolicyRegistryEvm,
-};
+mod policy;
+pub use policy::{IPolicyRegistry, PolicyHandle, PolicyRegistry, PolicyRegistryStorage};

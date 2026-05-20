@@ -5,11 +5,11 @@ pub use abi::IPolicyRegistry;
 
 mod dispatch;
 
-mod evm;
-pub use evm::PolicyRegistryEvm;
+mod precompile;
+pub use precompile::PolicyRegistry;
 
-mod policy;
-pub use policy::PolicyHandle;
+mod handle;
+pub use handle::PolicyHandle;
 
 mod storage;
-pub use storage::POLICY_REGISTRY_ADDRESS;
+pub use storage::PolicyRegistryStorage;

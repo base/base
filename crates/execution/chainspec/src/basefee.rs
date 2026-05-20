@@ -102,14 +102,12 @@ mod tests {
         base_sepolia_spec
             .hardforks
             .insert(BaseUpgrade::Jovian.boxed(), ForkCondition::Timestamp(JOVIAN_TIMESTAMP));
-        Arc::new(BaseChainSpec {
-            inner: ChainSpec {
-                chain: base_sepolia_spec.chain,
-                genesis: base_sepolia_spec.genesis,
-                genesis_header: base_sepolia_spec.genesis_header,
-                ..Default::default()
-            },
-        })
+        Arc::new(BaseChainSpec::from(ChainSpec {
+            chain: base_sepolia_spec.chain,
+            genesis: base_sepolia_spec.genesis,
+            genesis_header: base_sepolia_spec.genesis_header,
+            ..Default::default()
+        }))
     }
 
     #[test]

@@ -12,7 +12,10 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_network::Base;
-use base_common_precompiles::{IB20, ITokenFactory, TokenFactory, TokenVariant};
+use base_common_precompiles::{
+    ActivationRegistryStorage, IActivationRegistry, IB20, ITokenFactory, TokenFactoryStorage,
+    TokenVariant,
+};
 use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
 use eyre::{Result, WrapErr, ensure};
 use tokio::time::{sleep, timeout};
@@ -115,7 +118,7 @@ impl<'a> B20PrecompileClient<'a> {
         let token = self.predict_token_address(variant, params.decimals, salt);
         let call = ITokenFactory::createTokenCall {
             params: ITokenFactory::CreateTokenParams {
-                version: TokenFactory::CREATE_TOKEN_VERSION,
+                version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
                 variant: variant.discriminant(),
                 requiredParams: params.abi_encode().into(),
                 optionalParams: Bytes::new(),
@@ -123,8 +126,28 @@ impl<'a> B20PrecompileClient<'a> {
                 salt,
             },
         };
-        self.send_call(TokenFactory::ADDRESS, call, "create B-20 token").await?;
+        self.send_call(TokenFactoryStorage::ADDRESS, call, "create B-20 token").await?;
         Ok(token)
+    }
+
+    /// Activates an activation-registry feature.
+    pub async fn activate_feature(&self, feature: B256) -> Result<()> {
+        self.send_call(
+            ActivationRegistryStorage::ADDRESS,
+            IActivationRegistry::activateCall { feature },
+            "activate feature",
+        )
+        .await
+    }
+
+    /// Deactivates an activation-registry feature.
+    pub async fn deactivate_feature(&self, feature: B256) -> Result<()> {
+        self.send_call(
+            ActivationRegistryStorage::ADDRESS,
+            IActivationRegistry::deactivateCall { feature },
+            "deactivate feature",
+        )
+        .await
     }
 
     /// Computes the token address a factory creation call will use.
@@ -167,15 +190,16 @@ impl<'a> B20PrecompileClient<'a> {
     /// Reads the variant encoded in a token address via the factory.
     pub async fn variant_of(&self, token: Address) -> Result<u8> {
         let output =
-            self.call(TokenFactory::ADDRESS, ITokenFactory::variantOfCall { token }).await?;
+            self.call(TokenFactoryStorage::ADDRESS, ITokenFactory::variantOfCall { token }).await?;
         ITokenFactory::variantOfCall::abi_decode_returns(output.as_ref())
             .wrap_err("Failed to decode variantOf")
     }
 
     /// Reads the decimals encoded in a token address via the factory.
     pub async fn decimals_of(&self, token: Address) -> Result<u8> {
-        let output =
-            self.call(TokenFactory::ADDRESS, ITokenFactory::decimalsOfCall { token }).await?;
+        let output = self
+            .call(TokenFactoryStorage::ADDRESS, ITokenFactory::decimalsOfCall { token })
+            .await?;
         ITokenFactory::decimalsOfCall::abi_decode_returns(output.as_ref())
             .wrap_err("Failed to decode decimalsOf")
     }
@@ -335,7 +359,8 @@ impl<'a> B20PrecompileClient<'a> {
 
     /// Returns true if `token` is a deployed B-20 via the factory.
     pub async fn is_b20(&self, token: Address) -> Result<bool> {
-        let output = self.call(TokenFactory::ADDRESS, ITokenFactory::isB20Call { token }).await?;
+        let output =
+            self.call(TokenFactoryStorage::ADDRESS, ITokenFactory::isB20Call { token }).await?;
         ITokenFactory::isB20Call::abi_decode_returns(output.as_ref())
             .wrap_err("Failed to decode isB20")
     }
@@ -350,7 +375,7 @@ impl<'a> B20PrecompileClient<'a> {
     ) -> Result<Address> {
         let output = self
             .call(
-                TokenFactory::ADDRESS,
+                TokenFactoryStorage::ADDRESS,
                 ITokenFactory::predictTokenAddressCall {
                     creator,
                     variant: variant.discriminant(),
