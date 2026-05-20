@@ -438,13 +438,19 @@ impl BerylTestEnv {
         block: &BaseBlock,
         user_tx_index: usize,
     ) -> base_common_consensus::BaseReceipt {
+        let deposit_count = block
+            .body
+            .transactions
+            .iter()
+            .take_while(|tx| matches!(tx, BaseTxEnvelope::Deposit(_)))
+            .count();
         let receipts = self
             .sequencer
             .receipts_at(block.header.number)
             .unwrap_or_else(|| panic!("receipts must exist for L2 block {}", block.header.number));
         receipts
             .into_iter()
-            .nth(user_tx_index + 1)
+            .nth(deposit_count + user_tx_index)
             .unwrap_or_else(|| panic!("user tx receipt {user_tx_index} must exist"))
     }
 

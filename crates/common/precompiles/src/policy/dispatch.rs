@@ -78,9 +78,6 @@ mod tests {
         .expect("dispatch should succeed");
 
         assert!(!output.reverted);
-        assert_eq!(
-            IPolicyRegistry::helloWorldCall::abi_decode_returns(&output.bytes).unwrap(),
-            true
-        );
+        assert!(IPolicyRegistry::helloWorldCall::abi_decode_returns(&output.bytes).unwrap());
     }
 }
