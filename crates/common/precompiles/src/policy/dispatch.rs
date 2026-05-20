@@ -7,13 +7,13 @@ use super::{
     abi::{IPolicyRegistry, IPolicyRegistry::IPolicyRegistryCalls as C},
     storage::PolicyRegistryStorage,
 };
-use crate::ActivationRegistry;
+use crate::ActivationRegistryStorage;
 
 impl PolicyRegistryStorage<'_> {
     /// ABI-dispatches `calldata` to the appropriate `IPolicyRegistry` handler.
     pub(super) fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        ActivationRegistry::new(ctx)
-            .ensure_activated(ActivationRegistry::POLICY_REGISTRY)
+        ActivationRegistryStorage::new(ctx)
+            .ensure_activated(ActivationRegistryStorage::POLICY_REGISTRY)
             .and_then(|()| self.inner(calldata))
             .into_precompile_result(ctx.gas_used(), |b| b)
     }
@@ -39,7 +39,7 @@ mod tests {
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use super::*;
-    use crate::{ActivationRegistry, IPolicyRegistry};
+    use crate::{ActivationRegistryStorage, IPolicyRegistry};
 
     fn activate_policy_registry(storage: &mut HashMapStorageProvider) {
         const ADMIN: alloy_primitives::Address =
@@ -47,8 +47,8 @@ mod tests {
 
         storage.set_caller(ADMIN);
         StorageCtx::enter(storage, |ctx| {
-            ActivationRegistry::new(ctx)
-                .activate(ActivationRegistry::POLICY_REGISTRY, Some(ADMIN))
+            ActivationRegistryStorage::new(ctx)
+                .activate(ActivationRegistryStorage::POLICY_REGISTRY, Some(ADMIN))
                 .unwrap()
         });
     }

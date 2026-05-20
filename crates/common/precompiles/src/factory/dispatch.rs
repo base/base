@@ -5,7 +5,7 @@ use alloy_sol_types::{SolCall, SolInterface};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use crate::{ActivationRegistry, ITokenFactory, TokenFactoryStorage, TokenVariant};
+use crate::{ActivationRegistryStorage, ITokenFactory, TokenFactoryStorage, TokenVariant};
 
 impl<'a> TokenFactoryStorage<'a> {
     /// ABI-dispatches `calldata` to the appropriate `ITokenFactory` handler.
@@ -20,7 +20,8 @@ impl<'a> TokenFactoryStorage<'a> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
-        ActivationRegistry::new(ctx).ensure_activated(ActivationRegistry::TOKEN_FACTORY)?;
+        ActivationRegistryStorage::new(ctx)
+            .ensure_activated(ActivationRegistryStorage::TOKEN_FACTORY)?;
 
         if calldata.len() < 4 {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));

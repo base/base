@@ -8,7 +8,7 @@ use super::{
     abi::{IB20, IB20::IB20Calls as C},
 };
 use crate::{
-    ActivationRegistry, Burnable, Configurable, Mintable, Pausable, Permittable, Policy,
+    ActivationRegistryStorage, Burnable, Configurable, Mintable, Pausable, Permittable, Policy,
     Redeemable, TokenAccounting, Transferable,
 };
 
@@ -24,7 +24,8 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
-        ActivationRegistry::new(ctx).ensure_activated(ActivationRegistry::B20_TOKEN)?;
+        ActivationRegistryStorage::new(ctx)
+            .ensure_activated(ActivationRegistryStorage::B20_TOKEN)?;
 
         if !self.accounting.is_initialized()? {
             return Err(BasePrecompileError::revert(IB20::Uninitialized {}));

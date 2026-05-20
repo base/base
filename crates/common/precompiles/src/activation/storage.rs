@@ -239,9 +239,9 @@ mod tests {
 
     #[test]
     fn feature_id_constants_match_canonical_names() {
-        assert_eq!(ActivationRegistry::B20_TOKEN, keccak256("base.b20_token"));
-        assert_eq!(ActivationRegistry::TOKEN_FACTORY, keccak256("base.token_factory"));
-        assert_eq!(ActivationRegistry::POLICY_REGISTRY, keccak256("base.policy_registry"));
+        assert_eq!(ActivationRegistryStorage::B20_TOKEN, keccak256("base.b20_token"));
+        assert_eq!(ActivationRegistryStorage::TOKEN_FACTORY, keccak256("base.token_factory"));
+        assert_eq!(ActivationRegistryStorage::POLICY_REGISTRY, keccak256("base.policy_registry"));
     }
 
     #[test]

@@ -144,7 +144,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        ActivationRegistry, B20Token, B20TokenStorage, IB20, Mintable, Permittable, Token,
+        ActivationRegistryStorage, B20Token, B20TokenStorage, IB20, Mintable, Permittable, Token,
         TokenAccounting, Transferable,
     };
 
@@ -153,13 +153,13 @@ mod tests {
     fn activate_precompiles(storage: &mut HashMapStorageProvider) {
         storage.set_caller(ACTIVATION_ADMIN);
         StorageCtx::enter(storage, |ctx| {
-            ActivationRegistry::new(ctx)
-                .activate(ActivationRegistry::TOKEN_FACTORY, Some(ACTIVATION_ADMIN))
+            ActivationRegistryStorage::new(ctx)
+                .activate(ActivationRegistryStorage::TOKEN_FACTORY, Some(ACTIVATION_ADMIN))
                 .unwrap()
         });
         StorageCtx::enter(storage, |ctx| {
-            ActivationRegistry::new(ctx)
-                .activate(ActivationRegistry::B20_TOKEN, Some(ACTIVATION_ADMIN))
+            ActivationRegistryStorage::new(ctx)
+                .activate(ActivationRegistryStorage::B20_TOKEN, Some(ACTIVATION_ADMIN))
                 .unwrap()
         });
     }
