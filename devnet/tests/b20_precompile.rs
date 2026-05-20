@@ -2,10 +2,11 @@
 
 mod common;
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolValue;
 use base_common_precompiles::{
-    CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, IB20, TokenFactory, TokenVariant,
+    CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, IB20, ITokenFactory, TokenFactory, TokenVariant,
 };
 use devnet::{
     B20PrecompileClient,
@@ -248,6 +249,7 @@ async fn test_b20_supply_cap() -> Result<()> {
         !b20.try_send_call(
             token,
             IB20::setSupplyCapCall { newSupplyCap: U256::from(INITIAL_SUPPLY - 1) },
+            "setSupplyCap below current supply",
         )
         .await?,
         "setSupplyCap below total supply should revert",
@@ -259,8 +261,12 @@ async fn test_b20_supply_cap() -> Result<()> {
 
     // Minting past the cap reverts.
     assert!(
-        !b20.try_send_call(token, IB20::mintCall { to: admin.address(), amount: U256::from(1) })
-            .await?,
+        !b20.try_send_call(
+            token,
+            IB20::mintCall { to: admin.address(), amount: U256::from(1) },
+            "mint past supply cap",
+        )
+        .await?,
         "mint past supply cap should revert",
     );
 
@@ -333,6 +339,7 @@ async fn test_b20_pause_and_unpause() -> Result<()> {
         !b20.try_send_call(
             token,
             IB20::transferCall { to: recipient, amount: U256::from(PAUSE_TRANSFER_AMOUNT) },
+            "transfer while paused",
         )
         .await?,
         "transfer should revert while paused",
@@ -405,10 +412,26 @@ async fn test_b20_create_token_duplicate_reverts() -> Result<()> {
         admin.address(),
     );
 
-    b20.create_token(TokenVariant::B20, params.clone(), salt).await?;
+    let token = b20.create_token(TokenVariant::B20, params.clone(), salt).await?;
+    b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
-    let second = b20.create_token(TokenVariant::B20, params, salt).await;
-    assert!(second.is_err(), "creating a token with the same salt should fail");
+    let succeeded = b20
+        .try_send_call(
+            TokenFactory::ADDRESS,
+            ITokenFactory::createTokenCall {
+                params: ITokenFactory::CreateTokenParams {
+                    version: TokenFactory::CREATE_TOKEN_VERSION,
+                    variant: TokenVariant::B20.discriminant(),
+                    requiredParams: params.abi_encode().into(),
+                    optionalParams: Bytes::new(),
+                    postCreateCalls: Vec::new(),
+                    salt,
+                },
+            },
+            "createToken (duplicate salt)",
+        )
+        .await?;
+    assert!(!succeeded, "creating a token with the same salt should revert on-chain");
 
     Ok(())
 }

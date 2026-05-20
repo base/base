@@ -364,11 +364,11 @@ impl<'a> B20PrecompileClient<'a> {
     }
 
     /// Sends a transaction and returns `true` if it succeeded, `false` if it reverted.
-    pub async fn try_send_call<C>(&self, to: Address, call: C) -> Result<bool>
+    pub async fn try_send_call<C>(&self, to: Address, call: C, label: &'static str) -> Result<bool>
     where
         C: SolCall,
     {
-        Ok(self.send_and_wait(to, Bytes::from(call.abi_encode()), "try_send_call").await?.status())
+        Ok(self.send_and_wait(to, Bytes::from(call.abi_encode()), label).await?.status())
     }
 
     /// Executes an `eth_call` against `to`.

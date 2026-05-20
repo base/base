@@ -73,6 +73,7 @@ async fn test_activation_registry_unauthorized_activate_reverts() -> Result<()> 
             IActivationRegistry::activateCall {
                 feature: ActivationRegistry::SECURITIES_TOKEN_CREATION,
             },
+            "activate (unauthorized)",
         )
         .await?;
 
