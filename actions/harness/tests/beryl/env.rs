@@ -10,7 +10,10 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
-use base_common_precompiles::{IB20, ITokenFactory, TokenFactoryStorage, TokenVariant};
+use base_common_precompiles::{
+    ActivationRegistryStorage, IActivationRegistry, IB20, ITokenFactory, TokenFactoryStorage,
+    TokenVariant,
+};
 use base_precompile_storage::StorageKey;
 use base_test_utils::Account;
 
@@ -82,6 +85,7 @@ impl BerylTestEnv {
             .with_jovian_at(0)
             .with_azul_at(0)
             .with_beryl_at(BERYL_ACTIVATION_TIMESTAMP)
+            .with_activation_admin_address(TEST_ACCOUNT_ADDRESS)
             .build();
         let chain_id = rollup_cfg.l2_chain_id.id();
         let harness = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
@@ -126,6 +130,24 @@ impl BerylTestEnv {
         account.create_tx(self.chain_id, to, input, U256::ZERO, gas_limit)
     }
 
+    /// Activation registry feature ID for the token factory precompile.
+    pub(crate) const fn token_factory_feature() -> B256 {
+        ActivationRegistryStorage::TOKEN_FACTORY
+    }
+
+    /// Activation registry feature ID for the B-20 token precompile.
+    pub(crate) const fn b20_token_feature() -> B256 {
+        ActivationRegistryStorage::B20_TOKEN
+    }
+
+    /// Activation registry feature ID for the policy registry precompile.
+    pub(crate) const fn policy_registry_feature() -> B256 {
+        ActivationRegistryStorage::POLICY_REGISTRY
+    }
+
+    /// Alternate salt for a second token creation used in deactivation/re-activation tests.
+    pub(crate) const ALT_SALT: B256 = B256::repeat_byte(0x43);
+
     /// Returns the deterministic salt used to create the B-20 token.
     pub(crate) const fn b20_token_salt() -> B256 {
         B256::repeat_byte(0x42)
@@ -138,11 +160,16 @@ impl BerylTestEnv {
             .0
     }
 
-    /// Creates a transaction that calls the B-20 token factory.
+    /// Creates a transaction that calls the B-20 token factory with the default salt.
     pub(crate) fn create_b20_token_tx(&self) -> BaseTxEnvelope {
+        self.create_b20_token_with_salt_tx(Self::b20_token_salt())
+    }
+
+    /// Creates a transaction that calls the B-20 token factory with the given `salt`.
+    pub(crate) fn create_b20_token_with_salt_tx(&self, salt: B256) -> BaseTxEnvelope {
         self.create_tx(
             TxKind::Call(TokenFactoryStorage::ADDRESS),
-            Bytes::from(self.create_b20_token_call().abi_encode()),
+            Bytes::from(self.create_b20_token_call_with_salt(salt).abi_encode()),
             Self::B20_GAS_LIMIT,
         )
     }
@@ -223,6 +250,20 @@ impl BerylTestEnv {
             input,
             Self::B20_GAS_LIMIT,
         )
+    }
+
+    /// Creates an activation registry `activate(feature)` transaction signed by the admin.
+    ///
+    /// The test rollup config sets `TEST_ACCOUNT_ADDRESS` as the activation admin.
+    pub(crate) fn activate_feature_tx(&self, feature: B256) -> BaseTxEnvelope {
+        let input = Bytes::from(IActivationRegistry::activateCall { feature }.abi_encode());
+        self.create_tx(TxKind::Call(ActivationRegistryStorage::ADDRESS), input, Self::B20_GAS_LIMIT)
+    }
+
+    /// Creates an activation registry `deactivate(feature)` transaction signed by the admin.
+    pub(crate) fn deactivate_feature_tx(&self, feature: B256) -> BaseTxEnvelope {
+        let input = Bytes::from(IActivationRegistry::deactivateCall { feature }.abi_encode());
+        self.create_tx(TxKind::Call(ActivationRegistryStorage::ADDRESS), input, Self::B20_GAS_LIMIT)
     }
 
     /// Creates a transaction that calls `totalSupply()` through `probe`.
@@ -358,7 +399,7 @@ impl BerylTestEnv {
         );
     }
 
-    fn create_b20_token_call(&self) -> ITokenFactory::createTokenCall {
+    fn create_b20_token_call_with_salt(&self, salt: B256) -> ITokenFactory::createTokenCall {
         ITokenFactory::createTokenCall {
             params: ITokenFactory::CreateTokenParams {
                 version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
@@ -366,7 +407,7 @@ impl BerylTestEnv {
                 requiredParams: self.b20_token_params().abi_encode().into(),
                 optionalParams: Bytes::new(),
                 postCreateCalls: Vec::new(),
-                salt: Self::b20_token_salt(),
+                salt,
             },
         }
     }

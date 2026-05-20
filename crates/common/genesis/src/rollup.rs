@@ -62,6 +62,9 @@ pub struct RollupConfig {
     /// `chain_op_config` is the chain-specific EIP1559 config for the rollup.
     #[cfg_attr(feature = "serde", serde(default = "FeeConfig::base_mainnet"))]
     pub chain_op_config: FeeConfig,
+    /// Activation registry admin address.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub activation_admin_address: Option<Address>,
 }
 
 #[cfg(feature = "arbitrary")]
@@ -83,6 +86,7 @@ impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
             protocol_versions_address: Address::arbitrary(u)?,
             blobs_enabled_l1_timestamp: Option::<u64>::arbitrary(u)?,
             chain_op_config: FeeConfig::base_mainnet(),
+            activation_admin_address: Option::<Address>::arbitrary(u)?,
         })
     }
 }
@@ -106,6 +110,7 @@ impl Default for RollupConfig {
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
             chain_op_config: FeeConfig::base_mainnet(),
+            activation_admin_address: None,
         }
     }
 }

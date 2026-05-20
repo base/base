@@ -3,11 +3,13 @@
 mod common;
 
 use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
+use base_common_network::Base;
 use base_common_precompiles::{
-    CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, IB20, ITokenFactory, TokenFactoryStorage,
-    TokenVariant,
+    ActivationRegistryStorage, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, IB20, ITokenFactory,
+    TokenFactoryStorage, TokenVariant,
 };
 use devnet::{
     B20PrecompileClient,
@@ -26,6 +28,17 @@ const MEMO_TRANSFER_AMOUNT: u64 = 111_000;
 const INITIAL_SUPPLY_CAP: u64 = 2_000_000_000;
 const PAUSE_TRANSFER_AMOUNT: u64 = 10_000;
 
+async fn activated_b20_client<'a>(
+    provider: &'a RootProvider<Base>,
+    admin: &'a PrivateKeySigner,
+) -> Result<B20PrecompileClient<'a>> {
+    let b20 = B20PrecompileClient::new(provider, admin, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    b20.activate_feature(ActivationRegistryStorage::TOKEN_FACTORY).await?;
+    b20.activate_feature(ActivationRegistryStorage::B20_TOKEN).await?;
+    Ok(b20)
+}
+
 #[tokio::test]
 async fn test_b20_factory_create_and_transfer_via_rpc() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
@@ -35,8 +48,7 @@ async fn test_b20_factory_create_and_transfer_via_rpc() -> Result<()> {
 
     common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    let b20 = activated_b20_client(&provider, &admin).await?;
     let salt = B256::repeat_byte(0x42);
     let params = B20PrecompileClient::token_params(
         "Devnet B20",
@@ -73,8 +85,7 @@ async fn test_b20_token_metadata() -> Result<()> {
         .wrap_err("Failed to parse admin key")?;
     common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    let b20 = activated_b20_client(&provider, &admin).await?;
     let salt = B256::repeat_byte(0x10);
     let params = B20PrecompileClient::token_params(
         "Metadata Token",
@@ -105,8 +116,7 @@ async fn test_b20_approve_and_transfer_from() -> Result<()> {
     common::wait_for_balance(&provider, admin.address()).await?;
     common::wait_for_balance(&provider, spender.address()).await?;
 
-    let b20_admin = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    let b20_admin = activated_b20_client(&provider, &admin).await?;
     let b20_spender = B20PrecompileClient::new(&provider, &spender, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
@@ -154,8 +164,7 @@ async fn test_b20_mint_and_burn() -> Result<()> {
         .wrap_err("Failed to parse admin key")?;
     common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    let b20 = activated_b20_client(&provider, &admin).await?;
     let salt = B256::repeat_byte(0x12);
     let params = B20PrecompileClient::token_params(
         "Mintable Token",
@@ -197,8 +206,7 @@ async fn test_b20_transfer_with_memo() -> Result<()> {
     let recipient = ANVIL_ACCOUNT_6.address;
     common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    let b20 = activated_b20_client(&provider, &admin).await?;
     let salt = B256::repeat_byte(0x13);
     let params = B20PrecompileClient::token_params(
         "Memo Token",
@@ -227,8 +235,7 @@ async fn test_b20_supply_cap() -> Result<()> {
         .wrap_err("Failed to parse admin key")?;
     common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    let b20 = activated_b20_client(&provider, &admin).await?;
     let salt = B256::repeat_byte(0x14);
     let mut params = B20PrecompileClient::token_params(
         "Capped Token",
@@ -281,8 +288,7 @@ async fn test_b20_metadata_updates() -> Result<()> {
         .wrap_err("Failed to parse admin key")?;
     common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    let b20 = activated_b20_client(&provider, &admin).await?;
     let salt = B256::repeat_byte(0x15);
     let params = B20PrecompileClient::token_params(
         "Old Name",
@@ -313,8 +319,7 @@ async fn test_b20_pause_and_unpause() -> Result<()> {
     let recipient = ANVIL_ACCOUNT_6.address;
     common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    let b20 = activated_b20_client(&provider, &admin).await?;
     let salt = B256::repeat_byte(0x16);
     let mut params = B20PrecompileClient::token_params(
         "Pausable Token",
@@ -363,8 +368,7 @@ async fn test_b20_factory_predict_and_is_b20() -> Result<()> {
         .wrap_err("Failed to parse admin key")?;
     common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    let b20 = activated_b20_client(&provider, &admin).await?;
     let salt = B256::repeat_byte(0x17);
     let params = B20PrecompileClient::token_params(
         "Predict Token",
@@ -405,8 +409,7 @@ async fn test_b20_create_token_duplicate_reverts() -> Result<()> {
         .wrap_err("Failed to parse admin key")?;
     common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    let b20 = activated_b20_client(&provider, &admin).await?;
     let salt = B256::repeat_byte(0x18);
     let params = B20PrecompileClient::token_params(
         "Dup Token",

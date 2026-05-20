@@ -1,6 +1,6 @@
 //! ABI dispatch for the activation registry.
 
-use alloy_primitives::Bytes;
+use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{SolCall, SolInterface};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
@@ -12,11 +12,21 @@ use super::{
 
 impl ActivationRegistryStorage<'_> {
     /// ABI-dispatches activation registry calldata.
-    pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        self.inner(calldata).into_precompile_result(ctx.gas_used(), |output| output)
+    pub fn dispatch(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        activation_admin_address: Option<Address>,
+    ) -> PrecompileResult {
+        self.inner(calldata, activation_admin_address)
+            .into_precompile_result(ctx.gas_used(), |output| output)
     }
 
-    fn inner(&mut self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
+    fn inner(
+        &mut self,
+        calldata: &[u8],
+        activation_admin_address: Option<Address>,
+    ) -> base_precompile_storage::Result<Bytes> {
         if calldata.len() < 4 {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
         }
@@ -28,16 +38,17 @@ impl ActivationRegistryStorage<'_> {
                 Ok(IActivationRegistry::isActivatedCall::abi_encode_returns(&activated).into())
             }
             Ok(C::activate(call)) => {
-                self.activate(call.feature)?;
+                self.activate(call.feature, activation_admin_address)?;
                 Ok(Bytes::new())
             }
             Ok(C::deactivate(call)) => {
-                self.deactivate(call.feature)?;
+                self.deactivate(call.feature, activation_admin_address)?;
                 Ok(Bytes::new())
             }
-            Ok(C::admin(_)) => {
-                Ok(IActivationRegistry::adminCall::abi_encode_returns(&self.admin()).into())
-            }
+            Ok(C::admin(_)) => Ok(IActivationRegistry::adminCall::abi_encode_returns(
+                &self.admin(activation_admin_address),
+            )
+            .into()),
             Err(_) => Err(BasePrecompileError::UnknownFunctionSelector(selector)),
         }
     }

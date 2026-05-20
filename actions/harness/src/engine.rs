@@ -192,6 +192,17 @@ impl ActionEngineClient {
         } else {
             genesis.config.extra_fields.insert("base".to_string(), base.into());
         }
+        match rollup_config.activation_admin_address {
+            Some(address) => {
+                genesis
+                    .config
+                    .extra_fields
+                    .insert("activationAdminAddress".to_string(), serde_json::json!(address));
+            }
+            None => {
+                genesis.config.extra_fields.remove("activationAdminAddress");
+            }
+        }
 
         genesis
     }

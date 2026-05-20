@@ -37,10 +37,22 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
         "B-20 total supply must remain unset before Beryl"
     );
 
-    let post_beryl_create = env.create_b20_token_tx();
-    let block2 = env.sequencer.build_next_block_with_transactions(vec![post_beryl_create]).await;
+    // Activate TOKEN_FACTORY and B20_TOKEN in the first post-Beryl block.
+    // These are committed to state before block3 runs, so precompile calls in block3+ see them.
+    let activate_factory = env.activate_feature_tx(BerylTestEnv::token_factory_feature());
+    let activate_b20 = env.activate_feature_tx(BerylTestEnv::b20_token_feature());
+    let block2 = env
+        .sequencer
+        .build_next_block_with_transactions(vec![activate_factory, activate_b20])
+        .await;
 
-    assert!(env.user_tx_succeeded(&block2, 0), "B-20 creation transaction must succeed");
+    assert!(env.user_tx_succeeded(&block2, 0), "TOKEN_FACTORY activation must succeed");
+    assert!(env.user_tx_succeeded(&block2, 1), "B20_TOKEN activation must succeed");
+
+    let post_beryl_create = env.create_b20_token_tx();
+    let block3 = env.sequencer.build_next_block_with_transactions(vec![post_beryl_create]).await;
+
+    assert!(env.user_tx_succeeded(&block3, 0), "B-20 creation transaction must succeed");
     assert!(env.sequencer.has_code(token), "B-20 token code must be deployed after Beryl");
     assert_eq!(
         env.b20_total_supply(token),
@@ -64,9 +76,9 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
     );
 
     let duplicate_create = env.create_b20_token_tx();
-    let block3 = env.sequencer.build_next_block_with_transactions(vec![duplicate_create]).await;
+    let block4 = env.sequencer.build_next_block_with_transactions(vec![duplicate_create]).await;
 
-    assert!(!env.user_tx_succeeded(&block3, 0), "duplicate B-20 creation must revert");
+    assert!(!env.user_tx_succeeded(&block4, 0), "duplicate B-20 creation must revert");
     assert_eq!(
         env.b20_total_supply(token),
         U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
@@ -80,12 +92,12 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
 
     let transfer_to_bob =
         env.transfer_b20_tx(token, BerylTestEnv::bob(), U256::from(BerylTestEnv::B20_BOB_TRANSFER));
-    let block4 = env.sequencer.build_next_block_with_transactions(vec![transfer_to_bob]).await;
+    let block5 = env.sequencer.build_next_block_with_transactions(vec![transfer_to_bob]).await;
 
-    assert!(env.user_tx_succeeded(&block4, 0), "Alice transfer transaction must succeed");
+    assert!(env.user_tx_succeeded(&block5, 0), "Alice transfer transaction must succeed");
     assert!(
         env.b20_transfer_log_emitted(
-            &block4,
+            &block5,
             0,
             token,
             BerylTestEnv::alice(),
@@ -115,13 +127,13 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
         BerylTestEnv::carol(),
         U256::from(BerylTestEnv::B20_CAROL_TRANSFER),
     );
-    let block5 =
+    let block6 =
         env.sequencer.build_next_block_with_transactions(vec![bob_transfer_to_carol]).await;
 
-    assert!(env.user_tx_succeeded(&block5, 0), "Bob transfer transaction must succeed");
+    assert!(env.user_tx_succeeded(&block6, 0), "Bob transfer transaction must succeed");
     assert!(
         env.b20_transfer_log_emitted(
-            &block5,
+            &block6,
             0,
             token,
             BerylTestEnv::bob(),
@@ -154,12 +166,12 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
     let bob_remaining = BerylTestEnv::B20_BOB_TRANSFER - BerylTestEnv::B20_CAROL_TRANSFER;
     let bob_overdraw =
         env.transfer_b20_from_bob_tx(token, BerylTestEnv::carol(), U256::from(bob_remaining + 1));
-    let block6 = env.sequencer.build_next_block_with_transactions(vec![bob_overdraw]).await;
+    let block7 = env.sequencer.build_next_block_with_transactions(vec![bob_overdraw]).await;
 
-    assert!(!env.user_tx_succeeded(&block6, 0), "Bob overdraw transfer must revert");
+    assert!(!env.user_tx_succeeded(&block7, 0), "Bob overdraw transfer must revert");
     assert!(
         !env.b20_transfer_log_emitted(
-            &block6,
+            &block7,
             0,
             token,
             BerylTestEnv::bob(),
@@ -181,12 +193,12 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
 
     let approve_bob =
         env.approve_b20_tx(token, BerylTestEnv::bob(), U256::from(BerylTestEnv::B20_BOB_ALLOWANCE));
-    let block7 = env.sequencer.build_next_block_with_transactions(vec![approve_bob]).await;
+    let block8 = env.sequencer.build_next_block_with_transactions(vec![approve_bob]).await;
 
-    assert!(env.user_tx_succeeded(&block7, 0), "Alice approval transaction must succeed");
+    assert!(env.user_tx_succeeded(&block8, 0), "Alice approval transaction must succeed");
     assert!(
         env.b20_approval_log_emitted(
-            &block7,
+            &block8,
             0,
             token,
             BerylTestEnv::alice(),
@@ -206,13 +218,13 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
         BerylTestEnv::carol(),
         U256::from(BerylTestEnv::B20_TRANSFER_FROM_CAROL),
     );
-    let block8 =
+    let block9 =
         env.sequencer.build_next_block_with_transactions(vec![transfer_from_alice_to_carol]).await;
 
-    assert!(env.user_tx_succeeded(&block8, 0), "Bob transferFrom transaction must succeed");
+    assert!(env.user_tx_succeeded(&block9, 0), "Bob transferFrom transaction must succeed");
     assert!(
         env.b20_transfer_log_emitted(
-            &block8,
+            &block9,
             0,
             token,
             BerylTestEnv::alice(),
@@ -254,7 +266,7 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
         "B-20 total supply must remain constant after transferFrom"
     );
 
-    let block9 = env
+    let block10 = env
         .sequencer
         .build_next_block_with_transactions(vec![
             env.probe_b20_total_supply_tx(total_supply_probe),
@@ -303,6 +315,86 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
         "decimals ABI call must return the token-address encoded decimals"
     );
 
+    // -- Deactivation tests --
+    // Block11: deactivate B20_TOKEN (committed state before block12).
+    let deactivate_b20 = env.deactivate_feature_tx(BerylTestEnv::b20_token_feature());
+    let block11 = env.sequencer.build_next_block_with_transactions(vec![deactivate_b20]).await;
+
+    assert!(env.user_tx_succeeded(&block11, 0), "B20_TOKEN deactivation must succeed");
+
+    // Block12: token transfer must revert while B20_TOKEN is deactivated.
+    let transfer_while_deactivated = env.transfer_b20_tx(token, BerylTestEnv::bob(), U256::from(1));
+    let block12 =
+        env.sequencer.build_next_block_with_transactions(vec![transfer_while_deactivated]).await;
+
+    assert!(
+        !env.user_tx_succeeded(&block12, 0),
+        "token transfer must revert when B20_TOKEN is deactivated"
+    );
+    assert_eq!(
+        env.b20_balance(token, BerylTestEnv::alice()),
+        U256::from(alice_final),
+        "Alice balance must be unchanged when B20_TOKEN is deactivated"
+    );
+
+    // Block13: re-activate B20_TOKEN (committed state before block14).
+    let reactivate_b20 = env.activate_feature_tx(BerylTestEnv::b20_token_feature());
+    let block13 = env.sequencer.build_next_block_with_transactions(vec![reactivate_b20]).await;
+
+    assert!(env.user_tx_succeeded(&block13, 0), "B20_TOKEN re-activation must succeed");
+
+    // Block14: token transfer must succeed after B20_TOKEN is re-activated.
+    let transfer_after_reactivate = env.transfer_b20_tx(token, BerylTestEnv::bob(), U256::from(1));
+    let block14 =
+        env.sequencer.build_next_block_with_transactions(vec![transfer_after_reactivate]).await;
+
+    assert!(
+        env.user_tx_succeeded(&block14, 0),
+        "token transfer must succeed after B20_TOKEN is re-activated"
+    );
+    assert_eq!(
+        env.b20_balance(token, BerylTestEnv::alice()),
+        U256::from(alice_final - 1),
+        "Alice balance must decrease after transfer following B20_TOKEN re-activation"
+    );
+    assert_eq!(
+        env.b20_balance(token, BerylTestEnv::bob()),
+        U256::from(bob_remaining + 1),
+        "Bob balance must increase after transfer following B20_TOKEN re-activation"
+    );
+
+    // Block15: deactivate TOKEN_FACTORY (committed state before block16).
+    let deactivate_factory = env.deactivate_feature_tx(BerylTestEnv::token_factory_feature());
+    let block15 = env.sequencer.build_next_block_with_transactions(vec![deactivate_factory]).await;
+
+    assert!(env.user_tx_succeeded(&block15, 0), "TOKEN_FACTORY deactivation must succeed");
+
+    // Block16: token creation must revert while TOKEN_FACTORY is deactivated.
+    let create_while_deactivated = env.create_b20_token_with_salt_tx(BerylTestEnv::ALT_SALT);
+    let block16 =
+        env.sequencer.build_next_block_with_transactions(vec![create_while_deactivated]).await;
+
+    assert!(
+        !env.user_tx_succeeded(&block16, 0),
+        "token creation must revert when TOKEN_FACTORY is deactivated"
+    );
+
+    // Block17: re-activate TOKEN_FACTORY (committed state before block18).
+    let reactivate_factory = env.activate_feature_tx(BerylTestEnv::token_factory_feature());
+    let block17 = env.sequencer.build_next_block_with_transactions(vec![reactivate_factory]).await;
+
+    assert!(env.user_tx_succeeded(&block17, 0), "TOKEN_FACTORY re-activation must succeed");
+
+    // Block18: token creation must succeed after TOKEN_FACTORY is re-activated.
+    let create_after_reactivate = env.create_b20_token_with_salt_tx(BerylTestEnv::ALT_SALT);
+    let block18 =
+        env.sequencer.build_next_block_with_transactions(vec![create_after_reactivate]).await;
+
+    assert!(
+        env.user_tx_succeeded(&block18, 0),
+        "token creation must succeed after TOKEN_FACTORY is re-activated"
+    );
+
     env.derive_blocks(
         [
             (block1, 1),
@@ -314,8 +406,17 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
             (block7, 7),
             (block8, 8),
             (block9, 9),
+            (block10, 10),
+            (block11, 11),
+            (block12, 12),
+            (block13, 13),
+            (block14, 14),
+            (block15, 15),
+            (block16, 16),
+            (block17, 17),
+            (block18, 18),
         ],
-        9,
+        18,
     )
     .await;
 }

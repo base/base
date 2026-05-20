@@ -151,10 +151,14 @@ mod tests {
     fn activate_precompiles(storage: &mut HashMapStorageProvider) {
         storage.set_caller(ActivationRegistry::ADMIN);
         StorageCtx::enter(storage, |ctx| {
-            ActivationRegistry::new(ctx).activate(ActivationRegistry::TOKEN_FACTORY).unwrap()
+            ActivationRegistry::new(ctx)
+                .activate(ActivationRegistry::TOKEN_FACTORY, ActivationRegistry::ADMIN)
+                .unwrap()
         });
         StorageCtx::enter(storage, |ctx| {
-            ActivationRegistry::new(ctx).activate(ActivationRegistry::B20_TOKEN).unwrap()
+            ActivationRegistry::new(ctx)
+                .activate(ActivationRegistry::B20_TOKEN, ActivationRegistry::ADMIN)
+                .unwrap()
         });
     }
 

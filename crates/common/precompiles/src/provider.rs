@@ -1,6 +1,7 @@
 use alloc::{boxed::Box, string::String};
 
 use alloy_evm::precompiles::PrecompilesMap;
+use alloy_primitives::Address;
 use base_common_chains::BaseUpgrade;
 use revm::{
     context::Cfg,
@@ -8,7 +9,7 @@ use revm::{
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, InterpreterResult},
     precompile::{self, Precompiles, bn254, modexp, secp256r1},
-    primitives::{Address, OnceLock, hardfork::SpecId},
+    primitives::{OnceLock, hardfork::SpecId},
 };
 
 use crate::{
@@ -23,6 +24,8 @@ pub struct BasePrecompiles<S = BaseUpgrade> {
     inner: EthPrecompiles,
     /// Spec id of the precompile provider.
     spec: S,
+    /// Activation registry admin address.
+    activation_admin_address: Option<Address>,
 }
 
 impl<S: BasePrecompileSpec> BasePrecompiles<S> {
@@ -43,7 +46,25 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
         };
 
-        Self { inner: EthPrecompiles { precompiles, spec: SpecId::default() }, spec }
+        Self {
+            inner: EthPrecompiles { precompiles, spec: SpecId::default() },
+            spec,
+            activation_admin_address: None,
+        }
+    }
+
+    /// Sets the activation registry admin address.
+    pub const fn with_activation_admin_address(
+        mut self,
+        activation_admin_address: Option<Address>,
+    ) -> Self {
+        self.activation_admin_address = activation_admin_address;
+        self
+    }
+
+    /// Returns the activation registry admin address.
+    pub const fn activation_admin_address(&self) -> Option<Address> {
+        self.activation_admin_address
     }
 
     /// Converts a Base upgrade into its Ethereum precompile spec.
@@ -153,7 +174,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             TokenFactory::install(&mut precompiles);
             B20TokenPrecompile::install(&mut precompiles);
             PolicyRegistry::install(&mut precompiles);
-            ActivationRegistry::install(&mut precompiles);
+            ActivationRegistry::install(&mut precompiles, self.activation_admin_address);
         }
         precompiles
     }
@@ -171,7 +192,7 @@ where
         if spec == self.spec {
             return false;
         }
-        *self = Self::new_with_spec(spec);
+        *self = Self::new_with_spec(spec).with_activation_admin_address(self.activation_admin_address);
         true
     }
 

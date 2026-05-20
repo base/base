@@ -5,8 +5,8 @@ use alloy_consensus::{BlockHeader, Header, proofs::storage_root_unhashed};
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
-use alloy_primitives::{B256, U256};
-use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
+use alloy_primitives::{Address, B256, U256};
+use base_common_chains::{BaseUpgrade, ChainConfig, DEFAULT_ACTIVATION_ADMIN_ADDRESS, Upgrades};
 use base_common_consensus::Predeploys;
 use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
@@ -72,7 +72,11 @@ impl GenesisInfo {
 #[derive(Debug, Clone, Deref, Into, Constructor, PartialEq, Eq)]
 pub struct BaseChainSpec {
     /// [`ChainSpec`].
+    #[deref]
     pub inner: ChainSpec,
+    /// Activation registry admin address.
+    #[deref(ignore)]
+    pub activation_admin_address: Address,
 }
 
 impl BaseChainSpec {
@@ -179,6 +183,7 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
                 prune_delete_limit: cfg.prune_delete_limit,
                 ..Default::default()
             },
+            activation_admin_address: cfg.activation_admin_address,
         })
     }
 }
@@ -281,12 +286,18 @@ impl Upgrades for BaseChainSpec {
     fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition {
         self.fork(fork)
     }
+
+    fn activation_admin_address(&self) -> Address {
+        self.activation_admin_address
+    }
 }
 
 impl From<Genesis> for BaseChainSpec {
     fn from(genesis: Genesis) -> Self {
         let base_genesis_info = GenesisInfo::extract_from(&genesis);
         let genesis_info = base_genesis_info.base_chain_info.genesis_info.unwrap_or_default();
+        let activation_admin_address =
+            genesis_info.activation_admin_address.unwrap_or(DEFAULT_ACTIVATION_ADMIN_ADDRESS);
 
         // Block-based hardforks in canonical fork ID order.
         let hardfork_opts = [
@@ -367,13 +378,14 @@ impl From<Genesis> for BaseChainSpec {
                 base_fee_params: base_genesis_info.base_fee_params,
                 ..Default::default()
             },
+            activation_admin_address,
         }
     }
 }
 
 impl From<ChainSpec> for BaseChainSpec {
     fn from(value: ChainSpec) -> Self {
-        Self { inner: value }
+        Self { inner: value, activation_admin_address: DEFAULT_ACTIVATION_ADMIN_ADDRESS }
     }
 }
 

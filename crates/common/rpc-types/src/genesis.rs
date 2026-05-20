@@ -1,5 +1,6 @@
 //! Base types for genesis data.
 
+use alloy_primitives::Address;
 use alloy_serde::OtherFields;
 use serde::de::Error;
 
@@ -69,6 +70,9 @@ pub struct GenesisInfo {
     /// Base-specific hardfork activation times.
     #[serde(default)]
     pub base: HardforkInfo,
+    /// Activation registry admin address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation_admin_address: Option<Address>,
 }
 
 impl GenesisInfo {

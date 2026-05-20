@@ -20,12 +20,6 @@ impl ActivationRegistryStorage<'_> {
     /// Activation registry precompile address.
     pub const ADDRESS: Address = address!("0x84530000000000000000000000000000000000ff");
 
-    /// Temporary activation admin address.
-    ///
-    /// Replace this with the final Base-controlled activation signer before deployment. The admin is
-    /// protocol configuration: changing it after deployment requires a coordinated binary upgrade.
-    pub const ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
-
     /// Security-token factory creation feature id.
     pub const SECURITIES_TOKEN_CREATION: B256 =
         b256!("0x89e4523f0886ce01d76094212ed707081da92a45221e22c15c5689be470db63e");
@@ -43,8 +37,11 @@ impl ActivationRegistryStorage<'_> {
         b256!("0xb582ebae03f16fee49a6763f78df482fb11ae73f103ed0d330bbe556aa90a43f");
 
     /// Returns the activation admin.
-    pub const fn admin(&self) -> Address {
-        Self::ADMIN
+    pub const fn admin(&self, activation_admin_address: Option<Address>) -> Address {
+        match activation_admin_address {
+            Some(address) => address,
+            None => Address::ZERO,
+        }
     }
 
     /// Returns true when the feature is activated.
@@ -72,17 +69,30 @@ impl ActivationRegistryStorage<'_> {
     }
 
     /// Activates the feature.
-    pub fn activate(&mut self, feature: B256) -> Result<()> {
-        self.set_activated(feature, true)
+    pub fn activate(
+        &mut self,
+        feature: B256,
+        activation_admin_address: Option<Address>,
+    ) -> Result<()> {
+        self.set_activated(feature, true, activation_admin_address)
     }
 
     /// Deactivates the feature.
-    pub fn deactivate(&mut self, feature: B256) -> Result<()> {
-        self.set_activated(feature, false)
+    pub fn deactivate(
+        &mut self,
+        feature: B256,
+        activation_admin_address: Option<Address>,
+    ) -> Result<()> {
+        self.set_activated(feature, false, activation_admin_address)
     }
 
     /// Sets the feature activation state.
-    pub fn set_activated(&mut self, feature: B256, activated: bool) -> Result<()> {
+    pub fn set_activated(
+        &mut self,
+        feature: B256,
+        activated: bool,
+        activation_admin_address: Option<Address>,
+    ) -> Result<()> {
         // Keep this guard at the shared mutation boundary so `activate`, `deactivate`, and direct
         // `set_activated` callers all get the same static-call behavior after calldata validation.
         if self.storage.is_static() {
@@ -90,7 +100,10 @@ impl ActivationRegistryStorage<'_> {
         }
 
         let caller = self.storage.caller();
-        if caller != Self::ADMIN {
+        let Some(admin) = activation_admin_address else {
+            return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
+        };
+        if caller != admin {
             return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
         }
 
@@ -129,6 +142,7 @@ mod tests {
     use super::*;
 
     const FEATURE: B256 = ActivationRegistryStorage::SECURITIES_TOKEN_CREATION;
+    const ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
 
     #[derive(Debug, Clone, Copy)]
     enum Transition {
@@ -159,8 +173,8 @@ mod tests {
         StorageCtx::enter(storage, |ctx| {
             let mut registry = ActivationRegistryStorage::new(ctx);
             match transition {
-                Transition::Activate => registry.activate(FEATURE),
-                Transition::Deactivate => registry.deactivate(FEATURE),
+                Transition::Activate => registry.activate(FEATURE, Some(ADMIN)),
+                Transition::Deactivate => registry.deactivate(FEATURE, Some(ADMIN)),
             }
         })
     }
@@ -174,7 +188,7 @@ mod tests {
     fn set_invalid_context(storage: &mut HashMapStorageProvider, context: InvalidContext) {
         match context {
             InvalidContext::Static => {
-                storage.set_caller(ActivationRegistryStorage::ADMIN);
+                storage.set_caller(ADMIN);
                 storage.set_static(true);
             }
             InvalidContext::Unauthorized => {
@@ -184,13 +198,17 @@ mod tests {
     }
 
     fn activate_feature(storage: &mut HashMapStorageProvider) -> Result<()> {
-        storage.set_caller(ActivationRegistryStorage::ADMIN);
-        StorageCtx::enter(storage, |ctx| ActivationRegistryStorage::new(ctx).activate(FEATURE))
+        storage.set_caller(ADMIN);
+        StorageCtx::enter(storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).activate(FEATURE, Some(ADMIN))
+        })
     }
 
     fn deactivate_feature(storage: &mut HashMapStorageProvider) -> Result<()> {
-        storage.set_caller(ActivationRegistryStorage::ADMIN);
-        StorageCtx::enter(storage, |ctx| ActivationRegistryStorage::new(ctx).deactivate(FEATURE))
+        storage.set_caller(ADMIN);
+        StorageCtx::enter(storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).deactivate(FEATURE, Some(ADMIN))
+        })
     }
 
     fn assert_activated(storage: &mut HashMapStorageProvider, expected: bool) {
@@ -233,6 +251,27 @@ mod tests {
         activate_feature(&mut storage).unwrap();
         assert_activated(&mut storage, true);
         assert_eq!(storage.get_events(ActivationRegistryStorage::ADDRESS).len(), 3);
+    }
+
+    #[test]
+    fn configured_admin_can_differ_from_default_admin() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let configured_admin = address!("0x0000000000000000000000000000000000000002");
+
+        storage.set_caller(ADMIN);
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).activate(FEATURE, Some(configured_admin))
+        })
+        .unwrap_err();
+        assert!(matches!(err, BasePrecompileError::Revert(_)));
+        assert_activated(&mut storage, false);
+
+        storage.set_caller(configured_admin);
+        StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).activate(FEATURE, Some(configured_admin))
+        })
+        .unwrap();
+        assert_activated(&mut storage, true);
     }
 
     #[rstest]

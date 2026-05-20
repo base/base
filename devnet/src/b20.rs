@@ -12,7 +12,10 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_network::Base;
-use base_common_precompiles::{IB20, ITokenFactory, TokenFactoryStorage, TokenVariant};
+use base_common_precompiles::{
+    ActivationRegistryStorage, IActivationRegistry, IB20, ITokenFactory, TokenFactoryStorage,
+    TokenVariant,
+};
 use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
 use eyre::{Result, WrapErr, ensure};
 use tokio::time::{sleep, timeout};
@@ -125,6 +128,26 @@ impl<'a> B20PrecompileClient<'a> {
         };
         self.send_call(TokenFactoryStorage::ADDRESS, call, "create B-20 token").await?;
         Ok(token)
+    }
+
+    /// Activates an activation-registry feature.
+    pub async fn activate_feature(&self, feature: B256) -> Result<()> {
+        self.send_call(
+            ActivationRegistryStorage::ADDRESS,
+            IActivationRegistry::activateCall { feature },
+            "activate feature",
+        )
+        .await
+    }
+
+    /// Deactivates an activation-registry feature.
+    pub async fn deactivate_feature(&self, feature: B256) -> Result<()> {
+        self.send_call(
+            ActivationRegistryStorage::ADDRESS,
+            IActivationRegistry::deactivateCall { feature },
+            "deactivate feature",
+        )
+        .await
     }
 
     /// Computes the token address a factory creation call will use.
