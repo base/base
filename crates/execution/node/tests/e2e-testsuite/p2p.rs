@@ -7,8 +7,8 @@ use futures::StreamExt;
 use tokio::sync::Mutex;
 
 // Ignored: reth's deferred_trie `wait_cloned` debug_assert fires when called from a Rayon
-// worker thread during proof computation in debug builds. This is a known upstream reth issue.
-// Run with `--include-ignored` once https://github.com/paradigmxyz/reth is fixed.
+// worker thread during proof computation in debug builds. Devnet follower nodes use
+// `--engine.state-root-fallback` to avoid this path until upstream reth is fixed.
 #[ignore]
 #[tokio::test]
 async fn can_sync() -> eyre::Result<()> {

@@ -452,6 +452,22 @@ where
         // before the trie data is ready. The overlay will be computed on first access.
         let (lazy_overlay, anchor_hash) = Self::get_parent_lazy_overlay(parent_hash, ctx.state());
 
+        // Reth's parallel proof workers run on Rayon threads and must not first-touch deferred trie
+        // data from inside that worker pool. Materialize the overlay before handing it to any
+        // parallel state-root path so subsequent worker access only reads the cached overlay.
+        if matches!(strategy, StateRootStrategy::StateRootTask | StateRootStrategy::Parallel)
+            && let Some(overlay) = &lazy_overlay
+        {
+            let overlay_blocks = overlay.num_blocks();
+            let _ = overlay.get();
+            debug!(
+                target: "engine::tree::payload_validator",
+                overlay_blocks,
+                %anchor_hash,
+                "Materialized lazy overlay before parallel state-root computation"
+            );
+        }
+
         // Create overlay factory for payload processor (StateRootTask path needs it for
         // multiproofs)
         let overlay_factory =

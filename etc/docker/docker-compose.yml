@@ -543,6 +543,8 @@ services:
       - --rpc.txfeecap=0
       - --rpc.gascap=600000000
       - --rpc.eth-proof-window=1209600
+      # Avoid upstream reth sparse proof-worker panics in debug/devnet follower nodes.
+      - --engine.state-root-fallback
       - --flashblocks-url=ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
@@ -697,6 +699,8 @@ services:
       - --rpc.txfeecap=0
       - --rpc.gascap=600000000
       - --rpc.eth-proof-window=1209600
+      # Avoid upstream reth sparse proof-worker panics in debug/devnet follower nodes.
+      - --engine.state-root-fallback
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
       - --l1-eth-rpc
