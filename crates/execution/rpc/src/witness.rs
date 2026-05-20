@@ -20,7 +20,7 @@ use reth_storage_api::{
 };
 use reth_tasks::TaskSpawner;
 use reth_transaction_pool::TransactionPool;
-use tokio::sync::{Semaphore, oneshot};
+use tokio::sync::oneshot;
 
 /// An extension to the `debug_` namespace of the RPC API.
 pub struct BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs> {
@@ -34,8 +34,7 @@ impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmCo
         task_spawner: Box<dyn TaskSpawner>,
         builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
     ) -> Self {
-        let semaphore = Arc::new(Semaphore::new(3));
-        let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner, semaphore };
+        let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner };
         Self { inner: Arc::new(inner) }
     }
 }
@@ -84,8 +83,6 @@ where
         parent_block_hash: B256,
         attributes: Attrs::RpcPayloadAttributes,
     ) -> RpcResult<ExecutionWitness> {
-        let _permit = self.inner.semaphore.acquire().await;
-
         let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
 
         let (tx, rx) = oneshot::channel();
@@ -120,5 +117,4 @@ struct BaseDebugWitnessApiInner<Pool, Provider, EvmConfig, Attrs> {
     provider: Provider,
     builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
     task_spawner: Box<dyn TaskSpawner>,
-    semaphore: Arc<Semaphore>,
 }

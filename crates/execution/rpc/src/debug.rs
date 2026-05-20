@@ -33,7 +33,7 @@ use reth_rpc_eth_types::EthApiError;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_tasks::TaskSpawner;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Semaphore, oneshot};
+use tokio::sync::oneshot;
 
 use crate::{
     metrics::{DebugApiExtMetrics, DebugApis},
@@ -112,7 +112,6 @@ pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs
     state_provider_factory: BaseStateProviderFactory<Eth, Storage>,
     evm_config: EvmConfig,
     task_spawner: Box<dyn TaskSpawner>,
-    semaphore: Semaphore,
     _attrs: PhantomData<Attrs>,
 }
 
@@ -137,7 +136,6 @@ where
             eth_api,
             evm_config,
             task_spawner,
-            semaphore: Semaphore::new(3),
             _attrs: PhantomData,
         }
     }
@@ -193,8 +191,6 @@ where
         attributes: Attrs::RpcPayloadAttributes,
     ) -> RpcResult<ExecutionWitness> {
         DebugApiExtMetrics::record_operation_async(DebugApis::DebugExecutePayload, async {
-            let _permit = self.inner.semaphore.acquire().await;
-
             let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
 
             let (tx, rx) = oneshot::channel();
@@ -246,8 +242,6 @@ where
 
     async fn execution_witness(&self, block_id: BlockNumberOrTag) -> RpcResult<ExecutionWitness> {
         DebugApiExtMetrics::record_operation_async(DebugApis::DebugExecutionWitness, async {
-            let _permit = self.inner.semaphore.acquire().await;
-
             let block = self
                 .inner
                 .eth_api
