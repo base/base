@@ -406,21 +406,21 @@ mod tests {
     fn dispatch_factory_success(ctx: StorageCtx<'_>, call: impl SolCall) -> Bytes {
         let mut factory = TokenFactoryStorage::new(ctx);
         let output = factory.dispatch(ctx, &call.abi_encode()).unwrap();
-        assert!(!output.reverted, "factory call reverted: {:?}", output.bytes);
+        assert!(!output.is_revert(), "factory call reverted: {:?}", output.bytes);
         output.bytes
     }
 
     fn dispatch_factory_revert(ctx: StorageCtx<'_>, call: impl SolCall) -> Bytes {
         let mut factory = TokenFactoryStorage::new(ctx);
         let output = factory.dispatch(ctx, &call.abi_encode()).unwrap();
-        assert!(output.reverted, "factory call unexpectedly succeeded");
+        assert!(output.is_revert(), "factory call unexpectedly succeeded");
         output.bytes
     }
 
     fn dispatch_b20_success(ctx: StorageCtx<'_>, token_addr: Address, call: impl SolCall) -> Bytes {
         let mut token = token_at(token_addr, ctx);
         let output = token.dispatch(ctx, &call.abi_encode()).unwrap();
-        assert!(!output.reverted, "token call reverted: {:?}", output.bytes);
+        assert!(!output.is_revert(), "token call reverted: {:?}", output.bytes);
         output.bytes
     }
 
@@ -970,8 +970,8 @@ mod tests {
             let mut token = token_at(token_addr, ctx);
             let result = token.dispatch(ctx, &IB20::nameCall {}.abi_encode()).unwrap();
 
-            assert!(result.reverted);
-            assert!(result.bytes.is_empty());
+            assert!(result.is_revert());
+            assert_eq!(result.bytes.as_ref(), IB20::Uninitialized {}.abi_encode());
         });
     }
 

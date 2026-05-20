@@ -185,12 +185,12 @@ skip = [
     "webpki-roots",
     "webpki-root-certs",
 
-    # JNI version mismatch from transitive deps
-    "jni",
-    "jni-sys",
-
     # wasm-streams version mismatch from transitive deps
     "wasm-streams",
+
+    # revm version mismatch from SP1 patched deps vs workspace
+    "revm-primitives",
+    "revm-precompile",
 
     # libp2p dependency chain version mismatch
     "unsigned-varint",

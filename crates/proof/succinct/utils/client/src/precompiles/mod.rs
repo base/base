@@ -500,13 +500,9 @@ mod tests {
         );
 
         // Osaka P256VERIFY costs 6,900 gas. With 5,000 gas it must fail with OOG.
-        let result =
-            azul_p256.execute(&[], 5_000, 0).expect("execute should not return a fatal error");
+        let azul_result = azul_p256.execute(&[], 5_000, 0);
         assert!(
-            matches!(
-                result.status,
-                revm_precompile::PrecompileStatus::Halt(revm_precompile::PrecompileHalt::OutOfGas)
-            ),
+            matches!(&azul_result, Ok(output) if output.halt_reason().is_some()),
             "AZUL P256VERIFY must fail with 5,000 gas (Osaka pricing, 6,900 base fee)",
         );
     }

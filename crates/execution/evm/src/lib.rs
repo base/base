@@ -14,16 +14,13 @@ mod build;
 pub use build::BaseBlockAssembler;
 
 mod config;
-pub use config::{BaseEvmConfig, BaseNextBlockEnvAttributes};
+pub use config::{BaseEvmConfig, BaseExecutorProvider, BaseNextBlockEnvAttributes};
 
 mod env;
 pub use env::BaseEvmEnvBuilder;
 
 mod error;
 pub use error::{BaseBlockExecutionError, L1BlockInfoError};
-
-mod execute;
-pub use execute::*;
 
 mod l1;
 pub use l1::*;
