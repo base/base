@@ -12,13 +12,12 @@ use alloy_primitives::{Address, B256, Log, LogData, U256};
 use revm::{
     context::{Block, journaled_state::JournalCheckpoint},
     context_interface::cfg::GasParams,
-    interpreter::gas::{KECCAK256, KECCAK256WORD},
+    interpreter::gas::{KECCAK256, KECCAK256WORD, LOG},
     primitives::keccak256,
     state::{AccountInfo, Bytecode},
 };
 
 use crate::gas_tracker::GasTracker;
-
 use crate::{
     error::{BasePrecompileError, Result},
     provider::PrecompileStorageProvider,
@@ -106,23 +105,52 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
-        self.internals.sload(address, key).map(|s| s.data).map_err(Into::into)
+        let s = self
+            .internals
+            .sload(address, key)
+            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+
+        // EIP-2929: warm base cost always charged
+        self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
+        // dynamic cold penalty
+        if s.is_cold {
+            self.deduct_gas(self.gas_params.cold_storage_additional_cost())?;
+        }
+
+        Ok(s.data)
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
+        self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
         Ok(self.internals.tload(address, key))
     }
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
-        self.internals.sstore(address, key, value).map(|_| ()).map_err(Into::into)
+        let s = self
+            .internals
+            .sstore(address, key, value)
+            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+
+        // EIP-2929: static warm base cost
+        self.deduct_gas(self.gas_params.sstore_static_gas())?;
+        // EIP-2929 + EIP-2200: dynamic cost (cold penalty + net-metering)
+        self.deduct_gas(self.gas_params.sstore_dynamic_gas(true, &s.data, s.is_cold))?;
+        // EIP-3529: net-metering refund
+        self.refund_gas(self.gas_params.sstore_refund(true, &s.data));
+
+        Ok(())
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
         self.internals.tstore(address, key, value);
         Ok(())
     }
 
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<()> {
+        let cost = LOG
+            + self.gas_params.log_cost(event.topics().len() as u8, event.data.len() as u64);
+        self.deduct_gas(cost)?;
         self.internals.log(Log { address, data: event });
         Ok(())
     }
@@ -135,7 +163,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn deduct_state_gas(&mut self, gas: u64) -> Result<()> {
-        if !self.gas_tracker.record_state_cost(gas) {
+        if gas > 0 && !self.gas_tracker.record_state_cost(gas) {
             return Err(BasePrecompileError::OutOfGas);
         }
         Ok(())

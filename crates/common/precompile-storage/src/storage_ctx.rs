@@ -176,6 +176,11 @@ impl<'a> StorageCtx<'a> {
         self.try_with_storage(|s| s.deduct_gas(gas))
     }
 
+    /// Deducts state-creating gas from the EIP-8037 reservoir.
+    pub fn deduct_state_gas(&self, gas: u64) -> Result<()> {
+        self.try_with_storage(|s| s.deduct_state_gas(gas))
+    }
+
     /// Computes keccak256 and charges the appropriate gas.
     pub fn keccak256(&self, data: &[u8]) -> Result<B256> {
         self.try_with_storage(|s| s.keccak256(data))
