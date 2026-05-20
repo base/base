@@ -4,7 +4,7 @@ mod common;
 
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
-use base_common_precompiles::{IPolicyRegistry, POLICY_REGISTRY_ADDRESS};
+use base_common_precompiles::{IPolicyRegistry, PolicyRegistryStorage};
 use devnet::{B20PrecompileClient, config::ANVIL_ACCOUNT_5};
 use eyre::{Result, WrapErr};
 
@@ -19,7 +19,8 @@ async fn test_policy_registry_hello_world() -> Result<()> {
     let client = B20PrecompileClient::new(&provider, &caller, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
-    let output = client.call(POLICY_REGISTRY_ADDRESS, IPolicyRegistry::helloWorldCall {}).await?;
+    let output =
+        client.call(PolicyRegistryStorage::ADDRESS, IPolicyRegistry::helloWorldCall {}).await?;
     let result = IPolicyRegistry::helloWorldCall::abi_decode_returns(output.as_ref())
         .wrap_err("Failed to decode helloWorld")?;
 

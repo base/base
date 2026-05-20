@@ -6,7 +6,8 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use base_common_precompiles::{
-    CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, IB20, ITokenFactory, TokenFactory, TokenVariant,
+    CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, IB20, ITokenFactory, TokenFactoryStorage,
+    TokenVariant,
 };
 use devnet::{
     B20PrecompileClient,
@@ -385,7 +386,10 @@ async fn test_b20_factory_predict_and_is_b20() -> Result<()> {
     assert_eq!(token, rpc_prediction, "created token address should match prediction");
 
     assert!(b20.is_b20(token).await?, "created token should be recognised as B-20");
-    assert!(!b20.is_b20(TokenFactory::ADDRESS).await?, "factory address is not a B-20 token");
+    assert!(
+        !b20.is_b20(TokenFactoryStorage::ADDRESS).await?,
+        "factory address is not a B-20 token",
+    );
     assert!(
         !b20.is_b20(Address::repeat_byte(0xab)).await?,
         "arbitrary address is not a B-20 token",
@@ -417,10 +421,10 @@ async fn test_b20_create_token_duplicate_reverts() -> Result<()> {
 
     let succeeded = b20
         .try_send_call(
-            TokenFactory::ADDRESS,
+            TokenFactoryStorage::ADDRESS,
             ITokenFactory::createTokenCall {
                 params: ITokenFactory::CreateTokenParams {
-                    version: TokenFactory::CREATE_TOKEN_VERSION,
+                    version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
                     variant: TokenVariant::B20.discriminant(),
                     requiredParams: params.abi_encode().into(),
                     optionalParams: Bytes::new(),
