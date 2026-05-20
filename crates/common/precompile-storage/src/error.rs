@@ -38,6 +38,13 @@ pub enum BasePrecompileError {
     #[error("Slot overflow")]
     SlotOverflow,
 
+    /// State mutation attempted inside a STATICCALL context.
+    ///
+    /// Reverts the current call frame without consuming all gas, matching the EVM's
+    /// `StateChangeDuringStaticCall` behaviour for SSTORE/LOG in static contexts.
+    #[error("State mutation in static call")]
+    StaticCallViolation,
+
     /// ABI-encoded revert from a contract-defined error (e.g. `InvalidSender`).
     #[error("Revert")]
     #[from(skip)]
@@ -105,6 +112,7 @@ impl BasePrecompileError {
             Self::Fatal(msg) => {
                 return Err(PrecompileError::Fatal(msg));
             }
+            Self::StaticCallViolation => Bytes::new(),
             Self::UnknownFunctionSelector(sel) => sel.to_vec().into(),
             Self::AbiDecodeFailed { selector, error } => {
                 let mut bytes = selector.to_vec();

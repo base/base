@@ -141,6 +141,9 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        if self.is_static {
+            return Err(BasePrecompileError::StaticCallViolation);
+        }
         let s = self
             .internals
             .sstore(address, key, value)
@@ -157,12 +160,18 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        if self.is_static {
+            return Err(BasePrecompileError::StaticCallViolation);
+        }
         self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
         self.internals.tstore(address, key, value);
         Ok(())
     }
 
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<()> {
+        if self.is_static {
+            return Err(BasePrecompileError::StaticCallViolation);
+        }
         let cost = LOG
             + self.gas_params.log_cost(event.topics().len() as u8, event.data.len() as u64);
         self.deduct_gas(cost)?;
