@@ -96,11 +96,23 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         address: Address,
         f: &mut dyn FnMut(&AccountInfo),
     ) -> Result<()> {
-        let state_load = self
-            .internals
-            .load_account(address)
-            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
-        f(&state_load.data.info);
+        // Extract is_cold and clone AccountInfo before releasing the internals borrow.
+        let (info, is_cold) = {
+            let state_load = self
+                .internals
+                .load_account(address)
+                .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+            (state_load.data.info.clone(), state_load.is_cold)
+        };
+
+        // EIP-2929: warm base cost always charged (100)
+        self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
+        // dynamic cold penalty — total 2600 for a cold account access
+        if is_cold {
+            self.deduct_gas(self.gas_params.cold_account_additional_cost())?;
+        }
+
+        f(&info);
         Ok(())
     }
 
