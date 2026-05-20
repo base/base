@@ -7,6 +7,18 @@ extern crate alloc;
 
 mod macros;
 
+/// Gas cost for ABI-decoding calldata of the given byte length.
+///
+/// Charges `G_sha3word` (6 gas) per 32-byte word, rounded up — the same rate the EVM uses for
+/// data-processing operations (keccak256). The EVM has no universal precompile input cost;
+/// each precompile defines its own. Using `G_sha3word` is the natural choice because ABI decoding
+/// is proportional data-processing work, and it prevents large calldata from being free to
+/// process — a potential attack vector without this charge.
+pub const fn input_cost(calldata_len: usize) -> u64 {
+    const G_SHA3WORD: u64 = 6;
+    calldata_len.div_ceil(32).saturating_mul(G_SHA3WORD as usize) as u64
+}
+
 mod provider;
 pub use provider::BasePrecompiles;
 

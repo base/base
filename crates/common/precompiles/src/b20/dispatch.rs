@@ -15,6 +15,18 @@ use crate::{
 impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
     /// ABI-dispatches `calldata` to the appropriate `IB20` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        if let Err(e) = ctx.deduct_gas(crate::input_cost(calldata.len())) {
+            return e.into_precompile_result(ctx.gas_used());
+        }
+        // Ensure the token has been deployed (has bytecode at its address).
+        match self.accounting.is_initialized() {
+            Ok(true) => {}
+            Ok(false) => {
+                return BasePrecompileError::revert(IB20::Uninitialized {})
+                    .into_precompile_result(ctx.gas_used());
+            }
+            Err(e) => return e.into_precompile_result(ctx.gas_used()),
+        }
         self.inner(ctx, calldata).into_precompile_result(ctx.gas_used(), |b| b)
     }
 
@@ -26,10 +38,6 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
     ) -> base_precompile_storage::Result<Bytes> {
         ActivationRegistryStorage::new(ctx)
             .ensure_activated(ActivationRegistryStorage::B20_TOKEN)?;
-
-        if !self.accounting.is_initialized()? {
-            return Err(BasePrecompileError::revert(IB20::Uninitialized {}));
-        }
 
         if calldata.len() < 4 {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
