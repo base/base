@@ -48,3 +48,77 @@ pub trait Pausable: Token {
         self.accounting_mut().emit_event(IB20::Unpaused { updater: caller }.encode_log_data())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, U256};
+
+    use super::Pausable;
+    use crate::common::{
+        CAPABILITY_PAUSABLE, Token,
+        test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
+    };
+
+    const CALLER: Address = Address::repeat_byte(0xaa);
+    const VECTOR_1: U256 = U256::from_limbs([1, 0, 0, 0]);
+    const VECTOR_2: U256 = U256::from_limbs([2, 0, 0, 0]);
+
+    fn make_token(caps: U256) -> TestToken {
+        let mut acc = InMemoryTokenAccounting::new(Address::repeat_byte(1));
+        acc.capabilities = caps;
+        TestToken::with_storage_and_policy(acc, InMemoryPolicy::new())
+    }
+
+    #[test]
+    fn is_pausable_reflects_capability_bit() {
+        assert!(make_token(CAPABILITY_PAUSABLE).is_pausable().unwrap());
+        assert!(!make_token(U256::ZERO).is_pausable().unwrap());
+    }
+
+    #[test]
+    fn pause_sets_bitmask_and_emits_event() {
+        let mut token = make_token(CAPABILITY_PAUSABLE);
+        token.pause(CALLER, VECTOR_1).unwrap();
+
+        assert!(token.is_paused(VECTOR_1).unwrap());
+        assert_eq!(token.accounting().events.len(), 1);
+    }
+
+    #[test]
+    fn pause_ors_into_existing_bitmask() {
+        let mut token = make_token(CAPABILITY_PAUSABLE);
+        token.pause(CALLER, VECTOR_1).unwrap();
+        token.pause(CALLER, VECTOR_2).unwrap();
+
+        assert!(token.is_paused(VECTOR_1).unwrap());
+        assert!(token.is_paused(VECTOR_2).unwrap());
+    }
+
+    #[test]
+    fn unpause_clears_all_vectors() {
+        let mut token = make_token(CAPABILITY_PAUSABLE);
+        token.pause(CALLER, VECTOR_1 | VECTOR_2).unwrap();
+        token.unpause(CALLER).unwrap();
+
+        assert!(!token.is_paused(VECTOR_1).unwrap());
+        assert!(!token.is_paused(VECTOR_2).unwrap());
+    }
+
+    #[test]
+    fn pause_without_capability_reverts() {
+        let mut token = make_token(U256::ZERO);
+        assert!(token.pause(CALLER, VECTOR_1).is_err());
+    }
+
+    #[test]
+    fn unpause_without_capability_reverts() {
+        let mut token = make_token(U256::ZERO);
+        assert!(token.unpause(CALLER).is_err());
+    }
+
+    #[test]
+    fn pause_zero_vector_reverts() {
+        let mut token = make_token(CAPABILITY_PAUSABLE);
+        assert!(token.pause(CALLER, U256::ZERO).is_err());
+    }
+}

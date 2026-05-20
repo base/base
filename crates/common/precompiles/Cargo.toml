@@ -30,6 +30,7 @@ revm.workspace = true
 rstest.workspace = true
 criterion.workspace = true
 base-precompile-storage = { workspace = true, features = ["test-utils"] }
+k256 = { workspace = true, features = ["ecdsa"] }
 
 [[bench]]
 name = "base_precompiles"

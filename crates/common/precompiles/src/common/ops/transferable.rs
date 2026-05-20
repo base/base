@@ -99,3 +99,89 @@ pub trait Transferable: Token {
         self.accounting_mut().emit_event(IB20::Memo { memo }.encode_log_data())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, U256};
+    use rstest::rstest;
+
+    use super::Transferable;
+    use crate::common::{
+        Token, TokenAccounting,
+        test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
+    };
+
+    const ALICE: Address = Address::repeat_byte(0xaa);
+    const BOB: Address = Address::repeat_byte(0xbb);
+    const SPENDER: Address = Address::repeat_byte(0xcc);
+
+    fn make_token() -> TestToken {
+        TestToken::with_storage_and_policy(
+            InMemoryTokenAccounting::new(Address::repeat_byte(1)),
+            InMemoryPolicy::new(),
+        )
+    }
+
+    #[test]
+    fn transfer_moves_balances_and_emits_event() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+
+        token.transfer(ALICE, BOB, U256::from(40u64)).unwrap();
+
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
+        assert_eq!(token.accounting().events.len(), 1);
+    }
+
+    #[test]
+    fn transfer_from_zero_sender_reverts() {
+        let mut token = make_token();
+        assert!(token.transfer(Address::ZERO, BOB, U256::from(1u64)).is_err());
+    }
+
+    #[test]
+    fn transfer_to_zero_receiver_reverts() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        assert!(token.transfer(ALICE, Address::ZERO, U256::from(1u64)).is_err());
+    }
+
+    #[test]
+    fn transfer_insufficient_balance_reverts() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(ALICE, U256::from(5u64));
+        assert!(token.transfer(ALICE, BOB, U256::from(10u64)).is_err());
+    }
+
+    #[test]
+    fn approve_sets_allowance_and_emits_event() {
+        let mut token = make_token();
+        token.approve(ALICE, SPENDER, U256::from(50u64)).unwrap();
+
+        assert_eq!(token.accounting().allowance(ALICE, SPENDER).unwrap(), U256::from(50u64));
+        assert_eq!(token.accounting().events.len(), 1);
+    }
+
+    #[rstest]
+    #[case::finite(U256::from(30u64), U256::from(20u64), Some(U256::from(10u64)))]
+    #[case::max_allowance(U256::MAX, U256::from(50u64), Some(U256::MAX))]
+    #[case::insufficient(U256::from(5u64), U256::from(10u64), None)]
+    fn transfer_from_allowance_cases(
+        #[case] allowance: U256,
+        #[case] amount: U256,
+        #[case] expected_remaining: Option<U256>,
+    ) {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().allowances.insert((ALICE, SPENDER), allowance);
+        let result = token.transfer_from(SPENDER, ALICE, BOB, amount);
+        match expected_remaining {
+            Some(rem) => {
+                result.unwrap();
+                assert_eq!(token.accounting().allowance(ALICE, SPENDER).unwrap(), rem);
+            }
+            None => assert!(result.is_err()),
+        }
+    }
+}

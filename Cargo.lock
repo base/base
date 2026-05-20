@@ -3410,6 +3410,7 @@ dependencies = [
  "base-precompile-macros",
  "base-precompile-storage",
  "criterion",
+ "k256",
  "revm",
  "rstest",
 ]

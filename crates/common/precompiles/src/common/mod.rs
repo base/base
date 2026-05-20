@@ -2,6 +2,10 @@
 
 mod ops;
 mod policy;
+#[cfg(any(test, feature = "test-utils"))]
+pub(super) mod test_utils;
+#[cfg(any(test, feature = "test-utils"))]
+pub use test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken};
 mod token;
 mod token_accounting;
 
