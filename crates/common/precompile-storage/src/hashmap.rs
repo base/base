@@ -140,10 +140,6 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(())
     }
 
-    fn deduct_state_gas(&mut self, _gas: u64) -> Result<(), BasePrecompileError> {
-        Ok(())
-    }
-
     fn refund_gas(&mut self, _gas: i64) {}
 
     fn gas_limit(&self) -> u64 {

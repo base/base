@@ -186,12 +186,6 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         Ok(())
     }
 
-    fn deduct_state_gas(&mut self, _gas: u64) -> Result<()> {
-        // State gas (EIP-8037 reservoir model) requires GasParams v17 (Amsterdam).
-        // No-op until revm upgrades to context-interface v17.
-        Ok(())
-    }
-
     fn refund_gas(&mut self, gas: i64) {
         self.gas.record_refund(gas);
     }
