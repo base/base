@@ -171,6 +171,8 @@ skip = [
     # wasm-streams version mismatch from transitive deps
     "wasm-streams",
 
+    "discv5",
+
     # libp2p dependency chain version mismatch
     "unsigned-varint",
     "if-addrs",

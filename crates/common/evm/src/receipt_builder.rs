@@ -15,7 +15,7 @@ pub(crate) type ReceiptBuilderError<'a, Tx, E> = Box<ReceiptBuilderCtx<'a, Tx, E
 #[auto_impl::auto_impl(&, Arc)]
 pub trait BaseReceiptBuilder: Debug {
     /// Transaction type.
-    type Transaction: TransactionEnvelope;
+    type Transaction: TransactionEnvelope<TxType: Send + 'static>;
     /// Receipt type.
     type Receipt;
 

@@ -145,7 +145,7 @@ where
             Block = alloy_consensus::Block<R::Transaction>,
         >,
     BaseTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
-    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction>,
+    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction> + Clone,
     EvmF: EvmFactory<
             Tx: FromRecoveredTx<R::Transaction>
                     + FromTxWithEncoded<R::Transaction>
@@ -222,7 +222,7 @@ where
             Block = alloy_consensus::Block<R::Transaction>,
         >,
     BaseTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
-    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction>,
+    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction> + Clone,
     Self: Send + Sync + Unpin + Clone + 'static,
 {
     fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {

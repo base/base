@@ -218,10 +218,7 @@ where
         self.executor.apply_pre_execution_changes()
     }
 
-    fn commit_transaction(
-        &mut self,
-        output: Self::Result,
-    ) -> Result<GasOutput, BlockExecutionError> {
+    fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
         self.executor.commit_transaction(output)
     }
 

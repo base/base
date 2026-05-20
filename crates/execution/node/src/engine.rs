@@ -142,7 +142,9 @@ where
             .unwrap_or_default();
         isthmus::verify_withdrawals_root_prehashed(predeploy_storage_updates, parent_state, header)
             .map_err(|err| {
-                ConsensusError::Other(format!("failed to verify block post-execution: {err}"))
+                ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
+                    format!("failed to verify block post-execution: {err}"),
+                )))
             })
     }
 }
@@ -206,9 +208,11 @@ where
 
         let parent_state =
             self.provider.state_by_block_hash(block.parent_hash()).map_err(|err| {
-                ConsensusError::Other(format!(
-                    "failed to load parent state for Isthmus withdrawals root validation: {err}"
-                ))
+                ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
+                    format!(
+                        "failed to load parent state for Isthmus withdrawals root validation: {err}"
+                    ),
+                )))
             })?;
 
         self.validate_block_post_execution_with_state(state_updates, parent_state, block.header())

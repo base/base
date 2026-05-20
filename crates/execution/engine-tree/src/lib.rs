@@ -2,6 +2,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+use alloy_eip7928 as _;
+
 mod cached_execution;
 pub use cached_execution::{
     CachedExecutionProvider, CachedExecutor, FlashblocksCachedExecutionProvider,

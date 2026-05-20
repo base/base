@@ -17,7 +17,6 @@ use alloy_consensus::{
     Header,
     transaction::{Either, TxHashRef},
 };
-use alloy_eip7928::BlockAccessList;
 use alloy_eips::eip2718::Decodable2718;
 use alloy_evm::Evm;
 use alloy_primitives::B256;
@@ -69,7 +68,8 @@ use reth_provider::{
     BlockExecutionOutput, BlockNumReader, BlockReader, ChainSpecProvider, ChangeSetReader,
     DatabaseProviderFactory, DatabaseProviderROFactory, HashedPostStateProvider, ProviderError,
     PruneCheckpointReader, StageCheckpointReader, StateProvider, StateProviderFactory, StateReader,
-    StorageChangeSetReader, StorageSettingsCache, providers::OverlayStateProviderFactory,
+    StorageChangeSetReader, StorageSettingsCache,
+    providers::{OverlayBuilder, OverlayStateProviderFactory},
 };
 use reth_revm::{
     database::StateProviderDatabase,
@@ -383,9 +383,11 @@ where
                 match $expr {
                     Ok(val) => val,
                     Err(e) => {
-                        return Err(
-                            InsertBlockError::new($block.into_sealed_block(), e.into()).into()
+                        return Err(InsertBlockError::new(
+                            $block.into_sealed_block(),
+                            InsertBlockErrorKind::from(e),
                         )
+                        .into())
                     }
                 }
             };
@@ -424,6 +426,13 @@ where
             .in_scope(|| self.evm_env_for(&input))
             .map_err(NewPayloadError::other)?;
 
+        let decoded_bal = ensure_ok!(
+            input
+                .try_decoded_access_list()
+                .map_err(Box::<dyn std::error::Error + Send + Sync>::from)
+        )
+        .map(Arc::new);
+
         let env = ExecutionEnv {
             evm_env,
             hash: input.hash(),
@@ -432,6 +441,7 @@ where
             transaction_count: input.transaction_count(),
             gas_used: input.gas_used(),
             withdrawals: input.withdrawals().map(|w| w.to_vec()),
+            decoded_bal,
         };
 
         // Plan the strategy used for state root computation.
@@ -446,26 +456,17 @@ where
         // Get an iterator over the transactions in the payload
         let txs = self.tx_iterator_for(&input)?;
 
-        // Extract the BAL, if valid and available
-        let block_access_list = ensure_ok!(
-            input
-                .block_access_list()
-                .transpose()
-                // Eventually gets converted to a `InsertBlockErrorKind::Other`
-                .map_err(Box::<dyn std::error::Error + Send + Sync>::from)
-        )
-        .map(Arc::new);
-
         // Create lazy overlay from ancestors - this doesn't block, allowing execution to start
         // before the trie data is ready. The overlay will be computed on first access.
         let (lazy_overlay, anchor_hash) = Self::get_parent_lazy_overlay(parent_hash, ctx.state());
 
         // Create overlay factory for payload processor (StateRootTask path needs it for
         // multiproofs)
-        let overlay_factory =
-            OverlayStateProviderFactory::new(self.provider.clone(), self.changeset_cache.clone())
-                .with_block_hash(Some(anchor_hash))
+        let overlay_builder =
+            OverlayBuilder::<BasePrimitives>::new(anchor_hash, self.changeset_cache.clone())
                 .with_lazy_overlay(lazy_overlay);
+        let overlay_factory =
+            OverlayStateProviderFactory::new(self.provider.clone(), overlay_builder);
 
         // Spawn the appropriate processor based on strategy
         let mut handle = ensure_ok!(self.spawn_payload_processor(
@@ -474,7 +475,6 @@ where
             provider_builder.clone(),
             overlay_factory.clone(),
             strategy,
-            block_access_list,
         ));
 
         // Use cached state provider before executing, used in execution after prewarming threads
@@ -947,7 +947,7 @@ where
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
     fn compute_state_root_parallel(
         &self,
-        overlay_factory: OverlayStateProviderFactory<P>,
+        overlay_factory: OverlayStateProviderFactory<P, BasePrimitives>,
         hashed_state: &HashedPostState,
     ) -> Result<(B256, TrieUpdates), ParallelStateRootError> {
         // The `hashed_state` argument will be taken into account as part of the overlay, but we
@@ -966,7 +966,7 @@ where
     /// [`HashedPostState`] containing the changes of this block, to compute the state root and
     /// trie updates for this block.
     fn compute_state_root_serial(
-        overlay_factory: OverlayStateProviderFactory<P>,
+        overlay_factory: OverlayStateProviderFactory<P, BasePrimitives>,
         hashed_state: &HashedPostState,
     ) -> ProviderResult<(B256, TrieUpdates)> {
         // The `hashed_state` argument will be taken into account as part of the overlay, but we
@@ -1005,7 +1005,7 @@ where
     fn await_state_root_with_timeout<Tx, Err, R: Send + Sync + 'static>(
         &self,
         handle: &mut PayloadHandle<Tx, Err, R>,
-        overlay_factory: OverlayStateProviderFactory<P>,
+        overlay_factory: OverlayStateProviderFactory<P, BasePrimitives>,
         hashed_state: &HashedPostState,
     ) -> ProviderResult<Result<StateRootComputeOutcome, ParallelStateRootError>> {
         let Some(timeout) = self.config.state_root_task_timeout() else {
@@ -1195,9 +1195,8 @@ where
         env: ExecutionEnv<Evm>,
         txs: T,
         provider_builder: StateProviderBuilder<BasePrimitives, P>,
-        overlay_factory: OverlayStateProviderFactory<P>,
+        overlay_factory: OverlayStateProviderFactory<P, BasePrimitives>,
         strategy: StateRootStrategy,
-        block_access_list: Option<Arc<BlockAccessList>>,
     ) -> Result<
         PayloadHandle<
             impl ExecutableTxFor<Evm> + use<P, Evm, V, T, C>,
@@ -1217,7 +1216,6 @@ where
                     provider_builder,
                     overlay_factory,
                     &self.config,
-                    block_access_list,
                 );
 
                 // record prewarming initialization duration
@@ -1230,12 +1228,8 @@ where
             }
             StateRootStrategy::Parallel | StateRootStrategy::Synchronous => {
                 let start = Instant::now();
-                let handle = self.payload_processor.spawn_cache_exclusive(
-                    env,
-                    txs,
-                    provider_builder,
-                    block_access_list,
-                );
+                let handle =
+                    self.payload_processor.spawn_cache_exclusive(env, txs, provider_builder);
 
                 // Record prewarming initialization duration
                 self.metrics
@@ -1321,7 +1315,7 @@ where
     fn get_parent_lazy_overlay(
         parent_hash: B256,
         state: &EngineApiTreeState<BasePrimitives>,
-    ) -> (Option<LazyOverlay>, B256) {
+    ) -> (Option<LazyOverlay<BasePrimitives>>, B256) {
         // Get blocks leading to the parent to determine the anchor
         let (anchor_hash, blocks) =
             state.tree_state().blocks_by_hash(parent_hash).unwrap_or_else(|| (parent_hash, vec![]));
@@ -1350,10 +1344,7 @@ where
             "Creating lazy overlay for in-memory blocks"
         );
 
-        // Extract deferred trie data handles (non-blocking)
-        let handles: Vec<DeferredTrieData> = blocks.iter().map(|b| b.trie_data_handle()).collect();
-
-        (Some(LazyOverlay::new(anchor_hash, handles)), anchor_hash)
+        (Some(LazyOverlay::<BasePrimitives>::new(blocks)), anchor_hash)
     }
 
     /// Spawns a background task to compute and sort trie data for the executed block.
@@ -1585,10 +1576,11 @@ where
         state: &EngineApiTreeState<BasePrimitives>,
     ) -> Option<StateRootHandle> {
         let (lazy_overlay, anchor_hash) = Self::get_parent_lazy_overlay(parent_hash, state);
-        let overlay_factory =
-            OverlayStateProviderFactory::new(self.provider.clone(), self.changeset_cache.clone())
-                .with_block_hash(Some(anchor_hash))
+        let overlay_builder =
+            OverlayBuilder::<BasePrimitives>::new(anchor_hash, self.changeset_cache.clone())
                 .with_lazy_overlay(lazy_overlay);
+        let overlay_factory =
+            OverlayStateProviderFactory::new(self.provider.clone(), overlay_builder);
 
         Some(self.payload_processor.spawn_state_root(
             overlay_factory,

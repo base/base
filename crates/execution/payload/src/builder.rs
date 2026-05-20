@@ -17,7 +17,6 @@ use reth_basic_payload_builder::{
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::{
     ConfigureEvm, Database,
-    block::BlockExecutorFor,
     execute::{
         BlockBuilder, BlockBuilderOutcome, BlockExecutionError, BlockExecutor, BlockValidationError,
     },
@@ -604,13 +603,7 @@ where
     pub fn block_builder<'a, DB: Database>(
         &'a self,
         db: &'a mut State<DB>,
-    ) -> Result<
-        impl BlockBuilder<
-            Primitives = Evm::Primitives,
-            Executor: BlockExecutorFor<'a, Evm::BlockExecutorFactory, &'a mut State<DB>>,
-        > + 'a,
-        PayloadBuilderError,
-    > {
+    ) -> Result<impl BlockBuilder<Primitives = Evm::Primitives> + 'a, PayloadBuilderError> {
         self.evm_config
             .builder_for_next_block(
                 db,
@@ -662,8 +655,8 @@ where
                 PayloadBuilderError::other(BasePayloadBuilderError::TransactionEcRecoverFailed)
             })?;
 
-            let gas_used = match builder.execute_transaction(sequencer_tx.clone()) {
-                Ok(gas_used) => gas_used,
+            let gas_output = match builder.execute_transaction(sequencer_tx.clone()) {
+                Ok(gas_output) => gas_output,
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
@@ -672,17 +665,11 @@ where
                     continue;
                 }
                 Err(err) => {
-                    // Either a fatal execution error, or an `InvalidTx` from an
-                    // attribute-derived (`no_tx_pool=true`) transaction list. The latter must
-                    // be fatal so the EL rejects the payload exactly like the proof executor
-                    // does, allowing Holocene's deposit-only fallback to apply consistently
-                    // across both consumers of the same L1 input.
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
 
-            // add gas used by the transaction to cumulative gas used, before creating the receipt
-            info.cumulative_gas_used += gas_used;
+            info.cumulative_gas_used += gas_output.tx_gas_used();
         }
 
         Ok(info)
@@ -754,39 +741,32 @@ where
                 return Ok(Some(()));
             }
 
-            let gas_used = match builder.execute_transaction(tx.clone()) {
-                Ok(gas_used) => gas_used,
+            let gas_output = match builder.execute_transaction(tx.clone()) {
+                Ok(gas_output) => gas_output,
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
                 })) => {
                     if error.is_nonce_too_low() {
-                        // if the nonce is too low, we can skip this transaction
                         trace!(target: "payload_builder", %error, ?tx, "skipping nonce too low transaction");
                     } else {
-                        // if the transaction is invalid, we can skip it and all of its
-                        // descendants
                         trace!(target: "payload_builder", %error, ?tx, "skipping invalid transaction and its descendants");
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
                     }
                     continue;
                 }
                 Err(err) => {
-                    // this is an error that we should treat as fatal for this attempt
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
 
-            // add gas used by the transaction to cumulative gas used, before creating the
-            // receipt
-            info.cumulative_gas_used += gas_used;
+            info.cumulative_gas_used += gas_output.tx_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
 
-            // update and add to total fees
             let miner_fee = tx
                 .effective_tip_per_gas(base_fee)
                 .expect("fee is always valid; execution succeeded");
-            info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
+            info.total_fees += U256::from(miner_fee) * U256::from(gas_output.tx_gas_used());
         }
 
         Ok(None)

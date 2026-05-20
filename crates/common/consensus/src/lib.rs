@@ -10,7 +10,7 @@
 
 extern crate alloc;
 
-#[cfg(feature = "reth")]
+#[cfg(feature = "evm")]
 use revm as _;
 
 #[cfg(feature = "reth")]

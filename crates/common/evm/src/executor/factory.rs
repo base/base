@@ -1,17 +1,17 @@
 //! Contains the factory.
 
-use alloy_consensus::{Transaction, TxReceipt};
+use alloy_consensus::{Transaction, TransactionEnvelope, TxReceipt};
 use alloy_eips::Encodable2718;
 use alloy_evm::{
     EvmFactory, FromRecoveredTx, FromTxWithEncoded,
-    block::{BlockExecutorFactory, BlockExecutorFor},
+    block::{BlockExecutorFactory, StateDB},
 };
 use base_common_chains::{ChainUpgrades, Upgrades};
 use revm::Inspector;
 
 use crate::{
     AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmFactory,
-    BaseReceiptBuilder, BaseTxEnv,
+    BaseReceiptBuilder, BaseTxEnv, BaseTxResult,
 };
 
 /// Ethereum block executor factory.
@@ -54,8 +54,11 @@ impl<R, Spec, EvmFactory> BaseBlockExecutorFactory<R, Spec, EvmFactory> {
 
 impl<R, Spec, EvmF> BlockExecutorFactory for BaseBlockExecutorFactory<R, Spec, EvmF>
 where
-    R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: Upgrades,
+    R: BaseReceiptBuilder<
+            Transaction: Transaction + Encodable2718 + TransactionEnvelope<TxType: Send + 'static>,
+            Receipt: TxReceipt,
+        > + Clone,
+    Spec: Upgrades + Clone,
     EvmF: EvmFactory<
         Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
     >,
@@ -65,6 +68,12 @@ where
     type ExecutionCtx<'a> = BaseBlockExecutionCtx;
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
+    type TxExecutionResult = BaseTxResult<
+        <EvmF as EvmFactory>::HaltReason,
+        <R::Transaction as TransactionEnvelope>::TxType,
+    >;
+    type Executor<'a, DB: StateDB, I: Inspector<EvmF::Context<DB>>> =
+        BaseBlockExecutor<EvmF::Evm<DB, I>, R, Spec>;
 
     fn evm_factory(&self) -> &Self::EvmFactory {
         &self.evm_factory
@@ -74,11 +83,11 @@ where
         &'a self,
         evm: EvmF::Evm<DB, I>,
         ctx: Self::ExecutionCtx<'a>,
-    ) -> impl BlockExecutorFor<'a, Self, DB, I>
+    ) -> Self::Executor<'a, DB, I>
     where
-        DB: alloy_evm::block::StateDB + 'a,
-        I: Inspector<EvmF::Context<DB>> + 'a,
+        DB: StateDB,
+        I: Inspector<EvmF::Context<DB>>,
     {
-        BaseBlockExecutor::new(evm, ctx, &self.spec, &self.receipt_builder)
+        BaseBlockExecutor::new(evm, ctx, self.spec.clone(), self.receipt_builder.clone())
     }
 }

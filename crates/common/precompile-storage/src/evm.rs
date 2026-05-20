@@ -200,7 +200,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn deduct_gas(&mut self, gas: u64) -> Result<()> {
-        if !self.gas.record_cost(gas) {
+        if !self.gas.record_regular_cost(gas) {
             return Err(BasePrecompileError::OutOfGas);
         }
         Ok(())
@@ -215,7 +215,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn gas_used(&self) -> u64 {
-        self.gas.spent()
+        self.gas.total_gas_spent()
     }
 
     fn state_gas_used(&self) -> u64 {

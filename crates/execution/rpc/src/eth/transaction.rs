@@ -169,6 +169,7 @@ where
                 index: meta.index,
                 block_hash: meta.block_hash,
                 block_number: meta.block_number,
+                block_timestamp: meta.timestamp,
                 base_fee: meta.base_fee,
             }));
         }

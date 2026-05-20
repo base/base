@@ -114,7 +114,7 @@ mod tests {
         })
         .expect("dispatch should not fatally error");
 
-        assert!(output.reverted);
+        assert!(output.is_revert());
     }
 
     #[test]
@@ -130,7 +130,7 @@ mod tests {
         })
         .expect("dispatch should not fatally error");
 
-        assert!(!output.reverted);
+        assert!(!output.is_revert());
         assert!(IPolicyRegistry::policyExistsCall::abi_decode_returns(&output.bytes).unwrap());
     }
 
@@ -150,7 +150,7 @@ mod tests {
         })
         .expect("dispatch should not fatally error");
 
-        assert!(!output.reverted);
+        assert!(!output.is_revert());
         let id = IPolicyRegistry::createPolicyCall::abi_decode_returns(&output.bytes).unwrap();
         assert_eq!((id >> 56) as u8, IPolicyRegistry::PolicyType::ALLOWLIST as u8);
     }
@@ -170,7 +170,7 @@ mod tests {
         })
         .expect("dispatch should not fatally error");
 
-        assert!(!output.reverted);
+        assert!(!output.is_revert());
         assert!(IPolicyRegistry::isAuthorizedCall::abi_decode_returns(&output.bytes).unwrap());
     }
 
@@ -185,7 +185,7 @@ mod tests {
         })
         .expect("dispatch should not fatally error");
 
-        assert!(output.reverted);
+        assert!(output.is_revert());
     }
 
     fn create_allowlist_policy(storage: &mut HashMapStorageProvider) -> u64 {
@@ -199,7 +199,7 @@ mod tests {
             PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
         })
         .unwrap();
-        assert!(!output.reverted, "create_allowlist_policy setup unexpectedly reverted");
+        assert!(!output.is_revert(), "create_allowlist_policy setup unexpectedly reverted");
         IPolicyRegistry::createPolicyCall::abi_decode_returns(&output.bytes).unwrap()
     }
 
@@ -220,7 +220,7 @@ mod tests {
         })
         .unwrap();
 
-        assert!(!output.reverted);
+        assert!(!output.is_revert());
         let id = IPolicyRegistry::createPolicyWithAccountsCall::abi_decode_returns(&output.bytes)
             .unwrap();
         assert_eq!((id >> 56) as u8, IPolicyRegistry::PolicyType::ALLOWLIST as u8);
@@ -242,7 +242,7 @@ mod tests {
             PolicyRegistryStorage::new(ctx).dispatch(ctx, &stage_calldata)
         })
         .unwrap();
-        assert!(!out.reverted);
+        assert!(!out.is_revert());
 
         // finalize
         storage.set_caller(new_admin);
@@ -252,7 +252,7 @@ mod tests {
             PolicyRegistryStorage::new(ctx).dispatch(ctx, &finalize_calldata)
         })
         .unwrap();
-        assert!(!out.reverted);
+        assert!(!out.is_revert());
 
         // confirm admin changed
         let admin_calldata = IPolicyRegistry::policyAdminCall { policyId: id }.abi_encode();
@@ -276,7 +276,7 @@ mod tests {
             PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
         })
         .unwrap();
-        assert!(!out.reverted);
+        assert!(!out.is_revert());
     }
 
     #[test]
@@ -296,7 +296,7 @@ mod tests {
             PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
         })
         .unwrap();
-        assert!(!out.reverted);
+        assert!(!out.is_revert());
 
         // updateBlocklist on a blocklist policy
         storage.set_caller(ADMIN);
@@ -309,7 +309,7 @@ mod tests {
             PolicyRegistryStorage::new(ctx).dispatch(ctx, &blocklist_calldata)
         })
         .unwrap();
-        assert!(!blocklist_out.reverted, "blocklist policy creation unexpectedly reverted");
+        assert!(!blocklist_out.is_revert(), "blocklist policy creation unexpectedly reverted");
         let bid =
             IPolicyRegistry::createPolicyCall::abi_decode_returns(&blocklist_out.bytes).unwrap();
 
@@ -324,7 +324,7 @@ mod tests {
             PolicyRegistryStorage::new(ctx).dispatch(ctx, &update_blocklist)
         })
         .unwrap();
-        assert!(!out.reverted);
+        assert!(!out.is_revert());
     }
 
     #[test]
@@ -338,7 +338,7 @@ mod tests {
             PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
         })
         .unwrap();
-        assert!(!out.reverted);
+        assert!(!out.is_revert());
         let pending =
             IPolicyRegistry::pendingPolicyAdminCall::abi_decode_returns(&out.bytes).unwrap();
         assert_eq!(pending, Address::ZERO);

@@ -433,8 +433,12 @@ impl PendingBlocks {
             tx_type: tx.inner.inner.tx_type(),
         };
 
-        let base_tx_result =
-            BaseTxResult { inner: eth_tx_result, is_deposit: tx.inner.inner.is_deposit(), sender };
+        let base_tx_result = BaseTxResult {
+            inner: eth_tx_result,
+            is_deposit: tx.inner.inner.is_deposit(),
+            sender,
+            depositor: None,
+        };
 
         Some(base_tx_result)
     }
