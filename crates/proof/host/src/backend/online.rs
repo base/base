@@ -88,7 +88,7 @@ impl PreimageFetcher for OnlineHostBackend {
 
                 if let Err(e) = value {
                     error!(target: "host_backend", error = %e, hint = ?hint, "failed to prefetch hint");
-                    continue;
+                    return Err(PreimageOracleError::Other(e.to_string()));
                 }
 
                 let kv_lock = self.kv.read().await;
