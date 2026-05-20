@@ -187,12 +187,13 @@ pub struct DiscoveryResolution {
     pub reachable_count: usize,
     /// Total instances returned by discovery (reachable + unreachable).
     pub total_count: usize,
-    /// Whether the cycle satisfies both the majority guard
-    /// (`reachable * 2 > total`) and the cancellation policy
-    /// (token not cancelled). `true` when `total_count` is zero **and**
-    /// the driver is not cancelled — otherwise `false`, so the orphan
-    /// dereg pass is skipped during shutdown to avoid acquiring nonces
-    /// we don't intend to broadcast.
+    /// Whether orphan deregistration is safe to run this cycle. `true`
+    /// when the cancellation token has not fired **and either**
+    /// `total_count` is zero (legitimate fleet drain) **or** a strict
+    /// majority of discovered instances were reachable
+    /// (`reachable * 2 > total`). `false` during shutdown (to avoid
+    /// acquiring nonces we don't intend to broadcast) or when too few
+    /// instances responded for the quorum guard to clear.
     pub ok_to_dereg: bool,
 }
 
