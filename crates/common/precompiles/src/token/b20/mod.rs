@@ -6,7 +6,7 @@ mod precompile;
 pub use precompile::B20TokenPrecompile;
 
 mod storage;
-pub use storage::{B20_TOKEN_ADDRESS, B20TokenStorage};
+pub use storage::B20TokenStorage;
 
 mod token;
 pub use token::B20Token;

@@ -10,7 +10,7 @@ pub use common::{
 };
 
 mod b20;
-pub use b20::{B20_TOKEN_ADDRESS, B20Token, B20TokenPrecompile, B20TokenStorage};
+pub use b20::{B20Token, B20TokenPrecompile, B20TokenStorage};
 
 mod factory;
 pub use factory::{TokenFactory, TokenFactoryPrecompile, TokenVariant};

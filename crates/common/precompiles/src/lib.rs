@@ -22,9 +22,9 @@ mod bls12_381;
 
 mod token;
 pub use token::{
-    B20_TOKEN_ADDRESS, B20Token, B20TokenPrecompile, B20TokenStorage, Burnable,
-    CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, IB20, IPolicyRegistry,
-    ITokenFactory, Mintable, POLICY_REGISTRY_ADDRESS, Pausable, Permittable, Policy, PolicyHandle,
-    PolicyRegistryEvm, Redeemable, Token, TokenAccounting, TokenFactory, TokenFactoryPrecompile,
-    TokenVariant, Transferable,
+    B20Token, B20TokenPrecompile, B20TokenStorage, Burnable, CAPABILITY_CAP_MUTABLE,
+    CAPABILITY_PAUSABLE, Configurable, IB20, IPolicyRegistry, ITokenFactory, Mintable,
+    POLICY_REGISTRY_ADDRESS, Pausable, Permittable, Policy, PolicyHandle, PolicyRegistryEvm,
+    Redeemable, Token, TokenAccounting, TokenFactory, TokenFactoryPrecompile, TokenVariant,
+    Transferable,
 };
