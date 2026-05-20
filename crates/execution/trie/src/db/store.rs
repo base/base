@@ -53,6 +53,13 @@ struct ProofWindowValue {
     latest: NumHash,
 }
 
+/// Switch from per-key wipe-and-rewrite to a sequential table walk above this many cutoff
+/// keys per table. The sequential path replaces N B-tree descents with one forward walk that
+/// benefits from OS read-ahead — cheaper on cold pages once N approaches the table's key
+/// count. Below the threshold, per-key seek is faster because it only touches the relevant
+/// keys instead of the whole table. Set conservatively for catch-up runs.
+const SEQUENTIAL_WALK_THRESHOLD: usize = 100_000;
+
 /// Preprocessed prune plan for a target block number
 #[derive(Debug, Clone)]
 struct PrunePlan {
@@ -61,6 +68,13 @@ struct PrunePlan {
     storage_survivors: Vec<(StorageTrieKey, u64)>,
     hashed_acc_survivors: Vec<(B256, u64)>,
     hashed_storage_survivors: Vec<(HashedStorageKey, u64)>,
+    /// Total per-table change-set key occurrences in the prune range. Equals the count of
+    /// history rows about to be touched per table, used to derive exact delete metrics
+    /// without an extra cursor pass.
+    acc_occurrences: u64,
+    storage_occurrences: u64,
+    hashed_acc_occurrences: u64,
+    hashed_storage_occurrences: u64,
 }
 
 /// Preprocessed delete work for a prune range
@@ -301,12 +315,18 @@ impl MdbxProofsStorage {
             let mut hashed_storage_candidates: HashMap<HashedStorageKey, u64> =
                 HashMap::with_capacity_and_hasher(cap, Default::default());
 
+            let (mut acc_occ, mut st_occ, mut ha_occ, mut hs_occ) = (0u64, 0u64, 0u64, 0u64);
+
             let mut cs_cursor = tx.cursor_read::<BlockChangeSet>()?;
             let mut walker = cs_cursor.walk_back(Some(target_block))?;
             while let Some(Ok((block_number, cs))) = walker.next() {
                 if block_number <= earliest {
                     break;
                 }
+                acc_occ += cs.account_trie_keys.len() as u64;
+                st_occ += cs.storage_trie_keys.len() as u64;
+                ha_occ += cs.hashed_account_keys.len() as u64;
+                hs_occ += cs.hashed_storage_keys.len() as u64;
                 for k in cs.account_trie_keys {
                     acc_candidates.entry(k).or_insert(block_number);
                 }
@@ -327,6 +347,10 @@ impl MdbxProofsStorage {
                 storage_survivors: Self::flatten_and_sort(storage_candidates),
                 hashed_acc_survivors: Self::flatten_and_sort(hashed_acc_candidates),
                 hashed_storage_survivors: Self::flatten_and_sort(hashed_storage_candidates),
+                acc_occurrences: acc_occ,
+                storage_occurrences: st_occ,
+                hashed_acc_occurrences: ha_occ,
+                hashed_storage_occurrences: hs_occ,
             }))
         })?
     }
@@ -339,10 +363,42 @@ impl MdbxProofsStorage {
         v
     }
 
-    /// Delete history versions for `items` that are strictly older than the provided block number.
-    /// `items` is a list of (Key, `SurvivorBlock`). Everything strictly older than `SurvivorBlock`
-    /// is deleted. Returns the number of entries deleted.
+    /// Reduce each key's dup-group to a single survivor row (or zero rows when the survivor
+    /// is a tombstone). `cutoff_items` is the sorted list of `(key, survivor_block)` pairs
+    /// from the prune plan; `occurrences` is the total number of history rows across those
+    /// keys in the prune window, used to compute the exact deletion count.
+    ///
+    /// Strategy: for each key, seek directly to its survivor dup, drop the entire dup-group
+    /// in one MDBX call (`MDBX_NODUPDATA`), then re-insert just the survivor. This collapses
+    /// the original `1 + 2N` syscalls per N-deep dup-group down to a constant 2 or 3.
+    /// Above [`SEQUENTIAL_WALK_THRESHOLD`] keys we instead walk the table forward once and
+    /// process keys in cursor order, which beats per-key seeks on cold pages because of OS
+    /// read-ahead.
     fn prune_history_preceding<T, V>(
+        &self,
+        tx: &(impl DbTxMut + DbTx),
+        cutoff_items: Vec<(T::Key, u64)>,
+        occurrences: u64,
+    ) -> BaseProofsStorageResult<u64>
+    where
+        T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
+        T::Key: Clone + Ord + std::hash::Hash,
+    {
+        if cutoff_items.is_empty() {
+            return Ok(0);
+        }
+
+        let non_tombstone_survivors = if cutoff_items.len() >= SEQUENTIAL_WALK_THRESHOLD {
+            self.prune_history_preceding_sequential::<T, V>(tx, cutoff_items)?
+        } else {
+            self.prune_history_preceding_per_key::<T, V>(tx, cutoff_items)?
+        };
+
+        Ok(occurrences.saturating_sub(non_tombstone_survivors))
+    }
+
+    /// Per-key wipe-and-rewrite. Returns the number of surviving (non-tombstone) rows.
+    fn prune_history_preceding_per_key<T, V>(
         &self,
         tx: &(impl DbTxMut + DbTx),
         cutoff_items: Vec<(T::Key, u64)>,
@@ -351,42 +407,60 @@ impl MdbxProofsStorage {
         T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
         T::Key: Clone + Ord,
     {
-        if cutoff_items.is_empty() {
-            return Ok(0);
-        }
-
-        let mut deleted_count = 0;
+        let mut non_tombstone_survivors = 0u64;
         let mut cur = tx.cursor_dup_write::<T>()?;
         for (key, survivor_block) in cutoff_items {
-            let Some(mut entry) = cur.seek_by_key_subkey(key, 0)? else { continue };
-            loop {
-                if entry.block_number >= survivor_block {
-                    // Reached the survivor version (or newer). Stop deleting for this key.
-                    // If the survivor is a tombstone (None), delete it too — with all older
-                    // history already gone, a tombstone at the new earliest is redundant
-                    // (it implies "does not exist").
-                    if entry.block_number == survivor_block && entry.value.0.is_none() {
-                        cur.delete_current()?;
-                        deleted_count += 1;
-                    }
-                    break;
-                }
+            let Some(survivor) = cur.seek_by_key_subkey(key.clone(), survivor_block)? else {
+                continue;
+            };
+            // `delete_current_duplicates` (`MDBX_NODUPDATA`) removes every dup of the key
+            // the cursor is currently positioned on, in a single syscall.
+            cur.delete_current_duplicates()?;
+            if survivor.value.0.is_some() {
+                // `upsert` on a DupSort table appends a new dup; with the group just
+                // emptied, this becomes the only row for `key`.
+                cur.upsert(key, &survivor)?;
+                non_tombstone_survivors += 1;
+            }
+            // Tombstone survivor: leaving the dup-group empty is correct — zero rows is
+            // semantically equivalent to "does not exist at this block".
+        }
+        Ok(non_tombstone_survivors)
+    }
 
-                // Entry is strictly older than survivor. Delete it.
-                cur.delete_current()?;
-                deleted_count += 1;
+    /// Sequential variant: walk the table forward and act on keys that appear in the cutoff
+    /// set. Wins over per-key seek when most of the table is being pruned (catch-up runs),
+    /// since OS page read-ahead amortizes I/O over many entries.
+    fn prune_history_preceding_sequential<T, V>(
+        &self,
+        tx: &(impl DbTxMut + DbTx),
+        cutoff_items: Vec<(T::Key, u64)>,
+    ) -> BaseProofsStorageResult<u64>
+    where
+        T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
+        T::Key: Clone + Ord + std::hash::Hash,
+    {
+        let cutoff: HashMap<T::Key, u64> = cutoff_items.into_iter().collect::<HashMap<_, _>>();
 
-                // libmdbx semantics: after `delete_current()` the cursor sits directly
-                // before the just-deleted slot, so `next_dup_val` (MDBX_NEXT_DUP) yields the
-                // following dup of the same key, or `None` once this key's dup-group is
-                // exhausted. That bound removes the need for an explicit key comparison.
-                match cur.next_dup_val()? {
-                    Some(next_entry) => entry = next_entry,
-                    None => break,
+        let mut non_tombstone_survivors = 0u64;
+        let mut cur = tx.cursor_dup_write::<T>()?;
+        let mut entry = cur.first()?;
+        while let Some((key, _first_dup)) = entry {
+            if let Some(&survivor_block) = cutoff.get(&key) {
+                let survivor = cur
+                    .seek_by_key_subkey(key.clone(), survivor_block)?
+                    .expect("survivor present: cutoff is derived from BlockChangeSet");
+                cur.delete_current_duplicates()?;
+                if survivor.value.0.is_some() {
+                    cur.upsert(key, &survivor)?;
+                    non_tombstone_survivors += 1;
                 }
             }
+            // `next_no_dup` advances to the first dup of the next key, skipping the
+            // remaining dups of the current key (or the empty slot left by a wipe).
+            entry = cur.next_no_dup()?;
         }
-        Ok(deleted_count)
+        Ok(non_tombstone_survivors)
     }
 
     /// Tombstone every key returned by `next`, then overlay `new_entries` so collisions
@@ -922,20 +996,28 @@ impl BaseProofsStore for MdbxProofsStorage {
         // --- PHASE 2: WRITE (Execute Deletions) ---
         self.env.update(|tx| {
             // 1. Execute Sparse Deletions and track actual deleted rows
-            let acc_deleted =
-                self.prune_history_preceding::<AccountTrieHistory, _>(tx, plan.acc_survivors)?;
+            let acc_deleted = self.prune_history_preceding::<AccountTrieHistory, _>(
+                tx,
+                plan.acc_survivors,
+                plan.acc_occurrences,
+            )?;
 
-            let st_deleted =
-                self.prune_history_preceding::<StorageTrieHistory, _>(tx, plan.storage_survivors)?;
+            let st_deleted = self.prune_history_preceding::<StorageTrieHistory, _>(
+                tx,
+                plan.storage_survivors,
+                plan.storage_occurrences,
+            )?;
 
             let ha_deleted = self.prune_history_preceding::<HashedAccountHistory, _>(
                 tx,
                 plan.hashed_acc_survivors,
+                plan.hashed_acc_occurrences,
             )?;
 
             let hs_deleted = self.prune_history_preceding::<HashedStorageHistory, _>(
                 tx,
                 plan.hashed_storage_survivors,
+                plan.hashed_storage_occurrences,
             )?;
 
             let counts = WriteCounts {
@@ -1280,7 +1362,7 @@ impl reth_db::database_metrics::DatabaseMetrics for MdbxProofsStorage {
 #[cfg(test)]
 mod tests {
     use alloy_eips::NumHash;
-    use alloy_primitives::B256;
+    use alloy_primitives::{B256, keccak256};
     use reth_db::{
         DatabaseError,
         cursor::DbDupCursorRO,
@@ -2896,6 +2978,67 @@ mod tests {
 
         assert_eq!(counts.hashed_accounts_written_total, 1);
         assert_eq!(counts.account_trie_updates_written_total, 0);
+    }
+
+    #[test]
+    fn prune_history_preceding_sequential_handles_tombstones_and_survivors() {
+        let dir = TempDir::new().unwrap();
+        let store = MdbxProofsStorage::new(dir.path()).expect("env");
+        store.set_earliest_block_number(0, B256::ZERO).unwrap();
+
+        let live = B256::from([0xA1; 32]);
+        let killed = B256::from([0xA2; 32]);
+        let single = B256::from([0xA3; 32]);
+        let acc = |n| Account { nonce: n, ..Default::default() };
+
+        let mut parent = B256::ZERO;
+        for n in 1u64..=3 {
+            let bwp = BlockWithParent::new(parent, NumHash::new(n, keccak256(n.to_be_bytes())));
+            let mut diff = HashedPostState::default();
+            diff.accounts.insert(live, Some(acc(n)));
+            if n == 2 {
+                diff.accounts.insert(killed, Some(acc(99)));
+            }
+            if n == 3 {
+                diff.accounts.insert(killed, None);
+                diff.accounts.insert(single, Some(acc(7)));
+            }
+            store
+                .store_trie_updates(
+                    bwp,
+                    BlockStateDiff { sorted_post_state: diff.into_sorted(), ..Default::default() },
+                )
+                .unwrap();
+            parent = bwp.block.hash;
+        }
+
+        let cutoff: Vec<(B256, u64)> = vec![(live, 3), (killed, 3), (single, 3)];
+
+        let tx = store.env.tx_mut().unwrap();
+        let kept = store
+            .prune_history_preceding_sequential::<HashedAccountHistory, _>(&tx, cutoff)
+            .unwrap();
+        tx.commit().unwrap();
+
+        // `live` and `single` survive with real values; `killed` survives as a tombstone
+        // and the entire dup-group is dropped.
+        assert_eq!(kept, 2);
+
+        let tx = store.env.tx().unwrap();
+        let mut cur = tx.cursor_dup_read::<HashedAccountHistory>().unwrap();
+
+        let live_row = cur.seek_by_key_subkey(live, 0).unwrap().expect("live survives");
+        assert_eq!(live_row.block_number, 3);
+        assert_eq!(live_row.value.0, Some(acc(3)));
+
+        let single_row = cur.seek_by_key_subkey(single, 0).unwrap().expect("single survives");
+        assert_eq!(single_row.block_number, 3);
+        assert_eq!(single_row.value.0, Some(acc(7)));
+
+        assert!(
+            cur.seek_by_key_subkey(killed, 0).unwrap().is_none(),
+            "tombstone survivor must drop the whole dup-group"
+        );
     }
 
     #[test]
