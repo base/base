@@ -2,9 +2,6 @@
 
 use crate::BaseSpecId;
 
-/// Base precompile installer for the Base EVM spec.
-pub type BasePrecompileInstaller = base_common_precompiles::BasePrecompileInstaller<BaseSpecId>;
-
 /// Base precompile provider for the Base EVM spec.
 pub type BasePrecompiles = base_common_precompiles::BasePrecompiles<BaseSpecId>;
 
