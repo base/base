@@ -11,7 +11,8 @@ use alloy_evm::precompiles::PrecompileInput;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use revm::{
     context::{Block, journaled_state::JournalCheckpoint},
-    interpreter::gas::{KECCAK256, KECCAK256WORD},
+    context_interface::cfg::GasParams,
+    interpreter::gas::{GasTracker, KECCAK256, KECCAK256WORD},
     primitives::keccak256,
     state::{AccountInfo, Bytecode},
 };
@@ -30,9 +31,8 @@ use crate::{
 pub struct EvmPrecompileStorageProvider<'a> {
     internals: alloy_evm::EvmInternals<'a>,
     caller: Address,
-    gas_limit: u64,
-    gas_used: u64,
-    gas_refunded: i64,
+    gas_tracker: GasTracker,
+    gas_params: GasParams,
     is_static: bool,
     block_number: u64,
     timestamp: U256,
@@ -42,7 +42,10 @@ pub struct EvmPrecompileStorageProvider<'a> {
 
 impl<'a> EvmPrecompileStorageProvider<'a> {
     /// Consume a [`PrecompileInput`] and build the provider.
-    pub fn new(input: PrecompileInput<'a>) -> Self {
+    ///
+    /// `gas_params` drives all EIP-2929/2200/3529 cost calculations.
+    /// Pass [`GasParams::default`] when the active spec is unknown at call site.
+    pub fn new(input: PrecompileInput<'a>, gas_params: GasParams) -> Self {
         let PrecompileInput { gas, caller, is_static, internals, .. } = input;
 
         let block_number = internals.block_env().number().to::<u64>();
@@ -53,9 +56,8 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
         Self {
             internals,
             caller,
-            gas_limit: gas,
-            gas_used: 0,
-            gas_refunded: 0,
+            gas_tracker: GasTracker::new(gas, gas, 0),
+            gas_params,
             is_static,
             block_number,
             timestamp,
@@ -124,28 +126,26 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn deduct_gas(&mut self, gas: u64) -> Result<()> {
-        let new_used = self.gas_used.checked_add(gas).ok_or(BasePrecompileError::OutOfGas)?;
-        if new_used > self.gas_limit {
+        if !self.gas_tracker.record_regular_cost(gas) {
             return Err(BasePrecompileError::OutOfGas);
         }
-        self.gas_used = new_used;
         Ok(())
     }
 
     fn refund_gas(&mut self, gas: i64) {
-        self.gas_refunded = self.gas_refunded.saturating_add(gas);
+        self.gas_tracker.record_refund(gas);
     }
 
     fn gas_limit(&self) -> u64 {
-        self.gas_limit
+        self.gas_tracker.limit()
     }
 
     fn gas_used(&self) -> u64 {
-        self.gas_used
+        self.gas_tracker.limit() - self.gas_tracker.remaining()
     }
 
     fn gas_refunded(&self) -> i64 {
-        self.gas_refunded
+        self.gas_tracker.refunded()
     }
 
     fn is_static(&self) -> bool {
