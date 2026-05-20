@@ -297,33 +297,16 @@ where
                         sorted_trie_updates,
                         sorted_post_state,
                     } => {
-                        let result = session.store_trie_updates(
+                        let counts = session.store_trie_updates(
                             block_with_parent,
                             BlockStateDiff {
                                 sorted_trie_updates: (*sorted_trie_updates).clone(),
                                 sorted_post_state: (*sorted_post_state).clone(),
                             },
-                        );
-                        match result {
-                            Ok(counts) => {
-                                total_writes += counts;
-                                block_count += 1;
-                                last_block_number = block_with_parent.block.number;
-                            }
-                            Err(BaseProofsStorageError::OutOfOrder {
-                                block_number,
-                                latest_block_hash,
-                                parent_block_hash,
-                            }) => {
-                                warn!(
-                                    block_number,
-                                    ?latest_block_hash,
-                                    ?parent_block_hash,
-                                    "Skipping out-of-order cached block in batch",
-                                );
-                            }
-                            Err(e) => return Err(e),
-                        }
+                        )?;
+                        total_writes += counts;
+                        block_count += 1;
+                        last_block_number = block_with_parent.block.number;
                     }
                     BatchBlock::Execute(block) => {
                         let counts = self.execute_one_in_session(session, &block, earliest)?;

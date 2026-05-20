@@ -12,8 +12,10 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip1898::BlockWithParent;
+#[cfg(feature = "metrics")]
+use base_execution_trie::BaseProofsStore;
 use base_execution_trie::{
-    BaseProofStoragePrunerTask, BaseProofsBatchStore, BaseProofsStorage, BaseProofsStore,
+    BaseProofStoragePrunerTask, BaseProofsBatchStore, BaseProofsStorage,
     live::{BatchBlock, LiveTrieCollector},
     metrics::BlockMetrics,
 };
