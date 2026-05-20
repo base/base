@@ -8,8 +8,8 @@ use super::{
     abi::{IB20, IB20::IB20Calls as C},
 };
 use crate::{
-    Burnable, Configurable, Mintable, Pausable, Permittable, Policy, Redeemable, TokenAccounting,
-    Transferable,
+    ActivationRegistryStorage, Burnable, Configurable, Mintable, Pausable, Permittable, Policy,
+    Redeemable, TokenAccounting, Transferable,
 };
 
 impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
@@ -36,6 +36,9 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
+        ActivationRegistryStorage::new(ctx)
+            .ensure_activated(ActivationRegistryStorage::B20_TOKEN)?;
+
         if calldata.len() < 4 {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
         }

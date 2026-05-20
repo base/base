@@ -1,8 +1,8 @@
 use alloy_chains::Chain;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
+use alloy_primitives::Address;
 use base_common_chains::BaseUpgrade;
-use derive_more::From;
 use reth_chainspec::ChainSpecBuilder;
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_primitives_traits::SealedHeader;
@@ -10,10 +10,12 @@ use reth_primitives_traits::SealedHeader;
 use crate::BaseChainSpec;
 
 /// Chain spec builder for a Base chain.
-#[derive(Debug, Default, From)]
+#[derive(Debug, Default)]
 pub struct BaseChainSpecBuilder {
     /// [`ChainSpecBuilder`]
     inner: ChainSpecBuilder,
+    /// Activation registry admin address.
+    activation_admin_address: Option<Address>,
 }
 
 impl BaseChainSpecBuilder {
@@ -25,7 +27,7 @@ impl BaseChainSpecBuilder {
             .genesis(base_mainnet.genesis.clone());
         let forks = base_mainnet.hardforks.clone();
         inner = inner.with_forks(forks);
-        Self { inner }
+        Self { inner, activation_admin_address: base_mainnet.activation_admin_address }
     }
 
     /// Set the chain ID.
@@ -49,6 +51,18 @@ impl BaseChainSpecBuilder {
     /// Add the given forks with the given activation condition to the spec.
     pub fn with_forks(mut self, forks: ChainHardforks) -> Self {
         self.inner = self.inner.with_forks(forks);
+        self
+    }
+
+    /// Set the activation registry admin address.
+    pub const fn activation_admin_address(mut self, address: Address) -> Self {
+        self.activation_admin_address = Some(address);
+        self
+    }
+
+    /// Set or clear the activation registry admin address.
+    pub const fn optional_activation_admin_address(mut self, address: Option<Address>) -> Self {
+        self.activation_admin_address = address;
         self
     }
 
@@ -150,6 +164,6 @@ impl BaseChainSpecBuilder {
             &inner.genesis,
             &inner.hardforks,
         ));
-        BaseChainSpec { inner }
+        BaseChainSpec { inner, activation_admin_address: self.activation_admin_address }
     }
 }

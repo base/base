@@ -1,4 +1,5 @@
 use alloy_evm::{Database, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
+use alloy_primitives::Address;
 use revm::{
     Context, Inspector,
     context::{BlockEnv, TxEnv},
@@ -15,9 +16,30 @@ use crate::{
 ///
 /// Base precompiles are eagerly flattened into a [`PrecompilesMap`] on construction so that
 /// precompile dispatch is a single hash-map lookup rather than a spec-aware branch on every call.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
-pub struct BaseEvmFactory;
+pub struct BaseEvmFactory {
+    /// Activation registry admin address.
+    activation_admin_address: Option<Address>,
+}
+
+impl BaseEvmFactory {
+    /// Creates a new [`BaseEvmFactory`] with the given activation registry admin address.
+    pub const fn new(activation_admin_address: Option<Address>) -> Self {
+        Self { activation_admin_address }
+    }
+
+    /// Returns the activation registry admin address.
+    pub const fn activation_admin_address(&self) -> Option<Address> {
+        self.activation_admin_address
+    }
+}
+
+impl Default for BaseEvmFactory {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
 
 impl EvmFactory for BaseEvmFactory {
     type Evm<DB: Database, I: Inspector<BaseContext<DB>>> = BaseEvm<DB, I, PrecompilesMap>;
@@ -42,7 +64,11 @@ impl EvmFactory for BaseEvmFactory {
             .with_cfg(input.cfg_env)
             .build_base()
             .with_inspector(NoOpInspector {})
-            .with_precompiles(BasePrecompiles::new_with_spec(spec_id).install())
+            .with_precompiles(
+                BasePrecompiles::new_with_spec(spec_id)
+                    .with_activation_admin_address(self.activation_admin_address)
+                    .install(),
+            )
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -57,6 +83,10 @@ impl EvmFactory for BaseEvmFactory {
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
             .build_with_inspector(inspector)
-            .with_precompiles(BasePrecompiles::new_with_spec(spec_id).install())
+            .with_precompiles(
+                BasePrecompiles::new_with_spec(spec_id)
+                    .with_activation_admin_address(self.activation_admin_address)
+                    .install(),
+            )
     }
 }

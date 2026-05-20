@@ -1206,7 +1206,7 @@ mod tests {
         let inner =
             ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
 
-        Arc::new(BaseChainSpec { inner })
+        Arc::new(BaseChainSpec::from(inner))
     }
 
     /// Builds a sealed genesis header consistent with [`minimal_chain_spec`].

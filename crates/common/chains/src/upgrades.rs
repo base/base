@@ -1,4 +1,5 @@
 use alloy_hardforks::{EthereumHardforks, ForkCondition};
+use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
 
 use crate::BaseUpgrade;
@@ -9,6 +10,11 @@ pub trait Upgrades: EthereumHardforks {
     /// Retrieves [`ForkCondition`] by a [`BaseUpgrade`]. If `fork` is not present, returns
     /// [`ForkCondition::Never`].
     fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition;
+
+    /// Returns the activation registry admin address.
+    fn activation_admin_address(&self) -> Option<Address> {
+        None
+    }
 
     /// Convenience method to check if [`BaseUpgrade::Bedrock`] is active at a given block
     /// number.

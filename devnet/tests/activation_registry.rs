@@ -4,8 +4,11 @@ mod common;
 
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
-use base_common_precompiles::{ActivationRegistry, IActivationRegistry};
-use devnet::{B20PrecompileClient, config::ANVIL_ACCOUNT_5};
+use base_common_precompiles::{ActivationRegistryStorage, IActivationRegistry};
+use devnet::{
+    B20PrecompileClient,
+    config::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6},
+};
 use eyre::{Result, WrapErr};
 
 /// `isActivated` returns `false` for every feature id by default.
@@ -21,9 +24,9 @@ async fn test_activation_registry_is_activated_default() -> Result<()> {
 
     let output = client
         .call(
-            ActivationRegistry::ADDRESS,
+            ActivationRegistryStorage::ADDRESS,
             IActivationRegistry::isActivatedCall {
-                feature: ActivationRegistry::SECURITIES_TOKEN_CREATION,
+                feature: ActivationRegistryStorage::SECURITIES_TOKEN_CREATION,
             },
         )
         .await?;
@@ -35,7 +38,7 @@ async fn test_activation_registry_is_activated_default() -> Result<()> {
     Ok(())
 }
 
-/// `admin()` returns the hardcoded activation admin address.
+/// `admin()` returns the generated devnet activation admin address.
 #[tokio::test]
 async fn test_activation_registry_admin() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
@@ -47,11 +50,11 @@ async fn test_activation_registry_admin() -> Result<()> {
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
     let output =
-        client.call(ActivationRegistry::ADDRESS, IActivationRegistry::adminCall {}).await?;
+        client.call(ActivationRegistryStorage::ADDRESS, IActivationRegistry::adminCall {}).await?;
     let admin_addr = IActivationRegistry::adminCall::abi_decode_returns(output.as_ref())
         .wrap_err("Failed to decode admin")?;
 
-    assert_eq!(admin_addr, ActivationRegistry::ADMIN);
+    assert_eq!(admin_addr, ANVIL_ACCOUNT_5.address);
 
     Ok(())
 }
@@ -60,7 +63,7 @@ async fn test_activation_registry_admin() -> Result<()> {
 #[tokio::test]
 async fn test_activation_registry_unauthorized_activate_reverts() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
-    let non_admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
+    let non_admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_6.private_key)
         .wrap_err("Failed to parse devnet private key")?;
     common::wait_for_balance(&provider, non_admin.address()).await?;
 
@@ -69,9 +72,9 @@ async fn test_activation_registry_unauthorized_activate_reverts() -> Result<()> 
 
     let succeeded = client
         .try_send_call(
-            ActivationRegistry::ADDRESS,
+            ActivationRegistryStorage::ADDRESS,
             IActivationRegistry::activateCall {
-                feature: ActivationRegistry::SECURITIES_TOKEN_CREATION,
+                feature: ActivationRegistryStorage::SECURITIES_TOKEN_CREATION,
             },
             "activate (unauthorized)",
         )
@@ -82,9 +85,9 @@ async fn test_activation_registry_unauthorized_activate_reverts() -> Result<()> 
     // Feature remains inactive after the failed attempt.
     let output = client
         .call(
-            ActivationRegistry::ADDRESS,
+            ActivationRegistryStorage::ADDRESS,
             IActivationRegistry::isActivatedCall {
-                feature: ActivationRegistry::SECURITIES_TOKEN_CREATION,
+                feature: ActivationRegistryStorage::SECURITIES_TOKEN_CREATION,
             },
         )
         .await?;

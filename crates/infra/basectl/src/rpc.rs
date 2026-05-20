@@ -849,6 +849,95 @@ pub async fn conductor_resume_node(
     let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
 }
 
+/// Pauses op-conductor's control loop on every node in `nodes` in parallel.
+///
+/// Returns a single summary string suitable for a toast. Per-node errors are
+/// collated into the summary so an operator sees both the success count and
+/// the names of any nodes that failed. Returns `Ok` only when every node
+/// succeeded; otherwise returns `Err` with the same summary text so the TUI
+/// surfaces it as a warning.
+pub async fn conductor_pause_all_nodes(
+    nodes: Vec<ConductorNodeConfig>,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    let summary = fan_out_conductor_control(nodes, "paused", |client| async move {
+        ConductorApiClient::conductor_pause(&client).await.map_err(|e| anyhow::anyhow!("{e}"))
+    })
+    .await;
+    let _ = result_tx.send(summary).await;
+}
+
+/// Resumes op-conductor's control loop on every node in `nodes` in parallel.
+///
+/// Mirrors [`conductor_pause_all_nodes`] in error handling and summary format.
+pub async fn conductor_resume_all_nodes(
+    nodes: Vec<ConductorNodeConfig>,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    let summary = fan_out_conductor_control(nodes, "resumed", |client| async move {
+        ConductorApiClient::conductor_resume(&client).await.map_err(|e| anyhow::anyhow!("{e}"))
+    })
+    .await;
+    let _ = result_tx.send(summary).await;
+}
+
+/// Runs a per-node conductor control RPC against every node concurrently and
+/// builds a single summary toast string.
+///
+/// `verb` is the past-tense action ("paused" / "resumed") used in the message.
+async fn fan_out_conductor_control<F, Fut>(
+    nodes: Vec<ConductorNodeConfig>,
+    verb: &'static str,
+    call: F,
+) -> Result<String, String>
+where
+    F: Fn(jsonrpsee::http_client::HttpClient) -> Fut + Send + Sync + Clone + 'static,
+    Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
+{
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    if nodes.is_empty() {
+        return Err(format!("no conductor nodes to {verb}"));
+    }
+    let total = nodes.len();
+
+    let results: Vec<(String, anyhow::Result<()>)> = stream::iter(nodes)
+        .map(|node| {
+            let call = call.clone();
+            async move {
+                let outcome: anyhow::Result<()> = async {
+                    let client = HttpClientBuilder::default()
+                        .request_timeout(TIMEOUT)
+                        .build(node.conductor_rpc.as_str())
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    call(client).await
+                }
+                .await;
+                (node.name, outcome)
+            }
+        })
+        .buffer_unordered(total.max(1))
+        .collect()
+        .await;
+
+    let (ok, failures): (Vec<_>, Vec<_>) = results.into_iter().partition(|(_, r)| r.is_ok());
+    let ok_count = ok.len();
+
+    if failures.is_empty() {
+        Ok(format!("conductor {verb} on {ok_count}/{total} nodes"))
+    } else {
+        let detail = failures
+            .iter()
+            .map(|(name, r)| {
+                let err = r.as_ref().err().map_or_else(String::new, ToString::to_string);
+                format!("{name}: {err}")
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        Err(format!("conductor {verb} on {ok_count}/{total} nodes; failures: {detail}"))
+    }
+}
+
 /// Starts the sequencer on a single node via `admin_startSequencer`.
 ///
 /// The `unsafe_head` hash must match the node's current engine unsafe head; the

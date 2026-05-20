@@ -95,6 +95,8 @@ pub struct ChainConfig {
     // Roles
     /// Unsafe block signer address.
     pub unsafe_block_signer: Option<Address>,
+    /// Activation registry admin address.
+    pub activation_admin_address: Option<Address>,
 
     // Gas limits
     /// Maximum gas limit for L2 blocks.
@@ -360,6 +362,7 @@ const MAINNET: ChainConfig = ChainConfig {
     protocol_versions_address: address!("8062abc286f5e7d9428a0ccb9abd71e50d93b935"),
 
     unsafe_block_signer: Some(address!("Af6E19BE0F9cE7f8afd49a1824851023A8249e8a")),
+    activation_admin_address: None,
 
     max_gas_limit: 105_000_000,
     prune_delete_limit: 20_000,
@@ -432,6 +435,7 @@ const SEPOLIA: ChainConfig = ChainConfig {
     protocol_versions_address: address!("79add5713b383daa0a138d3c4780c7a1804a8090"),
 
     unsafe_block_signer: Some(address!("b830b99c95Ea32300039624Cb567d324D4b1D83C")),
+    activation_admin_address: None,
 
     max_gas_limit: 45_000_000,
     prune_delete_limit: 10_000,
@@ -495,6 +499,7 @@ const DEVNET: ChainConfig = ChainConfig {
     protocol_versions_address: Address::ZERO,
 
     unsafe_block_signer: None,
+    activation_admin_address: None,
 
     max_gas_limit: 30_000_000,
     prune_delete_limit: 20_000,
@@ -547,6 +552,7 @@ const ZERONET: ChainConfig = ChainConfig {
     protocol_versions_address: address!("646c8604cf62b23e0cf094f2e790c6c75547ff85"),
 
     unsafe_block_signer: Some(address!("cf17274338d3128f6C96d9af54511a17e8b38a08")),
+    activation_admin_address: None,
 
     max_gas_limit: 25_000_000,
     prune_delete_limit: 10_000,
