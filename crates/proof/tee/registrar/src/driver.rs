@@ -2159,6 +2159,16 @@ mod tests {
         release: CancellationToken,
         call_count: AtomicUsize,
         in_flight: AtomicUsize,
+        /// Optional per-signer failure routing. If a signer address is
+        /// present in this set, [`GatedProofProvider::generate_proof_for_signer`]
+        /// returns a synthetic [`ProverError::Boundless`] immediately
+        /// (skipping the release gate) so tests can observe the
+        /// failure-path behaviour of `try_register` without having to
+        /// stand up a second proof provider type. The check happens
+        /// before [`GatedProofState::call_count`] is incremented, so
+        /// failed signers do not contribute to the in-flight count
+        /// either.
+        fail_for: Mutex<HashSet<Address>>,
     }
 
     /// RAII guard that bumps and decrements [`GatedProofState::in_flight`].
@@ -2213,6 +2223,19 @@ mod tests {
                 proof_bytes: Bytes::from_static(b"gated-proof"),
             })
         }
+
+        async fn generate_proof_for_signer(
+            &self,
+            attestation_bytes: &[u8],
+            signer_address: Address,
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            if self.state.fail_for.lock().unwrap().contains(&signer_address) {
+                return Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
+                    "synthetic failure injected by GatedProofProvider".into(),
+                ));
+            }
+            self.generate_proof(attestation_bytes).await
+        }
     }
 
     /// Test-side handle for inspecting and releasing a [`GatedProofProvider`].
@@ -2234,6 +2257,15 @@ mod tests {
 
         fn in_flight(&self) -> usize {
             self.state.in_flight.load(Ordering::SeqCst)
+        }
+
+        /// Configures [`GatedProofProvider::generate_proof_for_signer`]
+        /// to return a synthetic [`ProverError::Boundless`] for the
+        /// given signer addresses on every subsequent call. The check
+        /// happens **before** the gate, so failing tasks do not affect
+        /// [`Self::call_count`] or [`Self::in_flight`].
+        fn fail_for_signers(&self, signers: impl IntoIterator<Item = Address>) {
+            self.state.fail_for.lock().unwrap().extend(signers);
         }
     }
 
@@ -4354,6 +4386,139 @@ mod tests {
         let sent = harness.tx.sent_calldata();
         assert_eq!(count_register_calls(&sent), 0, "no registration submitted at shutdown");
     }
+
+    // ── apply_join_outcome + run() additional coverage ──────────────────
+    //
+    // These cover three gaps left after the initial spawn-and-reap test
+    // suite: the panic arm of [`apply_join_outcome`], the proof-failure
+    // path through [`RegistrationDriver::try_register`], and a single
+    // cycle that fires both the registration and orphan-dereg passes.
+
+    #[tokio::test]
+    async fn apply_join_outcome_drops_pending_entry_when_task_panics() {
+        // The `Err(JoinError)` arm of `apply_join_outcome` must still
+        // remove the panicked task from `pending` (using
+        // `JoinError::id()` to find it) so the per-task cancel handle
+        // is dropped and the proof-task-completed metric still fires.
+        // The full reap path is exercised so this is also a coverage
+        // test for `reap_finished_tasks` routing the JoinError correctly.
+        let mut tasks: JoinSet<Result<()>> = JoinSet::new();
+        let mut pending: HashMap<task::Id, PendingTask> = HashMap::new();
+
+        let handle = tasks.spawn(async {
+            panic!("synthetic proof-task panic for apply_join_outcome test");
+        });
+        pending
+            .insert(handle.id(), pending_task_for_test(HARDHAT_ACCOUNT, TEST_PENDING_INSTANCE_ID));
+
+        reap_until_pending_empty(&mut tasks, &mut pending).await;
+
+        assert!(pending.is_empty(), "panicked task must be evicted from pending");
+        assert!(tasks.is_empty(), "JoinSet must drain to empty");
+    }
+
+    #[tokio::test]
+    async fn run_isolates_proof_failure_and_continues_pipeline_for_other_signers() {
+        // EP1's proof errors out; EP2's proof must still complete and
+        // submit a registration. This proves:
+        //   1. The failing task does not park the gate (EP1 errors
+        //      before the await in `generate_proof`), so the loop sees
+        //      exactly one in-flight task.
+        //   2. EP2's registration lands — the failing task did not
+        //      block the pipeline serially behind it.
+        //   3. The failed task is evicted from `pending`, so shutdown
+        //      drains cleanly within [`GATED_WAIT_TIMEOUT`].
+        //
+        // The failing signer's proof returns `Err` *before* the
+        // `tx_manager.send()` call in `try_register`, so it can never
+        // produce a `registerSigner` calldata frame — regardless of
+        // how many cycles re-spawn it under the static `MockRegistry`.
+        // Every entry in `count_register_calls` is therefore attributable
+        // to the surviving signer.
+        let harness = multi_healthy_harness(2);
+        let failing_signer =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let surviving_signer =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
+        assert_ne!(failing_signer, surviving_signer, "test setup: distinct signer addresses");
+        harness.proof.fail_for_signers([failing_signer]);
+
+        let run_handle = harness.spawn_run();
+
+        // Only the surviving signer's task should park in the gate —
+        // the failing task errors immediately and returns from
+        // `try_register` without awaiting.
+        wait_for(
+            "exactly one proof parked (failing signer errored before the gate)",
+            || harness.proof.in_flight() == 1,
+        )
+        .await;
+
+        // Release the gate so the surviving signer can register.
+        harness.proof.release_all();
+        wait_for(
+            "surviving signer registered while failing signer errored",
+            || count_register_calls(&harness.tx.sent_calldata()) >= 1,
+        )
+        .await;
+
+        harness.shutdown(run_handle).await;
+
+        // Final state: at least one registration landed, the gate
+        // observed exactly one parked task (asserted above), and no
+        // tasks are still in flight after shutdown.
+        assert_eq!(harness.proof.in_flight(), 0, "every parked proof returned by shutdown");
+    }
+
+    #[tokio::test]
+    async fn run_handles_orphan_dereg_and_active_registration_in_same_cycle() {
+        // Mixed-mode cycle: EP1 is healthy + unregistered (so it must
+        // register), while ORPHAN_A is already on-chain but has no
+        // backing instance (so it must be deregistered). Both passes
+        // must run in the same cycle and both transactions must land.
+        let harness = GatedRunHarness::new(
+            vec![instance(EP1, InstanceHealthStatus::Healthy)],
+            &[(EP1, &HARDHAT_KEY_0)],
+            MockRegistry::with_signers(vec![ORPHAN_A]),
+        );
+
+        let run_handle = harness.spawn_run();
+
+        // Orphan dereg runs in the foreground each cycle; it must
+        // submit immediately without waiting for the proof gate.
+        wait_for(
+            "ORPHAN_A deregistered",
+            || count_deregister_calls(&harness.tx.sent_calldata()) == 1,
+        )
+        .await;
+
+        // EP1's proof is parked in the gate; releasing it must let
+        // the registration through alongside the already-completed
+        // dereg.
+        wait_for("EP1 proof parked", || harness.proof.in_flight() == 1).await;
+        harness.proof.release_all();
+        wait_for("EP1 registered", || count_register_calls(&harness.tx.sent_calldata()) == 1)
+            .await;
+
+        harness.shutdown(run_handle).await;
+
+        let sent = harness.tx.sent_calldata();
+        assert_eq!(count_register_calls(&sent), 1, "EP1 registration submitted exactly once");
+        assert_eq!(count_deregister_calls(&sent), 1, "ORPHAN_A deregistration submitted exactly once");
+    }
+
+    // NOTE on real-data fixtures: the pipeline tests above intentionally
+    // use the [`GatedProofProvider`] (which synthesises empty
+    // attestation-proof bytes) and the [`MockSignerClient`]'s default
+    // `b"mock-attestation"` byte string. The end-to-end run loop never
+    // parses these blobs in this test configuration: CRL pre-checks are
+    // disabled in [`default_config`], and `MockRegistry` does not verify
+    // calldata. The canonical 4-certificate chain from
+    // `crate::test_utils` is exercised separately and exhaustively by
+    // the OnchainRevocationCheck tests below, which target the actual
+    // cert-parsing code paths. Mixing real cert bytes into these
+    // orchestration tests would not exercise any additional code and
+    // would add ~3 KB of attestation byte literals to every test run.
 
     // ── OnchainRevocationCheck tests ────────────────────────────────────
     //
