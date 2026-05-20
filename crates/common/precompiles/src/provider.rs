@@ -213,9 +213,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{
-        ActivationRegistry, TokenFactory, TokenVariant, bls12_381, bn254_pair,
-    };
+    use crate::{ActivationRegistry, TokenFactory, TokenVariant, bls12_381, bn254_pair};
 
     type TestPrecompiles = BasePrecompiles<BaseUpgrade>;
 
