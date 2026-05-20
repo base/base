@@ -36,11 +36,11 @@ use crate::{
 /// Warm SLOAD / TLOAD cost (EIP-2929 / EIP-1153).
 const WARM_SLOAD: u64 = 100;
 
-/// Warm SSTORE cost for changing a nonzero slot (EIP-2929 SSTORE_RESET).
+/// Warm SSTORE cost for changing a nonzero slot (EIP-2929 `SSTORE_RESET`).
 ///
 /// All B20 storage is initialised by the factory before users can call, so
-/// every write we make is nonzero→nonzero. The first-write cost (SSTORE_SET =
-/// 20_000) was paid at deployment; subsequent writes use SSTORE_RESET = 2_900.
+/// every write we make is nonzero→nonzero. The first-write cost (`SSTORE_SET` =
+/// `20_000`) was paid at deployment; subsequent writes use `SSTORE_RESET` = `2_900`.
 const WARM_SSTORE: u64 = 2_900;
 
 /// TSTORE cost (EIP-1153) — same as warm storage read.
