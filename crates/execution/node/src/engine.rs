@@ -369,7 +369,7 @@ mod tests {
     use base_common_chains::ChainConfig;
     use base_common_consensus::BaseTxEnvelope;
     use base_common_rpc_types_engine::BasePayloadAttributes;
-    use base_execution_chainspec::{BASE_SEPOLIA, BaseChainSpec};
+    use base_execution_chainspec::BaseChainSpec;
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;
 

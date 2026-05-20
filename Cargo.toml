@@ -286,7 +286,7 @@ revm = { version = "38.0.0", default-features = false }
 revm-bytecode = { version = "10.0.0", default-features = false }
 revm-database = { version = "13.0.0", default-features = false }
 revm-inspectors = { version = "0.39.0", default-features = false }
-revm-precompile = { version = "34.0.0", default-features = false }
+revm-precompile = { version = "32.0.0", default-features = false }
 revm-primitives = { version = "23.0.0", default-features = false }
 revm-context-interface = { version = "17.0.1", default-features = false }
 
@@ -609,3 +609,16 @@ toml = { version = "1.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 unsigned-varint = { version = "0.8", default-features = false }
 ark-bls12-381 = { version = "0.5.0", default-features = false }
+
+[patch.crates-io]
+sp1-sdk = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
+sp1-build = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
+sp1-prover = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
+sp1-primitives = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
+sp1-prover-types = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
+sp1-core-executor = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
+sp1-core-machine = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
+sp1-hypercube = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
+sp1-recursion-circuit = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
+sp1-recursion-compiler = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
+sp1-recursion-executor = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }

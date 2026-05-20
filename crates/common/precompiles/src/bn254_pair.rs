@@ -7,11 +7,11 @@ use revm::precompile::{
 /// Max input size for the bn254 pair precompile after the Granite hardfork.
 pub(crate) const GRANITE_MAX_INPUT_SIZE: usize = 112687;
 /// Bn254 pair precompile with Granite input limits.
-pub const GRANITE: Precompile =
+pub(crate) const GRANITE: Precompile =
     Precompile::new(PrecompileId::Bn254Pairing, bn254::pair::ADDRESS, run_pair_granite);
 
 /// Run the bn254 pair precompile with Granite input limit.
-pub fn run_pair_granite(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
+pub(crate) fn run_pair_granite(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > GRANITE_MAX_INPUT_SIZE {
         return Err(PrecompileError::Fatal("Bn254PairLength".to_string()));
     }
@@ -31,13 +31,13 @@ pub fn run_pair_granite(input: &[u8], gas_limit: u64, reservoir: u64) -> Precomp
 }
 
 /// Max input size for the bn254 pair precompile after the Jovian hardfork.
-pub(crate) const JOVIAN_MAX_INPUT_SIZE: usize = 81_984;
+pub const JOVIAN_MAX_INPUT_SIZE: usize = 81_984;
 /// Bn254 pair precompile with Jovian input limits.
 pub const JOVIAN: Precompile =
     Precompile::new(PrecompileId::Bn254Pairing, bn254::pair::ADDRESS, run_pair_jovian);
 
 /// Run the bn254 pair precompile with Jovian input limit.
-pub fn run_pair_jovian(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
+pub(crate) fn run_pair_jovian(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
     if input.len() > JOVIAN_MAX_INPUT_SIZE {
         return Err(PrecompileError::Fatal("Bn254PairLength".to_string()));
     }

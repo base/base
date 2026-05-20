@@ -1197,8 +1197,7 @@ mod tests {
     use base_common_consensus::BaseTypedTransaction;
     use base_execution_chainspec::BaseChainSpec;
     use reth_chainspec::ChainSpec;
-    use reth_primitives::SealedHeader;
-    use reth_primitives_traits::WithEncoded;
+    use reth_primitives_traits::{SealedHeader, WithEncoded};
     use reth_provider::noop::NoopProvider;
     use reth_revm::{State, database::StateProviderDatabase};
 

@@ -286,7 +286,7 @@ mod tests {
         let precompile = precompiles.get(&address).unwrap();
         let input = vec![0u8; input_len];
         assert!(
-            precompile.execute(&input, u64::MAX).is_ok(),
+            precompile.execute(&input, u64::MAX, 0).is_ok(),
             "precompile {address} should succeed at max input size"
         );
     }

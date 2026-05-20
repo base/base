@@ -426,15 +426,16 @@ mod tests {
         precompiles::{Precompile, PrecompileInput},
     };
     use alloy_primitives::{Address, U256};
+    use base_common_precompiles::{
+        JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM,
+        JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
+        JOVIAN_PAIRING_MAX_INPUT_SIZE,
+    };
     use revm::{context::CfgEnv, database::EmptyDB};
     use rstest::rstest;
 
     use super::*;
-    use crate::{
-        BaseEvmFactory, JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM,
-        JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
-        JOVIAN_PAIRING_MAX_INPUT_SIZE, OpSpecId,
-    };
+    use crate::{BaseEvmFactory, BaseSpecId, BaseUpgrade};
 
     #[rstest]
     #[case::bn254_pair(*JOVIAN.address(), JOVIAN_MAX_INPUT_SIZE)]
@@ -444,7 +445,10 @@ mod tests {
     fn precompile_jovian_at_max_input(#[case] address: Address, #[case] max_size: usize) {
         let mut evm = BaseEvmFactory::default().create_evm(
             EmptyDB::default(),
-            EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::JOVIAN), BlockEnv::default()),
+            EvmEnv::new(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Jovian)),
+                BlockEnv::default(),
+            ),
         );
         let (precompiles, ctx) = (&mut evm.inner.precompiles, &mut evm.inner.ctx);
         let precompile = precompiles.get(&address).unwrap();
@@ -470,7 +474,10 @@ mod tests {
     fn precompile_jovian_over_max_input(#[case] address: Address, #[case] max_size: usize) {
         let mut evm = BaseEvmFactory::default().create_evm(
             EmptyDB::default(),
-            EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::JOVIAN), BlockEnv::default()),
+            EvmEnv::new(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Jovian)),
+                BlockEnv::default(),
+            ),
         );
         let (precompiles, ctx) = (&mut evm.inner.precompiles, &mut evm.inner.ctx);
         let precompile = precompiles.get(&address).unwrap();
