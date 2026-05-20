@@ -528,7 +528,15 @@ impl MdbxProofsStorage {
         let mut storage_trie_keys = Vec::<StorageTrieKey>::with_capacity(storage_trie_len);
         for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
             if nodes.is_deleted && append_mode {
-                let mut ro = self.storage_trie_cursor(*hashed_address, block_number - 1)?;
+                // Lookback must use the active tx so it sees uncommitted writes from earlier
+                // blocks in the same batch session. Opening a fresh RO tx here would read the
+                // pre-batch committed snapshot and emit wrong tombstones for wipe blocks whose
+                // parent is staged in the same batch.
+                let mut ro = MdbxTrieCursor::<StorageTrieHistory, _>::new(
+                    tx.cursor_dup_read::<StorageTrieHistory>()?,
+                    block_number - 1,
+                    Some(*hashed_address),
+                );
                 let keys = self.wipe_and_overlay(
                     tx,
                     block_number,
@@ -556,7 +564,12 @@ impl MdbxProofsStorage {
         let mut hashed_storage_keys = Vec::<HashedStorageKey>::with_capacity(hashed_storage_len);
         for (hashed_address, storage) in sorted_post_state.storages {
             if append_mode && storage.is_wiped() {
-                let mut ro = self.storage_hashed_cursor(hashed_address, block_number - 1)?;
+                // See lookback note above: must use the active tx, not a fresh RO tx.
+                let mut ro = MdbxStorageCursor::new(
+                    tx.cursor_dup_read::<HashedStorageHistory>()?,
+                    block_number - 1,
+                    hashed_address,
+                );
                 let keys = self.wipe_and_overlay(
                     tx,
                     block_number,
