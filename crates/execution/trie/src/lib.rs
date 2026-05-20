@@ -46,7 +46,7 @@ pub mod proof;
 
 pub mod provider;
 
-pub mod batch_provider;
+mod batch_provider;
 pub use batch_provider::BaseProofsBatchStateProviderRef;
 
 pub mod live;
