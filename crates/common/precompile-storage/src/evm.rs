@@ -134,6 +134,13 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         Ok(())
     }
 
+    fn deduct_state_gas(&mut self, gas: u64) -> Result<()> {
+        if !self.gas_tracker.record_state_cost(gas) {
+            return Err(BasePrecompileError::OutOfGas);
+        }
+        Ok(())
+    }
+
     fn refund_gas(&mut self, gas: i64) {
         self.gas_tracker.record_refund(gas);
     }
