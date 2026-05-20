@@ -20,9 +20,15 @@ impl B20TokenPrecompile {
     }
 
     /// Returns the B-20 token precompile for `address`, if the address encodes a supported token.
+    ///
+    /// Stablecoin and security discriminants route through the shared B-20 dispatcher because those
+    /// variants inherit the base B-20 surface. Until their factory creation arms are enabled, calls
+    /// to undeployed addresses still fail the token initialization guard.
     pub fn lookup(address: &Address) -> Option<DynPrecompile> {
         TokenVariant::from_address(*address).map(|variant| match variant {
-            TokenVariant::B20 => Self::create_precompile(*address),
+            TokenVariant::B20 | TokenVariant::Stablecoin | TokenVariant::Security => {
+                Self::create_precompile(*address)
+            }
         })
     }
 

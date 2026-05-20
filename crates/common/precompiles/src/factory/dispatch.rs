@@ -37,26 +37,21 @@ impl<'a> TokenFactoryStorage<'a> {
                 let token = self.create_token(caller, call)?;
                 Ok(ITokenFactory::createTokenCall::abi_encode_returns(&token).into())
             }
-            Ok(ITokenFactory::ITokenFactoryCalls::predictTokenAddress(call)) => {
-                let (addr, _) = TokenVariant::compute_address_for_discriminant(
-                    call.creator,
-                    call.variant,
-                    call.decimals,
-                    call.salt,
-                );
-                Ok(ITokenFactory::predictTokenAddressCall::abi_encode_returns(&addr).into())
+            Ok(ITokenFactory::ITokenFactoryCalls::getTokenAddress(call)) => {
+                let Some(variant) = TokenFactoryStorage::token_variant(call.variant) else {
+                    return Err(BasePrecompileError::revert(ITokenFactory::InvalidVariant {}));
+                };
+                let (addr, _) = variant.compute_address(call.sender, call.decimals, call.salt);
+                Ok(ITokenFactory::getTokenAddressCall::abi_encode_returns(&addr).into())
             }
             Ok(ITokenFactory::ITokenFactoryCalls::isB20(call)) => {
                 let result = self.is_b20(call.token)?;
                 Ok(ITokenFactory::isB20Call::abi_encode_returns(&result).into())
             }
-            Ok(ITokenFactory::ITokenFactoryCalls::variantOf(call)) => {
-                let v = self.variant_of_token(call.token)?;
-                Ok(ITokenFactory::variantOfCall::abi_encode_returns(&v).into())
-            }
-            Ok(ITokenFactory::ITokenFactoryCalls::decimalsOf(call)) => {
-                let decimals = self.decimals_of_token(call.token)?;
-                Ok(ITokenFactory::decimalsOfCall::abi_encode_returns(&decimals).into())
+            Ok(ITokenFactory::ITokenFactoryCalls::getTokenVariant(call)) => {
+                let variant =
+                    TokenFactoryStorage::abi_variant(TokenVariant::from_address(call.token));
+                Ok(ITokenFactory::getTokenVariantCall::abi_encode_returns(&variant).into())
             }
             Err(_) => Err(BasePrecompileError::UnknownFunctionSelector(selector)),
         }

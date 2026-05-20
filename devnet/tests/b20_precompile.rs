@@ -2,14 +2,13 @@
 
 mod common;
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use base_common_network::Base;
 use base_common_precompiles::{
-    ActivationRegistryStorage, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, IB20, ITokenFactory,
-    TokenFactoryStorage, TokenVariant,
+    ActivationRegistryStorage, IB20, ITokenFactory, TokenFactoryStorage, TokenVariant,
 };
 use devnet::{
     B20PrecompileClient,
@@ -54,6 +53,7 @@ async fn test_b20_factory_create_and_transfer_via_rpc() -> Result<()> {
         "Devnet B20",
         "DB20",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -91,6 +91,7 @@ async fn test_b20_token_metadata() -> Result<()> {
         "Metadata Token",
         "META",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -125,6 +126,7 @@ async fn test_b20_approve_and_transfer_from() -> Result<()> {
         "Allowance Token",
         "ALLW",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -170,6 +172,7 @@ async fn test_b20_mint_and_burn() -> Result<()> {
         "Mintable Token",
         "MINT",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -212,6 +215,7 @@ async fn test_b20_transfer_with_memo() -> Result<()> {
         "Memo Token",
         "MEMO",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -241,11 +245,11 @@ async fn test_b20_supply_cap() -> Result<()> {
         "Capped Token",
         "CAP",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
-    params.capabilities = CAPABILITY_CAP_MUTABLE;
-    params.supplyCap = U256::from(INITIAL_SUPPLY_CAP);
+    params.supply_cap = U256::from(INITIAL_SUPPLY_CAP);
 
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
@@ -294,6 +298,7 @@ async fn test_b20_metadata_updates() -> Result<()> {
         "Old Name",
         "OLD",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -321,15 +326,14 @@ async fn test_b20_pause_and_unpause() -> Result<()> {
 
     let b20 = activated_b20_client(&provider, &admin).await?;
     let salt = B256::repeat_byte(0x16);
-    let mut params = B20PrecompileClient::token_params(
+    let params = B20PrecompileClient::token_params(
         "Pausable Token",
         "PAUS",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
-    params.capabilities = CAPABILITY_PAUSABLE;
-
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
@@ -374,6 +378,7 @@ async fn test_b20_factory_predict_and_is_b20() -> Result<()> {
         "Predict Token",
         "PRD",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -415,6 +420,7 @@ async fn test_b20_create_token_duplicate_reverts() -> Result<()> {
         "Dup Token",
         "DUP",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -426,14 +432,10 @@ async fn test_b20_create_token_duplicate_reverts() -> Result<()> {
         .try_send_call(
             TokenFactoryStorage::ADDRESS,
             ITokenFactory::createTokenCall {
-                params: ITokenFactory::CreateTokenParams {
-                    version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
-                    variant: TokenVariant::B20.discriminant(),
-                    requiredParams: params.abi_encode().into(),
-                    optionalParams: Bytes::new(),
-                    postCreateCalls: Vec::new(),
-                    salt,
-                },
+                variant: ITokenFactory::TokenVariant::DEFAULT,
+                salt,
+                params: params.create.abi_encode().into(),
+                initCalls: Vec::new(),
             },
             "createToken (duplicate salt)",
         )

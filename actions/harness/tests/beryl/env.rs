@@ -400,14 +400,14 @@ impl BerylTestEnv {
 
     fn create_b20_token_call_with_salt(&self, salt: B256) -> ITokenFactory::createTokenCall {
         ITokenFactory::createTokenCall {
-            params: ITokenFactory::CreateTokenParams {
-                version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
-                variant: TokenVariant::B20.discriminant(),
-                requiredParams: self.b20_token_params().abi_encode().into(),
-                optionalParams: Bytes::new(),
-                postCreateCalls: Vec::new(),
-                salt,
-            },
+            variant: ITokenFactory::TokenVariant::DEFAULT,
+            salt,
+            params: self.b20_token_params().abi_encode().into(),
+            initCalls: vec![
+                IB20::mintCall { to: Self::alice(), amount: U256::from(Self::B20_INITIAL_SUPPLY) }
+                    .abi_encode()
+                    .into(),
+            ],
         }
     }
 
@@ -454,18 +454,13 @@ impl BerylTestEnv {
             .unwrap_or_else(|| panic!("user tx receipt {user_tx_index} must exist"))
     }
 
-    fn b20_token_params(&self) -> ITokenFactory::B20TokenParams {
-        ITokenFactory::B20TokenParams {
+    fn b20_token_params(&self) -> ITokenFactory::B20CreateParams {
+        ITokenFactory::B20CreateParams {
+            version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
             name: "Action B20".to_string(),
             symbol: "AB20".to_string(),
+            initialAdmin: Self::alice(),
             decimals: Self::B20_DECIMALS,
-            admin: Self::alice(),
-            capabilities: U256::ZERO,
-            initialSupply: U256::from(Self::B20_INITIAL_SUPPLY),
-            initialSupplyRecipient: Self::alice(),
-            supplyCap: U256::MAX,
-            minimumRedeemable: U256::ZERO,
-            contractURI: String::new(),
         }
     }
 

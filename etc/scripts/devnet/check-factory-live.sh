@@ -78,7 +78,7 @@ done
 [[ -n "$BOB_ADDR" ]] || BOB_ADDR="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 
 # Factory precompile (singleton, fixed at chain genesis)
-FACTORY="0xb02f000000000000000000000000000000000000"
+FACTORY="0xb20f00000000000000000000000000000000000f"
 
 # Token creation parameters
 TOKEN_NAME="Base USD"
@@ -134,40 +134,39 @@ pass "Alice is funded ($ALICE_ADDR)" "balance=$(cast from-wei "$ALICE_BAL") ETH"
 section "1/5  Predict token address (read-only)"
 
 PREDICTED=$(ccall "$FACTORY" \
-    "predictTokenAddress(address,uint8,uint8,bytes32)(address)" \
-    "$ALICE_ADDR" 1 "$TOKEN_DECIMALS" "$SALT") || fail "predictTokenAddress call failed" "$PREDICTED"
+    "getTokenAddress(uint8,uint8,address,bytes32)(address)" \
+    1 "$TOKEN_DECIMALS" "$ALICE_ADDR" "$SALT") || fail "getTokenAddress call failed" "$PREDICTED"
 PREDICTED=$(trim "$PREDICTED")
 [[ "$PREDICTED" =~ ^0x[0-9a-fA-F]{40}$ ]] || \
-    fail "predictTokenAddress returned bad address" "$PREDICTED"
+    fail "getTokenAddress returned bad address" "$PREDICTED"
 info "Predicted token address: $PREDICTED"
-pass "predictTokenAddress returned a valid address"
+pass "getTokenAddress returned a valid address"
 
 # Verify the prefix encodes the B-20 marker, variant=DEFAULT, and decimals.
-PREFIX=$(echo "${PREDICTED:2:8}" | tr '[:upper:]' '[:lower:]')
-EXPECTED_PREFIX=$(printf "b02001%02x" "$TOKEN_DECIMALS")
+PREFIX=$(echo "${PREDICTED:2:24}" | tr '[:upper:]' '[:lower:]')
+EXPECTED_PREFIX=$(printf "b200000000000000000001%02x" "$TOKEN_DECIMALS")
 [[ "$PREFIX" == "$EXPECTED_PREFIX" ]] || \
     fail "Token address does not encode DEFAULT variant and decimals" "expected prefix: 0x$EXPECTED_PREFIX got prefix: 0x$PREFIX"
 pass "Address prefix encodes B-20 marker, DEFAULT variant, and decimals"
 
-# isB20 must be false before creation (no code yet)
+# isB20 is a prefix check and returns true before bytecode is installed.
 IS_B20_BEFORE=$(ccall "$FACTORY" "isB20(address)(bool)" "$PREDICTED")
 IS_B20_BEFORE=$(trim "$IS_B20_BEFORE")
-assert_eq "isB20 is false before creation" "false" "$IS_B20_BEFORE"
+assert_eq "isB20 is true before creation" "true" "$IS_B20_BEFORE"
 
 # ── 2. Create token ───────────────────────────────────────────────────────────
 
 section "2/5  Create token (real transaction)"
 
-# Build B20TokenParams, then pass it as requiredParams into CreateTokenParams.
-# B20TokenParams field order: name,symbol,decimals,admin,capabilities,initialSupply,
-#                            initialSupplyRecipient,supplyCap,minimumRedeemable,contractURI
-REQUIRED_PARAMS=$(cast abi-encode \
-    "params(string,string,uint8,address,uint256,uint256,address,uint256,uint256,string)" \
-    "$TOKEN_NAME" "$TOKEN_SYMBOL" "$TOKEN_DECIMALS" "$ALICE_ADDR" 3 "$INITIAL_SUPPLY" \
-    "$ALICE_ADDR" "$SUPPLY_CAP" 0 "ipfs://check-factory-live")
+# Build B20CreateParams, then configure optional state through initCalls.
+CREATE_PARAMS=$(cast abi-encode \
+    "params(uint8,string,string,address,uint8)" \
+    1 "$TOKEN_NAME" "$TOKEN_SYMBOL" "$ALICE_ADDR" "$TOKEN_DECIMALS")
 
-# CreateTokenParams field order: version,variant,requiredParams,optionalParams,postCreateCalls,salt
-PARAMS="(1,1,$REQUIRED_PARAMS,0x,[],$SALT)"
+MINT_CALL=$(cast calldata "mint(address,uint256)" "$ALICE_ADDR" "$INITIAL_SUPPLY")
+SUPPLY_CAP_CALL=$(cast calldata "setSupplyCap(uint256)" "$SUPPLY_CAP")
+CONTRACT_URI_CALL=$(cast calldata "setContractURI(string)" "ipfs://check-factory-live")
+INIT_CALLS="[$MINT_CALL,$SUPPLY_CAP_CALL,$CONTRACT_URI_CALL]"
 
 info "Sending createToken transaction …"
 TX_OUTPUT=$(cast send \
@@ -176,8 +175,8 @@ TX_OUTPUT=$(cast send \
     --json \
     --confirmations 2 \
     "$FACTORY" \
-    "createToken((uint8,uint8,bytes,bytes,bytes[],bytes32))" \
-    "$PARAMS") || fail "createToken transaction failed" "$TX_OUTPUT"
+    "createToken(uint8,bytes32,bytes,bytes[])" \
+    1 "$SALT" "$CREATE_PARAMS" "$INIT_CALLS") || fail "createToken transaction failed" "$TX_OUTPUT"
 
 TX_HASH=$(echo "$TX_OUTPUT" | grep -o '"transactionHash":"[^"]*"' | cut -d'"' -f4)
 TX_STATUS=$(echo "$TX_OUTPUT" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
@@ -198,14 +197,10 @@ IS_B20=$(ccall "$FACTORY" "isB20(address)(bool)" "$TOKEN")
 IS_B20=$(trim "$IS_B20")
 assert_eq "isB20 is true after creation" "true" "$IS_B20"
 
-# variantOf must return 1 (VARIANT_DEFAULT)
-VARIANT=$(ccall "$FACTORY" "variantOf(address)(uint8)" "$TOKEN")
+# getTokenVariant must return 1 (VARIANT_DEFAULT)
+VARIANT=$(ccall "$FACTORY" "getTokenVariant(address)(uint8)" "$TOKEN")
 VARIANT=$(trim "$VARIANT")
-assert_eq "variantOf returns 1 (DEFAULT)" "1" "$VARIANT"
-
-FACTORY_DECIMALS=$(ccall "$FACTORY" "decimalsOf(address)(uint8)" "$TOKEN")
-FACTORY_DECIMALS=$(trim "$FACTORY_DECIMALS")
-assert_eq "decimalsOf returns encoded decimals" "$TOKEN_DECIMALS" "$FACTORY_DECIMALS"
+assert_eq "getTokenVariant returns 1 (DEFAULT)" "1" "$VARIANT"
 
 pass "Factory state is correct"
 
@@ -275,10 +270,9 @@ echo ""
 echo "Token: $TOKEN  (chain $CHAIN_ID, RPC $RPC_URL)"
 echo ""
 echo "Verified:"
-echo "  • predictTokenAddress → deterministic address with B-20 marker, variant, and decimals"
-echo "  • isB20 = false before creation, true after"
-echo "  • variantOf = 1 (DEFAULT)"
-echo "  • decimalsOf = $TOKEN_DECIMALS"
+echo "  • getTokenAddress → deterministic address with B-20 marker, variant, and decimals"
+echo "  • isB20 = true before and after creation"
+echo "  • getTokenVariant = 1 (DEFAULT)"
 echo "  • name='$TOKEN_NAME'  symbol='$TOKEN_SYMBOL'  decimals=$TOKEN_DECIMALS"
 echo "  • totalSupply=$INITIAL_SUPPLY  balanceOf(alice)=$ALICE_TOKEN_BAL"
 echo "  • transfer($TRANSFER_AMOUNT to bob) → alice=$EXPECTED_ALICE  bob=$TRANSFER_AMOUNT"
