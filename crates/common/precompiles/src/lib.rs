@@ -28,3 +28,5 @@ pub use token::{
     Redeemable, Token, TokenAccounting, TokenFactory, TokenFactoryPrecompile, TokenVariant,
     Transferable,
 };
+#[cfg(any(test, feature = "test-utils"))]
+pub use token::{InMemoryPolicy, InMemoryTokenAccounting, TestToken};

@@ -21,22 +21,34 @@ pub type TestToken = B20Token<InMemoryTokenAccounting, InMemoryPolicy>;
 /// HashMap-backed [`TokenAccounting`] for unit tests.
 ///
 /// Collect emitted events via the public `events` field after calling token ops.
+#[derive(Debug)]
 pub struct InMemoryTokenAccounting {
     address: Address,
     /// Whether `is_initialized` returns `true`.
     pub initialized: bool,
+    /// Per-account token balances.
     pub balances: HashMap<Address, U256>,
+    /// Approved spending allowances keyed by `(owner, spender)`.
     pub allowances: HashMap<(Address, Address), U256>,
+    /// Current total token supply.
     pub total_supply: U256,
     /// Defaults to `U256::MAX` so mint tests don't need to set a cap explicitly.
     pub supply_cap: U256,
+    /// Token name.
     pub name: String,
+    /// Token symbol.
     pub symbol: String,
+    /// Number of decimal places.
     pub decimals: u8,
+    /// Bitmask of active pause vectors.
     pub paused: U256,
+    /// Per-account EIP-2612 nonces.
     pub nonces: HashMap<Address, U256>,
+    /// Minimum amount required for a redeem operation.
     pub minimum_redeemable: U256,
+    /// URI pointing to the contract-level metadata.
     pub contract_uri: String,
+    /// Capability bitfield.
     pub capabilities: U256,
     /// Events collected by `emit_event`; does not produce real EVM logs.
     pub events: Vec<LogData>,
@@ -183,13 +195,16 @@ impl TokenAccounting for InMemoryTokenAccounting {
 ///
 /// Call [`InMemoryPolicy::allow`] to grant authorization before exercising token ops.
 /// Missing entries default to `false`.
+#[derive(Debug, Default)]
 pub struct InMemoryPolicy {
+    /// Authorization grants keyed by `(policy_id, account)`.
     pub authorizations: HashMap<(u64, Address), bool>,
 }
 
 impl InMemoryPolicy {
+    /// Creates an empty policy with no authorizations.
     pub fn new() -> Self {
-        Self { authorizations: HashMap::new() }
+        Self::default()
     }
 
     /// Marks `account` as authorized under `policy_id`.

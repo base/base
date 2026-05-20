@@ -3,15 +3,13 @@
 mod ops;
 mod policy;
 #[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils;
+pub(super) mod test_utils;
 mod token;
 mod token_accounting;
 
 use alloy_primitives::U256;
 pub use ops::{Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, Transferable};
 pub use policy::Policy;
-#[cfg(any(test, feature = "test-utils"))]
-pub use test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken};
 pub use token::Token;
 pub use token_accounting::TokenAccounting;
 /// Capability bit: `pause` / `unpause` are enabled on this token.
