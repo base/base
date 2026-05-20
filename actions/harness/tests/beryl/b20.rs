@@ -37,8 +37,12 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
         "B-20 total supply must remain unset before Beryl"
     );
 
-    // Activate TOKEN_FACTORY and B20_TOKEN in the first post-Beryl block.
-    // These are committed to state before block3 runs, so precompile calls in block3+ see them.
+    // Cross the Beryl activation boundary with an empty block so subsequent blocks execute with
+    // the Beryl precompile set.
+    let beryl_boundary = env.sequencer.build_empty_block().await;
+
+    // Activate TOKEN_FACTORY and B20_TOKEN after crossing Beryl.
+    // These are committed to state before the next block runs, so later precompile calls see them.
     let activate_factory = env.activate_feature_tx(BerylTestEnv::token_factory_feature());
     let activate_b20 = env.activate_feature_tx(BerylTestEnv::b20_token_feature());
     let block2 = env
@@ -316,13 +320,13 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
     );
 
     // -- Deactivation tests --
-    // Block11: deactivate B20_TOKEN (committed state before block12).
+    // Deactivate B20_TOKEN in its own block so the state is committed before the transfer.
     let deactivate_b20 = env.deactivate_feature_tx(BerylTestEnv::b20_token_feature());
     let block11 = env.sequencer.build_next_block_with_transactions(vec![deactivate_b20]).await;
 
     assert!(env.user_tx_succeeded(&block11, 0), "B20_TOKEN deactivation must succeed");
 
-    // Block12: token transfer must revert while B20_TOKEN is deactivated.
+    // Token transfer must revert while B20_TOKEN is deactivated.
     let transfer_while_deactivated = env.transfer_b20_tx(token, BerylTestEnv::bob(), U256::from(1));
     let block12 =
         env.sequencer.build_next_block_with_transactions(vec![transfer_while_deactivated]).await;
@@ -337,13 +341,13 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
         "Alice balance must be unchanged when B20_TOKEN is deactivated"
     );
 
-    // Block13: re-activate B20_TOKEN (committed state before block14).
+    // Re-activate B20_TOKEN in its own block so the state is committed before the transfer.
     let reactivate_b20 = env.activate_feature_tx(BerylTestEnv::b20_token_feature());
     let block13 = env.sequencer.build_next_block_with_transactions(vec![reactivate_b20]).await;
 
     assert!(env.user_tx_succeeded(&block13, 0), "B20_TOKEN re-activation must succeed");
 
-    // Block14: token transfer must succeed after B20_TOKEN is re-activated.
+    // Token transfer must succeed after B20_TOKEN is re-activated.
     let transfer_after_reactivate = env.transfer_b20_tx(token, BerylTestEnv::bob(), U256::from(1));
     let block14 =
         env.sequencer.build_next_block_with_transactions(vec![transfer_after_reactivate]).await;
@@ -363,13 +367,13 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
         "Bob balance must increase after transfer following B20_TOKEN re-activation"
     );
 
-    // Block15: deactivate TOKEN_FACTORY (committed state before block16).
+    // Deactivate TOKEN_FACTORY in its own block so the state is committed before token creation.
     let deactivate_factory = env.deactivate_feature_tx(BerylTestEnv::token_factory_feature());
     let block15 = env.sequencer.build_next_block_with_transactions(vec![deactivate_factory]).await;
 
     assert!(env.user_tx_succeeded(&block15, 0), "TOKEN_FACTORY deactivation must succeed");
 
-    // Block16: token creation must revert while TOKEN_FACTORY is deactivated.
+    // Token creation must revert while TOKEN_FACTORY is deactivated.
     let create_while_deactivated = env.create_b20_token_with_salt_tx(BerylTestEnv::ALT_SALT);
     let block16 =
         env.sequencer.build_next_block_with_transactions(vec![create_while_deactivated]).await;
@@ -379,13 +383,13 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
         "token creation must revert when TOKEN_FACTORY is deactivated"
     );
 
-    // Block17: re-activate TOKEN_FACTORY (committed state before block18).
+    // Re-activate TOKEN_FACTORY in its own block so the state is committed before token creation.
     let reactivate_factory = env.activate_feature_tx(BerylTestEnv::token_factory_feature());
     let block17 = env.sequencer.build_next_block_with_transactions(vec![reactivate_factory]).await;
 
     assert!(env.user_tx_succeeded(&block17, 0), "TOKEN_FACTORY re-activation must succeed");
 
-    // Block18: token creation must succeed after TOKEN_FACTORY is re-activated.
+    // Token creation must succeed after TOKEN_FACTORY is re-activated.
     let create_after_reactivate = env.create_b20_token_with_salt_tx(BerylTestEnv::ALT_SALT);
     let block18 =
         env.sequencer.build_next_block_with_transactions(vec![create_after_reactivate]).await;
@@ -398,25 +402,26 @@ async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
     env.derive_blocks(
         [
             (block1, 1),
-            (block2, 2),
-            (block3, 3),
-            (block4, 4),
-            (block5, 5),
-            (block6, 6),
-            (block7, 7),
-            (block8, 8),
-            (block9, 9),
-            (block10, 10),
-            (block11, 11),
-            (block12, 12),
-            (block13, 13),
-            (block14, 14),
-            (block15, 15),
-            (block16, 16),
-            (block17, 17),
-            (block18, 18),
+            (beryl_boundary, 2),
+            (block2, 3),
+            (block3, 4),
+            (block4, 5),
+            (block5, 6),
+            (block6, 7),
+            (block7, 8),
+            (block8, 9),
+            (block9, 10),
+            (block10, 11),
+            (block11, 12),
+            (block12, 13),
+            (block13, 14),
+            (block14, 15),
+            (block15, 16),
+            (block16, 17),
+            (block17, 18),
+            (block18, 19),
         ],
-        18,
+        19,
     )
     .await;
 }

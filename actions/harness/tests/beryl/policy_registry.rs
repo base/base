@@ -42,6 +42,10 @@ async fn beryl_enables_policy_registry_singleton_precompile() {
         "policy registry must not return true before Beryl"
     );
 
+    // Cross the Beryl activation boundary with an empty block so subsequent blocks execute with
+    // the Beryl precompile set.
+    let beryl_boundary = env.sequencer.build_empty_block().await;
+
     // Activate POLICY_REGISTRY in its own block so the state is committed before the probe runs.
     let activate_registry = env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
     let block2 = env.sequencer.build_next_block_with_transactions(vec![activate_registry]).await;
@@ -105,8 +109,17 @@ async fn beryl_enables_policy_registry_singleton_precompile() {
     );
 
     env.derive_blocks(
-        [(block1, 1), (block2, 2), (block3, 3), (block4, 4), (block5, 5), (block6, 6), (block7, 7)],
-        7,
+        [
+            (block1, 1),
+            (beryl_boundary, 2),
+            (block2, 3),
+            (block3, 4),
+            (block4, 5),
+            (block5, 6),
+            (block6, 7),
+            (block7, 8),
+        ],
+        8,
     )
     .await;
 }
