@@ -134,7 +134,10 @@ async fn test_b20_approve_and_transfer_from() -> Result<()> {
     let transfer_amount = U256::from(SPENDER_TRANSFER_AMOUNT);
 
     b20_admin.approve(token, spender.address(), approve_amount).await?;
-    assert_eq!(b20_admin.allowance(token, admin.address(), spender.address()).await?, approve_amount);
+    assert_eq!(
+        b20_admin.allowance(token, admin.address(), spender.address()).await?,
+        approve_amount
+    );
 
     b20_spender.transfer_from(token, admin.address(), recipient, transfer_amount).await?;
 
@@ -219,10 +222,7 @@ async fn test_b20_transfer_with_memo() -> Result<()> {
     b20.transfer_with_memo(token, recipient, amount, memo).await?;
 
     assert_eq!(b20.balance_of(token, recipient).await?, amount);
-    assert_eq!(
-        b20.balance_of(token, admin.address()).await?,
-        U256::from(INITIAL_SUPPLY) - amount,
-    );
+    assert_eq!(b20.balance_of(token, admin.address()).await?, U256::from(INITIAL_SUPPLY) - amount,);
 
     Ok(())
 }
@@ -376,9 +376,9 @@ async fn test_b20_factory_predict_and_is_b20() -> Result<()> {
     );
 
     let local_prediction = b20.predict_token_address(TokenVariant::B20, TOKEN_DECIMALS, salt);
-    let rpc_prediction =
-        b20.predict_token_address_rpc(admin.address(), TokenVariant::B20, TOKEN_DECIMALS, salt)
-            .await?;
+    let rpc_prediction = b20
+        .predict_token_address_rpc(admin.address(), TokenVariant::B20, TOKEN_DECIMALS, salt)
+        .await?;
     assert_eq!(local_prediction, rpc_prediction, "local and RPC predictions should match");
 
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;

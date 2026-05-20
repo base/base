@@ -335,8 +335,7 @@ impl<'a> B20PrecompileClient<'a> {
 
     /// Returns true if `token` is a deployed B-20 via the factory.
     pub async fn is_b20(&self, token: Address) -> Result<bool> {
-        let output =
-            self.call(TokenFactory::ADDRESS, ITokenFactory::isB20Call { token }).await?;
+        let output = self.call(TokenFactory::ADDRESS, ITokenFactory::isB20Call { token }).await?;
         ITokenFactory::isB20Call::abi_decode_returns(output.as_ref())
             .wrap_err("Failed to decode isB20")
     }

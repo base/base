@@ -8,10 +8,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use base_common_network::Base;
 use base_common_precompiles::{ActivationRegistry, IActivationRegistry};
-use devnet::{
-    B20PrecompileClient, Devnet, DevnetBuilder,
-    config::ANVIL_ACCOUNT_5,
-};
+use devnet::{B20PrecompileClient, Devnet, DevnetBuilder, config::ANVIL_ACCOUNT_5};
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
