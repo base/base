@@ -34,8 +34,9 @@ pub struct AttestationProof {
 ///    awaits is sufficient.
 /// 2. **Tolerate drop** of the returned future. Side effects that *do*
 ///    survive must be either idempotent or recoverable on the next call
-///    (e.g. via [`block_recovery_for_signer`]) so the registrar's
-///    spawn-and-reap loop can safely retry.
+///    (e.g. via the recovery probe `BoundlessProver` performs when it
+///    detects a prior in-flight request id for the same signer) so the
+///    registrar's spawn-and-reap loop can safely retry.
 ///
 /// See the per-impl docs on `DirectProver` and `BoundlessProver` for the
 /// exact survive-on-drop behaviour of each backend.
