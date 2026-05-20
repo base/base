@@ -137,8 +137,7 @@ fn batch_session_wipe_sees_uncommitted_parent_storage_slots() {
     assert_eq!(seen, vec![(s1, v1), (s2, v2)], "block 1 must observe its own writes");
 
     let mut at_block_2 = store.storage_hashed_cursor(addr, 2).expect("cursor at 2");
-    let after_wipe: Vec<_> =
-        std::iter::from_fn(|| at_block_2.next().expect("next")).collect();
+    let after_wipe: Vec<_> = std::iter::from_fn(|| at_block_2.next().expect("next")).collect();
     assert!(
         after_wipe.is_empty(),
         "wipe at block 2 must tombstone slots staged at block 1 inside the same batch; \

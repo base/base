@@ -687,7 +687,7 @@ impl BaseProofsStore for MdbxProofsStorage {
     }
 
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
-        self.env.view(|tx| self.inner_get_block_number_hash(tx, ProofWindowKey::EarliestBlock))?
+        self.env.view(|tx| self.inner_get_earliest_block_number_hash(tx))?
     }
 
     fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {

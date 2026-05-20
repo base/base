@@ -323,7 +323,6 @@ where
         let total = start.elapsed();
         BlockMetrics::record_operation_durations(&OperationDurations {
             total_duration_seconds: total,
-            write_duration_seconds: total,
             ..Default::default()
         });
         BlockMetrics::increment_write_counts(&total_writes);
