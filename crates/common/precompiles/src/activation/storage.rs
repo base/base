@@ -30,6 +30,18 @@ impl ActivationRegistryStorage<'_> {
     pub const SECURITIES_TOKEN_CREATION: B256 =
         b256!("0x89e4523f0886ce01d76094212ed707081da92a45221e22c15c5689be470db63e");
 
+    /// B20 token precompile feature id (`keccak256("base.b20_token")`).
+    pub const B20_TOKEN: B256 =
+        b256!("0x47a1afe8d3d691b87e090ee972d223a11f4da971ff5416c04985bb2393aca752");
+
+    /// Token factory precompile feature id (`keccak256("base.token_factory")`).
+    pub const TOKEN_FACTORY: B256 =
+        b256!("0xceff857b4173841a3aef07ca52b183282fe74fe117e8f9dda0dcb3ddafd18a5b");
+
+    /// Policy registry precompile feature id (`keccak256("base.policy_registry")`).
+    pub const POLICY_REGISTRY: B256 =
+        b256!("0xb582ebae03f16fee49a6763f78df482fb11ae73f103ed0d330bbe556aa90a43f");
+
     /// Returns the activation admin.
     pub const fn admin(&self) -> Address {
         Self::ADMIN

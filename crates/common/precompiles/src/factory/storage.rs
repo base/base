@@ -144,9 +144,19 @@ mod tests {
 
     use super::*;
     use crate::{
-        B20Token, B20TokenStorage, IB20, Mintable, Permittable, Token, TokenAccounting,
-        Transferable,
+        ActivationRegistry, B20Token, B20TokenStorage, IB20, Mintable, Permittable, Token,
+        TokenAccounting, Transferable,
     };
+
+    fn activate_precompiles(storage: &mut HashMapStorageProvider) {
+        storage.set_caller(ActivationRegistry::ADMIN);
+        StorageCtx::enter(storage, |ctx| {
+            ActivationRegistry::new(ctx).activate(ActivationRegistry::TOKEN_FACTORY).unwrap()
+        });
+        StorageCtx::enter(storage, |ctx| {
+            ActivationRegistry::new(ctx).activate(ActivationRegistry::B20_TOKEN).unwrap()
+        });
+    }
 
     fn token_params(
         name: &str,
@@ -371,6 +381,7 @@ mod tests {
     #[test]
     fn test_post_create_calls_execute_against_token() {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0xDD);
         let mut call = b20_call(salt);
@@ -487,6 +498,7 @@ mod tests {
         params.contractURI = "ipfs://dispatch".to_string();
 
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         storage.set_caller(creator);
 
         StorageCtx::enter(&mut storage, |ctx| {
@@ -569,6 +581,7 @@ mod tests {
     #[test]
     fn test_uninitialized_prefix_token_reverts() {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         StorageCtx::enter(&mut storage, |ctx| {
             let caller = Address::repeat_byte(0xCA);
             let (token_addr, lower_bytes) =
@@ -596,6 +609,7 @@ mod tests {
         let params = token_params("Dispatch Token", "DSP", 18, U256::from(1_000u64), U256::MAX);
 
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         storage.set_caller(creator);
         StorageCtx::enter(&mut storage, |ctx| {
             assert_output(
@@ -668,6 +682,7 @@ mod tests {
         params.admin = Address::ZERO;
 
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         storage.set_caller(creator);
 
         StorageCtx::enter(&mut storage, |ctx| {

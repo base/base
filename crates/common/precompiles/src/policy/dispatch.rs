@@ -7,11 +7,15 @@ use super::{
     abi::{IPolicyRegistry, IPolicyRegistry::IPolicyRegistryCalls as C},
     storage::PolicyRegistryStorage,
 };
+use crate::ActivationRegistry;
 
 impl PolicyRegistryStorage<'_> {
     /// ABI-dispatches `calldata` to the appropriate `IPolicyRegistry` handler.
     pub(super) fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        self.inner(calldata).into_precompile_result(ctx.gas_used(), |b| b)
+        ActivationRegistry::new(ctx)
+            .ensure_activated(ActivationRegistry::POLICY_REGISTRY)
+            .and_then(|()| self.inner(calldata))
+            .into_precompile_result(ctx.gas_used(), |b| b)
     }
 
     fn inner(&self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
