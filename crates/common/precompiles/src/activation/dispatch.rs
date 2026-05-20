@@ -13,6 +13,9 @@ use super::{
 impl ActivationRegistry<'_> {
     /// ABI-dispatches activation registry calldata.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        if let Err(e) = ctx.deduct_gas(crate::input_cost(calldata.len())) {
+            return e.into_precompile_result(ctx.gas_used());
+        }
         self.inner(calldata).into_precompile_result(ctx.gas_used(), |output| output)
     }
 

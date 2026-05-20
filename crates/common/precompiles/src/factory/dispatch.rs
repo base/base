@@ -11,6 +11,9 @@ use crate::ITokenFactory;
 impl<'a> TokenFactory<'a> {
     /// ABI-dispatches `calldata` to the appropriate `ITokenFactory` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        if let Err(e) = ctx.deduct_gas(crate::input_cost(calldata.len())) {
+            return e.into_precompile_result(ctx.gas_used());
+        }
         let result = self.inner(ctx, calldata);
         let gas = ctx.gas_used();
         result.into_precompile_result(gas, |b| b)

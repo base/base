@@ -11,6 +11,9 @@ use super::{
 impl PolicyRegistryStorage<'_> {
     /// ABI-dispatches `calldata` to the appropriate `IPolicyRegistry` handler.
     pub(super) fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        if let Err(e) = ctx.deduct_gas(crate::input_cost(calldata.len())) {
+            return e.into_precompile_result(ctx.gas_used());
+        }
         self.inner(calldata).into_precompile_result(ctx.gas_used(), |b| b)
     }
 

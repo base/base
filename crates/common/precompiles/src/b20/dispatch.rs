@@ -15,6 +15,9 @@ use crate::{
 impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
     /// ABI-dispatches `calldata` to the appropriate `IB20` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        if let Err(e) = ctx.deduct_gas(crate::input_cost(calldata.len())) {
+            return e.into_precompile_result(ctx.gas_used());
+        }
         self.inner(ctx, calldata).into_precompile_result(ctx.gas_used(), |b| b)
     }
 
