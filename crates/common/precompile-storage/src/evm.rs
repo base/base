@@ -21,6 +21,38 @@ use crate::{
     provider::PrecompileStorageProvider,
 };
 
+// ── Gas costs metered automatically on each storage operation ────────────────
+//
+// The EVM charges gas for every storage access and log emission. Metering here
+// — inside the provider, not in each precompile's dispatch — means all current
+// and future precompiles get correct gas accounting for free, with no per-call
+// tallying required in dispatch code.
+//
+// We use EIP-2929 warm-slot costs throughout. Without a per-transaction access
+// list mirroring revm's journal we cannot distinguish cold from warm slots, and
+// warm costs are the right baseline: precompile slots are touched repeatedly
+// within a single call, so cold costs would systematically over-bill.
+
+/// Warm SLOAD / TLOAD cost (EIP-2929 / EIP-1153).
+const WARM_SLOAD: u64 = 100;
+
+/// Warm SSTORE cost for changing a nonzero slot (EIP-2929 SSTORE_RESET).
+///
+/// All B20 storage is initialised by the factory before users can call, so
+/// every write we make is nonzero→nonzero. The first-write cost (SSTORE_SET =
+/// 20_000) was paid at deployment; subsequent writes use SSTORE_RESET = 2_900.
+const WARM_SSTORE: u64 = 2_900;
+
+/// TSTORE cost (EIP-1153) — same as warm storage read.
+const WARM_TSTORE: u64 = 100;
+
+/// Base gas for any EVM LOG (Yellow Paper §9.4.2).
+const LOG: u64 = 375;
+/// Gas per indexed topic in a LOG.
+const LOG_TOPIC: u64 = 375;
+/// Gas per byte of non-indexed LOG data.
+const LOG_DATA_BYTE: u64 = 8;
+
 /// Production [`PrecompileStorageProvider`] backed by a live EVM journal.
 ///
 /// Constructed from a [`PrecompileInput`] inside each native precompile's `run()` function.
@@ -102,23 +134,34 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
+        self.deduct_gas(WARM_SLOAD)?;
         self.internals.sload(address, key).map(|s| s.data).map_err(Into::into)
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
+        self.deduct_gas(WARM_SLOAD)?;
         Ok(self.internals.tload(address, key))
     }
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        self.deduct_gas(WARM_SSTORE)?;
         self.internals.sstore(address, key, value).map(|_| ()).map_err(Into::into)
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        self.deduct_gas(WARM_TSTORE)?;
         self.internals.tstore(address, key, value);
         Ok(())
     }
 
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<()> {
+        // Charge LOG base + per-topic + per-data-byte before emitting.
+        let topics = event.topics().len() as u64;
+        let data_len = event.data.len() as u64;
+        let log_gas = LOG
+            .saturating_add(LOG_TOPIC.saturating_mul(topics))
+            .saturating_add(LOG_DATA_BYTE.saturating_mul(data_len));
+        self.deduct_gas(log_gas)?;
         self.internals.log(Log { address, data: event });
         Ok(())
     }
