@@ -85,10 +85,32 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
-        // EIP-3541: charge per byte of deployed code.
-        self.deduct_gas(self.gas_params.code_deposit_cost(code.len()))?;
-        // TODO: also charge code_deposit_state_gas + create_state_gas (Amsterdam EIP-8037)
-        // once GasParams upgrades to context-interface v17.
+        let code_len = code.len();
+
+        // EIP-3541 / Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
+        self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
+
+        // For new (empty) accounts charge the CREATE equivalent costs (Yellow Paper G_create).
+        let is_new_account = {
+            let state_load = self
+                .internals
+                .load_account(address)
+                .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+            state_load.data.info.is_empty()
+        };
+
+        if is_new_account {
+            // Yellow Paper G_create: base cost for creating a new contract account.
+            self.deduct_gas(self.gas_params.create_cost())?;
+            // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
+            let num_words = code_len.div_ceil(32) as u64;
+            self.deduct_gas(
+                KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)),
+            )?;
+            // TODO: also charge create_state_gas + code_deposit_state_gas (Amsterdam EIP-8037)
+            // once GasParams upgrades to context-interface v17.
+        }
+
         self.internals
             .set_code(address, code)
             .map_err(|e| BasePrecompileError::Fatal(e.to_string()))
