@@ -13,7 +13,6 @@ use std::sync::Arc;
 use alloy_primitives::Bytes;
 use base_proof_tee_nitro_verifier::VerifierInput;
 use risc0_zkvm::{ExecutorEnv, ProverOpts, compute_image_id, default_prover};
-
 use tokio_util::sync::CancellationToken;
 
 use crate::{AttestationProof, AttestationProofProvider, ProverError, Result};
