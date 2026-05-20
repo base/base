@@ -7,10 +7,7 @@ use base_precompile_storage::{BasePrecompileError, Handler, Result};
 use revm::state::Bytecode;
 
 use super::variant::TokenVariant;
-use crate::{
-    B20Token, B20TokenStorage, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, ITokenFactory,
-    PolicyHandle,
-};
+use crate::{B20Token, B20TokenStorage, ITokenFactory, PolicyHandle};
 
 /// The B-20 token factory precompile.
 #[contract(addr = Self::ADDRESS)]
@@ -22,6 +19,12 @@ impl<'a> TokenFactoryStorage<'a> {
 
     /// Current token creation parameter version.
     pub const CREATE_TOKEN_VERSION: u8 = 1;
+
+    /// Initial supply cap for newly created default B-20 tokens.
+    pub const DEFAULT_SUPPLY_CAP: U256 = U256::MAX;
+
+    /// Initial capability bits for newly created default B-20 tokens.
+    pub const DEFAULT_CAPABILITIES: U256 = U256::from_limbs([3, 0, 0, 0]);
 
     /// Creates a token at a deterministic address derived from `(caller, variant, decimals, salt)`.
     pub fn create_token(
@@ -50,8 +53,8 @@ impl<'a> TokenFactoryStorage<'a> {
         let mut token = B20TokenStorage::from_address(token_address, self.storage);
         token.name.write(token_params.0.clone())?;
         token.symbol.write(token_params.1.clone())?;
-        token.supply_cap.write(U256::MAX)?;
-        token.capabilities.write(CAPABILITY_CAP_MUTABLE | CAPABILITY_PAUSABLE)?;
+        token.supply_cap.write(Self::DEFAULT_SUPPLY_CAP)?;
+        token.capabilities.write(Self::DEFAULT_CAPABILITIES)?;
 
         self.emit_event(ITokenFactory::TokenCreated {
             token: token_address,
@@ -304,6 +307,8 @@ mod tests {
             assert_eq!(token.name.read().unwrap(), "My Token");
             assert_eq!(token.symbol.read().unwrap(), "MYT");
             assert_eq!(token.decimals().unwrap(), 6);
+            assert_eq!(token.supply_cap().unwrap(), TokenFactoryStorage::DEFAULT_SUPPLY_CAP);
+            assert_eq!(token.capabilities().unwrap(), TokenFactoryStorage::DEFAULT_CAPABILITIES);
             assert_eq!(TokenVariant::decimals_of(token_addr), Some(6));
         });
     }

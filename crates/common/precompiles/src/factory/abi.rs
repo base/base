@@ -79,6 +79,11 @@ sol! {
         // ── Functions ────────────────────────────────────────────────────────
 
         /// Creates a B-20 token of the requested variant at a deterministic address.
+        ///
+        /// Default tokens start with an unbounded supply cap and the pausable plus mutable-cap
+        /// capability bits enabled. Callers configure optional launch state atomically through
+        /// `initCalls`, such as minting initial supply, lowering the supply cap, pausing, or setting
+        /// metadata.
         function createToken(
             TokenVariant variant,
             bytes32 salt,
