@@ -124,7 +124,10 @@ pub struct DiscoveryResolution {
     pub total_count: usize,
     /// Whether the cycle satisfies both the majority guard
     /// (`reachable * 2 > total`) and the cancellation policy
-    /// (token not cancelled). Always `true` when `total_count` is zero.
+    /// (token not cancelled). `true` when `total_count` is zero **and**
+    /// the driver is not cancelled — otherwise `false`, so the orphan
+    /// dereg pass is skipped during shutdown to avoid acquiring nonces
+    /// we don't intend to broadcast.
     pub ok_to_dereg: bool,
 }
 
@@ -850,7 +853,22 @@ where
     /// legacy `process_instance` helper minus the `try_register` loop,
     /// so the [`Self::run`] pipeline can spawn registration tasks
     /// separately from discovery.
+    ///
+    /// **Cancellation contract.** This future is allowed to be dropped by
+    /// the caller only at boundaries that contain no in-flight
+    /// `tx_manager.send()` — i.e. before, between, or after the explicit
+    /// `self.config.cancel.is_cancelled()` early-return checks below.
+    /// `check_and_revoke_crls` submits `revokeCert` transactions via
+    /// [`Self::submit_revoke_cert`]; dropping that future after a
+    /// `NonceGuard` has been acquired but before broadcast would leave a
+    /// permanent nonce gap. `discover_and_resolve` therefore drains its
+    /// `buffer_unordered` stream to natural completion instead of wrapping
+    /// `futs.next()` in a cancel-select.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<ResolveOutcome> {
+        if self.config.cancel.is_cancelled() {
+            return Ok(ResolveOutcome { addresses: Vec::new(), attestations: None });
+        }
+
         let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
         let mut addresses = Vec::with_capacity(public_keys.len());
         for public_key in &public_keys {
@@ -878,6 +896,10 @@ where
             );
         }
 
+        if self.config.cancel.is_cancelled() {
+            return Ok(ResolveOutcome { addresses, attestations: None });
+        }
+
         let nonce: [u8; 32] = random();
         info!(
             nonce = %hex::encode(nonce),
@@ -902,6 +924,13 @@ where
         }
 
         if self.config.crl.enabled {
+            // Skip the CRL check (and its potential `revokeCert` submission)
+            // on shutdown so we don't acquire a nonce we won't broadcast.
+            // Already-running `submit_revoke_cert` calls are NOT cancelled —
+            // see the cancellation contract on this function.
+            if self.config.cancel.is_cancelled() {
+                return Ok(ResolveOutcome { addresses, attestations: Some(all_attestations) });
+            }
             match self.check_and_revoke_crls(&all_attestations[0], instance).await {
                 Ok(true) => {
                     warn!(
@@ -929,16 +958,27 @@ where
     ///
     /// Like the legacy synchronous `step` helper, this fans out
     /// per-instance resolution work concurrently (bounded by
-    /// [`DriverConfig::max_concurrency`]) and breaks out on
-    /// cancellation. Unlike `step`, no registration
+    /// [`DriverConfig::max_concurrency`]). Unlike `step`, no registration
     /// transactions are submitted here — the [`Self::run`] loop spawns a
     /// dedicated task per registerable signer instead, so that long
     /// Boundless proofs do not block the next discovery cycle.
     ///
+    /// **Why no outer cancel-select.** `resolve_instance` may call
+    /// `check_and_revoke_crls` → `submit_revoke_cert` → `tx_manager.send()`;
+    /// dropping that future after `NonceGuard` acquisition leaves a
+    /// permanent nonce gap. The buffered stream is therefore drained to
+    /// natural completion; each `resolve_instance` short-circuits on
+    /// `self.config.cancel` *between* awaits but never abandons an
+    /// in-flight send. Shutdown latency is bounded by `max_concurrency` ×
+    /// the slowest signer-RPC / CRL-fetch timeout, not by long proof work
+    /// (which lives in the spawned proof tasks).
+    ///
     /// The returned `ok_to_dereg` flag bakes in both the majority guard
     /// (`reachable * 2 > total`) and the cancellation policy (token not
     /// cancelled). The empty-discovery case sets it to `true` so legitimate
-    /// fleet drains still let orphan cleanup proceed.
+    /// fleet drains still let orphan cleanup proceed — except when the
+    /// driver is cancelled, in which case the orphan dereg pass is skipped
+    /// so we don't acquire nonces during shutdown.
     async fn discover_and_resolve(self: &Arc<Self>) -> Result<DiscoveryResolution> {
         let instances = self.discovery.discover_instances().await?;
         RegistrarMetrics::discovery_success_total().increment(1);
@@ -975,35 +1015,30 @@ where
         }))
         .buffer_unordered(concurrency);
 
-        loop {
-            tokio::select! {
-                biased;
-                () = self.config.cancel.cancelled() => {
-                    debug!("shutdown requested during instance resolution");
-                    break;
-                }
-                maybe_result = futs.next() => {
-                    let Some((instance, result)) = maybe_result else { break };
-                    match result {
-                        Ok(outcome) => {
-                            reachable_count += 1;
-                            for addr in &outcome.addresses {
-                                active_signers.insert(*addr);
-                            }
-                            if let Some(attestations) = outcome.attestations {
-                                registerable.push((instance, outcome.addresses, attestations));
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                error = %e,
-                                instance = %instance.instance_id,
-                                endpoint = %instance.endpoint,
-                                "failed to resolve instance"
-                            );
-                            RegistrarMetrics::processing_errors_total().increment(1);
-                        }
+        // No cancel-select around `futs.next()`: `resolve_instance` may
+        // hold an in-flight `tx_manager.send()` (via CRL revokeCert) whose
+        // nonce we MUST broadcast to avoid a permanent gap. Each future
+        // checks `self.config.cancel` cooperatively between awaits; new
+        // work is short-circuited, but in-flight sends complete naturally.
+        while let Some((instance, result)) = futs.next().await {
+            match result {
+                Ok(outcome) => {
+                    reachable_count += 1;
+                    for addr in &outcome.addresses {
+                        active_signers.insert(*addr);
                     }
+                    if let Some(attestations) = outcome.attestations {
+                        registerable.push((instance, outcome.addresses, attestations));
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        instance = %instance.instance_id,
+                        endpoint = %instance.endpoint,
+                        "failed to resolve instance"
+                    );
+                    RegistrarMetrics::processing_errors_total().increment(1);
                 }
             }
         }
@@ -1203,15 +1238,20 @@ where
         }
     }
 
-    /// Cancels every pending task, awaits them, and updates `pending`
-    /// via [`Self::apply_join_outcome`]. Used only at shutdown — see
-    /// [`Self::run`].
+    /// Cancels every pending task cooperatively, awaits them to natural
+    /// completion, and updates `pending` via [`Self::apply_join_outcome`].
+    /// Used only at shutdown — see [`Self::run`].
     ///
-    /// `JoinSet::abort_all` is layered on top of cooperative cancel as
-    /// a backstop: if a task is wedged in a non-cancel-aware path
-    /// (e.g. blocking inside a third-party future), abort wakes it.
-    /// The cooperative path is always preferred so cancel-safe
-    /// checkpoints take effect first.
+    /// **No `JoinSet::abort_all`.** Aborting would drop futures at arbitrary
+    /// await points, including inside [`base_tx_manager::TxManager::send`]
+    /// after a `NonceGuard` has been acquired but before the transaction is
+    /// broadcast — leaving a permanent nonce gap (`NonceGuard::Drop` does not
+    /// roll back). Cooperative cancellation is the only safe option: each
+    /// task observes its `signer_cancel` token at its own checkpoints and
+    /// exits with `Ok(())`. Shutdown latency is therefore bounded by the
+    /// longest non-cancel-aware operation a task may be in (typically the
+    /// in-flight `tx_manager.send()` it is waiting on), not by any local
+    /// timeout.
     async fn drain_proof_tasks(
         tasks: &mut JoinSet<Result<()>>,
         pending: &mut HashMap<task::Id, PendingTask>,
@@ -1219,7 +1259,6 @@ where
         for task in pending.values() {
             task.cancel.cancel();
         }
-        tasks.abort_all();
         // NOTE: we drain through `join_next_with_id` (not
         // `JoinSet::shutdown`) so each terminal outcome flows through
         // `apply_join_outcome` — keeping the `pending` map and the
