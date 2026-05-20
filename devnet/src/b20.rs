@@ -429,7 +429,7 @@ impl<'a> B20PrecompileClient<'a> {
             .wrap_err("Failed to decode getTokenAddress")
     }
 
-    fn abi_variant(variant: TokenVariant) -> ITokenFactory::TokenVariant {
+    const fn abi_variant(variant: TokenVariant) -> ITokenFactory::TokenVariant {
         match variant {
             TokenVariant::B20 => ITokenFactory::TokenVariant::DEFAULT,
             TokenVariant::Stablecoin => ITokenFactory::TokenVariant::STABLECOIN,
