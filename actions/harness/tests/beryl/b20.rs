@@ -1,427 +1,439 @@
 //! B-20 precompile action tests across the Base Beryl boundary.
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 
 use crate::env::BerylTestEnv;
 
 #[tokio::test]
-async fn beryl_enables_b20_factory_and_dynamic_token_precompile() {
-    let mut env = BerylTestEnv::new();
-    let token = env.b20_token_address();
+async fn b20_transfers_update_balances_and_emit_events() {
+    let mut scenario = B20TokenScenario::new().await;
 
-    let (total_supply_probe, deploy_total_supply_probe) = env.deploy_staticcall_probe_tx(token);
-    let (alice_balance_probe, deploy_alice_balance_probe) = env.deploy_staticcall_probe_tx(token);
-    let (bob_balance_probe, deploy_bob_balance_probe) = env.deploy_staticcall_probe_tx(token);
-    let (carol_balance_probe, deploy_carol_balance_probe) = env.deploy_staticcall_probe_tx(token);
-    let (allowance_probe, deploy_allowance_probe) = env.deploy_staticcall_probe_tx(token);
-    let (decimals_probe, deploy_decimals_probe) = env.deploy_staticcall_probe_tx(token);
-
-    let pre_beryl_create = env.create_b20_token_tx();
-    let block1 = env
-        .sequencer
-        .build_next_block_with_transactions(vec![
-            deploy_total_supply_probe,
-            deploy_alice_balance_probe,
-            deploy_bob_balance_probe,
-            deploy_carol_balance_probe,
-            deploy_allowance_probe,
-            deploy_decimals_probe,
-            pre_beryl_create,
-        ])
-        .await;
-
-    assert!(!env.sequencer.has_code(token), "B-20 token code must not be deployed before Beryl");
-    assert_eq!(
-        env.b20_total_supply(token),
-        U256::ZERO,
-        "B-20 total supply must remain unset before Beryl"
-    );
-
-    // Cross the Beryl activation boundary with an empty block so subsequent blocks execute with
-    // the Beryl precompile set.
-    let beryl_boundary = env.sequencer.build_empty_block().await;
-
-    // Activate TOKEN_FACTORY and B20_TOKEN after crossing Beryl.
-    // These are committed to state before the next block runs, so later precompile calls see them.
-    let activate_factory = env.activate_feature_tx(BerylTestEnv::token_factory_feature());
-    let activate_b20 = env.activate_feature_tx(BerylTestEnv::b20_token_feature());
-    let block2 = env
-        .sequencer
-        .build_next_block_with_transactions(vec![activate_factory, activate_b20])
-        .await;
-
-    assert!(env.user_tx_succeeded(&block2, 0), "TOKEN_FACTORY activation must succeed");
-    assert!(env.user_tx_succeeded(&block2, 1), "B20_TOKEN activation must succeed");
-
-    let post_beryl_create = env.create_b20_token_tx();
-    let block3 = env.sequencer.build_next_block_with_transactions(vec![post_beryl_create]).await;
-
-    assert!(env.user_tx_succeeded(&block3, 0), "B-20 creation transaction must succeed");
-    assert!(env.sequencer.has_code(token), "B-20 token code must be deployed after Beryl");
-    assert_eq!(
-        env.b20_total_supply(token),
-        U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
-        "B-20 total supply must be initialized after Beryl"
-    );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::alice()),
-        U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
-        "Alice must receive the initial B-20 supply"
-    );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::bob()),
-        U256::ZERO,
-        "Bob must start with no B-20 balance"
-    );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::carol()),
-        U256::ZERO,
-        "Carol must start with no B-20 balance"
-    );
-
-    let duplicate_create = env.create_b20_token_tx();
-    let block4 = env.sequencer.build_next_block_with_transactions(vec![duplicate_create]).await;
-
-    assert!(!env.user_tx_succeeded(&block4, 0), "duplicate B-20 creation must revert");
-    assert_eq!(
-        env.b20_total_supply(token),
-        U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
-        "duplicate B-20 creation must leave total supply unchanged"
-    );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::alice()),
-        U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
-        "duplicate B-20 creation must leave Alice's balance unchanged"
-    );
-
-    let transfer_to_bob =
-        env.transfer_b20_tx(token, BerylTestEnv::bob(), U256::from(BerylTestEnv::B20_BOB_TRANSFER));
-    let block5 = env.sequencer.build_next_block_with_transactions(vec![transfer_to_bob]).await;
-
-    assert!(env.user_tx_succeeded(&block5, 0), "Alice transfer transaction must succeed");
-    assert!(
-        env.b20_transfer_log_emitted(
-            &block5,
-            0,
-            token,
-            BerylTestEnv::alice(),
-            BerylTestEnv::bob(),
-            U256::from(BerylTestEnv::B20_BOB_TRANSFER),
-        ),
-        "Alice transfer must emit a Transfer event"
-    );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::alice()),
-        U256::from(BerylTestEnv::B20_INITIAL_SUPPLY - BerylTestEnv::B20_BOB_TRANSFER),
-        "Alice balance must decrease after transferring to Bob"
-    );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::bob()),
+    let transfer_to_bob = scenario.env.transfer_b20_tx(
+        scenario.token,
+        BerylTestEnv::bob(),
         U256::from(BerylTestEnv::B20_BOB_TRANSFER),
-        "Bob balance must increase after receiving B-20"
     );
-    assert_eq!(
-        env.b20_total_supply(token),
-        U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
-        "B-20 total supply must not change after transfer"
+    let block = scenario.build_block_with_transactions(vec![transfer_to_bob]).await;
+
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "Alice transfer transaction must succeed");
+    scenario.assert_transfer_log(
+        &block,
+        BerylTestEnv::alice(),
+        BerylTestEnv::bob(),
+        BerylTestEnv::B20_BOB_TRANSFER,
+    );
+    scenario.assert_total_supply(BerylTestEnv::B20_INITIAL_SUPPLY);
+    scenario.assert_balances(
+        BerylTestEnv::B20_INITIAL_SUPPLY - BerylTestEnv::B20_BOB_TRANSFER,
+        BerylTestEnv::B20_BOB_TRANSFER,
+        0,
     );
 
-    let bob_transfer_to_carol = env.transfer_b20_from_bob_tx(
-        token,
+    let transfer_to_carol = scenario.env.transfer_b20_from_bob_tx(
+        scenario.token,
         BerylTestEnv::carol(),
         U256::from(BerylTestEnv::B20_CAROL_TRANSFER),
     );
-    let block6 =
-        env.sequencer.build_next_block_with_transactions(vec![bob_transfer_to_carol]).await;
+    let block = scenario.build_block_with_transactions(vec![transfer_to_carol]).await;
 
-    assert!(env.user_tx_succeeded(&block6, 0), "Bob transfer transaction must succeed");
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "Bob transfer transaction must succeed");
+    scenario.assert_transfer_log(
+        &block,
+        BerylTestEnv::bob(),
+        BerylTestEnv::carol(),
+        BerylTestEnv::B20_CAROL_TRANSFER,
+    );
+    scenario.assert_total_supply(BerylTestEnv::B20_INITIAL_SUPPLY);
+    scenario.assert_balances(
+        BerylTestEnv::B20_INITIAL_SUPPLY - BerylTestEnv::B20_BOB_TRANSFER,
+        BerylTestEnv::B20_BOB_TRANSFER - BerylTestEnv::B20_CAROL_TRANSFER,
+        BerylTestEnv::B20_CAROL_TRANSFER,
+    );
+
+    scenario.derive().await;
+}
+
+#[tokio::test]
+async fn b20_transfer_reverts_when_sender_balance_is_insufficient() {
+    let mut scenario = B20TokenScenario::new().await;
+
+    let transfer_to_bob = scenario.env.transfer_b20_tx(
+        scenario.token,
+        BerylTestEnv::bob(),
+        U256::from(BerylTestEnv::B20_BOB_TRANSFER),
+    );
+    let block = scenario.build_block_with_transactions(vec![transfer_to_bob]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "Alice transfer transaction must succeed");
+
+    let overdraw_amount = BerylTestEnv::B20_BOB_TRANSFER + 1;
+    let overdraw = scenario.env.transfer_b20_from_bob_tx(
+        scenario.token,
+        BerylTestEnv::carol(),
+        U256::from(overdraw_amount),
+    );
+    let block = scenario.build_block_with_transactions(vec![overdraw]).await;
+
+    assert!(!scenario.env.user_tx_succeeded(&block, 0), "Bob overdraw transfer must revert");
     assert!(
-        env.b20_transfer_log_emitted(
-            &block6,
+        !scenario.env.b20_transfer_log_emitted(
+            &block,
             0,
-            token,
+            scenario.token,
             BerylTestEnv::bob(),
             BerylTestEnv::carol(),
-            U256::from(BerylTestEnv::B20_CAROL_TRANSFER),
-        ),
-        "Bob transfer must emit a Transfer event"
-    );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::alice()),
-        U256::from(BerylTestEnv::B20_INITIAL_SUPPLY - BerylTestEnv::B20_BOB_TRANSFER),
-        "Alice balance must remain unchanged after Bob transfers to Carol"
-    );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::bob()),
-        U256::from(BerylTestEnv::B20_BOB_TRANSFER - BerylTestEnv::B20_CAROL_TRANSFER),
-        "Bob balance must decrease after transferring to Carol"
-    );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::carol()),
-        U256::from(BerylTestEnv::B20_CAROL_TRANSFER),
-        "Carol balance must increase after receiving B-20"
-    );
-    assert_eq!(
-        env.b20_total_supply(token),
-        U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
-        "B-20 total supply must remain constant after multiple transfers"
-    );
-
-    let bob_remaining = BerylTestEnv::B20_BOB_TRANSFER - BerylTestEnv::B20_CAROL_TRANSFER;
-    let bob_overdraw =
-        env.transfer_b20_from_bob_tx(token, BerylTestEnv::carol(), U256::from(bob_remaining + 1));
-    let block7 = env.sequencer.build_next_block_with_transactions(vec![bob_overdraw]).await;
-
-    assert!(!env.user_tx_succeeded(&block7, 0), "Bob overdraw transfer must revert");
-    assert!(
-        !env.b20_transfer_log_emitted(
-            &block7,
-            0,
-            token,
-            BerylTestEnv::bob(),
-            BerylTestEnv::carol(),
-            U256::from(bob_remaining + 1),
+            U256::from(overdraw_amount),
         ),
         "failed overdraw transfer must not emit a Transfer event"
     );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::bob()),
-        U256::from(bob_remaining),
-        "failed overdraw transfer must leave Bob's balance unchanged"
-    );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::carol()),
-        U256::from(BerylTestEnv::B20_CAROL_TRANSFER),
-        "failed overdraw transfer must leave Carol's balance unchanged"
+    scenario.assert_balances(
+        BerylTestEnv::B20_INITIAL_SUPPLY - BerylTestEnv::B20_BOB_TRANSFER,
+        BerylTestEnv::B20_BOB_TRANSFER,
+        0,
     );
 
-    let approve_bob =
-        env.approve_b20_tx(token, BerylTestEnv::bob(), U256::from(BerylTestEnv::B20_BOB_ALLOWANCE));
-    let block8 = env.sequencer.build_next_block_with_transactions(vec![approve_bob]).await;
+    scenario.derive().await;
+}
 
-    assert!(env.user_tx_succeeded(&block8, 0), "Alice approval transaction must succeed");
-    assert!(
-        env.b20_approval_log_emitted(
-            &block8,
-            0,
-            token,
-            BerylTestEnv::alice(),
-            BerylTestEnv::bob(),
-            U256::from(BerylTestEnv::B20_BOB_ALLOWANCE),
-        ),
-        "Alice approval must emit an Approval event"
-    );
-    assert_eq!(
-        env.b20_allowance(token, BerylTestEnv::alice(), BerylTestEnv::bob()),
+#[tokio::test]
+async fn b20_approval_and_transfer_from_update_allowance() {
+    let mut scenario = B20TokenScenario::new().await;
+
+    let approve_bob = scenario.env.approve_b20_tx(
+        scenario.token,
+        BerylTestEnv::bob(),
         U256::from(BerylTestEnv::B20_BOB_ALLOWANCE),
-        "Alice must approve Bob's B-20 allowance"
+    );
+    let block = scenario.build_block_with_transactions(vec![approve_bob]).await;
+
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "Alice approval transaction must succeed");
+    scenario.assert_approval_log(
+        &block,
+        BerylTestEnv::alice(),
+        BerylTestEnv::bob(),
+        BerylTestEnv::B20_BOB_ALLOWANCE,
+    );
+    scenario.assert_allowance(
+        BerylTestEnv::alice(),
+        BerylTestEnv::bob(),
+        BerylTestEnv::B20_BOB_ALLOWANCE,
     );
 
-    let transfer_from_alice_to_carol = env.transfer_b20_from_alice_by_bob_tx(
-        token,
+    let transfer_from_alice_to_carol = scenario.env.transfer_b20_from_alice_by_bob_tx(
+        scenario.token,
         BerylTestEnv::carol(),
         U256::from(BerylTestEnv::B20_TRANSFER_FROM_CAROL),
     );
-    let block9 =
-        env.sequencer.build_next_block_with_transactions(vec![transfer_from_alice_to_carol]).await;
+    let block = scenario.build_block_with_transactions(vec![transfer_from_alice_to_carol]).await;
 
-    assert!(env.user_tx_succeeded(&block9, 0), "Bob transferFrom transaction must succeed");
-    assert!(
-        env.b20_transfer_log_emitted(
-            &block9,
-            0,
-            token,
-            BerylTestEnv::alice(),
-            BerylTestEnv::carol(),
-            U256::from(BerylTestEnv::B20_TRANSFER_FROM_CAROL),
-        ),
-        "transferFrom must emit a Transfer event from Alice to Carol"
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "Bob transferFrom transaction must succeed");
+    scenario.assert_transfer_log(
+        &block,
+        BerylTestEnv::alice(),
+        BerylTestEnv::carol(),
+        BerylTestEnv::B20_TRANSFER_FROM_CAROL,
     );
+    scenario.assert_balances(
+        BerylTestEnv::B20_INITIAL_SUPPLY - BerylTestEnv::B20_TRANSFER_FROM_CAROL,
+        0,
+        BerylTestEnv::B20_TRANSFER_FROM_CAROL,
+    );
+    scenario.assert_allowance(
+        BerylTestEnv::alice(),
+        BerylTestEnv::bob(),
+        BerylTestEnv::B20_BOB_ALLOWANCE - BerylTestEnv::B20_TRANSFER_FROM_CAROL,
+    );
+    scenario.assert_total_supply(BerylTestEnv::B20_INITIAL_SUPPLY);
 
-    let alice_final = BerylTestEnv::B20_INITIAL_SUPPLY
-        - BerylTestEnv::B20_BOB_TRANSFER
-        - BerylTestEnv::B20_TRANSFER_FROM_CAROL;
-    let carol_final = BerylTestEnv::B20_CAROL_TRANSFER + BerylTestEnv::B20_TRANSFER_FROM_CAROL;
-    let allowance_final = BerylTestEnv::B20_BOB_ALLOWANCE - BerylTestEnv::B20_TRANSFER_FROM_CAROL;
+    scenario.derive().await;
+}
 
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::alice()),
-        U256::from(alice_final),
-        "transferFrom must decrease Alice's balance"
-    );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::bob()),
-        U256::from(bob_remaining),
-        "transferFrom must not change Bob's balance"
-    );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::carol()),
-        U256::from(carol_final),
-        "transferFrom must increase Carol's balance"
-    );
-    assert_eq!(
-        env.b20_allowance(token, BerylTestEnv::alice(), BerylTestEnv::bob()),
-        U256::from(allowance_final),
-        "transferFrom must decrement Bob's allowance"
-    );
-    assert_eq!(
-        env.b20_total_supply(token),
-        U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
-        "B-20 total supply must remain constant after transferFrom"
-    );
+#[tokio::test]
+async fn b20_staticcall_abi_returns_storage_values() {
+    let mut scenario = B20TokenScenario::new().await;
 
-    let block10 = env
-        .sequencer
-        .build_next_block_with_transactions(vec![
-            env.probe_b20_total_supply_tx(total_supply_probe),
-            env.probe_b20_balance_tx(alice_balance_probe, BerylTestEnv::alice()),
-            env.probe_b20_balance_tx(bob_balance_probe, BerylTestEnv::bob()),
-            env.probe_b20_balance_tx(carol_balance_probe, BerylTestEnv::carol()),
-            env.probe_b20_allowance_tx(allowance_probe, BerylTestEnv::alice(), BerylTestEnv::bob()),
-            env.probe_b20_decimals_tx(decimals_probe),
+    let transfer_to_bob = scenario.env.transfer_b20_tx(
+        scenario.token,
+        BerylTestEnv::bob(),
+        U256::from(BerylTestEnv::B20_BOB_TRANSFER),
+    );
+    let approve_bob = scenario.env.approve_b20_tx(
+        scenario.token,
+        BerylTestEnv::bob(),
+        U256::from(BerylTestEnv::B20_BOB_ALLOWANCE),
+    );
+    let transfer_from_alice_to_carol = scenario.env.transfer_b20_from_alice_by_bob_tx(
+        scenario.token,
+        BerylTestEnv::carol(),
+        U256::from(BerylTestEnv::B20_TRANSFER_FROM_CAROL),
+    );
+    let block = scenario
+        .build_block_with_transactions(vec![
+            transfer_to_bob,
+            approve_bob,
+            transfer_from_alice_to_carol,
         ])
         .await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "Alice transfer transaction must succeed");
+    assert!(scenario.env.user_tx_succeeded(&block, 1), "Alice approval transaction must succeed");
+    assert!(scenario.env.user_tx_succeeded(&block, 2), "Bob transferFrom transaction must succeed");
 
-    assert!(env.probe_call_succeeded(total_supply_probe), "totalSupply ABI call must succeed");
-    assert_eq!(
-        env.probe_return_word(total_supply_probe),
-        U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
-        "totalSupply ABI call must return the initialized supply"
-    );
-    assert!(env.probe_call_succeeded(alice_balance_probe), "Alice balanceOf ABI call must succeed");
-    assert_eq!(
-        env.probe_return_word(alice_balance_probe),
-        U256::from(alice_final),
-        "Alice balanceOf ABI call must match storage"
-    );
-    assert!(env.probe_call_succeeded(bob_balance_probe), "Bob balanceOf ABI call must succeed");
-    assert_eq!(
-        env.probe_return_word(bob_balance_probe),
-        U256::from(bob_remaining),
-        "Bob balanceOf ABI call must match storage"
-    );
-    assert!(env.probe_call_succeeded(carol_balance_probe), "Carol balanceOf ABI call must succeed");
-    assert_eq!(
-        env.probe_return_word(carol_balance_probe),
-        U256::from(carol_final),
-        "Carol balanceOf ABI call must match storage"
-    );
-    assert!(env.probe_call_succeeded(allowance_probe), "allowance ABI call must succeed");
-    assert_eq!(
-        env.probe_return_word(allowance_probe),
-        U256::from(allowance_final),
-        "allowance ABI call must match storage"
-    );
-    assert!(env.probe_call_succeeded(decimals_probe), "decimals ABI call must succeed");
-    assert_eq!(
-        env.probe_return_word(decimals_probe),
-        U256::from(BerylTestEnv::B20_DECIMALS),
-        "decimals ABI call must return the token-address encoded decimals"
+    let probes = B20StaticcallProbes::deploy(&mut scenario).await;
+    let probe_calls = probes.call_txs(&scenario);
+    let _block = scenario.build_block_with_transactions(probe_calls).await;
+
+    probes.assert_returns(
+        &scenario,
+        B20ProbeExpectations {
+            total_supply: BerylTestEnv::B20_INITIAL_SUPPLY,
+            alice_balance: BerylTestEnv::B20_INITIAL_SUPPLY
+                - BerylTestEnv::B20_BOB_TRANSFER
+                - BerylTestEnv::B20_TRANSFER_FROM_CAROL,
+            bob_balance: BerylTestEnv::B20_BOB_TRANSFER,
+            carol_balance: BerylTestEnv::B20_TRANSFER_FROM_CAROL,
+            allowance: BerylTestEnv::B20_BOB_ALLOWANCE - BerylTestEnv::B20_TRANSFER_FROM_CAROL,
+            decimals: BerylTestEnv::B20_DECIMALS,
+        },
     );
 
-    // -- Deactivation tests --
-    // Deactivate B20_TOKEN in its own block so the state is committed before the transfer.
-    let deactivate_b20 = env.deactivate_feature_tx(BerylTestEnv::b20_token_feature());
-    let block11 = env.sequencer.build_next_block_with_transactions(vec![deactivate_b20]).await;
+    scenario.derive().await;
+}
 
-    assert!(env.user_tx_succeeded(&block11, 0), "B20_TOKEN deactivation must succeed");
+#[tokio::test]
+async fn b20_transfer_reverts_while_token_feature_is_deactivated() {
+    let mut scenario = B20TokenScenario::new().await;
 
-    // Token transfer must revert while B20_TOKEN is deactivated.
-    let transfer_while_deactivated = env.transfer_b20_tx(token, BerylTestEnv::bob(), U256::from(1));
-    let block12 =
-        env.sequencer.build_next_block_with_transactions(vec![transfer_while_deactivated]).await;
+    let deactivate_b20 = scenario.env.deactivate_feature_tx(BerylTestEnv::b20_token_feature());
+    let block = scenario.build_block_with_transactions(vec![deactivate_b20]).await;
+
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_TOKEN deactivation must succeed");
+
+    let transfer_while_deactivated =
+        scenario.env.transfer_b20_tx(scenario.token, BerylTestEnv::bob(), U256::from(1));
+    let block = scenario.build_block_with_transactions(vec![transfer_while_deactivated]).await;
 
     assert!(
-        !env.user_tx_succeeded(&block12, 0),
+        !scenario.env.user_tx_succeeded(&block, 0),
         "token transfer must revert when B20_TOKEN is deactivated"
     );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::alice()),
-        U256::from(alice_final),
-        "Alice balance must be unchanged when B20_TOKEN is deactivated"
-    );
+    scenario.assert_balances(BerylTestEnv::B20_INITIAL_SUPPLY, 0, 0);
+    scenario.assert_total_supply(BerylTestEnv::B20_INITIAL_SUPPLY);
 
-    // Re-activate B20_TOKEN in its own block so the state is committed before the transfer.
-    let reactivate_b20 = env.activate_feature_tx(BerylTestEnv::b20_token_feature());
-    let block13 = env.sequencer.build_next_block_with_transactions(vec![reactivate_b20]).await;
+    let reactivate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_token_feature());
+    let block = scenario.build_block_with_transactions(vec![reactivate_b20]).await;
 
-    assert!(env.user_tx_succeeded(&block13, 0), "B20_TOKEN re-activation must succeed");
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_TOKEN re-activation must succeed");
 
-    // Token transfer must succeed after B20_TOKEN is re-activated.
-    let transfer_after_reactivate = env.transfer_b20_tx(token, BerylTestEnv::bob(), U256::from(1));
-    let block14 =
-        env.sequencer.build_next_block_with_transactions(vec![transfer_after_reactivate]).await;
+    let transfer_after_reactivate =
+        scenario.env.transfer_b20_tx(scenario.token, BerylTestEnv::bob(), U256::from(1));
+    let block = scenario.build_block_with_transactions(vec![transfer_after_reactivate]).await;
 
     assert!(
-        env.user_tx_succeeded(&block14, 0),
+        scenario.env.user_tx_succeeded(&block, 0),
         "token transfer must succeed after B20_TOKEN is re-activated"
     );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::alice()),
-        U256::from(alice_final - 1),
-        "Alice balance must decrease after transfer following B20_TOKEN re-activation"
-    );
-    assert_eq!(
-        env.b20_balance(token, BerylTestEnv::bob()),
-        U256::from(bob_remaining + 1),
-        "Bob balance must increase after transfer following B20_TOKEN re-activation"
-    );
+    scenario.assert_transfer_log(&block, BerylTestEnv::alice(), BerylTestEnv::bob(), 1);
+    scenario.assert_balances(BerylTestEnv::B20_INITIAL_SUPPLY - 1, 1, 0);
+    scenario.assert_total_supply(BerylTestEnv::B20_INITIAL_SUPPLY);
 
-    // Deactivate TOKEN_FACTORY in its own block so the state is committed before token creation.
-    let deactivate_factory = env.deactivate_feature_tx(BerylTestEnv::token_factory_feature());
-    let block15 = env.sequencer.build_next_block_with_transactions(vec![deactivate_factory]).await;
+    scenario.derive().await;
+}
 
-    assert!(env.user_tx_succeeded(&block15, 0), "TOKEN_FACTORY deactivation must succeed");
+struct B20TokenScenario {
+    env: BerylTestEnv,
+    token: Address,
+    blocks: Vec<(BaseBlock, u64)>,
+}
 
-    // Token creation must revert while TOKEN_FACTORY is deactivated.
-    let create_while_deactivated = env.create_b20_token_with_salt_tx(BerylTestEnv::ALT_SALT);
-    let block16 =
-        env.sequencer.build_next_block_with_transactions(vec![create_while_deactivated]).await;
+impl B20TokenScenario {
+    async fn new() -> Self {
+        let env = BerylTestEnv::new();
+        let token = env.b20_token_address();
+        let mut scenario = Self { env, token, blocks: Vec::new() };
 
-    assert!(
-        !env.user_tx_succeeded(&block16, 0),
-        "token creation must revert when TOKEN_FACTORY is deactivated"
-    );
+        scenario.build_block_with_transactions(Vec::new()).await;
 
-    // Re-activate TOKEN_FACTORY in its own block so the state is committed before token creation.
-    let reactivate_factory = env.activate_feature_tx(BerylTestEnv::token_factory_feature());
-    let block17 = env.sequencer.build_next_block_with_transactions(vec![reactivate_factory]).await;
+        let activate_factory =
+            scenario.env.activate_feature_tx(BerylTestEnv::token_factory_feature());
+        let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_token_feature());
+        let block =
+            scenario.build_block_with_transactions(vec![activate_factory, activate_b20]).await;
 
-    assert!(env.user_tx_succeeded(&block17, 0), "TOKEN_FACTORY re-activation must succeed");
+        assert!(scenario.env.user_tx_succeeded(&block, 0), "TOKEN_FACTORY activation must succeed");
+        assert!(scenario.env.user_tx_succeeded(&block, 1), "B20_TOKEN activation must succeed");
 
-    // Token creation must succeed after TOKEN_FACTORY is re-activated.
-    let create_after_reactivate = env.create_b20_token_with_salt_tx(BerylTestEnv::ALT_SALT);
-    let block18 =
-        env.sequencer.build_next_block_with_transactions(vec![create_after_reactivate]).await;
+        let create = scenario.env.create_b20_token_tx();
+        let block = scenario.build_block_with_transactions(vec![create]).await;
 
-    assert!(
-        env.user_tx_succeeded(&block18, 0),
-        "token creation must succeed after TOKEN_FACTORY is re-activated"
-    );
+        assert!(
+            scenario.env.user_tx_succeeded(&block, 0),
+            "B-20 creation transaction must succeed"
+        );
+        assert!(scenario.env.sequencer.has_code(token), "B-20 token code must be deployed");
+        scenario.assert_total_supply(BerylTestEnv::B20_INITIAL_SUPPLY);
+        scenario.assert_balances(BerylTestEnv::B20_INITIAL_SUPPLY, 0, 0);
 
-    env.derive_blocks(
-        [
-            (block1, 1),
-            (beryl_boundary, 2),
-            (block2, 3),
-            (block3, 4),
-            (block4, 5),
-            (block5, 6),
-            (block6, 7),
-            (block7, 8),
-            (block8, 9),
-            (block9, 10),
-            (block10, 11),
-            (block11, 12),
-            (block12, 13),
-            (block13, 14),
-            (block14, 15),
-            (block15, 16),
-            (block16, 17),
-            (block17, 18),
-            (block18, 19),
-        ],
-        19,
-    )
-    .await;
+        scenario
+    }
+
+    async fn build_block_with_transactions(
+        &mut self,
+        transactions: Vec<BaseTxEnvelope>,
+    ) -> BaseBlock {
+        let block = self.env.sequencer.build_next_block_with_transactions(transactions).await;
+        let block_number = self.blocks.len() as u64 + 1;
+        self.blocks.push((block.clone(), block_number));
+        block
+    }
+
+    fn assert_total_supply(&self, total_supply: u64) {
+        assert_eq!(
+            self.env.b20_total_supply(self.token),
+            U256::from(total_supply),
+            "B-20 total supply must match expected value"
+        );
+    }
+
+    fn assert_balances(&self, alice: u64, bob: u64, carol: u64) {
+        assert_eq!(
+            self.env.b20_balance(self.token, BerylTestEnv::alice()),
+            U256::from(alice),
+            "Alice B-20 balance must match expected value"
+        );
+        assert_eq!(
+            self.env.b20_balance(self.token, BerylTestEnv::bob()),
+            U256::from(bob),
+            "Bob B-20 balance must match expected value"
+        );
+        assert_eq!(
+            self.env.b20_balance(self.token, BerylTestEnv::carol()),
+            U256::from(carol),
+            "Carol B-20 balance must match expected value"
+        );
+    }
+
+    fn assert_allowance(&self, owner: Address, spender: Address, amount: u64) {
+        assert_eq!(
+            self.env.b20_allowance(self.token, owner, spender),
+            U256::from(amount),
+            "B-20 allowance must match expected value"
+        );
+    }
+
+    fn assert_transfer_log(&self, block: &BaseBlock, from: Address, to: Address, amount: u64) {
+        assert!(
+            self.env.b20_transfer_log_emitted(block, 0, self.token, from, to, U256::from(amount),),
+            "B-20 transfer must emit a Transfer event"
+        );
+    }
+
+    fn assert_approval_log(
+        &self,
+        block: &BaseBlock,
+        owner: Address,
+        spender: Address,
+        amount: u64,
+    ) {
+        assert!(
+            self.env.b20_approval_log_emitted(
+                block,
+                0,
+                self.token,
+                owner,
+                spender,
+                U256::from(amount),
+            ),
+            "B-20 approval must emit an Approval event"
+        );
+    }
+
+    async fn derive(mut self) {
+        let expected_safe_head = self.blocks.len() as u64;
+        self.env.derive_blocks(self.blocks, expected_safe_head).await;
+    }
+}
+
+struct B20StaticcallProbes {
+    total_supply: Address,
+    alice_balance: Address,
+    bob_balance: Address,
+    carol_balance: Address,
+    allowance: Address,
+    decimals: Address,
+}
+
+impl B20StaticcallProbes {
+    async fn deploy(scenario: &mut B20TokenScenario) -> Self {
+        let (total_supply, deploy_total_supply) =
+            scenario.env.deploy_staticcall_probe_tx(scenario.token);
+        let (alice_balance, deploy_alice_balance) =
+            scenario.env.deploy_staticcall_probe_tx(scenario.token);
+        let (bob_balance, deploy_bob_balance) =
+            scenario.env.deploy_staticcall_probe_tx(scenario.token);
+        let (carol_balance, deploy_carol_balance) =
+            scenario.env.deploy_staticcall_probe_tx(scenario.token);
+        let (allowance, deploy_allowance) = scenario.env.deploy_staticcall_probe_tx(scenario.token);
+        let (decimals, deploy_decimals) = scenario.env.deploy_staticcall_probe_tx(scenario.token);
+
+        let block = scenario
+            .build_block_with_transactions(vec![
+                deploy_total_supply,
+                deploy_alice_balance,
+                deploy_bob_balance,
+                deploy_carol_balance,
+                deploy_allowance,
+                deploy_decimals,
+            ])
+            .await;
+        for index in 0..6 {
+            assert!(
+                scenario.env.user_tx_succeeded(&block, index),
+                "B-20 staticcall probe deployment transaction {index} must succeed"
+            );
+        }
+
+        Self { total_supply, alice_balance, bob_balance, carol_balance, allowance, decimals }
+    }
+
+    fn call_txs(&self, scenario: &B20TokenScenario) -> Vec<BaseTxEnvelope> {
+        vec![
+            scenario.env.probe_b20_total_supply_tx(self.total_supply),
+            scenario.env.probe_b20_balance_tx(self.alice_balance, BerylTestEnv::alice()),
+            scenario.env.probe_b20_balance_tx(self.bob_balance, BerylTestEnv::bob()),
+            scenario.env.probe_b20_balance_tx(self.carol_balance, BerylTestEnv::carol()),
+            scenario.env.probe_b20_allowance_tx(
+                self.allowance,
+                BerylTestEnv::alice(),
+                BerylTestEnv::bob(),
+            ),
+            scenario.env.probe_b20_decimals_tx(self.decimals),
+        ]
+    }
+
+    fn assert_returns(&self, scenario: &B20TokenScenario, expected: B20ProbeExpectations) {
+        Self::assert_probe_return(scenario, self.total_supply, expected.total_supply);
+        Self::assert_probe_return(scenario, self.alice_balance, expected.alice_balance);
+        Self::assert_probe_return(scenario, self.bob_balance, expected.bob_balance);
+        Self::assert_probe_return(scenario, self.carol_balance, expected.carol_balance);
+        Self::assert_probe_return(scenario, self.allowance, expected.allowance);
+        Self::assert_probe_return(scenario, self.decimals, u64::from(expected.decimals));
+    }
+
+    fn assert_probe_return(scenario: &B20TokenScenario, probe: Address, expected: u64) {
+        assert!(scenario.env.probe_call_succeeded(probe), "B-20 staticcall probe must succeed");
+        assert_eq!(
+            scenario.env.probe_return_word(probe),
+            U256::from(expected),
+            "B-20 staticcall probe must return the expected word"
+        );
+    }
+}
+
+struct B20ProbeExpectations {
+    total_supply: u64,
+    alice_balance: u64,
+    bob_balance: u64,
+    carol_balance: u64,
+    allowance: u64,
+    decimals: u8,
 }
