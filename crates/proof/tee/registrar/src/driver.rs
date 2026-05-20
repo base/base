@@ -292,11 +292,31 @@ where
         let mut pending: HashMap<task::Id, PendingTask> = HashMap::new();
 
         loop {
+            // Reap before discovery so finished tasks don't linger in
+            // `pending` for an entire cycle and (incorrectly) cause
+            // reconcile to skip spawning a replacement on transient
+            // failure (audit finding #9).
             Self::reap_finished_tasks(&mut tasks, &mut pending);
+            RegistrarMetrics::proof_tasks_pending().set(pending.len() as f64);
 
             match self.discover_and_resolve().await {
                 Ok(resolution) => {
-                    self.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+                    // Reap again: discovery may have taken longer than
+                    // a quick proof failure. Without this, a task that
+                    // finished during discovery would still appear
+                    // in-flight to reconcile and either (a) get
+                    // re-cancelled if its signer vanished — bumping
+                    // `proof_tasks_cancelled` for an already-done task —
+                    // or (b) suppress a needed respawn for one cycle.
+                    Self::reap_finished_tasks(&mut tasks, &mut pending);
+
+                    // Spawning new proof tasks during a shutdown would
+                    // acquire L1 nonces we have no intention of
+                    // broadcasting. Skip reconcile (and the orphan
+                    // dereg pass) entirely when cancellation is set.
+                    if !self.config.cancel.is_cancelled() {
+                        self.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+                    }
                     RegistrarMetrics::proof_tasks_pending().set(pending.len() as f64);
 
                     if resolution.ok_to_dereg && !self.config.cancel.is_cancelled() {
@@ -317,6 +337,10 @@ where
                 Err(e) => {
                     warn!(error = %e, "discovery cycle failed");
                     RegistrarMetrics::processing_errors_total().increment(1);
+                    // Keep the in-flight gauge consistent even when
+                    // discovery fails — reap above already updated
+                    // `pending.len()`, so we re-publish for monitors.
+                    RegistrarMetrics::proof_tasks_pending().set(pending.len() as f64);
                 }
             }
 
@@ -658,6 +682,17 @@ where
         attestation_bytes: &[u8],
         signer_cancel: &CancellationToken,
     ) -> Result<()> {
+        // Check cancellation BEFORE the registry RPC: a task that was
+        // already cancelled (e.g. its signer just vanished from
+        // discovery, or shutdown started) shouldn't do new RPC work
+        // before returning. This bounds shutdown latency by the
+        // longest in-flight operation rather than by an additional
+        // registry round-trip per pending task (audit finding #8).
+        if signer_cancel.is_cancelled() {
+            debug!(signer = %signer_address, "task cancelled before registry probe");
+            return Ok(());
+        }
+
         if self.registry.is_registered(signer_address).await? {
             debug!(signer = %signer_address, "already registered, skipping");
             return Ok(());
