@@ -12,12 +12,11 @@ use alloy_primitives::{Address, B256, Log, LogData, U256};
 use revm::{
     context::{Block, journaled_state::JournalCheckpoint},
     context_interface::cfg::GasParams,
-    interpreter::gas::{KECCAK256, KECCAK256WORD, LOG},
+    interpreter::gas::{Gas, KECCAK256, KECCAK256WORD, LOG},
     primitives::keccak256,
     state::{AccountInfo, Bytecode},
 };
 
-use crate::gas_tracker::GasTracker;
 use crate::{
     error::{BasePrecompileError, Result},
     provider::PrecompileStorageProvider,
@@ -32,7 +31,7 @@ use crate::{
 pub struct EvmPrecompileStorageProvider<'a> {
     internals: alloy_evm::EvmInternals<'a>,
     caller: Address,
-    gas_tracker: GasTracker,
+    gas: Gas,
     gas_params: GasParams,
     is_static: bool,
     block_number: u64,
@@ -57,7 +56,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
         Self {
             internals,
             caller,
-            gas_tracker: GasTracker::new(gas, gas, 0),
+            gas: Gas::new(gas),
             gas_params,
             is_static,
             block_number,
@@ -172,41 +171,40 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn deduct_gas(&mut self, gas: u64) -> Result<()> {
-        if !self.gas_tracker.record_regular_cost(gas) {
+        if !self.gas.record_cost(gas) {
             return Err(BasePrecompileError::OutOfGas);
         }
         Ok(())
     }
 
-    fn deduct_state_gas(&mut self, gas: u64) -> Result<()> {
-        if gas > 0 && !self.gas_tracker.record_state_cost(gas) {
-            return Err(BasePrecompileError::OutOfGas);
-        }
+    fn deduct_state_gas(&mut self, _gas: u64) -> Result<()> {
+        // State gas (EIP-8037 reservoir model) requires GasParams v17 (Amsterdam).
+        // No-op until revm upgrades to context-interface v17.
         Ok(())
     }
 
     fn refund_gas(&mut self, gas: i64) {
-        self.gas_tracker.record_refund(gas);
+        self.gas.record_refund(gas);
     }
 
     fn gas_limit(&self) -> u64 {
-        self.gas_tracker.limit()
+        self.gas.limit()
     }
 
     fn gas_used(&self) -> u64 {
-        self.gas_tracker.limit() - self.gas_tracker.remaining()
+        self.gas.spent()
     }
 
     fn state_gas_used(&self) -> u64 {
-        self.gas_tracker.state_gas_spent()
+        0
     }
 
     fn gas_refunded(&self) -> i64 {
-        self.gas_tracker.refunded()
+        self.gas.refunded()
     }
 
     fn reservoir(&self) -> u64 {
-        self.gas_tracker.reservoir()
+        0
     }
 
     fn is_static(&self) -> bool {
