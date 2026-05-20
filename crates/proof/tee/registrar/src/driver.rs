@@ -2242,6 +2242,54 @@ mod tests {
         }
     }
 
+    /// Proof provider that records the `(signer, attestation_bytes)` pair
+    /// passed to every `generate_proof_for_signer` invocation, then
+    /// returns `Err` so the spawned `try_register` task exits without
+    /// reaching the (unmocked) tx-manager send path.
+    ///
+    /// Used by the spawn-pass indexing tests to assert that
+    /// [`RegistrationDriver::reconcile_proof_tasks`] pairs each signer
+    /// with `attestations[idx]` and never with a sibling's blob.
+    #[derive(Debug, Clone, Default)]
+    struct RecordingProofProvider {
+        recorded: Arc<Mutex<HashMap<Address, Vec<u8>>>>,
+    }
+
+    impl RecordingProofProvider {
+        fn snapshot(&self) -> HashMap<Address, Vec<u8>> {
+            self.recorded.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl AttestationProofProvider for RecordingProofProvider {
+        async fn generate_proof(
+            &self,
+            _attestation_bytes: &[u8],
+            _cancel: &CancellationToken,
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            unreachable!(
+                "RecordingProofProvider is only invoked via generate_proof_for_signer; \
+                 reaching generate_proof would mean the driver bypassed signer routing"
+            )
+        }
+
+        async fn generate_proof_for_signer(
+            &self,
+            attestation_bytes: &[u8],
+            signer_address: Address,
+            _cancel: &CancellationToken,
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            self.recorded.lock().unwrap().insert(signer_address, attestation_bytes.to_vec());
+            // Returning `Err` short-circuits `try_register` so the
+            // spawned task exits before reaching `tx_manager.send()`,
+            // which we do not wire for the indexing tests.
+            Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
+                "RecordingProofProvider exits after capturing attestation".into(),
+            ))
+        }
+    }
+
     /// Mock tx manager that returns a configurable sequence of results.
     ///
     /// Each call to `send()` pops the next result from `results`. When
@@ -4265,6 +4313,166 @@ mod tests {
         drain_test_tasks(&mut tasks, &mut pending).await;
     }
 
+    // ── reconcile_proof_tasks: dedupe + indexing tests ─────────────────
+
+    /// Driver specialisation used by the spawn-pass indexing tests so a
+    /// [`RecordingProofProvider`] can capture the `(signer, attestation)`
+    /// pairs handed to each spawned task.
+    type RecordingDriver = RegistrationDriver<
+        MockDiscovery,
+        RecordingProofProvider,
+        MockRegistry,
+        SharedTxManager,
+        MockSignerClient,
+    >;
+
+    /// Builds a driver suitable for direct `reconcile_proof_tasks`
+    /// invocation: the registry reports no signers as registered (so
+    /// each task reaches the proof step), and the proof provider
+    /// records and exits.
+    fn recording_driver(
+        keys: &[(&str, &[u8; 32])],
+        proof_provider: RecordingProofProvider,
+    ) -> Arc<RecordingDriver> {
+        Arc::new(
+            RegistrationDriver::new(
+                MockDiscovery { instances: vec![] },
+                proof_provider,
+                MockRegistry::with_signers(vec![]),
+                SharedTxManager::new(),
+                MockSignerClient::from_keys(keys),
+                default_config(CancellationToken::new()),
+                None,
+            )
+            .expect("recording driver constructs cleanly"),
+        )
+    }
+
+    #[tokio::test]
+    async fn reconcile_proof_tasks_dedupes_signer_across_registerable_entries() {
+        // Two `RegisterableSigner` entries report the SAME signer
+        // address (misconfig: two prover instances were provisioned
+        // with identical enclave keys). The spawn pass must only
+        // spawn one task — duplicating would later trigger two
+        // `tx_manager.send()` calls for the same signer and waste
+        // nonces.
+        let proof_provider = RecordingProofProvider::default();
+        let driver = recording_driver(
+            &[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_0)],
+            proof_provider.clone(),
+        );
+
+        // Both entries carry the same derived address but different
+        // attestation bytes so an accidental second spawn would be
+        // visible as a stale-attestation race in `recorded`.
+        let signer =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let entry_a = RegisterableSigner::new(
+            instance(EP1, InstanceHealthStatus::Healthy),
+            vec![signer],
+            vec![b"attestation-from-instance-a".to_vec()],
+        )
+        .expect("test fixture invariants hold");
+        let entry_b = RegisterableSigner::new(
+            instance(EP2, InstanceHealthStatus::Healthy),
+            vec![signer],
+            vec![b"attestation-from-instance-b".to_vec()],
+        )
+        .expect("test fixture invariants hold");
+        let resolution = DiscoveryResolution {
+            registerable: vec![entry_a, entry_b],
+            active_signers: HashSet::from([signer]),
+            reachable_count: 2,
+            total_count: 2,
+            ok_to_dereg: false,
+        };
+
+        let mut tasks: JoinSet<Result<()>> = JoinSet::new();
+        let mut pending: HashMap<task::Id, PendingTask> = HashMap::new();
+
+        driver.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+
+        assert_eq!(pending.len(), 1, "exactly one task should spawn for a duplicate signer");
+        let only = pending.values().next().unwrap();
+        assert_eq!(only.signer, signer, "the spawned task tracks the deduplicated signer");
+
+        // Let the single task run, record its attestation, and exit.
+        wait_for("the lone spawned task recorded its attestation", || {
+            !proof_provider.snapshot().is_empty()
+        })
+        .await;
+        drain_test_tasks(&mut tasks, &mut pending).await;
+
+        let snap = proof_provider.snapshot();
+        assert_eq!(snap.len(), 1, "exactly one signer recorded across both entries");
+    }
+
+    #[rstest]
+    #[case::forward_order(false)]
+    #[case::reversed_order(true)]
+    #[tokio::test]
+    async fn reconcile_proof_tasks_pairs_attestation_with_signer_by_index(
+        #[case] reverse: bool,
+    ) {
+        // The spawn pass reads `entry.attestations[idx]` for each
+        // `(idx, signer)` enumerated from `entry.addresses`. If
+        // those vectors were ever consumed independently (e.g. via
+        // `zip` with the wrong source, or via stable index across
+        // cycles), this test would catch the mispairing.
+        let signer_a =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let signer_b =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
+        assert_ne!(signer_a, signer_b, "test setup: distinct signer addresses");
+
+        let att_a: Vec<u8> = b"attestation-aligned-to-A".to_vec();
+        let att_b: Vec<u8> = b"attestation-aligned-to-B".to_vec();
+
+        // Both orderings must yield the same `signer → attestation`
+        // mapping: index alignment, not array position, is what
+        // defines the pairing.
+        let (addresses, attestations) = if reverse {
+            (vec![signer_b, signer_a], vec![att_b.clone(), att_a.clone()])
+        } else {
+            (vec![signer_a, signer_b], vec![att_a.clone(), att_b.clone()])
+        };
+
+        let proof_provider = RecordingProofProvider::default();
+        let driver = recording_driver(
+            &[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)],
+            proof_provider.clone(),
+        );
+
+        let entry = RegisterableSigner::new(
+            instance(EP1, InstanceHealthStatus::Healthy),
+            addresses,
+            attestations,
+        )
+        .expect("test fixture invariants hold");
+        let resolution = DiscoveryResolution {
+            registerable: vec![entry],
+            active_signers: HashSet::from([signer_a, signer_b]),
+            reachable_count: 1,
+            total_count: 1,
+            ok_to_dereg: false,
+        };
+
+        let mut tasks: JoinSet<Result<()>> = JoinSet::new();
+        let mut pending: HashMap<task::Id, PendingTask> = HashMap::new();
+
+        driver.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+
+        wait_for("both signers recorded their attestations", || {
+            proof_provider.snapshot().len() == 2
+        })
+        .await;
+        drain_test_tasks(&mut tasks, &mut pending).await;
+
+        let snap = proof_provider.snapshot();
+        assert_eq!(snap.get(&signer_a), Some(&att_a), "signer A got the A-aligned attestation");
+        assert_eq!(snap.get(&signer_b), Some(&att_b), "signer B got the B-aligned attestation");
+    }
+
     // ── reap_finished_tasks + apply_join_outcome tests ─────────────────
 
     #[rstest]
@@ -4748,6 +4956,73 @@ mod tests {
         let sent = harness.tx.sent_calldata();
         assert_eq!(count_register_calls(&sent), 1, "EP1 registration submitted exactly once");
         assert_eq!(count_deregister_calls(&sent), 1, "ORPHAN_A deregistration submitted exactly once");
+    }
+
+    /// `unhealthy_registration_window` parametric test: an `Unhealthy`
+    /// instance whose `launch_time` falls *inside* the window must
+    /// register via the full `run()` pipeline (proving the production
+    /// loop honours the grace period, not just the legacy
+    /// `process_instance` cfg(test) helper); one whose `launch_time`
+    /// falls *outside* the window — or who has no `launch_time` at
+    /// all — must not register.
+    #[rstest]
+    // Recently-launched unhealthy instance: should register.
+    #[case::recent_launch_registers(
+        Some(Duration::from_secs(60 * 10)),
+        true,
+    )]
+    // Old unhealthy instance well past the window: should NOT register.
+    #[case::old_launch_does_not_register(
+        Some(Duration::from_secs(60 * 60 * 24)),
+        false,
+    )]
+    // Unhealthy instance with no launch_time: cannot age-gate, so
+    // defaults to the safe path and does NOT register.
+    #[case::missing_launch_does_not_register(None, false)]
+    #[tokio::test]
+    async fn run_registers_unhealthy_only_within_grace_window(
+        #[case] age_below_now: Option<Duration>,
+        #[case] expect_registration: bool,
+    ) {
+        let launch_time = age_below_now.map(|age| SystemTime::now() - age);
+        let inst = instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time);
+        let harness =
+            GatedRunHarness::new(vec![inst], &[(EP1, &HARDHAT_KEY_0)], empty_registry());
+
+        let run_handle = harness.spawn_run();
+
+        if expect_registration {
+            // Eligible instance: a proof task must park on the gate,
+            // then the registration must land once we release.
+            wait_for("eligible unhealthy proof parked in gate", || {
+                harness.proof.in_flight() == 1
+            })
+            .await;
+            harness.proof.release_all();
+            wait_for("unhealthy-within-window signer registered", || {
+                count_register_calls(&harness.tx.sent_calldata()) >= 1
+            })
+            .await;
+        } else {
+            // Ineligible instance: give the loop at least a couple of
+            // cycles so a faulty short-circuit would have time to
+            // spawn a proof task and submit a tx. The gate stays
+            // unreleased — if anything parked we'd never reach the
+            // shutdown timeout below.
+            tokio::time::sleep(GATED_POLL_INTERVAL * MIN_CYCLES_IN_OBSERVATION_WINDOW as u32)
+                .await;
+            assert_eq!(
+                harness.proof.in_flight(),
+                0,
+                "ineligible unhealthy instance must not spawn a proof task"
+            );
+            assert!(
+                count_register_calls(&harness.tx.sent_calldata()) == 0,
+                "ineligible unhealthy instance must not register"
+            );
+        }
+
+        harness.shutdown(run_handle).await;
     }
 
     // NOTE on real-data fixtures: the pipeline tests above intentionally
