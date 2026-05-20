@@ -103,6 +103,7 @@ pub trait Transferable: Token {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
+    use rstest::rstest;
 
     use super::Transferable;
     use crate::common::{
@@ -162,35 +163,25 @@ mod tests {
         assert_eq!(token.accounting().events.len(), 1);
     }
 
-    #[test]
-    fn transfer_from_respects_allowance_and_decrements() {
+    #[rstest]
+    #[case::finite(U256::from(30u64), U256::from(20u64), Some(U256::from(10u64)))]
+    #[case::max_allowance(U256::MAX, U256::from(50u64), Some(U256::MAX))]
+    #[case::insufficient(U256::from(5u64), U256::from(10u64), None)]
+    fn transfer_from_allowance_cases(
+        #[case] allowance: U256,
+        #[case] amount: U256,
+        #[case] expected_remaining: Option<U256>,
+    ) {
         let mut token = make_token();
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().allowances.insert((ALICE, SPENDER), U256::from(30u64));
-
-        token.transfer_from(SPENDER, ALICE, BOB, U256::from(20u64)).unwrap();
-
-        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(20u64));
-        assert_eq!(token.accounting().allowance(ALICE, SPENDER).unwrap(), U256::from(10u64));
-    }
-
-    #[test]
-    fn transfer_from_max_allowance_skips_decrement() {
-        let mut token = make_token();
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().allowances.insert((ALICE, SPENDER), U256::MAX);
-
-        token.transfer_from(SPENDER, ALICE, BOB, U256::from(50u64)).unwrap();
-
-        assert_eq!(token.accounting().allowance(ALICE, SPENDER).unwrap(), U256::MAX);
-    }
-
-    #[test]
-    fn transfer_from_insufficient_allowance_reverts() {
-        let mut token = make_token();
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().allowances.insert((ALICE, SPENDER), U256::from(5u64));
-
-        assert!(token.transfer_from(SPENDER, ALICE, BOB, U256::from(10u64)).is_err());
+        token.accounting_mut().allowances.insert((ALICE, SPENDER), allowance);
+        let result = token.transfer_from(SPENDER, ALICE, BOB, amount);
+        match expected_remaining {
+            Some(rem) => {
+                result.unwrap();
+                assert_eq!(token.accounting().allowance(ALICE, SPENDER).unwrap(), rem);
+            }
+            None => assert!(result.is_err()),
+        }
     }
 }

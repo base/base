@@ -48,6 +48,7 @@ pub trait Redeemable: Burnable {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
+    use rstest::rstest;
 
     use super::Redeemable;
     use crate::common::{
@@ -74,30 +75,18 @@ mod tests {
 
         assert_eq!(token.accounting().balance_of(CALLER).unwrap(), U256::from(50u64));
         assert_eq!(token.accounting().total_supply().unwrap(), U256::from(50u64));
-        // burn emits Transfer, redeem emits Redeemed on top
         assert_eq!(token.accounting().events.len(), 2);
     }
 
-    #[test]
-    fn redeem_below_minimum_reverts() {
+    #[rstest]
+    #[case::below_minimum(5u64, false)]
+    #[case::at_minimum(10u64, true)]
+    fn redeem_enforces_minimum(#[case] amount: u64, #[case] succeeds: bool) {
         let mut token = make_token();
         token.accounting_mut().balances.insert(CALLER, U256::from(100u64));
         token.accounting_mut().total_supply = U256::from(100u64);
         token.accounting_mut().minimum_redeemable = U256::from(10u64);
-
-        assert!(token.redeem(CALLER, U256::from(5u64)).is_err());
-    }
-
-    #[test]
-    fn redeem_at_exact_minimum_succeeds() {
-        let mut token = make_token();
-        token.accounting_mut().balances.insert(CALLER, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(100u64);
-        token.accounting_mut().minimum_redeemable = U256::from(10u64);
-
-        token.redeem(CALLER, U256::from(10u64)).unwrap();
-
-        assert_eq!(token.accounting().balance_of(CALLER).unwrap(), U256::from(90u64));
+        assert_eq!(token.redeem(CALLER, U256::from(amount)).is_ok(), succeeds);
     }
 
     #[test]

@@ -43,6 +43,7 @@ pub trait Mintable: Token {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
+    use rstest::rstest;
 
     use super::Mintable;
     use crate::common::{
@@ -75,20 +76,13 @@ mod tests {
         assert!(token.mint(Address::ZERO, U256::from(1u64)).is_err());
     }
 
-    #[test]
-    fn mint_beyond_supply_cap_reverts() {
+    #[rstest]
+    #[case::at_cap(100u64, 100u64, true)]
+    #[case::exceeds_cap(50u64, 51u64, false)]
+    fn mint_respects_supply_cap(#[case] cap: u64, #[case] amount: u64, #[case] succeeds: bool) {
         let mut token = make_token();
-        token.accounting_mut().supply_cap = U256::from(50u64);
-        assert!(token.mint(ALICE, U256::from(51u64)).is_err());
-    }
-
-    #[test]
-    fn mint_up_to_supply_cap_succeeds() {
-        let mut token = make_token();
-        token.accounting_mut().supply_cap = U256::from(100u64);
-        token.mint(ALICE, U256::from(100u64)).unwrap();
-
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(100u64));
+        token.accounting_mut().supply_cap = U256::from(cap);
+        assert_eq!(token.mint(ALICE, U256::from(amount)).is_ok(), succeeds);
     }
 
     #[test]

@@ -38,6 +38,7 @@ pub trait Burnable: Token {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
+    use rstest::rstest;
 
     use super::Burnable;
     use crate::common::{
@@ -54,16 +55,22 @@ mod tests {
         )
     }
 
-    #[test]
-    fn burn_decreases_balance_and_total_supply() {
+    #[rstest]
+    #[case::partial(100u64, 40u64, 60u64)]
+    #[case::full(50u64, 50u64, 0u64)]
+    fn burn_decreases_balance_and_supply(
+        #[case] initial: u64,
+        #[case] burn: u64,
+        #[case] remaining: u64,
+    ) {
         let mut token = make_token();
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(100u64);
+        token.accounting_mut().balances.insert(ALICE, U256::from(initial));
+        token.accounting_mut().total_supply = U256::from(initial);
 
-        token.burn(ALICE, U256::from(40u64)).unwrap();
+        token.burn(ALICE, U256::from(burn)).unwrap();
 
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(60u64));
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(remaining));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(remaining));
         assert_eq!(token.accounting().events.len(), 1);
     }
 
@@ -73,17 +80,5 @@ mod tests {
         token.accounting_mut().balances.insert(ALICE, U256::from(10u64));
         token.accounting_mut().total_supply = U256::from(10u64);
         assert!(token.burn(ALICE, U256::from(11u64)).is_err());
-    }
-
-    #[test]
-    fn burn_full_balance_zeroes_supply() {
-        let mut token = make_token();
-        token.accounting_mut().balances.insert(ALICE, U256::from(50u64));
-        token.accounting_mut().total_supply = U256::from(50u64);
-
-        token.burn(ALICE, U256::from(50u64)).unwrap();
-
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::ZERO);
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::ZERO);
     }
 }
