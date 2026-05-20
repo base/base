@@ -33,6 +33,9 @@ pub use types::{
     VecHandler,
 };
 
+mod gas_tracker;
+pub use gas_tracker::GasTracker;
+
 mod evm;
 pub use evm::EvmPrecompileStorageProvider;
 

@@ -150,9 +150,17 @@ impl<'a> StorageCtx<'a> {
     pub fn gas_used(&self) -> u64 {
         self.with_storage(|s| s.gas_used())
     }
+    /// Returns the state-creating gas spent so far (EIP-8037).
+    pub fn state_gas_used(&self) -> u64 {
+        self.with_storage(|s| s.state_gas_used())
+    }
     /// Returns the gas refunded so far.
     pub fn gas_refunded(&self) -> i64 {
         self.with_storage(|s| s.gas_refunded())
+    }
+    /// Returns the remaining EIP-8037 state-gas reservoir.
+    pub fn reservoir(&self) -> u64 {
+        self.with_storage(|s| s.reservoir())
     }
     /// Returns whether the current call context is static.
     pub fn is_static(&self) -> bool {

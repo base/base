@@ -12,10 +12,12 @@ use alloy_primitives::{Address, B256, Log, LogData, U256};
 use revm::{
     context::{Block, journaled_state::JournalCheckpoint},
     context_interface::cfg::GasParams,
-    interpreter::gas::{GasTracker, KECCAK256, KECCAK256WORD},
+    interpreter::gas::{KECCAK256, KECCAK256WORD},
     primitives::keccak256,
     state::{AccountInfo, Bytecode},
 };
+
+use crate::gas_tracker::GasTracker;
 
 use crate::{
     error::{BasePrecompileError, Result},
@@ -144,8 +146,16 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         self.gas_tracker.limit() - self.gas_tracker.remaining()
     }
 
+    fn state_gas_used(&self) -> u64 {
+        self.gas_tracker.state_gas_spent()
+    }
+
     fn gas_refunded(&self) -> i64 {
         self.gas_tracker.refunded()
+    }
+
+    fn reservoir(&self) -> u64 {
+        self.gas_tracker.reservoir()
     }
 
     fn is_static(&self) -> bool {

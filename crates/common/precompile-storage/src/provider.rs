@@ -56,8 +56,18 @@ pub trait PrecompileStorageProvider {
     fn gas_limit(&self) -> u64;
     /// Returns the gas used so far.
     fn gas_used(&self) -> u64;
+    /// Returns the state-creating gas spent so far (EIP-8037 reservoir model).
+    ///
+    /// Counts only state-creation operations: zero→nonzero SSTORE and code deposit.
+    /// Returns zero unless an EIP-8037 reservoir was provided at construction time.
+    fn state_gas_used(&self) -> u64;
     /// Returns the gas refunded so far.
     fn gas_refunded(&self) -> i64;
+    /// Returns the remaining EIP-8037 state-gas reservoir.
+    ///
+    /// State gas is first deducted from this reservoir before spilling into regular gas.
+    /// Returns zero when no reservoir was provided at construction time.
+    fn reservoir(&self) -> u64;
 
     /// Returns whether the current call context is static.
     fn is_static(&self) -> bool;
