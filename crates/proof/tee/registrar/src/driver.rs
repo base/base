@@ -396,9 +396,7 @@ where
                     }
 
                     if resolution.ok_to_dereg && !self.config.cancel.is_cancelled() {
-                        if let Err(e) =
-                            self.run_orphan_dereg(&resolution.active_signers).await
-                        {
+                        if let Err(e) = self.run_orphan_dereg(&resolution.active_signers).await {
                             warn!(error = %e, "orphan deregistration pass failed");
                             RegistrarMetrics::processing_errors_total().increment(1);
                         }
@@ -1205,14 +1203,8 @@ where
                         // assertion: a failure would mean an upstream
                         // regression rather than recoverable input.
                         registerable.push(
-                            RegisterableSigner::new(
-                                instance,
-                                outcome.addresses,
-                                attestations,
-                            )
-                            .expect(
-                                "resolve_instance validated RegisterableSigner invariants",
-                            ),
+                            RegisterableSigner::new(instance, outcome.addresses, attestations)
+                                .expect("resolve_instance validated RegisterableSigner invariants"),
                         );
                     }
                 }
@@ -1327,13 +1319,12 @@ where
                 let instance_id = entry.instance.instance_id.clone();
 
                 let handle = tasks.spawn(async move {
-                    driver.run_proof_task(instance_owned, signer, idx, attestation, task_cancel).await
+                    driver
+                        .run_proof_task(instance_owned, signer, idx, attestation, task_cancel)
+                        .await
                 });
                 let id = handle.id();
-                pending.insert(
-                    id,
-                    PendingTask { instance_id, signer, cancel: signer_cancel },
-                );
+                pending.insert(id, PendingTask { instance_id, signer, cancel: signer_cancel });
                 RegistrarMetrics::proof_tasks_spawned().increment(1);
             }
         }
@@ -4414,9 +4405,7 @@ mod tests {
     #[case::forward_order(false)]
     #[case::reversed_order(true)]
     #[tokio::test]
-    async fn reconcile_proof_tasks_pairs_attestation_with_signer_by_index(
-        #[case] reverse: bool,
-    ) {
+    async fn reconcile_proof_tasks_pairs_attestation_with_signer_by_index(#[case] reverse: bool) {
         // The spawn pass reads `entry.attestations[idx]` for each
         // `(idx, signer)` enumerated from `entry.addresses`. If
         // those vectors were ever consumed independently (e.g. via
@@ -4489,11 +4478,7 @@ mod tests {
         let mut pending: HashMap<task::Id, PendingTask> = HashMap::new();
 
         let handle = tasks.spawn(async move {
-            if succeed {
-                Ok(())
-            } else {
-                Err(RegistrarError::Transaction("synthetic".into()))
-            }
+            if succeed { Ok(()) } else { Err(RegistrarError::Transaction("synthetic".into())) }
         });
         pending
             .insert(handle.id(), pending_task_for_test(HARDHAT_ACCOUNT, TEST_PENDING_INSTANCE_ID));
@@ -4572,28 +4557,20 @@ mod tests {
 
         let run_handle = harness.spawn_run();
 
-        wait_for(
-            "every proof task parked in gate",
-            || harness.proof.in_flight() == num_instances,
-        )
-        .await;
+        wait_for("every proof task parked in gate", || harness.proof.in_flight() == num_instances)
+            .await;
 
         // Release the gate so the proof tasks return and registrations submit.
         harness.proof.release_all();
 
-        wait_for(
-            "every registerSigner tx submitted",
-            || count_register_calls(&harness.tx.sent_calldata()) == num_instances,
-        )
+        wait_for("every registerSigner tx submitted", || {
+            count_register_calls(&harness.tx.sent_calldata()) == num_instances
+        })
         .await;
 
         harness.shutdown(run_handle).await;
 
-        assert_eq!(
-            harness.proof.call_count(),
-            num_instances,
-            "exactly one proof per enclave"
-        );
+        assert_eq!(harness.proof.call_count(), num_instances, "exactly one proof per enclave");
     }
 
     #[rstest]
@@ -4619,10 +4596,8 @@ mod tests {
 
         let run_handle = harness.spawn_run();
 
-        wait_for("every proof task parked in gate", || {
-            harness.proof.in_flight() == initial_count
-        })
-        .await;
+        wait_for("every proof task parked in gate", || harness.proof.in_flight() == initial_count)
+            .await;
 
         // Drop the chosen indices from discovery.
         let drop_set: HashSet<usize> = drop_indices.iter().copied().collect();
@@ -4634,25 +4609,20 @@ mod tests {
         let kept_count = kept_endpoints.len();
         let dropped_count = drop_indices.len();
         harness.discovery.set(
-            kept_endpoints
-                .iter()
-                .map(|ep| instance(ep, InstanceHealthStatus::Healthy))
-                .collect(),
+            kept_endpoints.iter().map(|ep| instance(ep, InstanceHealthStatus::Healthy)).collect(),
         );
 
         // The reconcile pass on the next cycle must cancel every
         // dropped instance's task.
-        wait_for("dropped proof tasks cancelled", || harness.proof.in_flight() == kept_count)
-            .await;
+        wait_for("dropped proof tasks cancelled", || harness.proof.in_flight() == kept_count).await;
 
         // Surviving proofs are still parked; release the gate to let
         // them through.
         harness.proof.release_all();
 
-        wait_for(
-            "every surviving instance registered",
-            || count_register_calls(&harness.tx.sent_calldata()) == kept_count,
-        )
+        wait_for("every surviving instance registered", || {
+            count_register_calls(&harness.tx.sent_calldata()) == kept_count
+        })
         .await;
 
         harness.shutdown(run_handle).await;
@@ -4684,10 +4654,9 @@ mod tests {
 
         let run_handle = harness.spawn_run();
 
-        wait_for(
-            "initial proof tasks parked in gate",
-            || harness.proof.in_flight() == initial_count,
-        )
+        wait_for("initial proof tasks parked in gate", || {
+            harness.proof.in_flight() == initial_count
+        })
         .await;
         let initial_call_count = harness.proof.call_count();
 
@@ -4701,10 +4670,9 @@ mod tests {
         );
 
         // Every new instance must enter the proof pipeline.
-        wait_for(
-            "all proof tasks spawned despite existing in-flight tasks",
-            || harness.proof.in_flight() == final_count,
-        )
+        wait_for("all proof tasks spawned despite existing in-flight tasks", || {
+            harness.proof.in_flight() == final_count
+        })
         .await;
         let added = final_count - initial_count;
         assert_eq!(
@@ -4715,10 +4683,9 @@ mod tests {
 
         // Release everything and let them register.
         harness.proof.release_all();
-        wait_for(
-            "every instance registered",
-            || count_register_calls(&harness.tx.sent_calldata()) == final_count,
-        )
+        wait_for("every instance registered", || {
+            count_register_calls(&harness.tx.sent_calldata()) == final_count
+        })
         .await;
 
         harness.shutdown(run_handle).await;
@@ -4745,18 +4712,15 @@ mod tests {
     /// [`NoRegisterReason`] case.
     fn build_no_register_inputs(reason: NoRegisterReason) -> (Vec<ProverInstance>, MockRegistry) {
         match reason {
-            NoRegisterReason::InstanceDraining => (
-                vec![instance(EP1, InstanceHealthStatus::Draining)],
-                empty_registry(),
-            ),
-            NoRegisterReason::InstanceUnhealthy => (
-                vec![instance(EP1, InstanceHealthStatus::Unhealthy)],
-                empty_registry(),
-            ),
+            NoRegisterReason::InstanceDraining => {
+                (vec![instance(EP1, InstanceHealthStatus::Draining)], empty_registry())
+            }
+            NoRegisterReason::InstanceUnhealthy => {
+                (vec![instance(EP1, InstanceHealthStatus::Unhealthy)], empty_registry())
+            }
             NoRegisterReason::SignerAlreadyRegistered => {
                 let signer =
-                    ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0))
-                        .unwrap();
+                    ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
                 (
                     vec![instance(EP1, InstanceHealthStatus::Healthy)],
                     MockRegistry::all_registered(vec![signer]),
@@ -4806,15 +4770,13 @@ mod tests {
         // every on-chain signer is an orphan. ok_to_dereg is true
         // when total_count == 0, so the orphan pass fires and
         // deregisters ORPHAN_A.
-        let harness =
-            GatedRunHarness::new(vec![], &[], MockRegistry::with_signers(vec![ORPHAN_A]));
+        let harness = GatedRunHarness::new(vec![], &[], MockRegistry::with_signers(vec![ORPHAN_A]));
 
         let run_handle = harness.spawn_run();
 
-        wait_for(
-            "ORPHAN_A deregistered",
-            || count_deregister_calls(&harness.tx.sent_calldata()) == 1,
-        )
+        wait_for("ORPHAN_A deregistered", || {
+            count_deregister_calls(&harness.tx.sent_calldata()) == 1
+        })
         .await;
 
         harness.shutdown(run_handle).await;
@@ -4902,18 +4864,16 @@ mod tests {
         // Only the surviving signer's task should park in the gate —
         // the failing task errors immediately and returns from
         // `try_register` without awaiting.
-        wait_for(
-            "exactly one proof parked (failing signer errored before the gate)",
-            || harness.proof.in_flight() == 1,
-        )
+        wait_for("exactly one proof parked (failing signer errored before the gate)", || {
+            harness.proof.in_flight() == 1
+        })
         .await;
 
         // Release the gate so the surviving signer can register.
         harness.proof.release_all();
-        wait_for(
-            "surviving signer registered while failing signer errored",
-            || count_register_calls(&harness.tx.sent_calldata()) >= 1,
-        )
+        wait_for("surviving signer registered while failing signer errored", || {
+            count_register_calls(&harness.tx.sent_calldata()) >= 1
+        })
         .await;
 
         harness.shutdown(run_handle).await;
@@ -4940,10 +4900,9 @@ mod tests {
 
         // Orphan dereg runs in the foreground each cycle; it must
         // submit immediately without waiting for the proof gate.
-        wait_for(
-            "ORPHAN_A deregistered",
-            || count_deregister_calls(&harness.tx.sent_calldata()) == 1,
-        )
+        wait_for("ORPHAN_A deregistered", || {
+            count_deregister_calls(&harness.tx.sent_calldata()) == 1
+        })
         .await;
 
         // EP1's proof is parked in the gate; releasing it must let
@@ -4951,14 +4910,17 @@ mod tests {
         // dereg.
         wait_for("EP1 proof parked", || harness.proof.in_flight() == 1).await;
         harness.proof.release_all();
-        wait_for("EP1 registered", || count_register_calls(&harness.tx.sent_calldata()) == 1)
-            .await;
+        wait_for("EP1 registered", || count_register_calls(&harness.tx.sent_calldata()) == 1).await;
 
         harness.shutdown(run_handle).await;
 
         let sent = harness.tx.sent_calldata();
         assert_eq!(count_register_calls(&sent), 1, "EP1 registration submitted exactly once");
-        assert_eq!(count_deregister_calls(&sent), 1, "ORPHAN_A deregistration submitted exactly once");
+        assert_eq!(
+            count_deregister_calls(&sent),
+            1,
+            "ORPHAN_A deregistration submitted exactly once"
+        );
     }
 
     /// `unhealthy_registration_window` parametric test: an `Unhealthy`
@@ -4989,18 +4951,15 @@ mod tests {
     ) {
         let launch_time = age_below_now.map(|age| SystemTime::now() - age);
         let inst = instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time);
-        let harness =
-            GatedRunHarness::new(vec![inst], &[(EP1, &HARDHAT_KEY_0)], empty_registry());
+        let harness = GatedRunHarness::new(vec![inst], &[(EP1, &HARDHAT_KEY_0)], empty_registry());
 
         let run_handle = harness.spawn_run();
 
         if expect_registration {
             // Eligible instance: a proof task must park on the gate,
             // then the registration must land once we release.
-            wait_for("eligible unhealthy proof parked in gate", || {
-                harness.proof.in_flight() == 1
-            })
-            .await;
+            wait_for("eligible unhealthy proof parked in gate", || harness.proof.in_flight() == 1)
+                .await;
             harness.proof.release_all();
             wait_for("unhealthy-within-window signer registered", || {
                 count_register_calls(&harness.tx.sent_calldata()) >= 1
@@ -5012,8 +4971,7 @@ mod tests {
             // spawn a proof task and submit a tx. The gate stays
             // unreleased — if anything parked we'd never reach the
             // shutdown timeout below.
-            tokio::time::sleep(GATED_POLL_INTERVAL * MIN_CYCLES_IN_OBSERVATION_WINDOW as u32)
-                .await;
+            tokio::time::sleep(GATED_POLL_INTERVAL * MIN_CYCLES_IN_OBSERVATION_WINDOW as u32).await;
             assert_eq!(
                 harness.proof.in_flight(),
                 0,

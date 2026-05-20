@@ -253,10 +253,8 @@ mod tests {
     async fn custom_override_is_called_instead_of_default() {
         let provider = SignerAwareProvider;
         let cancel = CancellationToken::new();
-        let proof = provider
-            .generate_proof_for_signer(STUB_ATTESTATION, SIGNER_A, &cancel)
-            .await
-            .unwrap();
+        let proof =
+            provider.generate_proof_for_signer(STUB_ATTESTATION, SIGNER_A, &cancel).await.unwrap();
 
         // Output should contain attestation bytes + signer address,
         // proving the override ran (not the default delegation).
@@ -272,10 +270,8 @@ mod tests {
     async fn boxed_custom_override_dispatches_correctly() {
         let provider: Box<dyn AttestationProofProvider> = Box::new(SignerAwareProvider);
         let cancel = CancellationToken::new();
-        let proof = provider
-            .generate_proof_for_signer(STUB_ATTESTATION, SIGNER_B, &cancel)
-            .await
-            .unwrap();
+        let proof =
+            provider.generate_proof_for_signer(STUB_ATTESTATION, SIGNER_B, &cancel).await.unwrap();
 
         let mut expected = STUB_ATTESTATION.to_vec();
         expected.extend_from_slice(SIGNER_B.as_slice());
@@ -292,10 +288,8 @@ mod tests {
         let provider = StubProvider;
         let cancel = CancellationToken::new();
         cancel.cancel();
-        let proof = provider
-            .generate_proof_for_signer(STUB_ATTESTATION, SIGNER_A, &cancel)
-            .await
-            .unwrap();
+        let proof =
+            provider.generate_proof_for_signer(STUB_ATTESTATION, SIGNER_A, &cancel).await.unwrap();
         assert_eq!(proof.output, Bytes::copy_from_slice(STUB_ATTESTATION));
     }
 }
