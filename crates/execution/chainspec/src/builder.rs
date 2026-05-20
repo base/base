@@ -2,7 +2,7 @@ use alloy_chains::Chain;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::Address;
-use base_common_chains::{BaseUpgrade, DEFAULT_ACTIVATION_ADMIN_ADDRESS};
+use base_common_chains::BaseUpgrade;
 use reth_chainspec::ChainSpecBuilder;
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_primitives_traits::SealedHeader;
@@ -15,15 +15,12 @@ pub struct BaseChainSpecBuilder {
     /// [`ChainSpecBuilder`]
     inner: ChainSpecBuilder,
     /// Activation registry admin address.
-    activation_admin_address: Address,
+    activation_admin_address: Option<Address>,
 }
 
 impl Default for BaseChainSpecBuilder {
     fn default() -> Self {
-        Self {
-            inner: ChainSpecBuilder::default(),
-            activation_admin_address: DEFAULT_ACTIVATION_ADMIN_ADDRESS,
-        }
+        Self { inner: ChainSpecBuilder::default(), activation_admin_address: None }
     }
 }
 
@@ -65,6 +62,12 @@ impl BaseChainSpecBuilder {
 
     /// Set the activation registry admin address.
     pub const fn activation_admin_address(mut self, address: Address) -> Self {
+        self.activation_admin_address = Some(address);
+        self
+    }
+
+    /// Set or clear the activation registry admin address.
+    pub const fn optional_activation_admin_address(mut self, address: Option<Address>) -> Self {
         self.activation_admin_address = address;
         self
     }

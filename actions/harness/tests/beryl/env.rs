@@ -85,7 +85,6 @@ impl BerylTestEnv {
             .with_jovian_at(0)
             .with_azul_at(0)
             .with_beryl_at(BERYL_ACTIVATION_TIMESTAMP)
-            .with_activation_admin_address(TEST_ACCOUNT_ADDRESS)
             .build();
         let chain_id = rollup_cfg.l2_chain_id.id();
         let harness = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);

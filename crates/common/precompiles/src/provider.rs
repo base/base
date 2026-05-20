@@ -192,7 +192,8 @@ where
         if spec == self.spec {
             return false;
         }
-        *self = Self::new_with_spec(spec).with_activation_admin_address(self.activation_admin_address);
+        *self =
+            Self::new_with_spec(spec).with_activation_admin_address(self.activation_admin_address);
         true
     }
 

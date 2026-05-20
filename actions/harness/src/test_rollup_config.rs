@@ -73,12 +73,6 @@ impl TestRollupConfigBuilder {
         self
     }
 
-    /// Overrides the activation registry admin address.
-    pub const fn with_activation_admin_address(mut self, addr: Address) -> Self {
-        self.config.activation_admin_address = Some(addr);
-        self
-    }
-
     /// Overrides the L1 deposit contract address.
     pub const fn with_deposit_contract(mut self, addr: Address) -> Self {
         self.config.deposit_contract_address = addr;

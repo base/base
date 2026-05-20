@@ -254,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn configured_admin_can_differ_from_default_admin() {
+    fn configured_admin_can_activate_when_default_is_unset() {
         let mut storage = HashMapStorageProvider::new(1);
         let configured_admin = address!("0x0000000000000000000000000000000000000002");
 
@@ -272,6 +272,22 @@ mod tests {
         })
         .unwrap();
         assert_activated(&mut storage, true);
+    }
+
+    #[test]
+    fn unset_admin_cannot_change_activation() {
+        let mut storage = HashMapStorageProvider::new(1);
+
+        storage.set_caller(ADMIN);
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            let mut registry = ActivationRegistryStorage::new(ctx);
+            assert_eq!(registry.admin(None), Address::ZERO);
+            registry.activate(FEATURE, None)
+        })
+        .unwrap_err();
+
+        assert!(matches!(err, BasePrecompileError::Revert(_)));
+        assert_activated(&mut storage, false);
     }
 
     #[rstest]

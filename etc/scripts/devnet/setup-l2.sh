@@ -146,14 +146,6 @@ op-deployer inspect rollup \
   >"$OUTPUT_DIR/rollup.json"
 echo "Rollup config written to $OUTPUT_DIR/rollup.json"
 
-TMP_ROLLUP=$(mktemp)
-jq \
-  --arg activation_admin "$L2_ACTIVATION_ADMIN_ADDR" \
-  '.activation_admin_address = $activation_admin' \
-  "$OUTPUT_DIR/rollup.json" \
-  >"$TMP_ROLLUP"
-mv "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
-
 TMP_GENESIS=$(mktemp)
 jq \
   --arg activation_admin "$L2_ACTIVATION_ADMIN_ADDR" \
@@ -161,7 +153,7 @@ jq \
   "$OUTPUT_DIR/genesis.json" \
   >"$TMP_GENESIS"
 mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
-echo "Patched activation admin into rollup and genesis configs"
+echo "Patched activation admin into genesis config"
 
 L2_BLOCK_TIME=$(jq -re '.block_time' "$OUTPUT_DIR/rollup.json")
 L2_GENESIS_TIME=$(jq -re '.genesis.l2_time' "$OUTPUT_DIR/rollup.json")

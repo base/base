@@ -138,7 +138,7 @@ impl<'a> TokenFactoryStorage<'a> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
+    use alloy_primitives::{B256, address};
     use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
@@ -148,16 +148,18 @@ mod tests {
         TokenAccounting, Transferable,
     };
 
+    const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
+
     fn activate_precompiles(storage: &mut HashMapStorageProvider) {
-        storage.set_caller(ActivationRegistry::ADMIN);
+        storage.set_caller(ACTIVATION_ADMIN);
         StorageCtx::enter(storage, |ctx| {
             ActivationRegistry::new(ctx)
-                .activate(ActivationRegistry::TOKEN_FACTORY, ActivationRegistry::ADMIN)
+                .activate(ActivationRegistry::TOKEN_FACTORY, Some(ACTIVATION_ADMIN))
                 .unwrap()
         });
         StorageCtx::enter(storage, |ctx| {
             ActivationRegistry::new(ctx)
-                .activate(ActivationRegistry::B20_TOKEN, ActivationRegistry::ADMIN)
+                .activate(ActivationRegistry::B20_TOKEN, Some(ACTIVATION_ADMIN))
                 .unwrap()
         });
     }

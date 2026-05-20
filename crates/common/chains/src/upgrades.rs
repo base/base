@@ -2,7 +2,7 @@ use alloy_hardforks::{EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
 
-use crate::{BaseUpgrade, DEFAULT_ACTIVATION_ADMIN_ADDRESS};
+use crate::BaseUpgrade;
 
 /// Extends [`EthereumHardforks`] with Base upgrade helper methods.
 #[auto_impl::auto_impl(&, Arc)]
@@ -12,8 +12,8 @@ pub trait Upgrades: EthereumHardforks {
     fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition;
 
     /// Returns the activation registry admin address.
-    fn activation_admin_address(&self) -> Address {
-        DEFAULT_ACTIVATION_ADMIN_ADDRESS
+    fn activation_admin_address(&self) -> Option<Address> {
+        None
     }
 
     /// Convenience method to check if [`BaseUpgrade::Bedrock`] is active at a given block
@@ -134,10 +134,6 @@ impl Upgrades for RollupConfig {
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
         }
-    }
-
-    fn activation_admin_address(&self) -> Address {
-        self.activation_admin_address.unwrap_or(DEFAULT_ACTIVATION_ADMIN_ADDRESS)
     }
 }
 
