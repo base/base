@@ -20,13 +20,13 @@ use crate::{
 
 /// Charged per 32-byte word of calldata before any decoding work.
 ///
-/// Set to 2× the EVM's COPY_COST (3 gas/word) because ABI decoding reads and
+/// Set to 2× the EVM's `COPY_COST` (3 gas/word) because ABI decoding reads and
 /// allocates input data at least twice: once for selector routing and once for
 /// argument struct construction.
 const INPUT_PER_WORD_COST: u64 = 6;
 
 #[inline]
-fn input_cost(calldata: &[u8]) -> u64 {
+const fn input_cost(calldata: &[u8]) -> u64 {
     calldata.len().div_ceil(32) as u64 * INPUT_PER_WORD_COST
 }
 
@@ -38,8 +38,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         // Deduct calldata cost upfront before any decoding. This ensures that
         // out-of-gas is reported with the correct gas_used even when the caller
         // provides barely enough gas budget to cover the input alone.
-        ctx.deduct_gas(input_cost(calldata))
-            .map_err(|_| PrecompileError::OutOfGas)?;
+        ctx.deduct_gas(input_cost(calldata)).map_err(|_| PrecompileError::OutOfGas)?;
 
         self.inner(ctx, calldata).into_precompile_result(ctx.gas_used(), |b| b)
     }
