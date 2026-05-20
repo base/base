@@ -1,43 +1,40 @@
 //! End-to-end tests for B-20 precompiles over Base node RPC.
 
-use std::time::Duration;
+mod common;
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
-use base_common_network::Base;
 use base_common_precompiles::{
     CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, IB20, TokenFactory, TokenVariant,
 };
 use devnet::{
-    B20PrecompileClient, Devnet, DevnetBuilder,
+    B20PrecompileClient,
     config::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7},
 };
 use eyre::{Result, WrapErr};
-use tokio::time::{sleep, timeout};
 
-const L1_CHAIN_ID: u64 = 1337;
-const L2_CHAIN_ID: u64 = 84538453;
-const BASE_AZUL_ACTIVATION_BLOCK: u64 = 0;
-const BASE_BERYL_ACTIVATION_BLOCK: u64 = 3;
-const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(30);
-const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
-const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 const TOKEN_DECIMALS: u8 = 6;
 const INITIAL_SUPPLY: u64 = 1_000_000_000;
 const TRANSFER_AMOUNT: u64 = 100_000_000;
+const MINT_AMOUNT: u64 = 500_000;
+const BURN_AMOUNT: u64 = 200_000;
+const APPROVE_AMOUNT: u64 = 50_000_000;
+const SPENDER_TRANSFER_AMOUNT: u64 = 30_000_000;
+const MEMO_TRANSFER_AMOUNT: u64 = 111_000;
+const INITIAL_SUPPLY_CAP: u64 = 2_000_000_000;
+const PAUSE_TRANSFER_AMOUNT: u64 = 10_000;
 
 #[tokio::test]
 async fn test_b20_factory_create_and_transfer_via_rpc() -> Result<()> {
-    let devnet = B20Devnet::start().await?;
+    let (_devnet, provider) = common::start_beryl_devnet().await?;
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse devnet private key")?;
     let recipient = ANVIL_ACCOUNT_6.address;
 
-    devnet.wait_for_balance(admin.address()).await?;
+    common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(devnet.provider(), &admin, L2_CHAIN_ID)
-        .with_receipt_timeout(TX_RECEIPT_TIMEOUT);
+    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
     let salt = B256::repeat_byte(0x42);
     let params = B20PrecompileClient::token_params(
         "Devnet B20",
@@ -48,7 +45,7 @@ async fn test_b20_factory_create_and_transfer_via_rpc() -> Result<()> {
     );
 
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;
-    b20.wait_for_token_code(token, TX_RECEIPT_TIMEOUT, BLOCK_POLL_INTERVAL).await?;
+    b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     assert_eq!(b20.variant_of(token).await?, TokenVariant::B20.discriminant());
     assert_eq!(b20.decimals_of(token).await?, TOKEN_DECIMALS);
@@ -67,23 +64,15 @@ async fn test_b20_factory_create_and_transfer_via_rpc() -> Result<()> {
     Ok(())
 }
 
-const MINT_AMOUNT: u64 = 500_000;
-const BURN_AMOUNT: u64 = 200_000;
-const APPROVE_AMOUNT: u64 = 50_000_000;
-const SPENDER_TRANSFER_AMOUNT: u64 = 30_000_000;
-const MEMO_TRANSFER_AMOUNT: u64 = 111_000;
-const INITIAL_SUPPLY_CAP: u64 = 2_000_000_000;
-const PAUSE_TRANSFER_AMOUNT: u64 = 10_000;
-
 #[tokio::test]
 async fn test_b20_token_metadata() -> Result<()> {
-    let devnet = B20Devnet::start().await?;
+    let (_devnet, provider) = common::start_beryl_devnet().await?;
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse admin key")?;
-    devnet.wait_for_balance(admin.address()).await?;
+    common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(devnet.provider(), &admin, L2_CHAIN_ID)
-        .with_receipt_timeout(TX_RECEIPT_TIMEOUT);
+    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
     let salt = B256::repeat_byte(0x10);
     let params = B20PrecompileClient::token_params(
         "Metadata Token",
@@ -94,7 +83,7 @@ async fn test_b20_token_metadata() -> Result<()> {
     );
 
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;
-    b20.wait_for_token_code(token, TX_RECEIPT_TIMEOUT, BLOCK_POLL_INTERVAL).await?;
+    b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     assert_eq!(b20.name(token).await?, "Metadata Token");
     assert_eq!(b20.symbol(token).await?, "META");
@@ -105,19 +94,19 @@ async fn test_b20_token_metadata() -> Result<()> {
 
 #[tokio::test]
 async fn test_b20_approve_and_transfer_from() -> Result<()> {
-    let devnet = B20Devnet::start().await?;
+    let (_devnet, provider) = common::start_beryl_devnet().await?;
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse admin key")?;
     let spender =
         PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_7.private_key).wrap_err("spender key")?;
     let recipient = ANVIL_ACCOUNT_6.address;
-    devnet.wait_for_balance(admin.address()).await?;
-    devnet.wait_for_balance(spender.address()).await?;
+    common::wait_for_balance(&provider, admin.address()).await?;
+    common::wait_for_balance(&provider, spender.address()).await?;
 
-    let b20_admin = B20PrecompileClient::new(devnet.provider(), &admin, L2_CHAIN_ID)
-        .with_receipt_timeout(TX_RECEIPT_TIMEOUT);
-    let b20_spender = B20PrecompileClient::new(devnet.provider(), &spender, L2_CHAIN_ID)
-        .with_receipt_timeout(TX_RECEIPT_TIMEOUT);
+    let b20_admin = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    let b20_spender = B20PrecompileClient::new(&provider, &spender, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
     let salt = B256::repeat_byte(0x11);
     let params = B20PrecompileClient::token_params(
@@ -128,7 +117,9 @@ async fn test_b20_approve_and_transfer_from() -> Result<()> {
         admin.address(),
     );
     let token = b20_admin.create_token(TokenVariant::B20, params, salt).await?;
-    b20_admin.wait_for_token_code(token, TX_RECEIPT_TIMEOUT, BLOCK_POLL_INTERVAL).await?;
+    b20_admin
+        .wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL)
+        .await?;
 
     let approve_amount = U256::from(APPROVE_AMOUNT);
     let transfer_amount = U256::from(SPENDER_TRANSFER_AMOUNT);
@@ -156,13 +147,13 @@ async fn test_b20_approve_and_transfer_from() -> Result<()> {
 
 #[tokio::test]
 async fn test_b20_mint_and_burn() -> Result<()> {
-    let devnet = B20Devnet::start().await?;
+    let (_devnet, provider) = common::start_beryl_devnet().await?;
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse admin key")?;
-    devnet.wait_for_balance(admin.address()).await?;
+    common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(devnet.provider(), &admin, L2_CHAIN_ID)
-        .with_receipt_timeout(TX_RECEIPT_TIMEOUT);
+    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
     let salt = B256::repeat_byte(0x12);
     let params = B20PrecompileClient::token_params(
         "Mintable Token",
@@ -172,7 +163,7 @@ async fn test_b20_mint_and_burn() -> Result<()> {
         admin.address(),
     );
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;
-    b20.wait_for_token_code(token, TX_RECEIPT_TIMEOUT, BLOCK_POLL_INTERVAL).await?;
+    b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     let supply_before = b20.total_supply(token).await?;
 
@@ -198,14 +189,14 @@ async fn test_b20_mint_and_burn() -> Result<()> {
 
 #[tokio::test]
 async fn test_b20_transfer_with_memo() -> Result<()> {
-    let devnet = B20Devnet::start().await?;
+    let (_devnet, provider) = common::start_beryl_devnet().await?;
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse admin key")?;
     let recipient = ANVIL_ACCOUNT_6.address;
-    devnet.wait_for_balance(admin.address()).await?;
+    common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(devnet.provider(), &admin, L2_CHAIN_ID)
-        .with_receipt_timeout(TX_RECEIPT_TIMEOUT);
+    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
     let salt = B256::repeat_byte(0x13);
     let params = B20PrecompileClient::token_params(
         "Memo Token",
@@ -215,7 +206,7 @@ async fn test_b20_transfer_with_memo() -> Result<()> {
         admin.address(),
     );
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;
-    b20.wait_for_token_code(token, TX_RECEIPT_TIMEOUT, BLOCK_POLL_INTERVAL).await?;
+    b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     let memo = B256::repeat_byte(0xde);
     let amount = U256::from(MEMO_TRANSFER_AMOUNT);
@@ -229,13 +220,13 @@ async fn test_b20_transfer_with_memo() -> Result<()> {
 
 #[tokio::test]
 async fn test_b20_supply_cap() -> Result<()> {
-    let devnet = B20Devnet::start().await?;
+    let (_devnet, provider) = common::start_beryl_devnet().await?;
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse admin key")?;
-    devnet.wait_for_balance(admin.address()).await?;
+    common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(devnet.provider(), &admin, L2_CHAIN_ID)
-        .with_receipt_timeout(TX_RECEIPT_TIMEOUT);
+    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
     let salt = B256::repeat_byte(0x14);
     let mut params = B20PrecompileClient::token_params(
         "Capped Token",
@@ -248,7 +239,7 @@ async fn test_b20_supply_cap() -> Result<()> {
     params.supplyCap = U256::from(INITIAL_SUPPLY_CAP);
 
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;
-    b20.wait_for_token_code(token, TX_RECEIPT_TIMEOUT, BLOCK_POLL_INTERVAL).await?;
+    b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     assert_eq!(b20.supply_cap(token).await?, U256::from(INITIAL_SUPPLY_CAP));
 
@@ -278,13 +269,13 @@ async fn test_b20_supply_cap() -> Result<()> {
 
 #[tokio::test]
 async fn test_b20_metadata_updates() -> Result<()> {
-    let devnet = B20Devnet::start().await?;
+    let (_devnet, provider) = common::start_beryl_devnet().await?;
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse admin key")?;
-    devnet.wait_for_balance(admin.address()).await?;
+    common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(devnet.provider(), &admin, L2_CHAIN_ID)
-        .with_receipt_timeout(TX_RECEIPT_TIMEOUT);
+    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
     let salt = B256::repeat_byte(0x15);
     let params = B20PrecompileClient::token_params(
         "Old Name",
@@ -294,7 +285,7 @@ async fn test_b20_metadata_updates() -> Result<()> {
         admin.address(),
     );
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;
-    b20.wait_for_token_code(token, TX_RECEIPT_TIMEOUT, BLOCK_POLL_INTERVAL).await?;
+    b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     b20.set_name(token, "New Name").await?;
     b20.set_symbol(token, "NEW").await?;
@@ -309,14 +300,14 @@ async fn test_b20_metadata_updates() -> Result<()> {
 
 #[tokio::test]
 async fn test_b20_pause_and_unpause() -> Result<()> {
-    let devnet = B20Devnet::start().await?;
+    let (_devnet, provider) = common::start_beryl_devnet().await?;
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse admin key")?;
     let recipient = ANVIL_ACCOUNT_6.address;
-    devnet.wait_for_balance(admin.address()).await?;
+    common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(devnet.provider(), &admin, L2_CHAIN_ID)
-        .with_receipt_timeout(TX_RECEIPT_TIMEOUT);
+    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
     let salt = B256::repeat_byte(0x16);
     let mut params = B20PrecompileClient::token_params(
         "Pausable Token",
@@ -328,7 +319,7 @@ async fn test_b20_pause_and_unpause() -> Result<()> {
     params.capabilities = CAPABILITY_PAUSABLE;
 
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;
-    b20.wait_for_token_code(token, TX_RECEIPT_TIMEOUT, BLOCK_POLL_INTERVAL).await?;
+    b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     // Transfer succeeds before pause.
     b20.transfer(token, recipient, U256::from(PAUSE_TRANSFER_AMOUNT)).await?;
@@ -359,13 +350,13 @@ async fn test_b20_pause_and_unpause() -> Result<()> {
 
 #[tokio::test]
 async fn test_b20_factory_predict_and_is_b20() -> Result<()> {
-    let devnet = B20Devnet::start().await?;
+    let (_devnet, provider) = common::start_beryl_devnet().await?;
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse admin key")?;
-    devnet.wait_for_balance(admin.address()).await?;
+    common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(devnet.provider(), &admin, L2_CHAIN_ID)
-        .with_receipt_timeout(TX_RECEIPT_TIMEOUT);
+    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
     let salt = B256::repeat_byte(0x17);
     let params = B20PrecompileClient::token_params(
         "Predict Token",
@@ -382,7 +373,7 @@ async fn test_b20_factory_predict_and_is_b20() -> Result<()> {
     assert_eq!(local_prediction, rpc_prediction, "local and RPC predictions should match");
 
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;
-    b20.wait_for_token_code(token, TX_RECEIPT_TIMEOUT, BLOCK_POLL_INTERVAL).await?;
+    b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     assert_eq!(token, rpc_prediction, "created token address should match prediction");
 
@@ -398,13 +389,13 @@ async fn test_b20_factory_predict_and_is_b20() -> Result<()> {
 
 #[tokio::test]
 async fn test_b20_create_token_duplicate_reverts() -> Result<()> {
-    let devnet = B20Devnet::start().await?;
+    let (_devnet, provider) = common::start_beryl_devnet().await?;
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse admin key")?;
-    devnet.wait_for_balance(admin.address()).await?;
+    common::wait_for_balance(&provider, admin.address()).await?;
 
-    let b20 = B20PrecompileClient::new(devnet.provider(), &admin, L2_CHAIN_ID)
-        .with_receipt_timeout(TX_RECEIPT_TIMEOUT);
+    let b20 = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
     let salt = B256::repeat_byte(0x18);
     let params = B20PrecompileClient::token_params(
         "Dup Token",
@@ -420,58 +411,4 @@ async fn test_b20_create_token_duplicate_reverts() -> Result<()> {
     assert!(second.is_err(), "creating a token with the same salt should fail");
 
     Ok(())
-}
-
-struct B20Devnet {
-    _devnet: Devnet,
-    provider: RootProvider<Base>,
-}
-
-impl B20Devnet {
-    async fn start() -> Result<Self> {
-        let devnet = DevnetBuilder::new()
-            .with_l1_chain_id(L1_CHAIN_ID)
-            .with_l2_chain_id(L2_CHAIN_ID)
-            .with_base_azul_activation_block(BASE_AZUL_ACTIVATION_BLOCK)
-            .with_base_beryl_activation_block(BASE_BERYL_ACTIVATION_BLOCK)
-            .build()
-            .await?;
-
-        let provider = devnet.l2_builder_provider()?;
-        let this = Self { _devnet: devnet, provider };
-        this.wait_for_block(BASE_BERYL_ACTIVATION_BLOCK + 1).await?;
-        Ok(this)
-    }
-
-    const fn provider(&self) -> &RootProvider<Base> {
-        &self.provider
-    }
-
-    async fn wait_for_block(&self, min_block: u64) -> Result<u64> {
-        timeout(BLOCK_PRODUCTION_TIMEOUT, async {
-            loop {
-                let block = self.provider.get_block_number().await?;
-                if block >= min_block {
-                    return Ok::<_, eyre::Error>(block);
-                }
-                sleep(BLOCK_POLL_INTERVAL).await;
-            }
-        })
-        .await
-        .wrap_err("Block production timed out")?
-    }
-
-    async fn wait_for_balance(&self, address: alloy_primitives::Address) -> Result<()> {
-        timeout(Duration::from_secs(15), async {
-            loop {
-                let balance = self.provider.get_balance(address).await?;
-                if balance > U256::ZERO {
-                    return Ok::<_, eyre::Error>(());
-                }
-                sleep(BLOCK_POLL_INTERVAL).await;
-            }
-        })
-        .await
-        .wrap_err("Timed out waiting for funded devnet account")?
-    }
 }

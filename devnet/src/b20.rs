@@ -13,7 +13,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_network::Base;
 use base_common_precompiles::{IB20, ITokenFactory, TokenFactory, TokenVariant};
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
 use eyre::{Result, WrapErr, ensure};
 use tokio::time::{sleep, timeout};
 
@@ -368,31 +368,7 @@ impl<'a> B20PrecompileClient<'a> {
     where
         C: SolCall,
     {
-        let nonce = self.provider.get_transaction_count(self.signer.address()).await?;
-        let (raw_tx, _) = self
-            .create_signed_tx(to, nonce, Bytes::from(call.abi_encode()))
-            .wrap_err("Failed to sign transaction")?;
-
-        let pending_tx = self
-            .provider
-            .send_raw_transaction(&raw_tx)
-            .await
-            .wrap_err("Failed to send transaction")?;
-        let tx_hash = *pending_tx.tx_hash();
-
-        let receipt = timeout(self.receipt_timeout, async {
-            loop {
-                if let Some(r) = self.provider.get_transaction_receipt(tx_hash).await? {
-                    return Ok::<_, eyre::Error>(r);
-                }
-                sleep(Duration::from_secs(1)).await;
-            }
-        })
-        .await
-        .wrap_err("transaction receipt timed out")?
-        .wrap_err("Failed to get transaction receipt")?;
-
-        Ok(receipt.status())
+        Ok(self.send_and_wait(to, Bytes::from(call.abi_encode()), "try_send_call").await?.status())
     }
 
     /// Executes an `eth_call` against `to`.
@@ -413,9 +389,24 @@ impl<'a> B20PrecompileClient<'a> {
     where
         C: SolCall,
     {
+        let receipt = self.send_and_wait(to, Bytes::from(call.abi_encode()), label).await?;
+        ensure!(receipt.status(), "{label} transaction reverted");
+        ensure!(receipt.inner.to == Some(to), "{label} receipt target mismatch");
+        Ok(())
+    }
+
+    /// Signs, sends, and polls until a receipt is available.
+    ///
+    /// All error messages use `label`.  Both `send_call` and `try_send_call` delegate here so
+    /// the nonce-fetch / sign / send / poll-receipt pipeline stays in one place.
+    async fn send_and_wait(
+        &self,
+        to: Address,
+        input: Bytes,
+        label: &'static str,
+    ) -> Result<BaseTransactionReceipt> {
         let nonce = self.provider.get_transaction_count(self.signer.address()).await?;
-        let (raw_tx, expected_tx_hash) =
-            self.create_signed_tx(to, nonce, Bytes::from(call.abi_encode())).wrap_err(label)?;
+        let (raw_tx, expected_tx_hash) = self.create_signed_tx(to, nonce, input).wrap_err(label)?;
 
         let pending_tx = self
             .provider
@@ -425,7 +416,7 @@ impl<'a> B20PrecompileClient<'a> {
         let tx_hash = *pending_tx.tx_hash();
         ensure!(tx_hash == expected_tx_hash, "{label} transaction hash mismatch");
 
-        let receipt = timeout(self.receipt_timeout, async {
+        timeout(self.receipt_timeout, async {
             loop {
                 if let Some(receipt) = self.provider.get_transaction_receipt(tx_hash).await? {
                     return Ok::<_, eyre::Error>(receipt);
@@ -435,12 +426,7 @@ impl<'a> B20PrecompileClient<'a> {
         })
         .await
         .wrap_err_with(|| format!("{label} receipt timed out"))?
-        .wrap_err_with(|| format!("Failed to get {label} receipt"))?;
-
-        ensure!(receipt.status(), "{label} transaction reverted");
-        ensure!(receipt.inner.to == Some(to), "{label} receipt target mismatch");
-
-        Ok(())
+        .wrap_err_with(|| format!("Failed to get {label} receipt"))
     }
 
     /// Creates a signed transaction targeting `to`.
