@@ -21,7 +21,7 @@ use alloy_rpc_types_eth::{
 };
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
-use base_common_consensus::{BaseBlock, BasePrimitives};
+use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types::Transaction as BaseTransaction;
@@ -92,6 +92,7 @@ pub struct ActionEngineClientInner {
     canonical_head: L2BlockInfo,
     executed_headers: HashMap<u64, Header>,
     executed_infos: HashMap<u64, L2BlockInfo>,
+    executed_receipts: HashMap<u64, Vec<BaseReceipt>>,
     /// Payloads built via FCU-with-attrs (sequencer mode), keyed by `PayloadId`.
     pending_payloads: HashMap<PayloadId, PendingPayload>,
     /// Sealed payloads waiting for explicit insertion, keyed by block hash.
@@ -237,6 +238,7 @@ impl ActionEngineClient {
             canonical_head,
             executed_headers: HashMap::new(),
             executed_infos: HashMap::new(),
+            executed_receipts: HashMap::new(),
             pending_payloads: HashMap::new(),
             sealed_payloads: HashMap::new(),
             payload_counter: 0,
@@ -272,6 +274,12 @@ impl ActionEngineClient {
             .expect("failed to read storage")
             .map(alloy_primitives::U256::from)
             .unwrap_or(alloy_primitives::U256::ZERO)
+    }
+
+    /// Return receipts for an executed block number.
+    pub fn receipts_at(&self, block_number: u64) -> Option<Vec<BaseReceipt>> {
+        let inner = self.inner.lock().expect("engine client lock");
+        inner.executed_receipts.get(&block_number).cloned()
     }
 
     /// Check whether an account has non-empty code deployed.
@@ -374,9 +382,10 @@ impl ActionEngineClient {
         // Commit the block state to the database so subsequent blocks can build on it.
         if let Some(executed) = built.executed_block() {
             let execution_output = executed.execution_output;
+            let receipts = execution_output.result.receipts.clone();
             let execution_outcome = ExecutionOutcome {
                 bundle: execution_output.state.clone(),
-                receipts: vec![execution_output.result.receipts.clone()],
+                receipts: vec![receipts.clone()],
                 first_block: block_number,
                 requests: vec![execution_output.result.requests.clone()],
             };
@@ -421,6 +430,8 @@ impl ActionEngineClient {
                         "failed to rebuild blockchain provider: {e}"
                     )))
                 })?;
+
+            inner.executed_receipts.insert(block_number, receipts);
         }
 
         if let Some(expected_root) = registry.get_state_root(block_number) {
