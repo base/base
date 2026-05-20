@@ -187,9 +187,17 @@ impl<'a> StorageCtx<'a> {
         CheckpointGuard { storage: *self, checkpoint: Some(checkpoint) }
     }
 
-    /// Returns a success [`PrecompileOutput`] with the current gas used.
+    /// Returns a success [`PrecompileOutput`] with the current gas used and accumulated refund.
+    ///
+    /// The `gas_refunded` field is populated so revm's frame handler can propagate it to the
+    /// transaction-level refund counter, where the EIP-3529 cap (`gas_used / 5`) is applied.
     pub fn success_output(&self, output: Bytes) -> PrecompileOutput {
-        PrecompileOutput::new(self.gas_used(), output)
+        PrecompileOutput {
+            gas_used: self.gas_used(),
+            gas_refunded: self.gas_refunded(),
+            bytes: output,
+            reverted: false,
+        }
     }
 
     /// Returns an ABI-encoded success output.
