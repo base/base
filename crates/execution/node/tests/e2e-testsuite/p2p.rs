@@ -6,10 +6,8 @@ use base_node_core::utils::{advance_chain, setup};
 use futures::StreamExt;
 use tokio::sync::Mutex;
 
-// Ignored: reth's deferred_trie `wait_cloned` debug_assert fires when called from a Rayon
-// worker thread during proof computation in debug builds. Devnet follower nodes use
-// `--engine.state-root-fallback` to avoid this path until upstream reth is fixed.
-#[ignore]
+// Use the e2e setup's tree-config fallback to avoid upstream deferred-trie debug-assert
+// panics in debug builds until the reth worker-thread fix is available.
 #[tokio::test]
 async fn can_sync() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();

@@ -8,7 +8,7 @@ use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttribu
 use reth_e2e_test_utils::{
     NodeHelperType, TmpDB, transaction::TransactionTestContext, wallet::Wallet,
 };
-use reth_node_api::NodeTypesWithDBAdapter;
+use reth_node_api::{NodeTypesWithDBAdapter, TreeConfig};
 use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
 use tokio::sync::Mutex;
@@ -23,11 +23,14 @@ pub type BaseNode =
 pub async fn setup(num_nodes: usize) -> eyre::Result<(Vec<BaseNode>, Wallet)> {
     let genesis: Genesis =
         serde_json::from_str(include_str!("../tests/assets/genesis.json")).unwrap();
+    // Use sync state-root fallback in e2e setup to avoid upstream debug-assert panics in
+    // deferred trie proof workers until the reth fix lands.
+    let tree_config = TreeConfig::default().with_state_root_fallback(true);
     reth_e2e_test_utils::setup_engine(
         num_nodes,
         Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build()),
         false,
-        Default::default(),
+        tree_config,
         payload_attributes,
     )
     .await
@@ -39,20 +42,27 @@ pub async fn advance_chain(
     node: &mut BaseNode,
     wallet: Arc<Mutex<Wallet>>,
 ) -> eyre::Result<Vec<BaseBuiltPayload>> {
-    node.advance(length as u64, |_| {
-        let wallet = Arc::clone(&wallet);
-        Box::pin(async move {
-            let mut wallet = wallet.lock().await;
-            let tx_fut = TransactionTestContext::optimism_l1_block_info_tx(
-                wallet.chain_id,
-                wallet.inner.clone(),
-                wallet.inner_nonce,
-            );
-            wallet.inner_nonce += 1;
-            tx_fut.await
-        })
-    })
-    .await
+    let mut chain = Vec::with_capacity(length);
+    for _ in 0..length {
+        let mut wallet = wallet.lock().await;
+        let tx_fut = TransactionTestContext::optimism_l1_block_info_tx(
+            wallet.chain_id,
+            wallet.inner.clone(),
+            wallet.inner_nonce,
+        );
+        wallet.inner_nonce += 1;
+        let raw_tx = tx_fut.await;
+        drop(wallet);
+
+        let _tx_hash = node.rpc.inject_tx(raw_tx).await?;
+        let payload = node.advance_block().await?;
+        let block_hash = payload.block().hash();
+        let block_number = payload.block().number;
+        node.wait_block(block_number, block_hash, false).await?;
+        chain.push(payload);
+    }
+
+    Ok(chain)
 }
 
 /// Helper function to create a new eth payload attributes
