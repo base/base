@@ -108,66 +108,35 @@ pub struct PendingTask {
     pub cancel: CancellationToken,
 }
 
-/// A prover instance that passed all per-cycle gates and is ready to
-/// have a proof task spawned per derived signer address.
+/// A single (signer, attestation) pair from a prover instance that
+/// passed all per-cycle gates and is ready to be spawned as a proof task.
+///
+/// One [`RegisterableSigner`] corresponds to exactly one spawned proof
+/// task. Instances with multiple enclaves are flattened into one entry
+/// per enclave at construction time in `discover_and_resolve`, so the
+/// spawn pass in `reconcile_proof_tasks` is a flat iteration with no
+/// per-entry index correlation between parallel vectors.
 ///
 /// Replaces the earlier 3-tuple `(ProverInstance, Vec<Address>,
 /// Vec<Vec<u8>>)` whose unnamed positional fields made the
 /// `attestations[idx]` indexing contract invisible at the call site.
-///
-/// # Invariants (enforced by [`Self::new`])
-///
-/// - `addresses` is non-empty. An instance with zero signer addresses is
-///   not registerable and must never appear here — `discover_and_resolve`
-///   filters such instances out before constructing this type.
-/// - `attestations.len() >= addresses.len()`. The driver's spawn pass
-///   reads `attestations[idx]` for each `idx in 0..addresses.len()`, so
-///   the attestations vector must cover every signer. Extra trailing
-///   attestations are tolerated (some prover endpoints return additional
-///   enclave attestations beyond the active signer count).
 #[derive(Debug, Clone)]
 pub struct RegisterableSigner {
     /// Source prover instance, retained so per-signer log lines and
-    /// `PendingTask::instance_id` can attribute the spawned task.
+    /// `PendingTask::instance_id` can attribute the spawned task. Cloned
+    /// per enclave on the source instance (typically N=1) at flatten time.
     pub instance: ProverInstance,
-    /// Signer addresses derived from the instance's enclave public keys.
-    /// Each address gets its own spawned proof task.
-    pub addresses: Vec<Address>,
-    /// Pre-fetched attestation blobs aligned with `addresses` for the
-    /// first `addresses.len()` entries.
-    pub attestations: Vec<Vec<u8>>,
-}
-
-impl RegisterableSigner {
-    /// Constructs a `RegisterableSigner`, returning [`RegistrarError::Config`]
-    /// if the invariants documented on the type are not satisfied.
-    ///
-    /// In normal driver operation `discover_and_resolve` already filters
-    /// empty-address instances and validates `attestations.len() >=
-    /// addresses.len()` (returning a more specific `ProverClient` error),
-    /// so this constructor's checks are defence-in-depth — they catch
-    /// callers (notably tests) that build resolutions by hand.
-    pub fn new(
-        instance: ProverInstance,
-        addresses: Vec<Address>,
-        attestations: Vec<Vec<u8>>,
-    ) -> Result<Self> {
-        if addresses.is_empty() {
-            return Err(RegistrarError::Config(format!(
-                "RegisterableSigner: instance {} has no signer addresses",
-                instance.instance_id
-            )));
-        }
-        if attestations.len() < addresses.len() {
-            return Err(RegistrarError::Config(format!(
-                "RegisterableSigner: instance {} has {} attestations for {} signers",
-                instance.instance_id,
-                attestations.len(),
-                addresses.len()
-            )));
-        }
-        Ok(Self { instance, addresses, attestations })
-    }
+    /// Signer address derived from one of the instance's enclave public
+    /// keys. Each address gets its own spawned proof task.
+    pub signer: Address,
+    /// Pre-fetched attestation blob paired with [`Self::signer`] at
+    /// flatten time.
+    pub attestation: Vec<u8>,
+    /// Zero-based enclave index on the source instance, preserved from
+    /// the original `(addresses, attestations)` enumeration so per-task
+    /// log lines can attribute which enclave on a multi-enclave instance
+    /// the signer came from.
+    pub enclave_index: usize,
 }
 
 /// Aggregate output of the driver's per-cycle `discover_and_resolve` pass —
@@ -1298,17 +1267,26 @@ where
                         active_signers.insert(*addr);
                     }
                     if let Some(attestations) = outcome.attestations {
-                        // `resolve_instance` already enforced both
-                        // `RegisterableSigner` invariants (non-empty
-                        // addresses, `attestations.len() >=
-                        // addresses.len()`) with richer per-instance
-                        // errors, so the constructor here is an
-                        // assertion: a failure would mean an upstream
-                        // regression rather than recoverable input.
-                        registerable.push(
-                            RegisterableSigner::new(instance, outcome.addresses, attestations)
-                                .expect("resolve_instance validated RegisterableSigner invariants"),
-                        );
+                        // `resolve_instance` already enforced the pairing
+                        // invariants (non-empty addresses,
+                        // `attestations.len() >= addresses.len()`) with
+                        // richer per-instance errors. Flatten one entry
+                        // per (signer, attestation) so the spawn pass in
+                        // `reconcile_proof_tasks` becomes a flat
+                        // iteration. The `zip` truncates at the shorter
+                        // side, which mirrors the upstream invariant —
+                        // any extra trailing attestations are dropped on
+                        // the floor as before.
+                        for (enclave_index, (signer, attestation)) in
+                            outcome.addresses.into_iter().zip(attestations).enumerate()
+                        {
+                            registerable.push(RegisterableSigner {
+                                instance: instance.clone(),
+                                signer,
+                                attestation,
+                                enclave_index,
+                            });
+                        }
                     }
                 }
                 Err(e) => {
@@ -1383,12 +1361,7 @@ where
         tasks: &mut JoinSet<Result<()>>,
         pending: &mut HashMap<task::Id, PendingTask>,
     ) {
-        let mut wanted: HashSet<Address> = HashSet::new();
-        for entry in &resolution.registerable {
-            for addr in &entry.addresses {
-                wanted.insert(*addr);
-            }
-        }
+        let wanted: HashSet<Address> = resolution.registerable.iter().map(|e| e.signer).collect();
 
         // Cancel-pass: any in-flight task whose signer is no longer wanted.
         for task in pending.values() {
@@ -1405,31 +1378,32 @@ where
 
         // `in_flight` is updated as we spawn so a signer that appears in
         // two registerable entries within the same cycle (misconfig /
-        // discovery glitch) cannot spawn duplicate proof tasks.
+        // discovery glitch — two instances briefly backing the same
+        // enclave key) cannot spawn duplicate proof tasks.
         let mut in_flight: HashSet<Address> = pending.values().map(|t| t.signer).collect();
 
         // Spawn-pass: any wanted signer not currently in-flight.
         for entry in &resolution.registerable {
-            for (idx, &signer) in entry.addresses.iter().enumerate() {
-                if !in_flight.insert(signer) {
-                    continue;
-                }
-                let signer_cancel = self.config.cancel.child_token();
-                let driver = Arc::clone(self);
-                let instance_owned = entry.instance.clone();
-                let attestation = entry.attestations[idx].clone();
-                let task_cancel = signer_cancel.clone();
-                let instance_id = entry.instance.instance_id.clone();
-
-                let handle = tasks.spawn(async move {
-                    driver
-                        .run_proof_task(instance_owned, signer, idx, attestation, task_cancel)
-                        .await
-                });
-                let id = handle.id();
-                pending.insert(id, PendingTask { instance_id, signer, cancel: signer_cancel });
-                RegistrarMetrics::proof_tasks_spawned().increment(1);
+            if !in_flight.insert(entry.signer) {
+                continue;
             }
+            let signer_cancel = self.config.cancel.child_token();
+            let driver = Arc::clone(self);
+            let instance_owned = entry.instance.clone();
+            let attestation = entry.attestation.clone();
+            let task_cancel = signer_cancel.clone();
+            let instance_id = entry.instance.instance_id.clone();
+            let signer = entry.signer;
+            let enclave_index = entry.enclave_index;
+
+            let handle = tasks.spawn(async move {
+                driver
+                    .run_proof_task(instance_owned, signer, enclave_index, attestation, task_cancel)
+                    .await
+            });
+            let id = handle.id();
+            pending.insert(id, PendingTask { instance_id, signer, cancel: signer_cancel });
+            RegistrarMetrics::proof_tasks_spawned().increment(1);
         }
     }
 
@@ -2919,10 +2893,12 @@ mod tests {
             let inst = instance(ep, InstanceHealthStatus::Healthy);
             let addr = ProverClient::derive_address(&public_key_from_private(key)).unwrap();
             active_signers.insert(addr);
-            registerable.push(
-                RegisterableSigner::new(inst, vec![addr], vec![b"gated-attestation".to_vec()])
-                    .expect("test fixture satisfies RegisterableSigner invariants"),
-            );
+            registerable.push(RegisterableSigner {
+                instance: inst,
+                signer: addr,
+                attestation: b"gated-attestation".to_vec(),
+                enclave_index: 0,
+            });
         }
         let total = kept.len();
         DiscoveryResolution {
@@ -4525,18 +4501,18 @@ mod tests {
         // visible as a stale-attestation race in `recorded`.
         let signer =
             ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let entry_a = RegisterableSigner::new(
-            instance(EP1, InstanceHealthStatus::Healthy),
-            vec![signer],
-            vec![b"attestation-from-instance-a".to_vec()],
-        )
-        .expect("test fixture invariants hold");
-        let entry_b = RegisterableSigner::new(
-            instance(EP2, InstanceHealthStatus::Healthy),
-            vec![signer],
-            vec![b"attestation-from-instance-b".to_vec()],
-        )
-        .expect("test fixture invariants hold");
+        let entry_a = RegisterableSigner {
+            instance: instance(EP1, InstanceHealthStatus::Healthy),
+            signer,
+            attestation: b"attestation-from-instance-a".to_vec(),
+            enclave_index: 0,
+        };
+        let entry_b = RegisterableSigner {
+            instance: instance(EP2, InstanceHealthStatus::Healthy),
+            signer,
+            attestation: b"attestation-from-instance-b".to_vec(),
+            enclave_index: 0,
+        };
         let resolution = DiscoveryResolution {
             registerable: vec![entry_a, entry_b],
             active_signers: HashSet::from([signer]),
@@ -4569,12 +4545,15 @@ mod tests {
     #[case::forward_order(false)]
     #[case::reversed_order(true)]
     #[tokio::test]
-    async fn reconcile_proof_tasks_pairs_attestation_with_signer_by_index(#[case] reverse: bool) {
-        // The spawn pass reads `entry.attestations[idx]` for each
-        // `(idx, signer)` enumerated from `entry.addresses`. If
-        // those vectors were ever consumed independently (e.g. via
-        // `zip` with the wrong source, or via stable index across
-        // cycles), this test would catch the mispairing.
+    async fn reconcile_proof_tasks_pairs_attestation_with_signer(#[case] reverse: bool) {
+        // After the flatten in `discover_and_resolve`, each
+        // `RegisterableSigner` carries its own `(signer, attestation)`
+        // pair, so mispairing via the old `attestations[idx]` indexing
+        // bug class is structurally impossible. This test asserts the
+        // spawn pass forwards each entry's `signer` and `attestation`
+        // consistently — regardless of the order entries appear in the
+        // registerable vector — by recording the attestation the
+        // provider received per signer.
         let signer_a =
             ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
         let signer_b =
@@ -4584,14 +4563,19 @@ mod tests {
         let att_a: Vec<u8> = b"attestation-aligned-to-A".to_vec();
         let att_b: Vec<u8> = b"attestation-aligned-to-B".to_vec();
 
-        // Both orderings must yield the same `signer → attestation`
-        // mapping: index alignment, not array position, is what
-        // defines the pairing.
-        let (addresses, attestations) = if reverse {
-            (vec![signer_b, signer_a], vec![att_b.clone(), att_a.clone()])
-        } else {
-            (vec![signer_a, signer_b], vec![att_a.clone(), att_b.clone()])
+        let entry_a = RegisterableSigner {
+            instance: instance(EP1, InstanceHealthStatus::Healthy),
+            signer: signer_a,
+            attestation: att_a.clone(),
+            enclave_index: 0,
         };
+        let entry_b = RegisterableSigner {
+            instance: instance(EP2, InstanceHealthStatus::Healthy),
+            signer: signer_b,
+            attestation: att_b.clone(),
+            enclave_index: 0,
+        };
+        let registerable = if reverse { vec![entry_b, entry_a] } else { vec![entry_a, entry_b] };
 
         let proof_provider = RecordingProofProvider::default();
         let driver = recording_driver(
@@ -4599,17 +4583,11 @@ mod tests {
             proof_provider.clone(),
         );
 
-        let entry = RegisterableSigner::new(
-            instance(EP1, InstanceHealthStatus::Healthy),
-            addresses,
-            attestations,
-        )
-        .expect("test fixture invariants hold");
         let resolution = DiscoveryResolution {
-            registerable: vec![entry],
+            registerable,
             active_signers: HashSet::from([signer_a, signer_b]),
-            reachable_count: 1,
-            total_count: 1,
+            reachable_count: 2,
+            total_count: 2,
             ok_to_dereg: false,
         };
 
