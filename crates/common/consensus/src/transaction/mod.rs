@@ -40,7 +40,7 @@ pub use eip8130::{
     increment_nonce_op, is_owner_authorized, max_execution_gas_cost, nonce_increment_write,
     owner_registration_writes, read_change_sequence, read_lock_state, read_nonce,
     read_owner_config, resolve_sender, validate_config_change_sequences, validate_expiry,
-    validate_nonce, validate_structure, write_owner_config_op,
+    validate_nonce, validate_structure, validate_verifier_allowlist, write_owner_config_op,
 };
 #[cfg(feature = "native-verifier")]
 pub use eip8130::{NativeVerifyError, NativeVerifyResult, try_native_verify};

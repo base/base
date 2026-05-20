@@ -3294,7 +3294,9 @@ dependencies = [
  "arbitrary",
  "bincode 2.0.1",
  "bytes",
+ "k256",
  "modular-bitfield",
+ "p256 0.13.2",
  "rand 0.9.4",
  "reth-codecs",
  "reth-db-api",
@@ -3306,6 +3308,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
 ]
 

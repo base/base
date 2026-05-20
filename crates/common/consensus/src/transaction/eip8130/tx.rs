@@ -29,6 +29,7 @@ pub struct TxEip8130 {
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub chain_id: u64,
     /// Sender address. `None` means the sender is derived via ecrecover.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub from: Option<Address>,
     /// 2D nonce channel selector (uint256).
     pub nonce_key: U256,

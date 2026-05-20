@@ -268,15 +268,15 @@ mod tx_serde {
                 deposit_nonce,
             } = value;
 
-            // Deposit and EIP-8130 transactions already serialize their own `from` field through
-            // the inner envelope, so avoid emitting it twice via `OptionalFields`.
-            let from =
-                if matches!(inner.inner(), BaseTxEnvelope::Deposit(_) | BaseTxEnvelope::Eip8130(_))
-                {
-                    None
-                } else {
-                    Some(inner.signer())
-                };
+            // Deposit and explicit-from EIP-8130 transactions already serialize their own `from`
+            // field through the inner envelope. EOA-mode EIP-8130 transactions have no raw `from`,
+            // so expose the recovered signer in RPC responses for downstream block decoders.
+            let from = match inner.inner() {
+                BaseTxEnvelope::Deposit(_) => None,
+                BaseTxEnvelope::Eip8130(tx) if tx.inner().from.is_some() => None,
+                BaseTxEnvelope::Eip8130(_) => Some(inner.signer()),
+                _ => Some(inner.signer()),
+            };
 
             // if inner transaction has its own `gasPrice` don't serialize it in this struct.
             let effective_gas_price = effective_gas_price.filter(|_| inner.gas_price().is_none());
@@ -297,7 +297,7 @@ mod tx_serde {
 
         fn try_from(value: TransactionSerdeHelper) -> Result<Self, Self::Error> {
             let TransactionSerdeHelper {
-                inner,
+                mut inner,
                 block_hash,
                 block_number,
                 transaction_index,
@@ -305,15 +305,31 @@ mod tx_serde {
                 other,
             } = value;
 
+            // EOA-mode EIP-8130 transactions have no canonical inner `from` field, but RPC
+            // responses still expose the recovered sender as `from`. Because both are flattened
+            // JSON fields, serde initially places that value into `TxEip8130::from`; move it back
+            // out so re-encoding the consensus transaction preserves the original tx hash.
+            let eip8130_eoa_recovered_from = match &mut inner {
+                BaseTxEnvelope::Eip8130(tx)
+                    if tx.inner().sender_auth.len() == 65 && tx.inner().from.is_some() =>
+                {
+                    tx.inner_mut().from.take()
+                }
+                _ => None,
+            };
+
             // Try to get `from` field from inner envelope or from `MaybeFrom`, otherwise return
             // error
             let from = if let Some(from) = other.from {
                 from
+            } else if let Some(from) = eip8130_eoa_recovered_from {
+                from
+            } else if let Some(deposit) = inner.as_deposit() {
+                deposit.from
+            } else if let BaseTxEnvelope::Eip8130(tx) = &inner {
+                tx.inner().from.ok_or_else(|| serde_json::Error::custom("missing `from` field"))?
             } else {
-                inner
-                    .as_deposit()
-                    .map(|v| v.from)
-                    .ok_or_else(|| serde_json::Error::custom("missing `from` field"))?
+                return Err(serde_json::Error::custom("missing `from` field"));
             };
 
             // Only serialize deposit_nonce if inner transaction is deposit to avoid duplicated keys
@@ -338,6 +354,8 @@ mod tx_serde {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::{Sealable, transaction::Recovered};
+
     use super::*;
 
     #[test]
@@ -498,5 +516,70 @@ mod tests {
         let tx = serde_json::from_str::<Transaction>(rpc_tx).unwrap();
         let serialized = serde_json::to_string(&tx).unwrap();
         assert_eq!(serialized.matches("\"from\"").count(), 1);
+    }
+
+    #[test]
+    fn eip8130_eoa_serialization_emits_recovered_from_field() {
+        let signer = Address::repeat_byte(0x42);
+        let tx = base_common_consensus::TxEip8130 {
+            chain_id: 84538453,
+            from: None,
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            expiry: 0,
+            max_priority_fee_per_gas: 1_000_000,
+            max_fee_per_gas: 2_001_000_000,
+            gas_limit: 500_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            payer: None,
+            sender_auth: Bytes::from(vec![0x11; 65]),
+            payer_auth: Bytes::new(),
+        };
+        let envelope = BaseTxEnvelope::Eip8130(tx.seal_slow());
+        let recovered = Recovered::new_unchecked(envelope, signer);
+        let transaction = Transaction::from_transaction(
+            recovered,
+            base_common_consensus::BaseTransactionInfo::default(),
+        );
+
+        let value = serde_json::to_value(&transaction).unwrap();
+
+        assert_eq!(value["from"], serde_json::json!(signer));
+        assert_eq!(value.to_string().matches("\"from\"").count(), 1);
+    }
+
+    #[test]
+    fn eip8130_eoa_rpc_deserialization_preserves_empty_inner_from() {
+        let signer = Address::repeat_byte(0x42);
+        let rpc_tx = serde_json::json!({
+            "type": "0x7b",
+            "chainId": "0x509f455",
+            "from": signer,
+            "nonceKey": "0x0",
+            "nonceSequence": "0x0",
+            "expiry": "0x0",
+            "maxPriorityFeePerGas": "0xf4240",
+            "maxFeePerGas": "0x7744d640",
+            "gas": "0x7a120",
+            "accountChanges": [],
+            "calls": [],
+            "payer": null,
+            "senderAuth": format!("0x{}", "11".repeat(65)),
+            "payerAuth": "0x",
+            "hash": "0xe05ee7338ea863d0a7d6b1eef28a0baf7c1e21ef1367541b005aff98401014f5",
+            "blockHash": "0xcce44084adef30124842b2929b14886714cba8a847a0d5d0714a712e87378f9e",
+            "blockNumber": "0x6f",
+            "transactionIndex": "0x1",
+            "gasPrice": "0x3baa0c40"
+        });
+
+        let tx: Transaction = serde_json::from_value(rpc_tx).unwrap();
+
+        let BaseTxEnvelope::Eip8130(inner) = tx.inner.inner.inner() else {
+            panic!("expected EIP-8130 transaction");
+        };
+        assert_eq!(tx.inner.inner.signer(), signer);
+        assert_eq!(inner.inner().from, None);
     }
 }

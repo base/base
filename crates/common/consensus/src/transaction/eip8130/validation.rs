@@ -16,8 +16,11 @@ use super::{
         MAX_ACCOUNT_CHANGES_PER_TX, MAX_CALLS_PER_TX, MAX_CONFIG_OPS_PER_TX, MAX_SIGNATURE_SIZE,
         NONCE_KEY_MAX,
     },
-    predeploys::{K1_VERIFIER_ADDRESS, REVOKED_VERIFIER},
+    delegate::parse_delegate_data,
+    predeploys::{DELEGATE_VERIFIER_ADDRESS, K1_VERIFIER_ADDRESS, REVOKED_VERIFIER},
     tx::TxEip8130,
+    types::AccountChangeEntry,
+    verifier::NativeVerifier,
 };
 
 /// Errors that can occur during AA transaction validation.
@@ -145,6 +148,89 @@ pub enum ValidationError {
     /// Database error during validation.
     #[error("database error: {0}")]
     Database(String),
+
+    /// An auth blob references a verifier that is not on the native allowlist.
+    ///
+    /// Only the native verifiers in [`NativeVerifier::ALL`] (plus the implicit
+    /// `Address::ZERO` shorthand for K1) are accepted. Arbitrary EVM contracts
+    /// are no longer permitted as verifiers.
+    #[error("verifier {address} is not on the native allowlist (auth slot: {auth_slot})")]
+    DisallowedVerifier {
+        /// The offending verifier address.
+        address: Address,
+        /// Which auth slot referenced it (`"sender_auth"`, `"payer_auth"`,
+        /// `"authorizer_auth"`, `"delegate_inner"`, or `"owner_change"`).
+        auth_slot: &'static str,
+    },
+}
+
+/// Auth-slot labels used by [`ValidationError::DisallowedVerifier`].
+const SLOT_SENDER: &str = "sender_auth";
+const SLOT_PAYER: &str = "payer_auth";
+const SLOT_AUTHORIZER: &str = "authorizer_auth";
+const SLOT_DELEGATE_INNER: &str = "delegate_inner";
+const SLOT_OWNER_CHANGE: &str = "owner_change";
+
+/// Returns `true` if `address` is the implicit-K1 shorthand or one of the
+/// native verifier predeploys.
+fn is_allowed_verifier(address: Address) -> bool {
+    address == Address::ZERO || NativeVerifier::from_address(address).is_some()
+}
+
+/// Validates a verifier address pulled from an auth blob.
+fn check_allowed_verifier(
+    address: Address,
+    auth_slot: &'static str,
+) -> Result<(), ValidationError> {
+    if is_allowed_verifier(address) {
+        Ok(())
+    } else {
+        Err(ValidationError::DisallowedVerifier { address, auth_slot })
+    }
+}
+
+/// Validates an auth blob's verifier prefix (and any nested delegate verifier).
+fn check_auth_verifier(auth: &[u8], slot: &'static str) -> Result<(), ValidationError> {
+    if auth.len() < 20 {
+        return Ok(());
+    }
+    let verifier = Address::from_slice(&auth[..20]);
+    check_allowed_verifier(verifier, slot)?;
+
+    if verifier == DELEGATE_VERIFIER_ADDRESS {
+        if let Some(parsed) = parse_delegate_data(&auth[20..]) {
+            check_allowed_verifier(parsed.nested_verifier, SLOT_DELEGATE_INNER)?;
+        }
+    }
+    Ok(())
+}
+
+/// Validates that every verifier referenced by the transaction is on the
+/// native allowlist. Custom EVM verifiers are rejected outright.
+pub fn validate_verifier_allowlist(tx: &TxEip8130) -> Result<(), ValidationError> {
+    if !tx.is_eoa() {
+        check_auth_verifier(&tx.sender_auth, SLOT_SENDER)?;
+    }
+    if !tx.is_self_pay() {
+        check_auth_verifier(&tx.payer_auth, SLOT_PAYER)?;
+    }
+    for entry in &tx.account_changes {
+        match entry {
+            AccountChangeEntry::ConfigChange(cc) => {
+                check_auth_verifier(&cc.authorizer_auth, SLOT_AUTHORIZER)?;
+                for op in &cc.owner_changes {
+                    check_allowed_verifier(op.verifier, SLOT_OWNER_CHANGE)?;
+                }
+            }
+            AccountChangeEntry::Create(create) => {
+                for owner in &create.initial_owners {
+                    check_allowed_verifier(owner.verifier, SLOT_OWNER_CHANGE)?;
+                }
+            }
+            AccountChangeEntry::Delegation(_) => {}
+        }
+    }
+    Ok(())
 }
 
 /// Validates structural constraints that don't require DB access.
@@ -170,14 +256,13 @@ pub fn validate_structure(tx: &TxEip8130) -> Result<(), ValidationError> {
     validate_account_changes_limit(tx)?;
     validate_config_operations_limit(tx)?;
     validate_authorizer_auth_sizes(tx)?;
+    validate_verifier_allowlist(tx)?;
 
     Ok(())
 }
 
 /// Validates the `account_changes` array structure.
 fn validate_account_changes_structure(tx: &TxEip8130) -> Result<(), ValidationError> {
-    use super::types::AccountChangeEntry;
-
     let mut seen_create = false;
     for (i, entry) in tx.account_changes.iter().enumerate() {
         match entry {
@@ -228,8 +313,6 @@ fn validate_account_changes_limit(tx: &TxEip8130) -> Result<(), ValidationError>
 
 /// Validates total config operation count across all config change entries.
 fn validate_config_operations_limit(tx: &TxEip8130) -> Result<(), ValidationError> {
-    use super::types::AccountChangeEntry;
-
     let total_ops: usize = tx
         .account_changes
         .iter()
@@ -249,8 +332,6 @@ fn validate_config_operations_limit(tx: &TxEip8130) -> Result<(), ValidationErro
 
 /// Validates config-change authorizer auth blobs with the same size bound as sender/payer auth.
 fn validate_authorizer_auth_sizes(tx: &TxEip8130) -> Result<(), ValidationError> {
-    use super::types::AccountChangeEntry;
-
     for entry in &tx.account_changes {
         let AccountChangeEntry::ConfigChange(cc) = entry else {
             continue;
@@ -382,8 +463,6 @@ pub fn validate_config_change_sequences<DB: Database>(
     sender: Address,
     tx: &TxEip8130,
 ) -> Result<(), ValidationError> {
-    use super::types::AccountChangeEntry;
-
     for entry in &tx.account_changes {
         if let AccountChangeEntry::ConfigChange(change) = entry {
             let expected = read_change_sequence(db, sender, change.chain_id)
@@ -481,7 +560,7 @@ mod tests {
     fn structure_validation_account_changes_limit() {
         let owners = (0..9)
             .map(|i| super::super::types::Owner {
-                verifier: address!("0x3333333333333333333333333333333333333333"),
+                verifier: K1_VERIFIER_ADDRESS,
                 owner_id: {
                     let mut id = [0u8; 32];
                     id[31] = i as u8;
@@ -688,5 +767,150 @@ mod tests {
             ..Default::default()
         };
         assert!(validate_structure(&tx).is_ok());
+    }
+
+    #[test]
+    fn allowlist_accepts_native_verifiers() {
+        for native in NativeVerifier::ALL {
+            let mut auth = Vec::new();
+            auth.extend_from_slice(native.address().as_slice());
+            auth.extend_from_slice(&[0u8; 65]);
+            let tx = TxEip8130 {
+                from: Some(address!("0x1111111111111111111111111111111111111111")),
+                sender_auth: Bytes::from(auth),
+                ..Default::default()
+            };
+            assert!(
+                validate_verifier_allowlist(&tx).is_ok(),
+                "native verifier {native:?} must be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn allowlist_accepts_implicit_zero_verifier() {
+        let mut auth = Vec::new();
+        auth.extend_from_slice(Address::ZERO.as_slice());
+        auth.extend_from_slice(&[0u8; 65]);
+        let tx = TxEip8130 {
+            from: Some(address!("0x1111111111111111111111111111111111111111")),
+            sender_auth: Bytes::from(auth),
+            ..Default::default()
+        };
+        assert!(validate_verifier_allowlist(&tx).is_ok());
+    }
+
+    #[test]
+    fn allowlist_rejects_custom_sender_verifier() {
+        let custom = address!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+        let mut auth = Vec::new();
+        auth.extend_from_slice(custom.as_slice());
+        auth.extend_from_slice(&[0u8; 65]);
+        let tx = TxEip8130 {
+            from: Some(address!("0x1111111111111111111111111111111111111111")),
+            sender_auth: Bytes::from(auth),
+            ..Default::default()
+        };
+        match validate_verifier_allowlist(&tx) {
+            Err(ValidationError::DisallowedVerifier { address, auth_slot }) => {
+                assert_eq!(address, custom);
+                assert_eq!(auth_slot, SLOT_SENDER);
+            }
+            other => panic!("expected DisallowedVerifier, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn allowlist_rejects_custom_payer_verifier() {
+        let custom = address!("0xbadbadbadbadbadbadbadbadbadbadbadbadbadb");
+        let mut auth = Vec::new();
+        auth.extend_from_slice(custom.as_slice());
+        let tx = TxEip8130 {
+            from: Some(address!("0x1111111111111111111111111111111111111111")),
+            payer: Some(address!("0x2222222222222222222222222222222222222222")),
+            payer_auth: Bytes::from(auth),
+            ..Default::default()
+        };
+        assert!(matches!(
+            validate_verifier_allowlist(&tx),
+            Err(ValidationError::DisallowedVerifier { auth_slot: SLOT_PAYER, .. })
+        ));
+    }
+
+    #[test]
+    fn allowlist_rejects_custom_authorizer_verifier() {
+        use super::super::predeploys::K1_VERIFIER_ADDRESS;
+        use super::super::types::{ConfigChangeEntry, OwnerChange};
+
+        let custom = address!("0xc0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff");
+        let mut authorizer = Vec::new();
+        authorizer.extend_from_slice(custom.as_slice());
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChangeEntry::ConfigChange(ConfigChangeEntry {
+                chain_id: 8453,
+                sequence: 0,
+                owner_changes: vec![OwnerChange {
+                    change_type: 0x01,
+                    verifier: K1_VERIFIER_ADDRESS,
+                    owner_id: B256::ZERO,
+                    scope: 0,
+                }],
+                authorizer_auth: Bytes::from(authorizer),
+            })],
+            ..Default::default()
+        };
+        assert!(matches!(
+            validate_verifier_allowlist(&tx),
+            Err(ValidationError::DisallowedVerifier { auth_slot: SLOT_AUTHORIZER, .. })
+        ));
+    }
+
+    #[test]
+    fn allowlist_rejects_custom_owner_change_verifier() {
+        use super::super::predeploys::K1_VERIFIER_ADDRESS;
+        use super::super::types::{ConfigChangeEntry, OwnerChange};
+
+        let custom = address!("0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed");
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChangeEntry::ConfigChange(ConfigChangeEntry {
+                chain_id: 8453,
+                sequence: 0,
+                owner_changes: vec![OwnerChange {
+                    change_type: 0x01,
+                    verifier: custom,
+                    owner_id: B256::ZERO,
+                    scope: 0,
+                }],
+                authorizer_auth: Bytes::from(K1_VERIFIER_ADDRESS.as_slice().to_vec()),
+            })],
+            ..Default::default()
+        };
+        assert!(matches!(
+            validate_verifier_allowlist(&tx),
+            Err(ValidationError::DisallowedVerifier { auth_slot: SLOT_OWNER_CHANGE, .. })
+        ));
+    }
+
+    #[test]
+    fn allowlist_rejects_custom_delegate_inner_verifier() {
+        use super::super::predeploys::DELEGATE_VERIFIER_ADDRESS;
+
+        let custom = address!("0xabababababababababababababababababababab");
+        let delegate_account = address!("0x3333333333333333333333333333333333333333");
+        let mut auth = Vec::new();
+        auth.extend_from_slice(DELEGATE_VERIFIER_ADDRESS.as_slice());
+        auth.extend_from_slice(delegate_account.as_slice());
+        auth.extend_from_slice(custom.as_slice());
+        auth.extend_from_slice(&[0u8; 65]);
+
+        let tx = TxEip8130 {
+            from: Some(address!("0x1111111111111111111111111111111111111111")),
+            sender_auth: Bytes::from(auth),
+            ..Default::default()
+        };
+        assert!(matches!(
+            validate_verifier_allowlist(&tx),
+            Err(ValidationError::DisallowedVerifier { auth_slot: SLOT_DELEGATE_INNER, .. })
+        ));
     }
 }

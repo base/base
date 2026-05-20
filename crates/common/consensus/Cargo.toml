@@ -49,6 +49,11 @@ reth-zstd-compressors = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true, features = ["serde-bincode-compat"] }
 reth-ethereum-primitives = { workspace = true, optional = true, features = ["serde-bincode-compat"] }
 
+# native verifier
+k256 = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa"], optional = true }
+
 [dev-dependencies]
 rand.workspace = true
 rstest.workspace = true
@@ -74,7 +79,7 @@ std = [
 	"thiserror/std",
 ]
 alloy-compat = [ "dep:alloy-network", "dep:alloy-rpc-types-eth", "serde" ]
-k256 = [ "alloy-consensus/k256", "alloy-primitives/k256" ]
+k256 = [ "alloy-consensus/k256", "alloy-primitives/k256", "dep:k256" ]
 kzg = [ "alloy-consensus/kzg", "alloy-eips/kzg", "std" ]
 arbitrary = [
 	"alloy-consensus/arbitrary",
@@ -119,4 +124,5 @@ reth = [
 	"serde-bincode-compat",
 	"std",
 ]
-native-verifier = []
+native-verifier = [ "dep:sha2", "k256", "p256" ]
+p256 = [ "dep:p256" ]

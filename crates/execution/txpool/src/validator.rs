@@ -10,7 +10,7 @@ use alloy_consensus::{BlockHeader, Transaction};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::U256;
 use base_common_chains::Upgrades;
-use base_common_consensus::{AA_TX_TYPE_ID, BaseTxEnvelope};
+use base_common_consensus::{AA_TX_TYPE_ID, BaseTxEnvelope, validate_structure};
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use parking_lot::RwLock;
@@ -226,6 +226,12 @@ where
             };
 
             let nonce_sequence = tx.inner().nonce_sequence;
+            if validate_structure(tx.inner()).is_err() {
+                return TransactionValidationOutcome::Invalid(
+                    transaction,
+                    InvalidTransactionError::TxTypeNotSupported.into(),
+                );
+            }
 
             return TransactionValidationOutcome::Valid {
                 // Balance checks for AA txs are enforced downstream; use max to avoid

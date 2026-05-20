@@ -4,9 +4,11 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_common_consensus::{
-    ACCOUNT_CONFIG_ADDRESS, AccountChangeEntry, ConfigChangeEntry, CreateEntry, TxEip8130,
-    auto_delegation_code, config_change_sequence, config_change_writes, derive_account_address,
-    implicit_eoa_owner_id, owner_registration_writes,
+    ACCOUNT_CONFIG_ADDRESS, AccountChangeEntry, ConfigChangeEntry, CreateEntry,
+    K1_VERIFIER_ADDRESS, NativeVerifyResult, TxEip8130, auto_delegation_code,
+    config_change_sequence, config_change_writes, derive_account_address, implicit_eoa_owner_id,
+    owner_registration_writes, sender_signature_hash, try_native_verify,
+    validate_verifier_allowlist,
 };
 
 /// A storage write produced by EIP-8130 account changes.
@@ -60,6 +62,10 @@ pub struct Eip8130Parts {
     pub payer: Address,
     /// Authenticated owner id for TxContext.
     pub owner_id: B256,
+    /// Verifier used to authenticate the sender.
+    pub sender_verifier: Address,
+    /// Auth validation error, if native verification failed.
+    pub auth_error: Option<&'static str>,
     /// Nonce lane key.
     pub nonce_key: U256,
     /// Optional delegation target from account changes.
@@ -86,6 +92,7 @@ impl Eip8130Parts {
         let mut sequence_updates = Vec::new();
         let mut code_placements = Vec::new();
         let mut delegation_target = None;
+        let (owner_id, sender_verifier, auth_error) = sender_auth_info(tx, recovered_caller);
 
         for entry in &tx.account_changes {
             match entry {
@@ -139,7 +146,9 @@ impl Eip8130Parts {
         Self {
             sender: recovered_caller,
             payer: tx.payer.unwrap_or(recovered_caller),
-            owner_id: implicit_eoa_owner_id(recovered_caller),
+            owner_id,
+            sender_verifier,
+            auth_error,
             nonce_key: tx.nonce_key,
             delegation_target,
             auto_delegation_code: auto_delegation_code(),
@@ -149,6 +158,37 @@ impl Eip8130Parts {
             code_placements,
             call_phases,
         }
+    }
+}
+
+/// Resolves sender authentication metadata using the native verifier allowlist.
+fn sender_auth_info(
+    tx: &TxEip8130,
+    recovered_caller: Address,
+) -> (B256, Address, Option<&'static str>) {
+    if tx.is_eoa() {
+        return (implicit_eoa_owner_id(recovered_caller), K1_VERIFIER_ADDRESS, None);
+    }
+
+    if validate_verifier_allowlist(tx).is_err() {
+        return (B256::ZERO, Address::ZERO, Some("sender verifier is not allowlisted"));
+    }
+
+    if tx.sender_auth.len() < 20 {
+        return (B256::ZERO, Address::ZERO, Some("sender auth is missing verifier prefix"));
+    }
+
+    let mut verifier = Address::from_slice(&tx.sender_auth[..20]);
+    if verifier.is_zero() {
+        verifier = K1_VERIFIER_ADDRESS;
+    }
+    let data = Bytes::copy_from_slice(&tx.sender_auth[20..]);
+    match try_native_verify(verifier, &data, sender_signature_hash(tx)) {
+        NativeVerifyResult::Verified(owner_id) => (owner_id, verifier, None),
+        NativeVerifyResult::Unsupported => {
+            (B256::ZERO, verifier, Some("sender verifier is unsupported"))
+        }
+        NativeVerifyResult::Invalid(_) => (B256::ZERO, verifier, Some("sender auth is invalid")),
     }
 }
 

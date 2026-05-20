@@ -104,6 +104,7 @@ pub use validation::{
     ValidationError, check_lock_state, check_payer_authorization, check_sender_authorization,
     decode_verify_return, encode_verify_call, implicit_eoa_owner_id, resolve_sender,
     validate_config_change_sequences, validate_expiry, validate_nonce, validate_structure,
+    validate_verifier_allowlist,
 };
 
 mod purity;

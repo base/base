@@ -272,7 +272,7 @@ async function deployCustomVerifierInitCode(initCode, label) {
     maxPriorityFeePerGas: FALLBACK_PRIORITY_FEE_PER_GAS,
   });
   console.log(`${label} deployment tx: ${deploymentHash}`);
-  const receipt = await waitForReceipt(deploymentHash, 30000, 2000);
+  const receipt = await waitForReceipt(deploymentHash, 90000, 2000);
   if (!receipt || receipt.status !== '0x1' || !receipt.contractAddress) {
     throw new Error(
       `${label} deployment failed (status=${receipt?.status || 'none'}, contract=${receipt?.contractAddress || 'none'})`
@@ -306,6 +306,34 @@ async function getAaNonceViaRpc(address, nonceKey = 0n) {
     params: [address, 'latest', numberToHex(nonceKey)],
   });
   return BigInt(result);
+}
+
+// Computes the NonceManager storage slot for `(account, nonce_key)` and
+// reads it directly via `eth_getStorageAt`, bypassing the RPC override.
+//
+// Slot layout: keccak256(nonceKey . keccak256(pad(account, 32) . NONCE_BASE_SLOT))
+// where NONCE_BASE_SLOT = 1.
+function nonceManagerSlot(address, nonceKey) {
+  const NONCE_BASE_SLOT = 1n;
+  const inner = keccak256(
+    concat([
+      padHex(address.toLowerCase(), { size: 32 }),
+      padHex(numberToHex(NONCE_BASE_SLOT), { size: 32 }),
+    ])
+  );
+  return keccak256(
+    concat([padHex(numberToHex(BigInt(nonceKey)), { size: 32 }), inner])
+  );
+}
+
+async function getAaNonceFromStorage(address, nonceKey = 0n) {
+  const slot = nonceManagerSlot(address, nonceKey);
+  const word = await client.request({
+    method: 'eth_getStorageAt',
+    params: [NONCE_MANAGER_ADDRESS, slot, 'latest'],
+  });
+  if (!word || word === '0x') return 0n;
+  return BigInt(word);
 }
 
 function ownerConfigSlot(accountAddr, ownerId) {
@@ -487,7 +515,7 @@ async function prepareUnsignedForSubmission(unsignedRlpFields) {
   return { prepared, estimatedGas, estimatedWithBuffer, fees };
 }
 
-async function waitForReceipt(nodeTxHash, timeoutMs = 30000, pollMs = 2000) {
+async function waitForReceipt(nodeTxHash, timeoutMs = 90000, pollMs = 2000) {
   const started = Date.now();
   while (Date.now() - started <= timeoutMs) {
     const receipt = await client.request({
@@ -506,6 +534,7 @@ async function signAndSend(unsignedRlpFields, {
   customSenderAuth = null,
   exitOnError = true,
   preparedUnsignedRlpFields = null,
+  feeBumpBps = 10_000n,
 } = {}) {
   let effectiveUnsigned = preparedUnsignedRlpFields;
   if (!effectiveUnsigned) {
@@ -519,6 +548,11 @@ async function signAndSend(unsignedRlpFields, {
         `Gas preflight: estimate=${preflight.estimatedGas} bufferedLimit=${preflight.estimatedWithBuffer}`
       );
     }
+  }
+  if (feeBumpBps !== 10_000n) {
+    effectiveUnsigned = [...effectiveUnsigned];
+    effectiveUnsigned[5] = encodeUint((parseHexQuantity(effectiveUnsigned[5]) * feeBumpBps) / 10_000n);
+    effectiveUnsigned[6] = encodeUint((parseHexQuantity(effectiveUnsigned[6]) * feeBumpBps) / 10_000n);
   }
 
   const signingPayload = concat([
@@ -584,8 +618,8 @@ async function signAndSend(unsignedRlpFields, {
     throw err;
   }
 
-  console.log('Waiting for receipt (up to 30s)...');
-  const receipt = await waitForReceipt(nodeTxHash, 30000, 2000);
+  console.log('Waiting for receipt (up to 90s)...');
+  const receipt = await waitForReceipt(nodeTxHash, 90000, 2000);
   if (receipt) {
     console.log(`\n--- Receipt ---`);
     console.log(`Status:       ${receipt.status}`);
@@ -619,7 +653,7 @@ function baseTxFields(
   callsRlp,
   accountChangesRlp = [],
   payerAddress = null,
-  { nonceKey = 0n, expiry = 0n, fromAddress = account.address } = {}
+  { nonceKey = opts.nonceKey, expiry = 0n, fromAddress = account.address } = {}
 ) {
   return [
     encodeUint(L2_CHAIN_ID),
@@ -1186,12 +1220,16 @@ async function runReceiptTest() {
   console.log('\n--- Receipt Field Verification ---');
   const senderAddr = account.address;
 
+  // All four sub-tests share the same lane (opts.nonceKey) so their
+  // sequence numbers chain correctly across the run.
+  const lane = opts.nonceKey;
+
   // Test 1: Single-phase success — phaseStatuses should be [true]
   console.log('\n=== Test 1: Single-phase success ===');
-  const nonce1 = await getAaNonce();
+  const nonce1 = await getAaNonceViaRpc(senderAddr, lane);
   const probeCalldata = encodeFunctionData({ abi: PROBE_ABI, functionName: 'probe' });
   const calls1 = [[[encodeAddress(opts.probeAddr), probeCalldata]]];
-  const unsigned1 = baseTxFields(nonce1, calls1);
+  const unsigned1 = baseTxFields(nonce1, calls1, [], null, { nonceKey: lane });
   const { receipt: r1 } = await signAndSend(unsigned1, { trace: false });
 
   let pass = true;
@@ -1206,13 +1244,13 @@ async function runReceiptTest() {
   // Phase 0: probe() — succeeds. Phase 1: call NonceManager (0xfe INVALID opcode) — reverts.
   // Note: AccountConfig has no code (pure storage), so calls to it succeed silently.
   console.log('\n=== Test 2: Mixed phase results ===');
-  const nonce2 = await getAaNonce();
+  const nonce2 = await getAaNonceViaRpc(senderAddr, lane);
   const invalidCalldata = '0xdeadbeef';
   const calls2 = [
     [[encodeAddress(opts.probeAddr), probeCalldata]],
     [[encodeAddress(NONCE_MANAGER_ADDRESS), invalidCalldata]],
   ];
-  const unsigned2 = baseTxFields(nonce2, calls2);
+  const unsigned2 = baseTxFields(nonce2, calls2, [], null, { nonceKey: lane });
   const { receipt: r2 } = await signAndSend(unsigned2, { trace: false });
 
   pass = true;
@@ -1228,9 +1266,9 @@ async function runReceiptTest() {
   // Test 3: Sponsored receipt — verify payer field
   console.log('\n=== Test 3: Sponsored payer field ===');
   const payerAcct = privateKeyToAccount(PAYER_KEY);
-  const nonce3 = await getAaNonce();
+  const nonce3 = await getAaNonceViaRpc(senderAddr, lane);
   const calls3 = [[[encodeAddress(opts.probeAddr), probeCalldata]]];
-  const unsigned3 = baseTxFields(nonce3, calls3, [], payerAcct.address);
+  const unsigned3 = baseTxFields(nonce3, calls3, [], payerAcct.address, { nonceKey: lane });
   const { receipt: r3 } = await signAndSend(unsigned3, { trace: false, payerAccount: payerAcct });
 
   pass = true;
@@ -1245,8 +1283,8 @@ async function runReceiptTest() {
 
   // Test 4: Empty calls (deploy-like) — phaseStatuses should be []
   console.log('\n=== Test 4: Empty calls receipt ===');
-  const nonce4 = await getAaNonce();
-  const unsigned4 = baseTxFields(nonce4, []);
+  const nonce4 = await getAaNonceViaRpc(senderAddr, lane);
+  const unsigned4 = baseTxFields(nonce4, [], [], null, { nonceKey: lane });
   const { receipt: r4 } = await signAndSend(unsigned4, { trace: false });
 
   pass = true;
@@ -1392,10 +1430,13 @@ async function runDeploy() {
 async function runNonceRpc() {
   console.log('\n--- eth_getTransactionCount(nonceKey) RPC Verification ---');
   const senderAddr = account.address;
+  const lane = opts.nonceKey;
 
-  const storageBefore = await getAaNonce();
-  const rpcBefore = await getAaNonceViaRpc(senderAddr, 0n);
-  console.log(`Before tx — storage nonce: ${storageBefore}, RPC nonce: ${rpcBefore}`);
+  const storageBefore = await getAaNonceFromStorage(senderAddr, lane);
+  const rpcBefore = await getAaNonceViaRpc(senderAddr, lane);
+  console.log(
+    `Before tx (lane=${lane}) — storage nonce: ${storageBefore}, RPC nonce: ${rpcBefore}`
+  );
 
   let pass = true;
   if (storageBefore !== rpcBefore) {
@@ -1407,7 +1448,7 @@ async function runNonceRpc() {
 
   const probeCalldata = encodeFunctionData({ abi: PROBE_ABI, functionName: 'probe' });
   const callsRlp = [[[encodeAddress(opts.probeAddr), probeCalldata]]];
-  const unsigned = baseTxFields(storageBefore, callsRlp);
+  const unsigned = baseTxFields(storageBefore, callsRlp, [], null, { nonceKey: lane });
   const { receipt } = await signAndSend(unsigned, { trace: false });
 
   if (receipt?.status !== '0x1') {
@@ -1415,9 +1456,11 @@ async function runNonceRpc() {
     pass = false;
   }
 
-  const storageAfter = await getAaNonce();
-  const rpcAfter = await getAaNonceViaRpc(senderAddr, 0n);
-  console.log(`After tx  — storage nonce: ${storageAfter}, RPC nonce: ${rpcAfter}`);
+  const storageAfter = await getAaNonceFromStorage(senderAddr, lane);
+  const rpcAfter = await getAaNonceViaRpc(senderAddr, lane);
+  console.log(
+    `After tx  (lane=${lane}) — storage nonce: ${storageAfter}, RPC nonce: ${rpcAfter}`
+  );
 
   if (storageAfter !== rpcAfter) {
     console.log(`FAIL: storage (${storageAfter}) != RPC (${rpcAfter}) after tx`);
@@ -1433,13 +1476,14 @@ async function runNonceRpc() {
     console.log('PASS: nonce incremented by 1');
   }
 
-  // Also test non-zero nonce_key returns 0 (unused lane)
-  const otherKeyNonce = await getAaNonceViaRpc(senderAddr, 42n);
+  // Also test an unused nonce_key returns 0 (different lane).
+  const otherLane = lane === 42n ? 43n : 42n;
+  const otherKeyNonce = await getAaNonceViaRpc(senderAddr, otherLane);
   if (otherKeyNonce !== 0n) {
-    console.log(`FAIL: nonce_key=42 should be 0, got ${otherKeyNonce}`);
+    console.log(`FAIL: nonce_key=${otherLane} should be 0, got ${otherKeyNonce}`);
     pass = false;
   } else {
-    console.log('PASS: nonce_key=42 returns 0 (unused lane)');
+    console.log(`PASS: nonce_key=${otherLane} returns 0 (unused lane)`);
   }
 
   console.log(pass ? '\n--- All nonce-rpc checks PASSED ---' : '\n--- Some nonce-rpc checks FAILED ---');
@@ -2283,6 +2327,7 @@ async function runOwnerChangeSigning() {
   const probeCalldata = encodeFunctionData({ abi: PROBE_ABI, functionName: 'probe' });
   const callsRlp = [[[encodeAddress(opts.probeAddr), probeCalldata]]];
   const seqSlotHash = sequenceSlot(account.address);
+  const lane = opts.nonceKey;
 
   const readSequence = async () => {
     const packedSeq = await client.getStorageAt({
@@ -2341,7 +2386,7 @@ async function runOwnerChangeSigning() {
     ];
   };
 
-  const waitForReceipt = async (txHash, attempts = 12, delayMs = 1000) => {
+  const waitForReceipt = async (txHash, attempts = 45, delayMs = 2000) => {
     for (let i = 0; i < attempts; i++) {
       const receipt = await client.request({
         method: 'eth_getTransactionReceipt',
@@ -2393,90 +2438,81 @@ async function runOwnerChangeSigning() {
     }
   };
 
-  // Step 1: revoked signer should fail (submission reject or on-chain revert).
-  console.log('\n--- Step 1: Tx signed by soon-to-be-revoked EOA should fail ---');
-  const step1NonceKey = 1n;
-  const nonce1 = await getAaNonceViaRpc(account.address, step1NonceKey);
-  const blockBeforeStep1 = await client.getBlockNumber();
-  console.log(`AA nonce (key=${step1NonceKey}): ${nonce1}`);
+  // Step 1: K1-signed tx that adds P256 + revokes K1 in the SAME tx.
+  //
+  // Per EIP-8130 §4.1, sender authentication uses pre-tx owner state, so the
+  // K1 sig is valid at the moment of authentication, the config change applies
+  // afterwards, and the tx must succeed. This is the documented "atomic owner
+  // rotation" pattern.
+  console.log('\n--- Step 1: K1-signed tx atomically rotates owners (K1 -> P256) ---');
+  const nonce1 = await getAaNonce(lane);
+  console.log(`AA nonce (key=${lane}): ${nonce1}`);
   const configChangeRlp1 = await buildConfigChangeRlp(rotationChanges, k1AuthForHash);
-  const unsigned1 = baseTxFields(nonce1, callsRlp, [configChangeRlp1], ZERO_ADDRESS, { nonceKey: step1NonceKey });
-  const senderAuth1 = await k1AuthForHash(aaSigHash(unsigned1));
-  const encodedTx1 = encodeSignedTx(unsigned1, senderAuth1);
-
-  try {
-    const txHash1 = await client.request({
-      method: 'eth_sendRawTransaction',
-      params: [encodedTx1],
-    });
-    console.log(`Tx accepted for propagation (${txHash1}); waiting for receipt...`);
-    const receipt1 = await waitForReceipt(txHash1);
-    if (!receipt1) {
-      const blockAfterStep1 = await client.getBlockNumber();
-      const stateAfterNoReceipt = await readOwnerVerifiers();
-      const stateUnchanged =
-        stateAfterNoReceipt.p256Config === initialState.p256Config &&
-        stateAfterNoReceipt.eoaConfig === initialState.eoaConfig;
-      if (blockAfterStep1 > blockBeforeStep1 && stateUnchanged) {
-        console.log('SUCCESS: Revoked-signer tx accepted by txpool but stayed unmined (invalid at inclusion)');
-        revokedSignerRejected = true;
-      } else {
-        console.log('FAILED: Revoked-signer tx had no receipt and owner state changed unexpectedly');
-        hadFailure = true;
-      }
-    } else if (receipt1.status === '0x1') {
-      console.log('FAILED: Revoked-signer tx succeeded unexpectedly');
-      hadFailure = true;
-      rotationApplied = true;
-    } else {
-      console.log('SUCCESS: Revoked-signer tx reverted on-chain as expected');
-      revokedSignerRejected = true;
-    }
-  } catch (err) {
-    console.log(`SUCCESS: Revoked-signer tx rejected at submission: ${toErrorMessage(err)}`);
-    revokedSignerRejected = true;
+  const unsigned1 = baseTxFields(nonce1, callsRlp, [configChangeRlp1], null, { nonceKey: lane });
+  const sent1 = await trySignAndSend(
+    unsigned1,
+    { trace: false },
+    'K1-signed rotation tx rejected',
+  );
+  const receipt1 = sent1?.receipt ?? null;
+  if (!receipt1 || receipt1.status !== '0x1') {
+    console.log(`FAILED: K1-signed rotation tx did not succeed (status=${receipt1?.status || 'no receipt'})`);
+    hadFailure = true;
+  } else {
+    rotationApplied = true;
+    console.log('SUCCESS: Rotation tx executed with pre-tx K1 authentication');
   }
 
-  // Step 2: newly-added P256 signer should pass in the same tx that adds it.
-  if (revokedSignerRejected) {
-    console.log('\n--- Step 2: Tx signed by newly-added P256 owner should pass ---');
-    const nonce2 = await getAaNonce();
-    console.log(`AA nonce (key=0): ${nonce2}`);
-    const configChangeRlp2 = await buildConfigChangeRlp(rotationChanges, k1AuthForHash);
-    const unsigned2 = baseTxFields(nonce2, callsRlp, [configChangeRlp2]);
-    const sent2 = await trySignAndSend(
-      unsigned2,
-      { trace: opts.trace, customSenderAuth: p256AuthForHash },
+  // Step 2: after rotation, a follow-up K1-signed tx must be rejected because
+  // the EOA owner has been revoked.
+  if (rotationApplied) {
+    console.log('\n--- Step 2: K1-signed tx after revoke should be rejected ---');
+    const nonce2k1 = await getAaNonceViaRpc(account.address, lane);
+    const unsigned2k1 = baseTxFields(nonce2k1, callsRlp, [], null, { nonceKey: lane });
+    const preflight2k1 = await prepareUnsignedForSubmission(unsigned2k1);
+    const senderAuth2k1 = await k1AuthForHash(aaSigHash(preflight2k1.prepared));
+    const encodedTx2k1 = encodeSignedTx(preflight2k1.prepared, senderAuth2k1);
+    try {
+      const txHash2k1 = await client.request({
+        method: 'eth_sendRawTransaction',
+        params: [encodedTx2k1],
+      });
+      console.log(`Tx accepted for propagation (${txHash2k1}); checking it stays unmined...`);
+      const receipt2k1 = await waitForReceipt(txHash2k1, 8, 1000);
+      if (receipt2k1 && receipt2k1.status === '0x1') {
+        console.log('FAILED: Revoked-EOA tx unexpectedly mined with status=0x1');
+        hadFailure = true;
+      } else if (receipt2k1 && receipt2k1.status !== '0x1') {
+        console.log('SUCCESS: Revoked-EOA tx reverted on-chain as expected');
+        revokedSignerRejected = true;
+      } else {
+        console.log('SUCCESS: Revoked-EOA tx stayed pending as invalid; next tx will replace it');
+        revokedSignerRejected = true;
+      }
+    } catch (err) {
+      console.log(`SUCCESS: Revoked-EOA tx rejected at submission: ${toErrorMessage(err)}`);
+      revokedSignerRejected = true;
+    }
+
+    // Step 2b: the newly-added P256 signer must be able to authenticate.
+    console.log('\n--- Step 2b: P256-signed tx with new owner should pass ---');
+    const nonce2p256 = await getAaNonce(lane);
+    const unsigned2p256 = baseTxFields(nonce2p256, callsRlp, [], null, { nonceKey: lane });
+    const sent2p256 = await trySignAndSend(
+      unsigned2p256,
+      { trace: false, customSenderAuth: p256AuthForHash, feeBumpBps: 15_000n },
       'Newly-added P256 signer tx rejected',
     );
-    const receipt2 = sent2?.receipt ?? null;
-
-    if (receipt2) {
-      if (receipt2.status !== '0x1') {
-        console.log(`FAILED: Newly-added P256 signer tx failed (status ${receipt2.status || 'unknown'})`);
-        hadFailure = true;
-      } else {
-        console.log('SUCCESS: Tx signed by owner added in owner_changes executed');
-      }
-    }
-
-    const stateAfterRotation = await readOwnerVerifiers();
-
-    if (stateAfterRotation.p256Verifier !== P256_VERIFIER_ADDRESS.toLowerCase()) {
-      console.log(`FAILED: P256 owner verifier mismatch (got ${stateAfterRotation.p256Verifier})`);
+    const receipt2p256 = sent2p256?.receipt ?? null;
+    if (!receipt2p256 || receipt2p256.status !== '0x1') {
+      console.log(`FAILED: P256-signed tx failed (status=${receipt2p256?.status || 'no receipt'})`);
       hadFailure = true;
-    }
-    if (stateAfterRotation.eoaVerifier !== REVOKED_VERIFIER_ADDRESS.toLowerCase()) {
-      console.log(`FAILED: EOA owner not revoked (got ${stateAfterRotation.eoaVerifier})`);
-      hadFailure = true;
-    }
-    rotationApplied = isRotationState(stateAfterRotation);
-    if (rotationApplied) {
-      console.log('SUCCESS: Post-state matches expected rotation (P256 added, EOA revoked)');
+    } else {
+      console.log('SUCCESS: P256-signed tx executed');
     }
   } else {
     console.log('\n--- Step 2: Skipped ---');
-    console.log('Skipped because step 1 did not confirm revoked-signer rejection.');
+    console.log('Skipped because step 1 did not apply the rotation.');
   }
 
   // Step 3: cleanup to restore original sender for subsequent script modes.
@@ -2486,13 +2522,13 @@ async function runOwnerChangeSigning() {
       { changeType: AUTHORIZE_OWNER, verifier: K1_VERIFIER_ADDRESS, ownerId: eoaOwnerId, scope: 0 },
       { changeType: REVOKE_OWNER, verifier: ZERO_ADDRESS, ownerId: p256OwnerId, scope: 0 },
     ];
-    const nonce3 = await getAaNonce();
-    console.log(`AA nonce (key=0): ${nonce3}`);
+    const nonce3 = await getAaNonce(lane);
+    console.log(`AA nonce (key=${lane}): ${nonce3}`);
     const configChangeRlp3 = await buildConfigChangeRlp(restoreChanges, p256AuthForHash);
-    const unsigned3 = baseTxFields(nonce3, callsRlp, [configChangeRlp3]);
+    const unsigned3 = baseTxFields(nonce3, callsRlp, [configChangeRlp3], null, { nonceKey: lane });
     const sent3 = await trySignAndSend(
       unsigned3,
-      { trace: false, customSenderAuth: k1AuthForHash },
+      { trace: false, customSenderAuth: p256AuthForHash },
       'Cleanup tx rejected',
     );
     const receipt3 = sent3?.receipt ?? null;
@@ -2537,16 +2573,17 @@ async function runLockedConfig() {
 
   console.log('\n--- Locked Config Test: Verify locked accounts reject config changes ---');
   console.log(`Sender: ${account.address}`);
+  const lane = opts.nonceKey;
 
   // Step 1: Lock the account via a call to AccountConfiguration.lock(2)
   console.log('\n--- Step 1: Lock the account ---');
 
   const lockCalldata = encodeFunctionData({ abi: LOCK_ABI, functionName: 'lock', args: [2] });
-  const nonce1 = await getAaNonce();
-  console.log(`AA nonce (key=0): ${nonce1}`);
+  const nonce1 = await getAaNonce(lane);
+  console.log(`AA nonce (key=${lane}): ${nonce1}`);
 
   const lockCalls = [[[encodeAddress(ACCOUNT_CONFIG_ADDRESS), lockCalldata]]];
-  const unsigned1 = baseTxFields(nonce1, lockCalls);
+  const unsigned1 = baseTxFields(nonce1, lockCalls, [], null, { nonceKey: lane });
   const { receipt: receipt1 } = await signAndSend(unsigned1, { trace: opts.trace });
 
   if (receipt1?.status !== '0x1') {
@@ -2567,7 +2604,7 @@ async function runLockedConfig() {
   console.log('\n--- Step 2: Attempt config change while locked (should fail) ---');
 
   const newOwnerId = padHex('0xdeadbeef', { size: 32, dir: 'right' });
-  const nonce2 = await getAaNonce();
+  const nonce2 = await getAaNonce(lane);
 
   const seqSlotHash = sequenceSlot(account.address);
   const packedSeq = await client.getStorageAt({ address: ACCOUNT_CONFIG_ADDRESS, slot: seqSlotHash });
@@ -2588,10 +2625,11 @@ async function runLockedConfig() {
 
   const probeCalldata = encodeFunctionData({ abi: PROBE_ABI, functionName: 'probe' });
   const callsRlp2 = [[[encodeAddress(opts.probeAddr), probeCalldata]]];
-  const unsigned2 = baseTxFields(nonce2, callsRlp2, [configChangeRlp]);
+  const unsigned2 = baseTxFields(nonce2, callsRlp2, [configChangeRlp], null, { nonceKey: lane });
   const preflight2 = await prepareUnsignedForSubmission(unsigned2);
 
-  // Sign manually — we expect submission to fail
+  // Sign manually. If the invalid tx is accepted into the pool but cannot be
+  // included, the cleanup tx below replaces it with a higher fee.
   const sigPayload = concat([toHex(AA_TX_TYPE, { size: 1 }), toRlp(preflight2.prepared)]);
   const sigHash = keccak256(sigPayload);
   const senderSig = await account.sign({ hash: sigHash });
@@ -2607,12 +2645,10 @@ async function runLockedConfig() {
       params: [encodedTx],
     });
     console.log(`TX was accepted (hash: ${txHash2}), checking receipt...`);
-    await new Promise(r => setTimeout(r, 5000));
-    const receipt2 = await client.request({
-      method: 'eth_getTransactionReceipt',
-      params: [txHash2],
-    });
-    if (!receipt2 || receipt2.status === '0x0') {
+    const receipt2 = await waitForReceipt(txHash2, 8, 1000);
+    if (!receipt2) {
+      console.log('SUCCESS: Config change stayed pending as invalid; cleanup will replace it');
+    } else if (receipt2.status === '0x0') {
       console.log('SUCCESS: Config change reverted on-chain (account is locked)');
     } else {
       console.log('FAILED: Config change succeeded despite account being locked!');
@@ -2626,10 +2662,10 @@ async function runLockedConfig() {
   // Step 3: Cleanup lock state so subsequent runs can proceed.
   console.log('\n--- Step 3: Cleanup lock state ---');
   const unlockCalldata = encodeFunctionData({ abi: LOCK_ABI, functionName: 'initiateUnlock', args: [] });
-  const nonce3 = await getAaNonce();
+  const nonce3 = await getAaNonce(lane);
   const unlockCalls = [[[encodeAddress(ACCOUNT_CONFIG_ADDRESS), unlockCalldata]]];
-  const unsigned3 = baseTxFields(nonce3, unlockCalls);
-  const { receipt: receipt3 } = await signAndSend(unsigned3, { trace: false });
+  const unsigned3 = baseTxFields(nonce3, unlockCalls, [], null, { nonceKey: lane });
+  const { receipt: receipt3 } = await signAndSend(unsigned3, { trace: false, feeBumpBps: 15_000n });
   if (receipt3?.status !== '0x1') {
     console.log(`FAILED: initiateUnlock tx failed (status ${receipt3?.status || 'unknown'})`);
     process.exit(1);
@@ -2908,8 +2944,8 @@ async function runEoa() {
   });
   console.log(`SUCCESS! TX hash from node: ${nodeTxHash}`);
 
-  console.log('Waiting for receipt (up to 30s)...');
-  const receipt = await waitForReceipt(nodeTxHash, 30000, 2000);
+  console.log('Waiting for receipt (up to 90s)...');
+  const receipt = await waitForReceipt(nodeTxHash, 90000, 2000);
 
   if (!receipt || receipt.status !== '0x1') {
     console.log(`FAILED: EOA tx did not land (status=${receipt?.status || 'no receipt'})`);
@@ -2991,6 +3027,48 @@ async function runEoa() {
 }
 
 // ─────────────────────────────────────────────────
+// Mode: rejects-custom-verifier (negative test for non-allowlisted verifiers)
+//
+// Submits an AA tx whose sender_auth is prefixed with an arbitrary (non-native)
+// verifier address and asserts the mempool/RPC rejects it. Used to cover the
+// former custom-verifier / impure-verifier / state-read-verifier /
+// external-staticcall-verifier / delegate-custom modes now that all
+// non-native verifiers are rejected at validation.
+// ─────────────────────────────────────────────────
+async function runRejectsCustomVerifier(modeName) {
+  console.log(`\n--- Negative test: ${modeName} (expect mempool rejection) ---`);
+  const customVerifier = '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+  const nonce = await getAaNonce(opts.nonceKey);
+  console.log(`AA nonce (key=${opts.nonceKey}): ${nonce}`);
+
+  const probeCalldata = encodeFunctionData({ abi: PROBE_ABI, functionName: 'probe' });
+  const callsRlp = [[[encodeAddress(opts.probeAddr), probeCalldata]]];
+  const unsigned = baseTxFields(nonce, callsRlp, [], null, { nonceKey: opts.nonceKey });
+
+  let rejected = false;
+  try {
+    await signAndSend(unsigned, {
+      trace: false,
+      exitOnError: false,
+      customSenderAuth: async (sigHash) => {
+        const sig = await account.sign({ hash: sigHash });
+        return concat([customVerifier, sig]);
+      },
+    });
+  } catch (err) {
+    rejected = true;
+    const detail = err.details || err.shortMessage || err.message || '';
+    console.log(`Mempool rejected as expected: ${detail}`);
+  }
+
+  if (!rejected) {
+    console.log(`\nFAILED: ${modeName} — chain accepted a non-native verifier ${customVerifier}`);
+    process.exit(1);
+  }
+  console.log(`\nSUCCESS: ${modeName} — non-native verifier rejected at mempool`);
+}
+
+// ─────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────
 const blockNum = await client.getBlockNumber();
@@ -3031,25 +3109,17 @@ switch (opts.mode) {
     await runEstimateGas();
     break;
   case 'custom-verifier':
-    await runCustomVerifier();
-    break;
   case 'impure-verifier':
-    await runImpureVerifier();
-    break;
   case 'state-read-verifier':
-    await runStateReadVerifier();
-    break;
   case 'external-staticcall-verifier':
-    await runExternalStaticcallVerifier();
+  case 'delegate-custom':
+    await runRejectsCustomVerifier(opts.mode);
     break;
   case 'delegate-native':
     await runDelegateNative();
     break;
   case 'delegate-p256':
     await runDelegateP256();
-    break;
-  case 'delegate-custom':
-    await runDelegateCustom();
     break;
   case 'owner-change-signing':
     await runOwnerChangeSigning();
@@ -3068,6 +3138,6 @@ switch (opts.mode) {
     break;
   default:
     console.error(`Unknown mode: ${opts.mode}`);
-    console.error('Available modes: probe, multi-call, sponsor, config-change, p256, webauthn, receipt-test, deploy, nonce-rpc, estimate-gas, custom-verifier, impure-verifier, state-read-verifier, external-staticcall-verifier, delegate-native, delegate-p256, delegate-custom, owner-change-signing, nonceless, delegation, locked-config, eoa');
+    console.error('Available modes: probe, multi-call, sponsor, config-change, p256, webauthn, receipt-test, deploy, nonce-rpc, estimate-gas, custom-verifier (negative), impure-verifier (negative), state-read-verifier (negative), external-staticcall-verifier (negative), delegate-native, delegate-p256, delegate-custom (negative), owner-change-signing, nonceless, delegation, locked-config, eoa');
     process.exit(1);
 }

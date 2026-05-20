@@ -1,10 +1,11 @@
 //! Handler related to Base chain
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 
 use base_common_chains::BaseUpgrade;
 use base_common_consensus::{
-    AA_TX_TYPE_ID, ACCOUNT_CONFIG_ADDRESS, NONCE_MANAGER_ADDRESS, Predeploys, TxContextValues,
-    nonce_slot, write_sequence,
+    AA_TX_TYPE_ID, ACCOUNT_CONFIG_ADDRESS, K1_VERIFIER_ADDRESS, NONCE_MANAGER_ADDRESS, OwnerScope,
+    Predeploys, REVOKED_VERIFIER, TxContextValues, account_state_slot, implicit_eoa_owner_id,
+    nonce_slot, owner_config_slot, parse_account_state, parse_owner_config, write_sequence,
 };
 use revm::{
     bytecode::Bytecode,
@@ -32,7 +33,7 @@ use revm::{
         InitialAndFloorGas, InstructionResult, InterpreterResult, SharedMemory,
         interpreter::EthInterpreter, interpreter_action::FrameInit,
     },
-    primitives::{Address, B256, Bytes, U256, hardfork::SpecId},
+    primitives::{Address, B256, Bytes, KECCAK_EMPTY, U256, hardfork::SpecId},
 };
 
 use crate::{
@@ -229,6 +230,78 @@ where
             *chain = L1BlockInfo::try_fetch(journal.db_mut(), block.number(), spec)?;
         }
 
+        if let Some(parts) = &eip8130_parts {
+            if let Some(error) = parts.auth_error {
+                return Err(InvalidTransaction::Str(Cow::Owned(format!(
+                    "invalid EIP-8130 auth: {error}"
+                )))
+                .into());
+            }
+
+            {
+                let mut account_config = journal.load_account_mut(ACCOUNT_CONFIG_ADDRESS)?.data;
+                let slot = owner_config_slot(parts.sender, parts.owner_id);
+                let packed = match account_config.sload(slot.into(), false) {
+                    Ok(state) => state.data.present_value(),
+                    Err(JournalLoadError::ColdLoadSkipped) => U256::ZERO,
+                    Err(JournalLoadError::DBError(err)) => {
+                        return Err(ERROR::from_string(format!(
+                            "failed to load AA owner config slot: {err}"
+                        )));
+                    }
+                };
+                let (verifier, scope) = parse_owner_config(B256::from(packed.to_be_bytes::<32>()));
+
+                if verifier == REVOKED_VERIFIER {
+                    return Err(InvalidTransaction::Str(Cow::Borrowed(
+                        "EIP-8130 sender owner is revoked",
+                    ))
+                    .into());
+                }
+                if verifier == Address::ZERO {
+                    if parts.sender_verifier != K1_VERIFIER_ADDRESS
+                        || parts.owner_id != implicit_eoa_owner_id(parts.sender)
+                    {
+                        return Err(InvalidTransaction::Str(Cow::Borrowed(
+                            "EIP-8130 sender owner is not authorized",
+                        ))
+                        .into());
+                    }
+                } else if verifier != parts.sender_verifier {
+                    return Err(InvalidTransaction::Str(Cow::Borrowed(
+                        "EIP-8130 sender verifier does not match owner config",
+                    ))
+                    .into());
+                } else if scope != 0 && (scope & OwnerScope::SENDER) == 0 {
+                    return Err(InvalidTransaction::Str(Cow::Borrowed(
+                        "EIP-8130 sender owner lacks SENDER scope",
+                    ))
+                    .into());
+                }
+            }
+
+            if !parts.config_writes.is_empty() || !parts.sequence_updates.is_empty() {
+                let mut account_config = journal.load_account_mut(ACCOUNT_CONFIG_ADDRESS)?.data;
+                let packed =
+                    match account_config.sload(account_state_slot(parts.sender).into(), false) {
+                        Ok(state) => state.data.present_value(),
+                        Err(JournalLoadError::ColdLoadSkipped) => U256::ZERO,
+                        Err(JournalLoadError::DBError(err)) => {
+                            return Err(ERROR::from_string(format!(
+                                "failed to load AA account state slot: {err}"
+                            )));
+                        }
+                    };
+                let account_state = parse_account_state(packed);
+                if block.timestamp() < account_state.unlocks_at {
+                    return Err(InvalidTransaction::Str(Cow::Borrowed(
+                        "EIP-8130 account is locked",
+                    ))
+                    .into());
+                }
+            }
+        }
+
         if is_aa {
             let nonce_key = tx.aa_nonce_key().unwrap_or_default();
             let slot = nonce_slot(tx.caller(), nonce_key);
@@ -312,6 +385,13 @@ where
             if let Some(target) = parts.delegation_target {
                 let mut account = journal.load_account_with_code_mut(parts.sender)?.data;
                 account.set_code_and_hash_slow(delegation_code(target));
+            } else {
+                let mut account = journal.load_account_with_code_mut(parts.sender)?.data;
+                if account.account().info.code_hash == KECCAK_EMPTY {
+                    account.set_code_and_hash_slow(Bytecode::new_raw(
+                        parts.auto_delegation_code.clone(),
+                    ));
+                }
             }
         }
 
