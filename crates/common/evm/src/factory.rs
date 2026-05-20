@@ -7,7 +7,7 @@ use revm::{
 };
 
 use crate::{
-    BaseContext, BaseEvm, BaseHaltReason, BasePrecompileInstaller, BaseSpecId, BaseTransaction,
+    BaseContext, BaseEvm, BaseHaltReason, BasePrecompiles, BaseSpecId, BaseTransaction,
     BaseTransactionError, Builder, DefaultBase,
 };
 
@@ -42,7 +42,7 @@ impl EvmFactory for BaseEvmFactory {
             .with_cfg(input.cfg_env)
             .build_base()
             .with_inspector(NoOpInspector {})
-            .with_precompiles(BasePrecompileInstaller::new(spec_id).install())
+            .with_precompiles(BasePrecompiles::new_with_spec(spec_id).install())
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -57,6 +57,6 @@ impl EvmFactory for BaseEvmFactory {
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
             .build_with_inspector(inspector)
-            .with_precompiles(BasePrecompileInstaller::new(spec_id).install())
+            .with_precompiles(BasePrecompiles::new_with_spec(spec_id).install())
     }
 }

@@ -1,5 +1,6 @@
 use alloc::{boxed::Box, string::String};
 
+use alloy_evm::precompiles::PrecompilesMap;
 use base_common_chains::BaseUpgrade;
 use revm::{
     context::Cfg,
@@ -10,7 +11,10 @@ use revm::{
     primitives::{Address, OnceLock, hardfork::SpecId},
 };
 
-use crate::{BasePrecompileSpec, bls12_381, bn254_pair};
+use crate::{
+    ActivationRegistryPrecompile, B20TokenPrecompile, BasePrecompileSpec, PolicyRegistryEvm,
+    TokenFactoryPrecompile, bls12_381, bn254_pair,
+};
 
 /// Base precompile provider.
 #[derive(Debug, Clone)]
@@ -34,7 +38,8 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             BaseUpgrade::Granite | BaseUpgrade::Holocene => Self::granite(),
             BaseUpgrade::Isthmus => Self::isthmus(),
             BaseUpgrade::Jovian => Self::jovian(),
-            BaseUpgrade::Azul | BaseUpgrade::Beryl => Self::azul(),
+            BaseUpgrade::Azul => Self::azul(),
+            BaseUpgrade::Beryl => Self::beryl(),
             upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
         };
 
@@ -131,6 +136,27 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             precompiles
         })
     }
+
+    /// Returns precompiles for the Base Beryl spec.
+    ///
+    /// Static precompiles are the same as Azul; Beryl adds dynamic precompiles at install time.
+    pub fn beryl() -> &'static Precompiles {
+        Self::azul()
+    }
+
+    /// Builds a [`PrecompilesMap`] with all Base precompiles for this spec installed.
+    ///
+    /// For Beryl and later, this also installs the dynamic token and registry precompiles.
+    pub fn install(self) -> PrecompilesMap {
+        let mut precompiles = PrecompilesMap::from_static(self.precompiles());
+        if self.spec.upgrade() >= BaseUpgrade::Beryl {
+            TokenFactoryPrecompile::install(&mut precompiles);
+            B20TokenPrecompile::install(&mut precompiles);
+            PolicyRegistryEvm::install(&mut precompiles);
+            ActivationRegistryPrecompile::install(&mut precompiles);
+        }
+        precompiles
+    }
 }
 
 impl<CTX, S> PrecompileProvider<CTX> for BasePrecompiles<S>
@@ -179,6 +205,7 @@ impl<S: BasePrecompileSpec> Default for BasePrecompiles<S> {
 mod tests {
     use std::vec;
 
+    use alloy_primitives::{Address, B256};
     use revm::{
         precompile::{PrecompileError, Precompiles, bls12_381_const, bn254, modexp, secp256r1},
         primitives::eip7823,
@@ -186,7 +213,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{bls12_381, bn254_pair};
+    use crate::{ActivationRegistry, TokenFactory, TokenVariant, bls12_381, bn254_pair};
 
     type TestPrecompiles = BasePrecompiles<BaseUpgrade>;
 
@@ -462,5 +489,43 @@ mod tests {
             secp256r1::P256VERIFY_BASE_GAS_FEE_OSAKA,
             secp256r1::P256VERIFY_BASE_GAS_FEE * 2
         );
+    }
+
+    #[test]
+    fn install_preserves_base_precompile_set() {
+        let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Jovian).install();
+
+        assert!(precompiles.get(&bn254::pair::ADDRESS).is_some());
+        assert!(precompiles.get(secp256r1::P256VERIFY.address()).is_some());
+    }
+
+    #[rstest]
+    #[case::azul(BaseUpgrade::Azul, false)]
+    #[case::beryl(BaseUpgrade::Beryl, true)]
+    fn install_routes_b20_precompiles_by_fork(#[case] spec: BaseUpgrade, #[case] expected: bool) {
+        let precompiles = BasePrecompiles::new_with_spec(spec).install();
+        let (token, _) = TokenVariant::B20.compute_address(
+            Address::repeat_byte(0x11),
+            18,
+            B256::repeat_byte(0x22),
+        );
+
+        assert_eq!(precompiles.get(&TokenFactory::ADDRESS).is_some(), expected);
+        assert_eq!(precompiles.get(&token).is_some(), expected);
+        assert!(precompiles.get(&Address::repeat_byte(0x42)).is_none());
+    }
+
+    #[test]
+    fn activation_registry_is_not_installed_before_beryl() {
+        let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Azul).install();
+
+        assert!(precompiles.get(&ActivationRegistry::ADDRESS).is_none());
+    }
+
+    #[test]
+    fn activation_registry_is_installed_at_beryl() {
+        let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Beryl).install();
+
+        assert!(precompiles.get(&ActivationRegistry::ADDRESS).is_some());
     }
 }

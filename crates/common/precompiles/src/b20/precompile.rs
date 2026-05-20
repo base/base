@@ -1,10 +1,10 @@
 //! Precompile entry point for the `B20Token`.
 
-use alloy_evm::precompiles::DynPrecompile;
+use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::Address;
 
 use super::{B20Token, storage::B20TokenStorage};
-use crate::{PolicyHandle, macros::base_precompile};
+use crate::{PolicyHandle, TokenVariant, macros::base_precompile};
 
 /// Entry point for the `B20Token` precompile.
 ///
@@ -14,6 +14,18 @@ use crate::{PolicyHandle, macros::base_precompile};
 pub struct B20TokenPrecompile;
 
 impl B20TokenPrecompile {
+    /// Installs the dynamic B-20 token precompile lookup into `precompiles`.
+    pub fn install(precompiles: &mut PrecompilesMap) {
+        precompiles.set_precompile_lookup(Self::lookup);
+    }
+
+    /// Returns the B-20 token precompile for `address`, if the address encodes a supported token.
+    pub fn lookup(address: &Address) -> Option<DynPrecompile> {
+        TokenVariant::from_address(*address).map(|variant| match variant {
+            TokenVariant::B20 => Self::create_precompile(*address),
+        })
+    }
+
     /// Returns a [`DynPrecompile`] that dispatches to the [`B20Token`] logic at `token_address`.
     ///
     /// Used by the precompile-lookup fallback to route calls to any B-20 token address.
