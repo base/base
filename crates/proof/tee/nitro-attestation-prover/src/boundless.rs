@@ -33,6 +33,7 @@ use boundless_market::{
 };
 use risc0_zkvm::sha::Digest;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use url::Url;
 
@@ -421,7 +422,24 @@ impl BoundlessProver {
 
 #[async_trait::async_trait]
 impl AttestationProofProvider for BoundlessProver {
-    async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<AttestationProof> {
+    /// # Cancellation
+    ///
+    /// Cooperatively honors `cancel` at phase boundaries: before
+    /// building the client/params, and (via
+    /// [`generate_proof_for_signer`]) between recovery probe attempts.
+    /// The actual submit + wait-for-fulfillment loop is not interrupted
+    /// once started; dropping the future is safe because any submitted
+    /// request remains discoverable on the next call via the
+    /// deterministic request-id derivation (see the module docs on
+    /// proof recovery).
+    async fn generate_proof(
+        &self,
+        attestation_bytes: &[u8],
+        cancel: &CancellationToken,
+    ) -> Result<AttestationProof> {
+        if cancel.is_cancelled() {
+            return Err(ProverError::Boundless("proof generation cancelled before start".into()));
+        }
         let (client, params) = self.build_client_and_params(attestation_bytes).await?;
         self.submit_and_wait(&client, params).await
     }
@@ -452,7 +470,11 @@ impl AttestationProofProvider for BoundlessProver {
         &self,
         attestation_bytes: &[u8],
         signer_address: Address,
+        cancel: &CancellationToken,
     ) -> Result<AttestationProof> {
+        if cancel.is_cancelled() {
+            return Err(ProverError::Boundless("proof generation cancelled before start".into()));
+        }
         let (client, params) = self.build_client_and_params(attestation_bytes).await?;
 
         let recovery_is_blocked = self
@@ -471,6 +493,14 @@ impl AttestationProofProvider for BoundlessProver {
         // Probe deterministic request-ID slots for recovery.
         let mut first_unknown_attempt: Option<u32> = None;
         for attempt in 0..self.max_recovery_attempts {
+            // Check cancellation between probe slots. Already-locked
+            // requests stay on-chain and remain recoverable on the next
+            // call via the same deterministic index.
+            if cancel.is_cancelled() {
+                return Err(ProverError::Boundless(
+                    "proof generation cancelled mid-recovery probe".into(),
+                ));
+            }
             let index = Self::derive_request_index(signer_address, attempt);
             // RequestId is keyed on the Boundless wallet (fee-payer,
             // `self.signer`), not the enclave signer (`signer_address`).

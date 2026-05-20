@@ -18,6 +18,7 @@ base-proof-tee-nitro-verifier.workspace = true
 # Types / traits (always available)
 thiserror.workspace = true
 async-trait.workspace = true
+tokio-util.workspace = true
 alloy-primitives.workspace = true
 
 # Proving backends (behind `prove` feature). This serves two purposes:

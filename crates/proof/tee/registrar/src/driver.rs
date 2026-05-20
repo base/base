@@ -20,7 +20,10 @@ use base_proof_tee_nitro_verifier::AttestationReport;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::StreamExt;
 use rand::random;
-use tokio::task::{self, JoinSet};
+use tokio::{
+    sync::Semaphore,
+    task::{self, JoinSet},
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, warn};
 
@@ -163,6 +166,14 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     /// on-chain (`revokedCerts` sentinel set) cannot be re-trusted via the
     /// `_cacheNewCert` rewrite path.
     nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
+    /// Bounds the number of proof-generation calls that may be in-flight
+    /// across the spawned task pool at once. Sized from
+    /// [`DriverConfig::max_concurrency`], matching the discovery/resolve
+    /// concurrency bound so an ASG scale-up cannot fan out an unbounded
+    /// number of concurrent Boundless proof requests. Permits are acquired
+    /// inside [`Self::run_proof_task`], not at spawn time, so the
+    /// reconcile pass remains synchronous.
+    proof_semaphore: Arc<Semaphore>,
 }
 
 impl<D, P, R, T, S> fmt::Debug for RegistrationDriver<D, P, R, T, S> {
@@ -219,6 +230,7 @@ where
         } else {
             None
         };
+        let proof_semaphore = Arc::new(Semaphore::new(config.max_concurrency.max(1)));
         Ok(Self {
             discovery,
             proof_provider,
@@ -228,6 +240,7 @@ where
             config,
             crl_http_client,
             nitro_verifier,
+            proof_semaphore,
         })
     }
 
@@ -254,11 +267,12 @@ where
     ///
     /// # Cancellation
     ///
-    /// On shutdown every `PendingTask::cancel` is fired; `abort_all` is
-    /// then used as a backstop, and tasks are awaited via
+    /// On shutdown every `PendingTask::cancel` is fired cooperatively;
+    /// tasks are then awaited to natural completion via
     /// `join_next_with_id` so each terminal outcome flows through
-    /// `apply_join_outcome` — keeping the proof-task metrics
-    /// consistent.
+    /// `apply_join_outcome`, keeping the proof-task metrics consistent.
+    /// `JoinSet::abort_all` is deliberately **not** used — see
+    /// [`Self::drain_proof_tasks`] for the nonce-gap rationale.
     ///
     /// # Why `Arc<Self>`
     ///
@@ -663,12 +677,42 @@ where
             "generating proof for unregistered signer"
         );
 
+        // Acquire a proof-concurrency permit. Bounds the number of
+        // simultaneous Boundless/Direct proof generations across all
+        // spawned tasks to [`DriverConfig::max_concurrency`], matching the
+        // discovery/resolve concurrency bound. Held until `_permit` drops
+        // at the end of this scope (after proof gen + the tx send loop).
+        // Cancellation while waiting on a permit is a clean exit.
+        let _permit = tokio::select! {
+            biased;
+            () = signer_cancel.cancelled() => {
+                debug!(
+                    signer = %signer_address,
+                    instance = %instance.instance_id,
+                    "task cancelled before acquiring proof permit"
+                );
+                return Ok(());
+            }
+            permit = Arc::clone(&self.proof_semaphore).acquire_owned() => {
+                // `acquire_owned` only errors when the semaphore is
+                // closed; we never call `close()`, so this is unreachable.
+                permit.expect("proof semaphore is never closed")
+            }
+        };
+
         // Cooperative cancel-safety around the long-running proof.
         //
         // `signer_cancel` is a child of the driver's global cancel token,
         // so a process-wide shutdown or a `reconcile_proof_tasks` decision
         // (instance vanished / no longer registerable) both reach us here.
         // Biased select! checks the token first to bound wake latency.
+        //
+        // Dropping the `generate_proof_for_signer` future on cancel may
+        // abandon work the impl had already started (see provider docs);
+        // for `DirectProver` this leaks a `spawn_blocking` until the
+        // backend completes, and for `BoundlessProver` any already-submitted
+        // off-chain request is recoverable via the deterministic
+        // request-id derivation on the next call.
         let proof = tokio::select! {
             biased;
             () = signer_cancel.cancelled() => {
@@ -679,7 +723,7 @@ where
                 );
                 return Ok(());
             }
-            res = self.proof_provider.generate_proof_for_signer(attestation_bytes, signer_address) => res?,
+            res = self.proof_provider.generate_proof_for_signer(attestation_bytes, signer_address, signer_cancel) => res?,
         };
 
         // Check cancellation before submitting the transaction — avoid starting
@@ -804,8 +848,18 @@ where
                     tokio::select! {
                         biased;
                         () = signer_cancel.cancelled() => {
-                            debug!("shutdown requested during retry delay");
-                            return Err(RegistrarError::from(e));
+                            // Cooperative cancel during the retry wait is
+                            // a clean exit, not a task failure — match the
+                            // `PendingTask` doc contract ("returns Ok(())
+                            // when it observes the cancel"). The underlying
+                            // tx error is logged for context; the next
+                            // discovery cycle will respawn if still wanted.
+                            debug!(
+                                error = %e,
+                                signer = %signer_address,
+                                "shutdown requested during retry delay; abandoning task"
+                            );
+                            return Ok(());
                         }
                         () = tokio::time::sleep(tx_retry_delay) => {}
                     }
@@ -1123,12 +1177,15 @@ where
             }
         }
 
-        let in_flight: HashSet<Address> = pending.values().map(|t| t.signer).collect();
+        // `in_flight` is updated as we spawn so a signer that appears in
+        // two registerable entries within the same cycle (misconfig /
+        // discovery glitch) cannot spawn duplicate proof tasks.
+        let mut in_flight: HashSet<Address> = pending.values().map(|t| t.signer).collect();
 
         // Spawn-pass: any wanted signer not currently in-flight.
         for (instance, addresses, attestations) in &resolution.registerable {
             for (idx, &signer) in addresses.iter().enumerate() {
-                if in_flight.contains(&signer) {
+                if !in_flight.insert(signer) {
                     continue;
                 }
                 let signer_cancel = self.config.cancel.child_token();
@@ -1257,7 +1314,14 @@ where
         pending: &mut HashMap<task::Id, PendingTask>,
     ) {
         for task in pending.values() {
-            task.cancel.cancel();
+            // Only count tasks we are cancelling here — already-cancelled
+            // tasks (because `reconcile_proof_tasks` cancelled them earlier
+            // this cycle) were counted at intent time and must not double
+            // count under shutdown.
+            if !task.cancel.is_cancelled() {
+                task.cancel.cancel();
+                RegistrarMetrics::proof_tasks_cancelled().increment(1);
+            }
         }
         // NOTE: we drain through `join_next_with_id` (not
         // `JoinSet::shutdown`) so each terminal outcome flows through
@@ -1753,6 +1817,7 @@ mod tests {
         async fn generate_proof(
             &self,
             _attestation_bytes: &[u8],
+            _cancel: &CancellationToken,
         ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
             Ok(AttestationProof {
                 output: Bytes::from_static(b"stub-output"),
@@ -1770,6 +1835,7 @@ mod tests {
         async fn generate_proof(
             &self,
             _attestation_bytes: &[u8],
+            _cancel: &CancellationToken,
         ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
             Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
                 "simulated proof failure".into(),
@@ -2038,6 +2104,7 @@ mod tests {
         async fn generate_proof(
             &self,
             _attestation_bytes: &[u8],
+            _cancel: &CancellationToken,
         ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
             self.call_count.fetch_add(1, Ordering::Relaxed);
             Ok(AttestationProof {
@@ -2253,6 +2320,7 @@ mod tests {
         async fn generate_proof(
             &self,
             _attestation_bytes: &[u8],
+            _cancel: &CancellationToken,
         ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
             self.state.call_count.fetch_add(1, Ordering::SeqCst);
             let _guard = InFlightGuard::new(Arc::clone(&self.state));
@@ -2267,13 +2335,14 @@ mod tests {
             &self,
             attestation_bytes: &[u8],
             signer_address: Address,
+            cancel: &CancellationToken,
         ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
             if self.state.fail_for.lock().unwrap().contains(&signer_address) {
                 return Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
                     "synthetic failure injected by GatedProofProvider".into(),
                 ));
             }
-            self.generate_proof(attestation_bytes).await
+            self.generate_proof(attestation_bytes, cancel).await
         }
     }
 
