@@ -2873,6 +2873,14 @@ fn prefix_read_options(prefix: &[u8]) -> ReadOptions {
     if let Some(upper_bound) = prefix_upper_bound(prefix) {
         read_options.set_iterate_upper_bound(upper_bound);
     }
+    // The provided `prefix` is shorter than the CF-configured fixed_prefix
+    // extractor (which spans the full key prefix incl. inner sub-key bytes).
+    // Without total_order_seek=true, the bloom filter would skip SST blocks
+    // whose extracted prefix doesn't match the seek key's, silently dropping
+    // all entries except the one whose full CF prefix matches exactly.
+    // total_order_seek bypasses the prefix-domain restriction; the explicit
+    // iterate_lower_bound/iterate_upper_bound above still bound the scan.
+    read_options.set_total_order_seek(true);
     read_options
 }
 
@@ -3276,6 +3284,90 @@ mod tests {
         assert_eq!(
             cursor.seek(address).unwrap(),
             Some((address, Account { nonce: 3, ..Default::default() }))
+        );
+    }
+
+    #[test]
+    fn storage_trie_cursor_finds_all_nibble_paths_after_flush() {
+        let (storage, _dir) = temp_storage();
+        let address = B256::repeat_byte(0xAA);
+
+        let nibble_paths = [
+            Nibbles::from_nibbles_unchecked(vec![0, 1]),
+            Nibbles::from_nibbles_unchecked(vec![1, 0]),
+            Nibbles::from_nibbles_unchecked(vec![2, 3, 4]),
+            Nibbles::from_nibbles_unchecked(vec![15, 0, 1]),
+        ];
+
+        let branch = BranchNodeCompact::new(
+            reth_trie_common::TrieMask::new(0b11),
+            reth_trie_common::TrieMask::default(),
+            reth_trie_common::TrieMask::default(),
+            vec![],
+            None,
+        );
+
+        let mut parent_hash = B256::ZERO;
+        for (i, path) in nibble_paths.iter().enumerate() {
+            let block_number = (i + 1) as u64;
+            let parent = block(block_number.saturating_sub(1), parent_hash);
+
+            let mut trie_updates = TrieUpdates::default();
+            let mut storage_updates = StorageTrieUpdates::default();
+            storage_updates.storage_nodes.insert(
+                path.clone(),
+                branch.clone(),
+            );
+            trie_updates.storage_tries.insert(address, storage_updates);
+
+            let diff = BlockStateDiff {
+                sorted_trie_updates: trie_updates.into_sorted(),
+                sorted_post_state: HashedPostState::default().into_sorted(),
+            };
+
+            parent_hash = parent.block.hash;
+            storage.store_trie_updates(parent, diff).expect("store should succeed");
+
+            storage.flush_and_compact().expect("flush should succeed");
+        }
+
+        // seek_exact uses exact_prefix_read_options (with prefix_same_as_start)
+        // and should find each entry individually.
+        for path in &nibble_paths {
+            let mut cursor = storage
+                .storage_trie_cursor(address, u64::MAX)
+                .expect("cursor should open");
+            let result = cursor
+                .seek_exact(path.clone())
+                .expect("seek_exact should succeed");
+            assert!(
+                result.is_some(),
+                "seek_exact should find entry for path {path:?}"
+            );
+        }
+
+        // seek/next use prefix_read_options with a 32-byte address prefix
+        // on a CF with a 65-byte prefix extractor. After flush, the bloom
+        // filter can cause the iterator to skip SST blocks whose 65-byte
+        // prefix doesn't match the one extracted from the seek key.
+        let mut cursor = storage
+            .storage_trie_cursor(address, u64::MAX)
+            .expect("cursor should open");
+
+        let first = cursor
+            .seek(Nibbles::default())
+            .expect("seek should succeed");
+        assert!(first.is_some(), "seek should find at least one entry");
+
+        let mut found = vec![first.unwrap().0];
+        while let Some((path, _)) = cursor.next().expect("next should succeed") {
+            found.push(path);
+        }
+
+        let expected: Vec<Nibbles> = nibble_paths.to_vec();
+        assert_eq!(
+            found, expected,
+            "cursor should find all nibble paths for the address after flush"
         );
     }
 }
