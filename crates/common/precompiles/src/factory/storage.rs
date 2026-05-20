@@ -316,6 +316,7 @@ mod tests {
     #[test]
     fn test_create_token_init_calls_can_mint_supply() {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0xCC);
         let recipient = Address::repeat_byte(0xCD);
@@ -388,6 +389,7 @@ mod tests {
     #[test]
     fn test_create_token_reverts_for_invalid_params_encoding() {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         let call = ITokenFactory::createTokenCall {
             variant: ITokenFactory::TokenVariant::DEFAULT,
             salt: B256::repeat_byte(0x04),
@@ -406,6 +408,7 @@ mod tests {
     #[test]
     fn test_create_token_reverts_for_missing_required_fields() {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let missing_name = create_call(
@@ -433,6 +436,7 @@ mod tests {
     #[test]
     fn test_create_token_reverts_for_unimplemented_variants() {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
 
         let stablecoin_params = ITokenFactory::B20StablecoinCreateParams {
             version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
