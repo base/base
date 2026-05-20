@@ -7,15 +7,13 @@ use revm::state::Bytecode;
 use super::variant::TokenVariant;
 use crate::{B20Token, B20TokenStorage, ITokenFactory, PolicyHandle, TokenAccounting};
 
-const FACTORY_ADDRESS: Address = address!("b02f000000000000000000000000000000000000");
-
 /// The B-20 token factory precompile.
-#[contract(addr = FACTORY_ADDRESS)]
+#[contract(addr = Self::ADDRESS)]
 pub struct TokenFactoryStorage {}
 
 impl<'a> TokenFactoryStorage<'a> {
     /// Singleton precompile address for the `TokenFactory`.
-    pub const ADDRESS: Address = FACTORY_ADDRESS;
+    pub const ADDRESS: Address = address!("b02f000000000000000000000000000000000000");
 
     /// Current token creation parameter version.
     pub const CREATE_TOKEN_VERSION: u8 = 1;
