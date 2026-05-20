@@ -5,7 +5,7 @@ use alloy_sol_types::SolValue;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use super::Transferable;
-use crate::token::{IB20, common::TokenAccounting};
+use crate::{IB20, TokenAccounting};
 
 /// ERC-5267 `eip712Domain()` return tuple: (fields, name, version, chainId, verifyingContract, salt, extensions).
 pub(super) type Eip712Domain = (FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>);
@@ -100,7 +100,7 @@ mod tests {
     use k256::ecdsa::SigningKey;
 
     use super::{PERMIT_TYPEHASH, Permittable};
-    use crate::token::common::{
+    use crate::common::{
         Token, TokenAccounting,
         test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
     };

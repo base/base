@@ -5,7 +5,7 @@
 //! capability by implementing the corresponding trait — no body required when the default
 //! impl is sufficient.
 //!
-//! [`TokenAccounting`]: crate::token::common::TokenAccounting
+//! [`TokenAccounting`]: crate::TokenAccounting
 
 mod burnable;
 mod configurable;

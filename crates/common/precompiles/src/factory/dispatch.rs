@@ -6,7 +6,7 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use super::{storage::TokenFactory, variant::TokenVariant};
-use crate::token::abi::ITokenFactory;
+use crate::ITokenFactory;
 
 impl<'a> TokenFactory<'a> {
     /// ABI-dispatches `calldata` to the appropriate `ITokenFactory` handler.

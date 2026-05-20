@@ -6,7 +6,7 @@ use base_precompile_storage::{
     BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
 };
 
-use crate::token::{TokenVariant, common::TokenAccounting};
+use crate::{TokenAccounting, TokenVariant};
 
 #[contract]
 pub struct B20TokenStorage {

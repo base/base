@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use alloy_primitives::{Address, LogData, U256};
 use base_precompile_storage::Result;
 
-use crate::token::{
-    B20Token,
+use crate::{
+    b20::B20Token,
     common::{Policy, TokenAccounting},
 };
 

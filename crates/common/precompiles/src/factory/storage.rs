@@ -5,9 +5,7 @@ use base_precompile_storage::{BasePrecompileError, Handler, Result};
 use revm::state::Bytecode;
 
 use super::variant::TokenVariant;
-use crate::token::{
-    B20Token, B20TokenStorage, TokenAccounting, abi::ITokenFactory, policy_registry::PolicyHandle,
-};
+use crate::{B20Token, B20TokenStorage, ITokenFactory, PolicyHandle, TokenAccounting};
 
 /// Singleton precompile address for the `TokenFactory`.
 const FACTORY_ADDRESS: Address = address!("b02f000000000000000000000000000000000000");
@@ -148,7 +146,7 @@ mod tests {
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use super::*;
-    use crate::token::{
+    use crate::{
         B20Token, B20TokenStorage, IB20, Mintable, Permittable, Token, TokenAccounting,
         Transferable,
     };

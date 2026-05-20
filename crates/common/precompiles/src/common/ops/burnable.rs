@@ -2,10 +2,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::{
-    IB20,
-    common::{Token, TokenAccounting},
-};
+use crate::{IB20, Token, TokenAccounting};
 
 /// Token burn operations.
 ///
@@ -43,7 +40,7 @@ mod tests {
     use alloy_primitives::{Address, U256};
 
     use super::Burnable;
-    use crate::token::common::{
+    use crate::common::{
         Token, TokenAccounting,
         test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
     };

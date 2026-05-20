@@ -2,10 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::{
-    IB20,
-    common::{CAPABILITY_PAUSABLE, Token, TokenAccounting},
-};
+use crate::{CAPABILITY_PAUSABLE, IB20, Token, TokenAccounting};
 
 /// Pause and unpause operations.
 ///
@@ -57,7 +54,7 @@ mod tests {
     use alloy_primitives::{Address, U256};
 
     use super::Pausable;
-    use crate::token::common::{
+    use crate::common::{
         CAPABILITY_PAUSABLE, Token,
         test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
     };

@@ -16,17 +16,28 @@ pub use installer::BasePrecompileInstaller;
 mod spec;
 pub use spec::BasePrecompileSpec;
 
+mod activation;
+pub use activation::{ActivationRegistry, ActivationRegistryPrecompile, IActivationRegistry};
+
 mod bn254_pair;
 
 mod bls12_381;
 
-mod token;
-pub use token::{
-    B20Token, B20TokenPrecompile, B20TokenStorage, Burnable, CAPABILITY_CAP_MUTABLE,
-    CAPABILITY_PAUSABLE, Configurable, IB20, IPolicyRegistry, ITokenFactory, Mintable,
-    POLICY_REGISTRY_ADDRESS, Pausable, Permittable, Policy, PolicyHandle, PolicyRegistryEvm,
-    Redeemable, Token, TokenAccounting, TokenFactory, TokenFactoryPrecompile, TokenVariant,
-    Transferable,
+mod common;
+pub use common::{
+    Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, Mintable, Pausable,
+    Permittable, Policy, Redeemable, Token, TokenAccounting, Transferable,
 };
 #[cfg(any(test, feature = "test-utils"))]
-pub use token::{InMemoryPolicy, InMemoryTokenAccounting, TestToken};
+pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestToken};
+
+mod b20;
+pub use b20::{B20Token, B20TokenPrecompile, B20TokenStorage, IB20};
+
+mod factory;
+pub use factory::{ITokenFactory, TokenFactory, TokenFactoryPrecompile, TokenVariant};
+
+mod policy_registry;
+pub use policy_registry::{
+    IPolicyRegistry, POLICY_REGISTRY_ADDRESS, PolicyHandle, PolicyRegistryEvm,
+};

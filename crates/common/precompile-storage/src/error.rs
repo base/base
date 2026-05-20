@@ -25,6 +25,15 @@ pub enum BasePrecompileError {
     #[error("Unknown function selector: {0:?}")]
     UnknownFunctionSelector([u8; 4]),
 
+    /// The calldata selector is known, but its arguments failed ABI decoding.
+    #[error("ABI decode failed for selector {selector:?}: {error}")]
+    AbiDecodeFailed {
+        /// The matched calldata selector.
+        selector: [u8; 4],
+        /// The ABI decoder error.
+        error: String,
+    },
+
     /// Storage slot arithmetic overflow.
     #[error("Slot overflow")]
     SlotOverflow,
@@ -79,6 +88,9 @@ impl BasePrecompileError {
     }
 
     /// ABI-encodes this error and wraps it as a [`PrecompileResult`] (revert or fatal error).
+    ///
+    /// Internal dispatch diagnostics use compact, non-ABI revert data: unknown selectors return the
+    /// raw selector bytes, and decode failures return `selector || utf8_error_string`.
     pub fn into_precompile_result(self, gas: u64) -> PrecompileResult {
         let bytes: Bytes = match self {
             Self::Revert(bytes) => bytes,
@@ -94,6 +106,11 @@ impl BasePrecompileError {
                 return Err(PrecompileError::Fatal(msg));
             }
             Self::UnknownFunctionSelector(sel) => sel.to_vec().into(),
+            Self::AbiDecodeFailed { selector, error } => {
+                let mut bytes = selector.to_vec();
+                bytes.extend_from_slice(error.as_bytes());
+                bytes.into()
+            }
         };
         // revm 32.x: revert is Ok with reverted=true
         Ok(PrecompileOutput::new_reverted(gas, bytes))

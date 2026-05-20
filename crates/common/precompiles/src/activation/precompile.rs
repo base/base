@@ -1,0 +1,19 @@
+//! Precompile entry point for the activation registry.
+
+use alloy_evm::precompiles::DynPrecompile;
+
+use super::ActivationRegistry;
+use crate::macros::base_precompile;
+
+/// Entry point for the activation registry precompile.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ActivationRegistryPrecompile;
+
+impl ActivationRegistryPrecompile {
+    /// Creates the EVM precompile wrapper for the activation registry.
+    pub fn precompile() -> DynPrecompile {
+        base_precompile!("ActivationRegistry", |ctx, calldata| {
+            ActivationRegistry::new(ctx).dispatch(ctx, &calldata)
+        })
+    }
+}
