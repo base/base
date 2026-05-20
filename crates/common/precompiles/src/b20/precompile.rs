@@ -22,7 +22,9 @@ impl B20TokenPrecompile {
     /// Returns the B-20 token precompile for `address`, if the address encodes a supported token.
     pub fn lookup(address: &Address) -> Option<DynPrecompile> {
         TokenVariant::from_address(*address).map(|variant| match variant {
-            TokenVariant::B20 => Self::create_precompile(*address),
+            TokenVariant::B20 | TokenVariant::Stablecoin | TokenVariant::Security => {
+                Self::create_precompile(*address)
+            }
         })
     }
 
