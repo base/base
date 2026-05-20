@@ -121,6 +121,7 @@ impl ActivationRegistryStorage<'_> {
         }
 
         if activated {
+            self.__initialize()?;
             self.features.at_mut(&feature).write(true)?;
             self.emit_event(IActivationRegistry::FeatureActivated { feature, caller })?;
         } else {
