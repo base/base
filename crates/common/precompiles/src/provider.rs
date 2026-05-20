@@ -211,8 +211,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        ActivationRegistry,
-        bls12_381, bn254_pair,
+        ActivationRegistry, bls12_381, bn254_pair,
         token::{TokenFactory, TokenVariant},
     };
 
