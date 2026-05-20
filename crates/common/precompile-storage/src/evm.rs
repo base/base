@@ -86,6 +86,10 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
+        // EIP-3541: charge per byte of deployed code.
+        self.deduct_gas(self.gas_params.code_deposit_cost(code.len()))?;
+        // TODO: also charge code_deposit_state_gas + create_state_gas (Amsterdam EIP-8037)
+        // once GasParams upgrades to context-interface v17.
         self.internals
             .set_code(address, code)
             .map_err(|e| BasePrecompileError::Fatal(e.to_string()))
