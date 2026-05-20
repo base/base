@@ -2,11 +2,23 @@
 //!
 //! Validates that the macro generates correct storage layout,
 //! typed getter/setter fields work round-trip, and collision detection fires.
-use alloy_primitives::{Address, U256, address};
+use alloy_primitives::{Address, U256, address, keccak256};
 use base_precompile_macros::contract;
 use base_precompile_storage::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};
 
 const TEST_ADDR: Address = address!("0000000000000000000000000000000000001234");
+
+fn data_slot(slot: U256) -> U256 {
+    U256::from_be_bytes(keccak256(slot.to_be_bytes::<32>()).0)
+}
+
+fn word_from_chunk(data: &[u8], chunk_index: usize) -> U256 {
+    let mut word = [0u8; 32];
+    let start = chunk_index * 32;
+    let end = (start + 32).min(data.len());
+    word[..end - start].copy_from_slice(&data[start..end]);
+    U256::from_be_bytes(word)
+}
 
 /// A minimal token storage layout for integration testing.
 #[contract(addr = TEST_ADDR)]
@@ -92,4 +104,257 @@ fn test_contract_multiple_instances_independent() {
         // storage2 is independent — balance should be zero.
         assert_eq!(t2.balances.at(&alice).read().unwrap(), U256::ZERO);
     });
+}
+
+mod namespaced_layout {
+    use alloy_primitives::{Address, U256, address, uint};
+    use base_precompile_macros::{Storable, contract};
+    use base_precompile_storage::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};
+
+    use super::{data_slot, word_from_chunk};
+
+    const NAMESPACED_ADDR: Address = address!("0000000000000000000000000000000000004321");
+    const EXPECTED_ROOT: U256 =
+        uint!(0x50861ae81a7f4392b927efbaeecf8f091f3bd39245aa45ea91499a137b8b3100_U256);
+
+    /// A storage section embedded into the token storage layout.
+    #[derive(Debug, Clone, Storable)]
+    struct PolicyNamespace {
+        label: String,
+        balances: Mapping<Address, U256>,
+        checkpoints: [U256; 3],
+        packed_flags: [u16; 20],
+        amounts: Vec<U256>,
+    }
+
+    /// Token storage with an embedded policy section rooted at the ERC-7201 namespace.
+    #[contract(addr = NAMESPACED_ADDR)]
+    pub struct NamespacedStorage {
+        pub admin: Address,
+        #[namespace("b20.policy")]
+        pub policy: PolicyNamespace,
+        pub total_supply: U256,
+        #[namespace("b20.policy")]
+        pub policy_owner: Address,
+    }
+
+    #[test]
+    fn namespace_root_and_offsets_are_deterministic() {
+        assert_eq!(slots::ADMIN, U256::ZERO);
+        assert_eq!(slots::POLICY, EXPECTED_ROOT);
+        assert_eq!(slots::TOTAL_SUPPLY, U256::ONE);
+        assert_eq!(
+            slots::POLICY_OWNER,
+            EXPECTED_ROOT + U256::from(__packing_policy_namespace::SLOT_COUNT)
+        );
+    }
+
+    #[test]
+    fn namespaced_struct_field_handles_dynamic_mapping_and_array_storage() {
+        let (mut storage, _) = setup_storage();
+        let owner = Address::from([0xaa; 20]);
+        let policy_owner = Address::from([0xcc; 20]);
+        let long_label =
+            "namespaced-string-storage-value-that-spans-more-than-one-word-for-layout".to_owned();
+        assert!(long_label.len() > 64);
+        let amounts = vec![U256::from(11), U256::from(22), U256::from(33)];
+        let policy_value = PolicyNamespace {
+            label: long_label.clone(),
+            balances: Mapping::default(),
+            checkpoints: [U256::from(1), U256::from(2), U256::from(3)],
+            packed_flags: [0; 20],
+            amounts: amounts.clone(),
+        };
+        let _ = (
+            &policy_value.label,
+            &policy_value.balances,
+            &policy_value.checkpoints,
+            &policy_value.packed_flags,
+            &policy_value.amounts,
+        );
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut layout = NamespacedStorage::new(ctx);
+            layout.admin.write(owner).unwrap();
+            layout.policy.label.write(long_label.clone()).unwrap();
+            layout.policy.balances.at_mut(&owner).write(U256::from(500)).unwrap();
+            layout.policy.checkpoints.write([U256::from(1), U256::from(2), U256::from(3)]).unwrap();
+            layout.policy.packed_flags[0].write(0x1111).unwrap();
+            layout.policy.packed_flags[16].write(0x2222).unwrap();
+            layout.policy.amounts.write(amounts.clone()).unwrap();
+            layout.total_supply.write(U256::from(1_000)).unwrap();
+            layout.policy_owner.write(policy_owner).unwrap();
+
+            assert_eq!(layout.admin.read().unwrap(), owner);
+            assert_eq!(layout.policy.label.read().unwrap(), long_label);
+            assert_eq!(layout.policy.balances.at(&owner).read().unwrap(), U256::from(500));
+            assert_eq!(layout.policy.checkpoints[2].read().unwrap(), U256::from(3));
+            assert_eq!(layout.policy.packed_flags[0].read().unwrap(), 0x1111);
+            assert_eq!(layout.policy.packed_flags[16].read().unwrap(), 0x2222);
+            assert_eq!(layout.policy.amounts.read().unwrap(), amounts);
+            assert_eq!(layout.total_supply.read().unwrap(), U256::from(1_000));
+            assert_eq!(layout.policy_owner.read().unwrap(), policy_owner);
+
+            let label_slot =
+                slots::POLICY + U256::from(__packing_policy_namespace::LABEL_LOC.offset_slots);
+            let balance_slot = owner.mapping_slot(
+                slots::POLICY + U256::from(__packing_policy_namespace::BALANCES_LOC.offset_slots),
+            );
+            let checkpoints_slot = slots::POLICY
+                + U256::from(__packing_policy_namespace::CHECKPOINTS_LOC.offset_slots);
+            let packed_flags_slot = slots::POLICY
+                + U256::from(__packing_policy_namespace::PACKED_FLAGS_LOC.offset_slots);
+            let amounts_slot =
+                slots::POLICY + U256::from(__packing_policy_namespace::AMOUNTS_LOC.offset_slots);
+
+            assert_eq!(ctx.sload(NAMESPACED_ADDR, balance_slot).unwrap(), U256::from(500));
+            assert_eq!(
+                ctx.sload(NAMESPACED_ADDR, slots::ADMIN).unwrap(),
+                U256::from_be_bytes({
+                    let mut word = [0u8; 32];
+                    word[12..].copy_from_slice(owner.as_slice());
+                    word
+                })
+            );
+            assert_eq!(ctx.sload(NAMESPACED_ADDR, slots::TOTAL_SUPPLY).unwrap(), U256::from(1_000));
+            assert_eq!(
+                ctx.sload(NAMESPACED_ADDR, slots::POLICY_OWNER).unwrap(),
+                U256::from_be_bytes({
+                    let mut word = [0u8; 32];
+                    word[12..].copy_from_slice(policy_owner.as_slice());
+                    word
+                })
+            );
+
+            assert_eq!(
+                ctx.sload(NAMESPACED_ADDR, label_slot).unwrap(),
+                U256::from(long_label.len() * 2 + 1)
+            );
+            let label_data_slot = data_slot(label_slot);
+            for chunk_index in 0..long_label.len().div_ceil(32) {
+                assert_eq!(
+                    ctx.sload(NAMESPACED_ADDR, label_data_slot + U256::from(chunk_index)).unwrap(),
+                    word_from_chunk(long_label.as_bytes(), chunk_index)
+                );
+            }
+
+            assert_eq!(ctx.sload(NAMESPACED_ADDR, checkpoints_slot).unwrap(), U256::from(1));
+            assert_eq!(
+                ctx.sload(NAMESPACED_ADDR, checkpoints_slot + U256::ONE).unwrap(),
+                U256::from(2)
+            );
+            assert_eq!(
+                ctx.sload(NAMESPACED_ADDR, checkpoints_slot + U256::from(2)).unwrap(),
+                U256::from(3)
+            );
+
+            let packed_first_slot = ctx.sload(NAMESPACED_ADDR, packed_flags_slot).unwrap();
+            let packed_second_slot =
+                ctx.sload(NAMESPACED_ADDR, packed_flags_slot + U256::ONE).unwrap();
+            assert_eq!(packed_first_slot & U256::from(0xffff), U256::from(0x1111));
+            assert_eq!(packed_second_slot & U256::from(0xffff), U256::from(0x2222));
+
+            assert_eq!(ctx.sload(NAMESPACED_ADDR, amounts_slot).unwrap(), U256::from(3));
+            let amounts_data_slot = data_slot(amounts_slot);
+            assert_eq!(ctx.sload(NAMESPACED_ADDR, amounts_data_slot).unwrap(), U256::from(11));
+            assert_eq!(
+                ctx.sload(NAMESPACED_ADDR, amounts_data_slot + U256::ONE).unwrap(),
+                U256::from(22)
+            );
+            assert_eq!(
+                ctx.sload(NAMESPACED_ADDR, amounts_data_slot + U256::from(2)).unwrap(),
+                U256::from(33)
+            );
+        });
+    }
+}
+
+mod namespaced_fields {
+    use alloy_primitives::{Address, U256, address, uint};
+    use base_precompile_macros::contract;
+    use base_precompile_storage::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};
+
+    use super::{data_slot, word_from_chunk};
+
+    const FIELD_NAMESPACE_ADDR: Address = address!("0000000000000000000000000000000000008765");
+    const EXPECTED_ROOT: U256 =
+        uint!(0x50861ae81a7f4392b927efbaeecf8f091f3bd39245aa45ea91499a137b8b3100_U256);
+
+    /// Token storage with individual fields routed into a shared namespace-local layout.
+    #[contract(addr = FIELD_NAMESPACE_ADDR)]
+    pub struct FieldNamespacedStorage {
+        pub admin: Address,
+        #[namespace("b20.policy")]
+        pub policy_label: String,
+        pub total_supply: U256,
+        #[namespace("b20.policy")]
+        pub policy_balances: Mapping<Address, U256>,
+    }
+
+    #[test]
+    fn namespaced_fields_share_namespace_layout_without_advancing_contract_slots() {
+        assert_eq!(slots::ADMIN, U256::ZERO);
+        assert_eq!(slots::POLICY_LABEL, EXPECTED_ROOT);
+        assert_eq!(slots::TOTAL_SUPPLY, U256::ONE);
+        assert_eq!(slots::POLICY_BALANCES, EXPECTED_ROOT + U256::ONE);
+
+        let (mut storage, _) = setup_storage();
+        let owner = Address::from([0xbb; 20]);
+        let label = "field-level-namespaced-policy-label-that-spans-two-slots".to_owned();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut layout = FieldNamespacedStorage::new(ctx);
+            layout.policy_label.write(label.clone()).unwrap();
+            layout.policy_balances.at_mut(&owner).write(U256::from(700)).unwrap();
+            layout.total_supply.write(U256::from(2_000)).unwrap();
+
+            assert_eq!(layout.policy_label.read().unwrap(), label);
+            assert_eq!(layout.policy_balances.at(&owner).read().unwrap(), U256::from(700));
+            assert_eq!(layout.total_supply.read().unwrap(), U256::from(2_000));
+
+            assert_eq!(
+                ctx.sload(FIELD_NAMESPACE_ADDR, slots::POLICY_LABEL).unwrap(),
+                U256::from(label.len() * 2 + 1)
+            );
+            let label_data_slot = data_slot(slots::POLICY_LABEL);
+            for chunk_index in 0..label.len().div_ceil(32) {
+                assert_eq!(
+                    ctx.sload(FIELD_NAMESPACE_ADDR, label_data_slot + U256::from(chunk_index))
+                        .unwrap(),
+                    word_from_chunk(label.as_bytes(), chunk_index)
+                );
+            }
+
+            let balance_slot = owner.mapping_slot(slots::POLICY_BALANCES);
+            assert_eq!(ctx.sload(FIELD_NAMESPACE_ADDR, balance_slot).unwrap(), U256::from(700));
+            assert_eq!(
+                ctx.sload(FIELD_NAMESPACE_ADDR, slots::TOTAL_SUPPLY).unwrap(),
+                U256::from(2_000)
+            );
+        });
+    }
+}
+
+mod namespace_outer_order {
+    use alloy_primitives::{Address, U256, address, uint};
+    use base_precompile_macros::{contract, namespace};
+
+    const ORDER_ADDR: Address = address!("0000000000000000000000000000000000005678");
+
+    #[namespace("b20.outer-order")]
+    #[contract(addr = ORDER_ADDR)]
+    pub struct OuterOrderStorage {
+        pub value: U256,
+    }
+
+    #[test]
+    fn namespace_macro_reorders_above_contract() {
+        assert_eq!(ORDER_ADDR, address!("0000000000000000000000000000000000005678"));
+        assert_eq!(slots::NAMESPACE_ID, "b20.outer-order");
+        assert_eq!(
+            slots::NAMESPACE_ROOT,
+            uint!(0xf06e16fd945cfdfdb627e60cabea1fb8bb965382c21574655d1e8bb28bdfcf00_U256)
+        );
+        assert_eq!(slots::VALUE, slots::NAMESPACE_ROOT);
+    }
 }

@@ -26,6 +26,14 @@ pub struct MyToken {
 - `#[base_slot(N)]` — resets the auto-allocation chain starting from slot N.
 - `#[slot("key")]` — computes `keccak256("key")` at macro expansion time.
 
+### Namespaced layouts
+
+- `#[namespace("id")]` — starts a `#[contract]` field at the ERC-7201 root for `id`.
+
+Multiple fields with the same namespace use normal Solidity offsets from that root without advancing
+the surrounding contract layout. `#[slot]` and `#[base_slot]` overrides cannot be combined with
+`#[namespace]` on the same field.
+
 ### Mapping slot derivation
 
 ```text

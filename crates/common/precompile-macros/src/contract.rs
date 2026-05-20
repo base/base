@@ -5,7 +5,10 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Expr, Fields, Ident, Token, Type, Visibility, parse::ParseStream};
 
-use crate::{layout, packing, utils::extract_attributes};
+use crate::{
+    layout, packing,
+    utils::{NamespaceInfo, extract_attributes, extract_namespace},
+};
 
 pub(crate) struct ContractConfig {
     pub(crate) address: Option<Expr>,
@@ -37,6 +40,7 @@ pub(crate) struct FieldInfo {
     pub(crate) ty: Type,
     pub(crate) slot: Option<U256>,
     pub(crate) base_slot: Option<U256>,
+    pub(crate) namespace: Option<NamespaceInfo>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -54,13 +58,17 @@ pub(crate) fn generate(input: DeriveInput, address: Option<&Expr>) -> proc_macro
 
 fn gen_output(input: DeriveInput, address: Option<&Expr>) -> syn::Result<TokenStream> {
     let (ident, vis) = (input.ident.clone(), input.vis.clone());
-    let fields = parse_fields(input)?;
+    let namespace = extract_namespace(&input.attrs)?;
+    let fields = parse_fields(input, namespace.is_some())?;
 
-    let storage_output = gen_storage(&ident, &vis, &fields, address)?;
+    let storage_output = gen_storage(&ident, &vis, &fields, address, namespace.as_ref())?;
     Ok(quote! { #storage_output })
 }
 
-pub(crate) fn parse_fields(input: DeriveInput) -> syn::Result<Vec<FieldInfo>> {
+pub(crate) fn parse_fields(
+    input: DeriveInput,
+    namespace_enabled: bool,
+) -> syn::Result<Vec<FieldInfo>> {
     if !input.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
             &input.generics,
@@ -94,8 +102,14 @@ pub(crate) fn parse_fields(input: DeriveInput) -> syn::Result<Vec<FieldInfo>> {
                 ));
             }
 
-            let (slot, base_slot) = extract_attributes(&field.attrs)?;
-            Ok(FieldInfo { name: name.to_owned(), ty: field.ty, slot, base_slot })
+            let (slot, base_slot, namespace) = extract_attributes(&field.attrs)?;
+            if namespace_enabled && (slot.is_some() || base_slot.is_some() || namespace.is_some()) {
+                return Err(syn::Error::new_spanned(
+                    name,
+                    "field-level `slot`, `base_slot`, and `namespace` attributes cannot be used with contract-level `namespace`",
+                ));
+            }
+            Ok(FieldInfo { name: name.to_owned(), ty: field.ty, slot, base_slot, namespace })
         })
         .collect()
 }
@@ -105,12 +119,16 @@ fn gen_storage(
     vis: &Visibility,
     fields: &[FieldInfo],
     address: Option<&Expr>,
+    namespace: Option<&NamespaceInfo>,
 ) -> syn::Result<TokenStream> {
-    let allocated_fields = packing::allocate_slots(fields)?;
+    let allocated_fields = packing::allocate_slots_from(
+        fields,
+        namespace.map_or(U256::ZERO, |namespace| namespace.root),
+    )?;
     let transformed_struct = layout::gen_struct(ident, vis, &allocated_fields);
     let storage_trait = layout::gen_contract_storage_impl(ident);
     let constructor = layout::gen_constructor(ident, &allocated_fields, address);
-    let slots_module = layout::gen_slots_module(&allocated_fields);
+    let slots_module = layout::gen_slots_module(&allocated_fields, namespace);
 
     Ok(quote! {
         #slots_module

@@ -4,6 +4,7 @@ mod contract;
 pub(crate) use contract::{FieldInfo, FieldKind};
 
 mod layout;
+mod namespace;
 mod packing;
 mod storable;
 mod storable_primitives;
@@ -22,6 +23,12 @@ pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
     let config = parse_macro_input!(attr as contract::ContractConfig);
     let input = parse_macro_input!(item as DeriveInput);
     contract::generate(input, config.address.as_ref())
+}
+
+/// Namespaces a `#[contract]` storage struct using an ERC-7201 storage root.
+#[proc_macro_attribute]
+pub fn namespace(attr: TokenStream, item: TokenStream) -> TokenStream {
+    namespace::expand(attr, item)
 }
 
 /// Derives the `Storable` trait for structs with named fields and `#[repr(u8)]` unit enums.
