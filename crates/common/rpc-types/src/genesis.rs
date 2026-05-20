@@ -156,6 +156,7 @@ mod tests {
                 isthmus_time: None,
                 jovian_time: None,
                 base: HardforkInfo { azul: Some(14), beryl: Some(16) },
+                activation_admin_address: None,
             }
         );
     }
@@ -221,6 +222,7 @@ mod tests {
                     isthmus_time: None,
                     jovian_time: None,
                     base: HardforkInfo { azul: Some(14), beryl: Some(16) },
+                    activation_admin_address: None,
                 }),
                 base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,
@@ -246,6 +248,7 @@ mod tests {
                     isthmus_time: None,
                     jovian_time: None,
                     base: HardforkInfo { azul: Some(14), beryl: Some(16) },
+                    activation_admin_address: None,
                 }),
                 base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,
@@ -289,6 +292,7 @@ mod tests {
                     isthmus_time: Some(0),
                     jovian_time: Some(0),
                     base: HardforkInfo::default(),
+                    activation_admin_address: None,
                 }),
                 base_fee_info: None,
             }

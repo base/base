@@ -32,3 +32,55 @@ impl PolicyRegistryStorage<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_sol_types::SolCall;
+    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+
+    use super::*;
+    use crate::{ActivationRegistry, IPolicyRegistry};
+
+    fn activate_policy_registry(storage: &mut HashMapStorageProvider) {
+        const ADMIN: alloy_primitives::Address =
+            alloy_primitives::address!("0xcb00000000000000000000000000000000000000");
+
+        storage.set_caller(ADMIN);
+        StorageCtx::enter(storage, |ctx| {
+            ActivationRegistry::new(ctx)
+                .activate(ActivationRegistry::POLICY_REGISTRY, Some(ADMIN))
+                .unwrap()
+        });
+    }
+
+    #[test]
+    fn dispatch_reverts_when_policy_registry_is_inactive() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let calldata = IPolicyRegistry::helloWorldCall {}.abi_encode();
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch should return a revert output");
+
+        assert!(output.reverted);
+    }
+
+    #[test]
+    fn dispatch_succeeds_when_policy_registry_is_active() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_policy_registry(&mut storage);
+        let calldata = IPolicyRegistry::helloWorldCall {}.abi_encode();
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch should succeed");
+
+        assert!(!output.reverted);
+        assert_eq!(
+            IPolicyRegistry::helloWorldCall::abi_decode_returns(&output.bytes).unwrap(),
+            true
+        );
+    }
+}

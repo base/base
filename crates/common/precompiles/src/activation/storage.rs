@@ -134,7 +134,7 @@ impl ActivationRegistryStorage<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, address};
+    use alloy_primitives::{B256, address, keccak256};
     use base_precompile_storage::{HashMapStorageProvider, Result, StorageCtx};
     use revm::precompile::PrecompileOutput;
     use rstest::rstest;
@@ -234,6 +234,13 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
 
         assert_activated(&mut storage, false);
+    }
+
+    #[test]
+    fn feature_id_constants_match_canonical_names() {
+        assert_eq!(ActivationRegistry::B20_TOKEN, keccak256("base.b20_token"));
+        assert_eq!(ActivationRegistry::TOKEN_FACTORY, keccak256("base.token_factory"));
+        assert_eq!(ActivationRegistry::POLICY_REGISTRY, keccak256("base.policy_registry"));
     }
 
     #[test]
