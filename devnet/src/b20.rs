@@ -108,6 +108,7 @@ impl<'a> B20PrecompileClient<'a> {
         name: &str,
         symbol: &str,
         decimals: u8,
+        initial_admin: Address,
         initial_supply: U256,
         initial_supply_recipient: Address,
     ) -> B20CreateConfig {
@@ -116,7 +117,7 @@ impl<'a> B20PrecompileClient<'a> {
                 version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
                 name: name.to_string(),
                 symbol: symbol.to_string(),
-                initialAdmin: initial_supply_recipient,
+                initialAdmin: initial_admin,
                 decimals,
             },
             initial_supply,

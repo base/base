@@ -3,7 +3,7 @@
 use std::hint::black_box;
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::SolValue;
+use alloy_sol_types::{SolCall, SolValue};
 use base_common_precompiles::{
     B20Token, B20TokenStorage, Burnable, Configurable, ITokenFactory, Mintable, Pausable,
     PolicyHandle, Token, TokenAccounting, TokenFactoryStorage, TokenVariant, Transferable,
@@ -509,22 +509,17 @@ fn base_token_factory_view(c: &mut Criterion) {
         });
     });
 
-    c.bench_function("base_token_factory_variant_of", |b| {
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageCtx::enter(&mut storage, |ctx| {
-            let factory = TokenFactoryStorage::new(ctx);
-            let (token_address, _) = TokenVariant::B20.compute_address(
-                BaseTokenBenchSetup::caller(),
-                18,
-                B256::repeat_byte(0x25),
-            );
+    c.bench_function("base_token_factory_get_token_variant", |b| {
+        let (token_address, _) = TokenVariant::B20.compute_address(
+            BaseTokenBenchSetup::caller(),
+            18,
+            B256::repeat_byte(0x25),
+        );
 
-            b.iter(|| {
-                let factory = black_box(&factory);
-                let token_address = black_box(token_address);
-                let result = factory.variant_of_token(token_address).unwrap();
-                black_box(result);
-            });
+        b.iter(|| {
+            let token_address = black_box(token_address);
+            let result = TokenVariant::from_address(token_address);
+            black_box(result);
         });
     });
 }

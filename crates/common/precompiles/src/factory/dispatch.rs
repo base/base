@@ -35,13 +35,10 @@ impl<'a> TokenFactoryStorage<'a> {
                 Ok(ITokenFactory::createTokenCall::abi_encode_returns(&token).into())
             }
             Ok(ITokenFactory::ITokenFactoryCalls::getTokenAddress(call)) => {
-                let variant = call.variant as u8;
-                let (addr, _) = TokenVariant::compute_address_for_discriminant(
-                    call.sender,
-                    variant,
-                    call.decimals,
-                    call.salt,
-                );
+                let Some(variant) = TokenFactoryStorage::token_variant(call.variant) else {
+                    return Err(BasePrecompileError::revert(ITokenFactory::InvalidVariant {}));
+                };
+                let (addr, _) = variant.compute_address(call.sender, call.decimals, call.salt);
                 Ok(ITokenFactory::getTokenAddressCall::abi_encode_returns(&addr).into())
             }
             Ok(ITokenFactory::ITokenFactoryCalls::isB20(call)) => {

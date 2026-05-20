@@ -53,6 +53,7 @@ async fn test_b20_factory_create_and_transfer_via_rpc() -> Result<()> {
         "Devnet B20",
         "DB20",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -90,6 +91,7 @@ async fn test_b20_token_metadata() -> Result<()> {
         "Metadata Token",
         "META",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -124,6 +126,7 @@ async fn test_b20_approve_and_transfer_from() -> Result<()> {
         "Allowance Token",
         "ALLW",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -169,6 +172,7 @@ async fn test_b20_mint_and_burn() -> Result<()> {
         "Mintable Token",
         "MINT",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -211,6 +215,7 @@ async fn test_b20_transfer_with_memo() -> Result<()> {
         "Memo Token",
         "MEMO",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -240,6 +245,7 @@ async fn test_b20_supply_cap() -> Result<()> {
         "Capped Token",
         "CAP",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -292,6 +298,7 @@ async fn test_b20_metadata_updates() -> Result<()> {
         "Old Name",
         "OLD",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -323,6 +330,7 @@ async fn test_b20_pause_and_unpause() -> Result<()> {
         "Pausable Token",
         "PAUS",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -370,6 +378,7 @@ async fn test_b20_factory_predict_and_is_b20() -> Result<()> {
         "Predict Token",
         "PRD",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
@@ -411,6 +420,7 @@ async fn test_b20_create_token_duplicate_reverts() -> Result<()> {
         "Dup Token",
         "DUP",
         TOKEN_DECIMALS,
+        admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );

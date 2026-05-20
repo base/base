@@ -60,6 +60,9 @@ sol! {
         /// A required string argument was empty.
         error MissingRequiredField();
 
+        /// `params` could not be decoded for the requested token variant.
+        error InvalidTokenParams();
+
         /// One of the post-creation init calls failed.
         error InitCallFailed(uint256 index);
 
