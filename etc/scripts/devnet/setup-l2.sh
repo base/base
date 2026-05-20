@@ -9,6 +9,7 @@ L2_DATA_DIR="${L2_DATA_DIR:-/data}"
 TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
 L2_BASE_AZUL_BLOCK="${L2_BASE_AZUL_BLOCK:-}"
 L2_BASE_BERYL_BLOCK="${L2_BASE_BERYL_BLOCK:-}"
+L2_ACTIVATION_ADMIN_ADDR="${L2_ACTIVATION_ADMIN_ADDR:-$SEQUENCER_ADDR}"
 L2_EL_BOOTNODE_P2P_KEY="${L2_EL_BOOTNODE_P2P_KEY:-1111111111111111111111111111111111111111111111111111111111111111}"
 L2_EL_BOOTNODE_ENODE_ID="${L2_EL_BOOTNODE_ENODE_ID:-4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1}"
 L2_EL_BOOTNODE_ENODE="${L2_EL_BOOTNODE_ENODE:-enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303}"
@@ -28,6 +29,7 @@ echo "=== L2 Genesis Generator (Live Deployment) ==="
 echo "L1 RPC URL: $L1_RPC_URL"
 echo "L1 Chain ID: $L1_CHAIN_ID"
 echo "L2 Chain ID: $L2_CHAIN_ID"
+echo "Activation admin address: $L2_ACTIVATION_ADMIN_ADDR"
 if [ -n "$L2_BASE_AZUL_BLOCK" ]; then
   echo "Base Azul activation block: $L2_BASE_AZUL_BLOCK"
 else
@@ -143,6 +145,15 @@ op-deployer inspect rollup \
   "$L2_CHAIN_ID" \
   >"$OUTPUT_DIR/rollup.json"
 echo "Rollup config written to $OUTPUT_DIR/rollup.json"
+
+TMP_GENESIS=$(mktemp)
+jq \
+  --arg activation_admin "$L2_ACTIVATION_ADMIN_ADDR" \
+  '.config.activationAdminAddress = $activation_admin' \
+  "$OUTPUT_DIR/genesis.json" \
+  >"$TMP_GENESIS"
+mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
+echo "Patched activation admin into genesis config"
 
 L2_BLOCK_TIME=$(jq -re '.block_time' "$OUTPUT_DIR/rollup.json")
 L2_GENESIS_TIME=$(jq -re '.genesis.l2_time' "$OUTPUT_DIR/rollup.json")

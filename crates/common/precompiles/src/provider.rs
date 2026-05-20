@@ -1,5 +1,7 @@
 use alloc::{boxed::Box, string::String};
 
+use alloy_evm::precompiles::PrecompilesMap;
+use alloy_primitives::Address;
 use base_common_chains::BaseUpgrade;
 use revm::{
     context::Cfg,
@@ -7,10 +9,13 @@ use revm::{
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, InterpreterResult},
     precompile::{self, Precompiles, bn254, modexp, secp256r1},
-    primitives::{Address, OnceLock, hardfork::SpecId},
+    primitives::{OnceLock, hardfork::SpecId},
 };
 
-use crate::{BasePrecompileSpec, bls12_381, bn254_pair};
+use crate::{
+    ActivationRegistry, B20TokenPrecompile, BasePrecompileSpec, PolicyRegistry, TokenFactory,
+    bls12_381, bn254_pair,
+};
 
 /// Base precompile provider.
 #[derive(Debug, Clone)]
@@ -19,6 +24,8 @@ pub struct BasePrecompiles<S = BaseUpgrade> {
     inner: EthPrecompiles,
     /// Spec id of the precompile provider.
     spec: S,
+    /// Activation registry admin address.
+    activation_admin_address: Option<Address>,
 }
 
 impl<S: BasePrecompileSpec> BasePrecompiles<S> {
@@ -34,11 +41,30 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             BaseUpgrade::Granite | BaseUpgrade::Holocene => Self::granite(),
             BaseUpgrade::Isthmus => Self::isthmus(),
             BaseUpgrade::Jovian => Self::jovian(),
-            BaseUpgrade::Azul | BaseUpgrade::Beryl => Self::azul(),
+            BaseUpgrade::Azul => Self::azul(),
+            BaseUpgrade::Beryl => Self::beryl(),
             upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
         };
 
-        Self { inner: EthPrecompiles { precompiles, spec: SpecId::default() }, spec }
+        Self {
+            inner: EthPrecompiles { precompiles, spec: SpecId::default() },
+            spec,
+            activation_admin_address: None,
+        }
+    }
+
+    /// Sets the activation registry admin address.
+    pub const fn with_activation_admin_address(
+        mut self,
+        activation_admin_address: Option<Address>,
+    ) -> Self {
+        self.activation_admin_address = activation_admin_address;
+        self
+    }
+
+    /// Returns the activation registry admin address.
+    pub const fn activation_admin_address(&self) -> Option<Address> {
+        self.activation_admin_address
     }
 
     /// Converts a Base upgrade into its Ethereum precompile spec.
@@ -131,6 +157,27 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             precompiles
         })
     }
+
+    /// Returns precompiles for the Base Beryl spec.
+    ///
+    /// Static precompiles are the same as Azul; Beryl adds dynamic precompiles at install time.
+    pub fn beryl() -> &'static Precompiles {
+        Self::azul()
+    }
+
+    /// Builds a [`PrecompilesMap`] with all Base precompiles for this spec installed.
+    ///
+    /// For Beryl and later, this also installs the dynamic token and registry precompiles.
+    pub fn install(self) -> PrecompilesMap {
+        let mut precompiles = PrecompilesMap::from_static(self.precompiles());
+        if self.spec.upgrade() >= BaseUpgrade::Beryl {
+            TokenFactory::install(&mut precompiles);
+            B20TokenPrecompile::install(&mut precompiles);
+            PolicyRegistry::install(&mut precompiles);
+            ActivationRegistry::install(&mut precompiles, self.activation_admin_address);
+        }
+        precompiles
+    }
 }
 
 impl<CTX, S> PrecompileProvider<CTX> for BasePrecompiles<S>
@@ -145,7 +192,8 @@ where
         if spec == self.spec {
             return false;
         }
-        *self = Self::new_with_spec(spec);
+        *self =
+            Self::new_with_spec(spec).with_activation_admin_address(self.activation_admin_address);
         true
     }
 
@@ -179,6 +227,7 @@ impl<S: BasePrecompileSpec> Default for BasePrecompiles<S> {
 mod tests {
     use std::vec;
 
+    use alloy_primitives::{Address, B256};
     use revm::{
         precompile::{PrecompileError, Precompiles, bls12_381_const, bn254, modexp, secp256r1},
         primitives::eip7823,
@@ -186,7 +235,9 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{bls12_381, bn254_pair};
+    use crate::{
+        ActivationRegistryStorage, TokenFactoryStorage, TokenVariant, bls12_381, bn254_pair,
+    };
 
     type TestPrecompiles = BasePrecompiles<BaseUpgrade>;
 
@@ -462,5 +513,43 @@ mod tests {
             secp256r1::P256VERIFY_BASE_GAS_FEE_OSAKA,
             secp256r1::P256VERIFY_BASE_GAS_FEE * 2
         );
+    }
+
+    #[test]
+    fn install_preserves_base_precompile_set() {
+        let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Jovian).install();
+
+        assert!(precompiles.get(&bn254::pair::ADDRESS).is_some());
+        assert!(precompiles.get(secp256r1::P256VERIFY.address()).is_some());
+    }
+
+    #[rstest]
+    #[case::azul(BaseUpgrade::Azul, false)]
+    #[case::beryl(BaseUpgrade::Beryl, true)]
+    fn install_routes_b20_precompiles_by_fork(#[case] spec: BaseUpgrade, #[case] expected: bool) {
+        let precompiles = BasePrecompiles::new_with_spec(spec).install();
+        let (token, _) = TokenVariant::B20.compute_address(
+            Address::repeat_byte(0x11),
+            18,
+            B256::repeat_byte(0x22),
+        );
+
+        assert_eq!(precompiles.get(&TokenFactoryStorage::ADDRESS).is_some(), expected);
+        assert_eq!(precompiles.get(&token).is_some(), expected);
+        assert!(precompiles.get(&Address::repeat_byte(0x42)).is_none());
+    }
+
+    #[test]
+    fn activation_registry_is_not_installed_before_beryl() {
+        let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Azul).install();
+
+        assert!(precompiles.get(&ActivationRegistryStorage::ADDRESS).is_none());
+    }
+
+    #[test]
+    fn activation_registry_is_installed_at_beryl() {
+        let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Beryl).install();
+
+        assert!(precompiles.get(&ActivationRegistryStorage::ADDRESS).is_some());
     }
 }

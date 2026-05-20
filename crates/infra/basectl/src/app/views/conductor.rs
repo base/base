@@ -13,9 +13,10 @@ use crate::{
     app::{Action, Resources, View},
     commands::COLOR_BASE_BLUE,
     rpc::{
-        ConductorNodeStatus, PausedPeers, ValidatorNodeStatus, conductor_pause_node,
-        conductor_resume_node, pause_sequencer_node, restart_conductor_node, start_sequencer_node,
-        stop_sequencer_node, transfer_conductor_leader, unpause_sequencer_node,
+        ConductorNodeStatus, PausedPeers, ValidatorNodeStatus, conductor_pause_all_nodes,
+        conductor_pause_node, conductor_resume_all_nodes, conductor_resume_node,
+        pause_sequencer_node, restart_conductor_node, start_sequencer_node, stop_sequencer_node,
+        transfer_conductor_leader, unpause_sequencer_node,
     },
     tui::{Keybinding, Toast},
 };
@@ -24,6 +25,8 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "←/→", description: "Select node" },
     Keybinding { key: "Enter", description: "Open action menu" },
     Keybinding { key: "t", description: "Transfer leader (any)" },
+    Keybinding { key: "P", description: "Pause conductor on all nodes" },
+    Keybinding { key: "R", description: "Resume conductor on all nodes" },
     Keybinding { key: "Esc", description: "Back to home" },
     Keybinding { key: "?", description: "Toggle help" },
 ];
@@ -131,6 +134,12 @@ pub enum PendingAction {
     ConductorPause(String),
     /// Resume the conductor's control loop on the named node.
     ConductorResume(String),
+    /// Pause the conductor's control loop on every node in the cluster.
+    ///
+    /// Carries the node count so the confirmation prompt can show it.
+    ConductorPauseAll(usize),
+    /// Resume the conductor's control loop on every node in the cluster.
+    ConductorResumeAll(usize),
     /// Start the sequencer at the given unsafe head hash.
     StartSequencer {
         /// Target conductor / sequencer node name.
@@ -155,6 +164,12 @@ impl PendingAction {
             Self::P2PReconnect(name) => format!("Reconnect saved peers on {name}?"),
             Self::ConductorPause(name) => format!("Pause conductor control loop on {name}?"),
             Self::ConductorResume(name) => format!("Resume conductor control loop on {name}?"),
+            Self::ConductorPauseAll(count) => {
+                format!("Pause conductor control loop on ALL {count} nodes?")
+            }
+            Self::ConductorResumeAll(count) => {
+                format!("Resume conductor control loop on ALL {count} nodes?")
+            }
             Self::StartSequencer { node, hash } => {
                 format!("Start sequencer on {node} at {hash}?")
             }
@@ -171,6 +186,7 @@ impl PendingAction {
                 | Self::RestartNode(_)
                 | Self::P2PIsolate(_)
                 | Self::ConductorPause(_)
+                | Self::ConductorPauseAll(_)
                 | Self::StopSequencer(_)
         )
     }
@@ -371,6 +387,16 @@ impl ConductorView {
                 } else {
                     self.op_pending = false;
                 }
+            }
+            PendingAction::ConductorPauseAll(_) => {
+                let (tx, rx) = mpsc::channel(1);
+                self.op_rx = Some(rx);
+                tokio::spawn(conductor_pause_all_nodes(nodes_cfg.to_vec(), tx));
+            }
+            PendingAction::ConductorResumeAll(_) => {
+                let (tx, rx) = mpsc::channel(1);
+                self.op_rx = Some(rx);
+                tokio::spawn(conductor_resume_all_nodes(nodes_cfg.to_vec(), tx));
             }
             PendingAction::StartSequencer { node: name, hash } => {
                 if let Some(node) = nodes_cfg.iter().find(|n| n.name == name).cloned() {
@@ -597,6 +623,18 @@ impl View for ConductorView {
                     button: ConfirmButton::No,
                 };
             }
+            KeyCode::Char('P') if !self.op_pending && node_count > 0 => {
+                self.overlay = Overlay::Confirm {
+                    action: PendingAction::ConductorPauseAll(node_count),
+                    button: ConfirmButton::No,
+                };
+            }
+            KeyCode::Char('R') if !self.op_pending && node_count > 0 => {
+                self.overlay = Overlay::Confirm {
+                    action: PendingAction::ConductorResumeAll(node_count),
+                    button: ConfirmButton::No,
+                };
+            }
             _ => {}
         }
 
@@ -630,7 +668,7 @@ impl View for ConductorView {
                 );
             }
         } else {
-            let conductor_height = 23u16;
+            let conductor_height = 25u16;
             let sections = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(conductor_height), Constraint::Min(0)])
@@ -722,6 +760,10 @@ fn render_footer(f: &mut Frame<'_>, area: Rect, overlay: &Overlay, op_pending: b
                 push_pair(&mut spans, "Enter", "actions");
                 spans.push(sep.clone());
                 push_pair(&mut spans, "t", "transfer (any)");
+                spans.push(sep.clone());
+                push_pair(&mut spans, "P", "pause all");
+                spans.push(sep.clone());
+                push_pair(&mut spans, "R", "resume all");
             }
         }
         Overlay::ActionMenu { .. } => {
@@ -972,6 +1014,13 @@ fn render_cluster_table(
 
     let inner = block.inner(area);
     f.render_widget(block, area);
+
+    let inner_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Min(0)])
+        .split(inner);
+    render_pause_all_banner(f, inner_chunks[0], nodes, op_pending);
+    let inner = inner_chunks[2];
 
     debug_assert!(!nodes.is_empty(), "render_cluster_table requires at least one node");
     let node_count = nodes.len();
@@ -1317,6 +1366,66 @@ fn render_cluster_table(
     let table = Table::new(rows, constraints).header(header).row_highlight_style(Style::default());
 
     f.render_stateful_widget(table, inner, &mut TableState::default());
+}
+
+/// Renders the cluster-wide control-loop status and the always-visible
+/// `[ P ] Pause all` / `[ R ] Resume all` button strip.
+///
+/// The status segment summarises `conductor_paused` across every node so the
+/// affordance for "pause all" is obvious without remembering a shortcut.
+fn render_pause_all_banner(
+    f: &mut Frame<'_>,
+    area: Rect,
+    nodes: &[ConductorNodeStatus],
+    op_pending: bool,
+) {
+    let total = nodes.len();
+    let paused = nodes.iter().filter(|n| n.conductor_paused == Some(true)).count();
+    let known = nodes.iter().filter(|n| n.conductor_paused.is_some()).count();
+
+    let active = known - paused;
+    let (status_label, status_color) = if known == 0 {
+        ("control loop: status unknown".to_string(), Color::DarkGray)
+    } else if known < total {
+        (
+            format!(
+                "control loop: PARTIAL REPORT ({paused} paused, {active} active, {} unknown of {total})",
+                total - known
+            ),
+            Color::DarkGray,
+        )
+    } else if paused == total {
+        (format!("control loop: ALL PAUSED ({paused}/{total})"), Color::Cyan)
+    } else if paused == 0 {
+        (format!("control loop: ALL ACTIVE ({total}/{total})"), Color::Green)
+    } else {
+        (format!("control loop: MIXED ({paused}/{total} paused)"), Color::Yellow)
+    };
+
+    let key_style =
+        Style::default().fg(Color::Black).bg(COLOR_BASE_BLUE).add_modifier(Modifier::BOLD);
+    let label_style = Style::default().fg(COLOR_BASE_BLUE).add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let working = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+
+    let mut spans: Vec<Span<'_>> = vec![
+        Span::styled(status_label, Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
+        Span::styled("   ·   ", dim),
+    ];
+
+    if op_pending {
+        spans.push(Span::styled("[ working… ]", working));
+    } else {
+        spans.push(Span::styled(" P ", key_style));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled("Pause all", label_style));
+        spans.push(Span::styled("    ", dim));
+        spans.push(Span::styled(" R ", key_style));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled("Resume all", label_style));
+    }
+
+    f.render_widget(Paragraph::new(Line::from(spans)).alignment(Alignment::Center), area);
 }
 
 /// Builds a row that renders a tri-state `Option<bool>` per node.
