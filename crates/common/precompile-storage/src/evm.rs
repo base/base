@@ -11,7 +11,8 @@ use alloy_evm::precompiles::PrecompileInput;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use revm::{
     context::{Block, journaled_state::JournalCheckpoint},
-    interpreter::gas::{KECCAK256, KECCAK256WORD},
+    context_interface::cfg::GasParams,
+    interpreter::gas::{Gas, KECCAK256, KECCAK256WORD, LOG},
     primitives::keccak256,
     state::{AccountInfo, Bytecode},
 };
@@ -30,9 +31,8 @@ use crate::{
 pub struct EvmPrecompileStorageProvider<'a> {
     internals: alloy_evm::EvmInternals<'a>,
     caller: Address,
-    gas_limit: u64,
-    gas_used: u64,
-    gas_refunded: i64,
+    gas: Gas,
+    gas_params: GasParams,
     is_static: bool,
     block_number: u64,
     timestamp: U256,
@@ -42,7 +42,10 @@ pub struct EvmPrecompileStorageProvider<'a> {
 
 impl<'a> EvmPrecompileStorageProvider<'a> {
     /// Consume a [`PrecompileInput`] and build the provider.
-    pub fn new(input: PrecompileInput<'a>) -> Self {
+    ///
+    /// `gas_params` drives all EIP-2929/2200/3529 cost calculations.
+    /// Pass [`GasParams::default`] when the active spec is unknown at call site.
+    pub fn new(input: PrecompileInput<'a>, gas_params: GasParams) -> Self {
         let PrecompileInput { gas, caller, is_static, internals, .. } = input;
 
         let block_number = internals.block_env().number().to::<u64>();
@@ -53,9 +56,8 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
         Self {
             internals,
             caller,
-            gas_limit: gas,
-            gas_used: 0,
-            gas_refunded: 0,
+            gas: Gas::new(gas),
+            gas_params,
             is_static,
             block_number,
             timestamp,
@@ -83,6 +85,30 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
+        let code_len = code.len();
+
+        // EIP-3541 / Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
+        self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
+
+        // For new (empty) accounts charge the CREATE equivalent costs (Yellow Paper G_create).
+        let is_new_account = {
+            let state_load = self
+                .internals
+                .load_account(address)
+                .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+            state_load.data.info.is_empty()
+        };
+
+        if is_new_account {
+            // Yellow Paper G_create: base cost for creating a new contract account.
+            self.deduct_gas(self.gas_params.create_cost())?;
+            // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
+            let num_words = code_len.div_ceil(32) as u64;
+            self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
+            // TODO: also charge create_state_gas + code_deposit_state_gas (Amsterdam EIP-8037)
+            // once GasParams upgrades to context-interface v17.
+        }
+
         self.internals
             .set_code(address, code)
             .map_err(|e| BasePrecompileError::Fatal(e.to_string()))
@@ -93,59 +119,115 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         address: Address,
         f: &mut dyn FnMut(&AccountInfo),
     ) -> Result<()> {
-        let state_load = self
-            .internals
-            .load_account(address)
-            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
-        f(&state_load.data.info);
+        // Extract is_cold and clone AccountInfo before releasing the internals borrow.
+        let (info, is_cold) = {
+            let state_load = self
+                .internals
+                .load_account(address)
+                .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+            (state_load.data.info.clone(), state_load.is_cold)
+        };
+
+        // EIP-2929: warm base cost always charged (100)
+        self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
+        // dynamic cold penalty — total 2600 for a cold account access
+        if is_cold {
+            self.deduct_gas(self.gas_params.cold_account_additional_cost())?;
+        }
+
+        f(&info);
         Ok(())
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
-        self.internals.sload(address, key).map(|s| s.data).map_err(Into::into)
+        let s = self
+            .internals
+            .sload(address, key)
+            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+
+        // EIP-2929: warm base cost always charged
+        self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
+        // dynamic cold penalty
+        if s.is_cold {
+            self.deduct_gas(self.gas_params.cold_storage_additional_cost())?;
+        }
+
+        Ok(s.data)
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
+        self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
         Ok(self.internals.tload(address, key))
     }
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
-        self.internals.sstore(address, key, value).map(|_| ()).map_err(Into::into)
+        if self.is_static {
+            return Err(BasePrecompileError::StaticCallViolation);
+        }
+        let s = self
+            .internals
+            .sstore(address, key, value)
+            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+
+        // EIP-2929: static warm base cost
+        self.deduct_gas(self.gas_params.sstore_static_gas())?;
+        // EIP-2929 + EIP-2200: dynamic cost (cold penalty + net-metering)
+        self.deduct_gas(self.gas_params.sstore_dynamic_gas(true, &s.data, s.is_cold))?;
+        // EIP-3529: net-metering refund
+        self.refund_gas(self.gas_params.sstore_refund(true, &s.data));
+
+        Ok(())
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        if self.is_static {
+            return Err(BasePrecompileError::StaticCallViolation);
+        }
+        self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
         self.internals.tstore(address, key, value);
         Ok(())
     }
 
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<()> {
+        if self.is_static {
+            return Err(BasePrecompileError::StaticCallViolation);
+        }
+        let cost =
+            LOG + self.gas_params.log_cost(event.topics().len() as u8, event.data.len() as u64);
+        self.deduct_gas(cost)?;
         self.internals.log(Log { address, data: event });
         Ok(())
     }
 
     fn deduct_gas(&mut self, gas: u64) -> Result<()> {
-        let new_used = self.gas_used.checked_add(gas).ok_or(BasePrecompileError::OutOfGas)?;
-        if new_used > self.gas_limit {
+        if !self.gas.record_cost(gas) {
             return Err(BasePrecompileError::OutOfGas);
         }
-        self.gas_used = new_used;
         Ok(())
     }
 
     fn refund_gas(&mut self, gas: i64) {
-        self.gas_refunded = self.gas_refunded.saturating_add(gas);
+        self.gas.record_refund(gas);
     }
 
     fn gas_limit(&self) -> u64 {
-        self.gas_limit
+        self.gas.limit()
     }
 
     fn gas_used(&self) -> u64 {
-        self.gas_used
+        self.gas.spent()
+    }
+
+    fn state_gas_used(&self) -> u64 {
+        0
     }
 
     fn gas_refunded(&self) -> i64 {
-        self.gas_refunded
+        self.gas.refunded()
+    }
+
+    fn reservoir(&self) -> u64 {
+        0
     }
 
     fn is_static(&self) -> bool {
