@@ -9,10 +9,8 @@ use revm::precompile::PrecompileResult;
 
 use crate::IActivationRegistry;
 
-const ACTIVATION_REGISTRY_ADDRESS: Address = address!("0x84530000000000000000000000000000000000ff");
-
 /// Runtime activation registry for Base-native features.
-#[contract(addr = ACTIVATION_REGISTRY_ADDRESS)]
+#[contract(addr = Self::ADDRESS)]
 pub struct ActivationRegistryStorage {
     /// Runtime activation flags keyed by feature id.
     pub features: Mapping<B256, bool>,
@@ -20,7 +18,7 @@ pub struct ActivationRegistryStorage {
 
 impl ActivationRegistryStorage<'_> {
     /// Activation registry precompile address.
-    pub const ADDRESS: Address = ACTIVATION_REGISTRY_ADDRESS;
+    pub const ADDRESS: Address = address!("0x84530000000000000000000000000000000000ff");
 
     /// Temporary activation admin address.
     ///
