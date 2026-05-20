@@ -11,7 +11,10 @@ use revm::{
     primitives::{Address, OnceLock, hardfork::SpecId},
 };
 
-use crate::{ActivationRegistryPrecompile, BasePrecompileSpec, bls12_381, bn254_pair};
+use crate::{
+    ActivationRegistryPrecompile, B20TokenPrecompile, BasePrecompileSpec, PolicyRegistryEvm,
+    TokenFactoryPrecompile, bls12_381, bn254_pair,
+};
 
 /// Base precompile provider.
 #[derive(Debug, Clone)]
@@ -147,9 +150,9 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     pub fn install(self) -> PrecompilesMap {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
-            crate::token::TokenFactoryPrecompile::install(&mut precompiles);
-            crate::token::B20TokenPrecompile::install(&mut precompiles);
-            crate::token::PolicyRegistryEvm::install(&mut precompiles);
+            TokenFactoryPrecompile::install(&mut precompiles);
+            B20TokenPrecompile::install(&mut precompiles);
+            PolicyRegistryEvm::install(&mut precompiles);
             ActivationRegistryPrecompile::install(&mut precompiles);
         }
         precompiles
