@@ -92,6 +92,18 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         self.inner.precompiles
     }
 
+    /// Converts into a [`PrecompilesMap`] with all Base precompiles installed.
+    pub fn install(self) -> PrecompilesMap {
+        let mut precompiles = PrecompilesMap::from_static(self.precompiles());
+        if self.spec.upgrade() >= BaseUpgrade::Beryl {
+            TokenFactoryPrecompile::install(&mut precompiles);
+            B20TokenPrecompile::install(&mut precompiles);
+            PolicyRegistryEvm::install(&mut precompiles);
+            ActivationRegistryPrecompile::install(&mut precompiles);
+        }
+        precompiles
+    }
+
     /// Returns precompiles for Fjord spec.
     pub fn fjord() -> &'static Precompiles {
         static INSTANCE: OnceLock<Precompiles> = OnceLock::new();

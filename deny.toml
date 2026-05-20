@@ -111,21 +111,6 @@ skip = [
     "itertools",
     "lru",
 
-    # Crypto crates - version differences from different crypto stacks
-    "signature",
-    "base16ct",
-    "crypto-bigint",
-    "der",
-    "ecdsa",
-    "elliptic-curve",
-    "ff",
-    "group",
-    "p256",
-    "pkcs8",
-    "rfc6979",
-    "sec1",
-    "spki",
-
     # System/platform crates
     "socket2",
     "bitflags",
@@ -169,7 +154,6 @@ skip = [
     "num_enum",
     "num_enum_derive",
     "ordered-float",
-    "pasta_curves",
     "petgraph",
     "proc-macro-crate",
     "gloo-timers",
@@ -179,7 +163,6 @@ skip = [
     "prost-build",
     "prost-types",
     "rustc-hash",
-    "send_wrapper",
     "sync_wrapper",
     "sysinfo",
     "webpki-roots",
@@ -187,10 +170,6 @@ skip = [
 
     # wasm-streams version mismatch from transitive deps
     "wasm-streams",
-
-    # revm version mismatch from SP1 patched deps vs workspace
-    "revm-primitives",
-    "revm-precompile",
 
     # libp2p dependency chain version mismatch
     "unsigned-varint",
@@ -217,10 +196,6 @@ skip = [
     # rustls-platform-verifier version mismatch: jsonrpsee uses 0.5.x, reqwest uses 0.6.x
     "rustls-platform-verifier",
 
-    # AWS SDK version mismatches from tips aws-sdk-s3 dependency
-    "aws-smithy-http",
-    "aws-smithy-json",
-
     # TLS/HTTP stack version mismatches from aws-sdk deps
     "h2",
     "http",
@@ -244,19 +219,13 @@ skip = [
     "half",
     "memoffset",
 
-    # SP1 + SP1 cluster duplicate dependency epochs
-    "ark-ff",
-    "ark-ff-asm",
-    "ark-ff-macros",
-    "ark-serialize",
-    "ark-std",
+    # SP1 + risc0/boundless transitive dependency mismatches
     "opentelemetry",
     "opentelemetry-appender-tracing",
     "opentelemetry-otlp",
     "opentelemetry-proto",
     "opentelemetry_sdk",
     "tracing-opentelemetry",
-    "pairing",
     "strum_macros",
     "wit-bindgen",
     "block-buffer",
@@ -289,30 +258,28 @@ skip = [
     "alloy-transport",
     "alloy-transport-http",
     "alloy-tx-macros",
-    "base16ct",
     "cargo-platform",
     "cargo_metadata",
     "cpufeatures",
-    "crypto-bigint",
-    "der",
-    "ecdsa",
-    "elliptic-curve",
     "foreign-types",
     "foreign-types-shared",
     "num-bigint",
-    "p256",
 
-    "pkcs8",
-    "rfc6979",
     "ringbuffer",
-    "sec1",
-    "sha2",
-    "spki",
     "tracing-subscriber",
     "untrusted",
 
     "winnow",
-    "wit-bindgen",
+
+    "jni",
+    "jni-sys",
+    "keccak",
+    "md-5",
+    "proptest-derive",
+    "ruzstd",
+    "sha1",
+    "sha3",
+    "twox-hash",
 ]
 
 [sources]

@@ -286,7 +286,7 @@ revm = { version = "38.0.0", default-features = false }
 revm-bytecode = { version = "10.0.0", default-features = false }
 revm-database = { version = "13.0.0", default-features = false }
 revm-inspectors = { version = "0.39.0", default-features = false }
-revm-precompile = { version = "32.0.0", default-features = false }
+revm-precompile = { version = "34.0.0", default-features = false }
 revm-primitives = { version = "23.0.0", default-features = false }
 revm-context-interface = { version = "17.0.1", default-features = false }
 
@@ -339,7 +339,6 @@ reth-codecs = { version = "0.3.0", default-features = false, features = ["alloy"
 reth-db-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
 reth-discv4 = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
 reth-discv5 = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
-reth-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
 reth-trie-db = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
 reth-rpc-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
 reth-network = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
@@ -353,11 +352,10 @@ reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
 reth-node-core = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
 reth-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
 reth-cli-runner = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
-reth-tokio-util = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
-reth-network-p2p = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
 reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
-reth-rpc-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
+reth-network-p2p = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
 reth-storage-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
 reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
 reth-engine-tree = { git = "https://github.com/paradigmxyz/reth", tag = "v2.1.0" }
@@ -431,7 +429,6 @@ tracing = { version = "0.1.43", default-features = false }
 
 # Metrics
 ordered-float = "5"
-metrics-derive = "0.1.0"
 metrics = { version = "0.24.3", default-features = false }
 metrics-util = { version = "0.20.1", default-features = false }
 metrics-process = { version = "2.4.3", default-features = false }
@@ -451,12 +448,12 @@ risc0-ethereum-contracts = "3.0.1"
 risc0-zkvm = { version = "^3.0", default-features = false }
 
 # SP1 v6.1.0 (Hypercube) — used by crates/proof/succinct
-sp1-sdk = { version = "=6.1.0" }
-sp1-build = "=6.1.0"
-sp1-prover-types = "=6.1.0"
-sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.1.5" }
-sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.1.5" }
-sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.1.5" }
+sp1-sdk = { version = "=6.2.1" }
+sp1-build = "=6.2.1"
+sp1-prover-types = "=6.2.1"
+sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
+sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
+sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
 
 # crypto
 sha3 = "0.10"
@@ -488,9 +485,9 @@ libp2p-identity = "0.2.12"
 bincode = "2"
 serde_bytes = "0.11"
 serde_with = "3.8.1"
-ethereum_ssz = "0.10.1"
+ethereum_ssz = "0.10"
 serde_yaml = "0.9.34"
-ethereum_ssz_derive = "0.10.1"
+ethereum_ssz_derive = "0.10"
 serde = { version = "1.0.228", default-features = false }
 serde_json = { version = "1.0.145", default-features = false }
 
@@ -498,7 +495,7 @@ serde_json = { version = "1.0.145", default-features = false }
 arbtest = "0.3"
 test-case = "3"
 mockall = "0.14"
-tempfile = "3.8"
+tempfile = "3.20"
 rstest = "0.26.1"
 criterion = "0.8"
 serial_test = "3"
@@ -609,16 +606,3 @@ toml = { version = "1.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 unsigned-varint = { version = "0.8", default-features = false }
 ark-bls12-381 = { version = "0.5.0", default-features = false }
-
-[patch.crates-io]
-sp1-sdk = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
-sp1-build = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
-sp1-prover = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
-sp1-primitives = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
-sp1-prover-types = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
-sp1-core-executor = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
-sp1-core-machine = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
-sp1-hypercube = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
-sp1-recursion-circuit = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
-sp1-recursion-compiler = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
-sp1-recursion-executor = { git = "https://github.com/succinctlabs/sp1", rev = "afe61d4" }
