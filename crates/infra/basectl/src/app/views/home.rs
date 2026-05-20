@@ -64,7 +64,7 @@ const MENU_ITEMS: &[MenuItem] = &[
         key: 'h',
         label: "HA Conductor",
         description: "Monitor HA conductor cluster",
-        badge: Some("devnet-only"),
+        badge: None,
         view_id: Some(ViewId::Conductor),
     },
     MenuItem {
@@ -308,13 +308,8 @@ const fn menu_height(columns: usize) -> u16 {
     (menu_row_count(columns) as u16).saturating_mul(MENU_ITEM_HEIGHT)
 }
 
-fn badge_style(badge: &str) -> Style {
-    match badge {
-        "devnet-only" => {
-            Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)
-        }
-        _ => Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
-    }
+fn badge_style(_badge: &str) -> Style {
+    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
 }
 
 fn truncate_description(description: &str, width: u16) -> String {
