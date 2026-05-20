@@ -10,18 +10,12 @@ use reth_primitives_traits::SealedHeader;
 use crate::BaseChainSpec;
 
 /// Chain spec builder for a Base chain.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct BaseChainSpecBuilder {
     /// [`ChainSpecBuilder`]
     inner: ChainSpecBuilder,
     /// Activation registry admin address.
     activation_admin_address: Option<Address>,
-}
-
-impl Default for BaseChainSpecBuilder {
-    fn default() -> Self {
-        Self { inner: ChainSpecBuilder::default(), activation_admin_address: None }
-    }
 }
 
 impl BaseChainSpecBuilder {
