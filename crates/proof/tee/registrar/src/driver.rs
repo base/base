@@ -5,7 +5,13 @@
 //! to L1 via the [`TxManager`]. Also detects orphaned on-chain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
-use std::{collections::HashSet, error::Error, fmt, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    error::Error,
+    fmt,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use alloy_primitives::{Address, Bytes, FixedBytes, hex};
 use alloy_sol_types::SolCall;
@@ -101,6 +107,45 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     /// on-chain (`revokedCerts` sentinel set) cannot be re-trusted via the
     /// `_cacheNewCert` rewrite path.
     nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
+    /// Process-local set of signer addresses currently being registered.
+    ///
+    /// `try_register` reserves an entry here before its `is_registered`
+    /// precheck and releases it (via [`InFlightGuard`]) when it returns.
+    /// This closes a TOCTOU race in which two concurrent `try_register`
+    /// invocations for the same signer — e.g. when a rotation briefly has
+    /// two instances backing the same enclave signing key, or when the
+    /// per-enclave loop within `process_instance` resolves the same address
+    /// more than once — both read `is_registered == false`, both generate
+    /// (potentially identical) proofs, and both submit duplicate
+    /// registration transactions.
+    ///
+    /// The set is held across the entire registration lifecycle (including
+    /// the ~20 minute Boundless proof generation) so deduplication holds
+    /// across `step()` cycles as well as within one.
+    in_flight_registrations: Arc<Mutex<HashSet<Address>>>,
+}
+
+/// RAII guard that removes a signer address from [`RegistrationDriver::in_flight_registrations`]
+/// when dropped.
+///
+/// Ensures cleanup on every exit path from `try_register` — success,
+/// error, retry-exhaustion, cancellation drop, and panic — so a failed
+/// or cancelled registration does not permanently block future attempts
+/// for the same signer.
+struct InFlightGuard {
+    in_flight: Arc<Mutex<HashSet<Address>>>,
+    signer: Address,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        // The critical section is a single `HashSet::remove` and cannot
+        // panic under normal conditions, so poisoning is effectively
+        // impossible. If it ever occurs, the set contents are still
+        // valid and cleanup must proceed.
+        let mut set = self.in_flight.lock().unwrap_or_else(|e| e.into_inner());
+        set.remove(&self.signer);
+    }
 }
 
 impl<D, P, R, T, S> fmt::Debug for RegistrationDriver<D, P, R, T, S> {
@@ -166,6 +211,7 @@ where
             config,
             crl_http_client,
             nitro_verifier,
+            in_flight_registrations: Arc::new(Mutex::new(HashSet::new())),
         })
     }
 
@@ -497,6 +543,36 @@ where
         enclave_index: usize,
         attestation_bytes: &[u8],
     ) -> Result<()> {
+        // Reserve this signer in the in-flight set before the
+        // `is_registered` precheck. If another concurrent task already
+        // owns it — e.g. a sibling `process_instance` future for a
+        // different prover instance that happens to back the same
+        // enclave signing key during a rotation — short-circuit so we
+        // don't race past the TOCTOU `is_registered` check, regenerate
+        // the proof, and submit a duplicate registration transaction.
+        //
+        // The guard is held across the entire registration (including
+        // the ~20 minute Boundless proof generation and the on-chain
+        // confirmation wait) and is released via RAII on every exit
+        // path: success, error, retry-exhaustion, cancellation drop,
+        // and panic.
+        let _in_flight = {
+            let mut set = self.in_flight_registrations.lock().unwrap_or_else(|e| e.into_inner());
+            if !set.insert(signer_address) {
+                debug!(
+                    signer = %signer_address,
+                    enclave_index,
+                    instance = %instance.instance_id,
+                    "registration already in flight for this signer, skipping duplicate",
+                );
+                return Ok(());
+            }
+            InFlightGuard {
+                in_flight: Arc::clone(&self.in_flight_registrations),
+                signer: signer_address,
+            }
+        };
+
         if self.registry.is_registered(signer_address).await? {
             debug!(signer = %signer_address, "already registered, skipping");
             return Ok(());
@@ -2962,6 +3038,156 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(tx.send_count(), 1, "should succeed on first attempt");
         assert_eq!(driver.proof_provider.call_count(), 1, "proof should be generated once");
+    }
+
+    // ── In-flight dedup tests ───────────────────────────────────────────
+    //
+    // Covers the in-flight registration guard added to `try_register` to
+    // prevent two concurrent invocations for the same signer from racing
+    // past the TOCTOU `is_registered` precheck and submitting duplicate
+    // registration transactions.
+
+    /// Proof provider that yields cooperatively during proof generation.
+    ///
+    /// Without yielding, the single-threaded test executor would run the
+    /// first concurrent future to completion before polling the second,
+    /// hiding any race window in `try_register`. The repeated yields here
+    /// guarantee a second concurrent caller is polled — and reaches its
+    /// own in-flight check — while the first is still mid-proof.
+    #[derive(Debug)]
+    struct YieldingProofProvider {
+        call_count: Arc<AtomicU32>,
+    }
+
+    impl YieldingProofProvider {
+        fn new() -> Self {
+            Self { call_count: Arc::new(AtomicU32::new(0)) }
+        }
+
+        fn call_count(&self) -> u32 {
+            self.call_count.load(Ordering::Relaxed)
+        }
+    }
+
+    #[async_trait]
+    impl AttestationProofProvider for YieldingProofProvider {
+        async fn generate_proof(
+            &self,
+            _attestation_bytes: &[u8],
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            self.call_count.fetch_add(1, Ordering::Relaxed);
+            // Yield repeatedly so any concurrent task gets polled and
+            // exercises the in-flight dedup path.
+            for _ in 0..16 {
+                tokio::task::yield_now().await;
+            }
+            Ok(AttestationProof {
+                output: Bytes::from_static(b"stub-output"),
+                proof_bytes: Bytes::from_static(b"stub-proof"),
+            })
+        }
+    }
+
+    /// Two concurrent `process_instance` calls that resolve to the same
+    /// signer address must collapse into a single registration: only one
+    /// proof generated, only one tx submitted, both calls return Ok.
+    ///
+    /// Models the cross-instance rotation case where two prover instances
+    /// briefly back the same enclave signing key, as well as the
+    /// intra-instance case where the per-enclave loop resolves the same
+    /// address more than once.
+    #[tokio::test]
+    async fn try_register_concurrent_same_signer_dedups() {
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let tx = FailingTxManager::with_errors(vec![]); // both attempts succeed
+        let registry = DynamicRegistry::never_registered(vec![]);
+        let proof_provider = YieldingProofProvider::new();
+        let driver = retry_driver(
+            signer_client,
+            registry,
+            tx.clone(),
+            proof_provider,
+            CancellationToken::new(),
+        );
+
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
+        let (r1, r2) = tokio::join!(driver.process_instance(&inst), driver.process_instance(&inst));
+
+        assert!(r1.is_ok(), "first concurrent registration failed: {r1:?}");
+        assert!(r2.is_ok(), "second concurrent registration failed: {r2:?}");
+        assert_eq!(
+            tx.send_count(),
+            1,
+            "concurrent registration of the same signer must dedup to a single tx",
+        );
+        assert_eq!(
+            driver.proof_provider.call_count(),
+            1,
+            "concurrent registration of the same signer must not regenerate the proof",
+        );
+    }
+
+    /// After a successful registration completes, the in-flight slot must
+    /// be released so a later cycle can re-register the same signer if it
+    /// becomes orphaned and re-discovered. Sequential calls for the same
+    /// signer must both execute their `is_registered` precheck (which in
+    /// the test mock returns false twice via `never_registered`), and both
+    /// submit txs — proving the guard does not leak across calls.
+    #[tokio::test]
+    async fn try_register_in_flight_slot_released_after_completion() {
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let tx = FailingTxManager::with_errors(vec![]);
+        let registry = DynamicRegistry::never_registered(vec![]);
+        let driver = retry_driver(
+            signer_client,
+            registry,
+            tx.clone(),
+            StubProofProvider,
+            CancellationToken::new(),
+        );
+
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
+        driver.process_instance(&inst).await.unwrap();
+        driver.process_instance(&inst).await.unwrap();
+
+        assert_eq!(
+            tx.send_count(),
+            2,
+            "sequential (non-overlapping) registrations must each submit their own tx — \
+             the in-flight slot must be released when try_register returns",
+        );
+    }
+
+    /// A failed registration (non-retryable error from the tx manager)
+    /// must still release the in-flight slot. Otherwise a transient
+    /// failure for one signer would permanently block subsequent
+    /// registration attempts for that signer.
+    #[tokio::test]
+    async fn try_register_in_flight_slot_released_after_failure() {
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        // First call fails non-retryably; second call succeeds.
+        let tx = FailingTxManager::with_errors(vec![TxManagerError::InsufficientFunds]);
+        let registry = DynamicRegistry::never_registered(vec![]);
+        let driver = retry_driver(
+            signer_client,
+            registry,
+            tx.clone(),
+            StubProofProvider,
+            CancellationToken::new(),
+        );
+
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
+        // First attempt: fails non-retryably (slot released on Err path).
+        driver.process_instance(&inst).await.unwrap();
+        // Second attempt: must reach the tx manager again — proving the
+        // in-flight slot was released after the first call's failure.
+        driver.process_instance(&inst).await.unwrap();
+
+        assert_eq!(
+            tx.send_count(),
+            2,
+            "a failed registration must release the in-flight slot so retries can proceed",
+        );
     }
 
     // ── OnchainRevocationCheck tests ────────────────────────────────────
