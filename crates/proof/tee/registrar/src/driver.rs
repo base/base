@@ -908,6 +908,14 @@ where
         // backend completes, and for `BoundlessProver` any already-submitted
         // off-chain request is recoverable via the deterministic
         // request-id derivation on the next call.
+        //
+        // Race window: the biased `select!` polls the cancel branch first,
+        // but if the token fires *between* that poll and the provider's own
+        // internal `cancel.is_cancelled()` check, the provider returns an
+        // `Err` that we must not propagate as a task failure (it would
+        // violate the `PendingTask` "cancelled task always returns `Ok(())`"
+        // contract and bump `processing_errors_total` for a clean cancel).
+        // The `Err(_) if signer_cancel.is_cancelled()` arm closes that gap.
         let proof = tokio::select! {
             biased;
             () = signer_cancel.cancelled() => {
@@ -918,7 +926,20 @@ where
                 );
                 return Ok(());
             }
-            res = self.proof_provider.generate_proof_for_signer(attestation_bytes, signer_address, signer_cancel) => res?,
+            res = self.proof_provider.generate_proof_for_signer(attestation_bytes, signer_address, signer_cancel) => {
+                match res {
+                    Ok(p) => p,
+                    Err(_) if signer_cancel.is_cancelled() => {
+                        debug!(
+                            signer = %signer_address,
+                            instance = %instance.instance_id,
+                            "task cancelled during proof generation (provider returned Err after cancel)",
+                        );
+                        return Ok(());
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
         };
 
         // Check cancellation before submitting the transaction — avoid starting
@@ -2043,6 +2064,33 @@ mod tests {
         ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
             Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
                 "simulated proof failure".into(),
+            ))
+        }
+    }
+
+    /// Mock proof provider that cancels its own token and then returns
+    /// `Err` synchronously on the same poll — simulating the race window
+    /// where `BoundlessProver`'s internal `cancel.is_cancelled()` check
+    /// fires *after* `try_register`'s biased `select!` has polled the
+    /// cancel branch (Pending) but *before* the select can re-poll it.
+    ///
+    /// Without the `Err(_) if signer_cancel.is_cancelled()` guard in
+    /// `try_register`, this `Err` would propagate as a task failure and
+    /// violate the `PendingTask` "cancelled task always returns `Ok(())`"
+    /// contract.
+    #[derive(Debug)]
+    struct CancelThenErrorProofProvider;
+
+    #[async_trait]
+    impl AttestationProofProvider for CancelThenErrorProofProvider {
+        async fn generate_proof(
+            &self,
+            _attestation_bytes: &[u8],
+            cancel: &CancellationToken,
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            cancel.cancel();
+            Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
+                "simulated cancel-race".into(),
             ))
         }
     }
@@ -4237,6 +4285,40 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(tx.send_count(), 0, "should not send any tx after pre-cancellation");
+    }
+
+    /// Cancel-race: provider returns `Err` synchronously *after* having
+    /// fired the cancel token in the same poll. The biased `select!` in
+    /// `try_register` polled the cancel branch (then Pending) before
+    /// polling the provider arm, so it commits to the provider's `Err`
+    /// rather than the (now-fired) cancel. The
+    /// `Err(_) if signer_cancel.is_cancelled()` guard catches this and
+    /// returns `Ok(())` to honour the `PendingTask` contract.
+    #[tokio::test]
+    async fn try_register_provider_err_after_cancel_returns_ok() {
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let tx = FailingTxManager::with_errors(vec![]);
+        let registry = DynamicRegistry::never_registered(vec![]);
+        let cancel = CancellationToken::new();
+        let driver = retry_driver(
+            signer_client,
+            registry,
+            tx.clone(),
+            CancelThenErrorProofProvider,
+            cancel.clone(),
+        );
+
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
+        let signer =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+
+        let res = driver.try_register(&inst, signer, 0, b"stub-attestation", &cancel).await;
+
+        assert!(
+            res.is_ok(),
+            "provider Err after cancel must be mapped to Ok(()) by try_register; got {res:?}",
+        );
+        assert_eq!(tx.send_count(), 0, "cancelled task must not submit a transaction");
     }
 
     /// Mixed errors: transient → `ExecutionReverted`. The retry loop should
