@@ -2322,6 +2322,19 @@ mod tests {
             let driver = Arc::clone(&self.driver);
             tokio::spawn(driver.run())
         }
+
+        /// Cancels the harness, awaits its run handle inside
+        /// [`GATED_WAIT_TIMEOUT`], and asserts the loop exited cleanly.
+        /// Every pipeline test must call this exactly once at the end
+        /// to drain in-flight proof tasks and surface unexpected panics.
+        async fn shutdown(&self, handle: tokio::task::JoinHandle<Result<()>>) {
+            self.cancel.cancel();
+            let outcome = tokio::time::timeout(GATED_WAIT_TIMEOUT, handle)
+                .await
+                .expect("run() should observe cancel and stop within timeout")
+                .expect("run() task should not panic");
+            outcome.expect("run() should return Ok on graceful shutdown");
+        }
     }
 
     /// Polls `predicate` until it returns `true` or [`GATED_WAIT_TIMEOUT`]
@@ -2337,20 +2350,6 @@ mod tests {
         }
     }
 
-    /// Cancels the harness, awaits its run handle with a generous
-    /// timeout, and asserts the loop exited cleanly.
-    async fn wait_for_run_to_stop(
-        harness: &GatedRunHarness,
-        handle: tokio::task::JoinHandle<Result<()>>,
-    ) {
-        harness.cancel.cancel();
-        let outcome = tokio::time::timeout(GATED_WAIT_TIMEOUT, handle)
-            .await
-            .expect("run() should observe cancel and stop within timeout")
-            .expect("run() task should not panic");
-        outcome.expect("run() should return Ok on graceful shutdown");
-    }
-
     /// Counts the number of `registerSigner` calldata frames in a
     /// captured tx-manager log.
     fn count_register_calls(sent: &[Bytes]) -> usize {
@@ -2362,6 +2361,97 @@ mod tests {
     fn count_deregister_calls(sent: &[Bytes]) -> usize {
         let sel = ITEEProverRegistry::deregisterSignerCall::SELECTOR;
         sent.iter().filter(|c| c.len() >= 4 && c[..4] == sel).count()
+    }
+
+    /// Instance ID used by every `PendingTask` constructed for the
+    /// reconcile / reap unit tests. The string is opaque — only the
+    /// `Address` keying matters for cancel/spawn logic — but pinning it
+    /// to a single named const keeps test output readable and avoids
+    /// per-test magic strings.
+    const TEST_PENDING_INSTANCE_ID: &str = "i-pending-test";
+
+    /// Cooperative shutdown for any [`JoinSet`] / `pending` pair built
+    /// by a unit test (i.e. without spawning the full `run()` loop).
+    ///
+    /// Fires every per-task cancel token, then `abort_all`s as a
+    /// backstop and drains the `JoinSet` so test teardown doesn't leak
+    /// futures that are forever parked on their tokens. Mirrors the
+    /// production shutdown sequence in [`RegistrationDriver::run`].
+    async fn drain_test_tasks(
+        tasks: &mut JoinSet<Result<()>>,
+        pending: &mut HashMap<task::Id, PendingTask>,
+    ) {
+        for task in pending.values() {
+            task.cancel.cancel();
+        }
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
+        pending.clear();
+    }
+
+    /// Polling fixed point used by the reap-loop helper below — small
+    /// enough that even on a loaded runner the test still terminates
+    /// well inside [`GATED_WAIT_TIMEOUT`].
+    const REAP_POLL_INTERVAL: Duration = Duration::from_millis(1);
+
+    /// Repeatedly invokes [`RunDriver::reap_finished_tasks`] until
+    /// `pending` is empty or [`GATED_WAIT_TIMEOUT`] elapses. The
+    /// production loop calls `reap_finished_tasks` exactly once per
+    /// cycle, so unit tests that drive it directly need to give the
+    /// runtime time to schedule the spawned task that they are waiting
+    /// to observe complete.
+    async fn reap_until_pending_empty(
+        tasks: &mut JoinSet<Result<()>>,
+        pending: &mut HashMap<task::Id, PendingTask>,
+    ) {
+        let started = std::time::Instant::now();
+        while !pending.is_empty() {
+            if started.elapsed() > GATED_WAIT_TIMEOUT {
+                panic!("timed out reaping {} pending task(s)", pending.len());
+            }
+            RunDriver::reap_finished_tasks(tasks, pending);
+            tokio::time::sleep(REAP_POLL_INTERVAL).await;
+        }
+    }
+
+    /// Builds a [`MockRegistry`] that reports zero registered signers.
+    /// Used by every pipeline test that wants the on-chain state to
+    /// start empty.
+    fn empty_registry() -> MockRegistry {
+        MockRegistry::with_signers(vec![])
+    }
+
+    /// Builds the single-instance / single-key `(EP1, HARDHAT_KEY_0)`
+    /// harness used by most pipeline tests, with no signers registered
+    /// on-chain. Centralising this pair removes ~5 lines of boilerplate
+    /// per test and makes it impossible for them to drift out of sync.
+    fn single_healthy_harness() -> GatedRunHarness {
+        GatedRunHarness::new(
+            vec![instance(EP1, InstanceHealthStatus::Healthy)],
+            &[(EP1, &HARDHAT_KEY_0)],
+            empty_registry(),
+        )
+    }
+
+    /// Builds an `n`-instance harness with all healthy instances and
+    /// no signers registered on-chain. The signer client is seeded with
+    /// **every** endpoint in [`ALL_ENDPOINTS`] (not just the initial
+    /// `n`) so scale-up tests that swap the discovery list mid-run can
+    /// resolve public keys for instances that weren't part of the
+    /// original snapshot.
+    fn multi_healthy_harness(num_instances: usize) -> GatedRunHarness {
+        assert!(
+            num_instances <= ALL_ENDPOINTS.len(),
+            "fixture has only {} endpoints; requested {num_instances}",
+            ALL_ENDPOINTS.len()
+        );
+        let initial: Vec<_> = ALL_ENDPOINTS[..num_instances]
+            .iter()
+            .map(|ep| instance(ep, InstanceHealthStatus::Healthy))
+            .collect();
+        let all_keys: Vec<(&str, &[u8; 32])> =
+            ALL_ENDPOINTS.iter().copied().zip(ALL_KEYS.iter().copied()).collect();
+        GatedRunHarness::new(initial, &all_keys, empty_registry())
     }
 
     /// Builds a minimal [`PendingTask`] for unit-testing
@@ -3809,22 +3899,6 @@ mod tests {
     // `pending` map, then assert exactly which tasks get cancelled
     // and which get spawned.
 
-    /// Helper: builds a registry that never has anyone registered.
-    fn empty_registry() -> MockRegistry {
-        MockRegistry::with_signers(vec![])
-    }
-
-    /// Builds a single-instance harness suitable for the reconcile tests.
-    fn reconcile_harness(initial_endpoints: &[&'static str]) -> GatedRunHarness {
-        let initial: Vec<_> = initial_endpoints
-            .iter()
-            .map(|ep| instance(ep, InstanceHealthStatus::Healthy))
-            .collect();
-        let keys: Vec<(&str, &[u8; 32])> =
-            initial_endpoints.iter().copied().zip(ALL_KEYS.iter().copied()).collect();
-        GatedRunHarness::new(initial, &keys, empty_registry())
-    }
-
     #[rstest]
     #[case::no_pending_spawns_all(&[], &[(EP1, &HARDHAT_KEY_0)], 1, 0)]
     #[case::pending_for_kept_spawns_nothing(&[(EP1, &HARDHAT_KEY_0)], &[(EP1, &HARDHAT_KEY_0)], 0, 0)]
@@ -3848,7 +3922,7 @@ mod tests {
         #[case] expected_new_spawns: usize,
         #[case] expected_cancels: usize,
     ) {
-        let harness = reconcile_harness(&[]);
+        let harness = single_healthy_harness();
         let mut tasks: JoinSet<Result<()>> = JoinSet::new();
         let mut pending: HashMap<task::Id, PendingTask> = HashMap::new();
 
@@ -3856,7 +3930,7 @@ mod tests {
         // pre-existing signers. These futures park on their per-task
         // cancel token so cooperative cancellation is observable.
         let mut seeded_cancels: Vec<CancellationToken> = Vec::new();
-        for (ep, key) in pre_existing {
+        for (_, key) in pre_existing {
             let signer = ProverClient::derive_address(&public_key_from_private(key)).unwrap();
             let task_cancel = CancellationToken::new();
             let task_cancel_inner = task_cancel.clone();
@@ -3867,7 +3941,7 @@ mod tests {
             pending.insert(
                 handle.id(),
                 PendingTask {
-                    instance_id: format!("i-{ep}"),
+                    instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
                     signer,
                     cancel: task_cancel.clone(),
                 },
@@ -3887,20 +3961,14 @@ mod tests {
         assert_eq!(new_spawns, expected_new_spawns, "spawn-pass count");
         assert_eq!(post_cancelled - pre_cancelled, expected_cancels, "cancel-pass count");
 
-        // Drain pending and tasks so the JoinSet drop doesn't leak
-        // tasks awaiting their cancel tokens forever.
-        for task in pending.values() {
-            task.cancel.cancel();
-        }
-        tasks.abort_all();
-        while tasks.join_next().await.is_some() {}
+        drain_test_tasks(&mut tasks, &mut pending).await;
     }
 
     #[tokio::test]
     async fn reconcile_proof_tasks_idempotent_when_resolution_unchanged() {
         // Running reconcile twice with the same resolution must not
         // spawn duplicate tasks or cancel an already-pending one.
-        let harness = reconcile_harness(&[]);
+        let harness = single_healthy_harness();
         let mut tasks: JoinSet<Result<()>> = JoinSet::new();
         let mut pending: HashMap<task::Id, PendingTask> = HashMap::new();
 
@@ -3919,11 +3987,7 @@ mod tests {
             assert!(!task.cancel.is_cancelled(), "kept task must not be cancelled");
         }
 
-        for task in pending.values() {
-            task.cancel.cancel();
-        }
-        tasks.abort_all();
-        while tasks.join_next().await.is_some() {}
+        drain_test_tasks(&mut tasks, &mut pending).await;
     }
 
     // ── reap_finished_tasks + apply_join_outcome tests ─────────────────
@@ -3945,24 +4009,10 @@ mod tests {
                 Err(RegistrarError::Transaction("synthetic".into()))
             }
         });
-        pending.insert(handle.id(), pending_task_for_test(HARDHAT_ACCOUNT, "i-test"));
+        pending
+            .insert(handle.id(), pending_task_for_test(HARDHAT_ACCOUNT, TEST_PENDING_INSTANCE_ID));
 
-        // Give the spawned future a chance to complete before we reap.
-        tokio::task::yield_now().await;
-        // Loop a couple of times to handle runtime scheduling variance.
-        for _ in 0..16 {
-            if pending.is_empty() {
-                break;
-            }
-            RegistrationDriver::<
-                MutableDiscovery,
-                GatedProofProvider,
-                MockRegistry,
-                SharedTxManager,
-                MockSignerClient,
-            >::reap_finished_tasks(&mut tasks, &mut pending);
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
+        reap_until_pending_empty(&mut tasks, &mut pending).await;
 
         assert!(pending.is_empty(), "completed task must be evicted from pending");
         assert!(tasks.is_empty(), "JoinSet must drain to empty");
@@ -3983,25 +4033,32 @@ mod tests {
         });
         pending.insert(
             handle.id(),
-            PendingTask { instance_id: "i-x".into(), signer: HARDHAT_ACCOUNT, cancel },
+            PendingTask {
+                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
+                signer: HARDHAT_ACCOUNT,
+                cancel,
+            },
         );
 
-        RegistrationDriver::<
-            MutableDiscovery,
-            GatedProofProvider,
-            MockRegistry,
-            SharedTxManager,
-            MockSignerClient,
-        >::reap_finished_tasks(&mut tasks, &mut pending);
+        RunDriver::reap_finished_tasks(&mut tasks, &mut pending);
 
         assert_eq!(pending.len(), 1, "live task must remain in pending");
 
-        // Cleanup.
-        for task in pending.values() {
-            task.cancel.cancel();
-        }
-        tasks.abort_all();
-        while tasks.join_next().await.is_some() {}
+        drain_test_tasks(&mut tasks, &mut pending).await;
+    }
+
+    #[tokio::test]
+    async fn reap_finished_tasks_is_noop_when_pending_is_empty() {
+        // Sanity: the production loop calls `reap_finished_tasks` every
+        // cycle, including cycles with no pending work. It must not
+        // panic in that case.
+        let mut tasks: JoinSet<Result<()>> = JoinSet::new();
+        let mut pending: HashMap<task::Id, PendingTask> = HashMap::new();
+
+        RunDriver::reap_finished_tasks(&mut tasks, &mut pending);
+
+        assert!(pending.is_empty(), "pending stays empty");
+        assert!(tasks.is_empty(), "JoinSet stays empty");
     }
 
     // ── run() spawn-and-reap pipeline tests ─────────────────────────────
@@ -4012,174 +4069,249 @@ mod tests {
     // counters and the SharedTxManager calldata log. Cancellation is
     // used to stop the loop cleanly between assertions.
 
+    #[rstest]
+    #[case::one_instance(1)]
+    #[case::two_instances(2)]
+    #[case::three_instances(3)]
+    #[case::four_instances(4)]
     #[tokio::test]
-    async fn run_spawns_one_task_per_enclave_and_each_submits_registration() {
-        // Three healthy instances, one enclave each, none yet registered.
-        // The pipeline should spawn three proof tasks; once released
-        // they each submit a single registerSigner tx.
-        let endpoints = [EP1, EP2, EP3];
-        let initial: Vec<_> =
-            endpoints.iter().map(|ep| instance(ep, InstanceHealthStatus::Healthy)).collect();
-        let keys: Vec<(&str, &[u8; 32])> =
-            endpoints.iter().copied().zip(ALL_KEYS.iter().copied()).collect();
-        let harness = GatedRunHarness::new(initial, &keys, empty_registry());
+    async fn run_spawns_one_task_per_enclave_and_each_submits_registration(
+        #[case] num_instances: usize,
+    ) {
+        // `num_instances` healthy instances, one enclave each, none yet
+        // registered. The pipeline must spawn exactly `num_instances`
+        // proof tasks; once released they each submit a single
+        // registerSigner tx — independent of the fan-out width.
+        let harness = multi_healthy_harness(num_instances);
 
         let run_handle = harness.spawn_run();
 
-        // Wait until the pipeline has spawned a proof task for every enclave.
-        wait_for("3 proof tasks parked in gate", || harness.proof.in_flight() == 3).await;
+        wait_for(
+            "every proof task parked in gate",
+            || harness.proof.in_flight() == num_instances,
+        )
+        .await;
 
         // Release the gate so the proof tasks return and registrations submit.
         harness.proof.release_all();
 
         wait_for(
-            "3 registerSigner txs submitted",
-            || count_register_calls(&harness.tx.sent_calldata()) == 3,
+            "every registerSigner tx submitted",
+            || count_register_calls(&harness.tx.sent_calldata()) == num_instances,
         )
         .await;
 
-        wait_for_run_to_stop(&harness, run_handle).await;
+        harness.shutdown(run_handle).await;
 
-        assert_eq!(harness.proof.call_count(), 3, "exactly one proof per enclave");
-    }
-
-    #[tokio::test]
-    async fn run_aborts_in_flight_task_when_instance_vanishes_mid_proof() {
-        // Start with EP1+EP2; observe both proof tasks parked. Remove
-        // EP2 from discovery; the next cycle must cancel its task
-        // cooperatively (the signer_cancel token fires inside
-        // try_register's biased select! around generate_proof_for_signer),
-        // and the task exits Ok(()) without submitting a tx.
-        let initial = vec![
-            instance(EP1, InstanceHealthStatus::Healthy),
-            instance(EP2, InstanceHealthStatus::Healthy),
-        ];
-        let keys: &[(&str, &[u8; 32])] = &[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)];
-        let harness = GatedRunHarness::new(initial, keys, empty_registry());
-
-        let run_handle = harness.spawn_run();
-
-        wait_for("both proofs parked", || harness.proof.in_flight() == 2).await;
-
-        // Vanish EP2 from discovery.
-        harness.discovery.set(vec![instance(EP1, InstanceHealthStatus::Healthy)]);
-
-        // The reconcile pass on the next cycle must cancel EP2's task.
-        wait_for("EP2 proof task left in-flight set", || harness.proof.in_flight() == 1).await;
-
-        // EP1's proof is still parked; release the gate to let it through.
-        harness.proof.release_all();
-
-        wait_for("EP1 registered", || count_register_calls(&harness.tx.sent_calldata()) == 1)
-            .await;
-
-        wait_for_run_to_stop(&harness, run_handle).await;
-
-        let sent = harness.tx.sent_calldata();
-        assert_eq!(count_register_calls(&sent), 1, "EP2 must NOT have submitted a registration");
-    }
-
-    #[tokio::test]
-    async fn run_continues_discovery_while_proof_task_is_in_flight() {
-        // The original bug: a long-running proof for the first
-        // discovered instance must not block the next discovery cycle
-        // from picking up a newly-launched instance.
-        let initial = vec![instance(EP1, InstanceHealthStatus::Healthy)];
-        let keys: &[(&str, &[u8; 32])] = &[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)];
-        let harness = GatedRunHarness::new(initial, keys, empty_registry());
-
-        let run_handle = harness.spawn_run();
-
-        wait_for("EP1 proof parked", || harness.proof.in_flight() == 1).await;
-        let initial_call_count = harness.proof.call_count();
-
-        // Now scale up: add EP2 to discovery while EP1's proof is still
-        // parked in the gate.
-        harness.discovery.set(vec![
-            instance(EP1, InstanceHealthStatus::Healthy),
-            instance(EP2, InstanceHealthStatus::Healthy),
-        ]);
-
-        // The pipeline must spawn a second task within
-        // MIN_CYCLES_IN_OBSERVATION_WINDOW cycles — that is the
-        // entire point of the refactor.
-        wait_for("EP2 proof spawned despite EP1 in-flight", || harness.proof.in_flight() == 2)
-            .await;
-        assert!(
-            harness.proof.call_count() > initial_call_count,
-            "EP2 generate_proof must have been called"
+        assert_eq!(
+            harness.proof.call_count(),
+            num_instances,
+            "exactly one proof per enclave"
         );
-
-        // Release both and let them register.
-        harness.proof.release_all();
-        wait_for("both registered", || count_register_calls(&harness.tx.sent_calldata()) == 2)
-            .await;
-
-        wait_for_run_to_stop(&harness, run_handle).await;
     }
 
     #[rstest]
-    #[case::draining(InstanceHealthStatus::Draining)]
-    #[case::unhealthy_no_launch_time(InstanceHealthStatus::Unhealthy)]
+    // Scale-down 2 → 1: cancel either the first-discovered or the
+    // last-discovered task, exhaustively.
+    #[case::two_instances_drop_first(2, &[0])]
+    #[case::two_instances_drop_last(2, &[1])]
+    // Scale-down 3 → 1: cancel two of three (covers middle index too).
+    #[case::three_instances_drop_two_keep_first(3, &[1, 2])]
+    #[case::three_instances_drop_two_keep_last(3, &[0, 1])]
     #[tokio::test]
-    async fn run_does_not_spawn_task_for_non_registerable_instance(
-        #[case] status: InstanceHealthStatus,
+    async fn run_cancels_in_flight_tasks_when_instances_vanish_mid_proof(
+        #[case] initial_count: usize,
+        #[case] drop_indices: &[usize],
     ) {
-        // Non-registerable instances must not enter the proof pipeline
-        // at all (their generate_proof is never called).
-        let initial = vec![instance(EP1, status)];
-        let keys: &[(&str, &[u8; 32])] = &[(EP1, &HARDHAT_KEY_0)];
-        let harness = GatedRunHarness::new(initial, keys, empty_registry());
+        // Start with `initial_count` healthy instances; observe every
+        // proof task parked. Remove the instances at `drop_indices` from
+        // discovery; the next cycle must cancel their tasks
+        // cooperatively (the signer_cancel token fires inside
+        // try_register's biased select! around generate_proof_for_signer),
+        // and the cancelled tasks exit Ok(()) without submitting a tx.
+        let harness = multi_healthy_harness(initial_count);
+
+        let run_handle = harness.spawn_run();
+
+        wait_for("every proof task parked in gate", || {
+            harness.proof.in_flight() == initial_count
+        })
+        .await;
+
+        // Drop the chosen indices from discovery.
+        let drop_set: HashSet<usize> = drop_indices.iter().copied().collect();
+        let kept_endpoints: Vec<&'static str> = ALL_ENDPOINTS[..initial_count]
+            .iter()
+            .enumerate()
+            .filter_map(|(i, ep)| (!drop_set.contains(&i)).then_some(*ep))
+            .collect();
+        let kept_count = kept_endpoints.len();
+        let dropped_count = drop_indices.len();
+        harness.discovery.set(
+            kept_endpoints
+                .iter()
+                .map(|ep| instance(ep, InstanceHealthStatus::Healthy))
+                .collect(),
+        );
+
+        // The reconcile pass on the next cycle must cancel every
+        // dropped instance's task.
+        wait_for("dropped proof tasks cancelled", || harness.proof.in_flight() == kept_count)
+            .await;
+
+        // Surviving proofs are still parked; release the gate to let
+        // them through.
+        harness.proof.release_all();
+
+        wait_for(
+            "every surviving instance registered",
+            || count_register_calls(&harness.tx.sent_calldata()) == kept_count,
+        )
+        .await;
+
+        harness.shutdown(run_handle).await;
+
+        let sent = harness.tx.sent_calldata();
+        assert_eq!(
+            count_register_calls(&sent),
+            kept_count,
+            "{dropped_count} dropped instance(s) must NOT have submitted a registration"
+        );
+    }
+
+    #[rstest]
+    // The exact bug this entire refactor fixes: a long-running proof
+    // for one already-discovered instance must not block discovery
+    // from picking up newly-launched instances. We cover three
+    // scale-up sizes so a regression that, e.g., serialises one new
+    // task per N existing in-flight tasks would still be caught.
+    #[case::scale_up_1_to_2(1, 2)]
+    #[case::scale_up_1_to_3(1, 3)]
+    #[case::scale_up_2_to_4(2, 4)]
+    #[tokio::test]
+    async fn run_continues_discovery_while_proof_tasks_are_in_flight(
+        #[case] initial_count: usize,
+        #[case] final_count: usize,
+    ) {
+        assert!(final_count > initial_count, "test case must scale up");
+        let harness = multi_healthy_harness(initial_count);
+
+        let run_handle = harness.spawn_run();
+
+        wait_for(
+            "initial proof tasks parked in gate",
+            || harness.proof.in_flight() == initial_count,
+        )
+        .await;
+        let initial_call_count = harness.proof.call_count();
+
+        // Now scale up: add the new instances while the initial ones'
+        // proofs are still parked in the gate.
+        harness.discovery.set(
+            ALL_ENDPOINTS[..final_count]
+                .iter()
+                .map(|ep| instance(ep, InstanceHealthStatus::Healthy))
+                .collect(),
+        );
+
+        // Every new instance must enter the proof pipeline.
+        wait_for(
+            "all proof tasks spawned despite existing in-flight tasks",
+            || harness.proof.in_flight() == final_count,
+        )
+        .await;
+        let added = final_count - initial_count;
+        assert_eq!(
+            harness.proof.call_count() - initial_call_count,
+            added,
+            "newly-discovered instances must each have generated a proof"
+        );
+
+        // Release everything and let them register.
+        harness.proof.release_all();
+        wait_for(
+            "every instance registered",
+            || count_register_calls(&harness.tx.sent_calldata()) == final_count,
+        )
+        .await;
+
+        harness.shutdown(run_handle).await;
+    }
+
+    /// Reasons a healthy-looking input still produces no proof and no
+    /// registration tx, used to parametrize
+    /// [`run_does_not_register_when`].
+    #[derive(Debug, Clone, Copy)]
+    enum NoRegisterReason {
+        /// Instance is `Draining` — `should_register()` is `false`.
+        InstanceDraining,
+        /// Instance is `Unhealthy` with no recent launch time —
+        /// `should_register()` is `false` and the unhealthy-grace
+        /// window doesn't apply.
+        InstanceUnhealthy,
+        /// Instance is `Healthy` but the derived signer is already on
+        /// the on-chain registry, so `try_register` short-circuits in
+        /// `is_registered()`.
+        SignerAlreadyRegistered,
+    }
+
+    /// Builds the (instance-list, registry) pair for each
+    /// [`NoRegisterReason`] case.
+    fn build_no_register_inputs(reason: NoRegisterReason) -> (Vec<ProverInstance>, MockRegistry) {
+        match reason {
+            NoRegisterReason::InstanceDraining => (
+                vec![instance(EP1, InstanceHealthStatus::Draining)],
+                empty_registry(),
+            ),
+            NoRegisterReason::InstanceUnhealthy => (
+                vec![instance(EP1, InstanceHealthStatus::Unhealthy)],
+                empty_registry(),
+            ),
+            NoRegisterReason::SignerAlreadyRegistered => {
+                let signer =
+                    ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0))
+                        .unwrap();
+                (
+                    vec![instance(EP1, InstanceHealthStatus::Healthy)],
+                    MockRegistry::all_registered(vec![signer]),
+                )
+            }
+        }
+    }
+
+    #[rstest]
+    #[case::instance_draining(NoRegisterReason::InstanceDraining)]
+    #[case::instance_unhealthy_no_launch_time(NoRegisterReason::InstanceUnhealthy)]
+    #[case::signer_already_registered(NoRegisterReason::SignerAlreadyRegistered)]
+    #[tokio::test]
+    async fn run_does_not_register_when(#[case] reason: NoRegisterReason) {
+        // For every reason listed above, the pipeline must observe the
+        // instance (otherwise this test would pass trivially with a
+        // broken discovery loop) and then choose not to spawn a proof
+        // / not to submit a registration. The two `assert_eq!(0, …)`s
+        // are the same invariant — only the *reason* the input failed
+        // to register differs.
+        let (initial_instances, registry) = build_no_register_inputs(reason);
+        let harness = GatedRunHarness::new(initial_instances, &[(EP1, &HARDHAT_KEY_0)], registry);
 
         let run_handle = harness.spawn_run();
 
         // Let multiple cycles elapse so we can be confident the loop
-        // observed the instance and chose not to spawn for it.
+        // observed the instance and chose not to register.
         tokio::time::sleep(GATED_POLL_INTERVAL * MIN_CYCLES_IN_OBSERVATION_WINDOW as u32).await;
 
         assert_eq!(
             harness.proof.call_count(),
             0,
-            "generate_proof must not be called for non-registerable instance"
+            "generate_proof must not be called for reason: {reason:?}"
         );
         assert_eq!(
             count_register_calls(&harness.tx.sent_calldata()),
             0,
-            "no registration tx must be submitted"
+            "no registration tx must be submitted for reason: {reason:?}"
         );
 
-        wait_for_run_to_stop(&harness, run_handle).await;
-    }
-
-    #[tokio::test]
-    async fn run_does_not_generate_proof_when_signer_already_registered() {
-        // Pre-registered signer + healthy instance: the proof task is
-        // spawned, but try_register short-circuits in is_registered() and
-        // never invokes generate_proof.
-        let signer = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0))
-            .unwrap();
-        let initial = vec![instance(EP1, InstanceHealthStatus::Healthy)];
-        let keys: &[(&str, &[u8; 32])] = &[(EP1, &HARDHAT_KEY_0)];
-        let harness =
-            GatedRunHarness::new(initial, keys, MockRegistry::all_registered(vec![signer]));
-
-        let run_handle = harness.spawn_run();
-
-        // Let at least one cycle complete.
-        tokio::time::sleep(GATED_POLL_INTERVAL * MIN_CYCLES_IN_OBSERVATION_WINDOW as u32).await;
-
-        assert_eq!(
-            harness.proof.call_count(),
-            0,
-            "is_registered short-circuits before generate_proof"
-        );
-        assert_eq!(
-            count_register_calls(&harness.tx.sent_calldata()),
-            0,
-            "no registration tx must be submitted for already-registered signer"
-        );
-
-        wait_for_run_to_stop(&harness, run_handle).await;
+        harness.shutdown(run_handle).await;
     }
 
     #[tokio::test]
@@ -4188,11 +4320,8 @@ mod tests {
         // every on-chain signer is an orphan. ok_to_dereg is true
         // when total_count == 0, so the orphan pass fires and
         // deregisters ORPHAN_A.
-        let harness = GatedRunHarness::new(
-            vec![],
-            &[],
-            MockRegistry::with_signers(vec![ORPHAN_A]),
-        );
+        let harness =
+            GatedRunHarness::new(vec![], &[], MockRegistry::with_signers(vec![ORPHAN_A]));
 
         let run_handle = harness.spawn_run();
 
@@ -4202,7 +4331,7 @@ mod tests {
         )
         .await;
 
-        wait_for_run_to_stop(&harness, run_handle).await;
+        harness.shutdown(run_handle).await;
 
         assert_eq!(harness.proof.call_count(), 0, "no proofs needed for orphan-only cycle");
     }
@@ -4213,16 +4342,14 @@ mod tests {
         // parked in the gate, the shutdown path must cancel + abort
         // the JoinSet and the task must terminate cleanly (Ok via the
         // signer_cancel select! branch).
-        let initial = vec![instance(EP1, InstanceHealthStatus::Healthy)];
-        let keys: &[(&str, &[u8; 32])] = &[(EP1, &HARDHAT_KEY_0)];
-        let harness = GatedRunHarness::new(initial, keys, empty_registry());
+        let harness = single_healthy_harness();
 
         let run_handle = harness.spawn_run();
 
         wait_for("EP1 proof parked", || harness.proof.in_flight() == 1).await;
 
         // Don't release the gate — let shutdown handle the cleanup.
-        wait_for_run_to_stop(&harness, run_handle).await;
+        harness.shutdown(run_handle).await;
 
         let sent = harness.tx.sent_calldata();
         assert_eq!(count_register_calls(&sent), 0, "no registration submitted at shutdown");
