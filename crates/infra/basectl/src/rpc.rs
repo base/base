@@ -901,7 +901,7 @@ where
     }
     let total = nodes.len();
 
-    let results: Vec<(String, anyhow::Result<()>)> = stream::iter(nodes.into_iter())
+    let results: Vec<(String, anyhow::Result<()>)> = stream::iter(nodes)
         .map(|node| {
             let call = call.clone();
             async move {

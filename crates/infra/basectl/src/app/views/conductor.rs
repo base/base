@@ -1383,8 +1383,17 @@ fn render_pause_all_banner(
     let paused = nodes.iter().filter(|n| n.conductor_paused == Some(true)).count();
     let known = nodes.iter().filter(|n| n.conductor_paused.is_some()).count();
 
+    let active = known - paused;
     let (status_label, status_color) = if known == 0 {
         ("control loop: status unknown".to_string(), Color::DarkGray)
+    } else if known < total {
+        (
+            format!(
+                "control loop: PARTIAL REPORT ({paused} paused, {active} active, {} unknown of {total})",
+                total - known
+            ),
+            Color::DarkGray,
+        )
     } else if paused == total {
         (format!("control loop: ALL PAUSED ({paused}/{total})"), Color::Cyan)
     } else if paused == 0 {
