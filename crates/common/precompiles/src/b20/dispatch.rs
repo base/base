@@ -8,7 +8,7 @@ use super::{
     abi::{IB20, IB20::IB20Calls as C},
 };
 use crate::{
-    ActivationRegistryStorage, B20TokenRole, Burnable, Configurable, Mintable, Pausable,
+    ActivationRegistryStorage, B20TokenRole, Burnable, Configurable, ActivationFeature, Mintable, Pausable,
     Permittable, Policy, RoleManaged, TokenAccounting, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
@@ -46,7 +46,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         privileged: bool,
     ) -> base_precompile_storage::Result<Bytes> {
         ActivationRegistryStorage::new(ctx)
-            .ensure_activated(ActivationRegistryStorage::B20_TOKEN)?;
+            .ensure_activated(ActivationFeature::B20Token.id())?;
 
         let call = decode_precompile_call!(calldata, IB20::IB20Calls);
 
