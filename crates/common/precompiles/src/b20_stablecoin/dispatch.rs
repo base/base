@@ -1,4 +1,10 @@
 //! ABI dispatch for the stablecoin B-20 variant.
+//!
+//! `IB20Stablecoin is IB20` expresses the inheritance relationship in the
+//! `sol!` macro, but alloy does not merge the parent's selectors into the
+//! child's `Calls` enum. The dispatch therefore uses two inline steps:
+//! stablecoin-only selectors first, then the full `IB20` selector set —
+//! all logic is self-contained with no delegation to `B20Token::inner`.
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolInterface, SolValue};
@@ -11,7 +17,7 @@ use crate::{
 };
 use super::{
     B20StablecoinToken,
-    abi::{IB20Stablecoin, IB20Stablecoin::IB20StablecoinCalls as C},
+    abi::{IB20, IB20Stablecoin, IB20Stablecoin::IB20StablecoinCalls as SC},
     accounting::StablecoinAccounting,
 };
 
@@ -31,20 +37,28 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             .ensure_activated(ActivationRegistryStorage::B20_TOKEN)?;
 
         if !self.accounting.is_initialized()? {
-            return Err(BasePrecompileError::revert(IB20Stablecoin::Uninitialized {}));
+            return Err(BasePrecompileError::revert(IB20::Uninitialized {}));
         }
 
         if calldata.len() < 4 {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
         }
         let selector: [u8; 4] = calldata[..4].try_into().unwrap();
-        let call = IB20Stablecoin::IB20StablecoinCalls::abi_decode(calldata)
+
+        // Step 1: stablecoin-only selectors (currency()).
+        if let Ok(call) = IB20Stablecoin::IB20StablecoinCalls::abi_decode(calldata) {
+            let encoded: Bytes = match call {
+                SC::currency(_) => self.accounting.currency()?.abi_encode().into(),
+            };
+            return Ok(encoded);
+        }
+
+        // Step 2: all inherited IB20 selectors, handled inline.
+        use IB20::IB20Calls as C;
+        let call = IB20::IB20Calls::abi_decode(calldata)
             .map_err(|_| BasePrecompileError::UnknownFunctionSelector(selector))?;
 
         let encoded: Bytes = match call {
-            // --- Stablecoin-specific ---
-            C::currency(_) => self.accounting.currency()?.abi_encode().into(),
-
             // --- Pure reads: direct to accounting ---
             C::name(_) => self.accounting.name()?.abi_encode().into(),
             C::symbol(_) => self.accounting.symbol()?.abi_encode().into(),
