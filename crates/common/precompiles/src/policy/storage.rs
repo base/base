@@ -365,6 +365,11 @@ impl PolicyRegistryStorage<'_> {
     }
 
     /// Returns `true` if `policy_id` refers to an existing policy.
+    ///
+    /// Before `write_builtins` has run, built-in IDs return `false` here. That is
+    /// intentional: an unwritten slot (value 0) and `ALWAYS_ALLOW_ID = 0` are the same
+    /// thing in storage, so there is nothing to distinguish "exists" from "not written yet."
+    /// `is_authorized` handles this case with an explicit fast-path.
     pub fn policy_exists(&self, policy_id: u64) -> Result<bool> {
         Self::require_well_formed(policy_id)?;
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
@@ -495,7 +500,7 @@ mod tests {
 
     #[test]
     fn packed_policy_zero_admin_is_non_zero() {
-        // Exists flag at bit 160 keeps the word non-zero even with zero admin.
+        // Exists flag at bit 255 keeps the word non-zero even with zero admin.
         let p = PackedPolicy::new(Address::ZERO);
         assert!(p.exists());
         assert_eq!(p.admin(), Address::ZERO);
