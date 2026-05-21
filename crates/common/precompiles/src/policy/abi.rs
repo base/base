@@ -1,5 +1,4 @@
 use alloy_sol_types::sol;
-use base_precompile_storage::Result;
 
 sol! {
     #[derive(Debug, PartialEq, Eq)]
@@ -45,7 +44,7 @@ sol! {
 
 impl IPolicyRegistry::PolicyType {
     /// Returns the raw `u8` discriminant for this policy type.
-    pub fn as_discriminant(self) -> Result<u8> {
-        Ok(self as u8)
+    pub fn as_discriminant(self) -> u8 {
+        self as u8
     }
 }

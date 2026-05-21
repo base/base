@@ -171,7 +171,7 @@ impl PolicyRegistryStorage<'_> {
     /// Creates a new ALLOWLIST or BLOCKLIST policy, returning its encoded ID.
     pub fn create_policy(&mut self, admin: Address, policy_type: PolicyType) -> Result<u64> {
         self.require_write()?;
-        let policy_type_u8 = policy_type.as_discriminant()?;
+        let policy_type_u8 = policy_type.as_discriminant();
         if admin == Address::ZERO {
             return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
         }
@@ -215,7 +215,7 @@ impl PolicyRegistryStorage<'_> {
         accounts: Vec<Address>,
     ) -> Result<u64> {
         let policy_id = self.create_policy(admin, policy_type)?;
-        let policy_type_u8 = policy_type.as_discriminant()?;
+        let policy_type_u8 = policy_type.as_discriminant();
         let caller = self.storage.caller();
         for account in &accounts {
             self.members.at_mut(&policy_id).at_mut(account).write(true)?;
