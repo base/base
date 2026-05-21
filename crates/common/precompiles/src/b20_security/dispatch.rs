@@ -6,7 +6,7 @@
 //! The `IB20` match block still includes those arms (Rust requires exhaustiveness)
 //! and routes them to the same security implementation as a safety net.
 
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
