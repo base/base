@@ -885,6 +885,14 @@ where
         // violate the `PendingTask` "cancelled task always returns `Ok(())`"
         // contract and bump `processing_errors_total` for a clean cancel).
         // The `Err(_) if signer_cancel.is_cancelled()` arm closes that gap.
+        //
+        // Invariant: the token forwarded to the provider MUST be the
+        // same `signer_cancel` the outer arm polls — the guard observes
+        // provider-side cancel-fires through that shared state. A future
+        // refactor that passed a child token to the provider (e.g. for
+        // per-provider tighter scoping) would silently break this guard
+        // because `signer_cancel.is_cancelled()` would stay `false` when
+        // only the child fired.
         let proof = tokio::select! {
             biased;
             () = signer_cancel.cancelled() => {
@@ -1344,16 +1352,28 @@ where
     ///    `PendingTask::cancel` token fires; the task itself observes it
     ///    at its next checkpoint (proof generation, retry sleep, pre-send)
     ///    and exits with `Ok(())`. The entry stays in `pending` until the
-    ///    join arrives (handled by [`Self::reap_finished_tasks`]) so the
-    ///    same signer is not re-spawned in the same cycle.
+    ///    join arrives (handled by [`Self::reap_finished_tasks`]).
     /// 2. **Spawn pass** — any registerable `(instance, signer)` not
-    ///    currently in-flight is spawned into the `JoinSet`. Each spawn
-    ///    creates a fresh child token from [`DriverConfig::cancel`] so
-    ///    the parent shutdown still propagates.
+    ///    currently in-flight (excluding already-cancelled tasks awaiting
+    ///    reap) is spawned into the `JoinSet`. Each spawn creates a fresh
+    ///    child token from [`DriverConfig::cancel`] so the parent
+    ///    shutdown still propagates.
     ///
-    /// Transient task failures are not re-spawned this cycle: a tracking
-    /// entry remains until reaped, at which point the next cycle will
-    /// observe the empty in-flight set and respawn naturally if the
+    /// Treating cancelled-but-not-reaped tasks as "not in-flight" enables
+    /// single-cycle convergence for the vanish-then-reappear case (e.g.
+    /// rolling deployments) where a signer drops out of `registerable`
+    /// one cycle and returns the next: without this filter the fresh
+    /// task would be deferred for an extra cycle until reap clears the
+    /// stale entry. Safety relies on
+    /// [`Self::in_flight_registrations`] (the `try_register`-layer
+    /// process-wide `Mutex<HashSet<Address>>` dedupe) catching any
+    /// brief overlap between the old task winding down and the new task
+    /// entering `try_register` — the second arrival short-circuits with
+    /// a debug log and exits `Ok(())`.
+    ///
+    /// Transient task failures (non-cancel `Err`) are not re-spawned this
+    /// cycle: the entry remains until reaped, after which the next cycle
+    /// observes the empty in-flight set and respawns naturally if the
     /// signer is still registerable.
     fn reconcile_proof_tasks(
         self: &Arc<Self>,
@@ -1376,11 +1396,21 @@ where
             }
         }
 
-        // `in_flight` is updated as we spawn so a signer that appears in
-        // two registerable entries within the same cycle (misconfig /
-        // discovery glitch — two instances briefly backing the same
-        // enclave key) cannot spawn duplicate proof tasks.
-        let mut in_flight: HashSet<Address> = pending.values().map(|t| t.signer).collect();
+        // Build `in_flight` from only the still-live tasks so a signer
+        // that was cancelled in a previous cycle and has now reappeared
+        // in `registerable` can spawn a fresh task immediately rather
+        // than waiting two cycles (one to reap, one to respawn). The
+        // `try_register`-layer in-flight mutex catches any brief overlap
+        // between the winding-down old task and the new task. Updated
+        // as we spawn so a signer that appears in two registerable
+        // entries within the same cycle (misconfig / discovery glitch —
+        // two instances briefly backing the same enclave key) cannot
+        // spawn duplicate proof tasks.
+        let mut in_flight: HashSet<Address> = pending
+            .values()
+            .filter(|t| !t.cancel.is_cancelled())
+            .map(|t| t.signer)
+            .collect();
 
         // Spawn-pass: any wanted signer not currently in-flight.
         for entry in &resolution.registerable {
@@ -1390,9 +1420,14 @@ where
             let signer_cancel = self.config.cancel.child_token();
             let driver = Arc::clone(self);
             let instance_owned = entry.instance.clone();
+            // Clone `instance_id` from `instance_owned` (rather than
+            // re-reaching into `entry.instance`) to make the origin
+            // explicit — the string is allocated twice either way
+            // because `instance_owned` is moved into the spawned future
+            // while `PendingTask` outlives the move.
+            let instance_id = instance_owned.instance_id.clone();
             let attestation = entry.attestation.clone();
             let task_cancel = signer_cancel.clone();
-            let instance_id = entry.instance.instance_id.clone();
             let signer = entry.signer;
             let enclave_index = entry.enclave_index;
 
@@ -4443,6 +4478,70 @@ mod tests {
         for task in pending.values() {
             assert!(!task.cancel.is_cancelled(), "kept task must not be cancelled");
         }
+
+        drain_test_tasks(&mut tasks, &mut pending).await;
+    }
+
+    /// Vanish-then-reappear: a signer cancelled in cycle N (because it
+    /// dropped from `registerable`) and then re-added in cycle N+1 must
+    /// spawn a fresh task in N+1 — the cancelled entry sitting in
+    /// `pending` awaiting reap must not block the respawn. Exercises
+    /// the `filter(|t| !t.cancel.is_cancelled())` on the `in_flight`
+    /// build, which is what enables single-cycle rolling-deploy
+    /// convergence instead of a 2-cycle (~60s at 30s poll) latency.
+    #[tokio::test]
+    async fn reconcile_proof_tasks_respawns_after_vanish_and_reappear() {
+        let harness = single_healthy_harness();
+        let mut tasks: JoinSet<Result<()>> = JoinSet::new();
+        let mut pending: HashMap<task::Id, PendingTask> = HashMap::new();
+
+        let signer =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+
+        // Cycle N: seed pending with a placeholder task for the signer.
+        // The placeholder parks on its cancel token so cooperative
+        // cancellation is observable without the task self-resolving.
+        let stale_cancel = CancellationToken::new();
+        let stale_cancel_inner = stale_cancel.clone();
+        let stale_handle = tasks.spawn(async move {
+            stale_cancel_inner.cancelled().await;
+            Ok(())
+        });
+        let stale_id = stale_handle.id();
+        pending.insert(
+            stale_id,
+            PendingTask {
+                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
+                signer,
+                cancel: stale_cancel.clone(),
+            },
+        );
+
+        // Cycle N+1: signer absent from resolution → cancel-pass fires
+        // but does not reap, so the stale entry persists in `pending`.
+        let empty = dr_from_kept(&[]);
+        harness.driver.reconcile_proof_tasks(&empty, &mut tasks, &mut pending);
+        assert!(stale_cancel.is_cancelled(), "stale task must be cancelled by reconcile");
+        assert!(pending.contains_key(&stale_id), "stale entry stays in pending until reaped");
+        assert_eq!(pending.len(), 1, "no fresh spawn yet (signer not registerable this cycle)");
+
+        // Cycle N+2 (BEFORE the stale entry is reaped): signer reappears
+        // → fresh spawn must happen this cycle, not deferred to N+3.
+        let resurrected = dr_from_kept(&[(EP1, &HARDHAT_KEY_0)]);
+        harness.driver.reconcile_proof_tasks(&resurrected, &mut tasks, &mut pending);
+
+        assert!(pending.contains_key(&stale_id), "stale entry still pending until reaped");
+        let fresh: Vec<_> = pending
+            .iter()
+            .filter(|(id, t)| **id != stale_id && t.signer == signer)
+            .collect();
+        assert_eq!(
+            fresh.len(),
+            1,
+            "a fresh task for the resurrected signer must spawn alongside the stale entry",
+        );
+        let (_, fresh_task) = fresh[0];
+        assert!(!fresh_task.cancel.is_cancelled(), "fresh task carries a live cancel token");
 
         drain_test_tasks(&mut tasks, &mut pending).await;
     }
