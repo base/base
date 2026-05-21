@@ -6,6 +6,52 @@ use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
 
 use super::{IPolicyRegistry, IPolicyRegistry::PolicyType};
 
+/// A packed policy storage word.
+///
+/// Layout: `[255:168]` reserved (zero) | `[167:8]` admin (160 bits) | `[7:0]` `PolicyType`.
+///
+/// The inner value is always non-zero for valid custom policies because ALLOWLIST = 2 and
+/// BLOCKLIST = 3 are both non-zero. This means the zero value reliably signals "never created",
+/// even after `renounce_admin` sets admin to `Address::ZERO` (the type byte is preserved).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PackedPolicy(U256);
+
+impl PackedPolicy {
+    /// Packs `admin` and `policy_type` discriminant into a storage word.
+    pub fn new(admin: Address, policy_type: u8) -> Self {
+        let mut word = [0u8; 32];
+        word[12..32].copy_from_slice(admin.as_slice());
+        Self((U256::from_be_slice(&word) << 8) | U256::from(policy_type))
+    }
+
+    /// Returns the admin address stored in `[167:8]`.
+    pub fn admin(self) -> Address {
+        let bytes = (self.0 >> 8usize).to_be_bytes::<32>();
+        Address::from_slice(&bytes[12..])
+    }
+
+    /// Returns the raw `PolicyType` discriminant stored in `[7:0]`.
+    pub const fn policy_type_u8(self) -> u8 {
+        self.0.to_be_bytes::<32>()[31]
+    }
+
+    /// Returns `true` if the word is zero (policy was never created).
+    pub fn is_zero(self) -> bool {
+        self.0.is_zero()
+    }
+
+    /// Returns the raw `U256` value for writing to storage.
+    pub const fn into_u256(self) -> U256 {
+        self.0
+    }
+}
+
+impl From<U256> for PackedPolicy {
+    fn from(v: U256) -> Self {
+        Self(v)
+    }
+}
+
 /// Storage layout for the `PolicyRegistry` precompile.
 ///
 /// Slots are append-only — never reorder across hardforks.
@@ -36,28 +82,6 @@ impl PolicyRegistryStorage<'_> {
     /// Maximum number of accounts accepted in any single membership call.
     pub const MAX_ACCOUNTS: usize = 64;
 
-    /// Packs `admin` and `policy_type` into a single U256 storage word.
-    ///
-    /// Layout: `[255:168]` reserved (zero) | `[167:8]` admin (160 bits) | `[7:0]` `PolicyType`.
-    ///
-    /// Invariant: the result is always non-zero because ALLOWLIST = 2 and BLOCKLIST = 3 are
-    /// both non-zero. This means `policies[id] == 0` reliably signals "never created", even
-    /// after `renounce_admin` sets admin to `Address::ZERO` (the type byte is preserved).
-    fn encode_packed(admin: Address, policy_type: u8) -> U256 {
-        let mut word = [0u8; 32];
-        word[12..32].copy_from_slice(admin.as_slice());
-        (U256::from_be_slice(&word) << 8) | U256::from(policy_type)
-    }
-
-    fn decode_admin(packed: U256) -> Address {
-        let bytes = (packed >> 8usize).to_be_bytes::<32>();
-        Address::from_slice(&bytes[12..])
-    }
-
-    const fn decode_type(packed: U256) -> u8 {
-        packed.to_be_bytes::<32>()[31]
-    }
-
     fn require_write(&self) -> Result<()> {
         if self.storage.is_static() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::StaticCallNotAllowed {}));
@@ -65,9 +89,9 @@ impl PolicyRegistryStorage<'_> {
         Ok(())
     }
 
-    fn require_custom(&self, policy_id: u64) -> Result<U256> {
-        let packed = self.policies.at(&policy_id).read()?;
-        if packed == U256::ZERO {
+    fn require_custom(&self, policy_id: u64) -> Result<PackedPolicy> {
+        let packed = PackedPolicy::from(self.policies.at(&policy_id).read()?);
+        if packed.is_zero() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
         Ok(packed)
@@ -75,11 +99,11 @@ impl PolicyRegistryStorage<'_> {
 
     /// Validates the policy exists and the caller is its current admin.
     /// Returns `(packed, caller)` on success.
-    fn require_admin(&self, policy_id: u64) -> Result<(U256, Address)> {
+    fn require_admin(&self, policy_id: u64) -> Result<(PackedPolicy, Address)> {
         self.require_write()?;
         let packed = self.require_custom(policy_id)?;
         let caller = self.storage.caller();
-        if Self::decode_admin(packed) != caller {
+        if packed.admin() != caller {
             return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
         }
         Ok((packed, caller))
@@ -100,7 +124,7 @@ impl PolicyRegistryStorage<'_> {
             .ok_or_else(|| BasePrecompileError::revert(IPolicyRegistry::CounterExhausted {}))?;
         self.next_counter.write(next)?;
         let policy_id = (policy_type_u8 as u64) << 56 | counter;
-        let packed = Self::encode_packed(admin, policy_type_u8);
+        let packed = PackedPolicy::new(admin, policy_type_u8).into_u256();
         self.policies.at_mut(&policy_id).write(packed)?;
 
         let caller = self.storage.caller();
@@ -184,9 +208,11 @@ impl PolicyRegistryStorage<'_> {
         if pending != caller {
             return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
         }
-        let previous_admin = Self::decode_admin(packed);
-        let policy_type = Self::decode_type(packed);
-        self.policies.at_mut(&policy_id).write(Self::encode_packed(caller, policy_type))?;
+        let previous_admin = packed.admin();
+        let policy_type = packed.policy_type_u8();
+        self.policies
+            .at_mut(&policy_id)
+            .write(PackedPolicy::new(caller, policy_type).into_u256())?;
         self.pending_admins.at_mut(&policy_id).delete()?;
         self.emit_event(IPolicyRegistry::PolicyAdminUpdated {
             policyId: policy_id,
@@ -199,8 +225,10 @@ impl PolicyRegistryStorage<'_> {
     /// Clears the admin of `policy_id`, leaving it permanently un-administered.
     pub fn renounce_admin(&mut self, policy_id: u64) -> Result<()> {
         let (packed, caller) = self.require_admin(policy_id)?;
-        let policy_type = Self::decode_type(packed);
-        self.policies.at_mut(&policy_id).write(Self::encode_packed(Address::ZERO, policy_type))?;
+        let policy_type = packed.policy_type_u8();
+        self.policies
+            .at_mut(&policy_id)
+            .write(PackedPolicy::new(Address::ZERO, policy_type).into_u256())?;
         self.pending_admins.at_mut(&policy_id).delete()?;
         self.emit_event(IPolicyRegistry::PolicyAdminUpdated {
             policyId: policy_id,
@@ -253,7 +281,7 @@ impl PolicyRegistryStorage<'_> {
             return Err(BasePrecompileError::revert(IPolicyRegistry::BatchTooLarge {}));
         }
         let (packed, caller) = self.require_admin(policy_id)?;
-        if Self::decode_type(packed) != expected_type {
+        if packed.policy_type_u8() != expected_type {
             return Err(BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
         }
         for account in accounts {
@@ -274,12 +302,12 @@ impl PolicyRegistryStorage<'_> {
         if policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(false);
         }
-        let packed = self.policies.at(&policy_id).read()?;
-        if packed == U256::ZERO {
+        let packed = PackedPolicy::from(self.policies.at(&policy_id).read()?);
+        if packed.is_zero() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
         let member = self.members.at(&policy_id).at(&account).read()?;
-        match Self::decode_type(packed) {
+        match packed.policy_type_u8() {
             Self::ALLOWLIST_TYPE => Ok(member),
             Self::BLOCKLIST_TYPE => Ok(!member),
             _ => Err(BasePrecompileError::enum_conversion_error()),
@@ -301,8 +329,8 @@ impl PolicyRegistryStorage<'_> {
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(true);
         }
-        let packed = self.policies.at(&policy_id).read()?;
-        Ok(packed != U256::ZERO)
+        let packed = PackedPolicy::from(self.policies.at(&policy_id).read()?);
+        Ok(!packed.is_zero())
     }
 
     /// Returns the `PolicyType` of `policy_id`, including built-in IDs.
@@ -313,11 +341,11 @@ impl PolicyRegistryStorage<'_> {
         if policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(PolicyType::ALWAYS_BLOCK);
         }
-        let packed = self.policies.at(&policy_id).read()?;
-        if packed == U256::ZERO {
+        let packed = PackedPolicy::from(self.policies.at(&policy_id).read()?);
+        if packed.is_zero() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
-        PolicyType::try_from(Self::decode_type(packed))
+        PolicyType::try_from(packed.policy_type_u8())
             .map_err(|_| BasePrecompileError::enum_conversion_error())
     }
 
@@ -326,11 +354,11 @@ impl PolicyRegistryStorage<'_> {
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(Address::ZERO);
         }
-        let packed = self.policies.at(&policy_id).read()?;
-        if packed == U256::ZERO {
+        let packed = PackedPolicy::from(self.policies.at(&policy_id).read()?);
+        if packed.is_zero() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
-        Ok(Self::decode_admin(packed))
+        Ok(packed.admin())
     }
 
     /// Returns the pending admin staged for `policy_id`, or `address(0)` if none.
@@ -411,6 +439,54 @@ impl crate::PolicyRegistry for PolicyRegistryStorage<'_> {
 
     fn pending_policy_admin(&self, policy_id: u64) -> Result<Address> {
         PolicyRegistryStorage::pending_policy_admin(self, policy_id)
+    }
+}
+
+#[cfg(test)]
+mod packed_policy_tests {
+    use alloy_primitives::{Address, U256, address};
+
+    use super::PackedPolicy;
+
+    const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
+
+    #[test]
+    fn new_roundtrips_admin_and_type() {
+        let p = PackedPolicy::new(ADMIN, 2);
+        assert_eq!(p.admin(), ADMIN);
+        assert_eq!(p.policy_type_u8(), 2);
+        assert!(!p.is_zero());
+    }
+
+    #[test]
+    fn zero_signals_never_created() {
+        let p = PackedPolicy::from(U256::ZERO);
+        assert!(p.is_zero());
+    }
+
+    #[test]
+    fn renounced_admin_is_non_zero() {
+        // After renounce_admin, admin = Address::ZERO but type byte preserved (2 or 3).
+        let p = PackedPolicy::new(Address::ZERO, 2);
+        assert!(!p.is_zero());
+        assert_eq!(p.admin(), Address::ZERO);
+        assert_eq!(p.policy_type_u8(), 2);
+    }
+
+    #[test]
+    fn into_u256_from_u256_roundtrip() {
+        let p = PackedPolicy::new(ADMIN, 3);
+        let raw = p.into_u256();
+        let p2 = PackedPolicy::from(raw);
+        assert_eq!(p, p2);
+        assert_eq!(p2.admin(), ADMIN);
+        assert_eq!(p2.policy_type_u8(), 3);
+    }
+
+    #[test]
+    fn different_admins_produce_different_words() {
+        let other = address!("0x2000000000000000000000000000000000000002");
+        assert_ne!(PackedPolicy::new(ADMIN, 2), PackedPolicy::new(other, 2));
     }
 }
 
