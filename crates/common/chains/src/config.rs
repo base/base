@@ -362,7 +362,7 @@ const MAINNET: ChainConfig = ChainConfig {
     protocol_versions_address: address!("8062abc286f5e7d9428a0ccb9abd71e50d93b935"),
 
     unsafe_block_signer: Some(address!("Af6E19BE0F9cE7f8afd49a1824851023A8249e8a")),
-    activation_admin_address: None,
+    activation_admin_address: Some(address!("331C9d37BbcebBC9dfAf98FBE3C5B8A39Dd6E771")),
 
     max_gas_limit: 105_000_000,
     prune_delete_limit: 20_000,
@@ -435,7 +435,7 @@ const SEPOLIA: ChainConfig = ChainConfig {
     protocol_versions_address: address!("79add5713b383daa0a138d3c4780c7a1804a8090"),
 
     unsafe_block_signer: Some(address!("b830b99c95Ea32300039624Cb567d324D4b1D83C")),
-    activation_admin_address: None,
+    activation_admin_address: Some(address!("5Be7Dd3678e999D5F7bC508c413db239F7D4Ac59")),
 
     max_gas_limit: 45_000_000,
     prune_delete_limit: 10_000,
