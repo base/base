@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     ActivationRegistryStorage, Burnable, Configurable, Mintable, Pausable, Permittable, Policy,
-    Redeemable, TokenAccounting, Transferable,
+    TokenAccounting, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
@@ -35,6 +35,16 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
+        self.inner_with_privilege(ctx, calldata, false)
+    }
+
+    /// Decodes calldata and executes it with optional factory-init privilege.
+    pub fn inner_with_privilege(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        privileged: bool,
+    ) -> base_precompile_storage::Result<Bytes> {
         ActivationRegistryStorage::new(ctx)
             .ensure_activated(ActivationRegistryStorage::B20_TOKEN)?;
 
@@ -46,19 +56,34 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
             C::symbol(_) => self.accounting.symbol()?.abi_encode().into(),
             C::decimals(_) => U256::from(self.accounting.decimals()?).abi_encode().into(),
             C::totalSupply(_) => self.accounting.total_supply()?.abi_encode().into(),
+            C::minimumRedeemable(_) => self.accounting.minimum_redeemable()?.abi_encode().into(),
+            C::currency(_) => self.accounting.currency()?.abi_encode().into(),
+            C::securityIdentifier(c) => {
+                self.accounting.security_identifier(&c.identifierType)?.abi_encode().into()
+            }
             C::balanceOf(c) => self.accounting.balance_of(c.account)?.abi_encode().into(),
             C::allowance(c) => self.accounting.allowance(c.owner, c.spender)?.abi_encode().into(),
             C::supplyCap(_) => self.accounting.supply_cap()?.abi_encode().into(),
-            C::paused(_) => self.accounting.paused()?.abi_encode().into(),
             C::nonces(c) => self.accounting.nonce(c.owner)?.abi_encode().into(),
-            C::minimumRedeemable(_) => self.accounting.minimum_redeemable()?.abi_encode().into(),
             C::contractURI(_) => self.accounting.contract_uri()?.abi_encode().into(),
-            C::capabilities(_) => self.accounting.capabilities()?.abi_encode().into(),
+            C::DEFAULT_ADMIN_ROLE(_) => Self::default_admin_role().abi_encode().into(),
+            C::MINT_ROLE(_) => Self::mint_role().abi_encode().into(),
+            C::BURN_ROLE(_) => Self::burn_role().abi_encode().into(),
+            C::BURN_BLOCKED_ROLE(_) => Self::burn_blocked_role().abi_encode().into(),
+            C::PAUSE_ROLE(_) => Self::pause_role().abi_encode().into(),
+            C::UNPAUSE_ROLE(_) => Self::unpause_role().abi_encode().into(),
+            C::METADATA_ROLE(_) => Self::metadata_role().abi_encode().into(),
+            C::TRANSFER_SENDER_POLICY(_) => Self::transfer_sender_policy().abi_encode().into(),
+            C::TRANSFER_RECEIVER_POLICY(_) => Self::transfer_receiver_policy().abi_encode().into(),
+            C::TRANSFER_EXECUTOR_POLICY(_) => Self::transfer_executor_policy().abi_encode().into(),
+            C::MINT_RECEIVER_POLICY(_) => Self::mint_receiver_policy().abi_encode().into(),
+            C::hasRole(c) => self.has_role(c.role, c.account)?.abi_encode().into(),
+            C::getRoleAdmin(c) => self.role_admin(c.role)?.abi_encode().into(),
+            C::pausedFeatures(_) => self.paused_features()?.abi_encode().into(),
+            C::policyId(c) => self.policy_id(c.policyType)?.abi_encode().into(),
 
             // --- Domain reads (light logic) ---
-            C::isPaused(c) => self.is_paused(c.vector)?.abi_encode().into(),
-            C::isPausable(_) => self.is_pausable()?.abi_encode().into(),
-            C::isCapMutable(_) => self.is_cap_mutable()?.abi_encode().into(),
+            C::isPaused(c) => self.is_paused(c.feature)?.abi_encode().into(),
             C::DOMAIN_SEPARATOR(_) => self.domain_separator(ctx.chain_id())?.abi_encode().into(),
             C::eip712Domain(_) => self.eip712_domain(ctx.chain_id())?.abi_encode().into(),
 
@@ -91,74 +116,98 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
 
             // --- Mint ---
             C::mint(c) => {
-                self.mint(c.to, c.amount)?;
+                let caller = ctx.caller();
+                self.mint(caller, c.to, c.amount, privileged)?;
                 Bytes::new()
             }
             C::mintWithMemo(c) => {
-                self.mint_with_memo(c.to, c.amount, c.memo)?;
+                let caller = ctx.caller();
+                self.mint_with_memo(caller, c.to, c.amount, c.memo, privileged)?;
                 Bytes::new()
             }
 
             // --- Burn ---
             C::burn(c) => {
                 let caller = ctx.caller();
-                self.burn(caller, c.amount)?;
+                // Self-burn operations are never factory-privileged: during init the caller is the
+                // factory, not a token holder.
+                self.burn(caller, caller, c.amount, false)?;
                 Bytes::new()
             }
             C::burnWithMemo(c) => {
                 let caller = ctx.caller();
-                self.burn_with_memo(caller, c.amount, c.memo)?;
+                self.burn_with_memo(caller, caller, c.amount, c.memo, false)?;
                 Bytes::new()
             }
-
-            // --- Redeem ---
-            C::redeem(c) => {
+            C::burnBlocked(c) => {
                 let caller = ctx.caller();
-                self.redeem(caller, c.amount)?;
-                Bytes::new()
-            }
-            C::redeemWithMemo(c) => {
-                let caller = ctx.caller();
-                self.redeem_with_memo(caller, c.amount, c.memo)?;
-                Bytes::new()
-            }
-            C::setMinimumRedeemable(c) => {
-                let caller = ctx.caller();
-                Redeemable::set_minimum_redeemable(self, caller, c.newMinimum)?;
+                self.burn_blocked(caller, c.from, c.amount, privileged)?;
                 Bytes::new()
             }
 
             // --- Pause ---
             C::pause(c) => {
                 let caller = ctx.caller();
-                self.pause(caller, c.vectors)?;
+                self.pause(caller, c.features, privileged)?;
                 Bytes::new()
             }
-            C::unpause(_) => {
+            C::unpause(c) => {
                 let caller = ctx.caller();
-                self.unpause(caller)?;
+                self.unpause(caller, c.features, privileged)?;
                 Bytes::new()
             }
 
             // --- Admin ---
             C::setSupplyCap(c) => {
                 let caller = ctx.caller();
-                Configurable::set_supply_cap(self, caller, c.newSupplyCap)?;
+                Configurable::set_supply_cap(self, caller, c.newSupplyCap, privileged)?;
                 Bytes::new()
             }
             C::setName(c) => {
                 let caller = ctx.caller();
-                Configurable::set_name(self, caller, c.newName)?;
+                Configurable::set_name(self, caller, c.newName, privileged)?;
                 Bytes::new()
             }
             C::setSymbol(c) => {
                 let caller = ctx.caller();
-                Configurable::set_symbol(self, caller, c.newSymbol)?;
+                Configurable::set_symbol(self, caller, c.newSymbol, privileged)?;
                 Bytes::new()
             }
             C::setContractURI(c) => {
                 let caller = ctx.caller();
-                Configurable::set_contract_uri(self, caller, c.newURI)?;
+                Configurable::set_contract_uri(self, caller, c.newURI, privileged)?;
+                Bytes::new()
+            }
+            C::grantRole(c) => {
+                let caller = ctx.caller();
+                self.grant_role(caller, c.role, c.account, privileged)?;
+                Bytes::new()
+            }
+            C::revokeRole(c) => {
+                let caller = ctx.caller();
+                self.revoke_role(caller, c.role, c.account, privileged)?;
+                Bytes::new()
+            }
+            // Renounce operations are never factory-privileged: they are only meaningful for the
+            // role holder making the call after token creation.
+            C::renounceRole(c) => {
+                let caller = ctx.caller();
+                self.renounce_role(caller, c.role, c.callerConfirmation)?;
+                Bytes::new()
+            }
+            C::renounceLastAdmin(_) => {
+                let caller = ctx.caller();
+                self.renounce_last_admin(caller)?;
+                Bytes::new()
+            }
+            C::setRoleAdmin(c) => {
+                let caller = ctx.caller();
+                self.set_role_admin(caller, c.role, c.newAdminRole, privileged)?;
+                Bytes::new()
+            }
+            C::updatePolicy(c) => {
+                let caller = ctx.caller();
+                self.update_policy(caller, c.policyType, c.newPolicyId, privileged)?;
                 Bytes::new()
             }
 

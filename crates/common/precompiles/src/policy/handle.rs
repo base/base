@@ -35,6 +35,10 @@ impl Policy for PolicyHandle<'_> {
     fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
         self.inner.is_authorized(policy_id, account)
     }
+
+    fn policy_exists(&self, policy_id: u64) -> Result<bool> {
+        self.inner.policy_exists(policy_id)
+    }
 }
 
 impl PolicyRegistry for PolicyHandle<'_> {
@@ -83,10 +87,6 @@ impl PolicyRegistry for PolicyHandle<'_> {
 
     fn next_policy_id(&self, policy_type: PolicyType) -> Result<u64> {
         self.inner.next_policy_id(policy_type)
-    }
-
-    fn policy_exists(&self, policy_id: u64) -> Result<bool> {
-        self.inner.policy_exists(policy_id)
     }
 
     fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType> {

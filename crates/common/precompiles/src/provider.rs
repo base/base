@@ -528,11 +528,8 @@ mod tests {
     #[case::beryl(BaseUpgrade::Beryl, true)]
     fn install_routes_b20_precompiles_by_fork(#[case] spec: BaseUpgrade, #[case] expected: bool) {
         let precompiles = BasePrecompiles::new_with_spec(spec).install();
-        let (token, _) = TokenVariant::B20.compute_address(
-            Address::repeat_byte(0x11),
-            18,
-            B256::repeat_byte(0x22),
-        );
+        let (token, _) =
+            TokenVariant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
 
         assert_eq!(precompiles.get(&TokenFactoryStorage::ADDRESS).is_some(), expected);
         assert_eq!(precompiles.get(&token).is_some(), expected);

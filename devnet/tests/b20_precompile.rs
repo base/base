@@ -8,7 +8,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use base_common_network::Base;
 use base_common_precompiles::{
-    ActivationRegistryStorage, IB20, ITokenFactory, TokenFactoryStorage, TokenVariant,
+    ActivationRegistryStorage, B20TokenRole, IB20, ITokenFactory, TokenFactoryStorage, TokenVariant,
 };
 use devnet::{
     B20PrecompileClient,
@@ -16,7 +16,7 @@ use devnet::{
 };
 use eyre::{Result, WrapErr};
 
-const TOKEN_DECIMALS: u8 = 6;
+const TOKEN_DECIMALS: u8 = 18;
 const INITIAL_SUPPLY: u64 = 1_000_000_000;
 const TRANSFER_AMOUNT: u64 = 100_000_000;
 const MINT_AMOUNT: u64 = 500_000;
@@ -52,7 +52,6 @@ async fn test_b20_factory_create_and_transfer_via_rpc() -> Result<()> {
     let params = B20PrecompileClient::token_params(
         "Devnet B20",
         "DB20",
-        TOKEN_DECIMALS,
         admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
@@ -61,7 +60,7 @@ async fn test_b20_factory_create_and_transfer_via_rpc() -> Result<()> {
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
-    assert_eq!(b20.variant_of(token).await?, TokenVariant::B20.discriminant());
+    assert_eq!(b20.variant_of(token).await?, TokenVariant::B20);
     assert_eq!(b20.decimals_of(token).await?, TOKEN_DECIMALS);
 
     let admin_balance_before = b20.balance_of(token, admin.address()).await?;
@@ -90,7 +89,6 @@ async fn test_b20_token_metadata() -> Result<()> {
     let params = B20PrecompileClient::token_params(
         "Metadata Token",
         "META",
-        TOKEN_DECIMALS,
         admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
@@ -125,7 +123,6 @@ async fn test_b20_approve_and_transfer_from() -> Result<()> {
     let params = B20PrecompileClient::token_params(
         "Allowance Token",
         "ALLW",
-        TOKEN_DECIMALS,
         admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
@@ -171,7 +168,6 @@ async fn test_b20_mint_and_burn() -> Result<()> {
     let params = B20PrecompileClient::token_params(
         "Mintable Token",
         "MINT",
-        TOKEN_DECIMALS,
         admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
@@ -180,6 +176,19 @@ async fn test_b20_mint_and_burn() -> Result<()> {
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     let supply_before = b20.total_supply(token).await?;
+
+    b20.send_call(
+        token,
+        IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: admin.address() },
+        "grant B-20 mint role",
+    )
+    .await?;
+    b20.send_call(
+        token,
+        IB20::grantRoleCall { role: B20TokenRole::Burn.id(), account: admin.address() },
+        "grant B-20 burn role",
+    )
+    .await?;
 
     b20.mint(token, admin.address(), U256::from(MINT_AMOUNT)).await?;
     assert_eq!(b20.total_supply(token).await?, supply_before + U256::from(MINT_AMOUNT));
@@ -214,7 +223,6 @@ async fn test_b20_transfer_with_memo() -> Result<()> {
     let params = B20PrecompileClient::token_params(
         "Memo Token",
         "MEMO",
-        TOKEN_DECIMALS,
         admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
@@ -244,7 +252,6 @@ async fn test_b20_supply_cap() -> Result<()> {
     let mut params = B20PrecompileClient::token_params(
         "Capped Token",
         "CAP",
-        TOKEN_DECIMALS,
         admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
@@ -297,7 +304,6 @@ async fn test_b20_metadata_updates() -> Result<()> {
     let params = B20PrecompileClient::token_params(
         "Old Name",
         "OLD",
-        TOKEN_DECIMALS,
         admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
@@ -329,7 +335,6 @@ async fn test_b20_pause_and_unpause() -> Result<()> {
     let params = B20PrecompileClient::token_params(
         "Pausable Token",
         "PAUS",
-        TOKEN_DECIMALS,
         admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
@@ -340,6 +345,19 @@ async fn test_b20_pause_and_unpause() -> Result<()> {
     // Transfer succeeds before pause.
     b20.transfer(token, recipient, U256::from(PAUSE_TRANSFER_AMOUNT)).await?;
     assert_eq!(b20.balance_of(token, recipient).await?, U256::from(PAUSE_TRANSFER_AMOUNT));
+
+    b20.send_call(
+        token,
+        IB20::grantRoleCall { role: B20TokenRole::Pause.id(), account: admin.address() },
+        "grant B-20 pause role",
+    )
+    .await?;
+    b20.send_call(
+        token,
+        IB20::grantRoleCall { role: B20TokenRole::Unpause.id(), account: admin.address() },
+        "grant B-20 unpause role",
+    )
+    .await?;
 
     b20.pause(token, U256::from(1)).await?;
     assert_ne!(b20.paused(token).await?, U256::ZERO, "token should be paused");
@@ -377,16 +395,14 @@ async fn test_b20_factory_predict_and_is_b20() -> Result<()> {
     let params = B20PrecompileClient::token_params(
         "Predict Token",
         "PRD",
-        TOKEN_DECIMALS,
         admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
 
-    let local_prediction = b20.predict_token_address(TokenVariant::B20, TOKEN_DECIMALS, salt);
-    let rpc_prediction = b20
-        .predict_token_address_rpc(admin.address(), TokenVariant::B20, TOKEN_DECIMALS, salt)
-        .await?;
+    let local_prediction = b20.predict_token_address(TokenVariant::B20, salt);
+    let rpc_prediction =
+        b20.predict_token_address_rpc(admin.address(), TokenVariant::B20, salt).await?;
     assert_eq!(local_prediction, rpc_prediction, "local and RPC predictions should match");
 
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;
@@ -419,7 +435,6 @@ async fn test_b20_create_token_duplicate_reverts() -> Result<()> {
     let params = B20PrecompileClient::token_params(
         "Dup Token",
         "DUP",
-        TOKEN_DECIMALS,
         admin.address(),
         U256::from(INITIAL_SUPPLY),
         admin.address(),

@@ -37,7 +37,7 @@ impl<'a> TokenFactoryStorage<'a> {
                 let Some(variant) = TokenFactoryStorage::token_variant(call.variant) else {
                     return Err(BasePrecompileError::revert(ITokenFactory::InvalidVariant {}));
                 };
-                let (addr, _) = variant.compute_address(call.sender, call.decimals, call.salt);
+                let (addr, _) = variant.compute_address(call.sender, call.salt);
                 Ok(ITokenFactory::getTokenAddressCall::abi_encode_returns(&addr).into())
             }
             ITokenFactory::ITokenFactoryCalls::isB20(call) => {

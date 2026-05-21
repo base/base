@@ -23,7 +23,6 @@ sol! {
             string name;
             string symbol;
             address initialAdmin;
-            uint8 decimals;
         }
 
         struct B20StablecoinCreateParams {
@@ -45,7 +44,7 @@ sol! {
 
         // ── Errors ───────────────────────────────────────────────────────────
 
-        /// A token already exists at the address derived from `(variant, decimals, msg.sender, salt)`.
+        /// A token already exists at the address derived from `(variant, msg.sender, salt)`.
         error TokenAlreadyExists(address token);
 
         /// `variant` is not recognized or is `NONE`.
@@ -54,14 +53,8 @@ sol! {
         /// `version` is not supported for the requested variant.
         error UnsupportedVersion(uint8 version);
 
-        /// `decimals` is outside the supported range.
-        error InvalidDecimals(uint8 decimals);
-
         /// A required string argument was empty.
         error MissingRequiredField();
-
-        /// `params` could not be decoded for the requested token variant.
-        error InvalidTokenParams();
 
         /// One of the post-creation init calls failed.
         error InitCallFailed(uint256 index);
@@ -92,7 +85,7 @@ sol! {
         ) external returns (address token);
 
         /// Returns the address a `createToken` call would produce.
-        function getTokenAddress(TokenVariant variant, uint8 decimals, address sender, bytes32 salt) external view returns (address);
+        function getTokenAddress(TokenVariant variant, address sender, bytes32 salt) external view returns (address);
 
         /// Returns `true` if `token` has the B-20 address prefix.
         function isB20(address token) external view returns (bool);
