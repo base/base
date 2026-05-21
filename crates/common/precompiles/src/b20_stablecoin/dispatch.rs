@@ -6,6 +6,7 @@
 //! stablecoin-only selectors first, then the full `IB20` selector set —
 //! all logic is self-contained with no delegation to `B20Token::inner`.
 
+use IB20::IB20Calls as C;
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
@@ -18,7 +19,7 @@ use super::{
 };
 use crate::{
     ActivationRegistryStorage, Burnable, Configurable, IB20, Mintable, Pausable, Permittable,
-    Policy, Redeemable, Transferable,
+    Policy, Redeemable, Transferable, macros::decode_precompile_call,
 };
 
 impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
@@ -52,20 +53,11 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         if calldata.len() < 4 {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
         }
-        let selector: [u8; 4] = calldata[..4].try_into().unwrap();
 
         // Step 1: stablecoin-only selectors (currency()).
-        if let Ok(call) = IB20Stablecoin::IB20StablecoinCalls::abi_decode(calldata) {
-            let encoded: Bytes = match call {
-                SC::currency(_) => self.accounting.currency()?.abi_encode().into(),
-            };
-            return Ok(encoded);
-        }
+        if let Ok(SC::currency(_)) = IB20Stablecoin::IB20StablecoinCalls::abi_decode(calldata) { return Ok(self.accounting.currency()?.abi_encode().into()) }
 
-        // Step 2: all inherited IB20 selectors, handled inline.
-        use IB20::IB20Calls as C;
-        let call = IB20::IB20Calls::abi_decode(calldata)
-            .map_err(|_| BasePrecompileError::UnknownFunctionSelector(selector))?;
+        let call = decode_precompile_call!(calldata, IB20::IB20Calls);
 
         let encoded: Bytes = match call {
             // --- Pure reads: direct to accounting ---
@@ -205,6 +197,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                 Bytes::new()
             }
         };
+
         Ok(encoded)
     }
 }
