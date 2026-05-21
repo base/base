@@ -33,6 +33,7 @@ sol! {
 
         function createPolicy(address admin, PolicyType policyType) external returns (uint64);
         function createPolicyWithAccounts(address admin, PolicyType policyType, address[] calldata accounts) external returns (uint64);
+        /// Pass address(0) as newAdmin to clear a previously staged transfer without nominating a replacement.
         function stageUpdateAdmin(uint64 policyId, address newAdmin) external;
         function finalizeUpdateAdmin(uint64 policyId) external;
         function renounceAdmin(uint64 policyId) external;

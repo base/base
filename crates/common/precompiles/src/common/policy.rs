@@ -25,6 +25,7 @@ pub trait PolicyRegistry: Policy {
         accounts: alloc::vec::Vec<Address>,
     ) -> Result<u64>;
     /// Stages a pending admin transfer for `policy_id`.
+    /// Pass `Address::ZERO` to clear a previously staged transfer without nominating a replacement.
     fn stage_update_admin(&mut self, policy_id: u64, new_admin: Address) -> Result<()>;
     /// Completes a pending admin transfer; caller must be the staged pending admin.
     fn finalize_update_admin(&mut self, policy_id: u64) -> Result<()>;

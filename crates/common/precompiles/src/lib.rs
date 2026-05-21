@@ -8,6 +8,11 @@ extern crate alloc;
 mod macros;
 
 /// Returns the EIP-3860-style input cost for calldata of the given length.
+///
+/// Charges `G_sha3word` (6 gas) per 32-byte word of calldata. This mirrors the cost model used
+/// by EIP-3860 for initcode and prevents callers from passing arbitrarily large calldata to
+/// precompiles at near-zero cost — without this, an attacker could force expensive ABI decoding
+/// with a single transaction.
 pub const fn input_cost(calldata_len: usize) -> u64 {
     const G_SHA3WORD: u64 = 6;
     calldata_len.div_ceil(32).saturating_mul(G_SHA3WORD as usize) as u64

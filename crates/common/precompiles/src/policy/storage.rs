@@ -39,6 +39,10 @@ impl PolicyRegistryStorage<'_> {
     /// Packs `admin` and `policy_type` into a single U256 storage word.
     ///
     /// Layout: `[255:168]` reserved (zero) | `[167:8]` admin (160 bits) | `[7:0]` `PolicyType`.
+    ///
+    /// Invariant: the result is always non-zero because ALLOWLIST = 2 and BLOCKLIST = 3 are
+    /// both non-zero. This means `policies[id] == 0` reliably signals "never created", even
+    /// after `renounce_admin` sets admin to `Address::ZERO` (the type byte is preserved).
     fn encode_packed(admin: Address, policy_type: u8) -> U256 {
         let mut word = [0u8; 32];
         word[12..32].copy_from_slice(admin.as_slice());
@@ -89,13 +93,13 @@ impl PolicyRegistryStorage<'_> {
             return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
         }
 
-        let policy_id = self.next_policy_id(policy_type)?;
-        let counter = policy_id & ((1u64 << 56) - 1);
+        let counter = self.next_counter.read()?;
         let next = counter
             .checked_add(1)
             .filter(|&n| n < (1u64 << 56))
             .ok_or_else(|| BasePrecompileError::revert(IPolicyRegistry::CounterExhausted {}))?;
         self.next_counter.write(next)?;
+        let policy_id = (policy_type_u8 as u64) << 56 | counter;
         let packed = Self::encode_packed(admin, policy_type_u8);
         self.policies.at_mut(&policy_id).write(packed)?;
 
@@ -125,7 +129,7 @@ impl PolicyRegistryStorage<'_> {
             return Err(BasePrecompileError::revert(IPolicyRegistry::BatchTooLarge {}));
         }
         let policy_id = self.create_policy(admin, policy_type)?;
-        let policy_type_u8 = policy_type as u8;
+        let policy_type_u8 = policy_type.as_discriminant()?;
         if !accounts.is_empty() {
             let caller = self.storage.caller();
             for account in &accounts {
