@@ -9,7 +9,7 @@ use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_storage::Result;
 
 use crate::{
-    IPolicyRegistry, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK, PolicyRegistry,
+    IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage,
     b20::B20Token,
     common::{Policy, TokenAccounting},
 };
@@ -233,7 +233,7 @@ impl TokenAccounting for InMemoryTokenAccounting {
     }
 
     fn policy_id(&self, policy_type: B256) -> Result<u64> {
-        Ok(*self.policy_ids.get(&policy_type).unwrap_or(&POLICY_ALWAYS_ALLOW))
+        Ok(*self.policy_ids.get(&policy_type).unwrap_or(&PolicyRegistryStorage::ALWAYS_ALLOW_ID))
     }
 
     fn set_policy_id(&mut self, policy_type: B256, policy_id: u64) -> Result<()> {
@@ -288,15 +288,15 @@ impl InMemoryPolicy {
 impl Policy for InMemoryPolicy {
     fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
         match policy_id {
-            POLICY_ALWAYS_ALLOW => Ok(true),
-            POLICY_ALWAYS_BLOCK => Ok(false),
+            PolicyRegistryStorage::ALWAYS_ALLOW_ID => Ok(true),
+            PolicyRegistryStorage::ALWAYS_BLOCK_ID => Ok(false),
             _ => Ok(*self.authorizations.get(&(policy_id, account)).unwrap_or(&false)),
         }
     }
 
     fn policy_exists(&self, policy_id: u64) -> Result<bool> {
-        Ok(policy_id == POLICY_ALWAYS_ALLOW
-            || policy_id == POLICY_ALWAYS_BLOCK
+        Ok(policy_id == PolicyRegistryStorage::ALWAYS_ALLOW_ID
+            || policy_id == PolicyRegistryStorage::ALWAYS_BLOCK_ID
             || self.policies.contains(&policy_id))
     }
 }
@@ -365,12 +365,12 @@ impl PolicyRegistry for InMemoryPolicy {
     }
 
     fn get_policy_type(&self, policy_id: u64) -> Result<IPolicyRegistry::PolicyType> {
-        // POLICY_ALWAYS_ALLOW=0 has BLOCKLIST semantics but its high byte encodes
+        // PolicyRegistryStorage::ALWAYS_ALLOW_ID=0 has BLOCKLIST semantics but its high byte encodes
         // ALLOWLIST (the zero value), so we must hardcode the return.
-        if policy_id == POLICY_ALWAYS_ALLOW {
+        if policy_id == PolicyRegistryStorage::ALWAYS_ALLOW_ID {
             return Ok(IPolicyRegistry::PolicyType::BLOCKLIST);
         }
-        // All other IDs (including POLICY_ALWAYS_BLOCK=1) encode the type in the high byte.
+        // All other IDs (including PolicyRegistryStorage::ALWAYS_BLOCK_ID=1) encode the type in the high byte.
         IPolicyRegistry::PolicyType::try_from((policy_id >> 56) as u8).map_err(|_| {
             base_precompile_storage::BasePrecompileError::enum_conversion_error()
         })

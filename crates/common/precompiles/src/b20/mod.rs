@@ -8,7 +8,7 @@ mod pausable;
 pub use pausable::B20PausableFeature;
 
 mod policies;
-pub use policies::{B20PolicyType, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK};
+pub use policies::B20PolicyType;
 
 mod precompile;
 pub use precompile::B20TokenPrecompile;

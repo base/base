@@ -14,7 +14,7 @@ use super::{IPolicyRegistry, IPolicyRegistry::PolicyType};
 /// `is_zero()` reliable as a "never written" sentinel even for BLOCKLIST (discriminant 0)
 /// policies whose admin has been renounced to `Address::ZERO`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PackedPolicy(U256);
+struct PackedPolicy(U256);
 
 impl PackedPolicy {
     /// Bit position of the "exists" flag. Always set for any initialized policy slot.
@@ -22,40 +22,40 @@ impl PackedPolicy {
 
     /// Packs `admin` and `policy_type` into a storage word.
     /// Accepts `PolicyType` to prevent invalid discriminants at construction time.
-    pub(crate) fn new(admin: Address, policy_type: PolicyType) -> Self {
+    fn new(admin: Address, policy_type: PolicyType) -> Self {
         Self::from_parts(admin, policy_type as u8)
     }
 
     /// Returns a new word with the same type byte but a different admin.
     /// Used when transferring or renouncing admin without changing the policy type.
-    pub(crate) fn with_admin(self, new_admin: Address) -> Self {
+    fn with_admin(self, new_admin: Address) -> Self {
         Self::from_parts(new_admin, self.policy_type_u8())
     }
 
     /// Returns the admin address stored in `[167:8]`.
-    pub(crate) fn admin(self) -> Address {
+    fn admin(self) -> Address {
         let bytes = (self.0 >> 8usize).to_be_bytes::<32>();
         Address::from_slice(&bytes[12..])
     }
 
     /// Returns the raw `PolicyType` discriminant stored in `[7:0]`.
-    pub(crate) const fn policy_type_u8(self) -> u8 {
+    const fn policy_type_u8(self) -> u8 {
         self.0.to_be_bytes::<32>()[31]
     }
 
     /// Returns `true` if the word is zero (policy slot was never written).
-    pub(crate) fn is_zero(self) -> bool {
+    fn is_zero(self) -> bool {
         self.0.is_zero()
     }
 
     /// Returns the raw `U256` value for writing to storage.
-    pub(crate) const fn into_u256(self) -> U256 {
+    const fn into_u256(self) -> U256 {
         self.0
     }
 
     /// Wraps a raw storage word without validating the type discriminant.
     /// Intended only for reading words back from storage.
-    pub(crate) const fn from_raw(v: U256) -> Self {
+    const fn from_raw(v: U256) -> Self {
         Self(v)
     }
 
@@ -101,7 +101,7 @@ impl PolicyRegistryStorage<'_> {
 
     const ALLOWLIST_TYPE: u8 = PolicyType::ALLOWLIST as u8;
     const BLOCKLIST_TYPE: u8 = PolicyType::BLOCKLIST as u8;
-    pub(crate) const COUNTER_MASK: u64 = (1u64 << 56) - 1;
+    const COUNTER_MASK: u64 = (1u64 << 56) - 1;
     const INITIAL_CUSTOM_COUNTER: u64 = 2;
     const POLICY_ID_TYPE_SHIFT: usize = 56;
 
@@ -160,7 +160,7 @@ impl PolicyRegistryStorage<'_> {
     /// Both have a renounced (zero) admin so they are permanently immutable.
     /// - `ALWAYS_ALLOW_ID`: BLOCKLIST with no members — everyone is authorized.
     /// - `ALWAYS_BLOCK_ID`: ALLOWLIST with no members — nobody is authorized.
-    pub(crate) fn write_builtins(&mut self) -> Result<()> {
+    pub fn write_builtins(&mut self) -> Result<()> {
         let allow_packed = PackedPolicy::new(Address::ZERO, PolicyType::BLOCKLIST).into_u256();
         self.policies.at_mut(&Self::ALWAYS_ALLOW_ID).write(allow_packed)?;
         let block_packed = PackedPolicy::new(Address::ZERO, PolicyType::ALLOWLIST).into_u256();
