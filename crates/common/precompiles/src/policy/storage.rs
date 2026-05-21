@@ -38,8 +38,8 @@ impl PackedPolicy {
         Address::from_slice(&bytes[12..])
     }
 
-    fn is_zero(self) -> bool {
-        self.0.is_zero()
+    fn exists(self) -> bool {
+        !(self.0 & Self::EXISTS_BIT).is_zero()
     }
 
     const fn into_u256(self) -> U256 {
@@ -84,6 +84,8 @@ impl PolicyRegistryStorage<'_> {
     const BLOCKLIST_TYPE: u8 = PolicyType::BLOCKLIST as u8;
     const COUNTER_MASK: u64 = (1u64 << 56) - 1;
     const POLICY_ID_TYPE_SHIFT: usize = 56;
+    /// Number of built-in policies; the counter is set to this value after write_builtins().
+    const BUILTIN_POLICY_COUNT: u64 = 2;
 
     fn require_write(&self) -> Result<()> {
         if self.storage.is_static() {
@@ -108,7 +110,7 @@ impl PolicyRegistryStorage<'_> {
     fn require_custom(&self, policy_id: u64) -> Result<PackedPolicy> {
         Self::require_well_formed(policy_id)?;
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
-        if packed.is_zero() {
+        if !packed.exists() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
         Ok(packed)
@@ -142,15 +144,23 @@ impl PolicyRegistryStorage<'_> {
     /// - `ALWAYS_ALLOW_ID` (counter=0, BLOCKLIST): no members blocked — everyone is authorized.
     /// - `ALWAYS_BLOCK_ID` (counter=1, ALLOWLIST): no members allowed — nobody is authorized.
     pub fn write_builtins(&mut self) -> Result<()> {
-        if self.next_counter.read()? > 0 {
+        if self.next_counter.read()? >= Self::BUILTIN_POLICY_COUNT {
             return Ok(());
         }
+        // Assert that the ID constants match the enum discriminants and counter slots,
+        // catching any future drift from enum reordering or constant changes.
+        debug_assert_eq!(
+            Self::make_id(PolicyType::BLOCKLIST.as_discriminant(), 0),
+            Self::ALWAYS_ALLOW_ID
+        );
+        debug_assert_eq!(
+            Self::make_id(PolicyType::ALLOWLIST.as_discriminant(), 1),
+            Self::ALWAYS_BLOCK_ID
+        );
         let builtin = PackedPolicy::new(Address::ZERO).into_u256();
-        // counter=0 → BLOCKLIST → ALWAYS_ALLOW_ID=0
         self.policies.at_mut(&Self::ALWAYS_ALLOW_ID).write(builtin)?;
-        // counter=1 → ALLOWLIST → ALWAYS_BLOCK_ID=(1<<56)|1
         self.policies.at_mut(&Self::ALWAYS_BLOCK_ID).write(builtin)?;
-        self.next_counter.write(2)?;
+        self.next_counter.write(Self::BUILTIN_POLICY_COUNT)?;
         Ok(())
     }
 
@@ -342,7 +352,7 @@ impl PolicyRegistryStorage<'_> {
             return Ok(false);
         }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
-        if packed.is_zero() {
+        if !packed.exists() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
         let member = self.members.at(&policy_id).at(&account).read()?;
@@ -360,7 +370,7 @@ impl PolicyRegistryStorage<'_> {
             return Ok(true);
         }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
-        Ok(!packed.is_zero())
+        Ok(packed.exists())
     }
 
     /// Returns the `PolicyType` of `policy_id`.
@@ -369,13 +379,14 @@ impl PolicyRegistryStorage<'_> {
         // Fast-path for built-in IDs: both encode the correct type in their high byte
         // (ALWAYS_ALLOW_ID=0 → BLOCKLIST=0, ALWAYS_BLOCK_ID=(1<<56)|1 → ALLOWLIST=1),
         // but the storage slot may be zero before write_builtins() has been called,
-        // so we skip the is_zero check for them.
+        // but the storage slot may not have the exists flag set before write_builtins() is called,
+        // so we skip the exists check for them.
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return PolicyType::try_from(Self::policy_id_type(policy_id))
                 .map_err(|_| BasePrecompileError::enum_conversion_error());
         }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
-        if packed.is_zero() {
+        if !packed.exists() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
         PolicyType::try_from(Self::policy_id_type(policy_id))
@@ -385,8 +396,13 @@ impl PolicyRegistryStorage<'_> {
     /// Returns the current admin of `policy_id`, or `address(0)` for policies with renounced admin.
     pub fn get_policy_admin(&self, policy_id: u64) -> Result<Address> {
         Self::require_well_formed(policy_id)?;
+        // Built-ins have a permanently renounced (zero) admin; fast-path so this works
+        // even before write_builtins() has been called.
+        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
+            return Ok(Address::ZERO);
+        }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
-        if packed.is_zero() {
+        if !packed.exists() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
         Ok(packed.admin())
@@ -395,6 +411,11 @@ impl PolicyRegistryStorage<'_> {
     /// Returns the pending admin staged for `policy_id`, or `address(0)` if none.
     pub fn pending_policy_admin(&self, policy_id: u64) -> Result<Address> {
         Self::require_well_formed(policy_id)?;
+        // Built-ins can never have a pending admin; fast-path so this works
+        // even before write_builtins() has been called.
+        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
+            return Ok(Address::ZERO);
+        }
         self.pending_admins.at(&policy_id).read()
     }
 }
@@ -481,20 +502,20 @@ mod tests {
     fn packed_policy_new_roundtrips_admin() {
         let p = PackedPolicy::new(ADMIN);
         assert_eq!(p.admin(), ADMIN);
-        assert!(!p.is_zero());
+        assert!(p.exists());
     }
 
     #[test]
     fn packed_policy_zero_signals_never_created() {
         let p = PackedPolicy::from_raw(U256::ZERO);
-        assert!(p.is_zero());
+        assert!(!p.exists());
     }
 
     #[test]
     fn packed_policy_zero_admin_is_non_zero() {
-        // Created flag at bit 0 keeps the word non-zero even with zero admin.
+        // Exists flag at bit 160 keeps the word non-zero even with zero admin.
         let p = PackedPolicy::new(Address::ZERO);
-        assert!(!p.is_zero());
+        assert!(p.exists());
         assert_eq!(p.admin(), Address::ZERO);
     }
 
