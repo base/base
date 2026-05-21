@@ -365,9 +365,8 @@ impl PolicyRegistry for InMemoryPolicy {
     }
 
     fn get_policy_type(&self, policy_id: u64) -> Result<IPolicyRegistry::PolicyType> {
-        IPolicyRegistry::PolicyType::try_from((policy_id >> 56) as u8).map_err(|_| {
-            base_precompile_storage::BasePrecompileError::enum_conversion_error()
-        })
+        IPolicyRegistry::PolicyType::try_from((policy_id >> 56) as u8)
+            .map_err(|_| base_precompile_storage::BasePrecompileError::enum_conversion_error())
     }
 
     fn get_policy_admin(&self, _policy_id: u64) -> Result<Address> {

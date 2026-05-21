@@ -29,7 +29,9 @@ pub use common::{
 pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestToken};
 
 mod b20;
-pub use b20::{B20PausableFeature, B20PolicyType, B20Token, B20TokenPrecompile, B20TokenStorage, IB20};
+pub use b20::{
+    B20PausableFeature, B20PolicyType, B20Token, B20TokenPrecompile, B20TokenStorage, IB20,
+};
 
 mod factory;
 pub use factory::{ITokenFactory, TokenFactory, TokenFactoryStorage, TokenVariant};

@@ -103,10 +103,7 @@ mod tests {
     /// built-in policy IDs (ALWAYS_ALLOW_ID, ALWAYS_BLOCK_ID) directly.
     fn activate_and_init(storage: &mut HashMapStorageProvider) {
         activate_policy_registry(storage);
-        StorageCtx::enter(storage, |ctx| {
-            PolicyRegistryStorage::new(ctx).write_builtins()
-        })
-        .unwrap();
+        StorageCtx::enter(storage, |ctx| PolicyRegistryStorage::new(ctx).write_builtins()).unwrap();
     }
 
     #[test]

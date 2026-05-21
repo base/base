@@ -141,13 +141,17 @@ mod tests {
     fn test_ensure_blocked_preserves_global_block_semantics() {
         let account = Address::repeat_byte(0xaa);
         let mut accounting = InMemoryTokenAccounting::new(Address::repeat_byte(0x20));
-        accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         let token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         B20Guards::ensure_blocked(&token, account).unwrap();
 
         let mut accounting = InMemoryTokenAccounting::new(Address::repeat_byte(0x20));
-        accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_ALLOW_ID);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_ALLOW_ID);
         let token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(

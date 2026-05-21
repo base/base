@@ -179,7 +179,9 @@ mod tests {
     #[test]
     fn mint_reverts_when_receiver_policy_denies() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
-        accounting.policy_ids.insert(B20PolicyType::MintReceiver.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::MintReceiver.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
