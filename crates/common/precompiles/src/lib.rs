@@ -26,7 +26,7 @@ pub use common::{
     PolicyRegistry, RoleManaged, Token, TokenAccounting, Transferable,
 };
 #[cfg(any(test, feature = "test-utils"))]
-pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestToken};
+pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
 
 mod b20;
 pub use b20::{

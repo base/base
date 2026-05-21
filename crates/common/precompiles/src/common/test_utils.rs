@@ -12,6 +12,7 @@ use crate::{
     IPolicyRegistry, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK, PolicyRegistry,
     b20::B20Token,
     b20_security::SecurityAccounting,
+    b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
     common::{Policy, TokenAccounting},
 };
 
@@ -22,6 +23,8 @@ pub type TestToken = B20Token<InMemoryTokenAccounting, InMemoryPolicy>;
 
 /// Convenience alias: [`B20StablecoinToken`] wired with both in-memory fakes.
 ///
+/// Use this in unit tests instead of spelling out the full generic each time.
+pub type TestStablecoinToken = B20StablecoinToken<InMemoryTokenAccounting, InMemoryPolicy>;
 
 /// HashMap-backed [`TokenAccounting`] for unit tests.
 ///
