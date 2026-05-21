@@ -35,6 +35,7 @@ impl ActivationRegistryStorage<'_> {
     /// B20 stablecoin precompile feature id (`keccak256("base.b20_stablecoin")`).
     pub const B20_STABLECOIN: B256 =
         b256!("0xecfa0def2c10020caaf65e6155aa69c84b24892aaef76eeac52e0e2b3a0b8601");
+
     /// B20 security precompile feature id (`keccak256("base.b20_security")`).
     pub const B20_SECURITY: B256 =
         b256!("0x83d32fab502ae0e8bc4352a117767262cb5e47cc8d67a744008ed4ff03fcf5e6");

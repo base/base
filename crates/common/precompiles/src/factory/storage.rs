@@ -96,7 +96,7 @@ impl<'a> TokenFactoryStorage<'a> {
                     token_params.name.clone(),
                     token_params.symbol.clone(),
                     Self::DEFAULT_SUPPLY_CAP,
-                    alloy_primitives::U256::from(1_000_000_000_000_000_000u128),
+                    alloy_primitives::U256::from(1_000_000_000_000_000_000u128), // 1:1 ratio
                     token_params.security_isin,
                     token_params.minimum_redeemable,
                 )?;
