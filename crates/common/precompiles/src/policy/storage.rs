@@ -127,7 +127,7 @@ impl PolicyRegistryStorage<'_> {
         Ok(counter.max(Self::INITIAL_CUSTOM_COUNTER))
     }
 
-    fn make_id(policy_type: u8, counter: u64) -> u64 {
+    const fn make_id(policy_type: u8, counter: u64) -> u64 {
         (policy_type as u64) << Self::POLICY_ID_TYPE_SHIFT | (counter & Self::COUNTER_MASK)
     }
 

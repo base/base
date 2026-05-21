@@ -9,7 +9,7 @@ use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_storage::Result;
 
 use crate::{
-    POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK, PolicyRegistry, PolicyType,
+    POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK, IPolicyRegistry, PolicyRegistry,
     b20::B20Token,
     common::{Policy, TokenAccounting},
 };
@@ -302,7 +302,7 @@ impl Policy for InMemoryPolicy {
 }
 
 impl PolicyRegistry for InMemoryPolicy {
-    fn create_policy(&mut self, _admin: Address, policy_type: PolicyType) -> Result<u64> {
+    fn create_policy(&mut self, _admin: Address, policy_type: IPolicyRegistry::PolicyType) -> Result<u64> {
         let policy_id = (policy_type as u64) << 56 | self.next_policy_counter;
         self.next_policy_counter += 1;
         self.policies.insert(policy_id);
@@ -312,7 +312,7 @@ impl PolicyRegistry for InMemoryPolicy {
     fn create_policy_with_accounts(
         &mut self,
         admin: Address,
-        policy_type: PolicyType,
+        policy_type: IPolicyRegistry::PolicyType,
         accounts: Vec<Address>,
     ) -> Result<u64> {
         let policy_id = self.create_policy(admin, policy_type)?;
@@ -360,15 +360,15 @@ impl PolicyRegistry for InMemoryPolicy {
         Ok(())
     }
 
-    fn next_policy_id(&self, policy_type: PolicyType) -> Result<u64> {
+    fn next_policy_id(&self, policy_type: IPolicyRegistry::PolicyType) -> Result<u64> {
         Ok((policy_type as u64) << 56 | self.next_policy_counter)
     }
 
-    fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType> {
+    fn get_policy_type(&self, policy_id: u64) -> Result<IPolicyRegistry::PolicyType> {
         Ok(match policy_id {
-            POLICY_ALWAYS_ALLOW => PolicyType::ALWAYS_ALLOW,
-            POLICY_ALWAYS_BLOCK => PolicyType::ALWAYS_BLOCK,
-            _ => PolicyType::try_from((policy_id >> 56) as u8).map_err(|_| {
+            POLICY_ALWAYS_ALLOW => IPolicyRegistry::PolicyType::ALWAYS_ALLOW,
+            POLICY_ALWAYS_BLOCK => IPolicyRegistry::PolicyType::ALWAYS_BLOCK,
+            _ => IPolicyRegistry::PolicyType::try_from((policy_id >> 56) as u8).map_err(|_| {
                 base_precompile_storage::BasePrecompileError::enum_conversion_error()
             })?,
         })
