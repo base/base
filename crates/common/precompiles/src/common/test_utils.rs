@@ -9,7 +9,7 @@ use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_storage::Result;
 
 use crate::{
-    POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK, IPolicyRegistry, PolicyRegistry,
+    IPolicyRegistry, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK, PolicyRegistry,
     b20::B20Token,
     common::{Policy, TokenAccounting},
 };
@@ -302,7 +302,11 @@ impl Policy for InMemoryPolicy {
 }
 
 impl PolicyRegistry for InMemoryPolicy {
-    fn create_policy(&mut self, _admin: Address, policy_type: IPolicyRegistry::PolicyType) -> Result<u64> {
+    fn create_policy(
+        &mut self,
+        _admin: Address,
+        policy_type: IPolicyRegistry::PolicyType,
+    ) -> Result<u64> {
         let policy_id = (policy_type as u64) << 56 | self.next_policy_counter;
         self.next_policy_counter += 1;
         self.policies.insert(policy_id);
