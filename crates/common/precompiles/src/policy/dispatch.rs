@@ -85,8 +85,7 @@ mod tests {
     use alloy_sol_types::SolCall;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use super::*;
-    use crate::{ActivationRegistryStorage, IPolicyRegistry};
+    use crate::{ActivationRegistryStorage, IPolicyRegistry, PolicyRegistryStorage};
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
@@ -181,5 +180,196 @@ mod tests {
         .expect("dispatch should not fatally error");
 
         assert!(output.reverted);
+    }
+
+    fn create_allowlist_policy(storage: &mut HashMapStorageProvider) -> u64 {
+        storage.set_caller(ADMIN);
+        let calldata = IPolicyRegistry::createPolicyCall {
+            admin: ADMIN,
+            policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
+        }
+        .abi_encode();
+        let output = StorageCtx::enter(storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .unwrap();
+        assert!(!output.reverted, "create_allowlist_policy setup unexpectedly reverted");
+        IPolicyRegistry::createPolicyCall::abi_decode_returns(&output.bytes).unwrap()
+    }
+
+    #[test]
+    fn dispatch_create_policy_with_accounts() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_policy_registry(&mut storage);
+        storage.set_caller(ADMIN);
+        let calldata = IPolicyRegistry::createPolicyWithAccountsCall {
+            admin: ADMIN,
+            policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
+            accounts: alloc::vec![ALICE],
+        }
+        .abi_encode();
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .unwrap();
+
+        assert!(!output.reverted);
+        let id = IPolicyRegistry::createPolicyWithAccountsCall::abi_decode_returns(&output.bytes)
+            .unwrap();
+        assert_eq!((id >> 56) as u8, IPolicyRegistry::PolicyType::ALLOWLIST as u8);
+    }
+
+    #[test]
+    fn dispatch_stage_and_finalize_update_admin() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_policy_registry(&mut storage);
+        let id = create_allowlist_policy(&mut storage);
+        let new_admin = address!("0x3000000000000000000000000000000000000003");
+
+        // stage
+        storage.set_caller(ADMIN);
+        let stage_calldata =
+            IPolicyRegistry::stageUpdateAdminCall { policyId: id, newAdmin: new_admin }
+                .abi_encode();
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &stage_calldata)
+        })
+        .unwrap();
+        assert!(!out.reverted);
+
+        // finalize
+        storage.set_caller(new_admin);
+        let finalize_calldata =
+            IPolicyRegistry::finalizeUpdateAdminCall { policyId: id }.abi_encode();
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &finalize_calldata)
+        })
+        .unwrap();
+        assert!(!out.reverted);
+
+        // confirm admin changed
+        let admin_calldata = IPolicyRegistry::policyAdminCall { policyId: id }.abi_encode();
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &admin_calldata)
+        })
+        .unwrap();
+        let admin = IPolicyRegistry::policyAdminCall::abi_decode_returns(&out.bytes).unwrap();
+        assert_eq!(admin, new_admin);
+    }
+
+    #[test]
+    fn dispatch_renounce_admin() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_policy_registry(&mut storage);
+        let id = create_allowlist_policy(&mut storage);
+
+        storage.set_caller(ADMIN);
+        let calldata = IPolicyRegistry::renounceAdminCall { policyId: id }.abi_encode();
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .unwrap();
+        assert!(!out.reverted);
+    }
+
+    #[test]
+    fn dispatch_update_allowlist_and_blocklist() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_policy_registry(&mut storage);
+        let id = create_allowlist_policy(&mut storage);
+
+        storage.set_caller(ADMIN);
+        let calldata = IPolicyRegistry::updateAllowlistCall {
+            policyId: id,
+            allowed: true,
+            accounts: alloc::vec![ALICE],
+        }
+        .abi_encode();
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .unwrap();
+        assert!(!out.reverted);
+
+        // updateBlocklist on a blocklist policy
+        storage.set_caller(ADMIN);
+        let blocklist_calldata = IPolicyRegistry::createPolicyCall {
+            admin: ADMIN,
+            policyType: IPolicyRegistry::PolicyType::BLOCKLIST,
+        }
+        .abi_encode();
+        let blocklist_out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &blocklist_calldata)
+        })
+        .unwrap();
+        assert!(!blocklist_out.reverted, "blocklist policy creation unexpectedly reverted");
+        let bid =
+            IPolicyRegistry::createPolicyCall::abi_decode_returns(&blocklist_out.bytes).unwrap();
+
+        storage.set_caller(ADMIN);
+        let update_blocklist = IPolicyRegistry::updateBlocklistCall {
+            policyId: bid,
+            blocked: true,
+            accounts: alloc::vec![ALICE],
+        }
+        .abi_encode();
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &update_blocklist)
+        })
+        .unwrap();
+        assert!(!out.reverted);
+    }
+
+    #[test]
+    fn dispatch_next_policy_id() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_policy_registry(&mut storage);
+        let calldata = IPolicyRegistry::nextPolicyIdCall {
+            policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
+        }
+        .abi_encode();
+
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .unwrap();
+        assert!(!out.reverted);
+        let id = IPolicyRegistry::nextPolicyIdCall::abi_decode_returns(&out.bytes).unwrap();
+        assert_eq!((id >> 56) as u8, IPolicyRegistry::PolicyType::ALLOWLIST as u8);
+    }
+
+    #[test]
+    fn dispatch_policy_type() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_policy_registry(&mut storage);
+
+        let calldata =
+            IPolicyRegistry::policyTypeCall { policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID }
+                .abi_encode();
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .unwrap();
+        assert!(!out.reverted);
+        let pt = IPolicyRegistry::policyTypeCall::abi_decode_returns(&out.bytes).unwrap();
+        assert_eq!(pt, IPolicyRegistry::PolicyType::ALWAYS_ALLOW);
+    }
+
+    #[test]
+    fn dispatch_pending_policy_admin() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_policy_registry(&mut storage);
+        let id = create_allowlist_policy(&mut storage);
+
+        let calldata = IPolicyRegistry::pendingPolicyAdminCall { policyId: id }.abi_encode();
+        let out = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .unwrap();
+        assert!(!out.reverted);
+        let pending =
+            IPolicyRegistry::pendingPolicyAdminCall::abi_decode_returns(&out.bytes).unwrap();
+        assert_eq!(pending, Address::ZERO);
     }
 }
