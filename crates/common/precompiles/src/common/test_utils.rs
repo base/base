@@ -10,6 +10,7 @@ use base_precompile_storage::Result;
 
 use crate::{
     b20::B20Token,
+    b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
     common::{Policy, TokenAccounting},
 };
 
@@ -17,6 +18,11 @@ use crate::{
 ///
 /// Use this in unit tests instead of spelling out the full generic each time.
 pub type TestToken = B20Token<InMemoryTokenAccounting, InMemoryPolicy>;
+
+/// Convenience alias: [`B20StablecoinToken`] wired with both in-memory fakes.
+///
+/// Use this in unit tests instead of spelling out the full generic each time.
+pub type TestStablecoinToken = B20StablecoinToken<InMemoryTokenAccounting, InMemoryPolicy>;
 
 /// HashMap-backed [`TokenAccounting`] for unit tests.
 ///
@@ -50,6 +56,8 @@ pub struct InMemoryTokenAccounting {
     pub contract_uri: String,
     /// Capability bitfield.
     pub capabilities: U256,
+    /// Reference asset identifier (stablecoin tokens only).
+    pub currency: String,
     /// Events collected by `emit_event`; does not produce real EVM logs.
     pub events: Vec<LogData>,
 }
@@ -72,6 +80,7 @@ impl InMemoryTokenAccounting {
             minimum_redeemable: U256::ZERO,
             contract_uri: String::new(),
             capabilities: U256::ZERO,
+            currency: String::new(),
             events: Vec::new(),
         }
     }
@@ -187,6 +196,17 @@ impl TokenAccounting for InMemoryTokenAccounting {
 
     fn emit_event(&mut self, log: LogData) -> Result<()> {
         self.events.push(log);
+        Ok(())
+    }
+}
+
+impl StablecoinAccounting for InMemoryTokenAccounting {
+    fn currency(&self) -> Result<String> {
+        Ok(self.currency.clone())
+    }
+
+    fn set_currency(&mut self, currency: String) -> Result<()> {
+        self.currency = currency;
         Ok(())
     }
 }

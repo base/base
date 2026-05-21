@@ -4,7 +4,7 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::Address;
 
 use super::{B20Token, storage::B20TokenStorage};
-use crate::{PolicyHandle, TokenVariant, macros::base_precompile};
+use crate::{B20StablecoinPrecompile, PolicyHandle, TokenVariant, macros::base_precompile};
 
 /// Entry point for the `B20Token` precompile.
 ///
@@ -21,14 +21,16 @@ impl B20TokenPrecompile {
 
     /// Returns the B-20 token precompile for `address`, if the address encodes a supported token.
     ///
-    /// Stablecoin and security discriminants route through the shared B-20 dispatcher because those
-    /// variants inherit the base B-20 surface. Until their factory creation arms are enabled, calls
-    /// to undeployed addresses still fail the token initialization guard.
+    /// Stablecoin addresses are delegated to [`B20StablecoinPrecompile`], which handles the full
+    /// `IB20Stablecoin` surface including `currency()`. Security addresses fall through to the
+    /// shared `B20Token` dispatcher until that variant is implemented. Calls to undeployed
+    /// addresses fail the token initialization guard in the respective dispatcher.
     pub fn lookup(address: &Address) -> Option<DynPrecompile> {
-        TokenVariant::from_address(*address).map(|variant| match variant {
-            TokenVariant::B20 | TokenVariant::Stablecoin | TokenVariant::Security => {
-                Self::create_precompile(*address)
+        TokenVariant::from_address(*address).and_then(|variant| match variant {
+            TokenVariant::B20 | TokenVariant::Security => {
+                Some(Self::create_precompile(*address))
             }
+            TokenVariant::Stablecoin => B20StablecoinPrecompile::lookup(address),
         })
     }
 

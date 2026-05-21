@@ -5,7 +5,7 @@ mod policy;
 #[cfg(any(test, feature = "test-utils"))]
 pub(super) mod test_utils;
 #[cfg(any(test, feature = "test-utils"))]
-pub use test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken};
+pub use test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
 mod token;
 mod token_accounting;
 

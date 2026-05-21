@@ -38,10 +38,16 @@ pub use common::{
     Permittable, Policy, Redeemable, Token, TokenAccounting, Transferable,
 };
 #[cfg(any(test, feature = "test-utils"))]
-pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestToken};
+pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
 
 mod b20;
 pub use b20::{B20Token, B20TokenPrecompile, B20TokenStorage, IB20};
+
+mod b20_stablecoin;
+pub use b20_stablecoin::{
+    B20StablecoinPrecompile, B20StablecoinStorage, B20StablecoinToken, IB20Stablecoin,
+    StablecoinAccounting,
+};
 
 mod factory;
 pub use factory::{ITokenFactory, TokenFactory, TokenFactoryStorage, TokenVariant};
