@@ -1,5 +1,4 @@
-use std::path::PathBuf;
-use std::sync::LazyLock;
+use std::{path::PathBuf, sync::LazyLock};
 
 use cargo_metadata::MetadataCommand;
 
@@ -21,7 +20,5 @@ pub static OP_SUCCINCT_FAULT_DISPUTE_GAME_CONFIG_PATH: LazyLock<PathBuf> = LazyL
     std::env::var("OP_SUCCINCT_FAULT_DISPUTE_GAME_CONFIG_PATH")
         .ok()
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            get_workspace_root().join("contracts").join("opsuccinctfdgconfig.json")
-        })
+        .unwrap_or_else(|| get_workspace_root().join("contracts").join("opsuccinctfdgconfig.json"))
 });
