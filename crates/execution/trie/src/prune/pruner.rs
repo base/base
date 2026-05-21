@@ -103,7 +103,11 @@ where
     fn prune_batch(&self, start_block: u64, end_block: u64) -> Result<PrunerOutput, PrunerError> {
         let batch_start_time = Instant::now();
 
-        // Fetch block hashes for the new earliest block of this batch
+        // Fetch the block hash for the new earliest block of this batch.
+        //
+        // The parent hash is intentionally not fetched: `prune_earliest_state` only reads
+        // `block.number` and `block.hash` from the supplied `BlockWithParent`. Fetching the
+        // parent hash here was wasted I/O proportional to the number of batches.
         let new_earliest_block_hash = self
             .block_hash_reader
             .block_hash(end_block)
@@ -117,24 +121,8 @@ where
             })?
             .ok_or(PrunerError::BlockNotFound(end_block))?;
 
-        let parent_block_num = end_block - 1;
-        let parent_block_hash = self
-            .block_hash_reader
-            .block_hash(parent_block_num)
-            .inspect_err(|err| {
-                error!(
-                    target: "trie::pruner",
-                    block = parent_block_num,
-                    ?err,
-                    "Failed to fetch block hash for parent block during pruning"
-                )
-            })?
-            .ok_or(PrunerError::BlockNotFound(parent_block_num))?;
-
-        batch_start_time.elapsed();
-
         let block_with_parent = BlockWithParent {
-            parent: parent_block_hash,
+            parent: Default::default(),
             block: BlockNumHash { number: end_block, hash: new_earliest_block_hash },
         };
 
@@ -411,11 +399,6 @@ mod tests {
             .expect_block_hash()
             .withf(move |block_num| *block_num == 4)
             .returning(move |_| Ok(Some(b256(4))));
-
-        block_hash_reader
-            .expect_block_hash()
-            .withf(move |block_num| *block_num == 3)
-            .returning(move |_| Ok(Some(b256(3))));
 
         let pruner = BaseProofStoragePruner::new(store.clone(), block_hash_reader, 1, 1000);
         let out = pruner.run_inner().expect("pruner ok");

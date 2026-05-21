@@ -25,5 +25,8 @@ pub use pausable::Pausable;
 mod permittable;
 pub use permittable::Permittable;
 
+mod roles;
+pub use roles::{B20TokenRole, RoleManaged};
+
 mod transferable;
 pub use transferable::Transferable;

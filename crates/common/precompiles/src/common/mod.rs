@@ -1,7 +1,10 @@
 //! Shared business logic for all Base-native token variants.
 
 mod ops;
-pub use ops::{B20Guards, Burnable, Configurable, Mintable, Pausable, Permittable, Transferable};
+pub use ops::{
+    B20Guards, B20TokenRole, Burnable, Configurable, Mintable, Pausable, Permittable, RoleManaged,
+    Transferable,
+};
 
 mod policy;
 #[cfg(any(test, feature = "test-utils"))]

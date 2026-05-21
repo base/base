@@ -13,9 +13,6 @@ pub use policies::{B20PolicyType, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK};
 mod precompile;
 pub use precompile::B20TokenPrecompile;
 
-mod roles;
-pub use roles::B20TokenRole;
-
 mod storage;
 pub use storage::B20TokenStorage;
 

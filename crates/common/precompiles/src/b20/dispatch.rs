@@ -8,8 +8,8 @@ use super::{
     abi::{IB20, IB20::IB20Calls as C},
 };
 use crate::{
-    ActivationRegistryStorage, Burnable, Configurable, Mintable, Pausable, Permittable, Policy,
-    TokenAccounting, Transferable,
+    ActivationRegistryStorage, B20TokenRole, Burnable, Configurable, Mintable, Pausable,
+    Permittable, Policy, RoleManaged, TokenAccounting, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
@@ -66,13 +66,13 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
             C::supplyCap(_) => self.accounting.supply_cap()?.abi_encode().into(),
             C::nonces(c) => self.accounting.nonce(c.owner)?.abi_encode().into(),
             C::contractURI(_) => self.accounting.contract_uri()?.abi_encode().into(),
-            C::DEFAULT_ADMIN_ROLE(_) => Self::default_admin_role().abi_encode().into(),
-            C::MINT_ROLE(_) => Self::mint_role().abi_encode().into(),
-            C::BURN_ROLE(_) => Self::burn_role().abi_encode().into(),
-            C::BURN_BLOCKED_ROLE(_) => Self::burn_blocked_role().abi_encode().into(),
-            C::PAUSE_ROLE(_) => Self::pause_role().abi_encode().into(),
-            C::UNPAUSE_ROLE(_) => Self::unpause_role().abi_encode().into(),
-            C::METADATA_ROLE(_) => Self::metadata_role().abi_encode().into(),
+            C::DEFAULT_ADMIN_ROLE(_) => B20TokenRole::DefaultAdmin.id().abi_encode().into(),
+            C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
+            C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),
+            C::BURN_BLOCKED_ROLE(_) => B20TokenRole::BurnBlocked.id().abi_encode().into(),
+            C::PAUSE_ROLE(_) => B20TokenRole::Pause.id().abi_encode().into(),
+            C::UNPAUSE_ROLE(_) => B20TokenRole::Unpause.id().abi_encode().into(),
+            C::METADATA_ROLE(_) => B20TokenRole::Metadata.id().abi_encode().into(),
             C::TRANSFER_SENDER_POLICY(_) => Self::transfer_sender_policy().abi_encode().into(),
             C::TRANSFER_RECEIVER_POLICY(_) => Self::transfer_receiver_policy().abi_encode().into(),
             C::TRANSFER_EXECUTOR_POLICY(_) => Self::transfer_executor_policy().abi_encode().into(),
