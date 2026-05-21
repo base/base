@@ -517,6 +517,79 @@ mod tests {
         assert_ne!(PackedPolicy::new(ADMIN), PackedPolicy::new(other));
     }
 
+    #[test]
+    fn packed_policy_round_trips_admin_and_type() {
+        // Covers all four PolicyType variants to ensure packing and unpacking are
+        // consistent regardless of the discriminant value.
+        let cases = [
+            (PolicyType::ALWAYS_ALLOW, PolicyType::ALWAYS_ALLOW as u8),
+            (PolicyType::ALWAYS_BLOCK, PolicyType::ALWAYS_BLOCK as u8),
+            (PolicyType::ALLOWLIST, PolicyType::ALLOWLIST as u8),
+            (PolicyType::BLOCKLIST, PolicyType::BLOCKLIST as u8),
+        ];
+        for (policy_type, expected_u8) in cases {
+            let p = PackedPolicy::new(ADMIN, policy_type);
+            assert_eq!(p.admin(), ADMIN, "admin mismatch for type discriminant {expected_u8}");
+            assert_eq!(
+                p.policy_type_u8(),
+                expected_u8,
+                "type mismatch for discriminant {expected_u8}"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_word_means_never_created() {
+        // A zeroed storage word signals the policy slot was never written.
+        // policyExists relies on is_zero() being true for such a word.
+        let p = PackedPolicy::from_raw(U256::ZERO);
+        assert!(p.is_zero(), "zero U256 must report is_zero");
+        assert_eq!(p.admin(), Address::ZERO, "zero word admin must be Address::ZERO");
+        assert_eq!(p.policy_type_u8(), 0u8, "zero word type byte must be 0");
+        // Confirm this is how policyExists reasons: !is_zero() == false means absent.
+        assert!(!p.is_zero() == false, "policyExists would return false for a zero word: !is_zero() is false so policy is absent");
+    }
+
+    #[test]
+    fn zero_admin_with_valid_type_is_not_confused_with_never_created() {
+        // After renounce_admin the admin field is Address::ZERO but the type byte is
+        // preserved, keeping the word non-zero. policyExists must return true here.
+        let p = PackedPolicy::new(Address::ZERO, PolicyType::ALLOWLIST);
+        assert!(
+            !p.is_zero(),
+            "zero admin + non-zero type must NOT appear as never-created"
+        );
+        assert_eq!(p.admin(), Address::ZERO);
+        assert_eq!(p.policy_type_u8(), PolicyType::ALLOWLIST as u8);
+    }
+
+    #[test]
+    fn policy_type_does_not_bleed_into_admin_bits() {
+        // The type occupies bits [7:0]; the admin is extracted by shifting right 8 bits
+        // then reading bytes [12..32]. Type bits must not appear in the admin readback.
+        let p = PackedPolicy::new(ADMIN, PolicyType::BLOCKLIST); // BLOCKLIST = 3 (bits 0-1 set)
+        assert_eq!(p.admin(), ADMIN, "type bits must not corrupt the admin field");
+        // Verify with a raw word where bits [7:0] are all set (0xff).
+        let raw = PackedPolicy::new(ADMIN, PolicyType::ALLOWLIST).into_u256()
+            | U256::from(0xffu8); // force all low bits on
+        let p2 = PackedPolicy::from_raw(raw);
+        assert_eq!(p2.admin(), ADMIN, "saturated type bits must not bleed into admin");
+    }
+
+    #[test]
+    fn admin_bits_do_not_bleed_into_type_bits() {
+        // An address whose lowest byte is 0xff gets shifted into bits [15:8] during
+        // packing, so it must not corrupt bits [7:0] which hold the type discriminant.
+        let addr_with_ff_low = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaff");
+        let p = PackedPolicy::new(addr_with_ff_low, PolicyType::ALLOWLIST);
+        assert_eq!(
+            p.policy_type_u8(),
+            PolicyType::ALLOWLIST as u8,
+            "address low-byte (0xff) must not bleed into type bits"
+        );
+        assert_eq!(p.admin(), addr_with_ff_low, "address must round-trip with 0xff low byte");
+    }
+
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
     const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
     const BOB: Address = address!("0xB000000000000000000000000000000000000001");
