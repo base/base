@@ -1359,13 +1359,13 @@ where
     /// ghost-entry guard. Mirrors the trailing half of the legacy
     /// synchronous `step` helper — extracted so the [`Self::run`] pipeline
     /// can invoke it independently of the concurrent registration path.
+    ///
+    /// Both error paths (registry load and per-orphan deregistration)
+    /// propagate uniformly so the caller can log + increment
+    /// `processing_errors_total` once at a single site.
     async fn run_orphan_dereg(&self, active_signers: &HashSet<Address>) -> Result<()> {
         let registered_signers = self.registry.get_registered_signers().await?;
-        if let Err(e) = self.deregister_orphans(active_signers, &registered_signers).await {
-            warn!(error = %e, "failed to deregister orphan signers");
-            RegistrarMetrics::processing_errors_total().increment(1);
-        }
-        Ok(())
+        self.deregister_orphans(active_signers, &registered_signers).await
     }
 
     /// Reconciles the in-flight `pending` set against this cycle's
