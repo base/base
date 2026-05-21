@@ -862,9 +862,9 @@ mod tests {
     #[test]
     fn batch_mint_test_rejects_length_mismatch() {
         let mut token = make_token();
-        assert!(token
-            .batch_mint_test(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
-            .is_err());
+        assert!(
+            token.batch_mint_test(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err()
+        );
     }
 
     // --- batchBurn: EmptyBatch / LengthMismatch / multi-account Transfer events ---
@@ -878,9 +878,7 @@ mod tests {
     #[test]
     fn batch_burn_rejects_length_mismatch() {
         let mut token = make_token();
-        assert!(token
-            .batch_burn(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
-            .is_err());
+        assert!(token.batch_burn(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err());
     }
 
     #[test]
