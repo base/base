@@ -7,7 +7,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_action_harness::TEST_ACCOUNT_KEY;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
-use base_common_precompiles::{IB20, TokenFactoryStorage};
+use base_common_precompiles::{B20TokenRole, IB20};
 
 use crate::env::BerylTestEnv;
 
@@ -18,7 +18,6 @@ const MEMO_TRANSFER: B256 = B256::repeat_byte(0x10);
 const MEMO_TRANSFER_FROM: B256 = B256::repeat_byte(0x11);
 const MEMO_MINT: B256 = B256::repeat_byte(0x12);
 const MEMO_BURN: B256 = B256::repeat_byte(0x13);
-const MEMO_REDEEM: B256 = B256::repeat_byte(0x14);
 
 #[tokio::test]
 async fn b20_transfers_update_balances_and_emit_events() {
@@ -268,13 +267,6 @@ async fn b20_staticcall_abi_covers_all_read_methods() {
 
     scenario
         .assert_staticcall_cases(vec![
-            StaticcallCase::word(
-                "capabilities",
-                IB20::capabilitiesCall {}.abi_encode(),
-                TokenFactoryStorage::DEFAULT_CAPABILITIES,
-            ),
-            StaticcallCase::word("isPausable", IB20::isPausableCall {}.abi_encode(), U256::ONE),
-            StaticcallCase::word("isCapMutable", IB20::isCapMutableCall {}.abi_encode(), U256::ONE),
             StaticcallCase::word("name", IB20::nameCall {}.abi_encode(), U256::from(32)),
             StaticcallCase::word("symbol", IB20::symbolCall {}.abi_encode(), U256::from(32)),
             StaticcallCase::word(
@@ -303,10 +295,14 @@ async fn b20_staticcall_abi_covers_all_read_methods() {
                 IB20::minimumRedeemableCall {}.abi_encode(),
                 U256::ZERO,
             ),
-            StaticcallCase::word("paused", IB20::pausedCall {}.abi_encode(), U256::ZERO),
+            StaticcallCase::word(
+                "pausedFeatures",
+                IB20::pausedFeaturesCall {}.abi_encode(),
+                U256::from(32),
+            ),
             StaticcallCase::word(
                 "isPaused",
-                IB20::isPausedCall { vector: U256::ONE }.abi_encode(),
+                IB20::isPausedCall { feature: IB20::PausableFeature::TRANSFER }.abi_encode(),
                 U256::ZERO,
             ),
             StaticcallCase::word("supplyCap", IB20::supplyCapCall {}.abi_encode(), U256::MAX),
@@ -341,6 +337,23 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
     let mut scenario = B20TokenScenario::new().await;
     let initial = BerylTestEnv::B20_INITIAL_SUPPLY;
     let new_cap = U256::from(initial + 1_000);
+    let grant_roles = [
+        B20TokenRole::Metadata,
+        B20TokenRole::Mint,
+        B20TokenRole::Burn,
+        B20TokenRole::Pause,
+        B20TokenRole::Unpause,
+    ]
+    .into_iter()
+    .map(|role| {
+        scenario.call_tx(IB20::grantRoleCall { role: role.id(), account: BerylTestEnv::alice() })
+    })
+    .collect();
+    let block = scenario.build_block_with_transactions(grant_roles).await;
+
+    for index in 0..5 {
+        assert!(scenario.env.user_tx_succeeded(&block, index), "role grant {index} must succeed");
+    }
 
     let transfer_with_memo = scenario.call_tx(IB20::transferWithMemoCall {
         to: BerylTestEnv::bob(),
@@ -371,13 +384,10 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
     let burn = scenario.call_tx(IB20::burnCall { amount: U256::from(2) });
     let burn_with_memo =
         scenario.call_tx(IB20::burnWithMemoCall { amount: U256::from(3), memo: MEMO_BURN });
-    let set_minimum =
-        scenario.call_tx(IB20::setMinimumRedeemableCall { newMinimum: U256::from(4) });
-    let redeem = scenario.call_tx(IB20::redeemCall { amount: U256::from(4) });
-    let redeem_with_memo =
-        scenario.call_tx(IB20::redeemWithMemoCall { amount: U256::from(5), memo: MEMO_REDEEM });
-    let pause = scenario.call_tx(IB20::pauseCall { vectors: U256::ONE });
-    let unpause = scenario.call_tx(IB20::unpauseCall {});
+    let pause =
+        scenario.call_tx(IB20::pauseCall { features: vec![IB20::PausableFeature::TRANSFER] });
+    let unpause =
+        scenario.call_tx(IB20::unpauseCall { features: vec![IB20::PausableFeature::TRANSFER] });
 
     let block = scenario
         .build_block_with_transactions(vec![
@@ -392,15 +402,12 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
             mint_with_memo,
             burn,
             burn_with_memo,
-            set_minimum,
-            redeem,
-            redeem_with_memo,
             pause,
             unpause,
         ])
         .await;
 
-    for index in 0..16 {
+    for index in 0..13 {
         assert!(
             scenario.env.user_tx_succeeded(&block, index),
             "B-20 mutation {index} must succeed"
@@ -440,38 +447,30 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
     scenario.assert_log(
         &block,
         11,
-        IB20::MinimumRedeemableUpdated {
+        IB20::Paused {
             updater: BerylTestEnv::alice(),
-            oldMinimum: U256::ZERO,
-            newMinimum: U256::from(4),
+            features: vec![IB20::PausableFeature::TRANSFER],
         }
         .encode_log_data(),
     );
     scenario.assert_log(
         &block,
         12,
-        IB20::Redeemed { holder: BerylTestEnv::alice(), amount: U256::from(4) }.encode_log_data(),
-    );
-    scenario.assert_log(&block, 13, IB20::Memo { memo: MEMO_REDEEM }.encode_log_data());
-    scenario.assert_log(
-        &block,
-        14,
-        IB20::Paused { updater: BerylTestEnv::alice(), vectors: U256::ONE }.encode_log_data(),
-    );
-    scenario.assert_log(
-        &block,
-        15,
-        IB20::Unpaused { updater: BerylTestEnv::alice() }.encode_log_data(),
+        IB20::Unpaused {
+            updater: BerylTestEnv::alice(),
+            features: vec![IB20::PausableFeature::TRANSFER],
+        }
+        .encode_log_data(),
     );
 
-    scenario.assert_total_supply(initial + 20 + 30 - 2 - 3 - 4 - 5);
+    scenario.assert_total_supply(initial + 20 + 30 - 2 - 3);
     scenario.assert_allowance(BerylTestEnv::alice(), BerylTestEnv::bob(), 45);
     scenario
         .assert_staticcall_cases(vec![
             StaticcallCase::word(
-                "paused after unpause",
-                IB20::pausedCall {}.abi_encode(),
-                U256::ZERO,
+                "pausedFeatures after unpause",
+                IB20::pausedFeaturesCall {}.abi_encode(),
+                U256::from(32),
             ),
             StaticcallCase::word(
                 "supplyCap after update",
@@ -479,9 +478,9 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
                 new_cap,
             ),
             StaticcallCase::word(
-                "minimumRedeemable after update",
+                "minimumRedeemable",
                 IB20::minimumRedeemableCall {}.abi_encode(),
-                U256::from(4),
+                U256::ZERO,
             ),
         ])
         .await;
