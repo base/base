@@ -13,9 +13,23 @@ use revm::{
 };
 
 use crate::{
-    ActivationRegistry, B20TokenPrecompile, BasePrecompileSpec, PolicyRegistryPrecompile,
-    TokenFactory, bls12_381, bn254_pair,
+    ActivationRegistry, B20SecurityPrecompile, B20TokenPrecompile, BasePrecompileSpec,
+    PolicyRegistryPrecompile, TokenFactory, TokenVariant, bls12_381, bn254_pair,
 };
+
+/// Combined lookup for all B-20 token variants (default and security).
+///
+/// A single named function is required because `set_precompile_lookup` accepts
+/// function pointers (which are lifetime-generic) but not closures with a specific
+/// lifetime, and because successive `set_precompile_lookup` calls replace rather
+/// than chain the previous lookup.
+fn b20_token_lookup(address: &Address) -> Option<alloy_evm::precompiles::DynPrecompile> {
+    match TokenVariant::from_address(*address)? {
+        TokenVariant::B20 => Some(B20TokenPrecompile::create_precompile(*address)),
+        TokenVariant::Security => Some(B20SecurityPrecompile::create_precompile(*address)),
+        TokenVariant::Stablecoin => None,
+    }
+}
 
 /// Base precompile provider.
 #[derive(Debug, Clone)]
@@ -172,7 +186,9 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
             TokenFactory::install(&mut precompiles);
-            B20TokenPrecompile::install(&mut precompiles);
+            // A single combined lookup covers all B-20 variants:
+            // set_precompile_lookup replaces, not chains, so we cannot call install twice.
+            precompiles.set_precompile_lookup(b20_token_lookup);
             PolicyRegistryPrecompile::install(&mut precompiles);
             ActivationRegistry::install(&mut precompiles, self.activation_admin_address);
         }

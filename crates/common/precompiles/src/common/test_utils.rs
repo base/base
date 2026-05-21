@@ -3,13 +3,14 @@
 //! Use these for capability/ops logic tests (Transferable, Mintable, …).
 //! For factory, dispatch, and storage-layout tests keep the EVM harness.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use alloy_primitives::{Address, LogData, U256};
+use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_storage::Result;
 
 use crate::{
     b20::B20Token,
+    b20_security::SecurityAccounting,
     common::{Policy, TokenAccounting},
 };
 
@@ -17,6 +18,7 @@ use crate::{
 ///
 /// Use this in unit tests instead of spelling out the full generic each time.
 pub type TestToken = B20Token<InMemoryTokenAccounting, InMemoryPolicy>;
+
 
 /// HashMap-backed [`TokenAccounting`] for unit tests.
 ///
@@ -50,6 +52,12 @@ pub struct InMemoryTokenAccounting {
     pub contract_uri: String,
     /// Capability bitfield.
     pub capabilities: U256,
+    /// Share-to-tokens ratio scaled to WAD (1e18). Security tokens only.
+    pub shares_to_tokens_ratio: U256,
+    /// Security identifier values keyed by `keccak256(identifier_type)`. Security tokens only.
+    pub security_identifiers: HashMap<B256, String>,
+    /// Consumed announcement ids (stored as `keccak256(id)`). Security tokens only.
+    pub announcement_ids_used: HashSet<B256>,
     /// Events collected by `emit_event`; does not produce real EVM logs.
     pub events: Vec<LogData>,
 }
@@ -72,6 +80,9 @@ impl InMemoryTokenAccounting {
             minimum_redeemable: U256::ZERO,
             contract_uri: String::new(),
             capabilities: U256::ZERO,
+            shares_to_tokens_ratio: U256::ZERO,
+            security_identifiers: HashMap::new(),
+            announcement_ids_used: HashSet::new(),
             events: Vec::new(),
         }
     }
@@ -216,5 +227,38 @@ impl InMemoryPolicy {
 impl Policy for InMemoryPolicy {
     fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
         Ok(*self.authorizations.get(&(policy_id, account)).unwrap_or(&false))
+    }
+}
+
+impl SecurityAccounting for InMemoryTokenAccounting {
+    fn shares_to_tokens_ratio(&self) -> Result<U256> {
+        Ok(self.shares_to_tokens_ratio)
+    }
+
+    fn set_shares_to_tokens_ratio(&mut self, ratio: U256) -> Result<()> {
+        self.shares_to_tokens_ratio = ratio;
+        Ok(())
+    }
+
+    fn security_identifier(&self, key: B256) -> Result<String> {
+        Ok(self.security_identifiers.get(&key).cloned().unwrap_or_default())
+    }
+
+    fn set_security_identifier(&mut self, key: B256, value: String) -> Result<()> {
+        if value.is_empty() {
+            self.security_identifiers.remove(&key);
+        } else {
+            self.security_identifiers.insert(key, value);
+        }
+        Ok(())
+    }
+
+    fn is_announcement_id_used(&self, id_hash: B256) -> Result<bool> {
+        Ok(self.announcement_ids_used.contains(&id_hash))
+    }
+
+    fn mark_announcement_id_used(&mut self, id_hash: B256) -> Result<()> {
+        self.announcement_ids_used.insert(id_hash);
+        Ok(())
     }
 }
