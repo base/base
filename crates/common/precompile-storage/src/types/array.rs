@@ -147,3 +147,175 @@ where
         self.as_slot().t_delete()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, U256};
+
+    use super::*;
+    use crate::{hashmap::setup_storage, provider::Handler, storage_ctx::StorageCtx};
+
+    // -- Packed arrays (T::BYTES <= 16, multiple elements per slot) ---------------
+
+    #[test]
+    fn test_packed_array_write_read_whole() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(10u64);
+            let data: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+            let mut handler = ArrayHandler::<u32, 8>::new(base, address, ctx);
+            handler.write(data).unwrap();
+            let loaded = handler.read().unwrap();
+            assert_eq!(loaded, data);
+        });
+    }
+
+    #[test]
+    fn test_packed_array_all_elements_survive_write() {
+        // Write a full array and verify every element individually
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(20u64);
+            let data: [u8; 32] = core::array::from_fn(|i| i as u8);
+            let mut handler = ArrayHandler::<u8, 32>::new(base, address, ctx);
+            handler.write(data).unwrap();
+            let loaded = handler.read().unwrap();
+            for i in 0..32usize {
+                assert_eq!(loaded[i], i as u8, "mismatch at index {i}");
+            }
+        });
+    }
+
+    #[test]
+    fn test_packed_array_overwrite_previous_value() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(30u64);
+            let first: [u16; 4] = [10, 20, 30, 40];
+            let second: [u16; 4] = [100, 200, 300, 400];
+            let mut handler = ArrayHandler::<u16, 4>::new(base, address, ctx);
+            handler.write(first).unwrap();
+            handler.write(second).unwrap();
+            assert_eq!(handler.read().unwrap(), second);
+        });
+    }
+
+    #[test]
+    fn test_packed_array_index_read_individual_elements() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(40u64);
+            let data: [u32; 5] = [11, 22, 33, 44, 55];
+            let mut handler = ArrayHandler::<u32, 5>::new(base, address, ctx);
+            handler.write(data).unwrap();
+
+            // Read each element via the index operator
+            for (i, &expected) in data.iter().enumerate() {
+                let got = handler[i].read().unwrap();
+                assert_eq!(got, expected, "element {i} mismatch");
+            }
+        });
+    }
+
+    #[test]
+    fn test_packed_array_out_of_bounds_at_returns_none() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(50u64);
+            let mut handler = ArrayHandler::<u32, 4>::new(base, address, ctx);
+            assert!(handler.at(4).is_none(), "index 4 should be out of bounds for N=4");
+            assert!(handler.at(0).is_some());
+        });
+    }
+
+    // -- Unpacked arrays (T::BYTES == 32, one element per slot) ------------------
+
+    #[test]
+    fn test_unpacked_array_write_read_whole() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(100u64);
+            let data: [U256; 4] =
+                [U256::from(1u64), U256::from(2u64), U256::from(3u64), U256::from(4u64)];
+            let mut handler = ArrayHandler::<U256, 4>::new(base, address, ctx);
+            handler.write(data).unwrap();
+            assert_eq!(handler.read().unwrap(), data);
+        });
+    }
+
+    #[test]
+    fn test_unpacked_array_elements_occupy_consecutive_slots() {
+        // Each U256 element should occupy its own slot starting at base_slot + i
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(200u64);
+            let data: [U256; 3] = [U256::from(10u64), U256::from(20u64), U256::from(30u64)];
+            let mut handler = ArrayHandler::<U256, 3>::new(base, address, ctx);
+            handler.write(data).unwrap();
+
+            // Verify each element via individual handler read
+            for (i, &expected) in data.iter().enumerate() {
+                let got = handler[i].read().unwrap();
+                assert_eq!(got, expected, "element {i} mismatch");
+            }
+        });
+    }
+
+    #[test]
+    fn test_unpacked_array_overwrite_clears_previous() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(300u64);
+            let first: [U256; 2] = [U256::from(0xDEADu64), U256::from(0xBEEFu64)];
+            let second: [U256; 2] = [U256::from(1u64), U256::from(2u64)];
+            let mut handler = ArrayHandler::<U256, 2>::new(base, address, ctx);
+            handler.write(first).unwrap();
+            handler.write(second).unwrap();
+            assert_eq!(handler.read().unwrap(), second);
+        });
+    }
+
+    // -- Address arrays (T::BYTES == 20, packed) ---------------------------------
+
+    #[test]
+    fn test_address_array_roundtrip() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(400u64);
+            let data: [Address; 3] = [
+                Address::from([0x11; 20]),
+                Address::from([0x22; 20]),
+                Address::from([0x33; 20]),
+            ];
+            let mut handler = ArrayHandler::<Address, 3>::new(base, address, ctx);
+            handler.write(data).unwrap();
+            assert_eq!(handler.read().unwrap(), data);
+        });
+    }
+
+    // -- Metadata helpers --------------------------------------------------------
+
+    #[test]
+    fn test_array_handler_metadata() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(500u64);
+            let handler = ArrayHandler::<u32, 7>::new(base, address, ctx);
+            assert_eq!(handler.len(), 7);
+            assert!(!handler.is_empty());
+            assert_eq!(handler.base_slot(), base);
+        });
+    }
+
+    #[test]
+    fn test_array_handler_empty_const() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(600u64);
+            let mut handler = ArrayHandler::<u32, 0>::new(base, address, ctx);
+            assert!(handler.is_empty());
+            assert_eq!(handler.len(), 0);
+            assert!(handler.at(0).is_none());
+        });
+    }
+}
