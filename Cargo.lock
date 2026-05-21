@@ -5380,6 +5380,7 @@ dependencies = [
  "jsonrpsee",
  "k256",
  "metrics",
+ "metrics-exporter-prometheus",
  "rand 0.9.4",
  "reqwest 0.13.2",
  "rstest",

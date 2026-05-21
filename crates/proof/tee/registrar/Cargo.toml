@@ -68,9 +68,11 @@ hex.workspace = true
 [dev-dependencies]
 sha2.workspace = true
 rstest.workspace = true
+metrics.workspace = true
 hex-literal.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
+metrics-exporter-prometheus.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 
 [features]

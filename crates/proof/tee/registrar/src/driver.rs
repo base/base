@@ -106,6 +106,18 @@ pub struct PendingTask {
     pub signer: Address,
     /// Cooperative cancel handle for this single task.
     pub cancel: CancellationToken,
+    /// `true` once [`RegistrationDriver::reconcile_proof_tasks`] has
+    /// fired this task's [`Self::cancel`] (signer dropped from the
+    /// registerable set mid-flight). Lets [`RegistrationDriver::
+    /// drain_proof_tasks`] distinguish reconcile-cancelled tasks
+    /// (already counted in `proof_tasks_cancelled` at intent time)
+    /// from shutdown-cancelled tasks so neither double-counts nor
+    /// silently misses the shutdown path — every cancellation increments
+    /// the metric exactly once. Necessary because [`Self::cancel`] is a
+    /// child of [`DriverConfig::cancel`]; on shutdown the parent's fire
+    /// auto-cancels every child, so an `is_cancelled()` gate alone
+    /// cannot tell the two cases apart.
+    pub cancelled_by_reconcile: bool,
 }
 
 /// A single (signer, attestation) pair from a prover instance that
@@ -1422,7 +1434,12 @@ where
         // Tasks tied to instances that failed to resolve transiently
         // are preserved — the absence from `wanted` is then a lack of
         // evidence, not evidence of absence.
-        for task in pending.values() {
+        //
+        // `cancelled_by_reconcile = true` is set alongside the cancel
+        // intent so [`Self::drain_proof_tasks`] can tell shutdown-driven
+        // cancels (which it must count) apart from reconcile-driven
+        // cancels (already counted here).
+        for task in pending.values_mut() {
             if !wanted.contains(&task.signer)
                 && !task.cancel.is_cancelled()
                 && !resolution.unresolved_instance_ids.contains(&task.instance_id)
@@ -1433,6 +1450,7 @@ where
                     "cancelling proof task: signer no longer registerable"
                 );
                 task.cancel.cancel();
+                task.cancelled_by_reconcile = true;
                 RegistrarMetrics::proof_tasks_cancelled().increment(1);
             } else if !wanted.contains(&task.signer)
                 && !task.cancel.is_cancelled()
@@ -1484,7 +1502,15 @@ where
                     .await
             });
             let id = handle.id();
-            pending.insert(id, PendingTask { instance_id, signer, cancel: signer_cancel });
+            pending.insert(
+                id,
+                PendingTask {
+                    instance_id,
+                    signer,
+                    cancel: signer_cancel,
+                    cancelled_by_reconcile: false,
+                },
+            );
             RegistrarMetrics::proof_tasks_spawned().increment(1);
         }
     }
@@ -1595,11 +1621,19 @@ where
         pending: &mut HashMap<task::Id, PendingTask>,
     ) {
         for task in pending.values() {
-            // Only count tasks we are cancelling here — already-cancelled
-            // tasks (because `reconcile_proof_tasks` cancelled them earlier
-            // this cycle) were counted at intent time and must not double
-            // count under shutdown.
-            if !task.cancel.is_cancelled() {
+            // Gate on `cancelled_by_reconcile`, NOT on
+            // `task.cancel.is_cancelled()`. Each `signer_cancel` is a
+            // child of `DriverConfig::cancel`, so by the time drain
+            // runs the parent has already auto-cancelled every child —
+            // `is_cancelled()` is `true` for all tasks regardless of
+            // who triggered the cancel. Using the reconcile flag lets
+            // us count every shutdown-driven cancellation exactly once
+            // while preserving the "reconcile counted at intent time"
+            // contract. `task.cancel.cancel()` is still issued for
+            // belt-and-braces (it's a no-op when the parent fired) so
+            // the bookkeeping stays correct if anyone ever decouples
+            // `signer_cancel` from the parent in the future.
+            if !task.cancelled_by_reconcile {
                 task.cancel.cancel();
                 RegistrarMetrics::proof_tasks_cancelled().increment(1);
             }
@@ -2962,6 +2996,7 @@ mod tests {
             instance_id: instance_id.to_string(),
             signer,
             cancel: CancellationToken::new(),
+            cancelled_by_reconcile: false,
         }
     }
 
@@ -4484,6 +4519,7 @@ mod tests {
                     instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
                     signer,
                     cancel: task_cancel.clone(),
+                    cancelled_by_reconcile: false,
                 },
             );
             seeded_cancels.push(task_cancel);
@@ -4562,6 +4598,7 @@ mod tests {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
                 signer,
                 cancel: stale_cancel.clone(),
+                cancelled_by_reconcile: false,
             },
         );
 
@@ -4624,6 +4661,7 @@ mod tests {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
                 signer,
                 cancel: task_cancel.clone(),
+                cancelled_by_reconcile: false,
             },
         );
 
@@ -4667,6 +4705,88 @@ mod tests {
         );
 
         drain_test_tasks(&mut tasks, &mut pending).await;
+    }
+
+    // ── drain_proof_tasks metric-gating test ────────────────────────────
+
+    /// At shutdown, [`RegistrationDriver::drain_proof_tasks`] MUST count
+    /// only the tasks whose cancellation it actually drives — tasks
+    /// already cancelled by a prior
+    /// [`RegistrationDriver::reconcile_proof_tasks`] cancel-pass were
+    /// counted at intent time and double-counting them in the drain pass
+    /// would inflate the `proof_tasks_cancelled` counter. The gate uses
+    /// the `cancelled_by_reconcile` flag (not
+    /// `cancel.is_cancelled()`) because every per-task `signer_cancel`
+    /// is a child of `DriverConfig::cancel`, so by the time drain runs
+    /// the parent has already auto-cancelled every child token and
+    /// `is_cancelled()` no longer distinguishes the two cases.
+    ///
+    /// This test wires a real prometheus recorder via
+    /// [`metrics::with_local_recorder`], seeds three pending tasks (one
+    /// pre-flagged as `cancelled_by_reconcile = true`, two not), drains,
+    /// and asserts the counter increment equals exactly the unflagged
+    /// count.
+    #[cfg(feature = "metrics")]
+    mod drain_metric_tests {
+        use metrics_exporter_prometheus::PrometheusBuilder;
+
+        use super::*;
+
+        #[test]
+        fn drain_counts_only_tasks_not_already_cancelled_by_reconcile() {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let recorder = PrometheusBuilder::new().build_recorder();
+            let handle = recorder.handle();
+
+            metrics::with_local_recorder(&recorder, || {
+                rt.block_on(async {
+                    let mut tasks: JoinSet<Result<()>> = JoinSet::new();
+                    let mut pending: HashMap<task::Id, PendingTask> = HashMap::new();
+
+                    // Seed: (key, was_flagged_by_reconcile). The flagged
+                    // task must NOT re-count at drain; the two unflagged
+                    // ones must count exactly once each.
+                    let seed: &[(&[u8; 32], bool)] =
+                        &[(&HARDHAT_KEY_0, true), (&HARDHAT_KEY_1, false), (&HARDHAT_KEY_2, false)];
+
+                    for (key, flagged) in seed {
+                        let signer =
+                            ProverClient::derive_address(&public_key_from_private(key)).unwrap();
+                        let cancel = CancellationToken::new();
+                        let cancel_inner = cancel.clone();
+                        let handle = tasks.spawn(async move {
+                            cancel_inner.cancelled().await;
+                            Ok(())
+                        });
+                        pending.insert(
+                            handle.id(),
+                            PendingTask {
+                                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
+                                signer,
+                                cancel: cancel.clone(),
+                                cancelled_by_reconcile: *flagged,
+                            },
+                        );
+                        // Simulate the reconcile cancel-pass having
+                        // already fired for the flagged entry — this is
+                        // the precise state drain encounters at
+                        // shutdown for tasks reconcile already counted.
+                        if *flagged {
+                            cancel.cancel();
+                        }
+                    }
+
+                    RunDriver::drain_proof_tasks(&mut tasks, &mut pending).await;
+                });
+            });
+
+            let rendered = handle.render();
+            assert!(
+                rendered.contains("base_registrar_proof_tasks_cancelled 2"),
+                "drain must count only the unflagged tasks once each (expected 2); \
+                 double-count would render `3`, miscount `1`. Got:\n{rendered}",
+            );
+        }
     }
 
     // ── reconcile_proof_tasks: dedupe + indexing tests ─────────────────
@@ -4874,6 +4994,7 @@ mod tests {
                 instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
                 signer: HARDHAT_ACCOUNT,
                 cancel,
+                cancelled_by_reconcile: false,
             },
         );
 
