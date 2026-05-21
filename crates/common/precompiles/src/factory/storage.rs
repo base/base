@@ -202,7 +202,6 @@ impl<'a> TokenFactoryStorage<'a> {
         }
         Ok(())
     }
-
 }
 
 #[cfg(test)]
