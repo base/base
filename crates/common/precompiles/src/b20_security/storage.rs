@@ -4,7 +4,9 @@ use alloc::string::String;
 
 use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx};
+use base_precompile_storage::{
+    BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
+};
 
 use super::accounting::SecurityAccounting;
 use crate::{TokenAccounting, TokenVariant};

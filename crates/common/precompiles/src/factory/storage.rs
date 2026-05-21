@@ -90,7 +90,7 @@ impl<'a> TokenFactoryStorage<'a> {
                     Self::DEFAULT_SUPPLY_CAP,
                     Self::DEFAULT_CAPABILITIES,
                     alloy_primitives::U256::from(1_000_000_000_000_000_000u128), // 1:1 ratio
-                    security_params.0, // ISIN
+                    security_params.0,                                           // ISIN
                     security_params.1, // minimumRedeemable
                 )?;
 

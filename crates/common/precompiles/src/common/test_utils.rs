@@ -19,7 +19,6 @@ use crate::{
 /// Use this in unit tests instead of spelling out the full generic each time.
 pub type TestToken = B20Token<InMemoryTokenAccounting, InMemoryPolicy>;
 
-
 /// HashMap-backed [`TokenAccounting`] for unit tests.
 ///
 /// Collect emitted events via the public `events` field after calling token ops.

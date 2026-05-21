@@ -142,17 +142,14 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             C::redeemWithMemo(c) => {
                 let caller = ctx.caller();
                 self.security_redeem(caller, c.amount)?;
-                self.accounting_mut()
-                    .emit_event(IB20::Memo { memo: c.memo }.encode_log_data())?;
+                self.accounting_mut().emit_event(IB20::Memo { memo: c.memo }.encode_log_data())?;
                 Bytes::new()
             }
             C::setMinimumRedeemable(c) => {
                 self.accounting_mut().set_minimum_redeemable(c.newMinimum)?;
                 self.accounting_mut().emit_event(
-                    IB20Security::MinimumRedeemableUpdated {
-                        newMinimumRedeemable: c.newMinimum,
-                    }
-                    .encode_log_data(),
+                    IB20Security::MinimumRedeemableUpdated { newMinimumRedeemable: c.newMinimum }
+                        .encode_log_data(),
                 )?;
                 Bytes::new()
             }
@@ -285,8 +282,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             SC::redeemWithMemo(c) => {
                 let caller = ctx.caller();
                 self.security_redeem(caller, c.amount)?;
-                self.accounting_mut()
-                    .emit_event(IB20::Memo { memo: c.memo }.encode_log_data())?;
+                self.accounting_mut().emit_event(IB20::Memo { memo: c.memo }.encode_log_data())?;
                 Bytes::new()
             }
 
@@ -331,7 +327,11 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     }
 
     /// Performs a security-specific redeem: share-based floor check, burn, security `Redeemed` event.
-    fn security_redeem(&mut self, caller: Address, amount: U256) -> base_precompile_storage::Result<()> {
+    fn security_redeem(
+        &mut self,
+        caller: Address,
+        amount: U256,
+    ) -> base_precompile_storage::Result<()> {
         let ratio = self.accounting.shares_to_tokens_ratio()?;
         let shares = amount.saturating_mul(ratio) / WAD;
         let minimum = self.accounting.minimum_redeemable()?;
@@ -461,14 +461,11 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             // `in_announcement == true` causes recursive announce calls to revert via the
             // guard at the top of this function. No separate selector check needed.
             self.inner(ctx, call_bytes).map_err(|_| {
-                BasePrecompileError::revert(IB20Security::InternalCallFailed {
-                    call: call.clone(),
-                })
+                BasePrecompileError::revert(IB20Security::InternalCallFailed { call: call.clone() })
             })?;
         }
 
-        self.accounting_mut()
-            .emit_event(IB20Security::EndAnnouncement { id }.encode_log_data())
+        self.accounting_mut().emit_event(IB20Security::EndAnnouncement { id }.encode_log_data())
     }
 }
 
@@ -534,9 +531,7 @@ mod tests {
     #[test]
     fn batch_mint_rejects_length_mismatch() {
         let mut token = make_token();
-        assert!(token
-            .batch_mint(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
-            .is_err());
+        assert!(token.batch_mint(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err());
     }
 
     #[test]
@@ -611,10 +606,7 @@ mod tests {
         let key = keccak256(b"ISIN");
 
         assert_eq!(token.accounting().security_identifier(key).unwrap(), "");
-        token
-            .accounting_mut()
-            .set_security_identifier(key, "US0000000000".to_string())
-            .unwrap();
+        token.accounting_mut().set_security_identifier(key, "US0000000000".to_string()).unwrap();
         assert_eq!(
             token.accounting().security_identifier(key).unwrap(),
             "US0000000000".to_string()
