@@ -448,15 +448,18 @@ impl crate::PolicyRegistry for PolicyRegistryStorage<'_> {
 }
 
 #[cfg(test)]
-mod packed_policy_tests {
+mod tests {
     use alloy_primitives::{Address, U256, address};
+    use alloy_sol_types::SolEvent;
+    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use super::{PackedPolicy, PolicyType};
+    use super::*;
+    use crate::IPolicyRegistry;
 
-    const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
+    // --- PackedPolicy unit tests ---
 
     #[test]
-    fn new_roundtrips_admin_and_type() {
+    fn packed_policy_new_roundtrips_admin_and_type() {
         let p = PackedPolicy::new(ADMIN, PolicyType::ALLOWLIST);
         assert_eq!(p.admin(), ADMIN);
         assert_eq!(p.policy_type_u8(), PolicyType::ALLOWLIST as u8);
@@ -464,14 +467,13 @@ mod packed_policy_tests {
     }
 
     #[test]
-    fn zero_signals_never_created() {
+    fn packed_policy_zero_signals_never_created() {
         let p = PackedPolicy::from_raw(U256::ZERO);
         assert!(p.is_zero());
     }
 
     #[test]
-    fn renounced_admin_is_non_zero() {
-        // After renounce_admin, admin = Address::ZERO but type byte preserved (2 or 3).
+    fn packed_policy_renounced_admin_is_non_zero() {
         let p = PackedPolicy::new(Address::ZERO, PolicyType::ALLOWLIST);
         assert!(!p.is_zero());
         assert_eq!(p.admin(), Address::ZERO);
@@ -479,33 +481,22 @@ mod packed_policy_tests {
     }
 
     #[test]
-    fn into_u256_from_u256_roundtrip() {
+    fn packed_policy_into_u256_from_raw_roundtrip() {
         let p = PackedPolicy::new(ADMIN, PolicyType::BLOCKLIST);
-        let raw = p.into_u256();
-        let p2 = PackedPolicy::from_raw(raw);
+        let p2 = PackedPolicy::from_raw(p.into_u256());
         assert_eq!(p, p2);
         assert_eq!(p2.admin(), ADMIN);
         assert_eq!(p2.policy_type_u8(), PolicyType::BLOCKLIST as u8);
     }
 
     #[test]
-    fn different_admins_produce_different_words() {
+    fn packed_policy_different_admins_produce_different_words() {
         let other = address!("0x2000000000000000000000000000000000000002");
         assert_ne!(
             PackedPolicy::new(ADMIN, PolicyType::ALLOWLIST),
             PackedPolicy::new(other, PolicyType::ALLOWLIST)
         );
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use alloy_primitives::{Address, address};
-    use alloy_sol_types::SolEvent;
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
-
-    use super::*;
-    use crate::IPolicyRegistry;
 
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
     const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
