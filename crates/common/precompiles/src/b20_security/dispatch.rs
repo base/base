@@ -21,155 +21,14 @@ use super::{
 use crate::{
     ActivationRegistryStorage, B20PolicyType, B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
-    Mintable, Pausable, Permittable, Policy, Token, Transferable,
+    Mintable, Pausable, Permittable, Policy, RoleManaged, Token, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
 /// WAD precision for share ratio arithmetic: 1e18.
 const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
-// ---------------------------------------------------------------------------
-// Role and policy helpers (mirrors B20Token's roles.rs / policies.rs)
-// ---------------------------------------------------------------------------
-
 impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
-    /// The default top-level admin role identifier (`bytes32(0)`).
-    pub const fn default_admin_role() -> B256 {
-        B256::ZERO
-    }
-
-    /// Ensures `caller` has `role`, reverting with `AccessControlUnauthorizedAccount` otherwise.
-    fn ensure_role(&self, caller: Address, role: B256) -> base_precompile_storage::Result<()> {
-        if self.accounting.has_role(role, caller)? {
-            Ok(())
-        } else {
-            Err(BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: caller,
-                neededRole: role,
-            }))
-        }
-    }
-
-    /// Grants `role` to `account` without checking caller authorization.
-    fn grant_role_unchecked(
-        &mut self,
-        role: B256,
-        account: Address,
-        sender: Address,
-    ) -> base_precompile_storage::Result<()> {
-        if self.accounting.has_role(role, account)? {
-            return Ok(());
-        }
-        let current = self.accounting.role_member_count(role)?;
-        let next =
-            current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-        self.accounting_mut().set_role(role, account, true)?;
-        self.accounting_mut().set_role_member_count(role, next)?;
-        self.accounting_mut()
-            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
-    }
-
-    /// Revokes `role` from `account` without checking caller authorization.
-    fn revoke_role_unchecked(
-        &mut self,
-        role: B256,
-        account: Address,
-        sender: Address,
-    ) -> base_precompile_storage::Result<()> {
-        if !self.accounting.has_role(role, account)? {
-            return Ok(());
-        }
-        let current = self.accounting.role_member_count(role)?;
-        let next =
-            current.checked_sub(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-        self.accounting_mut().set_role(role, account, false)?;
-        self.accounting_mut().set_role_member_count(role, next)?;
-        self.accounting_mut()
-            .emit_event(IB20::RoleRevoked { role, account, sender }.encode_log_data())
-    }
-
-    /// Grants `role` to `account`, optionally bypassing authorization during factory init.
-    fn grant_role(
-        &mut self,
-        caller: Address,
-        role: B256,
-        account: Address,
-        privileged: bool,
-    ) -> base_precompile_storage::Result<()> {
-        if !privileged {
-            self.ensure_role(caller, self.accounting.role_admin(role)?)?;
-        }
-        self.grant_role_unchecked(role, account, caller)
-    }
-
-    /// Revokes `role` from `account`, optionally bypassing authorization during factory init.
-    fn revoke_role(
-        &mut self,
-        caller: Address,
-        role: B256,
-        account: Address,
-        privileged: bool,
-    ) -> base_precompile_storage::Result<()> {
-        if !privileged {
-            self.ensure_role(caller, self.accounting.role_admin(role)?)?;
-        }
-        self.revoke_role_unchecked(role, account, caller)
-    }
-
-    /// Renounces `role` for `caller`.
-    fn renounce_role(
-        &mut self,
-        caller: Address,
-        role: B256,
-        confirmation: Address,
-    ) -> base_precompile_storage::Result<()> {
-        if confirmation != caller {
-            return Err(BasePrecompileError::revert(IB20::AccessControlBadConfirmation {}));
-        }
-        if role == Self::default_admin_role()
-            && self.accounting.has_role(role, caller)?
-            && self.accounting.role_member_count(role)? == U256::ONE
-        {
-            return Err(BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
-        }
-        self.revoke_role_unchecked(role, caller, caller)
-    }
-
-    /// Permanently removes the final default admin.
-    fn renounce_last_admin(&mut self, caller: Address) -> base_precompile_storage::Result<()> {
-        let admin_role = Self::default_admin_role();
-        self.ensure_role(caller, admin_role)?;
-        if self.accounting.role_member_count(admin_role)? != U256::ONE {
-            return Err(BasePrecompileError::revert(IB20::NotSoleAdmin {}));
-        }
-        self.revoke_role_unchecked(admin_role, caller, caller)?;
-        self.accounting_mut()
-            .emit_event(IB20::LastAdminRenounced { previousAdmin: caller }.encode_log_data())
-    }
-
-    /// Sets the admin role for `role`.
-    fn set_role_admin_checked(
-        &mut self,
-        caller: Address,
-        role: B256,
-        new_admin_role: B256,
-        privileged: bool,
-    ) -> base_precompile_storage::Result<()> {
-        let previous_admin_role = self.accounting.role_admin(role)?;
-        if !privileged {
-            self.ensure_role(caller, previous_admin_role)?;
-        }
-        self.accounting_mut().set_role_admin(role, new_admin_role)?;
-        self.accounting_mut().emit_event(
-            IB20::RoleAdminChanged {
-                role,
-                previousAdminRole: previous_admin_role,
-                newAdminRole: new_admin_role,
-            }
-            .encode_log_data(),
-        )
-    }
-
     /// Returns the configured policy ID for `policy_type`.
     fn policy_id_checked(&self, policy_type: B256) -> base_precompile_storage::Result<u64> {
         B20PolicyType::from_id(policy_type).ok_or_else(|| {
@@ -193,7 +52,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             self.ensure_role(caller, Self::default_admin_role())?;
         }
         let old_policy_id = self.accounting.policy_id(policy_type)?;
-        if !self.policy.policy_exists(new_policy_id)? {
+        if !self.policy().policy_exists(new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
@@ -209,10 +68,6 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         )
     }
 }
-
-// ---------------------------------------------------------------------------
-// Dispatch
-// ---------------------------------------------------------------------------
 
 impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Security` handler.
@@ -412,7 +267,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }
             C::setRoleAdmin(c) => {
                 let caller = ctx.caller();
-                self.set_role_admin_checked(caller, c.role, c.newAdminRole, false)?;
+                self.set_role_admin(caller, c.role, c.newAdminRole, false)?;
                 Bytes::new()
             }
 
