@@ -4,12 +4,12 @@ sol! {
     #[derive(Debug, PartialEq, Eq)]
     interface IPolicyRegistry {
         enum PolicyType {
-            /// Authorizes only accounts explicitly added to the allowlist.
-            /// An empty allowlist rejects everyone.
-            ALLOWLIST,
             /// Rejects only accounts explicitly added to the blocklist.
             /// An empty blocklist authorizes everyone.
-            BLOCKLIST
+            BLOCKLIST,
+            /// Authorizes only accounts explicitly added to the allowlist.
+            /// An empty allowlist rejects everyone.
+            ALLOWLIST
         }
 
         error Unauthorized();

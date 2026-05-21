@@ -67,20 +67,18 @@ impl PolicyRegistryStorage<'_> {
     pub const ADDRESS: Address = address!("b030000000000000000000000000000000000000");
 
     /// Built-in policy ID that always authorizes every account.
-    /// Semantically a BLOCKLIST with no blocked members; handled via a fast-path
-    /// in all query methods so it works without registry initialization.
+    /// Encoded as BLOCKLIST (type=0) with counter=0 — an empty blocklist authorizes everyone.
     /// Also the EVM zero default: zero-initialized policy ID fields map here.
     pub const ALWAYS_ALLOW_ID: u64 = 0;
 
     /// Built-in policy ID that always rejects every account.
-    /// Encoded as ALLOWLIST (type=0) with counter=1 and an empty member set,
+    /// Encoded as ALLOWLIST (type=1) with counter=1 and an empty member set,
     /// so no account is on the allowlist and nobody passes.
-    pub const ALWAYS_BLOCK_ID: u64 = 1;
+    pub const ALWAYS_BLOCK_ID: u64 = (1u64 << Self::POLICY_ID_TYPE_SHIFT) | 1;
 
     const ALLOWLIST_TYPE: u8 = PolicyType::ALLOWLIST as u8;
     const BLOCKLIST_TYPE: u8 = PolicyType::BLOCKLIST as u8;
     const COUNTER_MASK: u64 = (1u64 << 56) - 1;
-    const INITIAL_CUSTOM_COUNTER: u64 = 2;
     const POLICY_ID_TYPE_SHIFT: usize = 56;
 
     fn require_write(&self) -> Result<()> {
@@ -95,7 +93,7 @@ impl PolicyRegistryStorage<'_> {
     }
 
     fn require_well_formed(policy_id: u64) -> Result<()> {
-        if Self::policy_id_type(policy_id) > PolicyType::BLOCKLIST as u8 {
+        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
             return Err(BasePrecompileError::revert(IPolicyRegistry::MalformedPolicyId {
                 policyId: policy_id,
             }));
@@ -113,8 +111,7 @@ impl PolicyRegistryStorage<'_> {
     }
 
     fn next_counter(&self) -> Result<u64> {
-        let counter = self.next_counter.read()?;
-        Ok(counter.max(Self::INITIAL_CUSTOM_COUNTER))
+        self.next_counter.read()
     }
 
     const fn make_id(policy_type: u8, counter: u64) -> u64 {
@@ -133,15 +130,30 @@ impl PolicyRegistryStorage<'_> {
         Ok((packed, caller))
     }
 
+    /// Assigns the next counter slot to a built-in policy with zero (renounced) admin.
+    fn create_builtin_policy(&mut self, policy_type: PolicyType) -> Result<u64> {
+        let policy_type_u8 = policy_type.as_discriminant();
+        let counter = self.next_counter.read()?;
+        let next = counter.checked_add(1).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.next_counter.write(next)?;
+        let policy_id = Self::make_id(policy_type_u8, counter);
+        self.policies.at_mut(&policy_id).write(PackedPolicy::new(Address::ZERO).into_u256())?;
+        Ok(policy_id)
+    }
+
     /// Writes the two built-in policies into the `policies` mapping.
     ///
-    /// Both have a renounced (zero) admin so they are permanently immutable.
-    /// - `ALWAYS_ALLOW_ID`: BLOCKLIST with no members — everyone is authorized.
-    /// - `ALWAYS_BLOCK_ID`: ALLOWLIST with no members — nobody is authorized.
+    /// Consumes counters 0 and 1, leaving the counter at 2 so custom policies
+    /// start there. Both built-ins have a renounced (zero) admin. Idempotent:
+    /// if the counter is already past 0 the builtins were already written.
+    /// - `ALWAYS_ALLOW_ID` (counter=0, BLOCKLIST): no members blocked — everyone is authorized.
+    /// - `ALWAYS_BLOCK_ID` (counter=1, ALLOWLIST): no members allowed — nobody is authorized.
     pub fn write_builtins(&mut self) -> Result<()> {
-        let builtin = PackedPolicy::new(Address::ZERO).into_u256();
-        self.policies.at_mut(&Self::ALWAYS_ALLOW_ID).write(builtin)?;
-        self.policies.at_mut(&Self::ALWAYS_BLOCK_ID).write(builtin)?;
+        if self.next_counter.read()? > 0 {
+            return Ok(());
+        }
+        self.create_builtin_policy(PolicyType::BLOCKLIST)?;
+        self.create_builtin_policy(PolicyType::ALLOWLIST)?;
         Ok(())
     }
 
@@ -357,14 +369,13 @@ impl PolicyRegistryStorage<'_> {
     /// Returns the `PolicyType` of `policy_id`.
     pub fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType> {
         Self::require_well_formed(policy_id)?;
-        // Built-in IDs: return the semantic type directly. ALWAYS_ALLOW_ID=0 has no
-        // meaningful type encoding in its high byte (it's the EVM zero-default), so
-        // we cannot derive the type from the ID; we hardcode it instead.
-        if policy_id == Self::ALWAYS_ALLOW_ID {
-            return Ok(PolicyType::BLOCKLIST);
-        }
-        if policy_id == Self::ALWAYS_BLOCK_ID {
-            return Ok(PolicyType::ALLOWLIST);
+        // Fast-path for built-in IDs: both encode the correct type in their high byte
+        // (ALWAYS_ALLOW_ID=0 → BLOCKLIST=0, ALWAYS_BLOCK_ID=(1<<56)|1 → ALLOWLIST=1),
+        // but the storage slot may be zero before write_builtins() has been called,
+        // so we skip the is_zero check for them.
+        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
+            return PolicyType::try_from(Self::policy_id_type(policy_id))
+                .map_err(|_| BasePrecompileError::enum_conversion_error());
         }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         if packed.is_zero() {
@@ -377,9 +388,6 @@ impl PolicyRegistryStorage<'_> {
     /// Returns the current admin of `policy_id`, or `address(0)` for policies with renounced admin.
     pub fn get_policy_admin(&self, policy_id: u64) -> Result<Address> {
         Self::require_well_formed(policy_id)?;
-        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
-            return Ok(Address::ZERO);
-        }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         if packed.is_zero() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
@@ -390,9 +398,6 @@ impl PolicyRegistryStorage<'_> {
     /// Returns the pending admin staged for `policy_id`, or `address(0)` if none.
     pub fn pending_policy_admin(&self, policy_id: u64) -> Result<Address> {
         Self::require_well_formed(policy_id)?;
-        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
-            return Ok(Address::ZERO);
-        }
         self.pending_admins.at(&policy_id).read()
     }
 }
