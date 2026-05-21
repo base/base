@@ -44,3 +44,63 @@ macro_rules! base_precompile {
 }
 
 pub(crate) use base_precompile;
+
+macro_rules! decode_precompile_call {
+    ($calldata:expr, $call_ty:ty $(,)?) => {{
+        let calldata = $calldata;
+        let selector = match calldata.get(..4) {
+            Some(bytes) => {
+                let mut selector = [0u8; 4];
+                selector.copy_from_slice(bytes);
+                selector
+            }
+            None => {
+                return Err(
+                    ::base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(
+                        [0u8; 4],
+                    ),
+                );
+            }
+        };
+
+        <$call_ty as ::alloy_sol_types::SolInterface>::abi_decode(calldata).map_err(|_| {
+            ::base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(selector)
+        })?
+    }};
+}
+
+pub(crate) use decode_precompile_call;
+
+#[cfg(test)]
+mod tests {
+    use alloy_sol_types::SolCall;
+    use base_precompile_storage::{BasePrecompileError, Result};
+
+    use crate::IPolicyRegistry;
+
+    fn decode_policy_call(calldata: &[u8]) -> Result<IPolicyRegistry::IPolicyRegistryCalls> {
+        Ok(decode_precompile_call!(calldata, IPolicyRegistry::IPolicyRegistryCalls,))
+    }
+
+    #[test]
+    fn decode_precompile_call_rejects_short_calldata() {
+        let err = decode_policy_call(&[1, 2, 3]).unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
+    }
+
+    #[test]
+    fn decode_precompile_call_preserves_unknown_selector() {
+        let err = decode_policy_call(&[1, 2, 3, 4]).unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::UnknownFunctionSelector([1, 2, 3, 4]));
+    }
+
+    #[test]
+    fn decode_precompile_call_decodes_known_call() {
+        let calldata = IPolicyRegistry::helloWorldCall {}.abi_encode();
+        let call = decode_policy_call(&calldata).unwrap();
+
+        assert!(matches!(call, IPolicyRegistry::IPolicyRegistryCalls::helloWorld(_)));
+    }
+}
