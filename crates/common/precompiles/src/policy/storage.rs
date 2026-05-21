@@ -8,21 +8,22 @@ use super::{IPolicyRegistry, IPolicyRegistry::PolicyType};
 
 /// A packed policy storage word.
 ///
-/// Layout: `[255:96]` admin (160 bits) | `[95:1]` reserved (zero) | `[0]` created flag.
+/// Layout: `[255:96]` admin (160 bits) | `[95]` exists flag | `[94:0]` reserved (zero).
 ///
 /// The policy type is not stored here — it is encoded in the high byte of the policy ID
-/// and derived from there. Bit 0 is always set for any written slot, making the zero word
+/// and derived from there. Bit 95 is always set for any written slot, making the zero word
 /// a reliable "never written" sentinel even when admin is `Address::ZERO`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PackedPolicy(U256);
 
 impl PackedPolicy {
     const ADMIN_SHIFT: usize = 96;
+    const EXISTS_BIT: U256 = U256::from_limbs([0, 1u64 << 31, 0, 0]); // bit 95
 
     fn new(admin: Address) -> Self {
         let mut word = [0u8; 32];
         word[12..32].copy_from_slice(admin.as_slice());
-        Self((U256::from_be_slice(&word) << Self::ADMIN_SHIFT) | U256::from(1u8))
+        Self((U256::from_be_slice(&word) << Self::ADMIN_SHIFT) | Self::EXISTS_BIT)
     }
 
     fn with_admin(self, new_admin: Address) -> Self {
