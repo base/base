@@ -373,15 +373,6 @@ impl PolicyRegistryStorage<'_> {
     /// Returns the `PolicyType` of `policy_id`.
     pub fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType> {
         Self::require_well_formed(policy_id)?;
-        // Fast-path for built-in IDs: both encode the correct type in their high byte
-        // (ALWAYS_ALLOW_ID=0 → BLOCKLIST=0, ALWAYS_BLOCK_ID=(1<<56)|1 → ALLOWLIST=1),
-        // but the storage slot may be zero before write_builtins() has been called,
-        // but the storage slot may not have the exists flag set before write_builtins() is called,
-        // so we skip the exists check for them.
-        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
-            return PolicyType::try_from(Self::policy_id_type(policy_id))
-                .map_err(|_| BasePrecompileError::enum_conversion_error());
-        }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         if !packed.exists() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
