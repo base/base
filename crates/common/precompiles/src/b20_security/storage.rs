@@ -139,7 +139,7 @@ impl TokenAccounting for B20SecurityStorage<'_> {
     }
 
     fn security_identifier(&self, identifier_type: &str) -> Result<String> {
-        self.security.identifiers.at(&identifier_type.to_owned()).read()
+        self.security.identifiers.at(&String::from(identifier_type)).read()
     }
 
     fn paused(&self) -> Result<U256> {
@@ -335,7 +335,7 @@ impl SecurityAccounting for B20SecurityStorage<'_> {
         identifier_type: &str,
         value: String,
     ) -> Result<()> {
-        let key = identifier_type.to_owned();
+        let key = String::from(identifier_type);
         if value.is_empty() {
             self.security.identifiers.at_mut(&key).delete()
         } else {
@@ -344,11 +344,11 @@ impl SecurityAccounting for B20SecurityStorage<'_> {
     }
 
     fn is_announcement_id_used(&self, id: &str) -> Result<bool> {
-        self.security.used_announcement_ids.at(&id.to_owned()).read()
+        self.security.used_announcement_ids.at(&String::from(id)).read()
     }
 
     fn mark_announcement_id_used(&mut self, id: &str) -> Result<()> {
-        self.security.used_announcement_ids.at_mut(&id.to_owned()).write(true)
+        self.security.used_announcement_ids.at_mut(&String::from(id)).write(true)
     }
 }
 
