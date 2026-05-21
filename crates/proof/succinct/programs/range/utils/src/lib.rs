@@ -1,5 +1,4 @@
-//! Utilities for running the range program.
-
+#![doc = include_str!("../README.md")]
 use std::sync::Arc;
 
 use base_proof::{OracleL1ChainProvider, OracleL2ChainProvider};
