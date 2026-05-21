@@ -13,6 +13,12 @@ use reth_trie::{hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFacto
 use crate::{
     BaseProofsHashedAccountCursor, BaseProofsHashedStorageCursor, BaseProofsStorage,
     BaseProofsStore, BaseProofsTrieCursor,
+    api::BaseProofsBatchSession,
+    cursor::{
+        BaseProofsHashedAccountCursor as RawHashedAccountCursor,
+        BaseProofsHashedStorageCursor as RawHashedStorageCursor,
+        BaseProofsTrieCursor as RawTrieCursor,
+    },
 };
 
 /// Request-scoped factory that opens trie cursors against a shared read-only transaction.
@@ -119,5 +125,108 @@ where
             hashed_address,
             self.block_number,
         )?))
+    }
+}
+
+/// Session-scoped trie cursor factory backed by a [`BaseProofsBatchSession`].
+///
+/// Cursors read from the session's active transaction and therefore observe writes
+/// from earlier `store_trie_updates` calls in the same session.
+#[derive(Debug)]
+pub struct BaseProofsBatchTrieCursorFactory<'a, S: BaseProofsBatchSession> {
+    session: &'a S,
+    block_number: u64,
+}
+
+impl<S: BaseProofsBatchSession> Clone for BaseProofsBatchTrieCursorFactory<'_, S> {
+    fn clone(&self) -> Self {
+        Self { session: self.session, block_number: self.block_number }
+    }
+}
+
+impl<'a, S: BaseProofsBatchSession> BaseProofsBatchTrieCursorFactory<'a, S> {
+    /// Initializes a session-scoped trie cursor factory.
+    pub const fn new(session: &'a S, block_number: u64) -> Self {
+        Self { session, block_number }
+    }
+}
+
+impl<S> TrieCursorFactory for BaseProofsBatchTrieCursorFactory<'_, S>
+where
+    S: BaseProofsBatchSession,
+{
+    type AccountTrieCursor<'a>
+        = RawTrieCursor<S::AccountTrieCursor<'a>>
+    where
+        Self: 'a;
+    type StorageTrieCursor<'a>
+        = RawTrieCursor<S::StorageTrieCursor<'a>>
+    where
+        Self: 'a;
+
+    fn account_trie_cursor(&self) -> Result<Self::AccountTrieCursor<'_>, DatabaseError> {
+        Ok(RawTrieCursor::new(
+            self.session
+                .account_trie_cursor(self.block_number)
+                .map_err(Into::<DatabaseError>::into)?,
+        ))
+    }
+
+    fn storage_trie_cursor(
+        &self,
+        hashed_address: B256,
+    ) -> Result<Self::StorageTrieCursor<'_>, DatabaseError> {
+        Ok(RawTrieCursor::new(
+            self.session
+                .storage_trie_cursor(hashed_address, self.block_number)
+                .map_err(Into::<DatabaseError>::into)?,
+        ))
+    }
+}
+
+/// Session-scoped hashed cursor factory backed by a [`BaseProofsBatchSession`].
+#[derive(Debug)]
+pub struct BaseProofsBatchHashedAccountCursorFactory<'a, S: BaseProofsBatchSession> {
+    session: &'a S,
+    block_number: u64,
+}
+
+impl<S: BaseProofsBatchSession> Clone for BaseProofsBatchHashedAccountCursorFactory<'_, S> {
+    fn clone(&self) -> Self {
+        Self { session: self.session, block_number: self.block_number }
+    }
+}
+
+impl<'a, S: BaseProofsBatchSession> BaseProofsBatchHashedAccountCursorFactory<'a, S> {
+    /// Initializes a session-scoped hashed cursor factory.
+    pub const fn new(session: &'a S, block_number: u64) -> Self {
+        Self { session, block_number }
+    }
+}
+
+impl<S> HashedCursorFactory for BaseProofsBatchHashedAccountCursorFactory<'_, S>
+where
+    S: BaseProofsBatchSession,
+{
+    type AccountCursor<'a>
+        = RawHashedAccountCursor<S::AccountHashedCursor<'a>>
+    where
+        Self: 'a;
+    type StorageCursor<'a>
+        = RawHashedStorageCursor<S::StorageCursor<'a>>
+    where
+        Self: 'a;
+
+    fn hashed_account_cursor(&self) -> Result<Self::AccountCursor<'_>, DatabaseError> {
+        Ok(RawHashedAccountCursor::new(self.session.account_hashed_cursor(self.block_number)?))
+    }
+
+    fn hashed_storage_cursor(
+        &self,
+        hashed_address: B256,
+    ) -> Result<Self::StorageCursor<'_>, DatabaseError> {
+        Ok(RawHashedStorageCursor::new(
+            self.session.storage_hashed_cursor(hashed_address, self.block_number)?,
+        ))
     }
 }

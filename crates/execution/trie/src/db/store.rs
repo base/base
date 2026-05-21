@@ -27,9 +27,12 @@ use crate::{
     BaseProofsStorageError,
     BaseProofsStorageError::NoBlocksFound,
     BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,
-    api::{BaseProofsInitialStateStore, InitialStateAnchor, InitialStateStatus, WriteCounts},
+    api::{
+        BaseProofsBatchStore, BaseProofsInitialStateStore, InitialStateAnchor, InitialStateStatus,
+        WriteCounts,
+    },
     db::{
-        MdbxAccountCursor, MdbxStorageCursor, MdbxTrieCursor,
+        MdbxAccountCursor, MdbxBatchSession, MdbxStorageCursor, MdbxTrieCursor,
         cursor::Dup,
         models::{
             AccountTrieHistory, BlockChangeSet, ChangeSet, HashedAccountHistory,
@@ -77,7 +80,7 @@ impl MdbxProofsStorage {
         Ok(Self { env })
     }
 
-    fn inner_get_latest_block_number_hash(
+    pub(crate) fn inner_get_latest_block_number_hash(
         &self,
         tx: &impl DbTx,
     ) -> BaseProofsStorageResult<Option<(u64, B256)>> {
@@ -86,6 +89,13 @@ impl MdbxProofsStorage {
             return Ok(block);
         }
 
+        self.inner_get_block_number_hash(tx, ProofWindowKey::EarliestBlock)
+    }
+
+    pub(crate) fn inner_get_earliest_block_number_hash(
+        &self,
+        tx: &impl DbTx,
+    ) -> BaseProofsStorageResult<Option<(u64, B256)>> {
         self.inner_get_block_number_hash(tx, ProofWindowKey::EarliestBlock)
     }
 
@@ -518,7 +528,15 @@ impl MdbxProofsStorage {
         let mut storage_trie_keys = Vec::<StorageTrieKey>::with_capacity(storage_trie_len);
         for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
             if nodes.is_deleted && append_mode {
-                let mut ro = self.storage_trie_cursor(*hashed_address, block_number - 1)?;
+                // Lookback must use the active tx so it sees uncommitted writes from earlier
+                // blocks in the same batch session. Opening a fresh RO tx here would read the
+                // pre-batch committed snapshot and emit wrong tombstones for wipe blocks whose
+                // parent is staged in the same batch.
+                let mut ro = MdbxTrieCursor::<StorageTrieHistory, _>::new(
+                    tx.cursor_dup_read::<StorageTrieHistory>()?,
+                    block_number - 1,
+                    Some(*hashed_address),
+                );
                 let keys = self.wipe_and_overlay(
                     tx,
                     block_number,
@@ -546,7 +564,12 @@ impl MdbxProofsStorage {
         let mut hashed_storage_keys = Vec::<HashedStorageKey>::with_capacity(hashed_storage_len);
         for (hashed_address, storage) in sorted_post_state.storages {
             if append_mode && storage.is_wiped() {
-                let mut ro = self.storage_hashed_cursor(hashed_address, block_number - 1)?;
+                // See lookback note above: must use the active tx, not a fresh RO tx.
+                let mut ro = MdbxStorageCursor::new(
+                    tx.cursor_dup_read::<HashedStorageHistory>()?,
+                    block_number - 1,
+                    hashed_address,
+                );
                 let keys = self.wipe_and_overlay(
                     tx,
                     block_number,
@@ -582,7 +605,7 @@ impl MdbxProofsStorage {
 
     /// Append-only writer for a block: validates parent, persists diff (soft-delete=true),
     /// records a `BlockChangeSet`, and advances `ProofWindow::LatestBlock`.
-    fn store_trie_updates_append_only(
+    pub(crate) fn store_trie_updates_append_only(
         &self,
         tx: &<DatabaseEnv as Database>::TXMut,
         block_ref: BlockWithParent,
@@ -664,7 +687,7 @@ impl BaseProofsStore for MdbxProofsStorage {
     }
 
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
-        self.env.view(|tx| self.inner_get_block_number_hash(tx, ProofWindowKey::EarliestBlock))?
+        self.env.view(|tx| self.inner_get_earliest_block_number_hash(tx))?
     }
 
     fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
@@ -1025,6 +1048,28 @@ impl BaseProofsStore for MdbxProofsStorage {
         hash: B256,
     ) -> BaseProofsStorageResult<()> {
         self.set_earliest_block_number_hash(block_number, hash)
+    }
+}
+
+impl BaseProofsBatchStore for MdbxProofsStorage {
+    type BatchSession<'a>
+        = MdbxBatchSession<'a>
+    where
+        Self: 'a;
+
+    fn with_batch_session<R, F>(&self, f: F) -> BaseProofsStorageResult<R>
+    where
+        F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>,
+    {
+        let tx = self.env.tx_mut()?;
+        let mut session = MdbxBatchSession::new(self, tx);
+        match f(&mut session) {
+            Ok(result) => {
+                session.commit()?;
+                Ok(result)
+            }
+            Err(err) => Err(err),
+        }
     }
 }
 
