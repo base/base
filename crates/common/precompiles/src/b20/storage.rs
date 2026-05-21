@@ -39,6 +39,14 @@ impl<'a> B20TokenStorage<'a> {
     pub fn from_address(addr: Address, storage: StorageCtx<'a>) -> Self {
         Self::__new(addr, storage)
     }
+
+    /// Writes all creation-time fields atomically.
+    pub fn initialize(&mut self, name: String, symbol: String, supply_cap: U256) -> Result<()> {
+        self.name.write(name)?;
+        self.symbol.write(symbol)?;
+        self.supply_cap.write(supply_cap)?;
+        Ok(())
+    }
 }
 
 impl TokenAccounting for B20TokenStorage<'_> {
