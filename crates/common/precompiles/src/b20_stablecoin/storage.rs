@@ -2,7 +2,7 @@
 
 use alloc::string::String;
 
-use alloy_primitives::{Address, LogData, U256};
+use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_macros::contract;
 use base_precompile_storage::{
     BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
@@ -160,8 +160,44 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
         self.contract_uri.write(uri)
     }
 
-    fn capabilities(&self) -> Result<U256> {
-        self.capabilities.read()
+    fn currency(&self) -> Result<String> {
+        self.currency.read()
+    }
+
+    fn security_identifier(&self, _identifier_type: &str) -> Result<String> {
+        Ok(String::new())
+    }
+
+    fn has_role(&self, _role: B256, _account: Address) -> Result<bool> {
+        Ok(false)
+    }
+
+    fn set_role(&mut self, _role: B256, _account: Address, _enabled: bool) -> Result<()> {
+        Ok(())
+    }
+
+    fn role_member_count(&self, _role: B256) -> Result<U256> {
+        Ok(U256::ZERO)
+    }
+
+    fn set_role_member_count(&mut self, _role: B256, _count: U256) -> Result<()> {
+        Ok(())
+    }
+
+    fn role_admin(&self, _role: B256) -> Result<B256> {
+        Ok(B256::ZERO)
+    }
+
+    fn set_role_admin(&mut self, _role: B256, _admin_role: B256) -> Result<()> {
+        Ok(())
+    }
+
+    fn policy_id(&self, _policy_type: B256) -> Result<u64> {
+        Ok(0)
+    }
+
+    fn set_policy_id(&mut self, _policy_type: B256, _policy_id: u64) -> Result<()> {
+        Ok(())
     }
 
     fn emit_event(&mut self, log: LogData) -> Result<()> {
@@ -170,10 +206,6 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
 }
 
 impl StablecoinAccounting for B20StablecoinStorage<'_> {
-    fn currency(&self) -> Result<String> {
-        self.currency.read()
-    }
-
     fn set_currency(&mut self, currency: String) -> Result<()> {
         self.currency.write(currency)
     }

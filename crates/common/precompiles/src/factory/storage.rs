@@ -3,7 +3,7 @@ use alloc::string::{String, ToString};
 use alloy_primitives::{Address, Bytes, U256, address};
 use alloy_sol_types::{SolCall, SolValue};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Result};
+use base_precompile_storage::{BasePrecompileError, Handler, Result};
 use revm::state::Bytecode;
 
 use super::variant::TokenVariant;

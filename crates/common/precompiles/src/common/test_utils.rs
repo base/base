@@ -11,8 +11,8 @@ use base_precompile_storage::Result;
 use crate::{
     IPolicyRegistry, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK, PolicyRegistry,
     b20::B20Token,
-    b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
     b20_security::SecurityAccounting,
+    b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
     common::{Policy, TokenAccounting},
 };
 
@@ -60,10 +60,6 @@ pub struct InMemoryTokenAccounting {
     pub minimum_redeemable: U256,
     /// URI pointing to the contract-level metadata.
     pub contract_uri: String,
-    /// Capability bitfield.
-    pub capabilities: U256,
-    /// Reference asset identifier (stablecoin tokens only).
-    pub currency: String,
     /// Role membership keyed by `(role, account)`.
     pub roles: HashMap<(B256, Address), bool>,
     /// Number of accounts assigned to each role.
@@ -101,8 +97,6 @@ impl InMemoryTokenAccounting {
             nonces: HashMap::new(),
             minimum_redeemable: U256::ZERO,
             contract_uri: String::new(),
-            capabilities: U256::ZERO,
-            currency: String::new(),
             roles: HashMap::new(),
             role_member_counts: HashMap::new(),
             role_admins: HashMap::new(),
@@ -274,10 +268,6 @@ impl TokenAccounting for InMemoryTokenAccounting {
 }
 
 impl StablecoinAccounting for InMemoryTokenAccounting {
-    fn currency(&self) -> Result<String> {
-        Ok(self.currency.clone())
-    }
-
     fn set_currency(&mut self, currency: String) -> Result<()> {
         self.currency = currency;
         Ok(())

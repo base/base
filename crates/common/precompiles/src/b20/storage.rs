@@ -41,17 +41,10 @@ impl<'a> B20TokenStorage<'a> {
     }
 
     /// Writes all creation-time fields atomically.
-    pub fn initialize(
-        &mut self,
-        name: String,
-        symbol: String,
-        supply_cap: U256,
-        capabilities: U256,
-    ) -> Result<()> {
+    pub fn initialize(&mut self, name: String, symbol: String, supply_cap: U256) -> Result<()> {
         self.name.write(name)?;
         self.symbol.write(symbol)?;
         self.supply_cap.write(supply_cap)?;
-        self.capabilities.write(capabilities)?;
         Ok(())
     }
 }
