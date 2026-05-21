@@ -57,16 +57,13 @@ impl<'a> TokenFactoryStorage<'a> {
         match variant {
             TokenVariant::B20 => {
                 let mut token = B20TokenStorage::from_address(token_address, self.storage);
-                token.name.write(name.clone())?;
-                token.symbol.write(symbol.clone())?;
-                token.supply_cap.write(Self::DEFAULT_SUPPLY_CAP)?;
-                token.capabilities.write(Self::DEFAULT_CAPABILITIES)?;
+                token.initialize(name.clone(), symbol.clone(), Self::DEFAULT_SUPPLY_CAP, Self::DEFAULT_CAPABILITIES)?;
 
                 self.emit_event(ITokenFactory::TokenCreated {
                     token: token_address,
                     variant: call.variant,
-                    name,
-                    symbol,
+                    name: name.clone(),
+                    symbol: symbol.clone(),
                     decimals,
                 })?;
 

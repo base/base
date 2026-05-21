@@ -6,11 +6,11 @@
 //! stablecoin-only selectors first, then the full `IB20` selector set —
 //! all logic is self-contained with no delegation to `B20Token::inner`.
 
-use IB20::IB20Calls as C;
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
+use IB20::IB20Calls as C;
 
 use super::{
     B20StablecoinToken,
@@ -19,13 +19,13 @@ use super::{
 };
 use crate::{
     ActivationRegistryStorage, Burnable, Configurable, IB20, Mintable, Pausable, Permittable,
-    Policy, Redeemable, Transferable, macros::decode_precompile_call,
+    Policy, Redeemable, Transferable,
+    macros::decode_precompile_call,
 };
 
 impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Stablecoin` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        // charge gas cost for input
         if let Err(e) = ctx.deduct_gas(crate::input_cost(calldata.len())) {
             return e.into_precompile_result(ctx.gas_used());
         }
@@ -50,12 +50,10 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         ActivationRegistryStorage::new(ctx)
             .ensure_activated(ActivationRegistryStorage::B20_STABLECOIN)?;
 
-        if calldata.len() < 4 {
-            return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
+        // currency() is stablecoin-specific and absent from IB20Calls, so handle it first.
+        if let Ok(SC::currency(_)) = IB20Stablecoin::IB20StablecoinCalls::abi_decode(calldata) {
+            return Ok(self.accounting.currency()?.abi_encode().into());
         }
-
-        // Step 1: stablecoin-only selectors (currency()).
-        if let Ok(SC::currency(_)) = IB20Stablecoin::IB20StablecoinCalls::abi_decode(calldata) { return Ok(self.accounting.currency()?.abi_encode().into()) }
 
         let call = decode_precompile_call!(calldata, IB20::IB20Calls);
 
@@ -197,7 +195,6 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                 Bytes::new()
             }
         };
-
         Ok(encoded)
     }
 }

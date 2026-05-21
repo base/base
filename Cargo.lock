@@ -5091,6 +5091,7 @@ dependencies = [
  "cfg-if",
  "futures",
  "kzg-rs",
+ "lazy_static",
  "metrics",
  "metrics-exporter-prometheus",
  "metrics-process",
