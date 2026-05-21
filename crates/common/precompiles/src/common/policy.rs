@@ -3,7 +3,7 @@
 use alloy_primitives::Address;
 use base_precompile_storage::Result;
 
-use crate::PolicyType;
+use crate::IPolicyRegistry::PolicyType;
 
 /// Minimal read-only policy interface consulted by B-20 tokens on every transfer, mint, and redeem.
 pub trait Policy {

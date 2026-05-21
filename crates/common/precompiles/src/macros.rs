@@ -45,6 +45,20 @@ macro_rules! base_precompile {
 
 pub(crate) use base_precompile;
 
+macro_rules! deduct_calldata_cost {
+    ($ctx:expr, $calldata:expr $(,)?) => {{
+        const G_SHA3WORD: u64 = 6;
+
+        let calldata_len = $calldata.len();
+        let calldata_cost = calldata_len.div_ceil(32).saturating_mul(G_SHA3WORD as usize) as u64;
+        if let Err(e) = $ctx.deduct_gas(calldata_cost) {
+            return e.into_precompile_result($ctx.gas_used());
+        }
+    }};
+}
+
+pub(crate) use deduct_calldata_cost;
+
 macro_rules! decode_precompile_call {
     ($calldata:expr, $call_ty:ty $(,)?) => {{
         let calldata = $calldata;

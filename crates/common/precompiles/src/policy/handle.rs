@@ -10,7 +10,7 @@ use alloy_primitives::Address;
 use base_precompile_storage::{Result, StorageCtx};
 
 use super::storage::PolicyRegistryStorage;
-use crate::{Policy, PolicyRegistry, PolicyType};
+use crate::{IPolicyRegistry::PolicyType, Policy, PolicyRegistry};
 
 /// Wraps [`PolicyRegistryStorage`] and implements [`Policy`] and [`PolicyRegistry`],
 /// separating authorization decisions from raw storage reads.

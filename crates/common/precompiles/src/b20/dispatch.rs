@@ -9,15 +9,14 @@ use super::{
 };
 use crate::{
     ActivationRegistryStorage, Burnable, Configurable, Mintable, Pausable, Permittable, Policy,
-    Redeemable, TokenAccounting, Transferable, macros::decode_precompile_call,
+    Redeemable, TokenAccounting, Transferable,
+    macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
 impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
     /// ABI-dispatches `calldata` to the appropriate `IB20` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        if let Err(e) = ctx.deduct_gas(crate::input_cost(calldata.len())) {
-            return e.into_precompile_result(ctx.gas_used());
-        }
+        deduct_calldata_cost!(ctx, calldata);
         // Ensure the token has been deployed (has bytecode at its address).
         match self.accounting.is_initialized() {
             Ok(true) => {}
