@@ -304,6 +304,7 @@ mod tests {
             PolicyRegistryStorage::new(ctx).dispatch(ctx, &blocklist_calldata)
         })
         .unwrap();
+        assert!(!blocklist_out.reverted, "blocklist policy creation unexpectedly reverted");
         let bid =
             IPolicyRegistry::createPolicyCall::abi_decode_returns(&blocklist_out.bytes).unwrap();
 
