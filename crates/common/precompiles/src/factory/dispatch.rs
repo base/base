@@ -6,7 +6,7 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ActivationRegistryStorage, ITokenFactory, TokenFactoryStorage, TokenVariant,
+    ActivationFeature, ActivationRegistryStorage, ITokenFactory, TokenFactoryStorage, TokenVariant,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
@@ -25,7 +25,7 @@ impl<'a> TokenFactoryStorage<'a> {
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
         ActivationRegistryStorage::new(ctx)
-            .ensure_activated(ActivationRegistryStorage::TOKEN_FACTORY)?;
+            .ensure_activated(ActivationFeature::TokenFactory.id())?;
 
         match decode_precompile_call!(calldata, ITokenFactory::ITokenFactoryCalls) {
             ITokenFactory::ITokenFactoryCalls::createToken(call) => {

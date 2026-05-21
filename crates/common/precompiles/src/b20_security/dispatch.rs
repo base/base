@@ -19,7 +19,8 @@ use super::{
     accounting::SecurityAccounting,
 };
 use crate::{
-    ActivationRegistryStorage, B20PolicyType, B20TokenRole, Burnable, Configurable,
+    ActivationFeature, ActivationRegistryStorage, B20PolicyType, B20TokenRole, Burnable,
+    Configurable,
     IB20::{self, IB20Calls as C},
     Mintable, Pausable, Permittable, Policy, RoleManaged, Token, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
@@ -92,7 +93,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
         ActivationRegistryStorage::new(ctx)
-            .ensure_activated(ActivationRegistryStorage::B20_SECURITY)?;
+            .ensure_activated(ActivationFeature::B20Security.id())?;
 
         // Security-specific and overridden selectors are caught here first.
         if let Ok(call) = IB20Security::IB20SecurityCalls::abi_decode(calldata) {

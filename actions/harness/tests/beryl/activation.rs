@@ -3,12 +3,12 @@
 use alloy_consensus::TxReceipt;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use base_common_precompiles::{ActivationRegistryStorage, IActivationRegistry};
+use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 
 use crate::env::BerylTestEnv;
 
 const GAS_LIMIT: u64 = 1_000_000;
-const FEATURE: alloy_primitives::B256 = ActivationRegistryStorage::B20_SECURITY;
+const FEATURE: alloy_primitives::B256 = ActivationFeature::B20Security.id();
 
 #[tokio::test]
 async fn beryl_enables_activation_registry_admin_and_feature_lifecycle() {
