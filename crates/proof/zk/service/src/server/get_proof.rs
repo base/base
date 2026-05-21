@@ -92,10 +92,11 @@ impl ProverServiceServer {
         proof_req: &base_zk_db::ProofRequest,
         requested_receipt_type: ReceiptType,
     ) -> Result<(Vec<u8>, Option<ExecutionStats>), Status> {
-        let execution_stats = self.execution_stats_for_request(proof_req.id).await?;
-
-        if execution_stats.is_some() {
-            return Ok((vec![], execution_stats));
+        if proof_req.stark_receipt.is_none() && proof_req.snark_receipt.is_none() {
+            let execution_stats = self.execution_stats_for_request(proof_req.id).await?;
+            if execution_stats.is_some() {
+                return Ok((vec![], execution_stats));
+            }
         }
 
         let receipt = get_receipt_by_type(proof_req, requested_receipt_type)?;
