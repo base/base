@@ -844,7 +844,23 @@ where
             }
         };
 
-        if self.registry.is_registered(signer_address).await? {
+        // Cancel-aware: `is_registered` is a side-effect-free read, so
+        // dropping it on cancel is safe (no nonce risk, no on-chain
+        // state mutation). Without this select, a shutdown during the
+        // registry RPC would extend drain latency by an entire
+        // round-trip per pending task.
+        let already_registered = tokio::select! {
+            biased;
+            () = signer_cancel.cancelled() => {
+                debug!(
+                    signer = %signer_address,
+                    "cancelled while probing registry pre-proof-gen"
+                );
+                return Ok(());
+            }
+            res = self.registry.is_registered(signer_address) => res?,
+        };
+        if already_registered {
             debug!(signer = %signer_address, "already registered, skipping");
             return Ok(());
         }
@@ -1006,7 +1022,25 @@ where
                     // The signer may already be registered despite the error
                     // (e.g. the tx was mined but the tx manager reported a
                     // nonce race during fee bumping). Check on-chain state.
-                    match self.registry.is_registered(signer_address).await {
+                    //
+                    // Cancel-aware: side-effect-free read; safe to drop on
+                    // cancel. The surrounding retry loop's top-of-iter
+                    // `signer_cancel.is_cancelled()` check already bounds
+                    // latency to one in-flight tx send, but a stalled
+                    // registry RPC here would still extend drain by an
+                    // entire round-trip per failed-tx retry.
+                    let post_err_check = tokio::select! {
+                        biased;
+                        () = signer_cancel.cancelled() => {
+                            debug!(
+                                signer = %signer_address,
+                                "cancelled while verifying post-tx-error registration state"
+                            );
+                            return Ok(());
+                        }
+                        res = self.registry.is_registered(signer_address) => res,
+                    };
+                    match post_err_check {
                         Ok(true) => {
                             info!(
                                 signer = %signer_address,
@@ -1376,7 +1410,19 @@ where
     /// propagate uniformly so the caller can log + increment
     /// `processing_errors_total` once at a single site.
     async fn run_orphan_dereg(&self, active_signers: &HashSet<Address>) -> Result<()> {
-        let registered_signers = self.registry.get_registered_signers().await?;
+        // Cancel-aware: `get_registered_signers` is a side-effect-free
+        // read, so dropping it on cancel is safe. Without this select,
+        // a shutdown during the registry RPC would extend drain latency
+        // by an entire round-trip before `deregister_orphans` is even
+        // reached.
+        let registered_signers = tokio::select! {
+            biased;
+            () = self.config.cancel.cancelled() => {
+                debug!("cancelled before loading registered signers for orphan dereg");
+                return Ok(());
+            }
+            res = self.registry.get_registered_signers() => res?,
+        };
         self.deregister_orphans(active_signers, &registered_signers).await
     }
 
@@ -1612,10 +1658,15 @@ where
     /// broadcast — leaving a permanent nonce gap (`NonceGuard::Drop` does not
     /// roll back). Cooperative cancellation is the only safe option: each
     /// task observes its `signer_cancel` token at its own checkpoints and
-    /// exits with `Ok(())`. Shutdown latency is therefore bounded by the
-    /// longest non-cancel-aware operation a task may be in (typically the
-    /// in-flight `tx_manager.send()` it is waiting on), not by any local
-    /// timeout.
+    /// exits with `Ok(())`. All registry RPCs in the spawned-task path
+    /// (`is_registered`, `get_registered_signers`) are wrapped in
+    /// `select!` against `signer_cancel` (or `DriverConfig::cancel` for
+    /// non-spawned paths) so they drop immediately on cancel — the only
+    /// remaining non-cancel-aware operation is
+    /// [`base_tx_manager::TxManager::send`], which is intentionally
+    /// kept that way to prevent the nonce-gap class of bugs. Shutdown
+    /// latency is therefore bounded by a single in-flight `send()` per
+    /// task, not by additional registry round-trips.
     async fn drain_proof_tasks(
         tasks: &mut JoinSet<Result<()>>,
         pending: &mut HashMap<task::Id, PendingTask>,
@@ -4464,6 +4515,165 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(tx.send_count(), 1, "should succeed on first attempt");
         assert_eq!(driver.proof_provider.call_count(), 1, "proof should be generated once");
+    }
+
+    // ── cancel-aware registry await tests ──────────────────────────────
+    //
+    // The three production registry RPCs in the spawned-task path —
+    // `is_registered` (pre-proof-gen and post-tx-error in `try_register`)
+    // and `get_registered_signers` (in `run_orphan_dereg`) — are each
+    // wrapped in `select!` against their owning cancel token so a
+    // shutdown during the RPC drops the call immediately. Without these
+    // wraps, a stalled registry RPC would extend drain latency by an
+    // entire round-trip per pending task (or per orphan-dereg cycle),
+    // far above the cooperative `tx_manager.send()` bound that drain
+    // already accepts.
+
+    /// Per-call stall registry: parks the configured method on a
+    /// never-completing future. Used to assert that the `select!`
+    /// wrappers in `try_register` and `run_orphan_dereg` short-circuit
+    /// on cancel instead of blocking on the RPC.
+    struct StallingRegistry {
+        stall_is_registered: bool,
+        stall_get_registered_signers: bool,
+        signers: Vec<Address>,
+    }
+
+    impl StallingRegistry {
+        fn stalling_is_registered() -> Self {
+            Self { stall_is_registered: true, stall_get_registered_signers: false, signers: vec![] }
+        }
+
+        fn stalling_get_registered_signers(signers: Vec<Address>) -> Self {
+            Self { stall_is_registered: false, stall_get_registered_signers: true, signers }
+        }
+    }
+
+    #[async_trait]
+    impl RegistryClient for StallingRegistry {
+        async fn is_registered(&self, _signer: Address) -> Result<bool> {
+            if self.stall_is_registered {
+                std::future::pending::<()>().await;
+            }
+            Ok(false)
+        }
+
+        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
+            if self.stall_get_registered_signers {
+                std::future::pending::<()>().await;
+            }
+            Ok(self.signers.clone())
+        }
+    }
+
+    /// Upper bound on how long a cancel must take to abort an in-flight
+    /// registry RPC. Generous enough to absorb CI jitter while still
+    /// failing fast on a regression (without the `select!` wrapper the
+    /// test would hang until the [`tokio::time::timeout`] backstop
+    /// fires, far above this bound).
+    const CANCEL_ABORT_BUDGET: Duration = Duration::from_secs(1);
+
+    /// Soft window the test sleeps between spawning the call-under-test
+    /// and firing the cancel token. Long enough that the spawned future
+    /// reaches its `is_registered` await point, short enough that the
+    /// total test time stays well under [`CANCEL_ABORT_BUDGET`].
+    const PRE_CANCEL_WARMUP: Duration = Duration::from_millis(50);
+
+    /// `try_register` MUST abort promptly when its `signer_cancel`
+    /// fires during the pre-proof-gen `is_registered` RPC. Without the
+    /// `select!` wrap this call would block until the RPC eventually
+    /// returns, extending drain latency by one round-trip per pending
+    /// task at shutdown.
+    #[tokio::test]
+    async fn try_register_aborts_promptly_when_cancel_fires_during_registry_stall() {
+        let cancel = CancellationToken::new();
+        let signer_cancel = cancel.child_token();
+        let signer =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let driver = Arc::new(
+            RegistrationDriver::new(
+                MockDiscovery { instances: vec![] },
+                StubProofProvider,
+                StallingRegistry::stalling_is_registered(),
+                SharedTxManager::new(),
+                StubSignerClient,
+                default_config(cancel.clone()),
+                None,
+            )
+            .expect("driver constructs"),
+        );
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
+        let attestation = vec![0u8; 32];
+
+        let driver_clone = Arc::clone(&driver);
+        let signer_cancel_clone = signer_cancel.clone();
+        let handle = tokio::spawn(async move {
+            let start = tokio::time::Instant::now();
+            let res = driver_clone
+                .try_register(&inst, signer, 0, &attestation, &signer_cancel_clone)
+                .await;
+            (res, start.elapsed())
+        });
+
+        // Let the spawned task reach its `is_registered` await.
+        tokio::time::sleep(PRE_CANCEL_WARMUP).await;
+        signer_cancel.cancel();
+
+        let (result, elapsed) = tokio::time::timeout(GATED_WAIT_TIMEOUT, handle)
+            .await
+            .expect("try_register must not hang past the timeout")
+            .expect("spawned task must not panic");
+
+        assert!(result.is_ok(), "cancel-induced exit must be Ok(()): {result:?}");
+        assert!(
+            elapsed < CANCEL_ABORT_BUDGET,
+            "cancel must abort the registry stall within {CANCEL_ABORT_BUDGET:?} (took {elapsed:?})",
+        );
+    }
+
+    /// `run_orphan_dereg` MUST abort promptly when `config.cancel` fires
+    /// during the `get_registered_signers` RPC. Without the `select!`
+    /// wrap a stalled RPC here would extend drain latency by one
+    /// round-trip even though the function never reaches the
+    /// per-orphan loop that has its own cancel check.
+    #[tokio::test]
+    async fn run_orphan_dereg_aborts_promptly_when_cancel_fires_during_registry_stall() {
+        let cancel = CancellationToken::new();
+        let driver = Arc::new(
+            RegistrationDriver::new(
+                MockDiscovery { instances: vec![] },
+                StubProofProvider,
+                StallingRegistry::stalling_get_registered_signers(vec![]),
+                SharedTxManager::new(),
+                StubSignerClient,
+                default_config(cancel.clone()),
+                None,
+            )
+            .expect("driver constructs"),
+        );
+
+        let driver_clone = Arc::clone(&driver);
+        let cancel_clone = cancel.clone();
+        let handle = tokio::spawn(async move {
+            let active: HashSet<Address> = HashSet::new();
+            let start = tokio::time::Instant::now();
+            let res = driver_clone.run_orphan_dereg(&active).await;
+            (res, start.elapsed(), cancel_clone)
+        });
+
+        tokio::time::sleep(PRE_CANCEL_WARMUP).await;
+        cancel.cancel();
+
+        let (result, elapsed, _alive) = tokio::time::timeout(GATED_WAIT_TIMEOUT, handle)
+            .await
+            .expect("run_orphan_dereg must not hang past the timeout")
+            .expect("spawned task must not panic");
+
+        assert!(result.is_ok(), "cancel-induced exit must be Ok(()): {result:?}");
+        assert!(
+            elapsed < CANCEL_ABORT_BUDGET,
+            "cancel must abort the registry stall within {CANCEL_ABORT_BUDGET:?} (took {elapsed:?})",
+        );
     }
 
     // ── reconcile_proof_tasks tests ─────────────────────────────────────
