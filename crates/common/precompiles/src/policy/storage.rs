@@ -44,9 +44,7 @@ impl PackedPolicy {
     pub const fn into_u256(self) -> U256 {
         self.0
     }
-}
 
-impl PackedPolicy {
     /// Wraps a raw storage word without validating the type discriminant.
     /// Intended only for reading words back from storage; does not guarantee a valid policy type.
     pub(crate) fn from_raw(v: U256) -> Self {
