@@ -34,6 +34,11 @@ pub use b20::{
     POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK,
 };
 
+mod b20_security;
+pub use b20_security::{
+    B20SecurityPrecompile, B20SecurityStorage, B20SecurityToken, IB20Security, SecurityAccounting,
+};
+
 mod factory;
 pub use factory::{ITokenFactory, TokenFactory, TokenFactoryStorage, TokenVariant};
 

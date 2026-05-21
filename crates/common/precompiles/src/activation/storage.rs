@@ -20,10 +20,6 @@ impl ActivationRegistryStorage<'_> {
     /// Activation registry precompile address.
     pub const ADDRESS: Address = address!("0x84530000000000000000000000000000000000ff");
 
-    /// Security-token factory creation feature id.
-    pub const SECURITIES_TOKEN_CREATION: B256 =
-        b256!("0x89e4523f0886ce01d76094212ed707081da92a45221e22c15c5689be470db63e");
-
     /// B20 token precompile feature id (`keccak256("base.b20_token")`).
     pub const B20_TOKEN: B256 =
         b256!("0x47a1afe8d3d691b87e090ee972d223a11f4da971ff5416c04985bb2393aca752");
@@ -35,6 +31,10 @@ impl ActivationRegistryStorage<'_> {
     /// Policy registry precompile feature id (`keccak256("base.policy_registry")`).
     pub const POLICY_REGISTRY: B256 =
         b256!("0xb582ebae03f16fee49a6763f78df482fb11ae73f103ed0d330bbe556aa90a43f");
+
+    /// B20 security precompile feature id (`keccak256("base.b20_security")`).
+    pub const B20_SECURITY: B256 =
+        b256!("0x83d32fab502ae0e8bc4352a117767262cb5e47cc8d67a744008ed4ff03fcf5e6");
 
     /// Returns the activation admin.
     pub const fn admin(&self, activation_admin_address: Option<Address>) -> Address {
@@ -142,7 +142,7 @@ mod tests {
 
     use super::*;
 
-    const FEATURE: B256 = ActivationRegistryStorage::SECURITIES_TOKEN_CREATION;
+    const FEATURE: B256 = ActivationRegistryStorage::B20_SECURITY;
     const ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
 
     #[derive(Debug, Clone, Copy)]
@@ -242,6 +242,7 @@ mod tests {
         assert_eq!(ActivationRegistryStorage::B20_TOKEN, keccak256("base.b20_token"));
         assert_eq!(ActivationRegistryStorage::TOKEN_FACTORY, keccak256("base.token_factory"));
         assert_eq!(ActivationRegistryStorage::POLICY_REGISTRY, keccak256("base.policy_registry"));
+        assert_eq!(ActivationRegistryStorage::B20_SECURITY, keccak256("base.b20_security"));
     }
 
     #[test]

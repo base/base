@@ -45,31 +45,24 @@ pub(crate) fn gen_handler_field_init(
         quote! { base_slot.saturating_add(::alloy_primitives::U256::from_limbs([#const_mod::#loc_const.offset_slots as u64, 0, 0, 0])) }
     };
 
+    let shares_slot_check =
+        gen_shares_slot_check(field, field_idx, all_fields, const_mod, is_contract);
+
     match &field.kind {
         FieldKind::Direct(ty) => {
-            let (prev_slot_const_ref, next_slot_const_ref) = if is_contract {
-                packing::get_same_root_neighbor_slot_refs(field_idx, all_fields, const_mod)
-            } else {
-                packing::get_neighbor_slot_refs(field_idx, all_fields, const_mod, |f| f.name, false)
-            };
-
             let layout_ctx = if is_contract {
                 packing::gen_layout_ctx_expr(
                     ty,
                     matches!(field.assigned_slot, SlotAssignment::Manual(_)),
-                    quote! { #const_mod::#slot_const },
                     quote! { #const_mod::#offset_const },
-                    prev_slot_const_ref,
-                    next_slot_const_ref,
+                    shares_slot_check,
                 )
             } else {
                 packing::gen_layout_ctx_expr(
                     ty,
                     false,
-                    quote! { #const_mod::#loc_const.offset_slots },
                     quote! { #const_mod::#loc_const.offset_bytes },
-                    prev_slot_const_ref,
-                    next_slot_const_ref,
+                    shares_slot_check,
                 )
             };
 
@@ -87,6 +80,41 @@ pub(crate) fn gen_handler_field_init(
             }
         }
     }
+}
+
+fn gen_shares_slot_check(
+    field: &LayoutField<'_>,
+    field_idx: usize,
+    all_fields: &[LayoutField<'_>],
+    const_mod: &Ident,
+    is_contract: bool,
+) -> Option<proc_macro2::TokenStream> {
+    let current_consts = PackingConstants::new(field.name);
+    let current_slot = if is_contract {
+        let current_slot = current_consts.slot();
+        quote! { #const_mod::#current_slot }
+    } else {
+        let current_loc = current_consts.location();
+        quote! { #const_mod::#current_loc.offset_slots }
+    };
+
+    let checks: Vec<_> = all_fields
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| *idx != field_idx)
+        .map(|(_, other)| {
+            let other_consts = PackingConstants::new(other.name);
+            if is_contract {
+                let other_slot = other_consts.slot();
+                quote! { #current_slot == #const_mod::#other_slot }
+            } else {
+                let other_loc = other_consts.location();
+                quote! { #current_slot == #const_mod::#other_loc.offset_slots }
+            }
+        })
+        .collect();
+
+    if checks.is_empty() { None } else { Some(quote! { false #(|| #checks)* }) }
 }
 
 pub(crate) fn gen_struct(

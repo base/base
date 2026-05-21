@@ -12,6 +12,13 @@ fn data_slot(slot: U256) -> U256 {
     U256::from_be_bytes(keccak256(slot.to_be_bytes::<32>()).0)
 }
 
+fn erc7201_root(id: &str) -> U256 {
+    let id_hash = U256::from_be_bytes(keccak256(id.as_bytes()).0);
+    let shifted = id_hash.checked_sub(U256::ONE).unwrap();
+    let root = U256::from_be_bytes(keccak256(shifted.to_be_bytes::<32>()).0);
+    root & (U256::MAX - U256::from(0xffu64))
+}
+
 fn word_from_chunk(data: &[u8], chunk_index: usize) -> U256 {
     let mut word = [0u8; 32];
     let start = chunk_index * 32;
@@ -265,6 +272,161 @@ mod namespaced_layout {
                 ctx.sload(NAMESPACED_ADDR, amounts_data_slot + U256::from(2)).unwrap(),
                 U256::from(33)
             );
+        });
+    }
+}
+
+mod type_namespaced_layouts {
+    use alloy_primitives::{Address, U256, address};
+    use base_precompile_macros::{Storable, contract};
+    use base_precompile_storage::{
+        Handler, Mapping, StorableType, StorageCtx, StorageKey, setup_storage,
+    };
+
+    use super::erc7201_root;
+
+    const TYPE_NAMESPACE_ADDR: Address = address!("0000000000000000000000000000000000002468");
+
+    /// Core B-20 storage rooted at the canonical B-20 namespace.
+    #[derive(Debug, Clone, Storable)]
+    #[namespace("b20")]
+    struct B20Storage {
+        total_supply: U256,
+        balances: Mapping<Address, U256>,
+    }
+
+    /// Security-specific B-20 extension storage.
+    #[derive(Debug, Clone, Storable)]
+    #[namespace("b20.security")]
+    struct B20SecurityStorage {
+        shares_to_tokens_ratio: U256,
+        used_announcement_ids: Mapping<String, bool>,
+        security_identifiers: Mapping<String, bool>,
+    }
+
+    /// Redeem-specific B-20 extension storage.
+    #[derive(Debug, Clone, Storable)]
+    #[namespace("b20.redeem")]
+    struct B20RedeemStorage {
+        minimum_redeemable: U256,
+        redeem_policy_ids: U256,
+    }
+
+    /// Security token layout that composes canonical namespaced storage sections.
+    #[contract(addr = TYPE_NAMESPACE_ADDR)]
+    pub struct B20SecurityLayout {
+        pub local_head: u8,
+        pub b20: B20Storage,
+        pub security: B20SecurityStorage,
+        pub redeem: B20RedeemStorage,
+        pub local_tail: u16,
+    }
+
+    #[test]
+    fn type_level_namespaces_mount_layouts_without_repeating_strings() {
+        let b20_value = B20Storage { total_supply: U256::ZERO, balances: Mapping::default() };
+        let security_value = B20SecurityStorage {
+            shares_to_tokens_ratio: U256::ZERO,
+            used_announcement_ids: Mapping::default(),
+            security_identifiers: Mapping::default(),
+        };
+        let redeem_value =
+            B20RedeemStorage { minimum_redeemable: U256::ZERO, redeem_policy_ids: U256::ZERO };
+        let _ = (
+            &b20_value.total_supply,
+            &b20_value.balances,
+            &security_value.shares_to_tokens_ratio,
+            &security_value.used_announcement_ids,
+            &security_value.security_identifiers,
+            &redeem_value.minimum_redeemable,
+            &redeem_value.redeem_policy_ids,
+        );
+
+        let b20_root = erc7201_root("b20");
+        let security_root = erc7201_root("b20.security");
+        let redeem_root = erc7201_root("b20.redeem");
+
+        assert_eq!(<B20Storage as StorableType>::STORAGE_NAMESPACE_ID, "b20");
+        assert_eq!(<B20Storage as StorableType>::STORAGE_NAMESPACE_ROOT, b20_root);
+        assert_eq!(<B20SecurityStorage as StorableType>::STORAGE_NAMESPACE_ROOT, security_root);
+        assert_eq!(<B20RedeemStorage as StorableType>::STORAGE_NAMESPACE_ROOT, redeem_root);
+
+        assert_eq!(slots::LOCAL_HEAD, U256::ZERO);
+        assert_eq!(slots::LOCAL_HEAD_OFFSET, 0);
+        assert_eq!(slots::B20, b20_root);
+        assert_eq!(slots::SECURITY, security_root);
+        assert_eq!(slots::REDEEM, redeem_root);
+        assert_eq!(slots::LOCAL_TAIL, U256::ZERO);
+        assert_eq!(slots::LOCAL_TAIL_OFFSET, 1);
+    }
+
+    #[test]
+    fn type_level_namespaced_layouts_round_trip_through_handlers() {
+        let (mut storage, _) = setup_storage();
+        let holder = Address::from([0xaa; 20]);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut layout = B20SecurityLayout::new(ctx);
+
+            layout.local_head.write(0x11).unwrap();
+            layout.b20.total_supply.write(U256::from(100)).unwrap();
+            layout.b20.balances.at_mut(&holder).write(U256::from(25)).unwrap();
+            layout.security.shares_to_tokens_ratio.write(U256::from(2)).unwrap();
+            layout.redeem.minimum_redeemable.write(U256::from(10)).unwrap();
+            layout.redeem.redeem_policy_ids.write(U256::from(3)).unwrap();
+            layout.local_tail.write(0x2233).unwrap();
+
+            assert_eq!(layout.local_head.read().unwrap(), 0x11);
+            assert_eq!(layout.b20.total_supply.read().unwrap(), U256::from(100));
+            assert_eq!(layout.b20.balances.at(&holder).read().unwrap(), U256::from(25));
+            assert_eq!(layout.security.shares_to_tokens_ratio.read().unwrap(), U256::from(2));
+            assert_eq!(layout.redeem.minimum_redeemable.read().unwrap(), U256::from(10));
+            assert_eq!(layout.redeem.redeem_policy_ids.read().unwrap(), U256::from(3));
+            assert_eq!(layout.local_tail.read().unwrap(), 0x2233);
+
+            assert_eq!(
+                ctx.sload(
+                    TYPE_NAMESPACE_ADDR,
+                    slots::B20 + U256::from(__packing_b20_storage::TOTAL_SUPPLY_LOC.offset_slots),
+                )
+                .unwrap(),
+                U256::from(100)
+            );
+            assert_eq!(
+                ctx.sload(
+                    TYPE_NAMESPACE_ADDR,
+                    holder.mapping_slot(
+                        slots::B20 + U256::from(__packing_b20_storage::BALANCES_LOC.offset_slots),
+                    ),
+                )
+                .unwrap(),
+                U256::from(25)
+            );
+            assert_eq!(
+                ctx.sload(
+                    TYPE_NAMESPACE_ADDR,
+                    slots::SECURITY
+                        + U256::from(
+                            __packing_b20_security_storage::SHARES_TO_TOKENS_RATIO_LOC.offset_slots,
+                        ),
+                )
+                .unwrap(),
+                U256::from(2)
+            );
+            assert_eq!(
+                ctx.sload(
+                    TYPE_NAMESPACE_ADDR,
+                    slots::REDEEM
+                        + U256::from(
+                            __packing_b20_redeem_storage::MINIMUM_REDEEMABLE_LOC.offset_slots
+                        ),
+                )
+                .unwrap(),
+                U256::from(10)
+            );
+            let local_slot = ctx.sload(TYPE_NAMESPACE_ADDR, slots::LOCAL_HEAD).unwrap();
+            assert_eq!(local_slot & U256::from(0xff), U256::from(0x11));
+            assert_eq!((local_slot >> 8) & U256::from(0xffff), U256::from(0x2233));
         });
     }
 }
