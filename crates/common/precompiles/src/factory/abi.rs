@@ -59,9 +59,6 @@ sol! {
         /// One of the post-creation init calls failed.
         error InitCallFailed(uint256 index);
 
-        /// Precompile cannot be executed via delegatecall or callcode.
-        error DelegateCallNotAllowed();
-
         // ── Events ───────────────────────────────────────────────────────────
 
         event TokenCreated(

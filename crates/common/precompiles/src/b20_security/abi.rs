@@ -34,9 +34,6 @@ sol! {
         /// An `internalCalls` entry reverted during its inner dispatch.
         error InternalCallFailed(bytes call);
 
-        /// Precompile cannot be executed via delegatecall or callcode.
-        error DelegateCallNotAllowed();
-
         // ── Events ───────────────────────────────────────────────────────────
 
         /// Emitted by `redeem`/`redeemWithMemo`. Includes the active share ratio at redemption time.

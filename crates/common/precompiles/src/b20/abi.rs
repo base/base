@@ -39,7 +39,6 @@ sol! {
         error LastAdminCannotRenounce();
         error NotSoleAdmin();
         error AccessControlBadConfirmation();
-        error DelegateCallNotAllowed();
 
         // Events
         event Transfer(address indexed from, address indexed to, uint256 amount);
