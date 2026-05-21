@@ -8,15 +8,18 @@ use super::{IPolicyRegistry, IPolicyRegistry::PolicyType};
 
 /// A packed policy storage word.
 ///
-/// Layout: `[255:168]` reserved (zero) | `[167:8]` admin (160 bits) | `[7:0]` `PolicyType`.
+/// Layout: `[255:169]` reserved (zero) | `[168]` exists flag | `[167:8]` admin (160 bits) | `[7:0]` `PolicyType`.
 ///
-/// The inner value is always non-zero for valid custom policies because ALLOWLIST = 2 and
-/// BLOCKLIST = 3 are both non-zero. This means the zero value reliably signals "never created",
-/// even after `renounce_admin` sets admin to `Address::ZERO` (the type byte is preserved).
+/// Bit 168 is always set for any created (or initialized built-in) policy. This keeps
+/// `is_zero()` reliable as a "never written" sentinel even for BLOCKLIST (discriminant 0)
+/// policies whose admin has been renounced to `Address::ZERO`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PackedPolicy(U256);
 
 impl PackedPolicy {
+    /// Bit position of the "exists" flag. Always set for any initialized policy slot.
+    const EXISTS_BIT: usize = 168;
+
     /// Packs `admin` and `policy_type` into a storage word.
     /// Accepts `PolicyType` to prevent invalid discriminants at construction time.
     pub(crate) fn new(admin: Address, policy_type: PolicyType) -> Self {
@@ -40,7 +43,7 @@ impl PackedPolicy {
         self.0.to_be_bytes::<32>()[31]
     }
 
-    /// Returns `true` if the word is zero (policy was never created).
+    /// Returns `true` if the word is zero (policy slot was never written).
     pub(crate) fn is_zero(self) -> bool {
         self.0.is_zero()
     }
@@ -59,7 +62,10 @@ impl PackedPolicy {
     fn from_parts(admin: Address, policy_type_u8: u8) -> Self {
         let mut word = [0u8; 32];
         word[12..32].copy_from_slice(admin.as_slice());
-        Self((U256::from_be_slice(&word) << 8) | U256::from(policy_type_u8))
+        let packed = (U256::from_be_slice(&word) << 8) | U256::from(policy_type_u8);
+        // Set the exists bit so that (zero admin, BLOCKLIST type=0) is non-zero and distinguishable
+        // from a slot that was never written (raw zero word).
+        Self(packed | (U256::from(1u64) << Self::EXISTS_BIT))
     }
 }
 
@@ -83,13 +89,19 @@ impl PolicyRegistryStorage<'_> {
     pub const ADDRESS: Address = address!("b030000000000000000000000000000000000000");
 
     /// Built-in policy ID that always authorizes every account.
+    /// Semantically a BLOCKLIST with no blocked members; handled via a fast-path
+    /// in all query methods so it works without registry initialization.
+    /// Also the EVM zero default: zero-initialized policy ID fields map here.
     pub const ALWAYS_ALLOW_ID: u64 = 0;
+
     /// Built-in policy ID that always rejects every account.
+    /// Encoded as ALLOWLIST (type=0) with counter=1 and an empty member set,
+    /// so no account is on the allowlist and nobody passes.
     pub const ALWAYS_BLOCK_ID: u64 = 1;
 
     const ALLOWLIST_TYPE: u8 = PolicyType::ALLOWLIST as u8;
     const BLOCKLIST_TYPE: u8 = PolicyType::BLOCKLIST as u8;
-    const COUNTER_MASK: u64 = (1u64 << 56) - 1;
+    pub(crate) const COUNTER_MASK: u64 = (1u64 << 56) - 1;
     const INITIAL_CUSTOM_COUNTER: u64 = 2;
     const POLICY_ID_TYPE_SHIFT: usize = 56;
 
@@ -143,6 +155,19 @@ impl PolicyRegistryStorage<'_> {
         Ok((packed, caller))
     }
 
+    /// Writes the two built-in policies into the `policies` mapping.
+    ///
+    /// Both have a renounced (zero) admin so they are permanently immutable.
+    /// - `ALWAYS_ALLOW_ID`: BLOCKLIST with no members — everyone is authorized.
+    /// - `ALWAYS_BLOCK_ID`: ALLOWLIST with no members — nobody is authorized.
+    pub(crate) fn write_builtins(&mut self) -> Result<()> {
+        let allow_packed = PackedPolicy::new(Address::ZERO, PolicyType::BLOCKLIST).into_u256();
+        self.policies.at_mut(&Self::ALWAYS_ALLOW_ID).write(allow_packed)?;
+        let block_packed = PackedPolicy::new(Address::ZERO, PolicyType::ALLOWLIST).into_u256();
+        self.policies.at_mut(&Self::ALWAYS_BLOCK_ID).write(block_packed)?;
+        Ok(())
+    }
+
     /// Creates a new ALLOWLIST or BLOCKLIST policy, returning its encoded ID.
     pub fn create_policy(&mut self, admin: Address, policy_type: PolicyType) -> Result<u64> {
         self.require_write()?;
@@ -157,6 +182,7 @@ impl PolicyRegistryStorage<'_> {
         // charges warm/cold account-read gas before skipping repeated `set_code`.
         if !self.is_initialized()? {
             self.__initialize()?;
+            self.write_builtins()?;
         }
 
         let counter = self.next_counter()?;
@@ -322,6 +348,9 @@ impl PolicyRegistryStorage<'_> {
     /// Returns `true` if `account` is authorized under `policy_id`.
     pub fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
         Self::require_well_formed(policy_id)?;
+        // Fast-paths for built-in IDs: these are semantically defined without storage
+        // and must work even before write_builtins() has been called (e.g. a token
+        // whose policy was set to ALWAYS_BLOCK_ID before any custom policy was created).
         if policy_id == Self::ALWAYS_ALLOW_ID {
             return Ok(true);
         }
@@ -340,6 +369,16 @@ impl PolicyRegistryStorage<'_> {
         }
     }
 
+    /// Returns the policy ID that would be assigned to the next policy of `policy_type`.
+    ///
+    /// The counter is global across all policy types, so this is a hint only — the counter
+    /// may advance between this query and the subsequent `create_policy` call.
+    pub fn next_policy_id(&self, policy_type: PolicyType) -> Result<u64> {
+        let discriminant = policy_type.as_discriminant()?;
+        let counter = self.next_counter()?;
+        Ok(Self::make_id(discriminant, counter))
+    }
+
     /// Returns `true` if `policy_id` refers to an existing or built-in policy.
     pub fn policy_exists(&self, policy_id: u64) -> Result<bool> {
         Self::require_well_formed(policy_id)?;
@@ -350,14 +389,17 @@ impl PolicyRegistryStorage<'_> {
         Ok(!packed.is_zero())
     }
 
-    /// Returns the `PolicyType` of `policy_id`, including built-in IDs.
+    /// Returns the `PolicyType` of `policy_id`.
     pub fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType> {
         Self::require_well_formed(policy_id)?;
+        // Built-in IDs: return the semantic type directly. ALWAYS_ALLOW_ID=0 has no
+        // meaningful type encoding in its high byte (it's the EVM zero-default), so
+        // we cannot derive the type from the ID; we hardcode it instead.
         if policy_id == Self::ALWAYS_ALLOW_ID {
-            return Ok(PolicyType::ALWAYS_ALLOW);
+            return Ok(PolicyType::BLOCKLIST);
         }
         if policy_id == Self::ALWAYS_BLOCK_ID {
-            return Ok(PolicyType::ALWAYS_BLOCK);
+            return Ok(PolicyType::ALLOWLIST);
         }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         if packed.is_zero() {
@@ -367,7 +409,7 @@ impl PolicyRegistryStorage<'_> {
             .map_err(|_| BasePrecompileError::enum_conversion_error())
     }
 
-    /// Returns the current admin of `policy_id`, or `address(0)` for built-in policies.
+    /// Returns the current admin of `policy_id`, or `address(0)` for policies with renounced admin.
     pub fn get_policy_admin(&self, policy_id: u64) -> Result<Address> {
         Self::require_well_formed(policy_id)?;
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
@@ -383,9 +425,6 @@ impl PolicyRegistryStorage<'_> {
     /// Returns the pending admin staged for `policy_id`, or `address(0)` if none.
     pub fn pending_policy_admin(&self, policy_id: u64) -> Result<Address> {
         Self::require_well_formed(policy_id)?;
-        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
-            return Ok(Address::ZERO);
-        }
         self.pending_admins.at(&policy_id).read()
     }
 }
@@ -484,10 +523,20 @@ mod tests {
 
     #[test]
     fn packed_policy_renounced_admin_is_non_zero() {
+        // ALLOWLIST (discriminant 1) with zero admin: exists bit keeps the word non-zero.
         let p = PackedPolicy::new(Address::ZERO, PolicyType::ALLOWLIST);
         assert!(!p.is_zero());
         assert_eq!(p.admin(), Address::ZERO);
         assert_eq!(p.policy_type_u8(), PolicyType::ALLOWLIST as u8);
+    }
+
+    #[test]
+    fn packed_policy_blocklist_zero_admin_is_non_zero() {
+        // BLOCKLIST (discriminant 0) with zero admin: exists bit prevents false "never created" signal.
+        let p = PackedPolicy::new(Address::ZERO, PolicyType::BLOCKLIST);
+        assert!(!p.is_zero(), "BLOCKLIST with zero admin must be non-zero due to exists bit");
+        assert_eq!(p.admin(), Address::ZERO);
+        assert_eq!(p.policy_type_u8(), PolicyType::BLOCKLIST as u8);
     }
 
     #[test]
@@ -513,9 +562,12 @@ mod tests {
     const BOB: Address = address!("0xB000000000000000000000000000000000000001");
     const NEW_ADMIN: Address = address!("0x2000000000000000000000000000000000000002");
 
+    /// Returns a storage provider with both built-in policies pre-written.
     fn storage() -> HashMapStorageProvider {
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
+        StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).write_builtins())
+            .unwrap();
         s
     }
 
@@ -573,16 +625,6 @@ mod tests {
         let mut s = storage();
         let err = StorageCtx::enter(&mut s, |ctx| {
             PolicyRegistryStorage::new(ctx).create_policy(Address::ZERO, PolicyType::ALLOWLIST)
-        })
-        .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    #[test]
-    fn create_policy_invalid_type_reverts() {
-        let mut s = storage();
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALWAYS_ALLOW)
         })
         .unwrap_err();
         assert!(matches!(err, BasePrecompileError::Revert(_)));
@@ -961,7 +1003,7 @@ mod tests {
                     .get_policy_type(PolicyRegistryStorage::ALWAYS_ALLOW_ID)
             })
             .unwrap(),
-            PolicyType::ALWAYS_ALLOW
+            PolicyType::BLOCKLIST
         );
         assert_eq!(
             StorageCtx::enter(&mut s, |ctx| {
@@ -969,7 +1011,7 @@ mod tests {
                     .get_policy_type(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
             })
             .unwrap(),
-            PolicyType::ALWAYS_BLOCK
+            PolicyType::ALLOWLIST
         );
     }
 
@@ -1027,6 +1069,21 @@ mod tests {
         })
         .unwrap();
         assert_eq!(pending, Address::ZERO);
+    }
+
+    // --- builtin policies block mutations via Unauthorized ---
+
+    #[test]
+    fn builtin_policies_reject_admin_mutations() {
+        let mut s = storage();
+        // Both built-in policies have zero admin, so any caller gets Unauthorized.
+        for policy_id in [PolicyRegistryStorage::ALWAYS_ALLOW_ID, PolicyRegistryStorage::ALWAYS_BLOCK_ID] {
+            let err = StorageCtx::enter(&mut s, |ctx| {
+                PolicyRegistryStorage::new(ctx).stage_update_admin(policy_id, ALICE)
+            })
+            .unwrap_err();
+            assert!(matches!(err, BasePrecompileError::Revert(_)));
+        }
     }
 
     // --- PolicyRegistryTrait delegation ---
@@ -1163,7 +1220,7 @@ mod tests {
             crate::PolicyRegistry::get_policy_type(&reg, PolicyRegistryStorage::ALWAYS_ALLOW_ID)
         })
         .unwrap();
-        assert_eq!(pt, PolicyType::ALWAYS_ALLOW);
+        assert_eq!(pt, PolicyType::BLOCKLIST);
     }
 
     #[test]

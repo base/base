@@ -8,8 +8,10 @@ use super::token::B20Token;
 use crate::{B20Guards, B20TokenRole, IB20, Policy, Token, TokenAccounting};
 
 /// Built-in policy ID that authorizes every account.
+/// BLOCKLIST semantics (empty blocklist), counter 0; fast-pathed in all query methods.
 pub const POLICY_ALWAYS_ALLOW: u64 = 0;
 /// Built-in policy ID that authorizes no account.
+/// ALLOWLIST type (discriminant 0), counter 1, empty member set.
 pub const POLICY_ALWAYS_BLOCK: u64 = 1;
 
 const TRANSFER_SENDER_POLICY: B256 =

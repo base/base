@@ -365,12 +365,14 @@ impl PolicyRegistry for InMemoryPolicy {
     }
 
     fn get_policy_type(&self, policy_id: u64) -> Result<IPolicyRegistry::PolicyType> {
-        Ok(match policy_id {
-            POLICY_ALWAYS_ALLOW => IPolicyRegistry::PolicyType::ALWAYS_ALLOW,
-            POLICY_ALWAYS_BLOCK => IPolicyRegistry::PolicyType::ALWAYS_BLOCK,
-            _ => IPolicyRegistry::PolicyType::try_from((policy_id >> 56) as u8).map_err(|_| {
-                base_precompile_storage::BasePrecompileError::enum_conversion_error()
-            })?,
+        // POLICY_ALWAYS_ALLOW=0 has BLOCKLIST semantics but its high byte encodes
+        // ALLOWLIST (the zero value), so we must hardcode the return.
+        if policy_id == POLICY_ALWAYS_ALLOW {
+            return Ok(IPolicyRegistry::PolicyType::BLOCKLIST);
+        }
+        // All other IDs (including POLICY_ALWAYS_BLOCK=1) encode the type in the high byte.
+        IPolicyRegistry::PolicyType::try_from((policy_id >> 56) as u8).map_err(|_| {
+            base_precompile_storage::BasePrecompileError::enum_conversion_error()
         })
     }
 
