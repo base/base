@@ -337,7 +337,7 @@ mod tests {
         });
     }
 
-    // -- Address arrays (T::BYTES == 20, packed) ---------------------------------
+    // -- Address arrays (T::BYTES == 20, unpacked: one element per slot) ----------
 
     #[test]
     fn test_address_array_roundtrip() {
