@@ -11,6 +11,8 @@ pub struct B20PausableFeature;
 impl B20PausableFeature {
     /// Returns the storage bit for a pausable feature.
     pub fn mask(feature: IB20::PausableFeature) -> U256 {
-        U256::ONE.checked_shl(usize::from(feature as u8)).unwrap_or(U256::ZERO)
+        U256::ONE
+            .checked_shl(usize::from(feature as u8))
+            .expect("PausableFeature discriminant must fit in U256")
     }
 }

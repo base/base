@@ -138,8 +138,9 @@ impl TokenAccounting for B20TokenStorage<'_> {
     }
 
     fn decimals(&self) -> Result<u8> {
-        Ok(TokenVariant::from_address(ContractStorage::address(self))
-            .map_or(0, TokenVariant::decimals))
+        let variant = TokenVariant::from_address(ContractStorage::address(self))
+            .ok_or_else(|| BasePrecompileError::revert(IB20::Uninitialized {}))?;
+        Ok(variant.decimals())
     }
 
     fn paused(&self) -> Result<U256> {
@@ -274,6 +275,8 @@ impl TokenAccounting for B20TokenStorage<'_> {
 
 impl B20TokenStorage<'_> {
     const ADMIN_COUNT_BITS: usize = 248;
+    // Policy IDs are packed into 64-bit lanes so the three transfer policy reads share one SLOAD.
+    // Lane 3 of `transfer_policy_ids` and lanes 1..=3 of `mint_policy_ids` are reserved.
     const TRANSFER_SENDER_POLICY_LANE: usize = 0;
     const TRANSFER_RECEIVER_POLICY_LANE: usize = 1;
     const TRANSFER_EXECUTOR_POLICY_LANE: usize = 2;
@@ -316,10 +319,13 @@ impl B20TokenStorage<'_> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256, address, uint};
-    use base_precompile_storage::{Handler, StorableType, StorageCtx, StorageKey, setup_storage};
+    use base_precompile_storage::{
+        BasePrecompileError, Handler, HashMapStorageProvider, StorableType, StorageCtx, StorageKey,
+        setup_storage,
+    };
 
     use super::{__packing_b20_core_storage, B20CoreStorage, B20TokenStorage, slots};
-    use crate::{B20TokenRole, TokenAccounting};
+    use crate::{B20TokenRole, IB20, TokenAccounting};
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b020");
     const B20_ROOT: U256 =
@@ -390,6 +396,20 @@ mod tests {
                 U256::ONE
             );
             assert_eq!(ctx.sload(TOKEN, admin_count_slot).unwrap(), U256::ONE);
+        });
+    }
+
+    #[test]
+    fn decimals_reverts_for_non_b20_address() {
+        let mut storage = HashMapStorageProvider::new(1);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = B20TokenStorage::from_address(Address::repeat_byte(0x42), ctx);
+
+            assert_eq!(
+                token.decimals().unwrap_err(),
+                BasePrecompileError::revert(IB20::Uninitialized {})
+            );
         });
     }
 }

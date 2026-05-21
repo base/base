@@ -5,7 +5,15 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use super::token::B20Token;
-use crate::{B20Guards, B20TokenRole, IB20, Policy, Token, TokenAccounting};
+use crate::{
+    B20DispatchMode, B20Guards, B20TokenRole, IB20, Policy, PolicyRegistryStorage, Token,
+    TokenAccounting,
+};
+
+/// Built-in policy ID that authorizes every account.
+pub const POLICY_ALWAYS_ALLOW: u64 = PolicyRegistryStorage::ALWAYS_ALLOW_ID;
+/// Built-in policy ID that authorizes no account.
+pub const POLICY_ALWAYS_BLOCK: u64 = PolicyRegistryStorage::ALWAYS_BLOCK_ID;
 
 const TRANSFER_SENDER_POLICY: B256 =
     b256!("b81736c875ab819dd97f59f2a6542cfb731ad52b4ae15a6f24df2fb02b0327f5");
@@ -84,14 +92,17 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
     }
 
     /// Updates the configured policy ID for `policy_type`.
+    ///
+    /// Any existing policy ID can be assigned to any token policy slot. The policy registry's
+    /// `is_authorized` result defines the final allow/deny semantics for that slot.
     pub fn update_policy(
         &mut self,
         caller: Address,
         policy_type: B256,
         new_policy_id: u64,
-        privileged: bool,
+        mode: B20DispatchMode,
     ) -> Result<()> {
-        if !privileged {
+        if !mode.is_factory_init() {
             B20Guards::ensure_token_role(self, caller, B20TokenRole::DefaultAdmin)?;
         }
         let old_policy_id = self.policy_id(policy_type)?;
@@ -128,7 +139,10 @@ mod tests {
     use alloy_primitives::{Address, B256};
 
     use super::*;
-    use crate::{B20TokenRole, InMemoryPolicy, InMemoryTokenAccounting, Token, TokenAccounting};
+    use crate::{
+        B20DispatchMode, B20TokenRole, InMemoryPolicy, InMemoryTokenAccounting, Token,
+        TokenAccounting,
+    };
 
     const ADMIN: Address = Address::repeat_byte(0xaa);
     const TOKEN_ADDR: Address = Address::repeat_byte(0x20);
@@ -157,7 +171,12 @@ mod tests {
 
         assert_eq!(
             token
-                .update_policy(ADMIN, B20PolicyType::TransferSender.id(), CUSTOM_POLICY_ID, false)
+                .update_policy(
+                    ADMIN,
+                    B20PolicyType::TransferSender.id(),
+                    CUSTOM_POLICY_ID,
+                    B20DispatchMode::standard(),
+                )
                 .unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyNotFound { policyId: CUSTOM_POLICY_ID })
         );
@@ -169,7 +188,12 @@ mod tests {
         token.policy.create_existing_policy(CUSTOM_POLICY_ID);
 
         token
-            .update_policy(ADMIN, B20PolicyType::TransferSender.id(), CUSTOM_POLICY_ID, false)
+            .update_policy(
+                ADMIN,
+                B20PolicyType::TransferSender.id(),
+                CUSTOM_POLICY_ID,
+                B20DispatchMode::standard(),
+            )
             .unwrap();
 
         assert_eq!(

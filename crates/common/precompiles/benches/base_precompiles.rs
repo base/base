@@ -5,8 +5,9 @@ use std::hint::black_box;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolValue;
 use base_common_precompiles::{
-    B20Token, B20TokenStorage, Burnable, Configurable, IB20, ITokenFactory, Mintable, Pausable,
-    PolicyHandle, Token, TokenAccounting, TokenFactoryStorage, TokenVariant, Transferable,
+    B20DispatchMode, B20Token, B20TokenRole, B20TokenStorage, Burnable, Configurable, IB20,
+    ITokenFactory, Mintable, Pausable, PolicyHandle, RoleManaged, Token, TokenAccounting,
+    TokenFactoryStorage, TokenVariant, Transferable,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -63,7 +64,19 @@ impl BaseTokenBenchSetup {
         let mut token = Self::token_at(ctx, token_address);
         if initial_supply > U256::ZERO {
             token
-                .mint(Self::admin(), Self::initial_supply_recipient(), initial_supply, true)
+                .grant_role_unchecked(
+                    B20TokenRole::Mint.id(),
+                    Self::admin(),
+                    TokenFactoryStorage::ADDRESS,
+                )
+                .unwrap();
+            token
+                .mint(
+                    Self::admin(),
+                    Self::initial_supply_recipient(),
+                    initial_supply,
+                    B20DispatchMode::standard(),
+                )
                 .unwrap();
         }
         token
@@ -224,11 +237,14 @@ fn base_token_mutate(c: &mut Criterion) {
             let user = Address::repeat_byte(0x01);
             let mut token =
                 BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x0c), U256::ZERO);
+            token
+                .grant_role_unchecked(B20TokenRole::Mint.id(), user, TokenFactoryStorage::ADDRESS)
+                .unwrap();
 
             b.iter(|| {
                 let token = black_box(&mut token);
                 let user = black_box(user);
-                token.mint(user, user, U256::ONE, true).unwrap();
+                token.mint(user, user, U256::ONE, B20DispatchMode::standard()).unwrap();
             });
         });
     });
@@ -242,11 +258,14 @@ fn base_token_mutate(c: &mut Criterion) {
                 B256::repeat_byte(0x0d),
                 U256::from(u128::MAX),
             );
+            token
+                .grant_role_unchecked(B20TokenRole::Burn.id(), holder, TokenFactoryStorage::ADDRESS)
+                .unwrap();
 
             b.iter(|| {
                 let token = black_box(&mut token);
                 let holder = black_box(holder);
-                token.burn(holder, holder, U256::ONE, true).unwrap();
+                token.burn(holder, holder, U256::ONE, B20DispatchMode::standard()).unwrap();
             });
         });
     });
@@ -356,11 +375,20 @@ fn base_token_mutate(c: &mut Criterion) {
             let admin = BaseTokenBenchSetup::admin();
             let mut token =
                 BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x13), U256::ZERO);
+            token
+                .grant_role_unchecked(B20TokenRole::Pause.id(), admin, TokenFactoryStorage::ADDRESS)
+                .unwrap();
 
             b.iter(|| {
                 let token = black_box(&mut token);
                 let admin = black_box(admin);
-                token.pause(admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+                token
+                    .pause(
+                        admin,
+                        vec![IB20::PausableFeature::TRANSFER],
+                        B20DispatchMode::standard(),
+                    )
+                    .unwrap();
             });
         });
     });
@@ -371,12 +399,30 @@ fn base_token_mutate(c: &mut Criterion) {
             let admin = BaseTokenBenchSetup::admin();
             let mut token =
                 BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x14), U256::ZERO);
-            token.pause(admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+            token
+                .grant_role_unchecked(B20TokenRole::Pause.id(), admin, TokenFactoryStorage::ADDRESS)
+                .unwrap();
+            token
+                .grant_role_unchecked(
+                    B20TokenRole::Unpause.id(),
+                    admin,
+                    TokenFactoryStorage::ADDRESS,
+                )
+                .unwrap();
+            token
+                .pause(admin, vec![IB20::PausableFeature::TRANSFER], B20DispatchMode::standard())
+                .unwrap();
 
             b.iter(|| {
                 let token = black_box(&mut token);
                 let admin = black_box(admin);
-                token.unpause(admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+                token
+                    .unpause(
+                        admin,
+                        vec![IB20::PausableFeature::TRANSFER],
+                        B20DispatchMode::standard(),
+                    )
+                    .unwrap();
             });
         });
     });
@@ -394,7 +440,9 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let admin = black_box(admin);
-                token.set_supply_cap(admin, U256::from(10_000u64), true).unwrap();
+                token
+                    .set_supply_cap(admin, U256::from(10_000u64), B20DispatchMode::standard())
+                    .unwrap();
             });
         });
     });

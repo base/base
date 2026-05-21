@@ -17,7 +17,7 @@
 
 [[elfs]]
 name = "range-elf-embedded"
-sha256 = "2ce6a3d8d7de8694e064f957e1d6a3b07e71d317190ce9d172608f0e72812e20"
+sha256 = "03c980495c013fe661ca5a5f88b42bd704ea8e05f585f6557e64a7459158c71a"
 
 [[elfs]]
 name = "aggregation-elf"

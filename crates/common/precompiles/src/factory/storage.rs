@@ -8,9 +8,9 @@ use revm::state::Bytecode;
 
 use super::variant::TokenVariant;
 use crate::{
-    B20SecurityInit, B20SecurityStorage, B20SecurityToken, B20StablecoinInit, B20StablecoinStorage,
-    B20StablecoinToken, B20Token, B20TokenInit, B20TokenRole, B20TokenStorage, ITokenFactory,
-    PolicyHandle, RoleManaged, Token,
+    B20DispatchMode, B20SecurityInit, B20SecurityStorage, B20SecurityToken, B20StablecoinInit,
+    B20StablecoinStorage, B20StablecoinToken, B20Token, B20TokenInit, B20TokenRole,
+    B20TokenStorage, ITokenFactory, PolicyHandle, RoleManaged, Token,
 };
 
 /// Maximum total supply for all newly-created B-20 tokens.
@@ -35,6 +35,10 @@ impl<'a> TokenFactoryStorage<'a> {
     pub const DEFAULT_SUPPLY_CAP: U256 = DEFAULT_SUPPLY_CAP;
 
     /// Creates a token at a deterministic address derived from `(caller, variant, salt)`.
+    ///
+    /// `initialAdmin == address(0)` intentionally creates an adminless token unless `initCalls`
+    /// grant roles during the factory bootstrap window. During that window the creator is trusted
+    /// to configure roles, policies, supply, and metadata atomically before the token is returned.
     pub fn create_token(
         &mut self,
         caller: Address,
@@ -120,7 +124,7 @@ impl<'a> TokenFactoryStorage<'a> {
 
         for (index, calldata) in init_calls.into_iter().enumerate() {
             token
-                .inner_with_privilege(self.storage, &calldata, true)
+                .inner_with_mode(self.storage, &calldata, B20DispatchMode::factory_init())
                 .map_err(|err| Self::map_init_call_error(index, err))?;
         }
         Ok(())
@@ -158,7 +162,7 @@ impl<'a> TokenFactoryStorage<'a> {
 
         for (index, calldata) in init_calls.into_iter().enumerate() {
             token
-                .inner_with_privilege(self.storage, &calldata, true)
+                .inner_with_mode(self.storage, &calldata, B20DispatchMode::factory_init())
                 .map_err(|err| Self::map_init_call_error(index, err))?;
         }
         Ok(())
@@ -200,7 +204,7 @@ impl<'a> TokenFactoryStorage<'a> {
                 B20SecurityStorage::from_address(token_address, self.storage),
                 PolicyHandle::new(self.storage),
             )
-            .inner_with_privilege(self.storage, &calldata, true)
+            .inner_with_mode(self.storage, &calldata, B20DispatchMode::factory_init())
             .map_err(|err| Self::map_init_call_error(index, err))?;
         }
         Ok(())
@@ -246,6 +250,8 @@ enum TokenCreateParams {
 
 impl TokenCreateParams {
     fn decode(variant: TokenVariant, params: &Bytes) -> Result<Self> {
+        // Decimals are fixed by each variant arm rather than supplied by callers. New variants must
+        // choose their own value here before they become creatable.
         match variant {
             TokenVariant::B20 => {
                 let p = ITokenFactory::B20CreateParams::abi_decode(params)
@@ -343,9 +349,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        ActivationFeature, ActivationRegistryStorage, B20SecurityStorage, B20Token,
-        B20TokenStorage, IB20, IB20Stablecoin, Mintable, Permittable, Token, TokenAccounting,
-        Transferable,
+        ActivationFeature, ActivationRegistryStorage, B20DispatchMode, B20PolicyType,
+        B20SecurityStorage, B20Token, B20TokenStorage, IB20, IB20Stablecoin, Mintable,
+        POLICY_ALWAYS_BLOCK, Permittable, Token, TokenAccounting, Transferable,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -526,6 +532,61 @@ mod tests {
 
             assert_eq!(token.b20.total_supply.read().unwrap(), supply);
             assert_eq!(token.balance_of(recipient).unwrap(), supply);
+        });
+    }
+
+    #[test]
+    fn test_create_token_init_calls_bypass_authorization_gates_but_apply_accounting() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let caller = Address::repeat_byte(0x55);
+        let salt = B256::repeat_byte(0xCE);
+        let alice = Address::repeat_byte(0xCD);
+        let bob = Address::repeat_byte(0xBB);
+        let mut call = create_call(
+            ITokenFactory::TokenVariant::DEFAULT,
+            token_params("Bootstrap Token", "BOOT"),
+            salt,
+        );
+        call.initCalls.push(
+            IB20::pauseCall {
+                features: vec![IB20::PausableFeature::MINT, IB20::PausableFeature::TRANSFER],
+            }
+            .abi_encode()
+            .into(),
+        );
+        call.initCalls.push(
+            IB20::updatePolicyCall {
+                policyType: B20PolicyType::MintReceiver.id(),
+                newPolicyId: POLICY_ALWAYS_BLOCK,
+            }
+            .abi_encode()
+            .into(),
+        );
+        call.initCalls
+            .push(IB20::mintCall { to: alice, amount: U256::from(100u64) }.abi_encode().into());
+        call.initCalls.push(
+            IB20::updatePolicyCall {
+                policyType: B20PolicyType::TransferSender.id(),
+                newPolicyId: POLICY_ALWAYS_BLOCK,
+            }
+            .abi_encode()
+            .into(),
+        );
+        call.initCalls.push(
+            IB20::transferFromCall { from: alice, to: bob, amount: U256::from(25u64) }
+                .abi_encode()
+                .into(),
+        );
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = TokenFactoryStorage::new(ctx);
+            let token_addr = factory.create_token(caller, call).unwrap();
+            let token = B20TokenStorage::from_address(token_addr, ctx);
+
+            assert_eq!(token.balance_of(alice).unwrap(), U256::from(75u64));
+            assert_eq!(token.balance_of(bob).unwrap(), U256::from(25u64));
+            assert_eq!(token.total_supply().unwrap(), U256::from(100u64));
         });
     }
 
@@ -822,9 +883,11 @@ mod tests {
             let bob = Address::repeat_byte(0xBB);
             let mut token = token_at(token_addr, ctx);
 
-            token.mint(alice, alice, U256::from(1_000u64), true).unwrap();
+            token
+                .mint(alice, alice, U256::from(1_000u64), B20DispatchMode::factory_init())
+                .unwrap();
             token.transfer(alice, bob, U256::from(300u64)).unwrap();
-            token.mint(alice, alice, U256::from(200u64), true).unwrap();
+            token.mint(alice, alice, U256::from(200u64), B20DispatchMode::factory_init()).unwrap();
 
             assert_eq!(token.accounting().balance_of(alice).unwrap(), U256::from(900u64));
             assert_eq!(token.accounting().balance_of(bob).unwrap(), U256::from(300u64));

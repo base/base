@@ -205,6 +205,9 @@ impl PolicyRegistryStorage<'_> {
     }
 
     /// Creates a new policy and populates its initial member list.
+    ///
+    /// The ABI accepts any list length; practical batch size is bounded by EVM gas because each
+    /// account writes one membership slot and the emitted event carries the full account list.
     pub fn create_policy_with_accounts(
         &mut self,
         admin: Address,
@@ -377,6 +380,21 @@ impl PolicyRegistryStorage<'_> {
         }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         Ok(packed.exists())
+    }
+
+    /// Returns the `PolicyType` of `policy_id`.
+    pub fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType> {
+        Self::require_well_formed(policy_id)?;
+        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
+            return PolicyType::try_from(Self::policy_id_type(policy_id))
+                .map_err(|_| BasePrecompileError::enum_conversion_error());
+        }
+        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
+        if !packed.exists() {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
+        }
+        PolicyType::try_from(Self::policy_id_type(policy_id))
+            .map_err(|_| BasePrecompileError::enum_conversion_error())
     }
 
     /// Returns the current admin of `policy_id`, or `address(0)` for policies with renounced admin.

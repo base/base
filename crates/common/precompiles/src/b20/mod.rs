@@ -8,7 +8,7 @@ mod pausable;
 pub use pausable::B20PausableFeature;
 
 mod policies;
-pub use policies::B20PolicyType;
+pub use policies::{B20PolicyType, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK};
 
 mod precompile;
 pub use precompile::B20TokenPrecompile;
@@ -17,4 +17,4 @@ mod storage;
 pub use storage::{B20CoreStorage, B20TokenInit, B20TokenStorage};
 
 mod token;
-pub use token::B20Token;
+pub use token::{B20DispatchMode, B20FactoryInitPrivilege, B20Token};

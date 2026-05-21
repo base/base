@@ -19,8 +19,8 @@ use super::{
     accounting::SecurityAccounting,
 };
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20PolicyType, B20TokenRole, Burnable,
-    Configurable,
+    ActivationFeature, ActivationRegistryStorage, B20DispatchMode, B20PolicyType, B20TokenRole,
+    Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     Mintable, Pausable, Permittable, Policy, RoleManaged, Token, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
@@ -44,12 +44,12 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         caller: Address,
         policy_type: B256,
         new_policy_id: u64,
-        privileged: bool,
+        mode: B20DispatchMode,
     ) -> base_precompile_storage::Result<()> {
         B20PolicyType::from_id(policy_type).ok_or_else(|| {
             BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
         })?;
-        if !privileged {
+        if !mode.is_factory_init() {
             self.ensure_role(caller, Self::default_admin_role())?;
         }
         let old_policy_id = self.accounting.policy_id(policy_type)?;
@@ -92,15 +92,15 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
-        self.inner_with_privilege(ctx, calldata, false)
+        self.inner_with_mode(ctx, calldata, B20DispatchMode::standard())
     }
 
-    /// Decodes calldata and executes it with optional factory-init privilege.
-    pub fn inner_with_privilege(
+    /// Decodes calldata and executes it with the requested dispatch mode.
+    pub fn inner_with_mode(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
-        privileged: bool,
+        mode: B20DispatchMode,
     ) -> base_precompile_storage::Result<Bytes> {
         ActivationRegistryStorage::new(ctx)
             .ensure_activated(ActivationFeature::B20Security.id())?;
@@ -189,12 +189,12 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             // --- Mint ---
             C::mint(c) => {
                 let caller = ctx.caller();
-                self.mint(caller, c.to, c.amount, privileged)?;
+                self.mint(caller, c.to, c.amount, mode)?;
                 Bytes::new()
             }
             C::mintWithMemo(c) => {
                 let caller = ctx.caller();
-                self.mint_with_memo(caller, c.to, c.amount, c.memo, privileged)?;
+                self.mint_with_memo(caller, c.to, c.amount, c.memo, mode)?;
                 Bytes::new()
             }
 
@@ -203,63 +203,63 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             // factory, not a token holder.
             C::burn(c) => {
                 let caller = ctx.caller();
-                self.burn(caller, caller, c.amount, false)?;
+                self.burn(caller, caller, c.amount, mode)?;
                 Bytes::new()
             }
             C::burnWithMemo(c) => {
                 let caller = ctx.caller();
-                self.burn_with_memo(caller, caller, c.amount, c.memo, false)?;
+                self.burn_with_memo(caller, caller, c.amount, c.memo, mode)?;
                 Bytes::new()
             }
             C::burnBlocked(c) => {
                 let caller = ctx.caller();
-                self.burn_blocked(caller, c.from, c.amount, privileged)?;
+                self.burn_blocked(caller, c.from, c.amount, mode)?;
                 Bytes::new()
             }
 
             // --- Pause ---
             C::pause(c) => {
                 let caller = ctx.caller();
-                self.pause(caller, c.features, privileged)?;
+                self.pause(caller, c.features, mode)?;
                 Bytes::new()
             }
             C::unpause(c) => {
                 let caller = ctx.caller();
-                self.unpause(caller, c.features, privileged)?;
+                self.unpause(caller, c.features, mode)?;
                 Bytes::new()
             }
 
             // --- Admin ---
             C::setSupplyCap(c) => {
                 let caller = ctx.caller();
-                Configurable::set_supply_cap(self, caller, c.newSupplyCap, privileged)?;
+                Configurable::set_supply_cap(self, caller, c.newSupplyCap, mode)?;
                 Bytes::new()
             }
             C::setName(c) => {
                 let caller = ctx.caller();
-                Configurable::set_name(self, caller, c.newName, privileged)?;
+                Configurable::set_name(self, caller, c.newName, mode)?;
                 Bytes::new()
             }
             C::setSymbol(c) => {
                 let caller = ctx.caller();
-                Configurable::set_symbol(self, caller, c.newSymbol, privileged)?;
+                Configurable::set_symbol(self, caller, c.newSymbol, mode)?;
                 Bytes::new()
             }
             C::setContractURI(c) => {
                 let caller = ctx.caller();
-                Configurable::set_contract_uri(self, caller, c.newURI, privileged)?;
+                Configurable::set_contract_uri(self, caller, c.newURI, mode)?;
                 Bytes::new()
             }
 
             // --- Role mutations ---
             C::grantRole(c) => {
                 let caller = ctx.caller();
-                self.grant_role(caller, c.role, c.account, privileged)?;
+                self.grant_role(caller, c.role, c.account, mode)?;
                 Bytes::new()
             }
             C::revokeRole(c) => {
                 let caller = ctx.caller();
-                self.revoke_role(caller, c.role, c.account, privileged)?;
+                self.revoke_role(caller, c.role, c.account, mode)?;
                 Bytes::new()
             }
             // Renounce operations are never factory-privileged: they are only meaningful for the
@@ -276,14 +276,14 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }
             C::setRoleAdmin(c) => {
                 let caller = ctx.caller();
-                self.set_role_admin(caller, c.role, c.newAdminRole, privileged)?;
+                self.set_role_admin(caller, c.role, c.newAdminRole, mode)?;
                 Bytes::new()
             }
 
             // --- Policy mutations ---
             C::updatePolicy(c) => {
                 let caller = ctx.caller();
-                self.update_policy(caller, c.policyType, c.newPolicyId, privileged)?;
+                self.update_policy(caller, c.policyType, c.newPolicyId, mode)?;
                 Bytes::new()
             }
 
@@ -477,7 +477,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         }
         let caller = ctx.caller();
         for (recipient, amount) in recipients.into_iter().zip(amounts) {
-            self.mint(caller, recipient, amount, true)?;
+            self.mint(caller, recipient, amount, B20DispatchMode::factory_init())?;
         }
         Ok(())
     }
@@ -585,7 +585,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }));
         }
         for (recipient, amount) in recipients.into_iter().zip(amounts) {
-            self.mint(Address::ZERO, recipient, amount, true)?;
+            self.mint(Address::ZERO, recipient, amount, B20DispatchMode::factory_init())?;
         }
         Ok(())
     }

@@ -3,7 +3,7 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use super::guards::B20Guards;
-use crate::{B20TokenRole, IB20, Token, TokenAccounting};
+use crate::{B20DispatchMode, B20TokenRole, IB20, Token, TokenAccounting};
 
 /// Token burn operations.
 ///
@@ -16,12 +16,12 @@ pub trait Burnable: Token {
         caller: Address,
         from: Address,
         amount: U256,
-        privileged: bool,
+        mode: B20DispatchMode,
     ) -> Result<()> {
-        if !privileged {
+        if !mode.is_factory_init() {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Burn)?;
+            B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         }
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         let balance = self.accounting().balance_of(from)?;
         if balance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
@@ -46,9 +46,9 @@ pub trait Burnable: Token {
         from: Address,
         amount: U256,
         memo: B256,
-        privileged: bool,
+        mode: B20DispatchMode,
     ) -> Result<()> {
-        self.burn(caller, from, amount, privileged)?;
+        self.burn(caller, from, amount, mode)?;
         self.accounting_mut().emit_event(IB20::Memo { memo }.encode_log_data())
     }
 
@@ -58,15 +58,30 @@ pub trait Burnable: Token {
         caller: Address,
         from: Address,
         amount: U256,
-        privileged: bool,
+        mode: B20DispatchMode,
     ) -> Result<()> {
-        if !privileged {
+        if !mode.is_factory_init() {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::BurnBlocked)?;
+            // Intentional asymmetry: BURN_BLOCKED_ROLE replaces BURN_ROLE, but emergency burn
+            // pauses still halt every non-bootstrap burn path, including burnBlocked.
+            B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
+            B20Guards::ensure_blocked::<Self>(self, from)?;
         }
-        B20Guards::ensure_blocked::<Self>(self, from)?;
-        // Intentional asymmetry: BURN_BLOCKED_ROLE replaces BURN_ROLE, but emergency burn pauses
-        // still halt every burn path, including burnBlocked.
-        self.burn(caller, from, amount, true)?;
+        let balance = self.accounting().balance_of(from)?;
+        if balance < amount {
+            return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
+                sender: from,
+                balance,
+                needed: amount,
+            }));
+        }
+        self.accounting_mut().set_balance(from, balance - amount)?;
+        let supply = self.accounting().total_supply()?;
+        let new_supply =
+            supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.accounting_mut().set_total_supply(new_supply)?;
+        self.accounting_mut()
+            .emit_event(IB20::Transfer { from, to: Address::ZERO, amount }.encode_log_data())?;
         self.accounting_mut()
             .emit_event(IB20::BurnedBlocked { caller, from, amount }.encode_log_data())
     }
@@ -79,7 +94,8 @@ mod tests {
 
     use super::Burnable;
     use crate::{
-        B20PausableFeature, B20PolicyType, B20TokenRole, IB20, PolicyRegistryStorage,
+        B20DispatchMode, B20PausableFeature, B20PolicyType, B20TokenRole, IB20,
+        POLICY_ALWAYS_BLOCK,
         common::{
             Token, TokenAccounting,
             test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
@@ -109,7 +125,7 @@ mod tests {
     fn burn_decreases_balance_and_supply() {
         let mut token = token_with_balance(U256::from(100u64));
 
-        token.burn(CALLER, ALICE, U256::from(40u64), true).unwrap();
+        token.burn(CALLER, ALICE, U256::from(40u64), B20DispatchMode::factory_init()).unwrap();
 
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
         assert_eq!(token.accounting().total_supply().unwrap(), U256::from(60u64));
@@ -121,7 +137,9 @@ mod tests {
         let mut token = token_with_balance(U256::from(10u64));
 
         assert_eq!(
-            token.burn(CALLER, ALICE, U256::from(11u64), true).unwrap_err(),
+            token
+                .burn(CALLER, ALICE, U256::from(11u64), B20DispatchMode::factory_init())
+                .unwrap_err(),
             BasePrecompileError::revert(IB20::InsufficientBalance {
                 sender: ALICE,
                 balance: U256::from(10u64),
@@ -135,7 +153,7 @@ mod tests {
         let mut token = token_with_balance(U256::from(10u64));
 
         assert_eq!(
-            token.burn(CALLER, ALICE, U256::ONE, false).unwrap_err(),
+            token.burn(CALLER, ALICE, U256::ONE, B20DispatchMode::standard()).unwrap_err(),
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: CALLER,
                 neededRole: B20TokenRole::Burn.id(),
@@ -147,7 +165,7 @@ mod tests {
     fn non_privileged_burn_with_role_succeeds() {
         let mut token = token_with_role(B20TokenRole::Burn, CALLER, U256::from(10u64));
 
-        token.burn(CALLER, ALICE, U256::from(4u64), false).unwrap();
+        token.burn(CALLER, ALICE, U256::from(4u64), B20DispatchMode::standard()).unwrap();
 
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(6u64));
     }
@@ -158,10 +176,11 @@ mod tests {
         accounting.balances.insert(ALICE, U256::from(10u64));
         accounting.total_supply = U256::from(10u64);
         accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
+        accounting.roles.insert((B20TokenRole::Burn.id(), CALLER), true);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
-            token.burn(CALLER, ALICE, U256::ONE, true).unwrap_err(),
+            token.burn(CALLER, ALICE, U256::ONE, B20DispatchMode::standard()).unwrap_err(),
             BasePrecompileError::revert(IB20::ContractPaused {
                 feature: IB20::PausableFeature::BURN,
             })
@@ -170,10 +189,10 @@ mod tests {
 
     #[test]
     fn burn_blocked_reverts_when_account_is_not_blocked() {
-        let mut token = token_with_balance(U256::from(10u64));
+        let mut token = token_with_role(B20TokenRole::BurnBlocked, CALLER, U256::from(10u64));
 
         assert_eq!(
-            token.burn_blocked(CALLER, ALICE, U256::ONE, true).unwrap_err(),
+            token.burn_blocked(CALLER, ALICE, U256::ONE, B20DispatchMode::standard()).unwrap_err(),
             BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE })
         );
     }
@@ -183,12 +202,11 @@ mod tests {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::from(100u64));
         accounting.total_supply = U256::from(100u64);
-        accounting
-            .policy_ids
-            .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+        accounting.roles.insert((B20TokenRole::BurnBlocked.id(), CALLER), true);
+        accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), POLICY_ALWAYS_BLOCK);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
-        token.burn_blocked(CALLER, ALICE, U256::from(25u64), true).unwrap();
+        token.burn_blocked(CALLER, ALICE, U256::from(25u64), B20DispatchMode::standard()).unwrap();
 
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(75u64));
         assert_eq!(token.accounting().total_supply().unwrap(), U256::from(75u64));
@@ -200,17 +218,29 @@ mod tests {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::from(10u64));
         accounting.total_supply = U256::from(10u64);
-        accounting
-            .policy_ids
-            .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+        accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), POLICY_ALWAYS_BLOCK);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
-            token.burn_blocked(CALLER, ALICE, U256::ONE, false).unwrap_err(),
+            token.burn_blocked(CALLER, ALICE, U256::ONE, B20DispatchMode::standard()).unwrap_err(),
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: CALLER,
                 neededRole: B20TokenRole::BurnBlocked.id(),
             })
         );
+    }
+
+    #[test]
+    fn factory_init_burn_blocked_bypasses_role_pause_and_blocked_policy() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        accounting.total_supply = U256::from(10u64);
+        accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        token.burn_blocked(CALLER, ALICE, U256::ONE, B20DispatchMode::factory_init()).unwrap();
+
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(9u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(9u64));
     }
 }

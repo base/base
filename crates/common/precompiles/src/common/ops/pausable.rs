@@ -5,7 +5,7 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use super::guards::B20Guards;
-use crate::{B20PausableFeature, B20TokenRole, IB20, Token, TokenAccounting};
+use crate::{B20DispatchMode, B20PausableFeature, B20TokenRole, IB20, Token, TokenAccounting};
 
 /// Pause and unpause operations.
 ///
@@ -37,16 +37,19 @@ pub trait Pausable: Token {
     }
 
     /// ORs `features` into the current paused bitmask.
+    ///
+    /// Re-pausing an already paused feature is intentionally idempotent and still emits the
+    /// requested feature list.
     fn pause(
         &mut self,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
-        privileged: bool,
+        mode: B20DispatchMode,
     ) -> Result<()> {
         if features.is_empty() {
             return Err(BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
         }
-        if !privileged {
+        if !mode.is_factory_init() {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Pause)?;
         }
         let current = self.accounting().paused()?;
@@ -60,16 +63,19 @@ pub trait Pausable: Token {
     }
 
     /// Clears `features` from the current paused bitmask.
+    ///
+    /// Unpausing an already active feature is intentionally idempotent and still emits the
+    /// requested feature list.
     fn unpause(
         &mut self,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
-        privileged: bool,
+        mode: B20DispatchMode,
     ) -> Result<()> {
         if features.is_empty() {
             return Err(BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
         }
-        if !privileged {
+        if !mode.is_factory_init() {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Unpause)?;
         }
         let mut next = self.accounting().paused()?;
@@ -91,7 +97,7 @@ mod tests {
 
     use super::Pausable;
     use crate::{
-        B20PausableFeature, B20TokenRole, IB20,
+        B20DispatchMode, B20PausableFeature, B20TokenRole, IB20,
         common::{
             Token,
             test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
@@ -118,7 +124,9 @@ mod tests {
     fn pause_sets_feature_and_emits_event() {
         let mut token = make_token();
 
-        token.pause(CALLER, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+        token
+            .pause(CALLER, vec![IB20::PausableFeature::TRANSFER], B20DispatchMode::factory_init())
+            .unwrap();
 
         assert!(token.is_paused(IB20::PausableFeature::TRANSFER).unwrap());
         assert_eq!(token.accounting().events.len(), 1);
@@ -128,9 +136,15 @@ mod tests {
     fn pause_ors_multiple_features_into_existing_bitmask() {
         let mut token = make_token();
 
-        token.pause(CALLER, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
         token
-            .pause(CALLER, vec![IB20::PausableFeature::MINT, IB20::PausableFeature::BURN], true)
+            .pause(CALLER, vec![IB20::PausableFeature::TRANSFER], B20DispatchMode::factory_init())
+            .unwrap();
+        token
+            .pause(
+                CALLER,
+                vec![IB20::PausableFeature::MINT, IB20::PausableFeature::BURN],
+                B20DispatchMode::factory_init(),
+            )
             .unwrap();
 
         assert!(token.is_paused(IB20::PausableFeature::TRANSFER).unwrap());
@@ -143,9 +157,15 @@ mod tests {
         let mut token = make_token();
 
         token
-            .pause(CALLER, vec![IB20::PausableFeature::TRANSFER, IB20::PausableFeature::MINT], true)
+            .pause(
+                CALLER,
+                vec![IB20::PausableFeature::TRANSFER, IB20::PausableFeature::MINT],
+                B20DispatchMode::factory_init(),
+            )
             .unwrap();
-        token.unpause(CALLER, vec![IB20::PausableFeature::MINT], true).unwrap();
+        token
+            .unpause(CALLER, vec![IB20::PausableFeature::MINT], B20DispatchMode::factory_init())
+            .unwrap();
 
         assert!(token.is_paused(IB20::PausableFeature::TRANSFER).unwrap());
         assert!(!token.is_paused(IB20::PausableFeature::MINT).unwrap());
@@ -169,7 +189,7 @@ mod tests {
         let mut token = make_token();
 
         assert_eq!(
-            token.pause(CALLER, vec![], true).unwrap_err(),
+            token.pause(CALLER, vec![], B20DispatchMode::standard()).unwrap_err(),
             BasePrecompileError::revert(IB20::EmptyFeatureSet {})
         );
     }
@@ -179,7 +199,7 @@ mod tests {
         let mut token = make_token();
 
         assert_eq!(
-            token.unpause(CALLER, vec![], true).unwrap_err(),
+            token.unpause(CALLER, vec![], B20DispatchMode::standard()).unwrap_err(),
             BasePrecompileError::revert(IB20::EmptyFeatureSet {})
         );
     }
@@ -189,7 +209,9 @@ mod tests {
         let mut token = make_token();
 
         assert_eq!(
-            token.pause(CALLER, vec![IB20::PausableFeature::TRANSFER], false).unwrap_err(),
+            token
+                .pause(CALLER, vec![IB20::PausableFeature::TRANSFER], B20DispatchMode::standard())
+                .unwrap_err(),
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: CALLER,
                 neededRole: B20TokenRole::Pause.id(),
@@ -201,7 +223,9 @@ mod tests {
     fn non_privileged_pause_with_role_succeeds() {
         let mut token = token_with_role(B20TokenRole::Pause, CALLER);
 
-        token.pause(CALLER, vec![IB20::PausableFeature::TRANSFER], false).unwrap();
+        token
+            .pause(CALLER, vec![IB20::PausableFeature::TRANSFER], B20DispatchMode::standard())
+            .unwrap();
 
         assert!(token.is_paused(IB20::PausableFeature::TRANSFER).unwrap());
     }
@@ -213,7 +237,13 @@ mod tests {
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
-            token.unpause(CALLER, vec![IB20::PausableFeature::TRANSFER], false).unwrap_err(),
+            token
+                .unpause(
+                    CALLER,
+                    vec![IB20::PausableFeature::TRANSFER],
+                    B20DispatchMode::standard(),
+                )
+                .unwrap_err(),
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: CALLER,
                 neededRole: B20TokenRole::Unpause.id(),
@@ -228,7 +258,9 @@ mod tests {
         accounting.roles.insert((B20TokenRole::Unpause.id(), CALLER), true);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
-        token.unpause(CALLER, vec![IB20::PausableFeature::TRANSFER], false).unwrap();
+        token
+            .unpause(CALLER, vec![IB20::PausableFeature::TRANSFER], B20DispatchMode::standard())
+            .unwrap();
 
         assert!(!token.is_paused(IB20::PausableFeature::TRANSFER).unwrap());
     }

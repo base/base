@@ -5,7 +5,7 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use super::guards::B20Guards;
-use crate::{IB20, Token, TokenAccounting};
+use crate::{B20DispatchMode, IB20, Token, TokenAccounting};
 
 const MINT_ROLE: B256 = b256!("154c00819833dac601ee5ddded6fda79d9d8b506b911b3dbd54cdb95fe6c3686");
 const BURN_ROLE: B256 = b256!("e97b137254058bd94f28d2f3eb79e2d34074ffb488d042e3bc958e0a57d2fa22");
@@ -111,13 +111,13 @@ pub trait RoleManaged: Token {
         if self.accounting().has_role(role, account)? {
             return Ok(());
         }
-        self.accounting_mut().set_role(role, account, true)?;
         if role == Self::default_admin_role() {
             let current = self.accounting().role_member_count(role)?;
             let next =
                 current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
             self.accounting_mut().set_role_member_count(role, next)?;
         }
+        self.accounting_mut().set_role(role, account, true)?;
         self.accounting_mut()
             .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
     }
@@ -132,13 +132,13 @@ pub trait RoleManaged: Token {
         if !self.accounting().has_role(role, account)? {
             return Ok(());
         }
-        self.accounting_mut().set_role(role, account, false)?;
         if role == Self::default_admin_role() {
             let current = self.accounting().role_member_count(role)?;
             let next =
                 current.checked_sub(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
             self.accounting_mut().set_role_member_count(role, next)?;
         }
+        self.accounting_mut().set_role(role, account, false)?;
         self.accounting_mut()
             .emit_event(IB20::RoleRevoked { role, account, sender }.encode_log_data())
     }
@@ -154,9 +154,9 @@ pub trait RoleManaged: Token {
         caller: Address,
         role: B256,
         account: Address,
-        privileged: bool,
+        mode: B20DispatchMode,
     ) -> Result<()> {
-        if !privileged {
+        if !mode.is_factory_init() {
             self.ensure_role(caller, self.role_admin(role)?)?;
         }
         self.grant_role_unchecked(role, account, caller)
@@ -168,9 +168,9 @@ pub trait RoleManaged: Token {
         caller: Address,
         role: B256,
         account: Address,
-        privileged: bool,
+        mode: B20DispatchMode,
     ) -> Result<()> {
-        if !privileged {
+        if !mode.is_factory_init() {
             self.ensure_role(caller, self.role_admin(role)?)?;
         }
         self.revoke_role_unchecked(role, account, caller)
@@ -180,7 +180,9 @@ pub trait RoleManaged: Token {
     ///
     /// Matches `AccessControl` no-op semantics for accounts that do not hold `role`: the call
     /// succeeds and emits no `RoleRevoked` event. The only stricter path is the final
-    /// `DEFAULT_ADMIN_ROLE` holder, which must use [`Self::renounce_last_admin`].
+    /// `DEFAULT_ADMIN_ROLE` holder, which must use [`Self::renounce_last_admin`]. Other roles keep
+    /// standard `AccessControl` semantics: a sole holder can renounce and rely on that role's admin
+    /// to grant it again if recovery is desired.
     fn renounce_role(&mut self, caller: Address, role: B256, confirmation: Address) -> Result<()> {
         if confirmation != caller {
             return Err(BasePrecompileError::revert(IB20::AccessControlBadConfirmation {}));
@@ -217,10 +219,10 @@ pub trait RoleManaged: Token {
         caller: Address,
         role: B256,
         new_admin_role: B256,
-        privileged: bool,
+        mode: B20DispatchMode,
     ) -> Result<()> {
         let previous_admin_role = self.role_admin(role)?;
-        if !privileged {
+        if !mode.is_factory_init() {
             self.ensure_role(caller, previous_admin_role)?;
         }
         self.accounting_mut().set_role_admin(role, new_admin_role)?;
@@ -243,7 +245,7 @@ mod tests {
 
     use super::{B20TokenRole, RoleManaged};
     use crate::{
-        IB20, Token, TokenAccounting,
+        B20DispatchMode, IB20, Token, TokenAccounting,
         common::test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
     };
 
@@ -270,7 +272,9 @@ mod tests {
     fn grant_role_authorizes_against_role_admin_and_emits_event() {
         let mut token = token_with_default_admin();
 
-        token.grant_role(ADMIN, B20TokenRole::Mint.id(), ALICE, false).unwrap();
+        token
+            .grant_role(ADMIN, B20TokenRole::Mint.id(), ALICE, B20DispatchMode::standard())
+            .unwrap();
 
         assert!(token.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
         assert_eq!(
@@ -285,7 +289,9 @@ mod tests {
         let mut token = make_token();
 
         assert_eq!(
-            token.grant_role(ADMIN, B20TokenRole::Mint.id(), ALICE, false).unwrap_err(),
+            token
+                .grant_role(ADMIN, B20TokenRole::Mint.id(), ALICE, B20DispatchMode::standard())
+                .unwrap_err(),
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: ADMIN,
                 neededRole: B256::ZERO,
@@ -324,7 +330,14 @@ mod tests {
     fn set_role_admin_emits_previous_and_new_admin_roles() {
         let mut token = token_with_default_admin();
 
-        token.set_role_admin(ADMIN, CUSTOM_ROLE, B20TokenRole::Mint.id(), false).unwrap();
+        token
+            .set_role_admin(
+                ADMIN,
+                CUSTOM_ROLE,
+                B20TokenRole::Mint.id(),
+                B20DispatchMode::standard(),
+            )
+            .unwrap();
 
         assert_eq!(token.role_admin(CUSTOM_ROLE).unwrap(), B20TokenRole::Mint.id());
         assert_eq!(

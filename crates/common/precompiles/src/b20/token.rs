@@ -7,6 +7,42 @@ use crate::{
     TokenAccounting, Transferable,
 };
 
+/// Factory-init privilege token for B-20 dispatch.
+///
+/// The private field prevents downstream crates from constructing this capability while still
+/// allowing the type to appear in the public API. The token factory is the only in-crate caller that
+/// can enter the factory-init dispatch mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct B20FactoryInitPrivilege {
+    _private: (),
+}
+
+/// Authorization mode for B-20 operation dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum B20DispatchMode {
+    /// Ordinary post-creation token call. All role, pause, and policy checks apply.
+    Standard,
+    /// Factory bootstrap call. Authorization gates are skipped, but accounting invariants remain.
+    FactoryInit(B20FactoryInitPrivilege),
+}
+
+impl B20DispatchMode {
+    /// Returns ordinary post-creation dispatch mode.
+    pub const fn standard() -> Self {
+        Self::Standard
+    }
+
+    /// Returns factory bootstrap dispatch mode.
+    pub(crate) const fn factory_init() -> Self {
+        Self::FactoryInit(B20FactoryInitPrivilege { _private: () })
+    }
+
+    /// Returns true when the current call is executing during factory bootstrap.
+    pub const fn is_factory_init(self) -> bool {
+        matches!(self, Self::FactoryInit(_))
+    }
+}
+
 /// EVM precompile for the Default B-20 token variant.
 ///
 /// The generic `S` lets callers swap in an in-memory [`TokenAccounting`]

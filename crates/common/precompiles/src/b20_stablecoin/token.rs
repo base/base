@@ -6,8 +6,8 @@ use base_precompile_storage::{BasePrecompileError, Result};
 
 use super::accounting::StablecoinAccounting;
 use crate::{
-    B20Guards, B20PolicyType, B20TokenRole, Burnable, Configurable, IB20, Mintable, Pausable,
-    Permittable, Policy, RoleManaged, Token, Transferable,
+    B20DispatchMode, B20Guards, B20PolicyType, B20TokenRole, Burnable, Configurable, IB20,
+    Mintable, Pausable, Permittable, Policy, RoleManaged, Token, Transferable,
 };
 
 /// EVM precompile for the stablecoin B-20 variant.
@@ -94,9 +94,9 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         caller: Address,
         policy_type: B256,
         new_policy_id: u64,
-        privileged: bool,
+        mode: B20DispatchMode,
     ) -> Result<()> {
-        if !privileged {
+        if !mode.is_factory_init() {
             B20Guards::ensure_token_role(self, caller, B20TokenRole::DefaultAdmin)?;
         }
         let old_policy_id = self.policy_id(policy_type)?;

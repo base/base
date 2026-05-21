@@ -1,7 +1,7 @@
 //! ABI dispatch for the stablecoin B-20 variant.
 //!
-//! Dispatches the full `IB20` selector set using B-20 stablecoin activation.
-//! All logic mirrors `B20Token::inner_with_privilege` exactly; the only
+//! Dispatches the full `IB20` selector set using `B20_STABLECOIN` activation.
+//! All logic mirrors `B20Token::inner_with_mode` exactly; the only
 //! distinction is the activation guard and the `StablecoinAccounting` bound
 //! that provides `currency()` from the stablecoin extension namespace.
 
@@ -16,7 +16,8 @@ use super::{
     accounting::StablecoinAccounting,
 };
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20TokenRole, Burnable, Configurable,
+    ActivationFeature, ActivationRegistryStorage, B20DispatchMode, B20TokenRole, Burnable,
+    Configurable,
     IB20::{self, IB20Calls as C},
     Mintable, Pausable, Permittable, Policy, RoleManaged, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
@@ -44,15 +45,15 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
-        self.inner_with_privilege(ctx, calldata, false)
+        self.inner_with_mode(ctx, calldata, B20DispatchMode::standard())
     }
 
-    /// Decodes calldata and executes it with optional factory-init privilege.
-    pub fn inner_with_privilege(
+    /// Decodes calldata and executes it with the requested dispatch mode.
+    pub fn inner_with_mode(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
-        privileged: bool,
+        mode: B20DispatchMode,
     ) -> base_precompile_storage::Result<Bytes> {
         ActivationRegistryStorage::new(ctx)
             .ensure_activated(ActivationFeature::B20Stablecoin.id())?;
@@ -98,12 +99,12 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             // --- ERC-20 mutating ---
             C::transfer(c) => {
                 let caller = ctx.caller();
-                self.transfer(caller, c.to, c.amount)?;
+                self.transfer_with_mode(caller, c.to, c.amount, mode)?;
                 true.abi_encode().into()
             }
             C::transferFrom(c) => {
                 let caller = ctx.caller();
-                self.transfer_from(caller, c.from, c.to, c.amount)?;
+                self.transfer_from_with_mode(caller, c.from, c.to, c.amount, mode)?;
                 true.abi_encode().into()
             }
             C::approve(c) => {
@@ -113,91 +114,89 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             }
             C::transferWithMemo(c) => {
                 let caller = ctx.caller();
-                self.transfer_with_memo(caller, c.to, c.amount, c.memo)?;
+                self.transfer_with_memo_with_mode(caller, c.to, c.amount, c.memo, mode)?;
                 true.abi_encode().into()
             }
             C::transferFromWithMemo(c) => {
                 let caller = ctx.caller();
-                self.transfer_from_with_memo(caller, c.from, c.to, c.amount, c.memo)?;
+                self.transfer_from_with_memo_with_mode(
+                    caller, c.from, c.to, c.amount, c.memo, mode,
+                )?;
                 true.abi_encode().into()
             }
 
             // --- Mint ---
             C::mint(c) => {
                 let caller = ctx.caller();
-                self.mint(caller, c.to, c.amount, privileged)?;
+                self.mint(caller, c.to, c.amount, mode)?;
                 Bytes::new()
             }
             C::mintWithMemo(c) => {
                 let caller = ctx.caller();
-                self.mint_with_memo(caller, c.to, c.amount, c.memo, privileged)?;
+                self.mint_with_memo(caller, c.to, c.amount, c.memo, mode)?;
                 Bytes::new()
             }
 
             // --- Burn ---
             C::burn(c) => {
                 let caller = ctx.caller();
-                // Self-burn operations are never factory-privileged: during init the caller is the
-                // factory, not a token holder.
-                self.burn(caller, caller, c.amount, false)?;
+                self.burn(caller, caller, c.amount, mode)?;
                 Bytes::new()
             }
             C::burnWithMemo(c) => {
                 let caller = ctx.caller();
-                self.burn_with_memo(caller, caller, c.amount, c.memo, false)?;
+                self.burn_with_memo(caller, caller, c.amount, c.memo, mode)?;
                 Bytes::new()
             }
             C::burnBlocked(c) => {
                 let caller = ctx.caller();
-                self.burn_blocked(caller, c.from, c.amount, privileged)?;
+                self.burn_blocked(caller, c.from, c.amount, mode)?;
                 Bytes::new()
             }
 
             // --- Pause ---
             C::pause(c) => {
                 let caller = ctx.caller();
-                self.pause(caller, c.features, privileged)?;
+                self.pause(caller, c.features, mode)?;
                 Bytes::new()
             }
             C::unpause(c) => {
                 let caller = ctx.caller();
-                self.unpause(caller, c.features, privileged)?;
+                self.unpause(caller, c.features, mode)?;
                 Bytes::new()
             }
 
             // --- Admin ---
             C::setSupplyCap(c) => {
                 let caller = ctx.caller();
-                Configurable::set_supply_cap(self, caller, c.newSupplyCap, privileged)?;
+                Configurable::set_supply_cap(self, caller, c.newSupplyCap, mode)?;
                 Bytes::new()
             }
             C::setName(c) => {
                 let caller = ctx.caller();
-                Configurable::set_name(self, caller, c.newName, privileged)?;
+                Configurable::set_name(self, caller, c.newName, mode)?;
                 Bytes::new()
             }
             C::setSymbol(c) => {
                 let caller = ctx.caller();
-                Configurable::set_symbol(self, caller, c.newSymbol, privileged)?;
+                Configurable::set_symbol(self, caller, c.newSymbol, mode)?;
                 Bytes::new()
             }
             C::setContractURI(c) => {
                 let caller = ctx.caller();
-                Configurable::set_contract_uri(self, caller, c.newURI, privileged)?;
+                Configurable::set_contract_uri(self, caller, c.newURI, mode)?;
                 Bytes::new()
             }
             C::grantRole(c) => {
                 let caller = ctx.caller();
-                self.grant_role(caller, c.role, c.account, privileged)?;
+                self.grant_role(caller, c.role, c.account, mode)?;
                 Bytes::new()
             }
             C::revokeRole(c) => {
                 let caller = ctx.caller();
-                self.revoke_role(caller, c.role, c.account, privileged)?;
+                self.revoke_role(caller, c.role, c.account, mode)?;
                 Bytes::new()
             }
-            // Renounce operations are never factory-privileged: they are only meaningful for the
-            // role holder making the call after token creation.
             C::renounceRole(c) => {
                 let caller = ctx.caller();
                 self.renounce_role(caller, c.role, c.callerConfirmation)?;
@@ -210,12 +209,12 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             }
             C::setRoleAdmin(c) => {
                 let caller = ctx.caller();
-                self.set_role_admin(caller, c.role, c.newAdminRole, privileged)?;
+                self.set_role_admin(caller, c.role, c.newAdminRole, mode)?;
                 Bytes::new()
             }
             C::updatePolicy(c) => {
                 let caller = ctx.caller();
-                self.update_policy(caller, c.policyType, c.newPolicyId, privileged)?;
+                self.update_policy(caller, c.policyType, c.newPolicyId, mode)?;
                 Bytes::new()
             }
 
