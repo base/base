@@ -31,6 +31,7 @@ impl<'a> B20TokenStorage<'a> {
         Self::__new(addr, storage)
     }
 
+    /// Writes all creation-time fields atomically.
     pub fn initialize(
         &mut self,
         name: String,

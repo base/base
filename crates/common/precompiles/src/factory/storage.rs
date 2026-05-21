@@ -3,7 +3,7 @@ use alloc::string::String;
 use alloy_primitives::{Address, Bytes, U256, address};
 use alloy_sol_types::SolValue;
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Result};
+use base_precompile_storage::{BasePrecompileError, Result};
 use revm::state::Bytecode;
 
 use super::variant::TokenVariant;
@@ -67,8 +67,8 @@ impl<'a> TokenFactoryStorage<'a> {
                 self.emit_event(ITokenFactory::TokenCreated {
                     token: token_address,
                     variant: call.variant,
-                    name: name.clone(),
-                    symbol: symbol.clone(),
+                    name,
+                    symbol,
                     decimals,
                 })?;
 
