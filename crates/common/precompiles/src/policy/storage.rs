@@ -369,16 +369,6 @@ impl PolicyRegistryStorage<'_> {
         }
     }
 
-    /// Returns the policy ID that would be assigned to the next policy of `policy_type`.
-    ///
-    /// The counter is global across all policy types, so this is a hint only — the counter
-    /// may advance between this query and the subsequent `create_policy` call.
-    pub fn next_policy_id(&self, policy_type: PolicyType) -> Result<u64> {
-        let discriminant = policy_type.as_discriminant()?;
-        let counter = self.next_counter()?;
-        Ok(Self::make_id(discriminant, counter))
-    }
-
     /// Returns `true` if `policy_id` refers to an existing or built-in policy.
     pub fn policy_exists(&self, policy_id: u64) -> Result<bool> {
         Self::require_well_formed(policy_id)?;
