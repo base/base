@@ -46,8 +46,10 @@ impl PackedPolicy {
     }
 }
 
-impl From<U256> for PackedPolicy {
-    fn from(v: U256) -> Self {
+impl PackedPolicy {
+    /// Wraps a raw storage word without validating the type discriminant.
+    /// Intended only for reading words back from storage; does not guarantee a valid policy type.
+    pub(crate) fn from_raw(v: U256) -> Self {
         Self(v)
     }
 }
@@ -90,7 +92,7 @@ impl PolicyRegistryStorage<'_> {
     }
 
     fn require_custom(&self, policy_id: u64) -> Result<PackedPolicy> {
-        let packed = PackedPolicy::from(self.policies.at(&policy_id).read()?);
+        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         if packed.is_zero() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
@@ -302,7 +304,7 @@ impl PolicyRegistryStorage<'_> {
         if policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(false);
         }
-        let packed = PackedPolicy::from(self.policies.at(&policy_id).read()?);
+        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         if packed.is_zero() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
@@ -329,7 +331,7 @@ impl PolicyRegistryStorage<'_> {
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(true);
         }
-        let packed = PackedPolicy::from(self.policies.at(&policy_id).read()?);
+        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         Ok(!packed.is_zero())
     }
 
@@ -341,7 +343,7 @@ impl PolicyRegistryStorage<'_> {
         if policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(PolicyType::ALWAYS_BLOCK);
         }
-        let packed = PackedPolicy::from(self.policies.at(&policy_id).read()?);
+        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         if packed.is_zero() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
@@ -354,7 +356,7 @@ impl PolicyRegistryStorage<'_> {
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(Address::ZERO);
         }
-        let packed = PackedPolicy::from(self.policies.at(&policy_id).read()?);
+        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         if packed.is_zero() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
@@ -460,7 +462,7 @@ mod packed_policy_tests {
 
     #[test]
     fn zero_signals_never_created() {
-        let p = PackedPolicy::from(U256::ZERO);
+        let p = PackedPolicy::from_raw(U256::ZERO);
         assert!(p.is_zero());
     }
 
@@ -477,7 +479,7 @@ mod packed_policy_tests {
     fn into_u256_from_u256_roundtrip() {
         let p = PackedPolicy::new(ADMIN, 3);
         let raw = p.into_u256();
-        let p2 = PackedPolicy::from(raw);
+        let p2 = PackedPolicy::from_raw(raw);
         assert_eq!(p, p2);
         assert_eq!(p2.admin(), ADMIN);
         assert_eq!(p2.policy_type_u8(), 3);
