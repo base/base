@@ -57,7 +57,12 @@ impl<'a> TokenFactoryStorage<'a> {
         match variant {
             TokenVariant::B20 => {
                 let mut token = B20TokenStorage::from_address(token_address, self.storage);
-                token.initialize(name.clone(), symbol.clone(), Self::DEFAULT_SUPPLY_CAP, Self::DEFAULT_CAPABILITIES)?;
+                token.initialize(
+                    name.clone(),
+                    symbol.clone(),
+                    Self::DEFAULT_SUPPLY_CAP,
+                    Self::DEFAULT_CAPABILITIES,
+                )?;
 
                 self.emit_event(ITokenFactory::TokenCreated {
                     token: token_address,

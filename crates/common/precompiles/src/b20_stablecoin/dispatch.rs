@@ -17,9 +17,10 @@ use super::{
     accounting::StablecoinAccounting,
 };
 use crate::{
-    ActivationRegistryStorage, Burnable, Configurable, Mintable, Pausable, Permittable, Policy,
-    Redeemable, Transferable, macros::decode_precompile_call,
+    ActivationRegistryStorage, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
+    Mintable, Pausable, Permittable, Policy, Redeemable, Transferable,
+    macros::decode_precompile_call,
 };
 
 impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
