@@ -27,7 +27,7 @@ base-precompile-storage.workspace = true
 revm.workspace = true
 
 # misc
-iso_currency.workspace = true
+iso_currency = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
@@ -48,6 +48,7 @@ std = [
 	"alloy-sol-types/std",
 	"base-common-chains/std",
 	"base-precompile-storage/std",
+	"dep:iso_currency",
 	"revm/std",
 ]
 bn = [ "revm/bn" ]

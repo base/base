@@ -7,6 +7,7 @@ use base_precompile_macros::contract;
 use base_precompile_storage::{
     BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
 };
+#[cfg(feature = "std")]
 use iso_currency::Currency;
 
 use super::{IB20Stablecoin, accounting::StablecoinAccounting};
@@ -51,6 +52,7 @@ impl<'a> B20StablecoinStorage<'a> {
         capabilities: U256,
         currency: String,
     ) -> Result<()> {
+        #[cfg(feature = "std")]
         if Currency::from_code(&currency).is_none() {
             return Err(BasePrecompileError::revert(IB20Stablecoin::InvalidCurrency {}));
         }
