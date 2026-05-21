@@ -131,8 +131,7 @@ fn try_resolve_elf(cache_dir: &Path, entry: &ElfEntry) -> Result<PathBuf, String
     if actual != entry.sha256 {
         return Err(format!(
             "ELF `{name}` sha256 mismatch at {path} (expected {expected}, actual {actual}). \
-             Rebuild with: just succinct build-elfs (that target refreshes both the \
-             ELF and its hash in manifest.toml.)",
+             Rebuild with: just succinct build-elfs && just succinct write-manifest.",
             name = entry.name,
             path = path.display(),
             expected = entry.sha256,
