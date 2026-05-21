@@ -57,9 +57,6 @@ sol! {
         /// `decimals` is outside the supported range.
         error InvalidDecimals(uint8 decimals);
 
-        /// `currency` is not a recognised ISO 4217 currency code.
-        error InvalidCurrency();
-
         /// A required string argument was empty.
         error MissingRequiredField();
 

@@ -7,8 +7,9 @@ use base_precompile_macros::contract;
 use base_precompile_storage::{
     BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
 };
+use iso_currency::Currency;
 
-use super::accounting::StablecoinAccounting;
+use super::{IB20Stablecoin, accounting::StablecoinAccounting};
 use crate::{TokenAccounting, TokenVariant};
 
 /// EVM-backed storage for a stablecoin B-20 token.
@@ -36,6 +37,28 @@ impl<'a> B20StablecoinStorage<'a> {
     /// Creates a `B20StablecoinStorage` instance targeting `addr`.
     pub fn from_address(addr: Address, storage: StorageCtx<'a>) -> Self {
         Self::__new(addr, storage)
+    }
+
+    /// Writes all creation-time fields atomically.
+    ///
+    /// Validates that `currency` is a recognised ISO 4217 code before writing
+    /// anything; reverts `IB20Stablecoin::InvalidCurrency` otherwise.
+    pub fn initialize(
+        &mut self,
+        name: String,
+        symbol: String,
+        supply_cap: U256,
+        capabilities: U256,
+        currency: String,
+    ) -> Result<()> {
+        if Currency::from_code(&currency).is_none() {
+            return Err(BasePrecompileError::revert(IB20Stablecoin::InvalidCurrency {}));
+        }
+        self.name.write(name)?;
+        self.symbol.write(symbol)?;
+        self.supply_cap.write(supply_cap)?;
+        self.capabilities.write(capabilities)?;
+        self.currency.write(currency)
     }
 }
 

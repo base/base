@@ -8,6 +8,9 @@ use alloy_sol_types::sol;
 sol! {
     #[derive(Debug, PartialEq, Eq)]
     interface IB20Stablecoin {
+        /// `currency` is not a recognised ISO 4217 currency code.
+        error InvalidCurrency();
+
         function currency() external view returns (string);
     }
 }

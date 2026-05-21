@@ -6,8 +6,6 @@ use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Handler, Result};
 use revm::state::Bytecode;
 
-use iso_currency::Currency;
-
 use super::variant::TokenVariant;
 use crate::{
     B20StablecoinStorage, B20StablecoinToken, B20Token, B20TokenStorage, ITokenFactory,
@@ -88,11 +86,13 @@ impl<'a> TokenFactoryStorage<'a> {
             TokenVariant::Stablecoin => {
                 let currency = maybe_currency.expect("stablecoin params always produce a currency");
                 let mut token = B20StablecoinStorage::from_address(token_address, self.storage);
-                token.name.write(name.clone())?;
-                token.symbol.write(symbol.clone())?;
-                token.supply_cap.write(Self::DEFAULT_SUPPLY_CAP)?;
-                token.capabilities.write(Self::DEFAULT_CAPABILITIES)?;
-                token.currency.write(currency)?;
+                token.initialize(
+                    name.clone(),
+                    symbol.clone(),
+                    Self::DEFAULT_SUPPLY_CAP,
+                    Self::DEFAULT_CAPABILITIES,
+                    currency,
+                )?;
 
                 self.emit_event(ITokenFactory::TokenCreated {
                     token: token_address,
@@ -187,7 +187,6 @@ impl<'a> TokenFactoryStorage<'a> {
                         ITokenFactory::MissingRequiredField {},
                     ));
                 }
-                Self::check_currency(&params.currency)?;
                 // TODO: validate and wire initialAdmin into token ownership/policy setup.
                 Ok((params.name, params.symbol, 6u8, Some(params.currency)))
             }
@@ -204,12 +203,6 @@ impl<'a> TokenFactoryStorage<'a> {
         Ok(())
     }
 
-    fn check_currency(currency: &str) -> Result<()> {
-        if Currency::from_code(currency).is_none() {
-            return Err(BasePrecompileError::revert(ITokenFactory::InvalidCurrency {}));
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
