@@ -20,15 +20,13 @@ use crate::{
     ActivationRegistryStorage, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     Mintable, Pausable, Permittable, Policy, Redeemable, Transferable,
-    macros::decode_precompile_call,
+    macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
 impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Stablecoin` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        if let Err(e) = ctx.deduct_gas(crate::input_cost(calldata.len())) {
-            return e.into_precompile_result(ctx.gas_used());
-        }
+        deduct_calldata_cost!(ctx, calldata);
 
         match self.accounting.is_initialized() {
             Ok(true) => {}
