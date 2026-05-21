@@ -167,20 +167,6 @@ impl ChainConfig {
     /// Base Zeronet chain configuration.
     pub const ZERONET: &'static Self = Self::zeronet();
 
-    /// Default activation registry admin for the local dev chain.
-    ///
-    /// This is the first account derived from the standard Anvil/Hardhat test mnemonic
-    /// (`test test test test test test test test test test test junk`, index 0). The
-    /// account is pre-funded in `res/genesis/dev.json`, so any developer running
-    /// `--chain dev` can sign activation registry transactions out of the box.
-    ///
-    /// This is a default for local development only. It can be overridden at runtime
-    /// without rebuilding by either loading a custom genesis JSON whose
-    /// `config.activationAdminAddress` is set, or by building the chain spec through
-    /// `BaseChainSpecBuilder::activation_admin_address`.
-    pub const DEVNET_ACTIVATION_ADMIN_ADDRESS: Address =
-        address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-
     /// Base Mainnet chain configuration.
     pub const fn mainnet() -> &'static Self {
         &MAINNET
@@ -513,7 +499,12 @@ const DEVNET: ChainConfig = ChainConfig {
     protocol_versions_address: Address::ZERO,
 
     unsafe_block_signer: None,
-    activation_admin_address: Some(ChainConfig::DEVNET_ACTIVATION_ADMIN_ADDRESS),
+    // Anvil/Hardhat account #0 from the standard test mnemonic
+    // ("test test ... junk", index 0). Pre-funded in res/genesis/dev.json so
+    // any developer running `--chain dev` can sign activation registry calls
+    // out of the box. Override at runtime via the genesis JSON's
+    // `activationAdminAddress` extra field or `BaseChainSpecBuilder`.
+    activation_admin_address: Some(address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266")),
 
     max_gas_limit: 30_000_000,
     prune_delete_limit: 20_000,
@@ -628,7 +619,7 @@ mod tests {
         // builder.
         assert_eq!(
             ChainConfig::devnet().activation_admin_address,
-            Some(ChainConfig::DEVNET_ACTIVATION_ADMIN_ADDRESS),
+            Some(address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266")),
         );
         assert_eq!(ChainConfig::mainnet().activation_admin_address, None);
         assert_eq!(ChainConfig::sepolia().activation_admin_address, None);
