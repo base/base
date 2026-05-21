@@ -25,14 +25,14 @@ pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
     contract::generate(input, config.address.as_ref())
 }
 
-/// Namespaces a `#[contract]` storage struct using an ERC-7201 storage root.
+/// Namespaces a `#[contract]` storage struct or `Storable` layout using an ERC-7201 storage root.
 #[proc_macro_attribute]
 pub fn namespace(attr: TokenStream, item: TokenStream) -> TokenStream {
     namespace::expand(attr, item)
 }
 
 /// Derives the `Storable` trait for structs with named fields and `#[repr(u8)]` unit enums.
-#[proc_macro_derive(Storable, attributes(storable_arrays))]
+#[proc_macro_derive(Storable, attributes(storable_arrays, namespace, storage_namespace))]
 pub fn derive_storage_block(input: TokenStream) -> TokenStream {
     storable::derive(parse_macro_input!(input as DeriveInput))
 }
