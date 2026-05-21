@@ -19,6 +19,10 @@ use crate::{
 /// Use this in unit tests instead of spelling out the full generic each time.
 pub type TestToken = B20Token<InMemoryTokenAccounting, InMemoryPolicy>;
 
+/// Convenience alias: [`B20StablecoinToken`] wired with both in-memory fakes.
+///
+/// Use this in unit tests instead of spelling out the full generic each time.
+pub type TestStablecoinToken = B20StablecoinToken<InMemoryTokenAccounting, InMemoryPolicy>;
 
 /// HashMap-backed [`TokenAccounting`] for unit tests.
 ///

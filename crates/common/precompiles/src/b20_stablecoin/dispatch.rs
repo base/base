@@ -11,14 +11,14 @@ use alloy_sol_types::{SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use crate::{
-    ActivationRegistryStorage, Burnable, Configurable, Mintable, Pausable, Permittable, Policy,
-    Redeemable, Transferable,
-};
 use super::{
     B20StablecoinToken,
-    abi::{IB20, IB20Stablecoin, IB20Stablecoin::IB20StablecoinCalls as SC},
+    abi::{IB20Stablecoin, IB20Stablecoin::IB20StablecoinCalls as SC},
     accounting::StablecoinAccounting,
+};
+use crate::{
+    ActivationRegistryStorage, Burnable, Configurable, IB20, Mintable, Pausable, Permittable,
+    Policy, Redeemable, Transferable,
 };
 
 impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {

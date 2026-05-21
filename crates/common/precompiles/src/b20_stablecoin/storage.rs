@@ -8,8 +8,8 @@ use base_precompile_storage::{
     BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
 };
 
-use crate::{TokenAccounting, TokenVariant};
 use super::accounting::StablecoinAccounting;
+use crate::{TokenAccounting, TokenVariant};
 
 /// EVM-backed storage for a stablecoin B-20 token.
 ///

@@ -75,7 +75,7 @@ impl<'a> TokenFactoryStorage<'a> {
                         B20TokenStorage::from_address(token_address, self.storage),
                         PolicyHandle::new(self.storage),
                     )
-                    .inner(self.storage, &calldata)
+                    .dispatch(self.storage, &calldata)
                     .map_err(|_| {
                         BasePrecompileError::revert(ITokenFactory::InitCallFailed {
                             index: U256::from(index),
@@ -561,9 +561,8 @@ mod tests {
                 B20StablecoinStorage::from_address(expected_addr, ctx),
                 PolicyHandle::new(ctx),
             );
-            let output = stablecoin
-                .dispatch(ctx, &IB20Stablecoin::currencyCall {}.abi_encode())
-                .unwrap();
+            let output =
+                stablecoin.dispatch(ctx, &IB20Stablecoin::currencyCall {}.abi_encode()).unwrap();
             assert!(!output.reverted, "currency() reverted: {:?}", output.bytes);
             assert_eq!(output.bytes.as_ref(), "USD".to_string().abi_encode());
         });

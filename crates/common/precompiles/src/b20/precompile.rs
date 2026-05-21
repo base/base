@@ -27,9 +27,7 @@ impl B20TokenPrecompile {
     /// addresses fail the token initialization guard in the respective dispatcher.
     pub fn lookup(address: &Address) -> Option<DynPrecompile> {
         TokenVariant::from_address(*address).and_then(|variant| match variant {
-            TokenVariant::B20 | TokenVariant::Security => {
-                Some(Self::create_precompile(*address))
-            }
+            TokenVariant::B20 | TokenVariant::Security => Some(Self::create_precompile(*address)),
             TokenVariant::Stablecoin => B20StablecoinPrecompile::lookup(address),
         })
     }

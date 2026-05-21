@@ -2,17 +2,17 @@
 
 use alloy_primitives::Address;
 
+use super::accounting::StablecoinAccounting;
 use crate::{
     Burnable, Configurable, Mintable, Pausable, Permittable, Policy, Redeemable, Token,
     Transferable,
 };
-use super::accounting::StablecoinAccounting;
 
 /// EVM precompile for the stablecoin B-20 variant.
 ///
-/// Mirrors the structure of [`crate::B20Token`] but requires `S:
-/// [`StablecoinAccounting`] so the dispatch layer can read `currency()` from
-/// storage. All inherited `IB20` capability traits are wired in identically.
+/// Mirrors the structure of [`crate::B20Token`] but requires `S: StablecoinAccounting`
+/// so the dispatch layer can read `currency()` from storage. All inherited
+/// `IB20` capability traits are wired in identically.
 #[derive(Debug, Clone)]
 pub struct B20StablecoinToken<S: StablecoinAccounting, P: Policy> {
     pub(super) accounting: S,
