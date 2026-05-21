@@ -73,9 +73,7 @@ async fn test_activation_registry_unauthorized_activate_reverts() -> Result<()> 
     let succeeded = client
         .try_send_call(
             ActivationRegistryStorage::ADDRESS,
-            IActivationRegistry::activateCall {
-                feature: ActivationRegistryStorage::B20_SECURITY,
-            },
+            IActivationRegistry::activateCall { feature: ActivationRegistryStorage::B20_SECURITY },
             "activate (unauthorized)",
         )
         .await?;
