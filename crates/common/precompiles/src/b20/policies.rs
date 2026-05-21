@@ -5,7 +5,7 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use super::token::B20Token;
-use crate::{IB20, Policy, Token, TokenAccounting};
+use crate::{B20Guards, B20TokenRole, IB20, Policy, Token, TokenAccounting};
 
 /// Built-in policy ID that authorizes every account.
 pub const POLICY_ALWAYS_ALLOW: u64 = 0;
@@ -97,7 +97,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            self.ensure_role(caller, Self::default_admin_role())?;
+            B20Guards::ensure_token_role(self, caller, B20TokenRole::DefaultAdmin)?;
         }
         let old_policy_id = self.policy_id(policy_type)?;
         if !self.policy.policy_exists(new_policy_id)? {

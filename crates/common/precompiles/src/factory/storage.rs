@@ -7,7 +7,9 @@ use base_precompile_storage::{BasePrecompileError, Handler, Result};
 use revm::state::Bytecode;
 
 use super::variant::TokenVariant;
-use crate::{B20Token, B20TokenStorage, ITokenFactory, PolicyHandle, Token};
+use crate::{
+    B20Token, B20TokenRole, B20TokenStorage, ITokenFactory, PolicyHandle, RoleManaged, Token,
+};
 
 /// The B-20 token factory precompile.
 #[contract(addr = Self::ADDRESS)]
@@ -70,7 +72,7 @@ impl<'a> TokenFactoryStorage<'a> {
 
         if !token_params.initial_admin.is_zero() {
             token.grant_role_unchecked(
-                B20Token::<B20TokenStorage<'_>, PolicyHandle<'_>>::default_admin_role(),
+                B20TokenRole::DefaultAdmin.id(),
                 token_params.initial_admin,
                 Self::ADDRESS,
             )?;
