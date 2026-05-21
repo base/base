@@ -753,6 +753,12 @@ services:
       - POSTGRES_PASSWORD=prover
       - POSTGRES_SSLMODE=disable
       - OTEL_SERVICE_NAME=base-prover-zk
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
     restart: unless-stopped
 
   jaeger:

@@ -50,7 +50,6 @@ group "ingress" {
     "ingress-rpc",
     "audit-archiver",
     "batcher",
-    "zk-prover",
   ]
 }
 
