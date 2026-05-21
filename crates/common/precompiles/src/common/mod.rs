@@ -11,7 +11,7 @@ mod token_accounting;
 
 use alloy_primitives::U256;
 pub use ops::{Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, Transferable};
-pub use policy::Policy;
+pub use policy::{Policy, PolicyRegistry};
 pub use token::Token;
 pub use token_accounting::TokenAccounting;
 /// Capability bit: `pause` / `unpause` are enabled on this token.

@@ -98,9 +98,9 @@ mod tests {
 
     #[test]
     fn decode_precompile_call_decodes_known_call() {
-        let calldata = IPolicyRegistry::helloWorldCall {}.abi_encode();
+        let calldata = IPolicyRegistry::policyExistsCall { policyId: 0 }.abi_encode();
         let call = decode_policy_call(&calldata).unwrap();
 
-        assert!(matches!(call, IPolicyRegistry::IPolicyRegistryCalls::helloWorld(_)));
+        assert!(matches!(call, IPolicyRegistry::IPolicyRegistryCalls::policyExists(_)));
     }
 }

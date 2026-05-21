@@ -7,13 +7,7 @@ extern crate alloc;
 
 mod macros;
 
-/// Gas cost for ABI-decoding calldata of the given byte length.
-///
-/// Charges `G_sha3word` (6 gas) per 32-byte word, rounded up — the same rate the EVM uses for
-/// data-processing operations (keccak256). The EVM has no universal precompile input cost;
-/// each precompile defines its own. Using `G_sha3word` is the natural choice because ABI decoding
-/// is proportional data-processing work, and it prevents large calldata from being free to
-/// process — a potential attack vector without this charge.
+/// Returns the EIP-3860-style input cost for calldata of the given length.
 pub const fn input_cost(calldata_len: usize) -> u64 {
     const G_SHA3WORD: u64 = 6;
     calldata_len.div_ceil(32).saturating_mul(G_SHA3WORD as usize) as u64
@@ -35,7 +29,7 @@ mod bls12_381;
 mod common;
 pub use common::{
     Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, Mintable, Pausable,
-    Permittable, Policy, Redeemable, Token, TokenAccounting, Transferable,
+    Permittable, Policy, PolicyRegistry, Redeemable, Token, TokenAccounting, Transferable,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestToken};
@@ -47,4 +41,12 @@ mod factory;
 pub use factory::{ITokenFactory, TokenFactory, TokenFactoryStorage, TokenVariant};
 
 mod policy;
-pub use policy::{IPolicyRegistry, PolicyHandle, PolicyRegistry, PolicyRegistryStorage};
+pub use policy::{
+    IPolicyRegistry,
+    // PolicyType is re-exported directly for ergonomics — callers write `PolicyType::ALLOWLIST`
+    // rather than `IPolicyRegistry::PolicyType::ALLOWLIST`.
+    IPolicyRegistry::PolicyType,
+    PolicyHandle,
+    PolicyRegistryPrecompile,
+    PolicyRegistryStorage,
+};

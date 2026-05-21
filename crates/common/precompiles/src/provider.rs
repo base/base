@@ -13,8 +13,8 @@ use revm::{
 };
 
 use crate::{
-    ActivationRegistry, B20TokenPrecompile, BasePrecompileSpec, PolicyRegistry, TokenFactory,
-    bls12_381, bn254_pair,
+    ActivationRegistry, B20TokenPrecompile, BasePrecompileSpec, PolicyRegistryPrecompile,
+    TokenFactory, bls12_381, bn254_pair,
 };
 
 /// Base precompile provider.
@@ -173,7 +173,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
             TokenFactory::install(&mut precompiles);
             B20TokenPrecompile::install(&mut precompiles);
-            PolicyRegistry::install(&mut precompiles);
+            PolicyRegistryPrecompile::install(&mut precompiles);
             ActivationRegistry::install(&mut precompiles, self.activation_admin_address);
         }
         precompiles

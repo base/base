@@ -6,9 +6,9 @@ use crate::{PolicyRegistryStorage, macros::base_precompile};
 
 /// EVM entry point for the `PolicyRegistry` precompile.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct PolicyRegistry;
+pub struct PolicyRegistryPrecompile;
 
-impl PolicyRegistry {
+impl PolicyRegistryPrecompile {
     /// Installs the singleton `PolicyRegistry` precompile into `precompiles`.
     pub fn install(precompiles: &mut PrecompilesMap) {
         precompiles.extend_precompiles(core::iter::once((
