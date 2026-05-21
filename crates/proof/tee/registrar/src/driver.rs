@@ -1175,8 +1175,17 @@ where
             // on shutdown so we don't acquire a nonce we won't broadcast.
             // Already-running `submit_revoke_cert` calls are NOT cancelled —
             // see the cancellation contract on this function.
+            //
+            // Return `attestations: None` so the safety invariant —
+            // `Some(..)` ↔ "passed every eligibility + security gate,
+            // including CRL" — is enforced locally. Today the outer
+            // `run_arc` loop re-checks `cancel.is_cancelled()` before
+            // calling `reconcile_proof_tasks`, so a `Some(..)` here
+            // would still be discarded; keeping it `None` removes the
+            // non-local dependence on that re-check and matches the
+            // CRL-revoked branch below.
             if self.config.cancel.is_cancelled() {
-                return Ok(ResolveOutcome { addresses, attestations: Some(all_attestations) });
+                return Ok(ResolveOutcome { addresses, attestations: None });
             }
             match self.check_and_revoke_crls(&all_attestations[0], instance).await {
                 Ok(true) => {
