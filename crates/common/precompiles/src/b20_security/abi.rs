@@ -97,10 +97,10 @@ sol! {
 
         // ── Batched issuance and clawback ────────────────────────────────────
 
-        /// Mints `amounts[i]` to `recipients[i]`. Requires MINT_ROLE. All-or-nothing.
+        /// Mints `amounts[i]` to `recipients[i]`. Requires `MINT_ROLE`. All-or-nothing.
         function batchMint(address[] calldata recipients, uint256[] calldata amounts) external;
 
-        /// Burns `amounts[i]` from `accounts[i]`. Requires BURN_FROM_ROLE. All-or-nothing.
+        /// Burns `amounts[i]` from `accounts[i]`. Requires `BURN_FROM_ROLE`. All-or-nothing.
         function batchBurn(address[] calldata accounts, uint256[] calldata amounts) external;
 
         // ── Redemption ────────────────────────────────────────────────────────
@@ -111,7 +111,7 @@ sol! {
         /// Same as `redeem`, followed by a `Memo` event.
         function redeemWithMemo(uint256 amount, bytes32 memo) external;
 
-        /// Sets the minimum-redeemable threshold in shares. Requires DEFAULT_ADMIN_ROLE.
+        /// Sets the minimum-redeemable threshold in shares. Requires `DEFAULT_ADMIN_ROLE`.
         function updateMinimumRedeemable(uint256 newMinimumRedeemable) external;
 
         // ── Security identifiers ─────────────────────────────────────────────

@@ -674,7 +674,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         let id_hash: B256 = keccak256(id.as_bytes());
         if self.accounting.is_announcement_id_used(id_hash)? {
             return Err(BasePrecompileError::revert(IB20Security::AnnouncementIdAlreadyUsed {
-                id: id.clone(),
+                id,
             }));
         }
         self.accounting_mut().mark_announcement_id_used(id_hash)?;
@@ -849,6 +849,186 @@ mod tests {
             token.accounting().security_identifier("ISIN").unwrap(),
             "US0000000000".to_string()
         );
+    }
+
+    // --- batchMint (via test helper): EmptyBatch / LengthMismatch ---
+
+    #[test]
+    fn batch_mint_test_rejects_empty() {
+        let mut token = make_token();
+        assert!(token.batch_mint_test(alloc::vec![], alloc::vec![]).is_err());
+    }
+
+    #[test]
+    fn batch_mint_test_rejects_length_mismatch() {
+        let mut token = make_token();
+        assert!(token
+            .batch_mint_test(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
+            .is_err());
+    }
+
+    // --- batchBurn: EmptyBatch / LengthMismatch / multi-account Transfer events ---
+
+    #[test]
+    fn batch_burn_rejects_empty() {
+        let mut token = make_token();
+        assert!(token.batch_burn(alloc::vec![], alloc::vec![]).is_err());
+    }
+
+    #[test]
+    fn batch_burn_rejects_length_mismatch() {
+        let mut token = make_token();
+        assert!(token
+            .batch_burn(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
+            .is_err());
+    }
+
+    #[test]
+    fn batch_burn_multiple_accounts_emits_one_transfer_each() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().balances.insert(BOB, U256::from(200u64));
+        token.accounting_mut().total_supply = U256::from(300u64);
+        token
+            .batch_burn(
+                alloc::vec![ALICE, BOB],
+                alloc::vec![U256::from(100u64), U256::from(200u64)],
+            )
+            .unwrap();
+        // IB20Security: "Emits Transfer(accounts[i], address(0), amounts[i]) per element"
+        assert_eq!(token.accounting().events.len(), 2);
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::ZERO);
+    }
+
+    // --- redeem: InsufficientBalance / boundary / ratio math / event pair ---
+
+    #[test]
+    fn security_redeem_rejects_insufficient_balance() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(ALICE, U256::from(10u64));
+        token.accounting_mut().total_supply = U256::from(10u64);
+        token.accounting_mut().minimum_redeemable = U256::from(1u64);
+        // amount=100 > balance=10 → InsufficientBalance after the share-floor check passes
+        assert!(token.security_redeem(ALICE, U256::from(100u64)).is_err());
+        // no state mutation on failure
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
+    }
+
+    #[test]
+    fn security_redeem_at_exact_minimum_succeeds() {
+        let mut token = make_token(); // 1:1 ratio
+        token.accounting_mut().balances.insert(ALICE, U256::from(50u64));
+        token.accounting_mut().total_supply = U256::from(50u64);
+        // 5 tokens * WAD / WAD = 5 shares == minimum → boundary must be accepted
+        token.accounting_mut().minimum_redeemable = U256::from(5u64);
+        token.security_redeem(ALICE, U256::from(5u64)).unwrap();
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(45u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(45u64));
+    }
+
+    #[test]
+    fn security_redeem_with_non_unit_ratio_applies_correct_share_math() {
+        let mut token = make_token();
+        // 2:1 ratio: 1 token = 2 shares
+        token.accounting_mut().shares_to_tokens_ratio = WAD * U256::from(2u64);
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(100u64);
+        // minimum = 10 shares → need at least 5 tokens
+        token.accounting_mut().minimum_redeemable = U256::from(10u64);
+        // 4 tokens → 8 shares < 10 → BelowMinimumRedeemable
+        assert!(token.security_redeem(ALICE, U256::from(4u64)).is_err());
+        // 5 tokens → 10 shares == minimum → accepted
+        token.security_redeem(ALICE, U256::from(5u64)).unwrap();
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(95u64));
+    }
+
+    #[test]
+    fn security_redeem_emits_transfer_then_redeemed() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(100u64);
+        token.accounting_mut().minimum_redeemable = U256::from(1u64);
+        token.security_redeem(ALICE, U256::from(10u64)).unwrap();
+        // "Emits Transfer(caller, address(0), amount) followed by Redeemed(caller, amount, ratio)"
+        assert_eq!(token.accounting().events.len(), 2);
+    }
+
+    // --- toShares: zero balance / sub-WAD truncation / sharesOf delegation ---
+
+    #[test]
+    fn to_shares_zero_balance_yields_zero() {
+        let token = make_token();
+        assert_eq!(token.to_shares(U256::ZERO).unwrap(), U256::ZERO);
+    }
+
+    #[test]
+    fn to_shares_sub_wad_ratio_truncates_to_zero() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        // 0.5 WAD: 1 token → 0.5 shares → truncates to 0 via integer division
+        accounting.shares_to_tokens_ratio = WAD / U256::from(2u64);
+        let token = TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        assert_eq!(token.to_shares(U256::from(1u64)).unwrap(), U256::ZERO);
+    }
+
+    #[test]
+    fn shares_of_derives_from_balance() {
+        let mut token = make_token(); // 1:1 ratio
+        token.accounting_mut().balances.insert(ALICE, U256::from(75u64));
+        // sharesOf(account) = toShares(balanceOf(account))
+        let balance = token.accounting().balance_of(ALICE).unwrap();
+        assert_eq!(token.to_shares(balance).unwrap(), U256::from(75u64));
+    }
+
+    // --- updateShareRatio: persistence ---
+
+    #[test]
+    fn shares_to_tokens_ratio_update_persists() {
+        let mut token = make_token();
+        let new_ratio = WAD * U256::from(3u64);
+        token.accounting_mut().set_shares_to_tokens_ratio(new_ratio).unwrap();
+        assert_eq!(token.accounting().shares_to_tokens_ratio().unwrap(), new_ratio);
+    }
+
+    // --- securityIdentifier / updateSecurityIdentifier ---
+
+    #[test]
+    fn security_identifier_missing_key_returns_empty() {
+        let token = make_token();
+        // "Returns the empty string if not set"
+        assert_eq!(token.accounting().security_identifier("CUSIP").unwrap(), "");
+    }
+
+    #[test]
+    fn security_identifier_empty_value_clears_entry() {
+        let mut token = make_token();
+        token
+            .accounting_mut()
+            .set_security_identifier_value("FIGI", "BBG000B9XRY4".to_string())
+            .unwrap();
+        assert_eq!(token.accounting().security_identifier("FIGI").unwrap(), "BBG000B9XRY4");
+        // "passing an empty value removes the entry"
+        token.accounting_mut().set_security_identifier_value("FIGI", String::new()).unwrap();
+        assert_eq!(token.accounting().security_identifier("FIGI").unwrap(), "");
+    }
+
+    // --- minimumRedeemable / updateMinimumRedeemable ---
+
+    #[test]
+    fn minimum_redeemable_persists() {
+        let mut token = make_token();
+        let floor = U256::from(42u64);
+        token.accounting_mut().set_minimum_redeemable(floor).unwrap();
+        assert_eq!(token.accounting().minimum_redeemable().unwrap(), floor);
+    }
+
+    // --- isAnnouncementIdUsed: fresh state ---
+
+    #[test]
+    fn announcement_id_not_used_initially() {
+        let token = make_token();
+        let id_hash = keccak256(b"2026-Q1-split");
+        // "Returns true if id has previously been consumed by announce" → false for new id
+        assert!(!token.accounting().is_announcement_id_used(id_hash).unwrap());
     }
 }
 
