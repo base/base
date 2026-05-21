@@ -167,6 +167,20 @@ impl ChainConfig {
     /// Base Zeronet chain configuration.
     pub const ZERONET: &'static Self = Self::zeronet();
 
+    /// Default activation registry admin for the local dev chain.
+    ///
+    /// This is the first account derived from the standard Anvil/Hardhat test mnemonic
+    /// (`test test test test test test test test test test test junk`, index 0). The
+    /// account is pre-funded in `res/genesis/dev.json`, so any developer running
+    /// `--chain dev` can sign activation registry transactions out of the box.
+    ///
+    /// This is a default for local development only. It can be overridden at runtime
+    /// without rebuilding by either loading a custom genesis JSON whose
+    /// `config.activationAdminAddress` is set, or by building the chain spec through
+    /// `BaseChainSpecBuilder::activation_admin_address`.
+    pub const DEVNET_ACTIVATION_ADMIN_ADDRESS: Address =
+        address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
     /// Base Mainnet chain configuration.
     pub const fn mainnet() -> &'static Self {
         &MAINNET
@@ -499,7 +513,7 @@ const DEVNET: ChainConfig = ChainConfig {
     protocol_versions_address: Address::ZERO,
 
     unsafe_block_signer: None,
-    activation_admin_address: None,
+    activation_admin_address: Some(ChainConfig::DEVNET_ACTIVATION_ADMIN_ADDRESS),
 
     max_gas_limit: 30_000_000,
     prune_delete_limit: 20_000,
@@ -603,5 +617,21 @@ mod tests {
         assert_eq!(ChainConfig::SEPOLIA, ChainConfig::sepolia());
         assert_eq!(ChainConfig::DEVNET, ChainConfig::devnet());
         assert_eq!(ChainConfig::ZERONET, ChainConfig::zeronet());
+    }
+
+    #[test]
+    fn devnet_activation_admin_defaults_to_anvil_account_zero() {
+        // The dev chain ships an admin that any developer can sign with: Anvil
+        // account #0 (mnemonic "test test ... junk", index 0). The address is
+        // pre-funded in res/genesis/dev.json. Production chains must remain
+        // None so they can only be set via genesis JSON or the chain spec
+        // builder.
+        assert_eq!(
+            ChainConfig::devnet().activation_admin_address,
+            Some(ChainConfig::DEVNET_ACTIVATION_ADMIN_ADDRESS),
+        );
+        assert_eq!(ChainConfig::mainnet().activation_admin_address, None);
+        assert_eq!(ChainConfig::sepolia().activation_admin_address, None);
+        assert_eq!(ChainConfig::zeronet().activation_admin_address, None);
     }
 }
