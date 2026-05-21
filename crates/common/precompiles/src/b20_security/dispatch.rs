@@ -706,6 +706,29 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 }
 
 #[cfg(test)]
+impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
+    fn batch_mint_test(
+        &mut self,
+        recipients: alloc::vec::Vec<Address>,
+        amounts: alloc::vec::Vec<U256>,
+    ) -> base_precompile_storage::Result<()> {
+        if recipients.is_empty() {
+            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
+        }
+        if recipients.len() != amounts.len() {
+            return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
+                leftLen: U256::from(recipients.len()),
+                rightLen: U256::from(amounts.len()),
+            }));
+        }
+        for (recipient, amount) in recipients.into_iter().zip(amounts) {
+            self.mint(Address::ZERO, recipient, amount, true)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256, keccak256};
 
@@ -1027,29 +1050,5 @@ mod tests {
         let id_hash = keccak256(b"2026-Q1-split");
         // "Returns true if id has previously been consumed by announce" → false for new id
         assert!(!token.accounting().is_announcement_id_used(id_hash).unwrap());
-    }
-}
-
-// Test helper: batch_mint without StorageCtx (uses privileged mode).
-#[cfg(test)]
-impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
-    fn batch_mint_test(
-        &mut self,
-        recipients: alloc::vec::Vec<Address>,
-        amounts: alloc::vec::Vec<U256>,
-    ) -> base_precompile_storage::Result<()> {
-        if recipients.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
-        }
-        if recipients.len() != amounts.len() {
-            return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
-                leftLen: U256::from(recipients.len()),
-                rightLen: U256::from(amounts.len()),
-            }));
-        }
-        for (recipient, amount) in recipients.into_iter().zip(amounts) {
-            self.mint(Address::ZERO, recipient, amount, true)?;
-        }
-        Ok(())
     }
 }
