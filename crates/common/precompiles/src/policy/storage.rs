@@ -93,6 +93,10 @@ impl PolicyRegistryStorage<'_> {
             return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
         }
 
+        // The registry account must be non-empty before the first policy storage write; otherwise
+        // the EVM path can prune writes made under an empty native-precompile account.
+        // TODO: Revisit this guard against the finalized Beryl gas model, since `is_initialized`
+        // charges warm/cold account-read gas before skipping repeated `set_code`.
         if !self.is_initialized()? {
             self.__initialize()?;
         }
