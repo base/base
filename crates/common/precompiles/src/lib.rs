@@ -51,7 +51,6 @@ pub use policy::{
     // PolicyType is re-exported directly for ergonomics — callers write `PolicyType::ALLOWLIST`
     // rather than `IPolicyRegistry::PolicyType::ALLOWLIST`.
     IPolicyRegistry::PolicyType,
-    PackedPolicy,
     PolicyHandle,
     PolicyRegistryPrecompile,
     PolicyRegistryStorage,

@@ -14,7 +14,7 @@ use super::{IPolicyRegistry, IPolicyRegistry::PolicyType};
 /// BLOCKLIST = 3 are both non-zero. This means the zero value reliably signals "never created",
 /// even after `renounce_admin` sets admin to `Address::ZERO` (the type byte is preserved).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PackedPolicy(U256);
+pub(crate) struct PackedPolicy(U256);
 
 impl PackedPolicy {
     /// Packs `admin` and `policy_type` discriminant into a storage word.
