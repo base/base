@@ -49,6 +49,7 @@ cfg-if.workspace = true
 
 [dev-dependencies]
 base-common-chains.workspace = true
+base-common-precompiles.workspace = true
 
 [lints]
 workspace = true
