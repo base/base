@@ -85,7 +85,6 @@ mod tests {
     use alloy_sol_types::SolCall;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use super::*;
     use crate::{ActivationRegistryStorage, IPolicyRegistry, PolicyRegistryStorage};
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
