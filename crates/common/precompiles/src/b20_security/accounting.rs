@@ -2,7 +2,7 @@
 
 use alloc::string::String;
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::U256;
 use base_precompile_storage::Result;
 
 use crate::TokenAccounting;
@@ -22,8 +22,8 @@ pub trait SecurityAccounting: TokenAccounting {
     fn set_security_identifier_value(&mut self, identifier_type: &str, value: String)
     -> Result<()>;
 
-    /// Returns `true` if `id_hash` (= `keccak256(id)`) has been consumed by `announce`.
-    fn is_announcement_id_used(&self, id_hash: B256) -> Result<bool>;
-    /// Marks `id_hash` as consumed. Called exactly once per announcement id.
-    fn mark_announcement_id_used(&mut self, id_hash: B256) -> Result<()>;
+    /// Returns `true` if `id` has been consumed by `announce`.
+    fn is_announcement_id_used(&self, id: &str) -> Result<bool>;
+    /// Marks `id` as consumed. Called exactly once per announcement id.
+    fn mark_announcement_id_used(&mut self, id: &str) -> Result<()>;
 }

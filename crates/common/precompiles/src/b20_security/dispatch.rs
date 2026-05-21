@@ -326,8 +326,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
             // --- Announcement reads ---
             SC::isAnnouncementIdUsed(c) => {
-                let id_hash = keccak256(c.id.as_bytes());
-                self.accounting.is_announcement_id_used(id_hash)?.abi_encode().into()
+                self.accounting.is_announcement_id_used(c.id.as_str())?.abi_encode().into()
             }
 
             // --- Security identifier reads ---
@@ -527,13 +526,12 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             return Err(BasePrecompileError::revert(IB20Security::AnnouncementInProgress {}));
         }
 
-        let id_hash: B256 = keccak256(id.as_bytes());
-        if self.accounting.is_announcement_id_used(id_hash)? {
+        if self.accounting.is_announcement_id_used(id.as_str())? {
             return Err(BasePrecompileError::revert(IB20Security::AnnouncementIdAlreadyUsed {
                 id,
             }));
         }
-        self.accounting_mut().mark_announcement_id_used(id_hash)?;
+        self.accounting_mut().mark_announcement_id_used(id.as_str())?;
 
         let caller = ctx.caller();
         self.accounting_mut().emit_event(
@@ -708,11 +706,11 @@ mod tests {
     #[test]
     fn announce_marks_id_used() {
         let mut token = make_token();
-        let id_hash = keccak256(b"2026-Q1-split");
+        let id = "2026-Q1-split";
 
-        assert!(!token.accounting().is_announcement_id_used(id_hash).unwrap());
-        token.accounting_mut().mark_announcement_id_used(id_hash).unwrap();
-        assert!(token.accounting().is_announcement_id_used(id_hash).unwrap());
+        assert!(!token.accounting().is_announcement_id_used(id).unwrap());
+        token.accounting_mut().mark_announcement_id_used(id).unwrap();
+        assert!(token.accounting().is_announcement_id_used(id).unwrap());
     }
 
     #[test]
@@ -903,8 +901,8 @@ mod tests {
     #[test]
     fn announcement_id_not_used_initially() {
         let token = make_token();
-        let id_hash = keccak256(b"2026-Q1-split");
+        let id = "2026-Q1-split";
         // "Returns true if id has previously been consumed by announce" → false for new id
-        assert!(!token.accounting().is_announcement_id_used(id_hash).unwrap());
+        assert!(!token.accounting().is_announcement_id_used(id).unwrap());
     }
 }

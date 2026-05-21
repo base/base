@@ -58,15 +58,14 @@ impl<'a> TokenFactoryStorage<'a> {
                     B20TokenStorage::from_address(token_address, self.storage),
                     PolicyHandle::new(self.storage),
                 );
-                token.accounting_mut().name.write(token_params.name.clone())?;
-                token.accounting_mut().symbol.write(token_params.symbol.clone())?;
-                token.accounting_mut().supply_cap.write(Self::DEFAULT_SUPPLY_CAP)?;
-                token.accounting_mut().minimum_redeemable.write(token_params.minimum_redeemable)?;
+                token.accounting_mut().b20.name.write(token_params.name.clone())?;
+                token.accounting_mut().b20.symbol.write(token_params.symbol.clone())?;
+                token.accounting_mut().b20.supply_cap.write(Self::DEFAULT_SUPPLY_CAP)?;
                 token
                     .accounting_mut()
-                    .stablecoin_currency
+                    .stablecoin
+                    .currency
                     .write(token_params.stablecoin_currency)?;
-                token.accounting_mut().security_isin.write(token_params.security_isin)?;
 
                 self.emit_event(ITokenFactory::TokenCreated {
                     token: token_address,
@@ -415,8 +414,8 @@ mod tests {
             let token_addr = factory.create_token(caller, call).unwrap();
             let token = B20TokenStorage::from_address(token_addr, ctx);
 
-            assert_eq!(token.name.read().unwrap(), "My Token");
-            assert_eq!(token.symbol.read().unwrap(), "MYT");
+            assert_eq!(token.b20.name.read().unwrap(), "My Token");
+            assert_eq!(token.b20.symbol.read().unwrap(), "MYT");
             assert_eq!(token.decimals().unwrap(), 18);
             assert_eq!(token.supply_cap().unwrap(), TokenFactoryStorage::DEFAULT_SUPPLY_CAP);
             assert_eq!(TokenVariant::decimals_of(token_addr), Some(18));
@@ -443,7 +442,7 @@ mod tests {
             let token_addr = factory.create_token(caller, call).unwrap();
             let token = B20TokenStorage::from_address(token_addr, ctx);
 
-            assert_eq!(token.total_supply.read().unwrap(), supply);
+            assert_eq!(token.b20.total_supply.read().unwrap(), supply);
             assert_eq!(token.balance_of(recipient).unwrap(), supply);
         });
     }
@@ -518,8 +517,8 @@ mod tests {
             let token_addr = factory.create_token(caller, call).unwrap();
             let token = B20TokenStorage::from_address(token_addr, ctx);
 
-            assert_eq!(token.name.read().unwrap(), "");
-            assert_eq!(token.symbol.read().unwrap(), "");
+            assert_eq!(token.b20.name.read().unwrap(), "");
+            assert_eq!(token.b20.symbol.read().unwrap(), "");
         });
     }
 
@@ -603,7 +602,7 @@ mod tests {
             )
             .unwrap();
             let stablecoin = B20TokenStorage::from_address(stablecoin_addr, ctx);
-            assert_eq!(stablecoin.stablecoin_currency.read().unwrap(), "USD");
+            assert_eq!(stablecoin.stablecoin.currency.read().unwrap(), "USD");
             assert_eq!(TokenVariant::from_address(stablecoin_addr), Some(TokenVariant::Stablecoin));
             assert_eq!(TokenVariant::decimals_of(stablecoin_addr), Some(6));
         });
@@ -641,18 +640,17 @@ mod tests {
             assert!(ctx.has_bytecode(expected_addr).unwrap());
 
             let sec_storage = B20SecurityStorage::from_address(expected_addr, ctx);
-            assert_eq!(sec_storage.name.read().unwrap(), "Security Token");
-            assert_eq!(sec_storage.symbol.read().unwrap(), "SEC");
+            assert_eq!(sec_storage.b20.name.read().unwrap(), "Security Token");
+            assert_eq!(sec_storage.b20.symbol.read().unwrap(), "SEC");
             assert_eq!(sec_storage.decimals().unwrap(), 6);
             assert_eq!(
-                sec_storage.shares_to_tokens_ratio.read().unwrap(),
+                sec_storage.security.shares_to_tokens_ratio.read().unwrap(),
                 U256::from(1_000_000_000_000_000_000u128)
             );
-            assert_eq!(sec_storage.minimum_redeemable.read().unwrap(), U256::ONE);
-            // ISIN is stored in the security_identifiers mapping under keccak256("ISIN").
-            let isin_key = alloy_primitives::keccak256(b"ISIN");
+            assert_eq!(sec_storage.redeem.minimum_redeemable.read().unwrap(), U256::ONE);
+            // ISIN is stored in the identifiers mapping under the raw "ISIN" key.
             assert_eq!(
-                sec_storage.security_identifiers.at(&isin_key).read().unwrap(),
+                sec_storage.security.identifiers.at(&String::from("ISIN")).read().unwrap(),
                 "US0000000000"
             );
         });
@@ -673,7 +671,7 @@ mod tests {
             let token_addr = factory.create_token(caller, call).unwrap();
             let token = B20TokenStorage::from_address(token_addr, ctx);
 
-            assert_eq!(token.name.read().unwrap(), "Configured");
+            assert_eq!(token.b20.name.read().unwrap(), "Configured");
         });
     }
 

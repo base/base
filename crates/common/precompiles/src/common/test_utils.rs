@@ -70,10 +70,10 @@ pub struct InMemoryTokenAccounting {
     pub policy_ids: HashMap<B256, u64>,
     /// Share-to-tokens ratio scaled to WAD (1e18). Security tokens only.
     pub shares_to_tokens_ratio: U256,
-    /// Security identifier values keyed by `keccak256(identifier_type)`. Security tokens only.
-    pub security_identifiers: HashMap<B256, String>,
-    /// Consumed announcement ids (stored as `keccak256(id)`). Security tokens only.
-    pub announcement_ids_used: HashSet<B256>,
+    /// Security identifier values keyed by raw `identifier_type`. Security tokens only.
+    pub security_identifiers: HashMap<String, String>,
+    /// Consumed announcement ids keyed by raw announcement id. Security tokens only.
+    pub announcement_ids_used: HashSet<String>,
     /// Events collected by `emit_event`; does not produce real EVM logs.
     pub events: Vec<LogData>,
 }
@@ -181,8 +181,7 @@ impl TokenAccounting for InMemoryTokenAccounting {
     }
 
     fn security_identifier(&self, identifier_type: &str) -> Result<String> {
-        let key = alloy_primitives::keccak256(identifier_type.as_bytes());
-        if let Some(val) = self.security_identifiers.get(&key) {
+        if let Some(val) = self.security_identifiers.get(identifier_type) {
             return Ok(val.clone());
         }
         if identifier_type == "ISIN" { Ok(self.security_isin.clone()) } else { Ok(String::new()) }
@@ -420,21 +419,20 @@ impl SecurityAccounting for InMemoryTokenAccounting {
         identifier_type: &str,
         value: String,
     ) -> Result<()> {
-        let key = alloy_primitives::keccak256(identifier_type.as_bytes());
         if value.is_empty() {
-            self.security_identifiers.remove(&key);
+            self.security_identifiers.remove(identifier_type);
         } else {
-            self.security_identifiers.insert(key, value);
+            self.security_identifiers.insert(identifier_type.to_owned(), value);
         }
         Ok(())
     }
 
-    fn is_announcement_id_used(&self, id_hash: B256) -> Result<bool> {
-        Ok(self.announcement_ids_used.contains(&id_hash))
+    fn is_announcement_id_used(&self, id: &str) -> Result<bool> {
+        Ok(self.announcement_ids_used.contains(id))
     }
 
-    fn mark_announcement_id_used(&mut self, id_hash: B256) -> Result<()> {
-        self.announcement_ids_used.insert(id_hash);
+    fn mark_announcement_id_used(&mut self, id: &str) -> Result<()> {
+        self.announcement_ids_used.insert(id.to_owned());
         Ok(())
     }
 }
