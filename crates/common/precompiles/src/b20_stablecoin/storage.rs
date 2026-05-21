@@ -10,7 +10,9 @@ use base_precompile_storage::{
 #[cfg(feature = "std")]
 use iso_currency::Currency;
 
-use super::{IB20Stablecoin, accounting::StablecoinAccounting};
+#[cfg(feature = "std")]
+use super::IB20Stablecoin;
+use super::accounting::StablecoinAccounting;
 use crate::{TokenAccounting, TokenVariant};
 
 /// EVM-backed storage for a stablecoin B-20 token.
