@@ -12,7 +12,6 @@ use crate::{
     IPolicyRegistry, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK, PolicyRegistry,
     b20::B20Token,
     b20_security::SecurityAccounting,
-    b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
     common::{Policy, TokenAccounting},
 };
 
