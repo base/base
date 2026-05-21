@@ -20,7 +20,7 @@ impl ActivationRegistryStorage<'_> {
     /// Activation registry precompile address.
     pub const ADDRESS: Address = address!("0x84530000000000000000000000000000000000ff");
 
-    /// Security-token factory creation feature id.
+    /// Security-token factory creation feature id (`keccak256("base.token_factory.securities.v1")`).
     pub const SECURITIES_TOKEN_CREATION: B256 =
         b256!("0x89e4523f0886ce01d76094212ed707081da92a45221e22c15c5689be470db63e");
 
@@ -239,6 +239,10 @@ mod tests {
 
     #[test]
     fn feature_id_constants_match_canonical_names() {
+        assert_eq!(
+            ActivationRegistryStorage::SECURITIES_TOKEN_CREATION,
+            keccak256("base.token_factory.securities.v1"),
+        );
         assert_eq!(ActivationRegistryStorage::B20_TOKEN, keccak256("base.b20_token"));
         assert_eq!(ActivationRegistryStorage::TOKEN_FACTORY, keccak256("base.token_factory"));
         assert_eq!(ActivationRegistryStorage::POLICY_REGISTRY, keccak256("base.policy_registry"));
