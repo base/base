@@ -371,9 +371,9 @@ impl BerylTestEnv {
     }
 
     /// Batches the supplied L2 blocks, derives each one, and asserts the final safe head.
-    pub(crate) async fn derive_blocks<const N: usize>(
+    pub(crate) async fn derive_blocks(
         &mut self,
-        blocks: [(BaseBlock, u64); N],
+        blocks: impl IntoIterator<Item = (BaseBlock, u64)>,
         expected_safe_head: u64,
     ) {
         let mut batcher = Batcher::new(

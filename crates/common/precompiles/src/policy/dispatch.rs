@@ -1,13 +1,13 @@
 use alloy_primitives::Bytes;
-use alloy_sol_types::{SolCall, SolInterface};
-use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
+use alloy_sol_types::SolCall;
+use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use super::{
     abi::{IPolicyRegistry, IPolicyRegistry::IPolicyRegistryCalls as C},
     storage::PolicyRegistryStorage,
 };
-use crate::ActivationRegistryStorage;
+use crate::{ActivationRegistryStorage, macros::decode_precompile_call};
 
 impl PolicyRegistryStorage<'_> {
     /// ABI-dispatches `calldata` to the appropriate `IPolicyRegistry` handler.
@@ -22,16 +22,10 @@ impl PolicyRegistryStorage<'_> {
     }
 
     fn inner(&self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
-        if calldata.len() < 4 {
-            return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
-        }
-        let selector: [u8; 4] = calldata[..4].try_into().unwrap();
-
-        match IPolicyRegistry::IPolicyRegistryCalls::abi_decode(calldata) {
-            Ok(C::helloWorld(_)) => {
+        match decode_precompile_call!(calldata, IPolicyRegistry::IPolicyRegistryCalls) {
+            C::helloWorld(_) => {
                 Ok(IPolicyRegistry::helloWorldCall::abi_encode_returns(&true).into())
             }
-            Err(_) => Err(BasePrecompileError::UnknownFunctionSelector(selector)),
         }
     }
 }

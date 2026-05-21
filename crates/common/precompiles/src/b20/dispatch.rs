@@ -1,5 +1,5 @@
 use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::{SolInterface, SolValue};
+use alloy_sol_types::SolValue;
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     ActivationRegistryStorage, Burnable, Configurable, Mintable, Pausable, Permittable, Policy,
-    Redeemable, TokenAccounting, Transferable,
+    Redeemable, TokenAccounting, Transferable, macros::decode_precompile_call,
 };
 
 impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
@@ -39,12 +39,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         ActivationRegistryStorage::new(ctx)
             .ensure_activated(ActivationRegistryStorage::B20_TOKEN)?;
 
-        if calldata.len() < 4 {
-            return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
-        }
-        let selector: [u8; 4] = calldata[..4].try_into().unwrap();
-        let call = IB20::IB20Calls::abi_decode(calldata)
-            .map_err(|_| BasePrecompileError::UnknownFunctionSelector(selector))?;
+        let call = decode_precompile_call!(calldata, IB20::IB20Calls);
 
         let encoded: Bytes = match call {
             // --- Pure reads: direct to accounting ---
