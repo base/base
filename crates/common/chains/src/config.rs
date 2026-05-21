@@ -499,12 +499,7 @@ const DEVNET: ChainConfig = ChainConfig {
     protocol_versions_address: Address::ZERO,
 
     unsafe_block_signer: None,
-    // Anvil/Hardhat account #0 from the standard test mnemonic
-    // ("test test ... junk", index 0). Pre-funded in res/genesis/dev.json so
-    // any developer running `--chain dev` can sign activation registry calls
-    // out of the box. Override at runtime via the genesis JSON's
-    // `activationAdminAddress` extra field or `BaseChainSpecBuilder`.
-    activation_admin_address: Some(address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266")),
+    activation_admin_address: None,
 
     max_gas_limit: 30_000_000,
     prune_delete_limit: 20_000,
@@ -608,21 +603,5 @@ mod tests {
         assert_eq!(ChainConfig::SEPOLIA, ChainConfig::sepolia());
         assert_eq!(ChainConfig::DEVNET, ChainConfig::devnet());
         assert_eq!(ChainConfig::ZERONET, ChainConfig::zeronet());
-    }
-
-    #[test]
-    fn devnet_activation_admin_defaults_to_anvil_account_zero() {
-        // The dev chain ships an admin that any developer can sign with: Anvil
-        // account #0 (mnemonic "test test ... junk", index 0). The address is
-        // pre-funded in res/genesis/dev.json. Production chains must remain
-        // None so they can only be set via genesis JSON or the chain spec
-        // builder.
-        assert_eq!(
-            ChainConfig::devnet().activation_admin_address,
-            Some(address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266")),
-        );
-        assert_eq!(ChainConfig::mainnet().activation_admin_address, None);
-        assert_eq!(ChainConfig::sepolia().activation_admin_address, None);
-        assert_eq!(ChainConfig::zeronet().activation_admin_address, None);
     }
 }
