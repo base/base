@@ -194,6 +194,7 @@ mod tests {
             PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
         })
         .unwrap();
+        assert!(!output.reverted, "create_allowlist_policy setup unexpectedly reverted");
         IPolicyRegistry::createPolicyCall::abi_decode_returns(&output.bytes).unwrap()
     }
 
