@@ -188,6 +188,12 @@ impl LayoutCtx {
 pub trait StorableType {
     /// Storage layout descriptor.
     const LAYOUT: Layout;
+    /// Whether this type declares its own ERC-7201 storage namespace.
+    const HAS_STORAGE_NAMESPACE: bool = false;
+    /// ERC-7201 namespace identifier for this type.
+    const STORAGE_NAMESPACE_ID: &'static str = "";
+    /// ERC-7201 namespace root slot for this type.
+    const STORAGE_NAMESPACE_ROOT: U256 = U256::ZERO;
     /// Number of storage slots this type occupies.
     const SLOTS: usize = Self::LAYOUT.slots();
     /// Number of bytes this type occupies.

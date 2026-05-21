@@ -22,21 +22,44 @@ fn expand_impl(
 
     parse_namespace_id(namespace_id.clone())?;
 
-    if input.attrs.iter().any(|attr| attr_path_is(attr.path(), "namespace")) {
+    if input.attrs.iter().any(|attr| {
+        attr_path_is(attr.path(), "namespace") || attr_path_is(attr.path(), "storage_namespace")
+    }) {
         return Err(syn::Error::new_spanned(&input.ident, "duplicate `namespace` attribute"));
     }
 
-    let contract_index =
-        input.attrs.iter().position(|attr| attr_path_is(attr.path(), "contract")).ok_or_else(
-            || {
-                syn::Error::new_spanned(
-                    &input.ident,
-                    "`#[namespace]` must be paired with `#[contract]`",
-                )
-            },
-        )?;
+    if let Some(contract_index) =
+        input.attrs.iter().position(|attr| attr_path_is(attr.path(), "contract"))
+    {
+        input.attrs.insert(contract_index + 1, syn::parse_quote!(#[namespace(#namespace_id)]));
+        return Ok(quote! { #input });
+    }
 
-    input.attrs.insert(contract_index + 1, syn::parse_quote!(#[namespace(#namespace_id)]));
+    if has_storable_derive(&input)? {
+        input.attrs.push(syn::parse_quote!(#[storage_namespace(#namespace_id)]));
+        return Ok(quote! { #input });
+    }
 
-    Ok(quote! { #input })
+    Err(syn::Error::new_spanned(
+        &input.ident,
+        "`#[namespace]` must be paired with `#[contract]` or `#[derive(Storable)]`",
+    ))
+}
+
+fn has_storable_derive(input: &DeriveInput) -> syn::Result<bool> {
+    let mut found = false;
+    for attr in &input.attrs {
+        if !attr.path().is_ident("derive") {
+            continue;
+        }
+
+        attr.parse_nested_meta(|meta| {
+            if attr_path_is(&meta.path, "Storable") {
+                found = true;
+            }
+            Ok(())
+        })?;
+    }
+
+    Ok(found)
 }

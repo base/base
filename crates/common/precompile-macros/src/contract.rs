@@ -124,6 +124,7 @@ fn gen_storage(
     let allocated_fields = packing::allocate_slots_from(
         fields,
         namespace.map_or(U256::ZERO, |namespace| namespace.root),
+        namespace.is_none(),
     )?;
     let transformed_struct = layout::gen_struct(ident, vis, &allocated_fields);
     let storage_trait = layout::gen_contract_storage_impl(ident);

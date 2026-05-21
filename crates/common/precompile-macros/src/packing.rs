@@ -44,14 +44,21 @@ pub(crate) fn const_name(name: &Ident) -> String {
 #[derive(Debug, Clone)]
 pub(crate) enum SlotAssignment {
     Manual(U256),
-    Auto { base_slot: U256 },
+    Auto { base_slot: U256, allow_type_namespace: bool },
 }
 
 impl SlotAssignment {
     pub(crate) const fn ref_slot(&self) -> &U256 {
         match self {
             Self::Manual(slot) => slot,
-            Self::Auto { base_slot } => base_slot,
+            Self::Auto { base_slot, .. } => base_slot,
+        }
+    }
+
+    pub(crate) const fn allows_type_namespace(&self) -> bool {
+        match self {
+            Self::Manual(_) => false,
+            Self::Auto { allow_type_namespace, .. } => *allow_type_namespace,
         }
     }
 }
@@ -66,13 +73,14 @@ pub(crate) struct LayoutField<'a> {
 
 /// Build layout IR from field information.
 pub(crate) fn allocate_slots(fields: &[FieldInfo]) -> syn::Result<Vec<LayoutField<'_>>> {
-    allocate_slots_from(fields, U256::ZERO)
+    allocate_slots_from(fields, U256::ZERO, false)
 }
 
 /// Build layout IR from field information, starting auto-allocation at `initial_base_slot`.
 pub(crate) fn allocate_slots_from(
     fields: &[FieldInfo],
     initial_base_slot: U256,
+    allow_type_namespaces: bool,
 ) -> syn::Result<Vec<LayoutField<'_>>> {
     let mut result = Vec::with_capacity(fields.len());
     let mut current_base_slot = initial_base_slot;
@@ -84,10 +92,15 @@ pub(crate) fn allocate_slots_from(
             (Some(explicit), _, _) => SlotAssignment::Manual(explicit),
             (None, Some(new_base), _) => {
                 current_base_slot = new_base;
-                SlotAssignment::Auto { base_slot: new_base }
+                SlotAssignment::Auto { base_slot: new_base, allow_type_namespace: false }
             }
-            (None, None, Some(namespace)) => SlotAssignment::Auto { base_slot: namespace.root },
-            (None, None, None) => SlotAssignment::Auto { base_slot: current_base_slot },
+            (None, None, Some(namespace)) => {
+                SlotAssignment::Auto { base_slot: namespace.root, allow_type_namespace: false }
+            }
+            (None, None, None) => SlotAssignment::Auto {
+                base_slot: current_base_slot,
+                allow_type_namespace: allow_type_namespaces,
+            },
         };
 
         result.push(LayoutField { name: &field.name, ty: &field.ty, kind, assigned_slot });
@@ -124,31 +137,7 @@ pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>], gen_location: bo
                 (slot_expr, quote! { 0 })
             }
             SlotAssignment::Auto { base_slot, .. } => {
-                let output = last_auto_fields
-                    .iter()
-                    .rev()
-                    .find(|candidate| candidate.assigned_slot.ref_slot() == base_slot)
-                    .map_or_else(
-                        || {
-                            let limbs = *base_slot.as_limbs();
-                            let slot_expr = quote! {
-                                ::alloy_primitives::U256::from_limbs([#(#limbs),*])
-                                    .checked_add(#slots_to_end).expect("slot overflow")
-                                    .saturating_sub(#slots_to_end)
-                            };
-                            (slot_expr, quote! { 0 })
-                        },
-                        |current_base| {
-                            let (prev_slot, prev_offset) =
-                                PackingConstants::new(current_base.name).into_tuple();
-                            gen_slot_packing_logic(
-                                current_base.ty,
-                                field.ty,
-                                quote! { #prev_slot },
-                                quote! { #prev_offset },
-                            )
-                        },
-                    );
+                let output = gen_auto_slot_expr(field, base_slot, &last_auto_fields, slots_to_end);
                 last_auto_fields.push(field);
                 output
             }
@@ -184,6 +173,83 @@ pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>], gen_location: bo
     }
 
     constants
+}
+
+fn gen_auto_slot_expr(
+    field: &LayoutField<'_>,
+    base_slot: &U256,
+    previous_auto_fields: &[&LayoutField<'_>],
+    slots_to_end: TokenStream,
+) -> (TokenStream, TokenStream) {
+    let limbs = *base_slot.as_limbs();
+    let initial_slot_expr = quote! {
+        ::alloy_primitives::U256::from_limbs([#(#limbs),*])
+            .checked_add(#slots_to_end).expect("slot overflow")
+            .saturating_sub(#slots_to_end)
+    };
+    let mut output = (initial_slot_expr, quote! { 0 });
+
+    for candidate in previous_auto_fields.iter().filter(|candidate| {
+        matches!(candidate.assigned_slot, SlotAssignment::Auto { .. })
+            && candidate.assigned_slot.ref_slot() == base_slot
+    }) {
+        let (prev_slot, prev_offset) = PackingConstants::new(candidate.name).into_tuple();
+        let candidate_output = gen_slot_packing_logic(
+            candidate.ty,
+            field.ty,
+            quote! { #prev_slot },
+            quote! { #prev_offset },
+        );
+
+        if candidate.assigned_slot.allows_type_namespace() {
+            let candidate_ty = candidate.ty;
+            let (fallback_slot, fallback_offset) = output;
+            let (candidate_slot, candidate_offset) = candidate_output;
+            output = (
+                quote! {
+                    if <#candidate_ty as ::base_precompile_storage::StorableType>::HAS_STORAGE_NAMESPACE {
+                        #fallback_slot
+                    } else {
+                        #candidate_slot
+                    }
+                },
+                quote! {
+                    if <#candidate_ty as ::base_precompile_storage::StorableType>::HAS_STORAGE_NAMESPACE {
+                        #fallback_offset
+                    } else {
+                        #candidate_offset
+                    }
+                },
+            );
+        } else {
+            output = candidate_output;
+        }
+    }
+
+    if field.assigned_slot.allows_type_namespace() {
+        let field_ty = field.ty;
+        let (normal_slot, normal_offset) = output;
+        (
+            quote! {
+                if <#field_ty as ::base_precompile_storage::StorableType>::HAS_STORAGE_NAMESPACE {
+                    <#field_ty as ::base_precompile_storage::StorableType>::STORAGE_NAMESPACE_ROOT
+                        .checked_add(#slots_to_end).expect("slot overflow")
+                        .saturating_sub(#slots_to_end)
+                } else {
+                    #normal_slot
+                }
+            },
+            quote! {
+                if <#field_ty as ::base_precompile_storage::StorableType>::HAS_STORAGE_NAMESPACE {
+                    0
+                } else {
+                    #normal_offset
+                }
+            },
+        )
+    } else {
+        output
+    }
 }
 
 /// Classify a field based on its type.
@@ -237,43 +303,6 @@ where
     (prev_slot_ref, next_slot_ref)
 }
 
-/// Returns previous and next slot constants for fields that share the same auto-allocation root.
-pub(crate) fn get_same_root_neighbor_slot_refs(
-    idx: usize,
-    fields: &[LayoutField<'_>],
-    packing: &Ident,
-) -> (Option<TokenStream>, Option<TokenStream>) {
-    if !matches!(fields[idx].assigned_slot, SlotAssignment::Auto { .. }) {
-        return (None, None);
-    }
-
-    let root = fields[idx].assigned_slot.ref_slot();
-    let prev_slot_ref = fields[..idx]
-        .iter()
-        .rev()
-        .find(|field| {
-            matches!(field.assigned_slot, SlotAssignment::Auto { .. })
-                && field.assigned_slot.ref_slot() == root
-        })
-        .map(|field| {
-            let prev_slot = PackingConstants::new(field.name).slot();
-            quote! { #packing::#prev_slot }
-        });
-
-    let next_slot_ref = fields[idx + 1..]
-        .iter()
-        .find(|field| {
-            matches!(field.assigned_slot, SlotAssignment::Auto { .. })
-                && field.assigned_slot.ref_slot() == root
-        })
-        .map(|field| {
-            let next_slot = PackingConstants::new(field.name).slot();
-            quote! { #packing::#next_slot }
-        });
-
-    (prev_slot_ref, next_slot_ref)
-}
-
 /// Generate slot packing decision logic.
 pub(crate) fn gen_slot_packing_logic(
     prev_ty: &Type,
@@ -317,22 +346,10 @@ pub(crate) fn gen_slot_packing_logic(
 pub(crate) fn gen_layout_ctx_expr(
     ty: &Type,
     is_manual_slot: bool,
-    slot_const_ref: TokenStream,
     offset_const_ref: TokenStream,
-    prev_slot_const_ref: Option<TokenStream>,
-    next_slot_const_ref: Option<TokenStream>,
+    shares_slot_check: Option<TokenStream>,
 ) -> TokenStream {
-    if !is_manual_slot && (prev_slot_const_ref.is_some() || next_slot_const_ref.is_some()) {
-        let prev_check = prev_slot_const_ref.map(|prev| quote! { #slot_const_ref == #prev });
-        let next_check = next_slot_const_ref.map(|next| quote! { #slot_const_ref == #next });
-
-        let shares_slot_check = match (prev_check, next_check) {
-            (Some(prev), Some(next)) => quote! { (#prev || #next) },
-            (Some(prev), None) => prev,
-            (None, Some(next)) => next,
-            (None, None) => unreachable!(),
-        };
-
+    if !is_manual_slot && let Some(shares_slot_check) = shares_slot_check {
         quote! {
             {
                 if #shares_slot_check && <#ty as ::base_precompile_storage::StorableType>::IS_PACKABLE {
