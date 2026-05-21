@@ -3,7 +3,7 @@
 //! This backend generates a real witness and executes the range program with
 //! `CpuProver`, but it does not produce or submit a proof.
 
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
@@ -11,8 +11,8 @@ use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL
 use base_proof_succinct_proof_utils::get_range_elf_embedded;
 use base_zk_client::{ExecutionStats, ProveBlockRequest};
 use base_zk_db::{
-    ProofRequest, ProofRequestRepo, ProofSession, ProofStatus, SessionStatus as DbSessionStatus,
-    UpdateReceipt,
+    ProofRequest, ProofRequestRepo, ProofSession, ProofStatus, ProofType,
+    SessionStatus as DbSessionStatus, UpdateReceipt,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -29,7 +29,7 @@ use crate::backends::traits::{
 };
 
 /// Metadata key where dry-run execution stats are stored on proof sessions.
-pub(crate) const EXECUTION_STATS_METADATA_KEY: &str = "execution_stats";
+pub const EXECUTION_STATS_METADATA_KEY: &str = "execution_stats";
 
 /// Metadata key indicating that a session was produced by the dry-run backend.
 pub(crate) const DRY_RUN_METADATA_KEY: &str = "dry_run";
@@ -43,13 +43,19 @@ pub struct DryRunBackend {
     default_sequence_window: u64,
 }
 
+/// Execution statistics persisted in proof-session metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct StoredExecutionStats {
-    pub(crate) total_instruction_cycles: u64,
-    pub(crate) total_sp1_gas: u64,
-    pub(crate) cycle_tracker: std::collections::HashMap<String, u64>,
-    pub(crate) witness_generation_ms: f64,
-    pub(crate) execution_ms: f64,
+pub struct StoredExecutionStats {
+    /// Total RISC-V instruction cycles reported by SP1.
+    pub total_instruction_cycles: u64,
+    /// Total SP1 gas reported by SP1.
+    pub total_sp1_gas: u64,
+    /// Per-section cycle tracker values reported by the range program.
+    pub cycle_tracker: HashMap<String, u64>,
+    /// Time spent generating the witness, in milliseconds.
+    pub witness_generation_ms: f64,
+    /// Time spent executing the SP1 range program, in milliseconds.
+    pub execution_ms: f64,
 }
 
 impl From<ExecutionStats> for StoredExecutionStats {
@@ -84,7 +90,7 @@ impl fmt::Debug for DryRunBackend {
 
 impl DryRunBackend {
     /// Create a dry-run backend using the shared OP Succinct witness provider.
-    pub fn new(
+    pub const fn new(
         provider: OpSuccinctProvider,
         base_consensus_url: String,
         l1_node_url: String,
@@ -132,9 +138,19 @@ impl ProvingBackend for DryRunBackend {
             anyhow::bail!("number_of_blocks_to_prove must be > 0");
         }
 
+        let proof_type = ProofType::try_from(request.proof_type)
+            .map_err(|e| anyhow::anyhow!("invalid proof_type: {e}"))?;
+        if proof_type == ProofType::OpSuccinctSp1ClusterSnarkGroth16 {
+            anyhow::bail!(
+                "dry-run backend only supports compressed proof types; SNARK_GROTH16 requires a proof-producing backend"
+            );
+        }
+
         let start_block = request.start_block_number;
         let num_blocks = request.number_of_blocks_to_prove;
-        let end_block = start_block + num_blocks;
+        let end_block = start_block.checked_add(num_blocks).ok_or_else(|| {
+            anyhow::anyhow!("block range overflow: start={start_block} + count={num_blocks}")
+        })?;
         let sequence_window = request.sequence_window.unwrap_or(self.default_sequence_window);
         let intermediate_root_interval =
             request.intermediate_root_interval.unwrap_or(DEFAULT_INTERMEDIATE_ROOT_INTERVAL);
@@ -210,6 +226,16 @@ impl ProvingBackend for DryRunBackend {
         proof_request: &ProofRequest,
         repo: &ProofRequestRepo,
     ) -> anyhow::Result<ProofProcessingResult> {
+        if proof_request.proof_type == ProofType::OpSuccinctSp1ClusterSnarkGroth16 {
+            return Ok(ProofProcessingResult {
+                status: ProofStatus::Failed,
+                error_message: Some(
+                    "dry-run backend only supports compressed proof types; SNARK_GROTH16 requires a proof-producing backend"
+                        .to_string(),
+                ),
+            });
+        }
+
         let sessions = repo.get_sessions_for_request(proof_request.id).await?;
 
         if sessions.is_empty() {

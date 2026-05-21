@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use base_zk_client::{
     ExecutionStats, GetProofRequest, GetProofResponse, ProofJobStatus, ReceiptType,
 };
@@ -9,9 +7,11 @@ use tonic::{Request, Response, Status};
 use tracing::{Instrument, info};
 use uuid::Uuid;
 
-use crate::{metrics, server::ProverServiceServer};
-
-const EXECUTION_STATS_METADATA_KEY: &str = "execution_stats";
+use crate::{
+    backends::{OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY, OpSuccinctStoredExecutionStats},
+    metrics,
+    server::ProverServiceServer,
+};
 
 /// Helper function to get the appropriate receipt based on requested type.
 fn get_receipt_by_type(
@@ -45,17 +45,9 @@ fn get_receipt_by_type(
 }
 
 fn execution_stats_from_metadata(metadata: &serde_json::Value) -> Option<ExecutionStats> {
-    let stats = metadata.get(EXECUTION_STATS_METADATA_KEY)?;
-    let cycle_tracker =
-        serde_json::from_value::<HashMap<String, u64>>(stats.get("cycle_tracker")?.clone()).ok()?;
-
-    Some(ExecutionStats {
-        total_instruction_cycles: stats.get("total_instruction_cycles")?.as_u64()?,
-        total_sp1_gas: stats.get("total_sp1_gas")?.as_u64()?,
-        cycle_tracker,
-        witness_generation_ms: stats.get("witness_generation_ms")?.as_f64()?,
-        execution_ms: stats.get("execution_ms")?.as_f64()?,
-    })
+    let stats = metadata.get(OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY)?;
+    let stored = serde_json::from_value::<OpSuccinctStoredExecutionStats>(stats.clone()).ok()?;
+    Some(stored.into())
 }
 
 impl ProverServiceServer {
@@ -203,10 +195,18 @@ impl ProverServiceServer {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use base_zk_db::{ProofRequest, ProofType};
     use chrono::Utc;
 
     use super::*;
+
+    fn metadata_with_execution_stats(stats: serde_json::Value) -> serde_json::Value {
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY.to_string(), stats);
+        serde_json::Value::Object(metadata)
+    }
 
     fn load_snark_fixture() -> Vec<u8> {
         let path =
@@ -237,6 +237,40 @@ mod tests {
             completed_at: Some(now),
             retry_count: 0,
         }
+    }
+
+    #[test]
+    fn test_execution_stats_from_metadata_deserializes_stored_stats() {
+        let stored_stats = OpSuccinctStoredExecutionStats {
+            total_instruction_cycles: 100,
+            total_sp1_gas: 200,
+            cycle_tracker: HashMap::from([("range".to_string(), 42)]),
+            witness_generation_ms: 12.5,
+            execution_ms: 34.5,
+        };
+        let metadata =
+            metadata_with_execution_stats(serde_json::to_value(stored_stats).expect("serialize"));
+
+        let stats = execution_stats_from_metadata(&metadata).expect("execution stats");
+
+        assert_eq!(stats.total_instruction_cycles, 100);
+        assert_eq!(stats.total_sp1_gas, 200);
+        assert_eq!(stats.cycle_tracker.get("range"), Some(&42));
+        assert_eq!(stats.witness_generation_ms, 12.5);
+        assert_eq!(stats.execution_ms, 34.5);
+    }
+
+    #[test]
+    fn test_execution_stats_from_metadata_rejects_invalid_schema() {
+        let metadata = metadata_with_execution_stats(serde_json::json!({
+            "total_instruction_cycles": "100",
+            "total_sp1_gas": 200,
+            "cycle_tracker": {},
+            "witness_generation_ms": 12.5,
+            "execution_ms": 34.5,
+        }));
+
+        assert!(execution_stats_from_metadata(&metadata).is_none());
     }
 
     #[test]

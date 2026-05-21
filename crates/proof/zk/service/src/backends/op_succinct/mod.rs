@@ -4,7 +4,7 @@ mod cluster;
 pub use cluster::ClusterBackend;
 
 mod dry_run;
-pub use dry_run::DryRunBackend;
+pub use dry_run::{DryRunBackend, EXECUTION_STATS_METADATA_KEY, StoredExecutionStats};
 
 mod mock;
 pub use mock::MockBackend;
