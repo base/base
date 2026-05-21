@@ -164,6 +164,16 @@ pub struct DiscoveryResolution {
     /// acquiring nonces we don't intend to broadcast) or when too few
     /// instances responded for the quorum guard to clear.
     pub ok_to_dereg: bool,
+    /// Instance IDs whose `resolve_instance` call returned `Err` this
+    /// cycle (transient `signer_public_key` / `signer_attestation` / CRL
+    /// failure). Their signers are absent from `registerable` only
+    /// because we couldn't resolve them — not because we proved them
+    /// gone or ineligible — so `reconcile_proof_tasks` MUST skip the
+    /// cancel-pass for any in-flight task whose `instance_id` is in
+    /// this set. Otherwise a single transient hiccup during a long
+    /// (~70 min) Boundless proof would abandon the in-flight work and
+    /// force the next cycle to start over from scratch.
+    pub unresolved_instance_ids: HashSet<String>,
 }
 
 /// Per-instance result of address resolution and registration-eligibility
@@ -1253,6 +1263,7 @@ where
         let mut active_signers: HashSet<Address> = HashSet::new();
         let mut reachable_count = 0usize;
         let mut registerable: Vec<RegisterableSigner> = Vec::new();
+        let mut unresolved_instance_ids: HashSet<String> = HashSet::new();
 
         let concurrency = self.config.max_concurrency.max(1);
         let mut futs = futures::stream::iter(instances.into_iter().map(|instance| {
@@ -1314,6 +1325,11 @@ where
                         "failed to resolve instance"
                     );
                     RegistrarMetrics::processing_errors_total().increment(1);
+                    // Mark this instance as inconclusive so reconcile
+                    // does NOT cancel in-flight proof tasks tied to it
+                    // (see `DiscoveryResolution::unresolved_instance_ids`
+                    // for the rationale).
+                    unresolved_instance_ids.insert(instance.instance_id.clone());
                 }
             }
         }
@@ -1332,6 +1348,7 @@ where
             reachable_count,
             total_count,
             ok_to_dereg,
+            unresolved_instance_ids,
         })
     }
 
@@ -1357,11 +1374,18 @@ where
     /// Two passes:
     ///
     /// 1. **Cancel pass** — any task whose `signer` is no longer in the
-    ///    current registerable set is cooperatively cancelled. The
-    ///    `PendingTask::cancel` token fires; the task itself observes it
-    ///    at its next checkpoint (proof generation, retry sleep, pre-send)
-    ///    and exits with `Ok(())`. The entry stays in `pending` until the
-    ///    join arrives (handled by [`Self::reap_finished_tasks`]).
+    ///    current registerable set is cooperatively cancelled, **except**
+    ///    when the task's `instance_id` is in
+    ///    [`DiscoveryResolution::unresolved_instance_ids`]. That
+    ///    inconclusive-snapshot guard prevents a single transient
+    ///    `resolve_instance` failure (e.g. signer-service RPC blip, CRL
+    ///    endpoint hiccup) from abandoning an in-flight ~70 min Boundless
+    ///    proof: the signer is missing from `registerable` only because
+    ///    we couldn't tell this cycle, not because we proved it's gone.
+    ///    The `PendingTask::cancel` token fires; the task itself observes
+    ///    it at its next checkpoint (proof generation, retry sleep,
+    ///    pre-send) and exits with `Ok(())`. The entry stays in `pending`
+    ///    until the join arrives (handled by [`Self::reap_finished_tasks`]).
     /// 2. **Spawn pass** — any registerable `(instance, signer)` not
     ///    currently in-flight (excluding already-cancelled tasks awaiting
     ///    reap) is spawned into the `JoinSet`. Each spawn creates a fresh
@@ -1392,9 +1416,17 @@ where
     ) {
         let wanted: HashSet<Address> = resolution.registerable.iter().map(|e| e.signer).collect();
 
-        // Cancel-pass: any in-flight task whose signer is no longer wanted.
+        // Cancel-pass: any in-flight task whose signer is no longer
+        // wanted AND whose source instance produced a conclusive
+        // verdict this cycle (i.e. NOT in `unresolved_instance_ids`).
+        // Tasks tied to instances that failed to resolve transiently
+        // are preserved — the absence from `wanted` is then a lack of
+        // evidence, not evidence of absence.
         for task in pending.values() {
-            if !wanted.contains(&task.signer) && !task.cancel.is_cancelled() {
+            if !wanted.contains(&task.signer)
+                && !task.cancel.is_cancelled()
+                && !resolution.unresolved_instance_ids.contains(&task.instance_id)
+            {
                 info!(
                     signer = %task.signer,
                     instance = %task.instance_id,
@@ -1402,6 +1434,15 @@ where
                 );
                 task.cancel.cancel();
                 RegistrarMetrics::proof_tasks_cancelled().increment(1);
+            } else if !wanted.contains(&task.signer)
+                && !task.cancel.is_cancelled()
+                && resolution.unresolved_instance_ids.contains(&task.instance_id)
+            {
+                debug!(
+                    signer = %task.signer,
+                    instance = %task.instance_id,
+                    "preserving proof task: source instance failed to resolve this cycle (inconclusive)"
+                );
             }
         }
 
@@ -2948,6 +2989,7 @@ mod tests {
             reachable_count: total,
             total_count: total,
             ok_to_dereg: true,
+            unresolved_instance_ids: HashSet::new(),
         }
     }
 
@@ -4550,6 +4592,83 @@ mod tests {
         drain_test_tasks(&mut tasks, &mut pending).await;
     }
 
+    /// Inconclusive-snapshot guard: when a signer's source instance
+    /// failed to resolve this cycle (its `instance_id` is recorded in
+    /// `DiscoveryResolution::unresolved_instance_ids`), reconcile MUST
+    /// NOT cancel that signer's in-flight proof task — the signer is
+    /// absent from `registerable` only because we couldn't tell this
+    /// cycle, not because we proved it's gone or ineligible. Without
+    /// this guard a single transient `signer_public_key` /
+    /// `signer_attestation` / CRL hiccup during a long (~70 min)
+    /// Boundless proof would abandon the in-flight work.
+    #[tokio::test]
+    async fn reconcile_proof_tasks_preserves_task_when_instance_fails_to_resolve() {
+        let harness = single_healthy_harness();
+        let mut tasks: JoinSet<Result<()>> = JoinSet::new();
+        let mut pending: HashMap<task::Id, PendingTask> = HashMap::new();
+
+        let signer =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+
+        // Seed pending with a placeholder task for the signer, tagged
+        // with the instance_id we'll later mark as unresolved.
+        let task_cancel = CancellationToken::new();
+        let task_cancel_inner = task_cancel.clone();
+        let handle = tasks.spawn(async move {
+            task_cancel_inner.cancelled().await;
+            Ok(())
+        });
+        pending.insert(
+            handle.id(),
+            PendingTask {
+                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
+                signer,
+                cancel: task_cancel.clone(),
+            },
+        );
+
+        // Build a resolution where the signer is absent from
+        // `registerable` (so `wanted` is empty) BUT the source
+        // instance is flagged as unresolved this cycle.
+        let mut unresolved = HashSet::new();
+        unresolved.insert(TEST_PENDING_INSTANCE_ID.to_string());
+        let resolution = DiscoveryResolution {
+            registerable: Vec::new(),
+            active_signers: HashSet::new(),
+            reachable_count: 0,
+            total_count: 1,
+            ok_to_dereg: false,
+            unresolved_instance_ids: unresolved,
+        };
+
+        harness.driver.reconcile_proof_tasks(&resolution, &mut tasks, &mut pending);
+
+        assert!(
+            !task_cancel.is_cancelled(),
+            "task tied to an unresolved instance must be preserved across the cancel-pass",
+        );
+        assert_eq!(pending.len(), 1, "no spurious spawn or eviction this cycle");
+
+        // Sanity contrast: same setup, but the instance is NOT
+        // unresolved → cancel-pass MUST fire. Asserts the previous
+        // arm's success was due to the guard, not unrelated logic.
+        let resolution_conclusive = DiscoveryResolution {
+            registerable: Vec::new(),
+            active_signers: HashSet::new(),
+            reachable_count: 1,
+            total_count: 1,
+            ok_to_dereg: true,
+            unresolved_instance_ids: HashSet::new(),
+        };
+        harness.driver.reconcile_proof_tasks(&resolution_conclusive, &mut tasks, &mut pending);
+        assert!(
+            task_cancel.is_cancelled(),
+            "with no inconclusive guard, the cancel-pass MUST fire on the same setup",
+        );
+
+        drain_test_tasks(&mut tasks, &mut pending).await;
+    }
+
     // ── reconcile_proof_tasks: dedupe + indexing tests ─────────────────
 
     /// Driver specialisation used by the spawn-pass indexing tests so a
@@ -4622,6 +4741,7 @@ mod tests {
             reachable_count: 2,
             total_count: 2,
             ok_to_dereg: false,
+            unresolved_instance_ids: HashSet::new(),
         };
 
         let mut tasks: JoinSet<Result<()>> = JoinSet::new();
@@ -4692,6 +4812,7 @@ mod tests {
             reachable_count: 2,
             total_count: 2,
             ok_to_dereg: false,
+            unresolved_instance_ids: HashSet::new(),
         };
 
         let mut tasks: JoinSet<Result<()>> = JoinSet::new();
