@@ -390,6 +390,9 @@ impl PolicyRegistryStorage<'_> {
     /// Returns the pending admin staged for `policy_id`, or `address(0)` if none.
     pub fn pending_policy_admin(&self, policy_id: u64) -> Result<Address> {
         Self::require_well_formed(policy_id)?;
+        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
+            return Ok(Address::ZERO);
+        }
         self.pending_admins.at(&policy_id).read()
     }
 }
