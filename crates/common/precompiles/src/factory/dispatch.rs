@@ -1,11 +1,14 @@
 //! ABI dispatch for the `TokenFactory` precompile.
 
 use alloy_primitives::Bytes;
-use alloy_sol_types::{SolCall, SolInterface};
+use alloy_sol_types::SolCall;
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use crate::{ActivationRegistryStorage, ITokenFactory, TokenFactoryStorage, TokenVariant};
+use crate::{
+    ActivationRegistryStorage, ITokenFactory, TokenFactoryStorage, TokenVariant,
+    macros::decode_precompile_call,
+};
 
 impl<'a> TokenFactoryStorage<'a> {
     /// ABI-dispatches `calldata` to the appropriate `ITokenFactory` handler.
@@ -26,34 +29,28 @@ impl<'a> TokenFactoryStorage<'a> {
         ActivationRegistryStorage::new(ctx)
             .ensure_activated(ActivationRegistryStorage::TOKEN_FACTORY)?;
 
-        if calldata.len() < 4 {
-            return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
-        }
-        let selector: [u8; 4] = calldata[..4].try_into().unwrap();
-
-        match ITokenFactory::ITokenFactoryCalls::abi_decode(calldata) {
-            Ok(ITokenFactory::ITokenFactoryCalls::createToken(call)) => {
+        match decode_precompile_call!(calldata, ITokenFactory::ITokenFactoryCalls) {
+            ITokenFactory::ITokenFactoryCalls::createToken(call) => {
                 let caller = ctx.caller();
                 let token = self.create_token(caller, call)?;
                 Ok(ITokenFactory::createTokenCall::abi_encode_returns(&token).into())
             }
-            Ok(ITokenFactory::ITokenFactoryCalls::getTokenAddress(call)) => {
+            ITokenFactory::ITokenFactoryCalls::getTokenAddress(call) => {
                 let Some(variant) = TokenFactoryStorage::token_variant(call.variant) else {
                     return Err(BasePrecompileError::revert(ITokenFactory::InvalidVariant {}));
                 };
                 let (addr, _) = variant.compute_address(call.sender, call.decimals, call.salt);
                 Ok(ITokenFactory::getTokenAddressCall::abi_encode_returns(&addr).into())
             }
-            Ok(ITokenFactory::ITokenFactoryCalls::isB20(call)) => {
+            ITokenFactory::ITokenFactoryCalls::isB20(call) => {
                 let result = self.is_b20(call.token)?;
                 Ok(ITokenFactory::isB20Call::abi_encode_returns(&result).into())
             }
-            Ok(ITokenFactory::ITokenFactoryCalls::getTokenVariant(call)) => {
+            ITokenFactory::ITokenFactoryCalls::getTokenVariant(call) => {
                 let variant =
                     TokenFactoryStorage::abi_variant(TokenVariant::from_address(call.token));
                 Ok(ITokenFactory::getTokenVariantCall::abi_encode_returns(&variant).into())
             }
-            Err(_) => Err(BasePrecompileError::UnknownFunctionSelector(selector)),
         }
     }
 }
