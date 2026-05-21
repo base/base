@@ -1,7 +1,7 @@
 //! Dry-run backend for local SP1 execution statistics.
 //!
 //! This backend generates a real witness and executes the range program with
-//! `CpuProver`, but it does not produce or submit a proof.
+//! `MockProver`, but it does not produce or submit a proof.
 
 use std::{collections::HashMap, fmt};
 
@@ -20,7 +20,7 @@ use sp1_sdk::{
     Elf, SP1Stdin,
     blocking::{MockProver, Prover},
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::provider::{OpSuccinctProvider, WitnessParams};
@@ -99,7 +99,7 @@ impl DryRunBackend {
         Self { provider, base_consensus_url, l1_node_url, default_sequence_window }
     }
 
-    async fn execute_range_program(stdin: SP1Stdin) -> anyhow::Result<(ExecutionStats, f64)> {
+    async fn execute_range_program(stdin: SP1Stdin) -> anyhow::Result<ExecutionStats> {
         let execution_start = std::time::Instant::now();
         let (_, report) = tokio::task::spawn_blocking(move || {
             info!("starting local SP1 zkVM execution");
@@ -117,13 +117,16 @@ impl DryRunBackend {
         let execution_ms = execution_start.elapsed().as_secs_f64() * 1000.0;
         let stats = ExecutionStats {
             total_instruction_cycles: report.total_instruction_count(),
-            total_sp1_gas: report.gas().unwrap_or(0),
+            total_sp1_gas: report.gas().unwrap_or_else(|| {
+                warn!("gas calculation returned None despite calculate_gas(true)");
+                0
+            }),
             cycle_tracker: report.cycle_tracker.into_iter().collect(),
             witness_generation_ms: 0.0,
             execution_ms,
         };
 
-        Ok((stats, execution_ms))
+        Ok(stats)
     }
 }
 
@@ -195,14 +198,14 @@ impl ProvingBackend for DryRunBackend {
             })?;
         let witness_generation_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
 
-        let (mut execution_stats, execution_ms) = Self::execute_range_program(stdin).await?;
+        let mut execution_stats = Self::execute_range_program(stdin).await?;
         execution_stats.witness_generation_ms = witness_generation_ms;
 
         info!(
             total_instruction_cycles = execution_stats.total_instruction_cycles,
             total_sp1_gas = execution_stats.total_sp1_gas,
             witness_generation_ms = witness_generation_ms,
-            execution_ms = execution_ms,
+            execution_ms = execution_stats.execution_ms,
             tracked_sections = execution_stats.cycle_tracker.len(),
             "dry-run SP1 execution completed"
         );
