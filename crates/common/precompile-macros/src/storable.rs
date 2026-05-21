@@ -9,7 +9,10 @@ use crate::{
     layout::{gen_handler_field_decl, gen_handler_field_init},
     packing::{self, LayoutField, PackingConstants},
     storable_primitives::gen_struct_arrays,
-    utils::{extract_mapping_types, extract_storable_array_sizes, to_snake_case},
+    utils::{
+        NamespaceInfo, extract_mapping_types, extract_storable_array_sizes,
+        extract_storage_namespace, to_snake_case,
+    },
 };
 
 /// Entry point called from `lib.rs` — parses input and converts errors to compile errors.
@@ -34,6 +37,7 @@ pub(crate) fn derive_impl(input: DeriveInput) -> syn::Result<TokenStream> {
 fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Result<TokenStream> {
     let strukt = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let namespace = extract_storage_namespace(&input.attrs)?;
 
     let fields = match &data_struct.fields {
         Fields::Named(fields_named) => &fields_named.named,
@@ -90,6 +94,7 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
 
     let handler_struct = gen_handler_struct(strukt, &layout_fields, &mod_ident);
     let handler_name = format_ident!("{}Handler", strukt);
+    let namespace_consts = gen_storage_namespace_consts(namespace.as_ref());
 
     let expanded = quote! {
         #packing_module
@@ -97,6 +102,7 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
 
         impl #impl_generics ::base_precompile_storage::StorableType for #strukt #ty_generics #where_clause {
             const LAYOUT: ::base_precompile_storage::Layout = ::base_precompile_storage::Layout::Slots(#mod_ident::SLOT_COUNT);
+            #namespace_consts
 
             const IS_DYNAMIC: bool = #(
                 <#direct_tys as ::base_precompile_storage::StorableType>::IS_DYNAMIC
@@ -175,6 +181,13 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
 }
 
 fn derive_unit_enum_impl(input: &DeriveInput, data_enum: &DataEnum) -> syn::Result<TokenStream> {
+    if extract_storage_namespace(&input.attrs)?.is_some() {
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "`namespace` is only supported for `Storable` structs",
+        ));
+    }
+
     if extract_storable_array_sizes(&input.attrs)?.is_some() {
         return Err(syn::Error::new_spanned(
             &input.ident,
@@ -388,6 +401,22 @@ fn gen_handler_struct(
             }
         }
     }
+}
+
+fn gen_storage_namespace_consts(namespace: Option<&NamespaceInfo>) -> TokenStream {
+    namespace.map_or_else(
+        || quote! {},
+        |namespace| {
+            let id = &namespace.id;
+            let limbs = *namespace.root.as_limbs();
+            quote! {
+                const HAS_STORAGE_NAMESPACE: bool = true;
+                const STORAGE_NAMESPACE_ID: &'static str = #id;
+                const STORAGE_NAMESPACE_ROOT: ::alloy_primitives::U256 =
+                    ::alloy_primitives::U256::from_limbs([#(#limbs),*]);
+            }
+        },
+    )
 }
 
 fn gen_load_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {

@@ -34,6 +34,22 @@ Multiple fields with the same namespace use normal Solidity offsets from that ro
 the surrounding contract layout. `#[slot]` and `#[base_slot]` overrides cannot be combined with
 `#[namespace]` on the same field.
 
+The namespace can also be declared once on a reusable `Storable` layout type. A `#[contract]`
+field with that type is automatically mounted at the type's namespace root:
+
+```rust,ignore
+#[derive(Debug, Clone, Storable)]
+#[namespace("b20.security")]
+pub struct B20SecurityStorage {
+    pub shares_to_tokens_ratio: U256,
+}
+
+#[contract]
+pub struct B20Security {
+    pub security: B20SecurityStorage,
+}
+```
+
 ### Mapping slot derivation
 
 ```text

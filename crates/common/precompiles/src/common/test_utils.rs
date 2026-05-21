@@ -11,6 +11,7 @@ use base_precompile_storage::Result;
 use crate::{
     IPolicyRegistry, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK, PolicyRegistry,
     b20::B20Token,
+    b20_security::SecurityAccounting,
     common::{Policy, TokenAccounting},
 };
 
@@ -43,7 +44,7 @@ pub struct InMemoryTokenAccounting {
     pub decimals: u8,
     /// Stablecoin currency identifier.
     pub currency: String,
-    /// Security ISIN identifier.
+    /// Security ISIN identifier (legacy field; prefer `security_identifiers` map for security tokens).
     pub security_isin: String,
     /// Bitmask of active pause vectors.
     pub paused: U256,
@@ -61,6 +62,12 @@ pub struct InMemoryTokenAccounting {
     pub role_admins: HashMap<B256, B256>,
     /// Policy IDs keyed by policy type.
     pub policy_ids: HashMap<B256, u64>,
+    /// Share-to-tokens ratio scaled to WAD (1e18). Security tokens only.
+    pub shares_to_tokens_ratio: U256,
+    /// Security identifier values keyed by `keccak256(identifier_type)`. Security tokens only.
+    pub security_identifiers: HashMap<B256, String>,
+    /// Consumed announcement ids (stored as `keccak256(id)`). Security tokens only.
+    pub announcement_ids_used: HashSet<B256>,
     /// Events collected by `emit_event`; does not produce real EVM logs.
     pub events: Vec<LogData>,
 }
@@ -88,6 +95,9 @@ impl InMemoryTokenAccounting {
             role_member_counts: HashMap::new(),
             role_admins: HashMap::new(),
             policy_ids: HashMap::new(),
+            shares_to_tokens_ratio: U256::ZERO,
+            security_identifiers: HashMap::new(),
+            announcement_ids_used: HashSet::new(),
             events: Vec::new(),
         }
     }
@@ -165,6 +175,10 @@ impl TokenAccounting for InMemoryTokenAccounting {
     }
 
     fn security_identifier(&self, identifier_type: &str) -> Result<String> {
+        let key = alloy_primitives::keccak256(identifier_type.as_bytes());
+        if let Some(val) = self.security_identifiers.get(&key) {
+            return Ok(val.clone());
+        }
         if identifier_type == "ISIN" { Ok(self.security_isin.clone()) } else { Ok(String::new()) }
     }
 
@@ -380,5 +394,39 @@ impl PolicyRegistry for InMemoryPolicy {
 
     fn pending_policy_admin(&self, _policy_id: u64) -> Result<Address> {
         Ok(Address::ZERO)
+    }
+}
+
+impl SecurityAccounting for InMemoryTokenAccounting {
+    fn shares_to_tokens_ratio(&self) -> Result<U256> {
+        Ok(self.shares_to_tokens_ratio)
+    }
+
+    fn set_shares_to_tokens_ratio(&mut self, ratio: U256) -> Result<()> {
+        self.shares_to_tokens_ratio = ratio;
+        Ok(())
+    }
+
+    fn set_security_identifier_value(
+        &mut self,
+        identifier_type: &str,
+        value: String,
+    ) -> Result<()> {
+        let key = alloy_primitives::keccak256(identifier_type.as_bytes());
+        if value.is_empty() {
+            self.security_identifiers.remove(&key);
+        } else {
+            self.security_identifiers.insert(key, value);
+        }
+        Ok(())
+    }
+
+    fn is_announcement_id_used(&self, id_hash: B256) -> Result<bool> {
+        Ok(self.announcement_ids_used.contains(&id_hash))
+    }
+
+    fn mark_announcement_id_used(&mut self, id_hash: B256) -> Result<()> {
+        self.announcement_ids_used.insert(id_hash);
+        Ok(())
     }
 }

@@ -26,7 +26,7 @@ async fn test_activation_registry_is_activated_default() -> Result<()> {
         .call(
             ActivationRegistryStorage::ADDRESS,
             IActivationRegistry::isActivatedCall {
-                feature: ActivationRegistryStorage::SECURITIES_TOKEN_CREATION,
+                feature: ActivationRegistryStorage::B20_SECURITY,
             },
         )
         .await?;
@@ -73,9 +73,7 @@ async fn test_activation_registry_unauthorized_activate_reverts() -> Result<()> 
     let succeeded = client
         .try_send_call(
             ActivationRegistryStorage::ADDRESS,
-            IActivationRegistry::activateCall {
-                feature: ActivationRegistryStorage::SECURITIES_TOKEN_CREATION,
-            },
+            IActivationRegistry::activateCall { feature: ActivationRegistryStorage::B20_SECURITY },
             "activate (unauthorized)",
         )
         .await?;
@@ -87,7 +85,7 @@ async fn test_activation_registry_unauthorized_activate_reverts() -> Result<()> 
         .call(
             ActivationRegistryStorage::ADDRESS,
             IActivationRegistry::isActivatedCall {
-                feature: ActivationRegistryStorage::SECURITIES_TOKEN_CREATION,
+                feature: ActivationRegistryStorage::B20_SECURITY,
             },
         )
         .await?;
