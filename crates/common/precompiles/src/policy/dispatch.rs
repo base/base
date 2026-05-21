@@ -8,7 +8,7 @@ use super::{
     storage::PolicyRegistryStorage,
 };
 use crate::{
-    ActivationRegistryStorage, ActivationFeature,
+    ActivationFeature, ActivationRegistryStorage,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
@@ -82,7 +82,9 @@ mod tests {
     use alloy_sol_types::SolCall;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use crate::{ActivationRegistryStorage, ActivationFeature, IPolicyRegistry, PolicyRegistryStorage};
+    use crate::{
+        ActivationFeature, ActivationRegistryStorage, IPolicyRegistry, PolicyRegistryStorage,
+    };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");

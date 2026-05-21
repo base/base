@@ -19,7 +19,8 @@ use super::{
     accounting::SecurityAccounting,
 };
 use crate::{
-    ActivationRegistryStorage, B20PolicyType, B20TokenRole, Burnable, Configurable, ActivationFeature,
+    ActivationFeature, ActivationRegistryStorage, B20PolicyType, B20TokenRole, Burnable,
+    Configurable,
     IB20::{self, IB20Calls as C},
     Mintable, Pausable, Permittable, Policy, RoleManaged, Token, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},

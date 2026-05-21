@@ -264,8 +264,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        ActivationRegistryStorage, B20SecurityStorage, B20Token, B20TokenStorage, ActivationFeature, IB20,
-        Mintable, Permittable, Token, TokenAccounting, Transferable,
+        ActivationFeature, ActivationRegistryStorage, B20SecurityStorage, B20Token,
+        B20TokenStorage, IB20, Mintable, Permittable, Token, TokenAccounting, Transferable,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");

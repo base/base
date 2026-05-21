@@ -4,7 +4,7 @@ mod abi;
 pub use abi::IActivationRegistry;
 
 mod storage;
-pub use storage::{ActivationRegistryStorage, ActivationFeature};
+pub use storage::{ActivationFeature, ActivationRegistryStorage};
 
 mod dispatch;
 

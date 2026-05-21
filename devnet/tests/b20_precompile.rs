@@ -8,7 +8,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use base_common_network::Base;
 use base_common_precompiles::{
-    B20TokenRole, ActivationFeature, IB20, ITokenFactory, TokenFactoryStorage, TokenVariant,
+    ActivationFeature, B20TokenRole, IB20, ITokenFactory, TokenFactoryStorage, TokenVariant,
 };
 use devnet::{
     B20PrecompileClient,

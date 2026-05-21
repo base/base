@@ -6,7 +6,7 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ActivationRegistryStorage, ActivationFeature, ITokenFactory, TokenFactoryStorage, TokenVariant,
+    ActivationFeature, ActivationRegistryStorage, ITokenFactory, TokenFactoryStorage, TokenVariant,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 

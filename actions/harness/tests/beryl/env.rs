@@ -11,9 +11,8 @@ use base_action_harness::{
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_precompiles::{
-    ActivationRegistryStorage, ActivationFeature, IActivationRegistry, IB20, ITokenFactory,
-    TokenFactoryStorage,
-    TokenVariant,
+    ActivationFeature, ActivationRegistryStorage, IActivationRegistry, IB20, ITokenFactory,
+    TokenFactoryStorage, TokenVariant,
 };
 use base_precompile_storage::StorageKey;
 use base_test_utils::Account;

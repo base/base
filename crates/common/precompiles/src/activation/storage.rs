@@ -338,10 +338,14 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
 
         set_active(&mut storage, initially_active);
+        let events_before = storage.get_events(ActivationRegistryStorage::ADDRESS).len();
+
         let result = apply_transition(&mut storage, transition);
 
         assert!(result.is_err());
         assert_activated(&mut storage, initially_active);
+        // A failed transition must not emit any events — guard against emit-then-revert bugs.
+        assert_eq!(storage.get_events(ActivationRegistryStorage::ADDRESS).len(), events_before);
     }
 
     #[rstest]
@@ -362,6 +366,16 @@ mod tests {
 
         assert!(result.is_err());
         assert_activated(&mut storage, initially_active);
+    }
+
+    #[test]
+    fn assert_activated_reverts_when_feature_never_activated() {
+        let mut storage = HashMapStorageProvider::new(1);
+
+        let output = assert_activated_output(&mut storage);
+
+        assert!(output.reverted);
+        assert_eq!(storage.get_events(ActivationRegistryStorage::ADDRESS).len(), 0);
     }
 
     #[test]
