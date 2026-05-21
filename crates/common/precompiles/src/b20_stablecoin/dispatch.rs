@@ -10,7 +10,6 @@ use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
-use IB20::IB20Calls as C;
 
 use super::{
     B20StablecoinToken,
@@ -18,9 +17,9 @@ use super::{
     accounting::StablecoinAccounting,
 };
 use crate::{
-    ActivationRegistryStorage, Burnable, Configurable, IB20, Mintable, Pausable, Permittable,
-    Policy, Redeemable, Transferable,
-    macros::decode_precompile_call,
+    ActivationRegistryStorage, Burnable, Configurable, Mintable, Pausable, Permittable, Policy,
+    Redeemable, Transferable, macros::decode_precompile_call,
+    IB20::{self, IB20Calls as C},
 };
 
 impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
