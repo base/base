@@ -1,10 +1,17 @@
 //! Utility functions for the contract macro implementation.
 
 use alloy_primitives::{U256, keccak256};
-use syn::{Attribute, Lit, Type};
+use syn::{Attribute, Lit, LitStr, Path, Type};
 
-/// Return type for [`extract_attributes`]: (`slot`, `base_slot`)
-type ExtractedAttributes = (Option<U256>, Option<U256>);
+/// Parsed `#[namespace("...")]` metadata.
+#[derive(Debug, Clone)]
+pub(crate) struct NamespaceInfo {
+    pub(crate) id: LitStr,
+    pub(crate) root: U256,
+}
+
+/// Return type for [`extract_attributes`]: (`slot`, `base_slot`, `namespace`)
+type ExtractedAttributes = (Option<U256>, Option<U256>, Option<NamespaceInfo>);
 
 /// Parses a slot value from a literal.
 ///
@@ -30,6 +37,34 @@ fn parse_slot_value(value: &Lit) -> syn::Result<U256> {
             "slot attribute must be an integer or a string literal",
         )),
     }
+}
+
+/// Returns whether an attribute path ends with the provided identifier.
+pub(crate) fn attr_path_is(path: &Path, ident: &str) -> bool {
+    path.segments.last().is_some_and(|segment| segment.ident == ident)
+}
+
+/// Parses and validates a namespace id string.
+pub(crate) fn parse_namespace_id(id: LitStr) -> syn::Result<NamespaceInfo> {
+    let value = id.value();
+    if value.is_empty() {
+        return Err(syn::Error::new(id.span(), "namespace id cannot be empty"));
+    }
+    if value.chars().any(char::is_whitespace) {
+        return Err(syn::Error::new(id.span(), "namespace id must not contain whitespace"));
+    }
+
+    Ok(NamespaceInfo { root: erc7201_root(&id)?, id })
+}
+
+/// Computes the ERC-7201 namespace root for `id`.
+pub(crate) fn erc7201_root(id: &LitStr) -> syn::Result<U256> {
+    let id_hash = U256::from_be_bytes(keccak256(id.value().as_bytes()).0);
+    let shifted = id_hash.checked_sub(U256::ONE).ok_or_else(|| {
+        syn::Error::new(id.span(), "namespace root underflow while applying ERC-7201 formula")
+    })?;
+    let root = U256::from_be_bytes(keccak256(shifted.to_be_bytes::<32>()).0);
+    Ok(root & (U256::MAX - U256::from(0xffu64)))
 }
 
 /// Converts a string from `CamelCase` or `snake_case` to `snake_case`.
@@ -89,16 +124,17 @@ pub(crate) fn to_camel_case(s: &str) -> String {
 pub(crate) fn extract_attributes(attrs: &[Attribute]) -> syn::Result<ExtractedAttributes> {
     let mut slot_attr: Option<U256> = None;
     let mut base_slot_attr: Option<U256> = None;
+    let mut namespace_attr: Option<NamespaceInfo> = None;
 
     for attr in attrs {
         if attr.path().is_ident("slot") {
             if slot_attr.is_some() {
                 return Err(syn::Error::new_spanned(attr, "duplicate `slot` attribute"));
             }
-            if base_slot_attr.is_some() {
+            if base_slot_attr.is_some() || namespace_attr.is_some() {
                 return Err(syn::Error::new_spanned(
                     attr,
-                    "cannot use both `slot` and `base_slot` attributes on the same field",
+                    "cannot combine `slot`, `base_slot`, and `namespace` attributes on the same field",
                 ));
             }
             let value: Lit = attr.parse_args()?;
@@ -107,18 +143,47 @@ pub(crate) fn extract_attributes(attrs: &[Attribute]) -> syn::Result<ExtractedAt
             if base_slot_attr.is_some() {
                 return Err(syn::Error::new_spanned(attr, "duplicate `base_slot` attribute"));
             }
-            if slot_attr.is_some() {
+            if slot_attr.is_some() || namespace_attr.is_some() {
                 return Err(syn::Error::new_spanned(
                     attr,
-                    "cannot use both `slot` and `base_slot` attributes on the same field",
+                    "cannot combine `slot`, `base_slot`, and `namespace` attributes on the same field",
                 ));
             }
             let value: Lit = attr.parse_args()?;
             base_slot_attr = Some(parse_slot_value(&value)?);
+        } else if attr_path_is(attr.path(), "namespace") {
+            if namespace_attr.is_some() {
+                return Err(syn::Error::new_spanned(attr, "duplicate `namespace` attribute"));
+            }
+            if slot_attr.is_some() || base_slot_attr.is_some() {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "cannot combine `slot`, `base_slot`, and `namespace` attributes on the same field",
+                ));
+            }
+            namespace_attr = Some(parse_namespace_id(attr.parse_args()?)?);
         }
     }
 
-    Ok((slot_attr, base_slot_attr))
+    Ok((slot_attr, base_slot_attr, namespace_attr))
+}
+
+/// Extracts a contract-level `#[namespace("...")]` attribute.
+pub(crate) fn extract_namespace(attrs: &[Attribute]) -> syn::Result<Option<NamespaceInfo>> {
+    let mut namespace = None;
+
+    for attr in attrs {
+        if !attr_path_is(attr.path(), "namespace") {
+            continue;
+        }
+        if namespace.is_some() {
+            return Err(syn::Error::new_spanned(attr, "duplicate `namespace` attribute"));
+        }
+
+        namespace = Some(parse_namespace_id(attr.parse_args()?)?);
+    }
+
+    Ok(namespace)
 }
 
 /// Extracts array sizes from the `#[storable_arrays(...)]` attribute.
@@ -211,6 +276,7 @@ pub(crate) fn extract_mapping_types(ty: &Type) -> Option<(&Type, &Type)> {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::uint;
     use syn::parse_quote;
 
     use super::*;
@@ -247,5 +313,20 @@ mod tests {
 
         let ty: Type = parse_quote!(Vec<u8>);
         assert!(extract_mapping_types(&ty).is_none());
+    }
+
+    #[test]
+    fn test_erc7201_root() {
+        let id: LitStr = parse_quote!("b20.policy");
+        assert_eq!(
+            erc7201_root(&id).unwrap(),
+            uint!(0x50861ae81a7f4392b927efbaeecf8f091f3bd39245aa45ea91499a137b8b3100_U256)
+        );
+    }
+
+    #[test]
+    fn test_parse_namespace_id_rejects_whitespace() {
+        let id: LitStr = parse_quote!("b20 policy");
+        assert!(parse_namespace_id(id).is_err());
     }
 }

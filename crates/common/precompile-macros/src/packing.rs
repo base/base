@@ -66,19 +66,28 @@ pub(crate) struct LayoutField<'a> {
 
 /// Build layout IR from field information.
 pub(crate) fn allocate_slots(fields: &[FieldInfo]) -> syn::Result<Vec<LayoutField<'_>>> {
+    allocate_slots_from(fields, U256::ZERO)
+}
+
+/// Build layout IR from field information, starting auto-allocation at `initial_base_slot`.
+pub(crate) fn allocate_slots_from(
+    fields: &[FieldInfo],
+    initial_base_slot: U256,
+) -> syn::Result<Vec<LayoutField<'_>>> {
     let mut result = Vec::with_capacity(fields.len());
-    let mut current_base_slot = U256::ZERO;
+    let mut current_base_slot = initial_base_slot;
 
     for field in fields {
         let kind = classify_field_type(&field.ty)?;
 
-        let assigned_slot = match (field.slot, field.base_slot) {
-            (Some(explicit), _) => SlotAssignment::Manual(explicit),
-            (None, Some(new_base)) => {
+        let assigned_slot = match (field.slot, field.base_slot, field.namespace.as_ref()) {
+            (Some(explicit), _, _) => SlotAssignment::Manual(explicit),
+            (None, Some(new_base), _) => {
                 current_base_slot = new_base;
                 SlotAssignment::Auto { base_slot: new_base }
             }
-            (None, None) => SlotAssignment::Auto { base_slot: current_base_slot },
+            (None, None, Some(namespace)) => SlotAssignment::Auto { base_slot: namespace.root },
+            (None, None, None) => SlotAssignment::Auto { base_slot: current_base_slot },
         };
 
         result.push(LayoutField { name: &field.name, ty: &field.ty, kind, assigned_slot });
@@ -90,7 +99,7 @@ pub(crate) fn allocate_slots(fields: &[FieldInfo]) -> syn::Result<Vec<LayoutFiel
 /// Generate packing constants from layout IR.
 pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>], gen_location: bool) -> TokenStream {
     let mut constants = TokenStream::new();
-    let mut current_base_slot: Option<&LayoutField<'_>> = None;
+    let mut last_auto_fields = Vec::<&LayoutField<'_>>::new();
 
     for field in fields {
         let ty = field.ty;
@@ -115,27 +124,32 @@ pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>], gen_location: bo
                 (slot_expr, quote! { 0 })
             }
             SlotAssignment::Auto { base_slot, .. } => {
-                let output = if let Some(current_base) = current_base_slot
-                    && current_base.assigned_slot.ref_slot() == field.assigned_slot.ref_slot()
-                {
-                    let (prev_slot, prev_offset) =
-                        PackingConstants::new(current_base.name).into_tuple();
-                    gen_slot_packing_logic(
-                        current_base.ty,
-                        field.ty,
-                        quote! { #prev_slot },
-                        quote! { #prev_offset },
-                    )
-                } else {
-                    let limbs = *base_slot.as_limbs();
-                    let slot_expr = quote! {
-                        ::alloy_primitives::U256::from_limbs([#(#limbs),*])
-                            .checked_add(#slots_to_end).expect("slot overflow")
-                            .saturating_sub(#slots_to_end)
-                    };
-                    (slot_expr, quote! { 0 })
-                };
-                current_base_slot = Some(field);
+                let output = last_auto_fields
+                    .iter()
+                    .rev()
+                    .find(|candidate| candidate.assigned_slot.ref_slot() == base_slot)
+                    .map_or_else(
+                        || {
+                            let limbs = *base_slot.as_limbs();
+                            let slot_expr = quote! {
+                                ::alloy_primitives::U256::from_limbs([#(#limbs),*])
+                                    .checked_add(#slots_to_end).expect("slot overflow")
+                                    .saturating_sub(#slots_to_end)
+                            };
+                            (slot_expr, quote! { 0 })
+                        },
+                        |current_base| {
+                            let (prev_slot, prev_offset) =
+                                PackingConstants::new(current_base.name).into_tuple();
+                            gen_slot_packing_logic(
+                                current_base.ty,
+                                field.ty,
+                                quote! { #prev_slot },
+                                quote! { #prev_offset },
+                            )
+                        },
+                    );
+                last_auto_fields.push(field);
                 output
             }
         };
@@ -219,6 +233,43 @@ where
     } else {
         None
     };
+
+    (prev_slot_ref, next_slot_ref)
+}
+
+/// Returns previous and next slot constants for fields that share the same auto-allocation root.
+pub(crate) fn get_same_root_neighbor_slot_refs(
+    idx: usize,
+    fields: &[LayoutField<'_>],
+    packing: &Ident,
+) -> (Option<TokenStream>, Option<TokenStream>) {
+    if !matches!(fields[idx].assigned_slot, SlotAssignment::Auto { .. }) {
+        return (None, None);
+    }
+
+    let root = fields[idx].assigned_slot.ref_slot();
+    let prev_slot_ref = fields[..idx]
+        .iter()
+        .rev()
+        .find(|field| {
+            matches!(field.assigned_slot, SlotAssignment::Auto { .. })
+                && field.assigned_slot.ref_slot() == root
+        })
+        .map(|field| {
+            let prev_slot = PackingConstants::new(field.name).slot();
+            quote! { #packing::#prev_slot }
+        });
+
+    let next_slot_ref = fields[idx + 1..]
+        .iter()
+        .find(|field| {
+            matches!(field.assigned_slot, SlotAssignment::Auto { .. })
+                && field.assigned_slot.ref_slot() == root
+        })
+        .map(|field| {
+            let next_slot = PackingConstants::new(field.name).slot();
+            quote! { #packing::#next_slot }
+        });
 
     (prev_slot_ref, next_slot_ref)
 }
