@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Address, U256, address};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
+use base_precompile_storage::{BasePrecompileError, ContractStorage, Handler, Mapping, Result};
 
 use super::{IPolicyRegistry, IPolicyRegistry::PolicyType};
 
@@ -126,6 +126,14 @@ impl PolicyRegistryStorage<'_> {
         let policy_type_u8 = policy_type.as_discriminant()?;
         if admin == Address::ZERO {
             return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
+        }
+
+        // The registry account must be non-empty before the first policy storage write; otherwise
+        // the EVM path can prune writes made under an empty native-precompile account.
+        // TODO: Revisit this guard against the finalized Beryl gas model, since `is_initialized`
+        // charges warm/cold account-read gas before skipping repeated `set_code`.
+        if !self.is_initialized()? {
+            self.__initialize()?;
         }
 
         let counter = self.next_counter.read()?;

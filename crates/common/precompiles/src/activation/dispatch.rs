@@ -9,7 +9,7 @@ use super::{
     ActivationRegistryStorage,
     IActivationRegistry::{self, IActivationRegistryCalls as C},
 };
-use crate::macros::decode_precompile_call;
+use crate::macros::{decode_precompile_call, deduct_calldata_cost};
 
 impl ActivationRegistryStorage<'_> {
     /// ABI-dispatches activation registry calldata.
@@ -19,9 +19,7 @@ impl ActivationRegistryStorage<'_> {
         calldata: &[u8],
         activation_admin_address: Option<Address>,
     ) -> PrecompileResult {
-        if let Err(e) = ctx.deduct_gas(crate::input_cost(calldata.len())) {
-            return e.into_precompile_result(ctx.gas_used());
-        }
+        deduct_calldata_cost!(ctx, calldata);
         self.inner(calldata, activation_admin_address)
             .into_precompile_result(ctx.gas_used(), |output| output)
     }

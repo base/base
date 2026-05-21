@@ -7,13 +7,14 @@ use super::{
     abi::{IPolicyRegistry, IPolicyRegistry::IPolicyRegistryCalls as C},
     storage::PolicyRegistryStorage,
 };
-use crate::{ActivationRegistryStorage, macros::decode_precompile_call};
+use crate::{
+    ActivationRegistryStorage,
+    macros::{decode_precompile_call, deduct_calldata_cost},
+};
 
 impl PolicyRegistryStorage<'_> {
     pub(super) fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        if let Err(e) = ctx.deduct_gas(crate::input_cost(calldata.len())) {
-            return e.into_precompile_result(ctx.gas_used());
-        }
+        deduct_calldata_cost!(ctx, calldata);
         ActivationRegistryStorage::new(ctx)
             .ensure_activated(ActivationRegistryStorage::POLICY_REGISTRY)
             .and_then(|()| self.inner(calldata))

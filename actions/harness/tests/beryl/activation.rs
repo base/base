@@ -1,0 +1,140 @@
+//! Activation registry precompile action tests across the Base Beryl boundary.
+
+use alloy_consensus::TxReceipt;
+use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_sol_types::{SolCall, SolEvent};
+use base_common_precompiles::{ActivationRegistryStorage, IActivationRegistry};
+
+use crate::env::BerylTestEnv;
+
+const GAS_LIMIT: u64 = 1_000_000;
+const FEATURE: alloy_primitives::B256 = ActivationRegistryStorage::SECURITIES_TOKEN_CREATION;
+
+#[tokio::test]
+async fn beryl_enables_activation_registry_admin_and_feature_lifecycle() {
+    let mut env = BerylTestEnv::new();
+    let (probe, deploy_probe) = env.deploy_staticcall_probe_tx(ActivationRegistryStorage::ADDRESS);
+
+    let admin_call = Bytes::from(IActivationRegistry::adminCall {}.abi_encode());
+    let pre_beryl_admin =
+        env.call_staticcall_probe_tx(probe, admin_call.clone(), BerylTestEnv::B20_PROBE_GAS_LIMIT);
+    let block1 =
+        env.sequencer.build_next_block_with_transactions(vec![deploy_probe, pre_beryl_admin]).await;
+
+    assert!(env.user_tx_succeeded(&block1, 0), "activation-registry probe must deploy");
+    assert_ne!(
+        env.probe_return_word(probe),
+        word_from_address(BerylTestEnv::alice()),
+        "activation registry admin must not be returned before Beryl"
+    );
+
+    let beryl_boundary = env.sequencer.build_empty_block().await;
+
+    let post_beryl_admin =
+        env.call_staticcall_probe_tx(probe, admin_call, BerylTestEnv::B20_PROBE_GAS_LIMIT);
+    let block2 = env.sequencer.build_next_block_with_transactions(vec![post_beryl_admin]).await;
+
+    assert!(env.probe_call_succeeded(probe), "admin() staticcall must succeed after Beryl");
+    assert_eq!(
+        env.probe_return_word(probe),
+        word_from_address(BerylTestEnv::alice()),
+        "admin() must return the harness activation admin"
+    );
+
+    let is_activated_call =
+        Bytes::from(IActivationRegistry::isActivatedCall { feature: FEATURE }.abi_encode());
+    let inactive_probe = env.call_staticcall_probe_tx(
+        probe,
+        is_activated_call.clone(),
+        BerylTestEnv::B20_PROBE_GAS_LIMIT,
+    );
+    let block3 = env.sequencer.build_next_block_with_transactions(vec![inactive_probe]).await;
+
+    assert!(env.probe_call_succeeded(probe), "isActivated() staticcall must succeed");
+    assert_eq!(env.probe_return_word(probe), U256::ZERO, "feature must start inactive");
+
+    let activate = env.activate_feature_tx(FEATURE);
+    let block4 = env.sequencer.build_next_block_with_transactions(vec![activate]).await;
+
+    assert!(env.user_tx_succeeded(&block4, 0), "admin activate(feature) must succeed");
+    assert_activation_log(&env, &block4, true);
+
+    let activate_again = env.activate_feature_tx(FEATURE);
+    let block5 = env.sequencer.build_next_block_with_transactions(vec![activate_again]).await;
+
+    assert!(!env.user_tx_succeeded(&block5, 0), "repeated activate(feature) must revert");
+
+    let active_probe = env.call_staticcall_probe_tx(
+        probe,
+        is_activated_call.clone(),
+        BerylTestEnv::B20_PROBE_GAS_LIMIT,
+    );
+    let block6 = env.sequencer.build_next_block_with_transactions(vec![active_probe]).await;
+
+    assert!(env.probe_call_succeeded(probe), "isActivated() staticcall must succeed");
+    assert_eq!(env.probe_return_word(probe), U256::ONE, "feature must be active");
+
+    let deactivate = env.deactivate_feature_tx(FEATURE);
+    let block7 = env.sequencer.build_next_block_with_transactions(vec![deactivate]).await;
+
+    assert!(env.user_tx_succeeded(&block7, 0), "admin deactivate(feature) must succeed");
+    assert_activation_log(&env, &block7, false);
+
+    let deactivate_again = env.deactivate_feature_tx(FEATURE);
+    let block8 = env.sequencer.build_next_block_with_transactions(vec![deactivate_again]).await;
+
+    assert!(!env.user_tx_succeeded(&block8, 0), "repeated deactivate(feature) must revert");
+
+    let unauthorized = env.create_bob_tx(
+        TxKind::Call(ActivationRegistryStorage::ADDRESS),
+        Bytes::from(IActivationRegistry::activateCall { feature: FEATURE }.abi_encode()),
+        GAS_LIMIT,
+    );
+    let block9 = env.sequencer.build_next_block_with_transactions(vec![unauthorized]).await;
+
+    assert!(!env.user_tx_succeeded(&block9, 0), "non-admin activate(feature) must revert");
+
+    env.derive_blocks(
+        [
+            (block1, 1),
+            (beryl_boundary, 2),
+            (block2, 3),
+            (block3, 4),
+            (block4, 5),
+            (block5, 6),
+            (block6, 7),
+            (block7, 8),
+            (block8, 9),
+            (block9, 10),
+        ],
+        10,
+    )
+    .await;
+}
+
+fn assert_activation_log(
+    env: &BerylTestEnv,
+    block: &base_common_consensus::BaseBlock,
+    active: bool,
+) {
+    let expected = if active {
+        IActivationRegistry::FeatureActivated { feature: FEATURE, caller: BerylTestEnv::alice() }
+            .encode_log_data()
+    } else {
+        IActivationRegistry::FeatureDeactivated { feature: FEATURE, caller: BerylTestEnv::alice() }
+            .encode_log_data()
+    };
+    assert!(
+        env.user_tx_receipt(block, 0)
+            .logs()
+            .iter()
+            .any(|log| log.address == ActivationRegistryStorage::ADDRESS && log.data == expected),
+        "activation transition must emit the expected event"
+    );
+}
+
+fn word_from_address(address: Address) -> U256 {
+    let mut word = [0u8; 32];
+    word[12..].copy_from_slice(address.as_slice());
+    U256::from_be_slice(&word)
+}

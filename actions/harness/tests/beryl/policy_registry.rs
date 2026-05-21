@@ -1,8 +1,10 @@
 //! Policy registry precompile action tests across the Base Beryl boundary.
 
+use alloy_consensus::TxReceipt;
 use alloy_primitives::{Bytes, TxKind, U256, hex};
-use alloy_sol_types::SolCall;
-use base_common_precompiles::IPolicyRegistry;
+use alloy_sol_types::{SolCall, SolEvent};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_precompiles::{IPolicyRegistry, PolicyRegistryStorage};
 
 use crate::env::BerylTestEnv;
 
@@ -124,4 +126,364 @@ async fn beryl_enables_policy_registry_singleton_precompile() {
         8,
     )
     .await;
+}
+
+#[tokio::test]
+async fn policy_registry_action_tests_cover_policy_lifecycle_and_views() {
+    let mut scenario = PolicyRegistryScenario::new().await;
+    let allowlist_id = policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 0);
+    let blocklist_id = policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 1);
+
+    let create_allowlist = scenario.tx(IPolicyRegistry::createPolicyCall {
+        admin: BerylTestEnv::alice(),
+        policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
+    });
+    let block = scenario.build_block_with_transactions(vec![create_allowlist]).await;
+
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "createPolicy() must succeed");
+    scenario.assert_policy_log(
+        &block,
+        0,
+        IPolicyRegistry::PolicyCreated {
+            policyId: allowlist_id,
+            creator: BerylTestEnv::alice(),
+            policyType: IPolicyRegistry::PolicyType::ALLOWLIST as u8,
+        }
+        .encode_log_data(),
+    );
+    scenario.assert_policy_log(
+        &block,
+        0,
+        IPolicyRegistry::PolicyAdminUpdated {
+            policyId: allowlist_id,
+            previousAdmin: alloy_primitives::Address::ZERO,
+            newAdmin: BerylTestEnv::alice(),
+        }
+        .encode_log_data(),
+    );
+
+    scenario
+        .assert_probe_word(
+            "nextPolicyId(BLOCKLIST)",
+            IPolicyRegistry::nextPolicyIdCall {
+                policyType: IPolicyRegistry::PolicyType::BLOCKLIST,
+            }
+            .abi_encode(),
+            U256::from(blocklist_id),
+        )
+        .await;
+    scenario
+        .assert_probe_word(
+            "policyExists(allowlist)",
+            IPolicyRegistry::policyExistsCall { policyId: allowlist_id }.abi_encode(),
+            U256::ONE,
+        )
+        .await;
+    scenario
+        .assert_probe_word(
+            "policyType(allowlist)",
+            IPolicyRegistry::policyTypeCall { policyId: allowlist_id }.abi_encode(),
+            U256::from(IPolicyRegistry::PolicyType::ALLOWLIST as u8),
+        )
+        .await;
+    scenario
+        .assert_probe_word(
+            "policyAdmin(allowlist)",
+            IPolicyRegistry::policyAdminCall { policyId: allowlist_id }.abi_encode(),
+            word_from_address(BerylTestEnv::alice()),
+        )
+        .await;
+    scenario
+        .assert_probe_word(
+            "pendingPolicyAdmin(allowlist)",
+            IPolicyRegistry::pendingPolicyAdminCall { policyId: allowlist_id }.abi_encode(),
+            U256::ZERO,
+        )
+        .await;
+
+    let update_allowlist = scenario.tx(IPolicyRegistry::updateAllowlistCall {
+        policyId: allowlist_id,
+        allowed: true,
+        accounts: vec![BerylTestEnv::bob()],
+    });
+    let block = scenario.build_block_with_transactions(vec![update_allowlist]).await;
+
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "updateAllowlist() must succeed");
+    scenario.assert_policy_log(
+        &block,
+        0,
+        IPolicyRegistry::AllowlistUpdated {
+            policyId: allowlist_id,
+            updater: BerylTestEnv::alice(),
+            allowed: true,
+            accounts: vec![BerylTestEnv::bob()],
+        }
+        .encode_log_data(),
+    );
+    scenario
+        .assert_probe_word(
+            "isAuthorized(allowlist member)",
+            IPolicyRegistry::isAuthorizedCall {
+                policyId: allowlist_id,
+                account: BerylTestEnv::bob(),
+            }
+            .abi_encode(),
+            U256::ONE,
+        )
+        .await;
+    scenario
+        .assert_probe_word(
+            "isAuthorized(allowlist non-member)",
+            IPolicyRegistry::isAuthorizedCall {
+                policyId: allowlist_id,
+                account: BerylTestEnv::carol(),
+            }
+            .abi_encode(),
+            U256::ZERO,
+        )
+        .await;
+
+    let stage_admin = scenario.tx(IPolicyRegistry::stageUpdateAdminCall {
+        policyId: allowlist_id,
+        newAdmin: BerylTestEnv::bob(),
+    });
+    let block = scenario.build_block_with_transactions(vec![stage_admin]).await;
+
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "stageUpdateAdmin() must succeed");
+    scenario.assert_policy_log(
+        &block,
+        0,
+        IPolicyRegistry::PolicyAdminStaged {
+            policyId: allowlist_id,
+            previousAdmin: BerylTestEnv::alice(),
+            newAdmin: BerylTestEnv::bob(),
+        }
+        .encode_log_data(),
+    );
+    scenario
+        .assert_probe_word(
+            "pendingPolicyAdmin(staged)",
+            IPolicyRegistry::pendingPolicyAdminCall { policyId: allowlist_id }.abi_encode(),
+            word_from_address(BerylTestEnv::bob()),
+        )
+        .await;
+
+    let finalize_admin =
+        scenario.bob_tx(IPolicyRegistry::finalizeUpdateAdminCall { policyId: allowlist_id });
+    let block = scenario.build_block_with_transactions(vec![finalize_admin]).await;
+
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "finalizeUpdateAdmin() must succeed");
+    scenario.assert_policy_log(
+        &block,
+        0,
+        IPolicyRegistry::PolicyAdminUpdated {
+            policyId: allowlist_id,
+            previousAdmin: BerylTestEnv::alice(),
+            newAdmin: BerylTestEnv::bob(),
+        }
+        .encode_log_data(),
+    );
+    scenario
+        .assert_probe_word(
+            "policyAdmin(after finalize)",
+            IPolicyRegistry::policyAdminCall { policyId: allowlist_id }.abi_encode(),
+            word_from_address(BerylTestEnv::bob()),
+        )
+        .await;
+
+    let create_blocklist = scenario.tx(IPolicyRegistry::createPolicyWithAccountsCall {
+        admin: BerylTestEnv::bob(),
+        policyType: IPolicyRegistry::PolicyType::BLOCKLIST,
+        accounts: vec![BerylTestEnv::bob()],
+    });
+    let block = scenario.build_block_with_transactions(vec![create_blocklist]).await;
+
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "createPolicyWithAccounts() must succeed");
+    scenario.assert_policy_log(
+        &block,
+        0,
+        IPolicyRegistry::BlocklistUpdated {
+            policyId: blocklist_id,
+            updater: BerylTestEnv::alice(),
+            blocked: true,
+            accounts: vec![BerylTestEnv::bob()],
+        }
+        .encode_log_data(),
+    );
+    scenario
+        .assert_probe_word(
+            "isAuthorized(blocked member)",
+            IPolicyRegistry::isAuthorizedCall {
+                policyId: blocklist_id,
+                account: BerylTestEnv::bob(),
+            }
+            .abi_encode(),
+            U256::ZERO,
+        )
+        .await;
+
+    let update_blocklist = scenario.bob_tx(IPolicyRegistry::updateBlocklistCall {
+        policyId: blocklist_id,
+        blocked: false,
+        accounts: vec![BerylTestEnv::bob()],
+    });
+    let block = scenario.build_block_with_transactions(vec![update_blocklist]).await;
+
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "updateBlocklist() must succeed");
+    scenario.assert_policy_log(
+        &block,
+        0,
+        IPolicyRegistry::BlocklistUpdated {
+            policyId: blocklist_id,
+            updater: BerylTestEnv::bob(),
+            blocked: false,
+            accounts: vec![BerylTestEnv::bob()],
+        }
+        .encode_log_data(),
+    );
+    scenario
+        .assert_probe_word(
+            "isAuthorized(unblocked member)",
+            IPolicyRegistry::isAuthorizedCall {
+                policyId: blocklist_id,
+                account: BerylTestEnv::bob(),
+            }
+            .abi_encode(),
+            U256::ONE,
+        )
+        .await;
+
+    let renounce_admin =
+        scenario.bob_tx(IPolicyRegistry::renounceAdminCall { policyId: allowlist_id });
+    let block = scenario.build_block_with_transactions(vec![renounce_admin]).await;
+
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "renounceAdmin() must succeed");
+    scenario.assert_policy_log(
+        &block,
+        0,
+        IPolicyRegistry::PolicyAdminUpdated {
+            policyId: allowlist_id,
+            previousAdmin: BerylTestEnv::bob(),
+            newAdmin: alloy_primitives::Address::ZERO,
+        }
+        .encode_log_data(),
+    );
+    scenario
+        .assert_probe_word(
+            "policyAdmin(after renounce)",
+            IPolicyRegistry::policyAdminCall { policyId: allowlist_id }.abi_encode(),
+            U256::ZERO,
+        )
+        .await;
+
+    scenario.derive().await;
+}
+
+struct PolicyRegistryScenario {
+    env: BerylTestEnv,
+    probe: alloy_primitives::Address,
+    blocks: Vec<(BaseBlock, u64)>,
+}
+
+impl PolicyRegistryScenario {
+    async fn new() -> Self {
+        let env = BerylTestEnv::new();
+        let mut scenario = Self { env, probe: alloy_primitives::Address::ZERO, blocks: Vec::new() };
+
+        scenario.build_empty_block().await;
+
+        let activate = scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
+        let block = scenario.build_block_with_transactions(vec![activate]).await;
+        assert!(
+            scenario.env.user_tx_succeeded(&block, 0),
+            "POLICY_REGISTRY activation must succeed"
+        );
+
+        let (probe, deploy_probe) =
+            scenario.env.deploy_staticcall_probe_tx(PolicyRegistryStorage::ADDRESS);
+        scenario.probe = probe;
+        let block = scenario.build_block_with_transactions(vec![deploy_probe]).await;
+        assert!(scenario.env.user_tx_succeeded(&block, 0), "policy probe deployment must succeed");
+
+        scenario
+    }
+
+    async fn build_empty_block(&mut self) {
+        let block = self.env.sequencer.build_empty_block().await;
+        self.push_block(block);
+    }
+
+    async fn build_block_with_transactions(&mut self, txs: Vec<BaseTxEnvelope>) -> BaseBlock {
+        let block = self.env.sequencer.build_next_block_with_transactions(txs).await;
+        self.push_block(block.clone());
+        block
+    }
+
+    fn tx(&self, call: impl SolCall) -> BaseTxEnvelope {
+        self.env.create_tx(
+            TxKind::Call(PolicyRegistryStorage::ADDRESS),
+            Bytes::from(call.abi_encode()),
+            GAS_LIMIT,
+        )
+    }
+
+    fn bob_tx(&mut self, call: impl SolCall) -> BaseTxEnvelope {
+        self.env.create_bob_tx(
+            TxKind::Call(PolicyRegistryStorage::ADDRESS),
+            Bytes::from(call.abi_encode()),
+            GAS_LIMIT,
+        )
+    }
+
+    async fn assert_probe_word(&mut self, label: &'static str, calldata: Vec<u8>, expected: U256) {
+        let tx = self.env.call_staticcall_probe_tx(
+            self.probe,
+            Bytes::from(calldata),
+            BerylTestEnv::B20_PROBE_GAS_LIMIT,
+        );
+        let block = self.build_block_with_transactions(vec![tx]).await;
+        assert!(self.env.user_tx_succeeded(&block, 0), "{label} probe tx must succeed");
+        assert!(self.env.probe_call_succeeded(self.probe), "{label} staticcall must succeed");
+        assert_eq!(
+            self.env.probe_return_word(self.probe),
+            expected,
+            "{label} staticcall must return the expected word"
+        );
+    }
+
+    fn assert_policy_log(
+        &self,
+        block: &BaseBlock,
+        user_tx_index: usize,
+        expected: alloy_primitives::LogData,
+    ) {
+        assert!(
+            self.env
+                .user_tx_receipt(block, user_tx_index)
+                .logs()
+                .iter()
+                .any(|log| log.address == PolicyRegistryStorage::ADDRESS && log.data == expected),
+            "policy-registry transaction {user_tx_index} must emit the expected event"
+        );
+    }
+
+    async fn derive(mut self) {
+        let expected_safe_head = self.blocks.len() as u64;
+        self.env.derive_blocks(self.blocks, expected_safe_head).await;
+    }
+
+    fn push_block(&mut self, block: BaseBlock) {
+        let block_number = self.blocks.len() as u64 + 1;
+        self.blocks.push((block, block_number));
+    }
+}
+
+const fn policy_id(policy_type: IPolicyRegistry::PolicyType, counter: u64) -> u64 {
+    (policy_type as u64) << 56 | counter
+}
+
+fn word_from_address(address: alloy_primitives::Address) -> U256 {
+    let mut word = [0u8; 32];
+    word[12..].copy_from_slice(address.as_slice());
+    U256::from_be_slice(&word)
 }

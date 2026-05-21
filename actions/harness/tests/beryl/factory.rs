@@ -1,7 +1,10 @@
 //! B-20 factory precompile action tests across the Base Beryl boundary.
 
-use alloy_primitives::U256;
+use alloy_consensus::TxReceipt;
+use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_sol_types::{SolCall, SolEvent};
 use base_common_consensus::BaseBlock;
+use base_common_precompiles::{ITokenFactory, TokenFactoryStorage};
 
 use crate::env::BerylTestEnv;
 
@@ -127,6 +130,132 @@ async fn b20_creation_reverts_while_factory_feature_is_deactivated() {
     .await;
 }
 
+#[tokio::test]
+async fn token_factory_views_and_events_are_available_after_beryl_activation() {
+    let mut env = BerylTestEnv::new();
+    let token = env.b20_token_address();
+
+    let block1 = env.sequencer.build_empty_block().await;
+    let activation_block = B20FactoryPrecompiles::activate(&mut env).await;
+
+    let create = env.create_b20_token_tx();
+    let block2 = env.sequencer.build_next_block_with_transactions(vec![create]).await;
+
+    assert!(env.user_tx_succeeded(&block2, 0), "B-20 creation transaction must succeed");
+    assert_token_created_log(&env, &block2, token);
+
+    let (probe, deploy_probe) = env.deploy_staticcall_probe_tx(TokenFactoryStorage::ADDRESS);
+    let block3 = env.sequencer.build_next_block_with_transactions(vec![deploy_probe]).await;
+    assert!(env.user_tx_succeeded(&block3, 0), "factory staticcall probe must deploy");
+
+    let get_token_address = env.call_staticcall_probe_tx(
+        probe,
+        Bytes::from(
+            ITokenFactory::getTokenAddressCall {
+                variant: ITokenFactory::TokenVariant::DEFAULT,
+                decimals: BerylTestEnv::B20_DECIMALS,
+                sender: BerylTestEnv::alice(),
+                salt: BerylTestEnv::b20_token_salt(),
+            }
+            .abi_encode(),
+        ),
+        BerylTestEnv::B20_PROBE_GAS_LIMIT,
+    );
+    let block4 = env.sequencer.build_next_block_with_transactions(vec![get_token_address]).await;
+
+    assert!(env.probe_call_succeeded(probe), "getTokenAddress() staticcall must succeed");
+    assert_eq!(
+        env.probe_return_word(probe),
+        word_from_address(token),
+        "getTokenAddress() must return the deterministic token address"
+    );
+
+    let is_b20 = env.call_staticcall_probe_tx(
+        probe,
+        Bytes::from(ITokenFactory::isB20Call { token }.abi_encode()),
+        BerylTestEnv::B20_PROBE_GAS_LIMIT,
+    );
+    let block5 = env.sequencer.build_next_block_with_transactions(vec![is_b20]).await;
+
+    assert!(env.probe_call_succeeded(probe), "isB20() staticcall must succeed");
+    assert_eq!(env.probe_return_word(probe), U256::ONE, "created token must be B-20");
+
+    let is_not_b20 = env.call_staticcall_probe_tx(
+        probe,
+        Bytes::from(ITokenFactory::isB20Call { token: TokenFactoryStorage::ADDRESS }.abi_encode()),
+        BerylTestEnv::B20_PROBE_GAS_LIMIT,
+    );
+    let block6 = env.sequencer.build_next_block_with_transactions(vec![is_not_b20]).await;
+
+    assert!(env.probe_call_succeeded(probe), "isB20(non-token) staticcall must succeed");
+    assert_eq!(env.probe_return_word(probe), U256::ZERO, "factory singleton must not be B-20");
+
+    let get_variant = env.call_staticcall_probe_tx(
+        probe,
+        Bytes::from(ITokenFactory::getTokenVariantCall { token }.abi_encode()),
+        BerylTestEnv::B20_PROBE_GAS_LIMIT,
+    );
+    let block7 = env.sequencer.build_next_block_with_transactions(vec![get_variant]).await;
+
+    assert!(env.probe_call_succeeded(probe), "getTokenVariant() staticcall must succeed");
+    assert_eq!(
+        env.probe_return_word(probe),
+        U256::from(ITokenFactory::TokenVariant::DEFAULT as u8),
+        "created token variant must be DEFAULT"
+    );
+
+    let get_none_variant = env.call_staticcall_probe_tx(
+        probe,
+        Bytes::from(
+            ITokenFactory::getTokenVariantCall { token: Address::repeat_byte(0xab) }.abi_encode(),
+        ),
+        BerylTestEnv::B20_PROBE_GAS_LIMIT,
+    );
+    let block8 = env.sequencer.build_next_block_with_transactions(vec![get_none_variant]).await;
+
+    assert!(env.probe_call_succeeded(probe), "getTokenVariant(non-token) staticcall must succeed");
+    assert_eq!(
+        env.probe_return_word(probe),
+        U256::from(ITokenFactory::TokenVariant::NONE as u8),
+        "non-token variant must be NONE"
+    );
+
+    let invalid_variant_create = env.create_tx(
+        TxKind::Call(TokenFactoryStorage::ADDRESS),
+        Bytes::from(
+            ITokenFactory::createTokenCall {
+                variant: ITokenFactory::TokenVariant::STABLECOIN,
+                salt: BerylTestEnv::ALT_SALT,
+                params: Bytes::new(),
+                initCalls: Vec::new(),
+            }
+            .abi_encode(),
+        ),
+        BerylTestEnv::B20_GAS_LIMIT,
+    );
+    let block9 =
+        env.sequencer.build_next_block_with_transactions(vec![invalid_variant_create]).await;
+
+    assert!(!env.user_tx_succeeded(&block9, 0), "unimplemented variants must revert");
+
+    env.derive_blocks(
+        [
+            (block1, 1),
+            (activation_block, 2),
+            (block2, 3),
+            (block3, 4),
+            (block4, 5),
+            (block5, 6),
+            (block6, 7),
+            (block7, 8),
+            (block8, 9),
+            (block9, 10),
+        ],
+        10,
+    )
+    .await;
+}
+
 struct B20FactoryPrecompiles;
 
 impl B20FactoryPrecompiles {
@@ -143,4 +272,28 @@ impl B20FactoryPrecompiles {
 
         block
     }
+}
+
+fn assert_token_created_log(env: &BerylTestEnv, block: &BaseBlock, token: Address) {
+    let expected = ITokenFactory::TokenCreated {
+        token,
+        variant: ITokenFactory::TokenVariant::DEFAULT,
+        name: "Action B20".to_string(),
+        symbol: "AB20".to_string(),
+        decimals: BerylTestEnv::B20_DECIMALS,
+    }
+    .encode_log_data();
+    assert!(
+        env.user_tx_receipt(block, 0)
+            .logs()
+            .iter()
+            .any(|log| log.address == TokenFactoryStorage::ADDRESS && log.data == expected),
+        "createToken() must emit TokenCreated"
+    );
+}
+
+fn word_from_address(address: Address) -> U256 {
+    let mut word = [0u8; 32];
+    word[12..].copy_from_slice(address.as_slice());
+    U256::from_be_slice(&word)
 }
