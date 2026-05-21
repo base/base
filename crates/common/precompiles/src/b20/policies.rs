@@ -111,12 +111,6 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         )
     }
 
-    /// Returns whether `policy_id` is one of the built-in global policies.
-    pub const fn is_builtin_policy(policy_id: u64) -> bool {
-        policy_id == PolicyRegistryStorage::ALWAYS_ALLOW_ID
-            || policy_id == PolicyRegistryStorage::ALWAYS_BLOCK_ID
-    }
-
     /// Ensures `policy_type` names a B-20 policy slot.
     pub fn ensure_supported_policy_type(policy_type: B256) -> Result<()> {
         if B20PolicyType::from_id(policy_type).is_some() {
