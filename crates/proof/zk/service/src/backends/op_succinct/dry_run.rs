@@ -12,7 +12,7 @@ use base_proof_succinct_proof_utils::get_range_elf_embedded;
 use base_zk_client::{ExecutionStats, ProveBlockRequest};
 use base_zk_db::{
     ProofRequest, ProofRequestRepo, ProofSession, ProofStatus, ProofType,
-    SessionStatus as DbSessionStatus, UpdateReceipt,
+    SessionStatus as DbSessionStatus, UpdateProofSession,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -32,7 +32,7 @@ use crate::backends::traits::{
 pub const EXECUTION_STATS_METADATA_KEY: &str = "execution_stats";
 
 /// Metadata key indicating that a session was produced by the dry-run backend.
-const DRY_RUN_METADATA_KEY: &str = "dry_run";
+pub const DRY_RUN_METADATA_KEY: &str = "dry_run";
 
 /// Local execution backend that returns SP1 execution statistics.
 #[derive(Clone)]
@@ -254,22 +254,20 @@ impl ProvingBackend for DryRunBackend {
             }
         }
 
-        for session in &sessions {
-            if session.status == DbSessionStatus::Running {
-                let update_receipt = UpdateReceipt {
-                    id: proof_request.id,
-                    stark_receipt: None,
-                    snark_receipt: None,
-                    status: ProofStatus::Running,
-                    error_message: None,
-                };
+        let running_sessions =
+            sessions.iter().filter(|session| session.status == DbSessionStatus::Running);
 
-                repo.complete_session_and_update_receipt(
-                    &session.backend_session_id,
-                    update_receipt,
-                )
+        for session in running_sessions {
+            let updated = repo
+                .update_proof_session_if_non_terminal(UpdateProofSession {
+                    backend_session_id: session.backend_session_id.clone(),
+                    status: DbSessionStatus::Completed,
+                    error_message: None,
+                    metadata: None,
+                })
                 .await?;
 
+            if updated {
                 info!(
                     proof_request_id = %proof_request.id,
                     session_id = %session.backend_session_id,

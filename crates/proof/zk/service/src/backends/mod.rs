@@ -2,7 +2,9 @@
 
 mod op_succinct;
 pub use op_succinct::{
-    ClusterBackend as OpSuccinctClusterBackend, DryRunBackend as OpSuccinctDryRunBackend,
+    ClusterBackend as OpSuccinctClusterBackend,
+    DRY_RUN_METADATA_KEY as OP_SUCCINCT_DRY_RUN_METADATA_KEY,
+    DryRunBackend as OpSuccinctDryRunBackend,
     EXECUTION_STATS_METADATA_KEY as OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY,
     MockBackend as OpSuccinctMockBackend, NetworkBackend as OpSuccinctNetworkBackend,
     OpSuccinctProvider, StoredExecutionStats as OpSuccinctStoredExecutionStats,

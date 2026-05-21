@@ -8,7 +8,10 @@ use tracing::{Instrument, info};
 use uuid::Uuid;
 
 use crate::{
-    backends::{OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY, OpSuccinctStoredExecutionStats},
+    backends::{
+        OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY,
+        OpSuccinctStoredExecutionStats,
+    },
     metrics,
     server::ProverServiceServer,
 };
@@ -45,6 +48,10 @@ fn get_receipt_by_type(
 }
 
 fn execution_stats_from_metadata(metadata: &serde_json::Value) -> Option<ExecutionStats> {
+    if !metadata.get(OP_SUCCINCT_DRY_RUN_METADATA_KEY)?.as_bool()? {
+        return None;
+    }
+
     let stats = metadata.get(OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY)?;
     let stored = serde_json::from_value::<OpSuccinctStoredExecutionStats>(stats.clone()).ok()?;
     Some(stored.into())
@@ -93,6 +100,8 @@ impl ProverServiceServer {
         requested_receipt_type: ReceiptType,
     ) -> Result<(Vec<u8>, Option<ExecutionStats>), Status> {
         if proof_req.stark_receipt.is_none() && proof_req.snark_receipt.is_none() {
+            // Receipt absence is only a fast path before touching session metadata; the dry-run
+            // marker remains the authoritative check inside `execution_stats_from_metadata`.
             let execution_stats = self.execution_stats_for_request(proof_req.id).await?;
             if execution_stats.is_some() {
                 return Ok((vec![], execution_stats));
@@ -205,6 +214,8 @@ mod tests {
 
     fn metadata_with_execution_stats(stats: serde_json::Value) -> serde_json::Value {
         let mut metadata = serde_json::Map::new();
+        metadata
+            .insert(OP_SUCCINCT_DRY_RUN_METADATA_KEY.to_string(), serde_json::Value::Bool(true));
         metadata.insert(OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY.to_string(), stats);
         serde_json::Value::Object(metadata)
     }
@@ -272,6 +283,24 @@ mod tests {
         }));
 
         assert!(execution_stats_from_metadata(&metadata).is_none());
+    }
+
+    #[test]
+    fn test_execution_stats_from_metadata_requires_dry_run_marker() {
+        let stored_stats = OpSuccinctStoredExecutionStats {
+            total_instruction_cycles: 100,
+            total_sp1_gas: 200,
+            cycle_tracker: HashMap::new(),
+            witness_generation_ms: 12.5,
+            execution_ms: 34.5,
+        };
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY.to_string(),
+            serde_json::to_value(stored_stats).expect("serialize"),
+        );
+
+        assert!(execution_stats_from_metadata(&serde_json::Value::Object(metadata)).is_none());
     }
 
     #[test]
