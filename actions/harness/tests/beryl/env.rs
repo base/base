@@ -1,7 +1,7 @@
 //! Shared test environment for Base Beryl action tests.
 
 use alloy_consensus::TxReceipt;
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, uint};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, L2Sequencer,
@@ -21,13 +21,16 @@ use base_test_utils::Account;
 pub(crate) const BERYL_ACTIVATION_TIMESTAMP: u64 = 4;
 
 /// B-20 token storage slot for `total_supply`.
-const B20_TOTAL_SUPPLY_SLOT: U256 = U256::ZERO;
+const B20_TOTAL_SUPPLY_SLOT: U256 =
+    uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434003_U256);
 
 /// B-20 token storage slot for `balances`.
-const B20_BALANCES_SLOT: U256 = U256::from_limbs([2, 0, 0, 0]);
+const B20_BALANCES_SLOT: U256 =
+    uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434004_U256);
 
 /// B-20 token storage slot for `allowances`.
-const B20_ALLOWANCES_SLOT: U256 = U256::from_limbs([3, 0, 0, 0]);
+const B20_ALLOWANCES_SLOT: U256 =
+    uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434005_U256);
 
 /// Storage slot where staticcall probes store the call success flag.
 const PROBE_CALL_SUCCESS_SLOT: U256 = U256::ZERO;

@@ -584,7 +584,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256, keccak256};
+    use alloy_primitives::{Address, U256};
 
     use crate::{
         Token, TokenAccounting,
