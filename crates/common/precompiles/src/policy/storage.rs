@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Address, U256, address};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
+use base_precompile_storage::{BasePrecompileError, ContractStorage, Handler, Mapping, Result};
 
 use super::{IPolicyRegistry, IPolicyRegistry::PolicyType};
 
@@ -91,6 +91,10 @@ impl PolicyRegistryStorage<'_> {
         let policy_type_u8 = policy_type.as_discriminant()?;
         if admin == Address::ZERO {
             return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
+        }
+
+        if !self.is_initialized()? {
+            self.__initialize()?;
         }
 
         let counter = self.next_counter.read()?;

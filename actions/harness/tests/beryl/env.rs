@@ -9,7 +9,7 @@ use base_action_harness::{
     VerifierPipeline,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_precompiles::{
     ActivationRegistryStorage, IActivationRegistry, IB20, ITokenFactory, TokenFactoryStorage,
     TokenVariant,
@@ -129,6 +129,21 @@ impl BerylTestEnv {
         account.create_tx(self.chain_id, to, input, U256::ZERO, gas_limit)
     }
 
+    /// Creates and signs a transaction from Bob's account.
+    pub(crate) fn create_bob_tx(
+        &mut self,
+        to: TxKind,
+        input: Bytes,
+        gas_limit: u64,
+    ) -> BaseTxEnvelope {
+        Self::create_account_tx(self.chain_id, &mut self.bob_account, to, input, gas_limit)
+    }
+
+    /// Returns the L2 chain ID used by the Beryl test environment.
+    pub(crate) const fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
     /// Activation registry feature ID for the token factory precompile.
     pub(crate) const fn token_factory_feature() -> B256 {
         ActivationRegistryStorage::TOKEN_FACTORY
@@ -186,6 +201,16 @@ impl BerylTestEnv {
             Self::B20_PROBE_GAS_LIMIT,
         );
         (address, tx)
+    }
+
+    /// Creates a transaction that calls a deployed staticcall probe with arbitrary calldata.
+    pub(crate) fn call_staticcall_probe_tx(
+        &self,
+        probe: Address,
+        input: Bytes,
+        gas_limit: u64,
+    ) -> BaseTxEnvelope {
+        self.create_tx(TxKind::Call(probe), input, gas_limit)
     }
 
     /// Creates a transaction that transfers B-20 tokens from Alice to `to`.
@@ -336,6 +361,24 @@ impl BerylTestEnv {
         self.user_tx_receipt(block, user_tx_index).status()
     }
 
+    /// Returns the receipt for a non-deposit transaction in `block`.
+    pub(crate) fn user_tx_receipt(&self, block: &BaseBlock, user_tx_index: usize) -> BaseReceipt {
+        let deposit_count = block
+            .body
+            .transactions
+            .iter()
+            .take_while(|tx| matches!(tx, BaseTxEnvelope::Deposit(_)))
+            .count();
+        let receipts = self
+            .sequencer
+            .receipts_at(block.header.number)
+            .unwrap_or_else(|| panic!("receipts must exist for L2 block {}", block.header.number));
+        receipts
+            .into_iter()
+            .nth(deposit_count + user_tx_index)
+            .unwrap_or_else(|| panic!("user tx receipt {user_tx_index} must exist"))
+    }
+
     /// Returns whether a user transaction emitted the expected B-20 `Transfer` event.
     pub(crate) fn b20_transfer_log_emitted(
         &self,
@@ -431,27 +474,6 @@ impl BerylTestEnv {
         init_code.extend_from_slice(&hex!("602f600c600039602f6000f3"));
         init_code.extend_from_slice(&runtime);
         Bytes::from(init_code)
-    }
-
-    fn user_tx_receipt(
-        &self,
-        block: &BaseBlock,
-        user_tx_index: usize,
-    ) -> base_common_consensus::BaseReceipt {
-        let deposit_count = block
-            .body
-            .transactions
-            .iter()
-            .take_while(|tx| matches!(tx, BaseTxEnvelope::Deposit(_)))
-            .count();
-        let receipts = self
-            .sequencer
-            .receipts_at(block.header.number)
-            .unwrap_or_else(|| panic!("receipts must exist for L2 block {}", block.header.number));
-        receipts
-            .into_iter()
-            .nth(deposit_count + user_tx_index)
-            .unwrap_or_else(|| panic!("user tx receipt {user_tx_index} must exist"))
     }
 
     fn b20_token_params(&self) -> ITokenFactory::B20CreateParams {
