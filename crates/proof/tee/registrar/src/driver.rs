@@ -1406,11 +1406,8 @@ where
         // entries within the same cycle (misconfig / discovery glitch —
         // two instances briefly backing the same enclave key) cannot
         // spawn duplicate proof tasks.
-        let mut in_flight: HashSet<Address> = pending
-            .values()
-            .filter(|t| !t.cancel.is_cancelled())
-            .map(|t| t.signer)
-            .collect();
+        let mut in_flight: HashSet<Address> =
+            pending.values().filter(|t| !t.cancel.is_cancelled()).map(|t| t.signer).collect();
 
         // Spawn-pass: any wanted signer not currently in-flight.
         for entry in &resolution.registerable {
@@ -4531,10 +4528,8 @@ mod tests {
         harness.driver.reconcile_proof_tasks(&resurrected, &mut tasks, &mut pending);
 
         assert!(pending.contains_key(&stale_id), "stale entry still pending until reaped");
-        let fresh: Vec<_> = pending
-            .iter()
-            .filter(|(id, t)| **id != stale_id && t.signer == signer)
-            .collect();
+        let fresh: Vec<_> =
+            pending.iter().filter(|(id, t)| **id != stale_id && t.signer == signer).collect();
         assert_eq!(
             fresh.len(),
             1,
