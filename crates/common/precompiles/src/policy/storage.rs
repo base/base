@@ -340,16 +340,6 @@ impl PolicyRegistryStorage<'_> {
         }
     }
 
-    /// Returns the policy ID that would be assigned to the next policy of `policy_type`.
-    ///
-    /// The counter is global across all policy types, so this is a hint only — the counter
-    /// may advance between this query and the subsequent `create_policy` call.
-    pub fn next_policy_id(&self, policy_type: PolicyType) -> Result<u64> {
-        let discriminant = policy_type.as_discriminant()?;
-        let counter = self.next_counter()?;
-        Ok(Self::make_id(discriminant, counter))
-    }
-
     /// Returns `true` if `policy_id` refers to an existing or built-in policy.
     pub fn policy_exists(&self, policy_id: u64) -> Result<bool> {
         Self::require_well_formed(policy_id)?;
@@ -452,10 +442,6 @@ impl crate::PolicyRegistry for PolicyRegistryStorage<'_> {
         accounts: alloc::vec::Vec<Address>,
     ) -> Result<()> {
         PolicyRegistryStorage::update_blocklist(self, policy_id, blocked, accounts)
-    }
-
-    fn next_policy_id(&self, policy_type: PolicyType) -> Result<u64> {
-        PolicyRegistryStorage::next_policy_id(self, policy_type)
     }
 
     fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType> {
@@ -943,18 +929,6 @@ mod tests {
         assert_eq!(err, BasePrecompileError::StaticCallViolation);
     }
 
-    // --- next_policy_id invalid type ---
-
-    #[test]
-    fn next_policy_id_always_allow_type_reverts() {
-        let mut s = storage();
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).next_policy_id(PolicyType::ALWAYS_ALLOW)
-        })
-        .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
     // --- policy_exists for built-in IDs ---
 
     #[test]
@@ -1168,17 +1142,6 @@ mod tests {
         })
         .unwrap();
         assert!(authorized);
-    }
-
-    #[test]
-    fn trait_next_policy_id_delegates() {
-        let mut s = storage();
-        let id = StorageCtx::enter(&mut s, |ctx| {
-            let reg = PolicyRegistryStorage::new(ctx);
-            crate::PolicyRegistry::next_policy_id(&reg, PolicyType::ALLOWLIST)
-        })
-        .unwrap();
-        assert_eq!((id >> 56) as u8, PolicyType::ALLOWLIST as u8);
     }
 
     #[test]

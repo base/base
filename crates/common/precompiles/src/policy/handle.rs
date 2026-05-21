@@ -85,10 +85,6 @@ impl PolicyRegistry for PolicyHandle<'_> {
         self.inner.update_blocklist(policy_id, blocked, accounts)
     }
 
-    fn next_policy_id(&self, policy_type: PolicyType) -> Result<u64> {
-        self.inner.next_policy_id(policy_type)
-    }
-
     fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType> {
         self.inner.get_policy_type(policy_id)
     }
@@ -147,16 +143,6 @@ mod tests {
         StorageCtx::enter(&mut s, |ctx| {
             let handle = PolicyHandle::new(ctx);
             assert!(handle.is_authorized(id, ALICE).unwrap());
-        });
-    }
-
-    #[test]
-    fn policy_registry_trait_next_policy_id() {
-        let mut s = storage();
-        StorageCtx::enter(&mut s, |ctx| {
-            let handle = PolicyHandle::new(ctx);
-            let id = handle.next_policy_id(IPolicyRegistry::PolicyType::ALLOWLIST).unwrap();
-            assert_eq!((id >> 56) as u8, IPolicyRegistry::PolicyType::ALLOWLIST as u8);
         });
     }
 

@@ -38,7 +38,6 @@ sol! {
         function updateAllowlist(uint64 policyId, bool allowed, address[] calldata accounts) external;
         function updateBlocklist(uint64 policyId, bool blocked, address[] calldata accounts) external;
         function isAuthorized(uint64 policyId, address account) external view returns (bool);
-        function nextPolicyId(PolicyType policyType) external view returns (uint64);
         function policyExists(uint64 policyId) external view returns (bool);
         function policyType(uint64 policyId) external view returns (PolicyType);
         function policyAdmin(uint64 policyId) external view returns (address);

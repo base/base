@@ -364,10 +364,6 @@ impl PolicyRegistry for InMemoryPolicy {
         Ok(())
     }
 
-    fn next_policy_id(&self, policy_type: IPolicyRegistry::PolicyType) -> Result<u64> {
-        Ok((policy_type as u64) << 56 | self.next_policy_counter)
-    }
-
     fn get_policy_type(&self, policy_id: u64) -> Result<IPolicyRegistry::PolicyType> {
         Ok(match policy_id {
             POLICY_ALWAYS_ALLOW => IPolicyRegistry::PolicyType::ALWAYS_ALLOW,

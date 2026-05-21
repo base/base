@@ -164,16 +164,6 @@ async fn policy_registry_action_tests_cover_policy_lifecycle_and_views() {
 
     scenario
         .assert_probe_word(
-            "nextPolicyId(BLOCKLIST)",
-            IPolicyRegistry::nextPolicyIdCall {
-                policyType: IPolicyRegistry::PolicyType::BLOCKLIST,
-            }
-            .abi_encode(),
-            U256::from(blocklist_id),
-        )
-        .await;
-    scenario
-        .assert_probe_word(
             "policyExists(allowlist)",
             IPolicyRegistry::policyExistsCall { policyId: allowlist_id }.abi_encode(),
             U256::ONE,
@@ -299,6 +289,16 @@ async fn policy_registry_action_tests_cover_policy_lifecycle_and_views() {
     let block = scenario.build_block_with_transactions(vec![create_blocklist]).await;
 
     assert!(scenario.env.user_tx_succeeded(&block, 0), "createPolicyWithAccounts() must succeed");
+    scenario.assert_policy_log(
+        &block,
+        0,
+        IPolicyRegistry::PolicyCreated {
+            policyId: blocklist_id,
+            creator: BerylTestEnv::alice(),
+            policyType: IPolicyRegistry::PolicyType::BLOCKLIST,
+        }
+        .encode_log_data(),
+    );
     scenario.assert_policy_log(
         &block,
         0,

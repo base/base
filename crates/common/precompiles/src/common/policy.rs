@@ -48,8 +48,6 @@ pub trait PolicyRegistry: Policy {
         blocked: bool,
         accounts: alloc::vec::Vec<Address>,
     ) -> Result<()>;
-    /// Returns the next policy ID that would be assigned for `policy_type`.
-    fn next_policy_id(&self, policy_type: PolicyType) -> Result<u64>;
     /// Returns the `PolicyType` of `policy_id`.
     fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType>;
     /// Returns the current admin of `policy_id`.
