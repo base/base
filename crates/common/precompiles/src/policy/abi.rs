@@ -22,6 +22,7 @@ sol! {
         error ZeroAddress();
         error NoPendingAdmin();
         error MalformedPolicyId(uint64 policyId);
+        error DelegateCallNotAllowed();
 
         event PolicyCreated(uint64 indexed policyId, address indexed creator, PolicyType policyType);
         event PolicyAdminStaged(uint64 indexed policyId, address indexed previousAdmin, address indexed newAdmin);
