@@ -186,6 +186,26 @@ pub(crate) fn extract_namespace(attrs: &[Attribute]) -> syn::Result<Option<Names
     Ok(namespace)
 }
 
+/// Extracts a type-level `#[namespace("...")]` attribute from a `Storable` layout.
+pub(crate) fn extract_storage_namespace(attrs: &[Attribute]) -> syn::Result<Option<NamespaceInfo>> {
+    let mut namespace = None;
+
+    for attr in attrs {
+        let is_namespace = attr_path_is(attr.path(), "namespace")
+            || attr_path_is(attr.path(), "storage_namespace");
+        if !is_namespace {
+            continue;
+        }
+        if namespace.is_some() {
+            return Err(syn::Error::new_spanned(attr, "duplicate `namespace` attribute"));
+        }
+
+        namespace = Some(parse_namespace_id(attr.parse_args()?)?);
+    }
+
+    Ok(namespace)
+}
+
 /// Extracts array sizes from the `#[storable_arrays(...)]` attribute.
 pub(crate) fn extract_storable_array_sizes(attrs: &[Attribute]) -> syn::Result<Option<Vec<usize>>> {
     for attr in attrs {
