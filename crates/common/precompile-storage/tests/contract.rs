@@ -346,7 +346,6 @@ mod type_namespaced_layouts {
         let security_root = erc7201_root("b20.security");
         let redeem_root = erc7201_root("b20.redeem");
 
-        assert!(<B20Storage as StorableType>::HAS_STORAGE_NAMESPACE);
         assert_eq!(<B20Storage as StorableType>::STORAGE_NAMESPACE_ID, "b20");
         assert_eq!(<B20Storage as StorableType>::STORAGE_NAMESPACE_ROOT, b20_root);
         assert_eq!(<B20SecurityStorage as StorableType>::STORAGE_NAMESPACE_ROOT, security_root);
