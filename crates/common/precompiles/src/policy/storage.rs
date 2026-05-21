@@ -344,9 +344,8 @@ impl PolicyRegistryStorage<'_> {
     /// Returns `true` if `account` is authorized under `policy_id`.
     pub fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
         Self::require_well_formed(policy_id)?;
-        // Fast-paths for built-in IDs: these are semantically defined without storage
-        // and must work even before write_builtins() has been called (e.g. a token
-        // whose policy was set to ALWAYS_BLOCK_ID before any custom policy was created).
+        // Fast-paths for built-in IDs: ALWAYS_ALLOW_ID = 0 is the EVM default for any
+        // uninitialized policy field, so this must work before write_builtins() has run.
         if policy_id == Self::ALWAYS_ALLOW_ID {
             return Ok(true);
         }
