@@ -8,18 +8,17 @@ use super::{IPolicyRegistry, IPolicyRegistry::PolicyType};
 
 /// A packed policy storage word.
 ///
-/// Layout: `[255:161]` reserved (zero) | `[160]` exists flag | `[159:0]` admin (160 bits).
+/// Layout: `[255]` exists flag | `[254:160]` reserved (zero) | `[159:0]` admin (160 bits).
 ///
 /// The policy type is not stored here — it is encoded in the high byte of the policy ID
-/// and derived from there. Bit 160 is always set for any written slot, making the zero word
+/// and derived from there. Bit 255 is always set for any written slot, making the zero word
 /// a reliable "never written" sentinel even when admin is `Address::ZERO`.
-/// The high bytes are always zero, matching the EVM's left-padded address encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PackedPolicy(U256);
 
 impl PackedPolicy {
-    /// Bit 160: the limb-2 bit at position 32 (160 - 128 = 32).
-    const EXISTS_BIT: U256 = U256::from_limbs([0, 0, 1u64 << 32, 0]);
+    /// Bit 255: the highest bit of limb 3.
+    const EXISTS_BIT: U256 = U256::from_limbs([0, 0, 0, 1u64 << 63]);
     /// Mask covering the low 160 bits where the admin address lives.
     const ADMIN_MASK: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0xFFFF_FFFF, 0]);
 
