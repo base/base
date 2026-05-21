@@ -264,8 +264,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        ActivationRegistryStorage, B20SecurityStorage, B20Token, B20TokenStorage, IB20, Mintable,
-        Permittable, Token, TokenAccounting, Transferable,
+        ActivationFeature, ActivationRegistryStorage, B20SecurityStorage, B20Token,
+        B20TokenStorage, IB20, Mintable, Permittable, Token, TokenAccounting, Transferable,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -273,9 +273,9 @@ mod tests {
     fn activate_precompiles(storage: &mut HashMapStorageProvider) {
         storage.set_caller(ACTIVATION_ADMIN);
         for key in [
-            ActivationRegistryStorage::TOKEN_FACTORY,
-            ActivationRegistryStorage::B20_TOKEN,
-            ActivationRegistryStorage::B20_SECURITY,
+            ActivationFeature::TokenFactory.id(),
+            ActivationFeature::B20Token.id(),
+            ActivationFeature::B20Security.id(),
         ] {
             StorageCtx::enter(storage, |ctx| {
                 ActivationRegistryStorage::new(ctx).activate(key, Some(ACTIVATION_ADMIN)).unwrap()

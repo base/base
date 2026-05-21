@@ -11,8 +11,8 @@ use base_action_harness::{
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_precompiles::{
-    ActivationRegistryStorage, IActivationRegistry, IB20, ITokenFactory, TokenFactoryStorage,
-    TokenVariant,
+    ActivationFeature, ActivationRegistryStorage, IActivationRegistry, IB20, ITokenFactory,
+    TokenFactoryStorage, TokenVariant,
 };
 use base_precompile_storage::StorageKey;
 use base_test_utils::Account;
@@ -146,17 +146,17 @@ impl BerylTestEnv {
 
     /// Activation registry feature ID for the token factory precompile.
     pub(crate) const fn token_factory_feature() -> B256 {
-        ActivationRegistryStorage::TOKEN_FACTORY
+        ActivationFeature::TokenFactory.id()
     }
 
     /// Activation registry feature ID for the B-20 token precompile.
     pub(crate) const fn b20_token_feature() -> B256 {
-        ActivationRegistryStorage::B20_TOKEN
+        ActivationFeature::B20Token.id()
     }
 
     /// Activation registry feature ID for the policy registry precompile.
     pub(crate) const fn policy_registry_feature() -> B256 {
-        ActivationRegistryStorage::POLICY_REGISTRY
+        ActivationFeature::PolicyRegistry.id()
     }
 
     /// Alternate salt for a second token creation used in deactivation/re-activation tests.

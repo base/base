@@ -8,7 +8,7 @@ use super::{
     storage::PolicyRegistryStorage,
 };
 use crate::{
-    ActivationRegistryStorage,
+    ActivationFeature, ActivationRegistryStorage,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
@@ -16,7 +16,7 @@ impl PolicyRegistryStorage<'_> {
     pub(super) fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         deduct_calldata_cost!(ctx, calldata);
         ActivationRegistryStorage::new(ctx)
-            .ensure_activated(ActivationRegistryStorage::POLICY_REGISTRY)
+            .ensure_activated(ActivationFeature::PolicyRegistry.id())
             .and_then(|()| self.inner(calldata))
             .into_precompile_result(ctx.gas_used(), |b| b)
     }
@@ -82,7 +82,9 @@ mod tests {
     use alloy_sol_types::SolCall;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use crate::{ActivationRegistryStorage, IPolicyRegistry, PolicyRegistryStorage};
+    use crate::{
+        ActivationFeature, ActivationRegistryStorage, IPolicyRegistry, PolicyRegistryStorage,
+    };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
@@ -92,7 +94,7 @@ mod tests {
         storage.set_caller(ACTIVATION_ADMIN);
         StorageCtx::enter(storage, |ctx| {
             ActivationRegistryStorage::new(ctx)
-                .activate(ActivationRegistryStorage::POLICY_REGISTRY, Some(ACTIVATION_ADMIN))
+                .activate(ActivationFeature::PolicyRegistry.id(), Some(ACTIVATION_ADMIN))
                 .unwrap()
         });
     }

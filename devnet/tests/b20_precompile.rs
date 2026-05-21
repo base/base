@@ -8,7 +8,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use base_common_network::Base;
 use base_common_precompiles::{
-    ActivationRegistryStorage, B20TokenRole, IB20, ITokenFactory, TokenFactoryStorage, TokenVariant,
+    ActivationFeature, B20TokenRole, IB20, ITokenFactory, TokenFactoryStorage, TokenVariant,
 };
 use devnet::{
     B20PrecompileClient,
@@ -33,8 +33,8 @@ async fn activated_b20_client<'a>(
 ) -> Result<B20PrecompileClient<'a>> {
     let b20 = B20PrecompileClient::new(provider, admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
-    b20.activate_feature(ActivationRegistryStorage::TOKEN_FACTORY).await?;
-    b20.activate_feature(ActivationRegistryStorage::B20_TOKEN).await?;
+    b20.activate_feature(ActivationFeature::TokenFactory.id()).await?;
+    b20.activate_feature(ActivationFeature::B20Token.id()).await?;
     Ok(b20)
 }
 
