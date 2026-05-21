@@ -9,30 +9,35 @@ use base_precompile_storage::{
 };
 
 use super::accounting::SecurityAccounting;
-use crate::{TokenAccounting, TokenVariant};
+use crate::{B20PolicyType, IB20, TokenAccounting, TokenVariant};
 
 /// EVM-backed storage for a security B-20 token.
 ///
-/// Slots 0–10 mirror [`crate::B20TokenStorage`] exactly so that the factory can
-/// initialize common fields through either storage type. Slot 11 holds the
-/// share-to-tokens ratio. Slots 12–13 hold security-specific mappings whose keys
-/// are `keccak256`-hashed strings (since `String` is not a valid `StorageKey`).
+/// Slots 0–16 mirror [`crate::B20TokenStorage`] exactly so that address layout
+/// and role/policy/pause storage is compatible. Slots 17–19 hold the
+/// security-specific fields: share ratio, identifier map, and announcement-id set.
 #[contract]
 pub struct B20SecurityStorage {
-    pub total_supply: U256,                                   // slot 0
-    pub supply_cap: U256,                                     // slot 1
-    pub balances: Mapping<Address, U256>,                     // slot 2
-    pub allowances: Mapping<Address, Mapping<Address, U256>>, // slot 3
-    pub paused: U256,                                         // slot 4
-    pub nonces: Mapping<Address, U256>,                       // slot 5
-    pub name: String,                                         // slot 6
-    pub symbol: String,                                       // slot 7
-    pub minimum_redeemable: U256,                             // slot 8 (in shares for security)
-    pub contract_uri: String,                                 // slot 9
-    pub capabilities: U256,                                   // slot 10
-    pub shares_to_tokens_ratio: U256,                         // slot 11
-    pub security_identifiers: Mapping<B256, String>,          // slot 12  (key = keccak256(type))
-    pub announcement_ids_used: Mapping<B256, bool>,           // slot 13  (key = keccak256(id))
+    pub total_supply: U256,                                     // slot 0
+    pub supply_cap: U256,                                       // slot 1
+    pub balances: Mapping<Address, U256>,                       // slot 2
+    pub allowances: Mapping<Address, Mapping<Address, U256>>,   // slot 3
+    pub paused: U256,                                           // slot 4
+    pub nonces: Mapping<Address, U256>,                         // slot 5
+    pub name: String,                                           // slot 6
+    pub symbol: String,                                         // slot 7
+    pub minimum_redeemable: U256,                               // slot 8
+    pub contract_uri: String,                                   // slot 9
+    pub roles: Mapping<B256, Mapping<Address, bool>>,           // slot 10
+    pub role_member_counts: Mapping<B256, U256>,                // slot 11
+    pub role_admins: Mapping<B256, B256>,                       // slot 12
+    pub transfer_policy_ids: U256, // slot 13: sender, receiver, executor, reserved
+    pub mint_policy_ids: U256,     // slot 14: receiver, reserved, reserved, reserved
+    pub stablecoin_currency: String, // slot 15 (unused for security tokens)
+    pub security_isin: String,     // slot 16 (unused; identifiers stored in slot 18 mapping)
+    pub shares_to_tokens_ratio: U256,             // slot 17
+    pub security_identifiers: Mapping<B256, String>, // slot 18  (key = keccak256(type))
+    pub announcement_ids_used: Mapping<B256, bool>,  // slot 19  (key = keccak256(id))
 }
 
 impl<'a> B20SecurityStorage<'a> {
@@ -44,13 +49,12 @@ impl<'a> B20SecurityStorage<'a> {
     /// Writes all creation-time fields atomically.
     ///
     /// `initial_isin` may be empty; when non-empty it is stored under the
-    /// `keccak256("ISIN")` key. Events for the initial ISIN are emitted by the factory.
+    /// `keccak256("ISIN")` key in the `security_identifiers` mapping.
     pub fn initialize(
         &mut self,
         name: String,
         symbol: String,
         supply_cap: U256,
-        capabilities: U256,
         initial_shares_to_tokens_ratio: U256,
         initial_isin: String,
         minimum_redeemable: U256,
@@ -58,7 +62,6 @@ impl<'a> B20SecurityStorage<'a> {
         self.name.write(name)?;
         self.symbol.write(symbol)?;
         self.supply_cap.write(supply_cap)?;
-        self.capabilities.write(capabilities)?;
         self.shares_to_tokens_ratio.write(initial_shares_to_tokens_ratio)?;
         self.minimum_redeemable.write(minimum_redeemable)?;
         if !initial_isin.is_empty() {
@@ -127,7 +130,16 @@ impl TokenAccounting for B20SecurityStorage<'_> {
     }
 
     fn decimals(&self) -> Result<u8> {
-        Ok(TokenVariant::decimals_of(self.address).unwrap_or(0))
+        Ok(TokenVariant::from_address(self.address).map_or(0, TokenVariant::decimals))
+    }
+
+    fn currency(&self) -> Result<String> {
+        self.stablecoin_currency.read()
+    }
+
+    fn security_identifier(&self, identifier_type: &str) -> Result<String> {
+        let key = alloy_primitives::keccak256(identifier_type.as_bytes());
+        self.security_identifiers.at(&key).read()
     }
 
     fn paused(&self) -> Result<U256> {
@@ -165,12 +177,116 @@ impl TokenAccounting for B20SecurityStorage<'_> {
         self.contract_uri.write(uri)
     }
 
-    fn capabilities(&self) -> Result<U256> {
-        self.capabilities.read()
+    fn has_role(&self, role: B256, account: Address) -> Result<bool> {
+        self.roles.at(&role).at(&account).read()
+    }
+
+    fn set_role(&mut self, role: B256, account: Address, enabled: bool) -> Result<()> {
+        self.roles.at_mut(&role).at_mut(&account).write(enabled)
+    }
+
+    fn role_member_count(&self, role: B256) -> Result<U256> {
+        self.role_member_counts.at(&role).read()
+    }
+
+    fn set_role_member_count(&mut self, role: B256, count: U256) -> Result<()> {
+        self.role_member_counts.at_mut(&role).write(count)
+    }
+
+    fn role_admin(&self, role: B256) -> Result<B256> {
+        self.role_admins.at(&role).read()
+    }
+
+    fn set_role_admin(&mut self, role: B256, admin_role: B256) -> Result<()> {
+        self.role_admins.at_mut(&role).write(admin_role)
+    }
+
+    fn policy_id(&self, policy_type: B256) -> Result<u64> {
+        let policy_type = Self::require_policy_type(policy_type)?;
+        match policy_type {
+            B20PolicyType::TransferSender => Ok(Self::read_policy_lane(
+                self.transfer_policy_ids.read()?,
+                Self::TRANSFER_SENDER_POLICY_LANE,
+            )),
+            B20PolicyType::TransferReceiver => Ok(Self::read_policy_lane(
+                self.transfer_policy_ids.read()?,
+                Self::TRANSFER_RECEIVER_POLICY_LANE,
+            )),
+            B20PolicyType::TransferExecutor => Ok(Self::read_policy_lane(
+                self.transfer_policy_ids.read()?,
+                Self::TRANSFER_EXECUTOR_POLICY_LANE,
+            )),
+            B20PolicyType::MintReceiver => Ok(Self::read_policy_lane(
+                self.mint_policy_ids.read()?,
+                Self::MINT_RECEIVER_POLICY_LANE,
+            )),
+        }
+    }
+
+    fn set_policy_id(&mut self, policy_type: B256, policy_id: u64) -> Result<()> {
+        let policy_type = Self::require_policy_type(policy_type)?;
+        match policy_type {
+            B20PolicyType::TransferSender => {
+                let packed = Self::write_policy_lane(
+                    self.transfer_policy_ids.read()?,
+                    Self::TRANSFER_SENDER_POLICY_LANE,
+                    policy_id,
+                );
+                self.transfer_policy_ids.write(packed)
+            }
+            B20PolicyType::TransferReceiver => {
+                let packed = Self::write_policy_lane(
+                    self.transfer_policy_ids.read()?,
+                    Self::TRANSFER_RECEIVER_POLICY_LANE,
+                    policy_id,
+                );
+                self.transfer_policy_ids.write(packed)
+            }
+            B20PolicyType::TransferExecutor => {
+                let packed = Self::write_policy_lane(
+                    self.transfer_policy_ids.read()?,
+                    Self::TRANSFER_EXECUTOR_POLICY_LANE,
+                    policy_id,
+                );
+                self.transfer_policy_ids.write(packed)
+            }
+            B20PolicyType::MintReceiver => {
+                let packed = Self::write_policy_lane(
+                    self.mint_policy_ids.read()?,
+                    Self::MINT_RECEIVER_POLICY_LANE,
+                    policy_id,
+                );
+                self.mint_policy_ids.write(packed)
+            }
+        }
     }
 
     fn emit_event(&mut self, log: LogData) -> Result<()> {
         self.emit_event(log)
+    }
+}
+
+impl B20SecurityStorage<'_> {
+    const TRANSFER_SENDER_POLICY_LANE: usize = 0;
+    const TRANSFER_RECEIVER_POLICY_LANE: usize = 1;
+    const TRANSFER_EXECUTOR_POLICY_LANE: usize = 2;
+    const MINT_RECEIVER_POLICY_LANE: usize = 0;
+    const POLICY_LANE_BITS: usize = 64;
+
+    fn require_policy_type(policy_type: B256) -> Result<B20PolicyType> {
+        B20PolicyType::from_id(policy_type).ok_or_else(|| {
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
+        })
+    }
+
+    fn read_policy_lane(packed: U256, lane: usize) -> u64 {
+        ((packed >> (lane * Self::POLICY_LANE_BITS)) & U256::from(u64::MAX)).to::<u64>()
+    }
+
+    fn write_policy_lane(packed: U256, lane: usize, policy_id: u64) -> U256 {
+        let shift = lane * Self::POLICY_LANE_BITS;
+        let mask = U256::from(u64::MAX) << shift;
+        (packed & !mask) | (U256::from(policy_id) << shift)
     }
 }
 
@@ -183,11 +299,12 @@ impl SecurityAccounting for B20SecurityStorage<'_> {
         self.shares_to_tokens_ratio.write(ratio)
     }
 
-    fn security_identifier(&self, key: B256) -> Result<String> {
-        self.security_identifiers.at(&key).read()
-    }
-
-    fn set_security_identifier(&mut self, key: B256, value: String) -> Result<()> {
+    fn set_security_identifier_value(
+        &mut self,
+        identifier_type: &str,
+        value: String,
+    ) -> Result<()> {
+        let key = alloy_primitives::keccak256(identifier_type.as_bytes());
         if value.is_empty() {
             self.security_identifiers.at_mut(&key).delete()
         } else {

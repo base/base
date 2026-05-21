@@ -19,7 +19,7 @@ use super::{
     accounting::SecurityAccounting,
 };
 use crate::{
-    ActivationRegistryStorage, Burnable, Configurable,
+    ActivationRegistryStorage, B20PolicyType, B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     Mintable, Pausable, Permittable, Policy, Token, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
@@ -27,6 +27,192 @@ use crate::{
 
 /// WAD precision for share ratio arithmetic: 1e18.
 const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+
+// ---------------------------------------------------------------------------
+// Role and policy helpers (mirrors B20Token's roles.rs / policies.rs)
+// ---------------------------------------------------------------------------
+
+impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
+    /// The default top-level admin role identifier (`bytes32(0)`).
+    pub const fn default_admin_role() -> B256 {
+        B256::ZERO
+    }
+
+    /// Ensures `caller` has `role`, reverting with `AccessControlUnauthorizedAccount` otherwise.
+    fn ensure_role(&self, caller: Address, role: B256) -> base_precompile_storage::Result<()> {
+        if self.accounting.has_role(role, caller)? {
+            Ok(())
+        } else {
+            Err(BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: caller,
+                neededRole: role,
+            }))
+        }
+    }
+
+    /// Grants `role` to `account` without checking caller authorization.
+    fn grant_role_unchecked(
+        &mut self,
+        role: B256,
+        account: Address,
+        sender: Address,
+    ) -> base_precompile_storage::Result<()> {
+        if self.accounting.has_role(role, account)? {
+            return Ok(());
+        }
+        let current = self.accounting.role_member_count(role)?;
+        let next =
+            current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.accounting_mut().set_role(role, account, true)?;
+        self.accounting_mut().set_role_member_count(role, next)?;
+        self.accounting_mut()
+            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
+    }
+
+    /// Revokes `role` from `account` without checking caller authorization.
+    fn revoke_role_unchecked(
+        &mut self,
+        role: B256,
+        account: Address,
+        sender: Address,
+    ) -> base_precompile_storage::Result<()> {
+        if !self.accounting.has_role(role, account)? {
+            return Ok(());
+        }
+        let current = self.accounting.role_member_count(role)?;
+        let next =
+            current.checked_sub(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.accounting_mut().set_role(role, account, false)?;
+        self.accounting_mut().set_role_member_count(role, next)?;
+        self.accounting_mut()
+            .emit_event(IB20::RoleRevoked { role, account, sender }.encode_log_data())
+    }
+
+    /// Grants `role` to `account`, optionally bypassing authorization during factory init.
+    fn grant_role(
+        &mut self,
+        caller: Address,
+        role: B256,
+        account: Address,
+        privileged: bool,
+    ) -> base_precompile_storage::Result<()> {
+        if !privileged {
+            self.ensure_role(caller, self.accounting.role_admin(role)?)?;
+        }
+        self.grant_role_unchecked(role, account, caller)
+    }
+
+    /// Revokes `role` from `account`, optionally bypassing authorization during factory init.
+    fn revoke_role(
+        &mut self,
+        caller: Address,
+        role: B256,
+        account: Address,
+        privileged: bool,
+    ) -> base_precompile_storage::Result<()> {
+        if !privileged {
+            self.ensure_role(caller, self.accounting.role_admin(role)?)?;
+        }
+        self.revoke_role_unchecked(role, account, caller)
+    }
+
+    /// Renounces `role` for `caller`.
+    fn renounce_role(
+        &mut self,
+        caller: Address,
+        role: B256,
+        confirmation: Address,
+    ) -> base_precompile_storage::Result<()> {
+        if confirmation != caller {
+            return Err(BasePrecompileError::revert(IB20::AccessControlBadConfirmation {}));
+        }
+        if role == Self::default_admin_role()
+            && self.accounting.has_role(role, caller)?
+            && self.accounting.role_member_count(role)? == U256::ONE
+        {
+            return Err(BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
+        }
+        self.revoke_role_unchecked(role, caller, caller)
+    }
+
+    /// Permanently removes the final default admin.
+    fn renounce_last_admin(&mut self, caller: Address) -> base_precompile_storage::Result<()> {
+        let admin_role = Self::default_admin_role();
+        self.ensure_role(caller, admin_role)?;
+        if self.accounting.role_member_count(admin_role)? != U256::ONE {
+            return Err(BasePrecompileError::revert(IB20::NotSoleAdmin {}));
+        }
+        self.revoke_role_unchecked(admin_role, caller, caller)?;
+        self.accounting_mut()
+            .emit_event(IB20::LastAdminRenounced { previousAdmin: caller }.encode_log_data())
+    }
+
+    /// Sets the admin role for `role`.
+    fn set_role_admin_checked(
+        &mut self,
+        caller: Address,
+        role: B256,
+        new_admin_role: B256,
+        privileged: bool,
+    ) -> base_precompile_storage::Result<()> {
+        let previous_admin_role = self.accounting.role_admin(role)?;
+        if !privileged {
+            self.ensure_role(caller, previous_admin_role)?;
+        }
+        self.accounting_mut().set_role_admin(role, new_admin_role)?;
+        self.accounting_mut().emit_event(
+            IB20::RoleAdminChanged {
+                role,
+                previousAdminRole: previous_admin_role,
+                newAdminRole: new_admin_role,
+            }
+            .encode_log_data(),
+        )
+    }
+
+    /// Returns the configured policy ID for `policy_type`.
+    fn policy_id_checked(&self, policy_type: B256) -> base_precompile_storage::Result<u64> {
+        B20PolicyType::from_id(policy_type).ok_or_else(|| {
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
+        })?;
+        self.accounting.policy_id(policy_type)
+    }
+
+    /// Updates the configured policy ID for `policy_type`.
+    fn update_policy(
+        &mut self,
+        caller: Address,
+        policy_type: B256,
+        new_policy_id: u64,
+        privileged: bool,
+    ) -> base_precompile_storage::Result<()> {
+        B20PolicyType::from_id(policy_type).ok_or_else(|| {
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
+        })?;
+        if !privileged {
+            self.ensure_role(caller, Self::default_admin_role())?;
+        }
+        let old_policy_id = self.accounting.policy_id(policy_type)?;
+        if !self.policy.policy_exists(new_policy_id)? {
+            return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
+                policyId: new_policy_id,
+            }));
+        }
+        self.accounting_mut().set_policy_id(policy_type, new_policy_id)?;
+        self.accounting_mut().emit_event(
+            IB20::PolicyUpdated {
+                policyType: policy_type,
+                oldPolicyId: old_policy_id,
+                newPolicyId: new_policy_id,
+            }
+            .encode_log_data(),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch
+// ---------------------------------------------------------------------------
 
 impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Security` handler.
@@ -67,19 +253,51 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             C::symbol(_) => self.accounting.symbol()?.abi_encode().into(),
             C::decimals(_) => U256::from(self.accounting.decimals()?).abi_encode().into(),
             C::totalSupply(_) => self.accounting.total_supply()?.abi_encode().into(),
+            C::minimumRedeemable(_) => self.accounting.minimum_redeemable()?.abi_encode().into(),
+            C::currency(_) => self.accounting.currency()?.abi_encode().into(),
+            // securityIdentifier also caught by IB20Security above; repeated for exhaustiveness.
+            C::securityIdentifier(c) => {
+                self.accounting.security_identifier(&c.identifierType)?.abi_encode().into()
+            }
             C::balanceOf(c) => self.accounting.balance_of(c.account)?.abi_encode().into(),
             C::allowance(c) => self.accounting.allowance(c.owner, c.spender)?.abi_encode().into(),
             C::supplyCap(_) => self.accounting.supply_cap()?.abi_encode().into(),
-            C::paused(_) => self.accounting.paused()?.abi_encode().into(),
             C::nonces(c) => self.accounting.nonce(c.owner)?.abi_encode().into(),
-            C::minimumRedeemable(_) => self.accounting.minimum_redeemable()?.abi_encode().into(),
             C::contractURI(_) => self.accounting.contract_uri()?.abi_encode().into(),
-            C::capabilities(_) => self.accounting.capabilities()?.abi_encode().into(),
+
+            // --- Role identifiers ---
+            C::DEFAULT_ADMIN_ROLE(_) => Self::default_admin_role().abi_encode().into(),
+            C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
+            C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),
+            C::BURN_BLOCKED_ROLE(_) => B20TokenRole::BurnBlocked.id().abi_encode().into(),
+            C::PAUSE_ROLE(_) => B20TokenRole::Pause.id().abi_encode().into(),
+            C::UNPAUSE_ROLE(_) => B20TokenRole::Unpause.id().abi_encode().into(),
+            C::METADATA_ROLE(_) => B20TokenRole::Metadata.id().abi_encode().into(),
+
+            // --- Policy type identifiers ---
+            C::TRANSFER_SENDER_POLICY(_) => {
+                B20PolicyType::TransferSender.id().abi_encode().into()
+            }
+            C::TRANSFER_RECEIVER_POLICY(_) => {
+                B20PolicyType::TransferReceiver.id().abi_encode().into()
+            }
+            C::TRANSFER_EXECUTOR_POLICY(_) => {
+                B20PolicyType::TransferExecutor.id().abi_encode().into()
+            }
+            C::MINT_RECEIVER_POLICY(_) => B20PolicyType::MintReceiver.id().abi_encode().into(),
+
+            // --- Role reads ---
+            C::hasRole(c) => self.accounting.has_role(c.role, c.account)?.abi_encode().into(),
+            C::getRoleAdmin(c) => self.accounting.role_admin(c.role)?.abi_encode().into(),
+
+            // --- Pause reads ---
+            C::pausedFeatures(_) => self.paused_features()?.abi_encode().into(),
+            C::isPaused(c) => self.is_paused(c.feature)?.abi_encode().into(),
+
+            // --- Policy reads ---
+            C::policyId(c) => self.policy_id_checked(c.policyType)?.abi_encode().into(),
 
             // --- Domain reads ---
-            C::isPaused(c) => self.is_paused(c.vector)?.abi_encode().into(),
-            C::isPausable(_) => self.is_pausable()?.abi_encode().into(),
-            C::isCapMutable(_) => self.is_cap_mutable()?.abi_encode().into(),
             C::DOMAIN_SEPARATOR(_) => self.domain_separator(ctx.chain_id())?.abi_encode().into(),
             C::eip712Domain(_) => self.eip712_domain(ctx.chain_id())?.abi_encode().into(),
 
@@ -112,79 +330,98 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
             // --- Mint ---
             C::mint(c) => {
-                self.mint(c.to, c.amount)?;
+                let caller = ctx.caller();
+                self.mint(caller, c.to, c.amount, false)?;
                 Bytes::new()
             }
             C::mintWithMemo(c) => {
-                self.mint_with_memo(c.to, c.amount, c.memo)?;
+                let caller = ctx.caller();
+                self.mint_with_memo(caller, c.to, c.amount, c.memo, false)?;
                 Bytes::new()
             }
 
             // --- Burn ---
             C::burn(c) => {
                 let caller = ctx.caller();
-                self.burn(caller, c.amount)?;
+                self.burn(caller, caller, c.amount, false)?;
                 Bytes::new()
             }
             C::burnWithMemo(c) => {
                 let caller = ctx.caller();
-                self.burn_with_memo(caller, c.amount, c.memo)?;
+                self.burn_with_memo(caller, caller, c.amount, c.memo, false)?;
                 Bytes::new()
             }
-
-            // Redeem / redeemWithMemo: normally caught by the security decoder above; these arms
-            // exist only for Rust match exhaustiveness and apply the same security semantics.
-            C::redeem(c) => {
+            C::burnBlocked(c) => {
                 let caller = ctx.caller();
-                self.security_redeem(caller, c.amount)?;
-                Bytes::new()
-            }
-            C::redeemWithMemo(c) => {
-                let caller = ctx.caller();
-                self.security_redeem(caller, c.amount)?;
-                self.accounting_mut().emit_event(IB20::Memo { memo: c.memo }.encode_log_data())?;
-                Bytes::new()
-            }
-            C::setMinimumRedeemable(c) => {
-                self.accounting_mut().set_minimum_redeemable(c.newMinimum)?;
-                self.accounting_mut().emit_event(
-                    IB20Security::MinimumRedeemableUpdated { newMinimumRedeemable: c.newMinimum }
-                        .encode_log_data(),
-                )?;
+                self.burn_blocked(caller, c.from, c.amount, false)?;
                 Bytes::new()
             }
 
             // --- Pause ---
             C::pause(c) => {
                 let caller = ctx.caller();
-                self.pause(caller, c.vectors)?;
+                self.pause(caller, c.features, false)?;
                 Bytes::new()
             }
-            C::unpause(_) => {
+            C::unpause(c) => {
                 let caller = ctx.caller();
-                self.unpause(caller)?;
+                self.unpause(caller, c.features, false)?;
                 Bytes::new()
             }
 
             // --- Admin ---
             C::setSupplyCap(c) => {
                 let caller = ctx.caller();
-                Configurable::set_supply_cap(self, caller, c.newSupplyCap)?;
+                Configurable::set_supply_cap(self, caller, c.newSupplyCap, false)?;
                 Bytes::new()
             }
             C::setName(c) => {
                 let caller = ctx.caller();
-                Configurable::set_name(self, caller, c.newName)?;
+                Configurable::set_name(self, caller, c.newName, false)?;
                 Bytes::new()
             }
             C::setSymbol(c) => {
                 let caller = ctx.caller();
-                Configurable::set_symbol(self, caller, c.newSymbol)?;
+                Configurable::set_symbol(self, caller, c.newSymbol, false)?;
                 Bytes::new()
             }
             C::setContractURI(c) => {
                 let caller = ctx.caller();
-                Configurable::set_contract_uri(self, caller, c.newURI)?;
+                Configurable::set_contract_uri(self, caller, c.newURI, false)?;
+                Bytes::new()
+            }
+
+            // --- Role mutations ---
+            C::grantRole(c) => {
+                let caller = ctx.caller();
+                self.grant_role(caller, c.role, c.account, false)?;
+                Bytes::new()
+            }
+            C::revokeRole(c) => {
+                let caller = ctx.caller();
+                self.revoke_role(caller, c.role, c.account, false)?;
+                Bytes::new()
+            }
+            C::renounceRole(c) => {
+                let caller = ctx.caller();
+                self.renounce_role(caller, c.role, c.callerConfirmation)?;
+                Bytes::new()
+            }
+            C::renounceLastAdmin(_) => {
+                let caller = ctx.caller();
+                self.renounce_last_admin(caller)?;
+                Bytes::new()
+            }
+            C::setRoleAdmin(c) => {
+                let caller = ctx.caller();
+                self.set_role_admin_checked(caller, c.role, c.newAdminRole, false)?;
+                Bytes::new()
+            }
+
+            // --- Policy mutations ---
+            C::updatePolicy(c) => {
+                let caller = ctx.caller();
+                self.update_policy(caller, c.policyType, c.newPolicyId, false)?;
                 Bytes::new()
             }
 
@@ -241,8 +478,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
             // --- Security identifier reads ---
             SC::securityIdentifier(c) => {
-                let key = keccak256(c.identifierType.as_bytes());
-                self.accounting.security_identifier(key)?.abi_encode().into()
+                self.accounting.security_identifier(c.identifierType.as_str())?.abi_encode().into()
             }
 
             // --- Share ratio mutations ---
@@ -265,7 +501,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
             // --- Batched mint / burn ---
             SC::batchMint(c) => {
-                self.batch_mint(c.recipients, c.amounts)?;
+                self.batch_mint(ctx, c.recipients, c.amounts)?;
                 Bytes::new()
             }
             SC::batchBurn(c) => {
@@ -305,8 +541,8 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
                         IB20Security::InvalidIdentifierType {},
                     ));
                 }
-                let key = keccak256(c.identifierType.as_bytes());
-                self.accounting_mut().set_security_identifier(key, c.value.clone())?;
+                self.accounting_mut()
+                    .set_security_identifier_value(c.identifierType.as_str(), c.value.clone())?;
                 self.accounting_mut().emit_event(
                     IB20Security::SecurityIdentifierUpdated {
                         identifierType: c.identifierType,
@@ -364,6 +600,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// Mints tokens to multiple recipients. All-or-nothing.
     fn batch_mint(
         &mut self,
+        ctx: StorageCtx<'_>,
         recipients: Vec<Address>,
         amounts: Vec<U256>,
     ) -> base_precompile_storage::Result<()> {
@@ -376,8 +613,9 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
                 rightLen: U256::from(amounts.len()),
             }));
         }
+        let caller = ctx.caller();
         for (recipient, amount) in recipients.into_iter().zip(amounts) {
-            self.mint(recipient, amount)?;
+            self.mint(caller, recipient, amount, true)?;
         }
         Ok(())
     }
@@ -510,7 +748,7 @@ mod tests {
     fn batch_mint_increases_balances() {
         let mut token = make_token();
         token
-            .batch_mint(
+            .batch_mint_test(
                 alloc::vec![ALICE, BOB],
                 alloc::vec![U256::from(100u64), U256::from(200u64)],
             )
@@ -525,13 +763,13 @@ mod tests {
     #[test]
     fn batch_mint_rejects_empty() {
         let mut token = make_token();
-        assert!(token.batch_mint(alloc::vec![], alloc::vec![]).is_err());
+        assert!(token.batch_burn(alloc::vec![], alloc::vec![]).is_err());
     }
 
     #[test]
     fn batch_mint_rejects_length_mismatch() {
         let mut token = make_token();
-        assert!(token.batch_mint(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err());
+        assert!(token.batch_burn(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err());
     }
 
     #[test]
@@ -603,13 +841,39 @@ mod tests {
     #[test]
     fn security_identifier_roundtrip() {
         let mut token = make_token();
-        let key = keccak256(b"ISIN");
 
-        assert_eq!(token.accounting().security_identifier(key).unwrap(), "");
-        token.accounting_mut().set_security_identifier(key, "US0000000000".to_string()).unwrap();
+        assert_eq!(token.accounting().security_identifier("ISIN").unwrap(), "");
+        token
+            .accounting_mut()
+            .set_security_identifier_value("ISIN", "US0000000000".to_string())
+            .unwrap();
         assert_eq!(
-            token.accounting().security_identifier(key).unwrap(),
+            token.accounting().security_identifier("ISIN").unwrap(),
             "US0000000000".to_string()
         );
+    }
+}
+
+// Test helper: batch_mint without StorageCtx (uses privileged mode).
+#[cfg(test)]
+impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
+    fn batch_mint_test(
+        &mut self,
+        recipients: alloc::vec::Vec<Address>,
+        amounts: alloc::vec::Vec<U256>,
+    ) -> base_precompile_storage::Result<()> {
+        if recipients.is_empty() {
+            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
+        }
+        if recipients.len() != amounts.len() {
+            return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
+                leftLen: U256::from(recipients.len()),
+                rightLen: U256::from(amounts.len()),
+            }));
+        }
+        for (recipient, amount) in recipients.into_iter().zip(amounts) {
+            self.mint(Address::ZERO, recipient, amount, true)?;
+        }
+        Ok(())
     }
 }

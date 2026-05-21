@@ -131,8 +131,8 @@ async fn beryl_enables_policy_registry_singleton_precompile() {
 #[tokio::test]
 async fn policy_registry_action_tests_cover_policy_lifecycle_and_views() {
     let mut scenario = PolicyRegistryScenario::new().await;
-    let allowlist_id = policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 0);
-    let blocklist_id = policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 1);
+    let allowlist_id = policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
+    let blocklist_id = policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 3);
 
     let create_allowlist = scenario.tx(IPolicyRegistry::createPolicyCall {
         admin: BerylTestEnv::alice(),
@@ -147,7 +147,7 @@ async fn policy_registry_action_tests_cover_policy_lifecycle_and_views() {
         IPolicyRegistry::PolicyCreated {
             policyId: allowlist_id,
             creator: BerylTestEnv::alice(),
-            policyType: IPolicyRegistry::PolicyType::ALLOWLIST as u8,
+            policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
         }
         .encode_log_data(),
     );
@@ -451,19 +451,21 @@ impl PolicyRegistryScenario {
         );
     }
 
+    #[track_caller]
     fn assert_policy_log(
         &self,
         block: &BaseBlock,
         user_tx_index: usize,
         expected: alloy_primitives::LogData,
     ) {
+        let receipt = self.env.user_tx_receipt(block, user_tx_index);
         assert!(
-            self.env
-                .user_tx_receipt(block, user_tx_index)
+            receipt
                 .logs()
                 .iter()
                 .any(|log| log.address == PolicyRegistryStorage::ADDRESS && log.data == expected),
-            "policy-registry transaction {user_tx_index} must emit the expected event"
+            "policy-registry transaction {user_tx_index} must emit the expected event; expected={expected:?}, logs={:?}",
+            receipt.logs()
         );
     }
 

@@ -21,11 +21,9 @@ sol! {
         error InvalidPolicyType();
         error ZeroAddress();
         error NoPendingAdmin();
-        error StaticCallNotAllowed();
-        error CounterExhausted();
-        error BatchTooLarge();
+        error MalformedPolicyId(uint64 policyId);
 
-        event PolicyCreated(uint64 indexed policyId, address indexed creator, uint8 policyType);
+        event PolicyCreated(uint64 indexed policyId, address indexed creator, PolicyType policyType);
         event PolicyAdminStaged(uint64 indexed policyId, address indexed previousAdmin, address indexed newAdmin);
         event PolicyAdminUpdated(uint64 indexed policyId, address indexed previousAdmin, address indexed newAdmin);
         event AllowlistUpdated(uint64 indexed policyId, address indexed updater, bool allowed, address[] accounts);

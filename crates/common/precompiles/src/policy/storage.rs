@@ -89,23 +89,46 @@ impl PolicyRegistryStorage<'_> {
 
     const ALLOWLIST_TYPE: u8 = PolicyType::ALLOWLIST as u8;
     const BLOCKLIST_TYPE: u8 = PolicyType::BLOCKLIST as u8;
-
-    /// Maximum number of accounts accepted in any single membership call.
-    pub const MAX_ACCOUNTS: usize = 64;
+    const COUNTER_MASK: u64 = (1u64 << 56) - 1;
+    const INITIAL_CUSTOM_COUNTER: u64 = 2;
+    const POLICY_ID_TYPE_SHIFT: usize = 56;
 
     fn require_write(&self) -> Result<()> {
         if self.storage.is_static() {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::StaticCallNotAllowed {}));
+            return Err(BasePrecompileError::StaticCallViolation);
+        }
+        Ok(())
+    }
+
+    const fn policy_id_type(policy_id: u64) -> u8 {
+        (policy_id >> Self::POLICY_ID_TYPE_SHIFT) as u8
+    }
+
+    fn require_well_formed(policy_id: u64) -> Result<()> {
+        if Self::policy_id_type(policy_id) > PolicyType::BLOCKLIST as u8 {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::MalformedPolicyId {
+                policyId: policy_id,
+            }));
         }
         Ok(())
     }
 
     fn require_custom(&self, policy_id: u64) -> Result<PackedPolicy> {
+        Self::require_well_formed(policy_id)?;
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         if packed.is_zero() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
         Ok(packed)
+    }
+
+    fn next_counter(&self) -> Result<u64> {
+        let counter = self.next_counter.read()?;
+        Ok(counter.max(Self::INITIAL_CUSTOM_COUNTER))
+    }
+
+    const fn make_id(policy_type: u8, counter: u64) -> u64 {
+        (policy_type as u64) << Self::POLICY_ID_TYPE_SHIFT | (counter & Self::COUNTER_MASK)
     }
 
     /// Validates the policy exists and the caller is its current admin.
@@ -136,13 +159,10 @@ impl PolicyRegistryStorage<'_> {
             self.__initialize()?;
         }
 
-        let counter = self.next_counter.read()?;
-        let next = counter
-            .checked_add(1)
-            .filter(|&n| n < (1u64 << 56))
-            .ok_or_else(|| BasePrecompileError::revert(IPolicyRegistry::CounterExhausted {}))?;
+        let counter = self.next_counter()?;
+        let next = counter.checked_add(1).ok_or_else(BasePrecompileError::under_overflow)?;
         self.next_counter.write(next)?;
-        let policy_id = (policy_type_u8 as u64) << 56 | counter;
+        let policy_id = Self::make_id(policy_type_u8, counter);
         let packed = PackedPolicy::new(admin, policy_type).into_u256();
         self.policies.at_mut(&policy_id).write(packed)?;
 
@@ -150,7 +170,7 @@ impl PolicyRegistryStorage<'_> {
         self.emit_event(IPolicyRegistry::PolicyCreated {
             policyId: policy_id,
             creator: caller,
-            policyType: policy_type_u8,
+            policyType: policy_type,
         })?;
         self.emit_event(IPolicyRegistry::PolicyAdminUpdated {
             policyId: policy_id,
@@ -168,31 +188,26 @@ impl PolicyRegistryStorage<'_> {
         policy_type: PolicyType,
         accounts: Vec<Address>,
     ) -> Result<u64> {
-        if accounts.len() > Self::MAX_ACCOUNTS {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::BatchTooLarge {}));
-        }
         let policy_id = self.create_policy(admin, policy_type)?;
         let policy_type_u8 = policy_type.as_discriminant()?;
-        if !accounts.is_empty() {
-            let caller = self.storage.caller();
-            for account in &accounts {
-                self.members.at_mut(&policy_id).at_mut(account).write(true)?;
-            }
-            match policy_type_u8 {
-                Self::ALLOWLIST_TYPE => self.emit_event(IPolicyRegistry::AllowlistUpdated {
-                    policyId: policy_id,
-                    updater: caller,
-                    allowed: true,
-                    accounts,
-                })?,
-                Self::BLOCKLIST_TYPE => self.emit_event(IPolicyRegistry::BlocklistUpdated {
-                    policyId: policy_id,
-                    updater: caller,
-                    blocked: true,
-                    accounts,
-                })?,
-                _ => unreachable!("policy_type validated by create_policy"),
-            }
+        let caller = self.storage.caller();
+        for account in &accounts {
+            self.members.at_mut(&policy_id).at_mut(account).write(true)?;
+        }
+        match policy_type_u8 {
+            Self::ALLOWLIST_TYPE => self.emit_event(IPolicyRegistry::AllowlistUpdated {
+                policyId: policy_id,
+                updater: caller,
+                allowed: true,
+                accounts,
+            })?,
+            Self::BLOCKLIST_TYPE => self.emit_event(IPolicyRegistry::BlocklistUpdated {
+                policyId: policy_id,
+                updater: caller,
+                blocked: true,
+                accounts,
+            })?,
+            _ => unreachable!("policy_type validated by create_policy"),
         }
         Ok(policy_id)
     }
@@ -290,9 +305,6 @@ impl PolicyRegistryStorage<'_> {
         add: bool,
         accounts: &[Address],
     ) -> Result<Address> {
-        if accounts.len() > Self::MAX_ACCOUNTS {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::BatchTooLarge {}));
-        }
         let (packed, caller) = self.require_admin(policy_id)?;
         if packed.policy_type_u8() != expected_type {
             return Err(BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
@@ -309,6 +321,7 @@ impl PolicyRegistryStorage<'_> {
 
     /// Returns `true` if `account` is authorized under `policy_id`.
     pub fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
+        Self::require_well_formed(policy_id)?;
         if policy_id == Self::ALWAYS_ALLOW_ID {
             return Ok(true);
         }
@@ -333,12 +346,13 @@ impl PolicyRegistryStorage<'_> {
     /// may advance between this query and the subsequent `create_policy` call.
     pub fn next_policy_id(&self, policy_type: PolicyType) -> Result<u64> {
         let discriminant = policy_type.as_discriminant()?;
-        let counter = self.next_counter.read()?;
-        Ok((discriminant as u64) << 56 | counter)
+        let counter = self.next_counter()?;
+        Ok(Self::make_id(discriminant, counter))
     }
 
     /// Returns `true` if `policy_id` refers to an existing or built-in policy.
     pub fn policy_exists(&self, policy_id: u64) -> Result<bool> {
+        Self::require_well_formed(policy_id)?;
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(true);
         }
@@ -348,6 +362,7 @@ impl PolicyRegistryStorage<'_> {
 
     /// Returns the `PolicyType` of `policy_id`, including built-in IDs.
     pub fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType> {
+        Self::require_well_formed(policy_id)?;
         if policy_id == Self::ALWAYS_ALLOW_ID {
             return Ok(PolicyType::ALWAYS_ALLOW);
         }
@@ -364,6 +379,7 @@ impl PolicyRegistryStorage<'_> {
 
     /// Returns the current admin of `policy_id`, or `address(0)` for built-in policies.
     pub fn get_policy_admin(&self, policy_id: u64) -> Result<Address> {
+        Self::require_well_formed(policy_id)?;
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(Address::ZERO);
         }
@@ -376,10 +392,10 @@ impl PolicyRegistryStorage<'_> {
 
     /// Returns the pending admin staged for `policy_id`, or `address(0)` if none.
     pub fn pending_policy_admin(&self, policy_id: u64) -> Result<Address> {
+        Self::require_well_formed(policy_id)?;
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(Address::ZERO);
         }
-        self.require_custom(policy_id)?;
         self.pending_admins.at(&policy_id).read()
     }
 }
@@ -387,6 +403,10 @@ impl PolicyRegistryStorage<'_> {
 impl crate::Policy for PolicyRegistryStorage<'_> {
     fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
         PolicyRegistryStorage::is_authorized(self, policy_id, account)
+    }
+
+    fn policy_exists(&self, policy_id: u64) -> Result<bool> {
+        PolicyRegistryStorage::policy_exists(self, policy_id)
     }
 }
 
@@ -436,10 +456,6 @@ impl crate::PolicyRegistry for PolicyRegistryStorage<'_> {
 
     fn next_policy_id(&self, policy_type: PolicyType) -> Result<u64> {
         PolicyRegistryStorage::next_policy_id(self, policy_type)
-    }
-
-    fn policy_exists(&self, policy_id: u64) -> Result<bool> {
-        PolicyRegistryStorage::policy_exists(self, policy_id)
     }
 
     fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType> {
@@ -593,8 +609,8 @@ mod tests {
         let id2 = create_blocklist(&mut s);
         assert_eq!((id1 >> 56) as u8, PolicyType::ALLOWLIST as u8);
         assert_eq!((id2 >> 56) as u8, PolicyType::BLOCKLIST as u8);
-        assert_eq!(id1 & ((1u64 << 56) - 1), 0);
-        assert_eq!(id2 & ((1u64 << 56) - 1), 1);
+        assert_eq!(id1 & PolicyRegistryStorage::COUNTER_MASK, 2);
+        assert_eq!(id2 & PolicyRegistryStorage::COUNTER_MASK, 3);
     }
 
     #[test]
@@ -606,7 +622,7 @@ mod tests {
         let created = IPolicyRegistry::PolicyCreated::decode_log_data(&events[0]).unwrap();
         assert_eq!(created.policyId, id);
         assert_eq!(created.creator, ADMIN);
-        assert_eq!(created.policyType, PolicyType::ALLOWLIST as u8);
+        assert_eq!(created.policyType, PolicyType::ALLOWLIST);
     }
 
     #[test]
@@ -764,6 +780,28 @@ mod tests {
         assert!(is_authorized(&mut s, id, BOB));
     }
 
+    #[test]
+    fn create_policy_with_accounts_empty_batch_emits_seed_event() {
+        let mut s = storage();
+        let id = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
+                ADMIN,
+                PolicyType::ALLOWLIST,
+                Vec::new(),
+            )
+        })
+        .unwrap();
+
+        let events = s.get_events(PolicyRegistryStorage::ADDRESS);
+        assert_eq!(events.len(), 3);
+        let updated =
+            IPolicyRegistry::AllowlistUpdated::decode_log_data(events.last().unwrap()).unwrap();
+        assert_eq!(updated.policyId, id);
+        assert_eq!(updated.updater, ADMIN);
+        assert!(updated.allowed);
+        assert!(updated.accounts.is_empty());
+    }
+
     // --- two-step admin transfer ---
 
     #[test]
@@ -826,25 +864,10 @@ mod tests {
             PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
         })
         .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
+        assert_eq!(err, BasePrecompileError::StaticCallViolation);
     }
 
     // --- create_policy_with_accounts edge cases ---
-
-    #[test]
-    fn create_policy_with_accounts_batch_too_large_reverts() {
-        let mut s = storage();
-        let accounts = vec![ALICE; PolicyRegistryStorage::MAX_ACCOUNTS + 1];
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
-                ADMIN,
-                PolicyType::ALLOWLIST,
-                accounts,
-            )
-        })
-        .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
 
     #[test]
     fn create_policy_with_accounts_blocklist_seeds_blocked_members() {
@@ -906,7 +929,7 @@ mod tests {
         assert!(matches!(err, BasePrecompileError::Revert(_)));
     }
 
-    // --- update_allowlist static call and batch guards ---
+    // --- update_allowlist static call ---
 
     #[test]
     fn update_allowlist_static_call_reverts() {
@@ -917,19 +940,7 @@ mod tests {
             PolicyRegistryStorage::new(ctx).update_allowlist(id, true, vec![ALICE])
         })
         .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    #[test]
-    fn update_allowlist_batch_too_large_reverts() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        let accounts = vec![ALICE; PolicyRegistryStorage::MAX_ACCOUNTS + 1];
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, accounts)
-        })
-        .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
+        assert_eq!(err, BasePrecompileError::StaticCallViolation);
     }
 
     // --- next_policy_id invalid type ---
@@ -1035,13 +1046,13 @@ mod tests {
     }
 
     #[test]
-    fn pending_policy_admin_unknown_id_reverts() {
+    fn pending_policy_admin_unknown_id_returns_zero_address() {
         let mut s = storage();
-        let err = StorageCtx::enter(&mut s, |ctx| {
+        let pending = StorageCtx::enter(&mut s, |ctx| {
             PolicyRegistryStorage::new(ctx).pending_policy_admin(0xdeadbeef)
         })
-        .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
+        .unwrap();
+        assert_eq!(pending, Address::ZERO);
     }
 
     // --- PolicyRegistryTrait delegation ---
@@ -1175,7 +1186,7 @@ mod tests {
         let mut s = storage();
         let exists = StorageCtx::enter(&mut s, |ctx| {
             let reg = PolicyRegistryStorage::new(ctx);
-            crate::PolicyRegistry::policy_exists(&reg, PolicyRegistryStorage::ALWAYS_ALLOW_ID)
+            crate::Policy::policy_exists(&reg, PolicyRegistryStorage::ALWAYS_ALLOW_ID)
         })
         .unwrap();
         assert!(exists);

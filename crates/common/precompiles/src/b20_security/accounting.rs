@@ -9,19 +9,21 @@ use crate::TokenAccounting;
 
 /// Extends [`TokenAccounting`] with security-token-specific storage slots.
 ///
-/// Keys for mappings are pre-hashed to [`B256`] by the caller so that
-/// `String` (not a valid [`base_precompile_storage::StorageKey`]) can be used
-/// as a logical key while the underlying mapping uses a primitive type.
+/// Security identifiers (ISIN, CUSIP, etc.) are stored and retrieved via
+/// [`TokenAccounting::security_identifier`] and
+/// [`SecurityAccounting::set_security_identifier_value`].
 pub trait SecurityAccounting: TokenAccounting {
     /// Returns the current share-to-tokens ratio scaled to WAD (1e18).
     fn shares_to_tokens_ratio(&self) -> Result<U256>;
     /// Writes a new share-to-tokens ratio.
     fn set_shares_to_tokens_ratio(&mut self, ratio: U256) -> Result<()>;
 
-    /// Returns the security identifier stored under `key` (= `keccak256(identifier_type)`).
-    fn security_identifier(&self, key: B256) -> Result<String>;
-    /// Writes (or removes when `value` is empty) the security identifier at `key`.
-    fn set_security_identifier(&mut self, key: B256, value: String) -> Result<()>;
+    /// Writes (or removes when `value` is empty) the security identifier for `identifier_type`.
+    fn set_security_identifier_value(
+        &mut self,
+        identifier_type: &str,
+        value: String,
+    ) -> Result<()>;
 
     /// Returns `true` if `id_hash` (= `keccak256(id)`) has been consumed by `announce`.
     fn is_announcement_id_used(&self, id_hash: B256) -> Result<bool>;

@@ -9,6 +9,7 @@ use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_storage::Result;
 
 use crate::{
+    IPolicyRegistry, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK, PolicyRegistry,
     b20::B20Token,
     b20_security::SecurityAccounting,
     common::{Policy, TokenAccounting},
@@ -41,6 +42,10 @@ pub struct InMemoryTokenAccounting {
     pub symbol: String,
     /// Number of decimal places.
     pub decimals: u8,
+    /// Stablecoin currency identifier.
+    pub currency: String,
+    /// Security ISIN identifier (legacy field; prefer `security_identifiers` map for security tokens).
+    pub security_isin: String,
     /// Bitmask of active pause vectors.
     pub paused: U256,
     /// Per-account EIP-2612 nonces.
@@ -49,8 +54,14 @@ pub struct InMemoryTokenAccounting {
     pub minimum_redeemable: U256,
     /// URI pointing to the contract-level metadata.
     pub contract_uri: String,
-    /// Capability bitfield.
-    pub capabilities: U256,
+    /// Role membership keyed by `(role, account)`.
+    pub roles: HashMap<(B256, Address), bool>,
+    /// Number of accounts assigned to each role.
+    pub role_member_counts: HashMap<B256, U256>,
+    /// Admin role for each role.
+    pub role_admins: HashMap<B256, B256>,
+    /// Policy IDs keyed by policy type.
+    pub policy_ids: HashMap<B256, u64>,
     /// Share-to-tokens ratio scaled to WAD (1e18). Security tokens only.
     pub shares_to_tokens_ratio: U256,
     /// Security identifier values keyed by `keccak256(identifier_type)`. Security tokens only.
@@ -74,11 +85,16 @@ impl InMemoryTokenAccounting {
             name: String::new(),
             symbol: String::new(),
             decimals: 18,
+            currency: String::new(),
+            security_isin: String::new(),
             paused: U256::ZERO,
             nonces: HashMap::new(),
             minimum_redeemable: U256::ZERO,
             contract_uri: String::new(),
-            capabilities: U256::ZERO,
+            roles: HashMap::new(),
+            role_member_counts: HashMap::new(),
+            role_admins: HashMap::new(),
+            policy_ids: HashMap::new(),
             shares_to_tokens_ratio: U256::ZERO,
             security_identifiers: HashMap::new(),
             announcement_ids_used: HashSet::new(),
@@ -154,6 +170,18 @@ impl TokenAccounting for InMemoryTokenAccounting {
         Ok(self.decimals)
     }
 
+    fn currency(&self) -> Result<String> {
+        Ok(self.currency.clone())
+    }
+
+    fn security_identifier(&self, identifier_type: &str) -> Result<String> {
+        let key = alloy_primitives::keccak256(identifier_type.as_bytes());
+        if let Some(val) = self.security_identifiers.get(&key) {
+            return Ok(val.clone());
+        }
+        if identifier_type == "ISIN" { Ok(self.security_isin.clone()) } else { Ok(String::new()) }
+    }
+
     fn paused(&self) -> Result<U256> {
         Ok(self.paused)
     }
@@ -191,8 +219,40 @@ impl TokenAccounting for InMemoryTokenAccounting {
         Ok(())
     }
 
-    fn capabilities(&self) -> Result<U256> {
-        Ok(self.capabilities)
+    fn has_role(&self, role: B256, account: Address) -> Result<bool> {
+        Ok(*self.roles.get(&(role, account)).unwrap_or(&false))
+    }
+
+    fn set_role(&mut self, role: B256, account: Address, enabled: bool) -> Result<()> {
+        self.roles.insert((role, account), enabled);
+        Ok(())
+    }
+
+    fn role_member_count(&self, role: B256) -> Result<U256> {
+        Ok(*self.role_member_counts.get(&role).unwrap_or(&U256::ZERO))
+    }
+
+    fn set_role_member_count(&mut self, role: B256, count: U256) -> Result<()> {
+        self.role_member_counts.insert(role, count);
+        Ok(())
+    }
+
+    fn role_admin(&self, role: B256) -> Result<B256> {
+        Ok(*self.role_admins.get(&role).unwrap_or(&B256::ZERO))
+    }
+
+    fn set_role_admin(&mut self, role: B256, admin_role: B256) -> Result<()> {
+        self.role_admins.insert(role, admin_role);
+        Ok(())
+    }
+
+    fn policy_id(&self, policy_type: B256) -> Result<u64> {
+        Ok(*self.policy_ids.get(&policy_type).unwrap_or(&POLICY_ALWAYS_ALLOW))
+    }
+
+    fn set_policy_id(&mut self, policy_type: B256, policy_id: u64) -> Result<()> {
+        self.policy_ids.insert(policy_type, policy_id);
+        Ok(())
     }
 
     fn emit_event(&mut self, log: LogData) -> Result<()> {
@@ -205,10 +265,20 @@ impl TokenAccounting for InMemoryTokenAccounting {
 ///
 /// Call [`InMemoryPolicy::allow`] to grant authorization before exercising token ops.
 /// Missing entries default to `false`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct InMemoryPolicy {
     /// Authorization grants keyed by `(policy_id, account)`.
     pub authorizations: HashMap<(u64, Address), bool>,
+    /// Policy IDs that should be treated as existing.
+    pub policies: HashSet<u64>,
+    /// Next custom policy counter for tests that exercise registry creation.
+    pub next_policy_counter: u64,
+}
+
+impl Default for InMemoryPolicy {
+    fn default() -> Self {
+        Self { authorizations: HashMap::new(), policies: HashSet::new(), next_policy_counter: 2 }
+    }
 }
 
 impl InMemoryPolicy {
@@ -219,13 +289,115 @@ impl InMemoryPolicy {
 
     /// Marks `account` as authorized under `policy_id`.
     pub fn allow(&mut self, policy_id: u64, account: Address) {
+        self.policies.insert(policy_id);
         self.authorizations.insert((policy_id, account), true);
+    }
+
+    /// Marks `policy_id` as an existing policy without granting any account.
+    pub fn create_existing_policy(&mut self, policy_id: u64) {
+        self.policies.insert(policy_id);
     }
 }
 
 impl Policy for InMemoryPolicy {
     fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
-        Ok(*self.authorizations.get(&(policy_id, account)).unwrap_or(&false))
+        match policy_id {
+            POLICY_ALWAYS_ALLOW => Ok(true),
+            POLICY_ALWAYS_BLOCK => Ok(false),
+            _ => Ok(*self.authorizations.get(&(policy_id, account)).unwrap_or(&false)),
+        }
+    }
+
+    fn policy_exists(&self, policy_id: u64) -> Result<bool> {
+        Ok(policy_id == POLICY_ALWAYS_ALLOW
+            || policy_id == POLICY_ALWAYS_BLOCK
+            || self.policies.contains(&policy_id))
+    }
+}
+
+impl PolicyRegistry for InMemoryPolicy {
+    fn create_policy(
+        &mut self,
+        _admin: Address,
+        policy_type: IPolicyRegistry::PolicyType,
+    ) -> Result<u64> {
+        let policy_id = (policy_type as u64) << 56 | self.next_policy_counter;
+        self.next_policy_counter += 1;
+        self.policies.insert(policy_id);
+        Ok(policy_id)
+    }
+
+    fn create_policy_with_accounts(
+        &mut self,
+        admin: Address,
+        policy_type: IPolicyRegistry::PolicyType,
+        accounts: Vec<Address>,
+    ) -> Result<u64> {
+        let policy_id = self.create_policy(admin, policy_type)?;
+        for account in accounts {
+            self.allow(policy_id, account);
+        }
+        Ok(policy_id)
+    }
+
+    fn stage_update_admin(&mut self, _policy_id: u64, _new_admin: Address) -> Result<()> {
+        Ok(())
+    }
+
+    fn finalize_update_admin(&mut self, _policy_id: u64) -> Result<()> {
+        Ok(())
+    }
+
+    fn renounce_admin(&mut self, _policy_id: u64) -> Result<()> {
+        Ok(())
+    }
+
+    fn update_allowlist(
+        &mut self,
+        policy_id: u64,
+        allowed: bool,
+        accounts: Vec<Address>,
+    ) -> Result<()> {
+        self.policies.insert(policy_id);
+        for account in accounts {
+            self.authorizations.insert((policy_id, account), allowed);
+        }
+        Ok(())
+    }
+
+    fn update_blocklist(
+        &mut self,
+        policy_id: u64,
+        blocked: bool,
+        accounts: Vec<Address>,
+    ) -> Result<()> {
+        self.policies.insert(policy_id);
+        for account in accounts {
+            self.authorizations.insert((policy_id, account), !blocked);
+        }
+        Ok(())
+    }
+
+    fn next_policy_id(&self, policy_type: IPolicyRegistry::PolicyType) -> Result<u64> {
+        Ok((policy_type as u64) << 56 | self.next_policy_counter)
+    }
+
+    fn get_policy_type(&self, policy_id: u64) -> Result<IPolicyRegistry::PolicyType> {
+        Ok(match policy_id {
+            POLICY_ALWAYS_ALLOW => IPolicyRegistry::PolicyType::ALWAYS_ALLOW,
+            POLICY_ALWAYS_BLOCK => IPolicyRegistry::PolicyType::ALWAYS_BLOCK,
+            _ => IPolicyRegistry::PolicyType::try_from((policy_id >> 56) as u8).map_err(|_| {
+                base_precompile_storage::BasePrecompileError::enum_conversion_error()
+            })?,
+        })
+    }
+
+    fn get_policy_admin(&self, _policy_id: u64) -> Result<Address> {
+        Ok(Address::ZERO)
+    }
+
+    fn pending_policy_admin(&self, _policy_id: u64) -> Result<Address> {
+        Ok(Address::ZERO)
     }
 }
 
@@ -239,11 +411,12 @@ impl SecurityAccounting for InMemoryTokenAccounting {
         Ok(())
     }
 
-    fn security_identifier(&self, key: B256) -> Result<String> {
-        Ok(self.security_identifiers.get(&key).cloned().unwrap_or_default())
-    }
-
-    fn set_security_identifier(&mut self, key: B256, value: String) -> Result<()> {
+    fn set_security_identifier_value(
+        &mut self,
+        identifier_type: &str,
+        value: String,
+    ) -> Result<()> {
+        let key = alloy_primitives::keccak256(identifier_type.as_bytes());
         if value.is_empty() {
             self.security_identifiers.remove(&key);
         } else {
