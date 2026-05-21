@@ -84,7 +84,7 @@ impl PolicyRegistryStorage<'_> {
     const BLOCKLIST_TYPE: u8 = PolicyType::BLOCKLIST as u8;
     const COUNTER_MASK: u64 = (1u64 << 56) - 1;
     const POLICY_ID_TYPE_SHIFT: usize = 56;
-    /// Number of built-in policies; the counter is set to this value after write_builtins().
+    /// Number of built-in policies; the counter is set to this value after `write_builtins`.
     const BUILTIN_POLICY_COUNT: u64 = 2;
 
     fn require_write(&self) -> Result<()> {
@@ -168,6 +168,9 @@ impl PolicyRegistryStorage<'_> {
     pub fn create_policy(&mut self, admin: Address, policy_type: PolicyType) -> Result<u64> {
         self.require_write()?;
         let policy_type_u8 = policy_type.as_discriminant();
+        if policy_type_u8 > Self::ALLOWLIST_TYPE {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::InvalidPolicyType {}));
+        }
         if admin == Address::ZERO {
             return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
         }
@@ -569,6 +572,46 @@ mod tests {
         })
         .unwrap_err();
         assert!(matches!(err, BasePrecompileError::Revert(_)));
+    }
+
+    // --- write_builtins initialization ---
+
+    #[test]
+    fn first_create_policy_initializes_builtins_and_starts_counter_at_two() {
+        // Start from bare storage — write_builtins has NOT been called yet.
+        let mut s = HashMapStorageProvider::new(1);
+        s.set_caller(ADMIN);
+        let id = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
+        })
+        .unwrap();
+        // Builtins claimed counters 0 and 1; first custom policy gets 2.
+        assert_eq!(id & PolicyRegistryStorage::COUNTER_MASK, 2);
+        // Builtins are now in storage.
+        assert!(
+            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx)
+                .policy_exists(PolicyRegistryStorage::ALWAYS_ALLOW_ID))
+            .unwrap()
+        );
+        assert!(
+            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx)
+                .policy_exists(PolicyRegistryStorage::ALWAYS_BLOCK_ID))
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn write_builtins_is_idempotent() {
+        let mut s = HashMapStorageProvider::new(1);
+        for _ in 0..3 {
+            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).write_builtins())
+                .unwrap();
+        }
+        // Counter must be exactly BUILTIN_POLICY_COUNT regardless of how many times called.
+        let counter =
+            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).next_counter.read())
+                .unwrap();
+        assert_eq!(counter, PolicyRegistryStorage::BUILTIN_POLICY_COUNT);
     }
 
     // --- createPolicy ---
