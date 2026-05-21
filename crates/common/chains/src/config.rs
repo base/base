@@ -499,8 +499,6 @@ const DEVNET: ChainConfig = ChainConfig {
     protocol_versions_address: Address::ZERO,
 
     unsafe_block_signer: None,
-    // Anvil account 5 from the standard test mnemonic. Mirrors
-    // `L2_ACTIVATION_ADMIN_ADDR` in etc/docker/devnet-env; keep both in sync.
     activation_admin_address: Some(address!("9965507D1a55bcC2695C58ba16FB37d819B0A4dc")),
 
     max_gas_limit: 30_000_000,
