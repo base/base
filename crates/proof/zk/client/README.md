@@ -107,6 +107,7 @@ impl ZkProofProvider for MockProvider {
             status: ProofJobStatus::Succeeded.into(),
             receipt: vec![1, 2, 3],
             error_message: None,
+            execution_stats: None,
         })
     }
 }
