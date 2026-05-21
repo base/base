@@ -363,12 +363,9 @@ impl PolicyRegistryStorage<'_> {
         }
     }
 
-    /// Returns `true` if `policy_id` refers to an existing or built-in policy.
+    /// Returns `true` if `policy_id` refers to an existing policy.
     pub fn policy_exists(&self, policy_id: u64) -> Result<bool> {
         Self::require_well_formed(policy_id)?;
-        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
-            return Ok(true);
-        }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         Ok(packed.exists())
     }
@@ -396,11 +393,6 @@ impl PolicyRegistryStorage<'_> {
     /// Returns the current admin of `policy_id`, or `address(0)` for policies with renounced admin.
     pub fn get_policy_admin(&self, policy_id: u64) -> Result<Address> {
         Self::require_well_formed(policy_id)?;
-        // Built-ins have a permanently renounced (zero) admin; fast-path so this works
-        // even before write_builtins() has been called.
-        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
-            return Ok(Address::ZERO);
-        }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         if !packed.exists() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
@@ -411,11 +403,6 @@ impl PolicyRegistryStorage<'_> {
     /// Returns the pending admin staged for `policy_id`, or `address(0)` if none.
     pub fn pending_policy_admin(&self, policy_id: u64) -> Result<Address> {
         Self::require_well_formed(policy_id)?;
-        // Built-ins can never have a pending admin; fast-path so this works
-        // even before write_builtins() has been called.
-        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
-            return Ok(Address::ZERO);
-        }
         self.pending_admins.at(&policy_id).read()
     }
 }
