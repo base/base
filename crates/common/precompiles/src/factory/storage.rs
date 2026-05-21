@@ -91,8 +91,7 @@ impl<'a> TokenFactoryStorage<'a> {
                 }
             }
             TokenVariant::Security => {
-                let mut storage =
-                    B20SecurityStorage::from_address(token_address, self.storage);
+                let mut storage = B20SecurityStorage::from_address(token_address, self.storage);
                 storage.initialize(
                     token_params.name.clone(),
                     token_params.symbol.clone(),

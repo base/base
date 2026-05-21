@@ -275,9 +275,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             C::METADATA_ROLE(_) => B20TokenRole::Metadata.id().abi_encode().into(),
 
             // --- Policy type identifiers ---
-            C::TRANSFER_SENDER_POLICY(_) => {
-                B20PolicyType::TransferSender.id().abi_encode().into()
-            }
+            C::TRANSFER_SENDER_POLICY(_) => B20PolicyType::TransferSender.id().abi_encode().into(),
             C::TRANSFER_RECEIVER_POLICY(_) => {
                 B20PolicyType::TransferReceiver.id().abi_encode().into()
             }

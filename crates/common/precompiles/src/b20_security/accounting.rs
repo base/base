@@ -19,11 +19,8 @@ pub trait SecurityAccounting: TokenAccounting {
     fn set_shares_to_tokens_ratio(&mut self, ratio: U256) -> Result<()>;
 
     /// Writes (or removes when `value` is empty) the security identifier for `identifier_type`.
-    fn set_security_identifier_value(
-        &mut self,
-        identifier_type: &str,
-        value: String,
-    ) -> Result<()>;
+    fn set_security_identifier_value(&mut self, identifier_type: &str, value: String)
+    -> Result<()>;
 
     /// Returns `true` if `id_hash` (= `keccak256(id)`) has been consumed by `announce`.
     fn is_announcement_id_used(&self, id_hash: B256) -> Result<bool>;

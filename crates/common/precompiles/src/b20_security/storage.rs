@@ -18,26 +18,26 @@ use crate::{B20PolicyType, IB20, TokenAccounting, TokenVariant};
 /// security-specific fields: share ratio, identifier map, and announcement-id set.
 #[contract]
 pub struct B20SecurityStorage {
-    pub total_supply: U256,                                     // slot 0
-    pub supply_cap: U256,                                       // slot 1
-    pub balances: Mapping<Address, U256>,                       // slot 2
-    pub allowances: Mapping<Address, Mapping<Address, U256>>,   // slot 3
-    pub paused: U256,                                           // slot 4
-    pub nonces: Mapping<Address, U256>,                         // slot 5
-    pub name: String,                                           // slot 6
-    pub symbol: String,                                         // slot 7
-    pub minimum_redeemable: U256,                               // slot 8
-    pub contract_uri: String,                                   // slot 9
-    pub roles: Mapping<B256, Mapping<Address, bool>>,           // slot 10
-    pub role_member_counts: Mapping<B256, U256>,                // slot 11
-    pub role_admins: Mapping<B256, B256>,                       // slot 12
+    pub total_supply: U256,                                   // slot 0
+    pub supply_cap: U256,                                     // slot 1
+    pub balances: Mapping<Address, U256>,                     // slot 2
+    pub allowances: Mapping<Address, Mapping<Address, U256>>, // slot 3
+    pub paused: U256,                                         // slot 4
+    pub nonces: Mapping<Address, U256>,                       // slot 5
+    pub name: String,                                         // slot 6
+    pub symbol: String,                                       // slot 7
+    pub minimum_redeemable: U256,                             // slot 8
+    pub contract_uri: String,                                 // slot 9
+    pub roles: Mapping<B256, Mapping<Address, bool>>,         // slot 10
+    pub role_member_counts: Mapping<B256, U256>,              // slot 11
+    pub role_admins: Mapping<B256, B256>,                     // slot 12
     pub transfer_policy_ids: U256, // slot 13: sender, receiver, executor, reserved
     pub mint_policy_ids: U256,     // slot 14: receiver, reserved, reserved, reserved
     pub stablecoin_currency: String, // slot 15 (unused for security tokens)
     pub security_isin: String,     // slot 16 (unused; identifiers stored in slot 18 mapping)
-    pub shares_to_tokens_ratio: U256,             // slot 17
+    pub shares_to_tokens_ratio: U256, // slot 17
     pub security_identifiers: Mapping<B256, String>, // slot 18  (key = keccak256(type))
-    pub announcement_ids_used: Mapping<B256, bool>,  // slot 19  (key = keccak256(id))
+    pub announcement_ids_used: Mapping<B256, bool>, // slot 19  (key = keccak256(id))
 }
 
 impl<'a> B20SecurityStorage<'a> {
