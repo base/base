@@ -32,7 +32,7 @@ use crate::backends::traits::{
 pub const EXECUTION_STATS_METADATA_KEY: &str = "execution_stats";
 
 /// Metadata key indicating that a session was produced by the dry-run backend.
-pub(crate) const DRY_RUN_METADATA_KEY: &str = "dry_run";
+const DRY_RUN_METADATA_KEY: &str = "dry_run";
 
 /// Local execution backend that returns SP1 execution statistics.
 #[derive(Clone)]
