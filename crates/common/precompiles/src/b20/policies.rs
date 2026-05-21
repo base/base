@@ -5,7 +5,7 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use super::token::B20Token;
-use crate::{B20Guards, B20TokenRole, IB20, Policy, PolicyRegistryStorage, Token, TokenAccounting};
+use crate::{B20Guards, B20TokenRole, IB20, Policy, Token, TokenAccounting};
 
 const TRANSFER_SENDER_POLICY: B256 =
     b256!("b81736c875ab819dd97f59f2a6542cfb731ad52b4ae15a6f24df2fb02b0327f5");

@@ -44,7 +44,7 @@ sol! {
 
 impl IPolicyRegistry::PolicyType {
     /// Returns the raw `u8` discriminant for this policy type.
-    pub fn as_discriminant(self) -> u8 {
+    pub const fn as_discriminant(self) -> u8 {
         self as u8
     }
 }

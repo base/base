@@ -130,17 +130,6 @@ impl PolicyRegistryStorage<'_> {
         Ok((packed, caller))
     }
 
-    /// Assigns the next counter slot to a built-in policy with zero (renounced) admin.
-    fn create_builtin_policy(&mut self, policy_type: PolicyType) -> Result<u64> {
-        let policy_type_u8 = policy_type.as_discriminant();
-        let counter = self.next_counter.read()?;
-        let next = counter.checked_add(1).ok_or_else(BasePrecompileError::under_overflow)?;
-        self.next_counter.write(next)?;
-        let policy_id = Self::make_id(policy_type_u8, counter);
-        self.policies.at_mut(&policy_id).write(PackedPolicy::new(Address::ZERO).into_u256())?;
-        Ok(policy_id)
-    }
-
     /// Writes the two built-in policies into the `policies` mapping.
     ///
     /// Consumes counters 0 and 1, leaving the counter at 2 so custom policies
@@ -152,8 +141,12 @@ impl PolicyRegistryStorage<'_> {
         if self.next_counter.read()? > 0 {
             return Ok(());
         }
-        self.create_builtin_policy(PolicyType::BLOCKLIST)?;
-        self.create_builtin_policy(PolicyType::ALLOWLIST)?;
+        let builtin = PackedPolicy::new(Address::ZERO).into_u256();
+        // counter=0 → BLOCKLIST → ALWAYS_ALLOW_ID=0
+        self.policies.at_mut(&Self::ALWAYS_ALLOW_ID).write(builtin)?;
+        // counter=1 → ALLOWLIST → ALWAYS_BLOCK_ID=(1<<56)|1
+        self.policies.at_mut(&Self::ALWAYS_BLOCK_ID).write(builtin)?;
+        self.next_counter.write(2)?;
         Ok(())
     }
 
@@ -220,7 +213,7 @@ impl PolicyRegistryStorage<'_> {
                 blocked: true,
                 accounts,
             })?,
-            _ => unreachable!("policy_type validated by create_policy"),
+            _ => return Err(BasePrecompileError::revert(IPolicyRegistry::InvalidPolicyType {})),
         }
         Ok(policy_id)
     }
@@ -524,8 +517,7 @@ mod tests {
     fn storage() -> HashMapStorageProvider {
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
-        StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).write_builtins())
-            .unwrap();
+        StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).write_builtins()).unwrap();
         s
     }
 
@@ -1035,7 +1027,9 @@ mod tests {
     fn builtin_policies_reject_admin_mutations() {
         let mut s = storage();
         // Both built-in policies have zero admin, so any caller gets Unauthorized.
-        for policy_id in [PolicyRegistryStorage::ALWAYS_ALLOW_ID, PolicyRegistryStorage::ALWAYS_BLOCK_ID] {
+        for policy_id in
+            [PolicyRegistryStorage::ALWAYS_ALLOW_ID, PolicyRegistryStorage::ALWAYS_BLOCK_ID]
+        {
             let err = StorageCtx::enter(&mut s, |ctx| {
                 PolicyRegistryStorage::new(ctx).stage_update_admin(policy_id, ALICE)
             })
