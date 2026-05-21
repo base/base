@@ -8,22 +8,25 @@ use super::{IPolicyRegistry, IPolicyRegistry::PolicyType};
 
 /// A packed policy storage word.
 ///
-/// Layout: `[255:96]` admin (160 bits) | `[95]` exists flag | `[94:0]` reserved (zero).
+/// Layout: `[255:161]` reserved (zero) | `[160]` exists flag | `[159:0]` admin (160 bits).
 ///
 /// The policy type is not stored here — it is encoded in the high byte of the policy ID
-/// and derived from there. Bit 95 is always set for any written slot, making the zero word
+/// and derived from there. Bit 160 is always set for any written slot, making the zero word
 /// a reliable "never written" sentinel even when admin is `Address::ZERO`.
+/// The high bytes are always zero, matching the EVM's left-padded address encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PackedPolicy(U256);
 
 impl PackedPolicy {
-    const ADMIN_SHIFT: usize = 96;
-    const EXISTS_BIT: U256 = U256::from_limbs([0, 1u64 << 31, 0, 0]); // bit 95
+    /// Bit 160: the limb-2 bit at position 32 (160 - 128 = 32).
+    const EXISTS_BIT: U256 = U256::from_limbs([0, 0, 1u64 << 32, 0]);
+    /// Mask covering the low 160 bits where the admin address lives.
+    const ADMIN_MASK: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0xFFFF_FFFF, 0]);
 
     fn new(admin: Address) -> Self {
         let mut word = [0u8; 32];
         word[12..32].copy_from_slice(admin.as_slice());
-        Self((U256::from_be_slice(&word) << Self::ADMIN_SHIFT) | Self::EXISTS_BIT)
+        Self(U256::from_be_slice(&word) | Self::EXISTS_BIT)
     }
 
     fn with_admin(self, new_admin: Address) -> Self {
@@ -31,7 +34,7 @@ impl PackedPolicy {
     }
 
     fn admin(self) -> Address {
-        let bytes = (self.0 >> Self::ADMIN_SHIFT).to_be_bytes::<32>();
+        let bytes = (self.0 & Self::ADMIN_MASK).to_be_bytes::<32>();
         Address::from_slice(&bytes[12..])
     }
 
