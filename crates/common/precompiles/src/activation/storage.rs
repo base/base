@@ -36,6 +36,10 @@ impl ActivationRegistryStorage<'_> {
     pub const POLICY_REGISTRY: B256 =
         b256!("0xb582ebae03f16fee49a6763f78df482fb11ae73f103ed0d330bbe556aa90a43f");
 
+    /// B20 stablecoin precompile feature id (`keccak256("base.b20_stablecoin")`).
+    pub const B20_STABLECOIN: B256 =
+        b256!("0xecfa0def2c10020caaf65e6155aa69c84b24892aaef76eeac52e0e2b3a0b8601");
+
     /// Returns the activation admin.
     pub const fn admin(&self, activation_admin_address: Option<Address>) -> Address {
         match activation_admin_address {
@@ -242,6 +246,7 @@ mod tests {
         assert_eq!(ActivationRegistryStorage::B20_TOKEN, keccak256("base.b20_token"));
         assert_eq!(ActivationRegistryStorage::TOKEN_FACTORY, keccak256("base.token_factory"));
         assert_eq!(ActivationRegistryStorage::POLICY_REGISTRY, keccak256("base.policy_registry"));
+        assert_eq!(ActivationRegistryStorage::B20_STABLECOIN, keccak256("base.b20_stablecoin"));
     }
 
     #[test]

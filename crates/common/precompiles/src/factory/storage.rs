@@ -6,6 +6,8 @@ use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Handler, Result};
 use revm::state::Bytecode;
 
+use iso_currency::Currency;
+
 use super::variant::TokenVariant;
 use crate::{
     B20StablecoinStorage, B20StablecoinToken, B20Token, B20TokenStorage, ITokenFactory,
@@ -185,6 +187,7 @@ impl<'a> TokenFactoryStorage<'a> {
                         ITokenFactory::MissingRequiredField {},
                     ));
                 }
+                Self::check_currency(&params.currency)?;
                 // TODO: validate and wire initialAdmin into token ownership/policy setup.
                 Ok((params.name, params.symbol, 6u8, Some(params.currency)))
             }
@@ -197,6 +200,13 @@ impl<'a> TokenFactoryStorage<'a> {
     fn check_version(version: u8) -> Result<()> {
         if version != Self::CREATE_TOKEN_VERSION {
             return Err(BasePrecompileError::revert(ITokenFactory::UnsupportedVersion { version }));
+        }
+        Ok(())
+    }
+
+    fn check_currency(currency: &str) -> Result<()> {
+        if Currency::from_code(currency).is_none() {
+            return Err(BasePrecompileError::revert(ITokenFactory::InvalidCurrency {}));
         }
         Ok(())
     }
@@ -219,16 +229,15 @@ mod tests {
 
     fn activate_precompiles(storage: &mut HashMapStorageProvider) {
         storage.set_caller(ACTIVATION_ADMIN);
-        StorageCtx::enter(storage, |ctx| {
-            ActivationRegistryStorage::new(ctx)
-                .activate(ActivationRegistryStorage::TOKEN_FACTORY, Some(ACTIVATION_ADMIN))
-                .unwrap()
-        });
-        StorageCtx::enter(storage, |ctx| {
-            ActivationRegistryStorage::new(ctx)
-                .activate(ActivationRegistryStorage::B20_TOKEN, Some(ACTIVATION_ADMIN))
-                .unwrap()
-        });
+        for key in [
+            ActivationRegistryStorage::TOKEN_FACTORY,
+            ActivationRegistryStorage::B20_TOKEN,
+            ActivationRegistryStorage::B20_STABLECOIN,
+        ] {
+            StorageCtx::enter(storage, |ctx| {
+                ActivationRegistryStorage::new(ctx).activate(key, Some(ACTIVATION_ADMIN)).unwrap()
+            });
+        }
     }
 
     fn token_params(name: &str, symbol: &str, decimals: u8) -> ITokenFactory::B20CreateParams {
@@ -565,6 +574,36 @@ mod tests {
                 stablecoin.dispatch(ctx, &IB20Stablecoin::currencyCall {}.abi_encode()).unwrap();
             assert!(!output.reverted, "currency() reverted: {:?}", output.bytes);
             assert_eq!(output.bytes.as_ref(), "USD".to_string().abi_encode());
+        });
+    }
+
+    #[test]
+    fn test_create_stablecoin_reverts_for_invalid_currency() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let caller = Address::repeat_byte(0x55);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            for bad_currency in ["notacurrency", "usd", "US", "USDD", "123", ""] {
+                let params = ITokenFactory::B20StablecoinCreateParams {
+                    version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
+                    name: "Test".to_string(),
+                    symbol: "TST".to_string(),
+                    initialAdmin: Address::repeat_byte(0xAB),
+                    currency: bad_currency.to_string(),
+                };
+                let call = ITokenFactory::createTokenCall {
+                    variant: ITokenFactory::TokenVariant::STABLECOIN,
+                    salt: B256::repeat_byte(0xDE),
+                    params: params.abi_encode().into(),
+                    initCalls: Vec::new(),
+                };
+                let mut factory = TokenFactoryStorage::new(ctx);
+                assert!(
+                    factory.create_token(caller, call).is_err(),
+                    "expected rejection for currency={bad_currency:?}"
+                );
+            }
         });
     }
 
