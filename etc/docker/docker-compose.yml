@@ -626,9 +626,6 @@ services:
       - ../../.devnet/l2/configs:/genesis/l2:ro
     environment:
       - OTEL_SERVICE_NAME=base-rpc
-      - BASE_CHAIN_NAME=dev
-      - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
-      - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
     entrypoint: /app/base
     command:
       - rpc
@@ -737,13 +734,13 @@ services:
       zk-prover-postgres:
         condition: service_healthy
     ports:
-      - "${ZK_PROVER_GRPC_PORT}:${ZK_PROVER_GRPC_PORT}"
+      - "${ZK_PROVER_GRPC_PORT}:9000"
     volumes:
       - ../../.devnet/l1/configs/el/chain-config.json:/app/configs/L1/${L1_CHAIN_ID}.json:ro
     environment:
       - SP1_PROVER=dry-run
       - PROXY_ENABLE=false
-      - GRPC_LISTEN_ADDR=0.0.0.0:${ZK_PROVER_GRPC_PORT}
+      - GRPC_LISTEN_ADDR=0.0.0.0:9000
       - BASE_CONSENSUS_ADDRESS=http://base-rpc:${L2_BASE_RPC_CL_RPC_PORT}
       - L1_NODE_ADDRESS=http://l1-el:${L1_HTTP_PORT}
       - L1_BEACON_ADDRESS=http://l1-cl:${L1_CL_HTTP_PORT}
