@@ -1,6 +1,6 @@
 //! ABI dispatch for the stablecoin B-20 variant.
 //!
-//! Dispatches the full `IB20` selector set using `B20_STABLECOIN` activation.
+//! Dispatches the full `IB20` selector set using B-20 stablecoin activation.
 //! All logic mirrors `B20Token::inner_with_privilege` exactly; the only
 //! distinction is the activation guard and the `StablecoinAccounting` bound
 //! that provides `currency()` from EVM slot 11.
@@ -12,7 +12,7 @@ use revm::precompile::PrecompileResult;
 
 use super::{B20StablecoinToken, accounting::StablecoinAccounting};
 use crate::{
-    ActivationRegistryStorage, B20TokenRole, Burnable, Configurable,
+    ActivationFeature, ActivationRegistryStorage, B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     Mintable, Pausable, Permittable, Policy, RoleManaged, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
@@ -51,7 +51,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         privileged: bool,
     ) -> base_precompile_storage::Result<Bytes> {
         ActivationRegistryStorage::new(ctx)
-            .ensure_activated(ActivationRegistryStorage::B20_STABLECOIN)?;
+            .ensure_activated(ActivationFeature::B20Stablecoin.id())?;
 
         let call = decode_precompile_call!(calldata, IB20::IB20Calls);
 

@@ -44,10 +44,10 @@ pub struct B20CoreStorage {
     pub nonces: Mapping<Address, U256>, // offset 13
 }
 
-/// Stablecoin B-20 storage rooted at the `base.b20.stablecoin` ERC-7201 namespace.
+/// Stablecoin B-20 extension storage rooted at the `base.b20.stablecoin` ERC-7201 namespace.
 #[derive(Debug, Clone, Storable)]
 #[namespace("base.b20.stablecoin")]
-pub struct B20StablecoinStorage {
+pub struct B20StablecoinExtensionStorage {
     /// Stablecoin currency identifier.
     pub currency: String, // offset 0
 }
@@ -56,7 +56,7 @@ pub struct B20StablecoinStorage {
 #[contract]
 pub struct B20TokenStorage {
     pub b20: B20CoreStorage,
-    pub stablecoin: B20StablecoinStorage,
+    pub stablecoin: B20StablecoinExtensionStorage,
 }
 
 impl<'a> B20TokenStorage<'a> {
@@ -69,9 +69,9 @@ impl<'a> B20TokenStorage<'a> {
 
     /// Writes all creation-time fields atomically.
     pub fn initialize(&mut self, name: String, symbol: String, supply_cap: U256) -> Result<()> {
-        self.name.write(name)?;
-        self.symbol.write(symbol)?;
-        self.supply_cap.write(supply_cap)?;
+        self.b20.name.write(name)?;
+        self.b20.symbol.write(symbol)?;
+        self.b20.supply_cap.write(supply_cap)?;
         Ok(())
     }
 }
@@ -332,7 +332,7 @@ mod tests {
 
     use super::{
         __packing_b20_core_storage, __packing_b20_stablecoin_storage, B20CoreStorage,
-        B20StablecoinStorage, B20TokenStorage, slots,
+        B20StablecoinExtensionStorage, B20TokenStorage, slots,
     };
     use crate::{B20TokenRole, TokenAccounting};
 
@@ -347,10 +347,13 @@ mod tests {
         assert_eq!(<B20CoreStorage as StorableType>::STORAGE_NAMESPACE_ID, "base.b20");
         assert_eq!(<B20CoreStorage as StorableType>::STORAGE_NAMESPACE_ROOT, B20_ROOT);
         assert_eq!(
-            <B20StablecoinStorage as StorableType>::STORAGE_NAMESPACE_ID,
+            <B20StablecoinExtensionStorage as StorableType>::STORAGE_NAMESPACE_ID,
             "base.b20.stablecoin"
         );
-        assert_eq!(<B20StablecoinStorage as StorableType>::STORAGE_NAMESPACE_ROOT, STABLECOIN_ROOT);
+        assert_eq!(
+            <B20StablecoinExtensionStorage as StorableType>::STORAGE_NAMESPACE_ROOT,
+            STABLECOIN_ROOT
+        );
 
         assert_eq!(slots::B20, B20_ROOT);
         assert_eq!(slots::STABLECOIN, STABLECOIN_ROOT);
