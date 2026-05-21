@@ -9,6 +9,9 @@ use crate::IPolicyRegistry::PolicyType;
 pub trait Policy {
     /// Returns `true` if `account` is authorized under the given `policy_id`.
     fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool>;
+
+    /// Returns `true` if `policy_id` is a built-in or previously created policy.
+    fn policy_exists(&self, policy_id: u64) -> Result<bool>;
 }
 
 /// Full policy registry interface including administrative mutations.
@@ -45,10 +48,6 @@ pub trait PolicyRegistry: Policy {
         blocked: bool,
         accounts: alloc::vec::Vec<Address>,
     ) -> Result<()>;
-    /// Returns the next policy ID that would be assigned for `policy_type`.
-    fn next_policy_id(&self, policy_type: PolicyType) -> Result<u64>;
-    /// Returns `true` if `policy_id` is a built-in or previously created policy.
-    fn policy_exists(&self, policy_id: u64) -> Result<bool>;
     /// Returns the `PolicyType` of `policy_id`.
     fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType>;
     /// Returns the current admin of `policy_id`.

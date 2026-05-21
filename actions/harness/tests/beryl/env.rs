@@ -54,8 +54,8 @@ impl BerylTestEnv {
     /// Gas limit used for B-20 staticcall probe transactions.
     pub(crate) const B20_PROBE_GAS_LIMIT: u64 = 1_000_000;
 
-    /// Token decimals encoded into the test B-20 address.
-    pub(crate) const B20_DECIMALS: u8 = 6;
+    /// Fixed decimals for the default B-20 token variant.
+    pub(crate) const B20_DECIMALS: u8 = 18;
 
     /// Initial B-20 supply minted to Alice.
     pub(crate) const B20_INITIAL_SUPPLY: u64 = 1_000_000;
@@ -169,9 +169,7 @@ impl BerylTestEnv {
 
     /// Returns the deterministic B-20 token address created by Alice.
     pub(crate) fn b20_token_address(&self) -> Address {
-        TokenVariant::B20
-            .compute_address(Self::alice(), Self::B20_DECIMALS, Self::b20_token_salt())
-            .0
+        TokenVariant::B20.compute_address(Self::alice(), Self::b20_token_salt()).0
     }
 
     /// Creates a transaction that calls the B-20 token factory with the default salt.
@@ -482,7 +480,6 @@ impl BerylTestEnv {
             name: "Action B20".to_string(),
             symbol: "AB20".to_string(),
             initialAdmin: Self::alice(),
-            decimals: Self::B20_DECIMALS,
         }
     }
 

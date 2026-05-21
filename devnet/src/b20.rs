@@ -13,8 +13,8 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_network::Base;
 use base_common_precompiles::{
-    ActivationRegistryStorage, IActivationRegistry, IB20, ITokenFactory, TokenFactoryStorage,
-    TokenVariant,
+    ActivationRegistryStorage, B20PausableFeature, IActivationRegistry, IB20, ITokenFactory,
+    TokenFactoryStorage, TokenVariant,
 };
 use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
 use eyre::{ContextCompat, Result, WrapErr, ensure};
@@ -31,8 +31,6 @@ pub struct B20CreateConfig {
     pub initial_supply_recipient: Address,
     /// Initial supply cap to configure during the factory init-call window.
     pub supply_cap: U256,
-    /// Initial minimum redeemable amount.
-    pub minimum_redeemable: U256,
     /// Initial ERC-7572 contract URI.
     pub contract_uri: String,
 }
@@ -107,7 +105,6 @@ impl<'a> B20PrecompileClient<'a> {
     pub fn token_params(
         name: &str,
         symbol: &str,
-        decimals: u8,
         initial_admin: Address,
         initial_supply: U256,
         initial_supply_recipient: Address,
@@ -118,12 +115,10 @@ impl<'a> B20PrecompileClient<'a> {
                 name: name.to_string(),
                 symbol: symbol.to_string(),
                 initialAdmin: initial_admin,
-                decimals,
             },
             initial_supply,
             initial_supply_recipient,
             supply_cap: U256::MAX,
-            minimum_redeemable: U256::ZERO,
             contract_uri: String::new(),
         }
     }
@@ -135,7 +130,7 @@ impl<'a> B20PrecompileClient<'a> {
         params: B20CreateConfig,
         salt: B256,
     ) -> Result<Address> {
-        let token = self.predict_token_address(variant, params.create.decimals, salt);
+        let token = self.predict_token_address(variant, salt);
         let mut init_calls = Vec::new();
         if params.initial_supply > U256::ZERO {
             init_calls.push(
@@ -152,19 +147,12 @@ impl<'a> B20PrecompileClient<'a> {
                 IB20::setSupplyCapCall { newSupplyCap: params.supply_cap }.abi_encode().into(),
             );
         }
-        if params.minimum_redeemable > U256::ZERO {
-            init_calls.push(
-                IB20::setMinimumRedeemableCall { newMinimum: params.minimum_redeemable }
-                    .abi_encode()
-                    .into(),
-            );
-        }
         if !params.contract_uri.is_empty() {
             init_calls
                 .push(IB20::setContractURICall { newURI: params.contract_uri }.abi_encode().into());
         }
         let call = ITokenFactory::createTokenCall {
-            variant: Self::abi_variant(variant),
+            variant: variant.abi(),
             salt,
             params: params.create.abi_encode().into(),
             initCalls: init_calls,
@@ -194,13 +182,8 @@ impl<'a> B20PrecompileClient<'a> {
     }
 
     /// Computes the token address a factory creation call will use.
-    pub fn predict_token_address(
-        &self,
-        variant: TokenVariant,
-        decimals: u8,
-        salt: B256,
-    ) -> Address {
-        variant.compute_address(self.signer.address(), decimals, salt).0
+    pub fn predict_token_address(&self, variant: TokenVariant, salt: B256) -> Address {
+        variant.compute_address(self.signer.address(), salt).0
     }
 
     /// Waits for a created token address to return non-empty bytecode.
@@ -231,16 +214,16 @@ impl<'a> B20PrecompileClient<'a> {
     }
 
     /// Reads the variant encoded in a token address via the factory.
-    pub async fn variant_of(&self, token: Address) -> Result<u8> {
+    pub async fn variant_of(&self, token: Address) -> Result<TokenVariant> {
         let output = self
             .call(TokenFactoryStorage::ADDRESS, ITokenFactory::getTokenVariantCall { token })
             .await?;
         let variant = ITokenFactory::getTokenVariantCall::abi_decode_returns(output.as_ref())
             .wrap_err("Failed to decode getTokenVariant")?;
-        Ok(variant as u8)
+        TokenVariant::from_abi(variant).map_err(|_| eyre::eyre!("invalid B-20 variant"))
     }
 
-    /// Reads the decimals encoded in a token address.
+    /// Reads the fixed decimals for the token variant encoded in an address.
     pub async fn decimals_of(&self, token: Address) -> Result<u8> {
         TokenVariant::decimals_of(token).wrap_err("Token address is not a supported B-20 token")
     }
@@ -384,18 +367,24 @@ impl<'a> B20PrecompileClient<'a> {
 
     /// Reads the pause vector flags.
     pub async fn paused(&self, token: Address) -> Result<U256> {
-        let output = self.call(token, IB20::pausedCall {}).await?;
-        IB20::pausedCall::abi_decode_returns(output.as_ref()).wrap_err("Failed to decode paused")
+        let output = self.call(token, IB20::pausedFeaturesCall {}).await?;
+        let features = IB20::pausedFeaturesCall::abi_decode_returns(output.as_ref())
+            .wrap_err("Failed to decode pausedFeatures")?;
+        Ok(features
+            .into_iter()
+            .fold(U256::ZERO, |paused, feature| paused | B20PausableFeature::mask(feature)))
     }
 
     /// Pauses the token for the given vector flags.
     pub async fn pause(&self, token: Address, vectors: U256) -> Result<()> {
-        self.send_call(token, IB20::pauseCall { vectors }, "pause B-20 token").await
+        let features = pausable_features_from_mask(vectors);
+        self.send_call(token, IB20::pauseCall { features }, "pause B-20 token").await
     }
 
     /// Unpauses all pause vectors on the token.
     pub async fn unpause(&self, token: Address) -> Result<()> {
-        self.send_call(token, IB20::unpauseCall {}, "unpause B-20 token").await
+        let features = pausable_features_from_mask(U256::from(0x0f));
+        self.send_call(token, IB20::unpauseCall { features }, "unpause B-20 token").await
     }
 
     /// Returns true if `token` is a deployed B-20 via the factory.
@@ -411,15 +400,13 @@ impl<'a> B20PrecompileClient<'a> {
         &self,
         creator: Address,
         variant: TokenVariant,
-        decimals: u8,
         salt: B256,
     ) -> Result<Address> {
         let output = self
             .call(
                 TokenFactoryStorage::ADDRESS,
                 ITokenFactory::getTokenAddressCall {
-                    variant: Self::abi_variant(variant),
-                    decimals,
+                    variant: variant.abi(),
                     sender: creator,
                     salt,
                 },
@@ -427,14 +414,6 @@ impl<'a> B20PrecompileClient<'a> {
             .await?;
         ITokenFactory::getTokenAddressCall::abi_decode_returns(output.as_ref())
             .wrap_err("Failed to decode getTokenAddress")
-    }
-
-    const fn abi_variant(variant: TokenVariant) -> ITokenFactory::TokenVariant {
-        match variant {
-            TokenVariant::B20 => ITokenFactory::TokenVariant::DEFAULT,
-            TokenVariant::Stablecoin => ITokenFactory::TokenVariant::STABLECOIN,
-            TokenVariant::Security => ITokenFactory::TokenVariant::SECURITY,
-        }
     }
 
     /// Sends a transaction and returns `true` if it succeeded, `false` if it reverted.
@@ -527,4 +506,16 @@ impl<'a> B20PrecompileClient<'a> {
 
         Ok((raw_tx, tx_hash))
     }
+}
+
+fn pausable_features_from_mask(mask: U256) -> Vec<IB20::PausableFeature> {
+    [
+        IB20::PausableFeature::TRANSFER,
+        IB20::PausableFeature::MINT,
+        IB20::PausableFeature::BURN,
+        IB20::PausableFeature::REDEEM,
+    ]
+    .into_iter()
+    .filter(|feature| (mask & B20PausableFeature::mask(*feature)) != U256::ZERO)
+    .collect()
 }

@@ -4,6 +4,12 @@ mod abi;
 mod dispatch;
 pub use abi::IB20;
 
+mod pausable;
+pub use pausable::B20PausableFeature;
+
+mod policies;
+pub use policies::{B20PolicyType, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK};
+
 mod precompile;
 pub use precompile::B20TokenPrecompile;
 

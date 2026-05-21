@@ -56,10 +56,6 @@ impl PolicyRegistryStorage<'_> {
                 let authorized = self.is_authorized(call.policyId, call.account)?;
                 Ok(IPolicyRegistry::isAuthorizedCall::abi_encode_returns(&authorized).into())
             }
-            C::nextPolicyId(call) => {
-                let id = self.next_policy_id(call.policyType)?;
-                Ok(IPolicyRegistry::nextPolicyIdCall::abi_encode_returns(&id).into())
-            }
             C::policyExists(call) => {
                 let exists = self.policy_exists(call.policyId)?;
                 Ok(IPolicyRegistry::policyExistsCall::abi_encode_returns(&exists).into())
@@ -320,24 +316,6 @@ mod tests {
         })
         .unwrap();
         assert!(!out.reverted);
-    }
-
-    #[test]
-    fn dispatch_next_policy_id() {
-        let mut storage = HashMapStorageProvider::new(1);
-        activate_policy_registry(&mut storage);
-        let calldata = IPolicyRegistry::nextPolicyIdCall {
-            policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
-        }
-        .abi_encode();
-
-        let out = StorageCtx::enter(&mut storage, |ctx| {
-            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
-        })
-        .unwrap();
-        assert!(!out.reverted);
-        let id = IPolicyRegistry::nextPolicyIdCall::abi_decode_returns(&out.bytes).unwrap();
-        assert_eq!((id >> 56) as u8, IPolicyRegistry::PolicyType::ALLOWLIST as u8);
     }
 
     #[test]

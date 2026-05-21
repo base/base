@@ -28,10 +28,13 @@ pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
 use tracing::{debug, error, info};
 
-// Safety threshold for maximum blocks to prune automatically on startup.
-// If the required prune exceeds this, the node will error out and require manual pruning. Default
-// is 1000 blocks.
-const MAX_PRUNE_BLOCKS_STARTUP: u64 = 1000;
+/// Default safety threshold for the gap between stored earliest block and the configured
+/// window target. When exceeded on startup, the node refuses to auto-prune and asks the
+/// operator to run `proofs prune` manually. The threshold is a backstop against accidental
+/// misconfiguration (e.g. shrinking the proofs window by orders of magnitude) — it is not a
+/// measure of pruner throughput. Override via
+/// [`BaseProofsExExBuilder::with_max_prune_blocks_startup`].
+const DEFAULT_MAX_PRUNE_BLOCKS_STARTUP: u64 = 100_000;
 
 /// How many blocks to process in a single batch before yielding. Default is 50 blocks.
 const SYNC_BLOCKS_BATCH_SIZE: usize = 50;
@@ -56,6 +59,7 @@ where
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
     verification_interval: u64,
+    max_prune_blocks_startup: u64,
 }
 
 impl<Node, Storage> BaseProofsExExBuilder<Node, Storage>
@@ -70,6 +74,7 @@ where
             proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW,
             proofs_history_prune_interval: DEFAULT_PRUNE_INTERVAL,
             verification_interval: DEFAULT_VERIFICATION_INTERVAL,
+            max_prune_blocks_startup: DEFAULT_MAX_PRUNE_BLOCKS_STARTUP,
         }
     }
 
@@ -91,6 +96,13 @@ where
         self
     }
 
+    /// Sets the safety threshold for blocks that may be auto-pruned at startup.
+    /// See [`DEFAULT_MAX_PRUNE_BLOCKS_STARTUP`].
+    pub const fn with_max_prune_blocks_startup(mut self, max_blocks: u64) -> Self {
+        self.max_prune_blocks_startup = max_blocks;
+        self
+    }
+
     /// Builds the [`BaseProofsExEx`].
     pub fn build(self) -> BaseProofsExEx<Node, Storage> {
         BaseProofsExEx {
@@ -99,6 +111,7 @@ where
             proofs_history_window: self.proofs_history_window,
             proofs_history_prune_interval: self.proofs_history_prune_interval,
             verification_interval: self.verification_interval,
+            max_prune_blocks_startup: self.max_prune_blocks_startup,
         }
     }
 }
@@ -187,6 +200,9 @@ where
     /// If 0, verification is disabled (always use fast path when available).
     /// If 1, verification is always enabled (always execute blocks).
     verification_interval: u64,
+    /// Maximum blocks the startup check is willing to schedule for auto-prune. See
+    /// [`DEFAULT_MAX_PRUNE_BLOCKS_STARTUP`].
+    max_prune_blocks_startup: u64,
 }
 
 impl<Node, Storage> BaseProofsExEx<Node, Storage>
@@ -278,13 +294,13 @@ where
         let target_earliest = latest_block_number.saturating_sub(self.proofs_history_window);
         if target_earliest > earliest_block_number {
             let blocks_to_prune = target_earliest - earliest_block_number;
-            if blocks_to_prune > MAX_PRUNE_BLOCKS_STARTUP {
+            if blocks_to_prune > self.max_prune_blocks_startup {
                 return Err(eyre::eyre!(
                     "Configuration requires pruning {} blocks, which exceeds the safety threshold of {}. \
                      Huge prune operations can stall the node. \
                      Please run 'base-reth-node proofs prune' manually before starting the node.",
                     blocks_to_prune,
-                    MAX_PRUNE_BLOCKS_STARTUP
+                    self.max_prune_blocks_startup
                 ));
             }
         }
@@ -798,6 +814,7 @@ mod tests {
             .with_proofs_history_window(20)
             .with_proofs_history_prune_interval(Duration::from_secs(3600))
             .with_verification_interval(1000)
+            .with_max_prune_blocks_startup(1000)
             .build()
     }
 

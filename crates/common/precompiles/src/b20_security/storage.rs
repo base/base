@@ -1,4 +1,4 @@
-//! `B20TokenStorage` stores the EVM storage layout for B-20 tokens.
+//! EVM storage adapter for the security B-20 variant.
 
 use alloc::string::String;
 
@@ -8,10 +8,16 @@ use base_precompile_storage::{
     BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
 };
 
+use super::accounting::SecurityAccounting;
 use crate::{B20PolicyType, IB20, TokenAccounting, TokenVariant};
 
+/// EVM-backed storage for a security B-20 token.
+///
+/// Slots 0–16 mirror [`crate::B20TokenStorage`] exactly so that address layout
+/// and role/policy/pause storage is compatible. Slots 17–19 hold the
+/// security-specific fields: share ratio, identifier map, and announcement-id set.
 #[contract]
-pub struct B20TokenStorage {
+pub struct B20SecurityStorage {
     pub total_supply: U256,                                   // slot 0
     pub supply_cap: U256,                                     // slot 1
     pub balances: Mapping<Address, U256>,                     // slot 2
@@ -22,41 +28,51 @@ pub struct B20TokenStorage {
     pub symbol: String,                                       // slot 7
     pub minimum_redeemable: U256,                             // slot 8
     pub contract_uri: String,                                 // slot 9
-    // slot 10 previously held pre-production capabilities; Beryl starts with fresh B-20 storage.
-    pub roles: Mapping<B256, Mapping<Address, bool>>, // slot 10
-    pub role_member_counts: Mapping<B256, U256>,      // slot 11
-    pub role_admins: Mapping<B256, B256>,             // slot 12
+    pub roles: Mapping<B256, Mapping<Address, bool>>,         // slot 10
+    pub role_member_counts: Mapping<B256, U256>,              // slot 11
+    pub role_admins: Mapping<B256, B256>,                     // slot 12
     pub transfer_policy_ids: U256, // slot 13: sender, receiver, executor, reserved
     pub mint_policy_ids: U256,     // slot 14: receiver, reserved, reserved, reserved
-    pub stablecoin_currency: String, // slot 15
-    pub security_isin: String,     // slot 16
+    pub stablecoin_currency: String, // slot 15 (unused for security tokens)
+    pub security_isin: String,     // slot 16 (unused; identifiers stored in slot 18 mapping)
+    pub shares_to_tokens_ratio: U256, // slot 17
+    pub security_identifiers: Mapping<B256, String>, // slot 18  (key = keccak256(type))
+    pub announcement_ids_used: Mapping<B256, bool>, // slot 19  (key = keccak256(id))
 }
 
-impl<'a> B20TokenStorage<'a> {
-    /// Creates a `B20TokenStorage` instance targeting `addr`.
-    ///
-    /// Used by the factory to initialize token storage at a dynamically computed address.
+impl<'a> B20SecurityStorage<'a> {
+    /// Creates a `B20SecurityStorage` instance targeting `addr`.
     pub fn from_address(addr: Address, storage: StorageCtx<'a>) -> Self {
         Self::__new(addr, storage)
     }
 
     /// Writes all creation-time fields atomically.
+    ///
+    /// `initial_isin` may be empty; when non-empty it is stored under the
+    /// `keccak256("ISIN")` key in the `security_identifiers` mapping.
     pub fn initialize(
         &mut self,
         name: String,
         symbol: String,
         supply_cap: U256,
-        capabilities: U256,
+        initial_shares_to_tokens_ratio: U256,
+        initial_isin: String,
+        minimum_redeemable: U256,
     ) -> Result<()> {
         self.name.write(name)?;
         self.symbol.write(symbol)?;
         self.supply_cap.write(supply_cap)?;
-        self.capabilities.write(capabilities)?;
+        self.shares_to_tokens_ratio.write(initial_shares_to_tokens_ratio)?;
+        self.minimum_redeemable.write(minimum_redeemable)?;
+        if !initial_isin.is_empty() {
+            let key = alloy_primitives::keccak256(b"ISIN");
+            self.security_identifiers.at_mut(&key).write(initial_isin)?;
+        }
         Ok(())
     }
 }
 
-impl TokenAccounting for B20TokenStorage<'_> {
+impl TokenAccounting for B20SecurityStorage<'_> {
     fn token_address(&self) -> Address {
         ContractStorage::address(self)
     }
@@ -122,7 +138,8 @@ impl TokenAccounting for B20TokenStorage<'_> {
     }
 
     fn security_identifier(&self, identifier_type: &str) -> Result<String> {
-        if identifier_type == "ISIN" { self.security_isin.read() } else { Ok(String::new()) }
+        let key = alloy_primitives::keccak256(identifier_type.as_bytes());
+        self.security_identifiers.at(&key).read()
     }
 
     fn paused(&self) -> Result<U256> {
@@ -249,7 +266,7 @@ impl TokenAccounting for B20TokenStorage<'_> {
     }
 }
 
-impl B20TokenStorage<'_> {
+impl B20SecurityStorage<'_> {
     const TRANSFER_SENDER_POLICY_LANE: usize = 0;
     const TRANSFER_RECEIVER_POLICY_LANE: usize = 1;
     const TRANSFER_EXECUTOR_POLICY_LANE: usize = 2;
@@ -270,5 +287,36 @@ impl B20TokenStorage<'_> {
         let shift = lane * Self::POLICY_LANE_BITS;
         let mask = U256::from(u64::MAX) << shift;
         (packed & !mask) | (U256::from(policy_id) << shift)
+    }
+}
+
+impl SecurityAccounting for B20SecurityStorage<'_> {
+    fn shares_to_tokens_ratio(&self) -> Result<U256> {
+        self.shares_to_tokens_ratio.read()
+    }
+
+    fn set_shares_to_tokens_ratio(&mut self, ratio: U256) -> Result<()> {
+        self.shares_to_tokens_ratio.write(ratio)
+    }
+
+    fn set_security_identifier_value(
+        &mut self,
+        identifier_type: &str,
+        value: String,
+    ) -> Result<()> {
+        let key = alloy_primitives::keccak256(identifier_type.as_bytes());
+        if value.is_empty() {
+            self.security_identifiers.at_mut(&key).delete()
+        } else {
+            self.security_identifiers.at_mut(&key).write(value)
+        }
+    }
+
+    fn is_announcement_id_used(&self, id_hash: B256) -> Result<bool> {
+        self.announcement_ids_used.at(&id_hash).read()
+    }
+
+    fn mark_announcement_id_used(&mut self, id_hash: B256) -> Result<()> {
+        self.announcement_ids_used.at_mut(&id_hash).write(true)
     }
 }

@@ -153,7 +153,6 @@ async fn token_factory_views_and_events_are_available_after_beryl_activation() {
         Bytes::from(
             ITokenFactory::getTokenAddressCall {
                 variant: ITokenFactory::TokenVariant::DEFAULT,
-                decimals: BerylTestEnv::B20_DECIMALS,
                 sender: BerylTestEnv::alice(),
                 salt: BerylTestEnv::b20_token_salt(),
             }

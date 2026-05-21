@@ -499,7 +499,7 @@ const DEVNET: ChainConfig = ChainConfig {
     protocol_versions_address: Address::ZERO,
 
     unsafe_block_signer: None,
-    activation_admin_address: None,
+    activation_admin_address: Some(address!("9965507D1a55bcC2695C58ba16FB37d819B0A4dc")),
 
     max_gas_limit: 30_000_000,
     prune_delete_limit: 20_000,

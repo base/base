@@ -22,14 +22,22 @@ mod bls12_381;
 
 mod common;
 pub use common::{
-    Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, Mintable, Pausable,
-    Permittable, Policy, PolicyRegistry, Redeemable, Token, TokenAccounting, Transferable,
+    B20Guards, B20TokenRole, Burnable, Configurable, Mintable, Pausable, Permittable, Policy,
+    PolicyRegistry, RoleManaged, Token, TokenAccounting, Transferable,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
 
 mod b20;
-pub use b20::{B20Token, B20TokenPrecompile, B20TokenStorage, IB20};
+pub use b20::{
+    B20PausableFeature, B20PolicyType, B20Token, B20TokenPrecompile, B20TokenStorage, IB20,
+    POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK,
+};
+
+mod b20_security;
+pub use b20_security::{
+    B20SecurityPrecompile, B20SecurityStorage, B20SecurityToken, IB20Security, SecurityAccounting,
+};
 
 mod b20_stablecoin;
 pub use b20_stablecoin::{

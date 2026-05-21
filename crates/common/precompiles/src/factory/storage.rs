@@ -1,15 +1,15 @@
-use alloc::string::String;
+use alloc::string::{String, ToString};
 
 use alloy_primitives::{Address, Bytes, U256, address};
-use alloy_sol_types::SolValue;
+use alloy_sol_types::{SolCall, SolValue};
 use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Result};
 use revm::state::Bytecode;
 
 use super::variant::TokenVariant;
 use crate::{
-    B20StablecoinStorage, B20StablecoinToken, B20Token, B20TokenStorage, ITokenFactory,
-    PolicyHandle,
+    B20SecurityStorage, B20SecurityToken, B20Token, B20TokenRole, B20TokenStorage, ITokenFactory,
+    PolicyHandle, RoleManaged, Token,
 };
 
 /// The B-20 token factory precompile.
@@ -26,10 +26,7 @@ impl<'a> TokenFactoryStorage<'a> {
     /// Initial supply cap for newly created default B-20 tokens.
     pub const DEFAULT_SUPPLY_CAP: U256 = U256::MAX;
 
-    /// Initial capability bits for newly created default B-20 tokens.
-    pub const DEFAULT_CAPABILITIES: U256 = U256::from_limbs([3, 0, 0, 0]);
-
-    /// Creates a token at a deterministic address derived from `(caller, variant, decimals, salt)`.
+    /// Creates a token at a deterministic address derived from `(caller, variant, salt)`.
     pub fn create_token(
         &mut self,
         caller: Address,
@@ -38,9 +35,10 @@ impl<'a> TokenFactoryStorage<'a> {
         let Some(variant) = Self::token_variant(call.variant) else {
             return Err(BasePrecompileError::revert(ITokenFactory::InvalidVariant {}));
         };
-        let (name, symbol, decimals, maybe_currency) =
-            Self::decode_create_params(variant, &call.params)?;
-        let (token_address, _) = variant.compute_address(caller, decimals, call.salt);
+        let token_params = DecodedCreateParams::decode(variant, &call.params)?;
+        Self::check_version(token_params.version)?;
+        token_params.validate()?;
+        let (token_address, _) = variant.compute_address(caller, call.salt);
 
         let already_deployed =
             self.storage.with_account_info(token_address, |info| Ok(!info.is_empty_code_hash()))?;
@@ -55,58 +53,65 @@ impl<'a> TokenFactoryStorage<'a> {
         self.storage.set_code(token_address, stub)?;
 
         match variant {
-            TokenVariant::B20 => {
-                let mut token = B20TokenStorage::from_address(token_address, self.storage);
-                token.initialize(
-                    name.clone(),
-                    symbol.clone(),
-                    Self::DEFAULT_SUPPLY_CAP,
-                    Self::DEFAULT_CAPABILITIES,
-                )?;
+            TokenVariant::B20 | TokenVariant::Stablecoin => {
+                let mut token = B20Token::with_storage_and_policy(
+                    B20TokenStorage::from_address(token_address, self.storage),
+                    PolicyHandle::new(self.storage),
+                );
+                token.accounting_mut().name.write(token_params.name.clone())?;
+                token.accounting_mut().symbol.write(token_params.symbol.clone())?;
+                token.accounting_mut().supply_cap.write(Self::DEFAULT_SUPPLY_CAP)?;
+                token.accounting_mut().minimum_redeemable.write(token_params.minimum_redeemable)?;
+                token
+                    .accounting_mut()
+                    .stablecoin_currency
+                    .write(token_params.stablecoin_currency)?;
+                token.accounting_mut().security_isin.write(token_params.security_isin)?;
 
                 self.emit_event(ITokenFactory::TokenCreated {
                     token: token_address,
                     variant: call.variant,
-                    name,
-                    symbol,
-                    decimals,
+                    name: token_params.name,
+                    symbol: token_params.symbol,
+                    decimals: token_params.decimals,
                 })?;
 
+                if !token_params.initial_admin.is_zero() {
+                    token.grant_role_unchecked(
+                        B20TokenRole::DefaultAdmin.id(),
+                        token_params.initial_admin,
+                        Self::ADDRESS,
+                    )?;
+                }
+
                 for (index, calldata) in call.initCalls.into_iter().enumerate() {
-                    B20Token::with_storage_and_policy(
-                        B20TokenStorage::from_address(token_address, self.storage),
-                        PolicyHandle::new(self.storage),
-                    )
-                    .dispatch(self.storage, &calldata)
-                    .map_err(|_| {
-                        BasePrecompileError::revert(ITokenFactory::InitCallFailed {
-                            index: U256::from(index),
-                        })
-                    })?;
+                    token
+                        .inner_with_privilege(self.storage, &calldata, true)
+                        .map_err(|err| Self::map_init_call_error(index, err))?;
                 }
             }
-            TokenVariant::Stablecoin => {
-                let currency = maybe_currency.expect("stablecoin params always produce a currency");
-                let mut token = B20StablecoinStorage::from_address(token_address, self.storage);
-                token.initialize(
-                    name.clone(),
-                    symbol.clone(),
+            TokenVariant::Security => {
+                let mut storage = B20SecurityStorage::from_address(token_address, self.storage);
+                storage.initialize(
+                    token_params.name.clone(),
+                    token_params.symbol.clone(),
                     Self::DEFAULT_SUPPLY_CAP,
-                    Self::DEFAULT_CAPABILITIES,
-                    currency,
+                    alloy_primitives::U256::from(1_000_000_000_000_000_000u128),
+                    token_params.security_isin,
+                    token_params.minimum_redeemable,
                 )?;
 
                 self.emit_event(ITokenFactory::TokenCreated {
                     token: token_address,
                     variant: call.variant,
-                    name,
-                    symbol,
-                    decimals,
+                    name: token_params.name,
+                    symbol: token_params.symbol,
+                    decimals: token_params.decimals,
                 })?;
 
                 for (index, calldata) in call.initCalls.into_iter().enumerate() {
-                    B20StablecoinToken::with_storage_and_policy(
-                        B20StablecoinStorage::from_address(token_address, self.storage),
+                    B20SecurityToken::with_storage_and_policy(
+                        B20SecurityStorage::from_address(token_address, self.storage),
                         PolicyHandle::new(self.storage),
                     )
                     .inner(self.storage, &calldata)
@@ -116,9 +121,6 @@ impl<'a> TokenFactoryStorage<'a> {
                         })
                     })?;
                 }
-            }
-            TokenVariant::Security => {
-                unreachable!("security variant is rejected by decode_create_params")
             }
         }
 
@@ -139,9 +141,8 @@ impl<'a> TokenFactoryStorage<'a> {
         match variant {
             ITokenFactory::TokenVariant::DEFAULT => Some(TokenVariant::B20),
             ITokenFactory::TokenVariant::STABLECOIN => Some(TokenVariant::Stablecoin),
-            ITokenFactory::TokenVariant::NONE
-            | ITokenFactory::TokenVariant::SECURITY
-            | ITokenFactory::TokenVariant::__Invalid => None,
+            ITokenFactory::TokenVariant::SECURITY => Some(TokenVariant::Security),
+            ITokenFactory::TokenVariant::NONE | ITokenFactory::TokenVariant::__Invalid => None,
         }
     }
 
@@ -154,55 +155,104 @@ impl<'a> TokenFactoryStorage<'a> {
         }
     }
 
-    fn decode_create_params(
-        variant: TokenVariant,
-        params: &Bytes,
-    ) -> Result<(String, String, u8, Option<String>)> {
-        match variant {
-            TokenVariant::B20 => {
-                let params = ITokenFactory::B20CreateParams::abi_decode(params).map_err(|_| {
-                    BasePrecompileError::revert(ITokenFactory::InvalidTokenParams {})
-                })?;
-                Self::check_version(params.version)?;
-                if params.name.is_empty() || params.symbol.is_empty() {
-                    return Err(BasePrecompileError::revert(
-                        ITokenFactory::MissingRequiredField {},
-                    ));
-                }
-                if params.decimals < 2 || params.decimals > 18 {
-                    return Err(BasePrecompileError::revert(ITokenFactory::InvalidDecimals {
-                        decimals: params.decimals,
-                    }));
-                }
-                // TODO: validate and wire initialAdmin into token ownership/policy setup.
-                Ok((params.name, params.symbol, params.decimals, None))
-            }
-            TokenVariant::Stablecoin => {
-                let params =
-                    ITokenFactory::B20StablecoinCreateParams::abi_decode(params).map_err(|_| {
-                        BasePrecompileError::revert(ITokenFactory::InvalidTokenParams {})
-                    })?;
-                Self::check_version(params.version)?;
-                if params.name.is_empty() || params.symbol.is_empty() || params.currency.is_empty()
-                {
-                    return Err(BasePrecompileError::revert(
-                        ITokenFactory::MissingRequiredField {},
-                    ));
-                }
-                // TODO: validate and wire initialAdmin into token ownership/policy setup.
-                Ok((params.name, params.symbol, 6u8, Some(params.currency)))
-            }
-            TokenVariant::Security => {
-                Err(BasePrecompileError::revert(ITokenFactory::InvalidVariant {}))
-            }
-        }
-    }
-
     fn check_version(version: u8) -> Result<()> {
         if version != Self::CREATE_TOKEN_VERSION {
             return Err(BasePrecompileError::revert(ITokenFactory::UnsupportedVersion { version }));
         }
         Ok(())
+    }
+
+    fn map_init_call_error(index: usize, err: BasePrecompileError) -> BasePrecompileError {
+        match err {
+            BasePrecompileError::Revert(bytes) if !bytes.is_empty() => {
+                BasePrecompileError::Revert(bytes)
+            }
+            err if err.is_system_error() => err,
+            _ => BasePrecompileError::revert(ITokenFactory::InitCallFailed {
+                index: U256::from(index),
+            }),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DecodedCreateParams {
+    variant: TokenVariant,
+    version: u8,
+    name: String,
+    symbol: String,
+    initial_admin: Address,
+    decimals: u8,
+    minimum_redeemable: U256,
+    stablecoin_currency: String,
+    security_isin: String,
+}
+
+impl DecodedCreateParams {
+    fn decode(variant: TokenVariant, params: &Bytes) -> Result<Self> {
+        match variant {
+            TokenVariant::B20 => {
+                let params = ITokenFactory::B20CreateParams::abi_decode(params)
+                    .map_err(Self::invalid_params)?;
+                Ok(Self {
+                    variant,
+                    version: params.version,
+                    name: params.name,
+                    symbol: params.symbol,
+                    initial_admin: params.initialAdmin,
+                    decimals: TokenVariant::B20.decimals(),
+                    minimum_redeemable: U256::ZERO,
+                    stablecoin_currency: String::new(),
+                    security_isin: String::new(),
+                })
+            }
+            TokenVariant::Stablecoin => {
+                let params = ITokenFactory::B20StablecoinCreateParams::abi_decode(params)
+                    .map_err(Self::invalid_params)?;
+                Ok(Self {
+                    variant,
+                    version: params.version,
+                    name: params.name,
+                    symbol: params.symbol,
+                    initial_admin: params.initialAdmin,
+                    decimals: TokenVariant::Stablecoin.decimals(),
+                    minimum_redeemable: U256::ZERO,
+                    stablecoin_currency: params.currency,
+                    security_isin: String::new(),
+                })
+            }
+            TokenVariant::Security => {
+                let params = ITokenFactory::B20SecurityCreateParams::abi_decode(params)
+                    .map_err(Self::invalid_params)?;
+                Ok(Self {
+                    variant,
+                    version: params.version,
+                    name: params.name,
+                    symbol: params.symbol,
+                    initial_admin: params.initialAdmin,
+                    decimals: TokenVariant::Security.decimals(),
+                    minimum_redeemable: params.minimumRedeemable,
+                    stablecoin_currency: String::new(),
+                    security_isin: params.isin,
+                })
+            }
+        }
+    }
+
+    fn invalid_params(error: impl core::fmt::Display) -> BasePrecompileError {
+        BasePrecompileError::AbiDecodeFailed {
+            selector: ITokenFactory::createTokenCall::SELECTOR,
+            error: error.to_string(),
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        match self.variant {
+            TokenVariant::Stablecoin if self.stablecoin_currency.is_empty() => {
+                Err(BasePrecompileError::revert(ITokenFactory::MissingRequiredField {}))
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -214,9 +264,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        ActivationRegistryStorage, B20StablecoinStorage, B20StablecoinToken, B20Token,
-        B20TokenStorage, IB20, IB20Stablecoin, Mintable, Permittable, Token, TokenAccounting,
-        Transferable,
+        ActivationRegistryStorage, B20SecurityStorage, B20Token, B20TokenStorage, IB20, Mintable,
+        Permittable, Token, TokenAccounting, Transferable,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -226,7 +275,7 @@ mod tests {
         for key in [
             ActivationRegistryStorage::TOKEN_FACTORY,
             ActivationRegistryStorage::B20_TOKEN,
-            ActivationRegistryStorage::B20_STABLECOIN,
+            ActivationRegistryStorage::B20_SECURITY,
         ] {
             StorageCtx::enter(storage, |ctx| {
                 ActivationRegistryStorage::new(ctx).activate(key, Some(ACTIVATION_ADMIN)).unwrap()
@@ -234,13 +283,12 @@ mod tests {
         }
     }
 
-    fn token_params(name: &str, symbol: &str, decimals: u8) -> ITokenFactory::B20CreateParams {
+    fn token_params(name: &str, symbol: &str) -> ITokenFactory::B20CreateParams {
         ITokenFactory::B20CreateParams {
             version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
             name: name.to_string(),
             symbol: symbol.to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
-            decimals,
         }
     }
 
@@ -258,7 +306,7 @@ mod tests {
     }
 
     fn b20_call(salt: B256) -> ITokenFactory::createTokenCall {
-        create_call(ITokenFactory::TokenVariant::DEFAULT, token_params("Test", "TST", 18), salt)
+        create_call(ITokenFactory::TokenVariant::DEFAULT, token_params("Test", "TST"), salt)
     }
 
     fn token_at<'a>(
@@ -297,35 +345,35 @@ mod tests {
     }
 
     #[test]
-    fn test_token_variant_compute_address_encodes_variant_and_decimals() {
+    fn test_token_variant_compute_address_encodes_variant_and_hash_tail() {
         let creator = Address::repeat_byte(0x11);
         let salt = B256::repeat_byte(0x22);
-        let (addr, lower_bytes) = TokenVariant::B20.compute_address(creator, 6, salt);
+        let (addr, tail) = TokenVariant::B20.compute_address(creator, salt);
 
-        assert_eq!(addr.as_slice()[12..], lower_bytes.to_be_bytes());
+        assert_eq!(addr.as_slice()[11..], tail);
         assert!(TokenVariant::is_b20_address(addr));
         assert_eq!(TokenVariant::from_address(addr), Some(TokenVariant::B20));
-        assert_eq!(TokenVariant::decimals_of(addr), Some(6));
+        assert_eq!(TokenVariant::decimals_of(addr), Some(18));
     }
 
     #[test]
-    fn test_different_decimals_produce_different_addresses() {
+    fn test_address_derivation_ignores_decimals_and_uses_variant() {
         let creator = Address::repeat_byte(0x11);
         let salt = B256::repeat_byte(0x33);
-        let (six, _) = TokenVariant::B20.compute_address(creator, 6, salt);
-        let (eighteen, _) = TokenVariant::B20.compute_address(creator, 18, salt);
+        let (default_token, _) = TokenVariant::B20.compute_address(creator, salt);
+        let (stablecoin, _) = TokenVariant::Stablecoin.compute_address(creator, salt);
 
-        assert_ne!(six, eighteen);
-        assert_eq!(TokenVariant::decimals_of(six), Some(6));
-        assert_eq!(TokenVariant::decimals_of(eighteen), Some(18));
+        assert_ne!(default_token, stablecoin);
+        assert_eq!(TokenVariant::decimals_of(default_token), Some(18));
+        assert_eq!(TokenVariant::decimals_of(stablecoin), Some(6));
     }
 
     #[test]
     fn test_supported_variants_are_b20_prefixes() {
         let creator = Address::repeat_byte(0x11);
         let salt = B256::repeat_byte(0x44);
-        let (stablecoin, _) = TokenVariant::compute_address_for_discriminant(creator, 2, 18, salt);
-        let (security, _) = TokenVariant::compute_address_for_discriminant(creator, 3, 18, salt);
+        let (stablecoin, _) = TokenVariant::compute_address_for_discriminant(creator, 2, salt);
+        let (security, _) = TokenVariant::compute_address_for_discriminant(creator, 3, salt);
 
         assert!(TokenVariant::is_supported_discriminant(2));
         assert!(TokenVariant::is_supported_discriminant(3));
@@ -340,7 +388,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0xAA);
-        let (expected_addr, _) = TokenVariant::B20.compute_address(caller, 18, salt);
+        let (expected_addr, _) = TokenVariant::B20.compute_address(caller, salt);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = TokenFactoryStorage::new(ctx);
@@ -352,13 +400,13 @@ mod tests {
     }
 
     #[test]
-    fn test_create_token_stores_metadata_and_parses_decimals_from_address() {
+    fn test_create_token_stores_metadata_and_uses_variant_decimals() {
         let mut storage = HashMapStorageProvider::new(1);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0xBB);
         let call = create_call(
             ITokenFactory::TokenVariant::DEFAULT,
-            token_params("My Token", "MYT", 6),
+            token_params("My Token", "MYT"),
             salt,
         );
 
@@ -369,10 +417,9 @@ mod tests {
 
             assert_eq!(token.name.read().unwrap(), "My Token");
             assert_eq!(token.symbol.read().unwrap(), "MYT");
-            assert_eq!(token.decimals().unwrap(), 6);
+            assert_eq!(token.decimals().unwrap(), 18);
             assert_eq!(token.supply_cap().unwrap(), TokenFactoryStorage::DEFAULT_SUPPLY_CAP);
-            assert_eq!(token.capabilities().unwrap(), TokenFactoryStorage::DEFAULT_CAPABILITIES);
-            assert_eq!(TokenVariant::decimals_of(token_addr), Some(6));
+            assert_eq!(TokenVariant::decimals_of(token_addr), Some(18));
         });
     }
 
@@ -386,7 +433,7 @@ mod tests {
         let supply = U256::from(5_000u64);
         let mut call = create_call(
             ITokenFactory::TokenVariant::DEFAULT,
-            token_params("Supply Token", "SUP", 18),
+            token_params("Supply Token", "SUP"),
             salt,
         );
         call.initCalls.push(IB20::mintCall { to: recipient, amount: supply }.abi_encode().into());
@@ -416,14 +463,14 @@ mod tests {
     }
 
     #[test]
-    fn test_create_token_reverts_for_invalid_version_variant_and_decimals() {
+    fn test_create_token_reverts_for_invalid_version_and_variant() {
         let mut storage = HashMapStorageProvider::new(1);
         let caller = Address::repeat_byte(0x55);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = TokenFactoryStorage::new(ctx);
 
-            let mut bad_params = token_params("Bad Version", "BAD", 18);
+            let mut bad_params = token_params("Bad Version", "BAD");
             bad_params.version = TokenFactoryStorage::CREATE_TOKEN_VERSION + 1;
             let bad_version = create_call(
                 ITokenFactory::TokenVariant::DEFAULT,
@@ -435,17 +482,10 @@ mod tests {
             let bad_variant = ITokenFactory::createTokenCall {
                 variant: ITokenFactory::TokenVariant::NONE,
                 salt: B256::repeat_byte(0x02),
-                params: token_params("Bad Variant", "BAD", 18).abi_encode().into(),
+                params: token_params("Bad Variant", "BAD").abi_encode().into(),
                 initCalls: Vec::new(),
             };
             assert!(factory.create_token(caller, bad_variant).is_err());
-
-            let invalid_decimals = create_call(
-                ITokenFactory::TokenVariant::DEFAULT,
-                token_params("Bad Decimals", "BAD", 1),
-                B256::repeat_byte(0x03),
-            );
-            assert!(factory.create_token(caller, invalid_decimals).is_err());
         });
     }
 
@@ -461,45 +501,121 @@ mod tests {
         };
 
         StorageCtx::enter(&mut storage, |ctx| {
-            assert_output(
-                dispatch_factory_revert(ctx, call),
-                ITokenFactory::InvalidTokenParams {}.abi_encode(),
-            );
+            let output = dispatch_factory_revert(ctx, call);
+            assert!(output.starts_with(&ITokenFactory::createTokenCall::SELECTOR));
         });
     }
 
     #[test]
-    fn test_create_token_reverts_for_missing_required_fields() {
+    fn test_create_token_allows_empty_default_name_and_symbol() {
         let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
+        let caller = Address::repeat_byte(0x55);
+        let salt = B256::repeat_byte(0x05);
+        let call = create_call(ITokenFactory::TokenVariant::DEFAULT, token_params("", ""), salt);
 
         StorageCtx::enter(&mut storage, |ctx| {
-            let missing_name = create_call(
-                ITokenFactory::TokenVariant::DEFAULT,
-                token_params("", "BAD", 18),
-                B256::repeat_byte(0x05),
-            );
-            let missing_symbol = create_call(
-                ITokenFactory::TokenVariant::DEFAULT,
-                token_params("Bad Symbol", "", 18),
-                B256::repeat_byte(0x06),
-            );
+            let mut factory = TokenFactoryStorage::new(ctx);
+            let token_addr = factory.create_token(caller, call).unwrap();
+            let token = B20TokenStorage::from_address(token_addr, ctx);
 
+            assert_eq!(token.name.read().unwrap(), "");
+            assert_eq!(token.symbol.read().unwrap(), "");
+        });
+    }
+
+    #[test]
+    fn test_create_token_reverts_for_missing_stablecoin_currency() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let params = ITokenFactory::B20StablecoinCreateParams {
+            version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
+            name: "Stablecoin Token".to_string(),
+            symbol: "USD".to_string(),
+            initialAdmin: Address::repeat_byte(0xAB),
+            currency: String::new(),
+        };
+        let call = ITokenFactory::createTokenCall {
+            variant: ITokenFactory::TokenVariant::STABLECOIN,
+            salt: B256::repeat_byte(0x06),
+            params: params.abi_encode().into(),
+            initCalls: Vec::new(),
+        };
+
+        StorageCtx::enter(&mut storage, |ctx| {
             assert_output(
-                dispatch_factory_revert(ctx, missing_name),
-                ITokenFactory::MissingRequiredField {}.abi_encode(),
-            );
-            assert_output(
-                dispatch_factory_revert(ctx, missing_symbol),
+                dispatch_factory_revert(ctx, call),
                 ITokenFactory::MissingRequiredField {}.abi_encode(),
             );
         });
     }
 
     #[test]
-    fn test_create_token_reverts_for_unimplemented_variants() {
+    fn test_create_token_checks_stablecoin_version_before_currency() {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
+        let params = ITokenFactory::B20StablecoinCreateParams {
+            version: TokenFactoryStorage::CREATE_TOKEN_VERSION + 1,
+            name: "Stablecoin Token".to_string(),
+            symbol: "USD".to_string(),
+            initialAdmin: Address::repeat_byte(0xAB),
+            currency: String::new(),
+        };
+        let call = ITokenFactory::createTokenCall {
+            variant: ITokenFactory::TokenVariant::STABLECOIN,
+            salt: B256::repeat_byte(0x07),
+            params: params.abi_encode().into(),
+            initCalls: Vec::new(),
+        };
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_output(
+                dispatch_factory_revert(ctx, call),
+                ITokenFactory::UnsupportedVersion {
+                    version: TokenFactoryStorage::CREATE_TOKEN_VERSION + 1,
+                }
+                .abi_encode(),
+            );
+        });
+    }
+
+    #[test]
+    fn test_create_token_supports_stablecoin() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+
+        let stablecoin_params = ITokenFactory::B20StablecoinCreateParams {
+            version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
+            name: "Stablecoin Token".to_string(),
+            symbol: "USD".to_string(),
+            initialAdmin: Address::repeat_byte(0xAB),
+            currency: "USD".to_string(),
+        };
+        let stablecoin_call = ITokenFactory::createTokenCall {
+            variant: ITokenFactory::TokenVariant::STABLECOIN,
+            salt: B256::repeat_byte(0x08),
+            params: stablecoin_params.abi_encode().into(),
+            initCalls: Vec::new(),
+        };
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let stablecoin_addr = ITokenFactory::createTokenCall::abi_decode_returns(
+                dispatch_factory_success(ctx, stablecoin_call).as_ref(),
+            )
+            .unwrap();
+            let stablecoin = B20TokenStorage::from_address(stablecoin_addr, ctx);
+            assert_eq!(stablecoin.stablecoin_currency.read().unwrap(), "USD");
+            assert_eq!(TokenVariant::from_address(stablecoin_addr), Some(TokenVariant::Stablecoin));
+            assert_eq!(TokenVariant::decimals_of(stablecoin_addr), Some(6));
+        });
+    }
+
+    #[test]
+    fn test_create_security_token_stores_isin_and_ratio() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let caller = Address::repeat_byte(0x55);
+        let salt = B256::repeat_byte(0x09);
+        let (expected_addr, _) = TokenVariant::Security.compute_address(caller, salt);
 
         let security_params = ITokenFactory::B20SecurityCreateParams {
             version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
@@ -511,93 +627,34 @@ mod tests {
         };
         let security_call = ITokenFactory::createTokenCall {
             variant: ITokenFactory::TokenVariant::SECURITY,
-            salt: B256::repeat_byte(0x07),
-            params: security_params.abi_encode().into(),
-            initCalls: Vec::new(),
-        };
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            assert_output(
-                dispatch_factory_revert(ctx, security_call),
-                ITokenFactory::InvalidVariant {}.abi_encode(),
-            );
-        });
-    }
-
-    #[test]
-    fn test_create_stablecoin_token_stores_currency() {
-        let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
-        let caller = Address::repeat_byte(0x55);
-        let salt = B256::repeat_byte(0xBC);
-        let (expected_addr, _) = TokenVariant::Stablecoin.compute_address(caller, 6, salt);
-
-        let stablecoin_params = ITokenFactory::B20StablecoinCreateParams {
-            version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
-            name: "USD Stablecoin".to_string(),
-            symbol: "USDC".to_string(),
-            initialAdmin: Address::repeat_byte(0xAB),
-            currency: "USD".to_string(),
-        };
-        let stablecoin_call = ITokenFactory::createTokenCall {
-            variant: ITokenFactory::TokenVariant::STABLECOIN,
             salt,
-            params: stablecoin_params.abi_encode().into(),
+            params: security_params.abi_encode().into(),
             initCalls: Vec::new(),
         };
 
         storage.set_caller(caller);
         StorageCtx::enter(&mut storage, |ctx| {
             assert_output(
-                dispatch_factory_success(ctx, stablecoin_call),
+                dispatch_factory_success(ctx, security_call),
                 ITokenFactory::createTokenCall::abi_encode_returns(&expected_addr),
             );
             assert!(ctx.has_bytecode(expected_addr).unwrap());
 
-            let sc_storage = B20StablecoinStorage::from_address(expected_addr, ctx);
-            assert_eq!(sc_storage.currency.read().unwrap(), "USD");
-            assert_eq!(sc_storage.name.read().unwrap(), "USD Stablecoin");
-            assert_eq!(sc_storage.symbol.read().unwrap(), "USDC");
-            assert_eq!(sc_storage.decimals().unwrap(), 6);
-
-            let mut stablecoin = B20StablecoinToken::with_storage_and_policy(
-                B20StablecoinStorage::from_address(expected_addr, ctx),
-                PolicyHandle::new(ctx),
+            let sec_storage = B20SecurityStorage::from_address(expected_addr, ctx);
+            assert_eq!(sec_storage.name.read().unwrap(), "Security Token");
+            assert_eq!(sec_storage.symbol.read().unwrap(), "SEC");
+            assert_eq!(sec_storage.decimals().unwrap(), 6);
+            assert_eq!(
+                sec_storage.shares_to_tokens_ratio.read().unwrap(),
+                U256::from(1_000_000_000_000_000_000u128)
             );
-            let output =
-                stablecoin.dispatch(ctx, &IB20Stablecoin::currencyCall {}.abi_encode()).unwrap();
-            assert!(!output.reverted, "currency() reverted: {:?}", output.bytes);
-            assert_eq!(output.bytes.as_ref(), "USD".to_string().abi_encode());
-        });
-    }
-
-    #[test]
-    fn test_create_stablecoin_reverts_for_invalid_currency() {
-        let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
-        let caller = Address::repeat_byte(0x55);
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            for bad_currency in ["notacurrency", "usd", "US", "USDD", "123", ""] {
-                let params = ITokenFactory::B20StablecoinCreateParams {
-                    version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
-                    name: "Test".to_string(),
-                    symbol: "TST".to_string(),
-                    initialAdmin: Address::repeat_byte(0xAB),
-                    currency: bad_currency.to_string(),
-                };
-                let call = ITokenFactory::createTokenCall {
-                    variant: ITokenFactory::TokenVariant::STABLECOIN,
-                    salt: B256::repeat_byte(0xDE),
-                    params: params.abi_encode().into(),
-                    initCalls: Vec::new(),
-                };
-                let mut factory = TokenFactoryStorage::new(ctx);
-                assert!(
-                    factory.create_token(caller, call).is_err(),
-                    "expected rejection for currency={bad_currency:?}"
-                );
-            }
+            assert_eq!(sec_storage.minimum_redeemable.read().unwrap(), U256::ONE);
+            // ISIN is stored in the security_identifiers mapping under keccak256("ISIN").
+            let isin_key = alloy_primitives::keccak256(b"ISIN");
+            assert_eq!(
+                sec_storage.security_identifiers.at(&isin_key).read().unwrap(),
+                "US0000000000"
+            );
         });
     }
 
@@ -625,7 +682,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0x11);
-        let (addr, _) = TokenVariant::B20.compute_address(caller, 18, salt);
+        let (addr, _) = TokenVariant::B20.compute_address(caller, salt);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = TokenFactoryStorage::new(ctx);
@@ -643,7 +700,7 @@ mod tests {
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0x13);
         let (future_variant, _) =
-            TokenVariant::compute_address_for_discriminant(caller, 0xff, 18, salt);
+            TokenVariant::compute_address_for_discriminant(caller, 0xff, salt);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let factory = TokenFactoryStorage::new(ctx);
@@ -668,7 +725,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = TokenFactoryStorage::new(ctx);
-            let params = token_params("Lifecycle", "LIFE", 18);
+            let params = token_params("Lifecycle", "LIFE");
             let token_addr = factory
                 .create_token(
                     Address::repeat_byte(0xCA),
@@ -684,9 +741,9 @@ mod tests {
             let bob = Address::repeat_byte(0xBB);
             let mut token = token_at(token_addr, ctx);
 
-            token.mint(alice, U256::from(1_000u64)).unwrap();
+            token.mint(alice, alice, U256::from(1_000u64), true).unwrap();
             token.transfer(alice, bob, U256::from(300u64)).unwrap();
-            token.mint(alice, U256::from(200u64)).unwrap();
+            token.mint(alice, alice, U256::from(200u64), true).unwrap();
 
             assert_eq!(token.accounting().balance_of(alice).unwrap(), U256::from(900u64));
             assert_eq!(token.accounting().balance_of(bob).unwrap(), U256::from(300u64));
@@ -732,19 +789,16 @@ mod tests {
     fn test_factory_dispatch_create_token_predicts_and_initializes_token() {
         let creator = Address::repeat_byte(0xCA);
         let salt = B256::repeat_byte(0x31);
-        let (expected_token, _) = TokenVariant::B20.compute_address(creator, 6, salt);
+        let (expected_token, _) = TokenVariant::B20.compute_address(creator, salt);
         let mut call = create_call(
             ITokenFactory::TokenVariant::DEFAULT,
-            token_params("Dispatch Token", "DSP", 6),
+            token_params("Dispatch Token", "DSP"),
             salt,
         );
         call.initCalls.push(
             IB20::mintCall { to: Address::repeat_byte(0xCD), amount: U256::from(1_000u64) }
                 .abi_encode()
                 .into(),
-        );
-        call.initCalls.push(
-            IB20::setMinimumRedeemableCall { newMinimum: U256::from(25u64) }.abi_encode().into(),
         );
         call.initCalls.push(
             IB20::setContractURICall { newURI: "ipfs://dispatch".to_string() }.abi_encode().into(),
@@ -760,7 +814,6 @@ mod tests {
                     ctx,
                     ITokenFactory::getTokenAddressCall {
                         variant: ITokenFactory::TokenVariant::DEFAULT,
-                        decimals: 6,
                         sender: creator,
                         salt,
                     },
@@ -772,7 +825,6 @@ mod tests {
                     ctx,
                     ITokenFactory::getTokenAddressCall {
                         variant: ITokenFactory::TokenVariant::NONE,
-                        decimals: 6,
                         sender: creator,
                         salt,
                     },
@@ -810,7 +862,7 @@ mod tests {
             );
             assert_output(
                 dispatch_b20_success(ctx, expected_token, IB20::decimalsCall {}),
-                IB20::decimalsCall::abi_encode_returns(&6u8),
+                IB20::decimalsCall::abi_encode_returns(&18u8),
             );
             assert_output(
                 dispatch_b20_success(ctx, expected_token, IB20::totalSupplyCall {}),
@@ -826,7 +878,7 @@ mod tests {
             );
             assert_output(
                 dispatch_b20_success(ctx, expected_token, IB20::minimumRedeemableCall {}),
-                U256::from(25u64).abi_encode(),
+                U256::ZERO.abi_encode(),
             );
             assert_output(
                 dispatch_b20_success(ctx, expected_token, IB20::contractURICall {}),
@@ -841,9 +893,9 @@ mod tests {
         activate_precompiles(&mut storage);
         StorageCtx::enter(&mut storage, |ctx| {
             let caller = Address::repeat_byte(0xCA);
-            let (token_addr, lower_bytes) =
-                TokenVariant::B20.compute_address(caller, 18, B256::repeat_byte(0x09));
-            assert_eq!(token_addr.as_slice()[12..], lower_bytes.to_be_bytes());
+            let (token_addr, tail) =
+                TokenVariant::B20.compute_address(caller, B256::repeat_byte(0x09));
+            assert_eq!(token_addr.as_slice()[11..], tail);
             assert!(!ctx.has_bytecode(token_addr).unwrap());
 
             let mut token = token_at(token_addr, ctx);
@@ -862,10 +914,10 @@ mod tests {
         let spender = Address::repeat_byte(0xEE);
         let charlie = Address::repeat_byte(0xCC);
         let salt = B256::repeat_byte(0x32);
-        let (token_addr, _) = TokenVariant::B20.compute_address(creator, 18, salt);
+        let (token_addr, _) = TokenVariant::B20.compute_address(creator, salt);
         let mut call = create_call(
             ITokenFactory::TokenVariant::DEFAULT,
-            token_params("Dispatch Token", "DSP", 18),
+            token_params("Dispatch Token", "DSP"),
             salt,
         );
         call.initCalls
@@ -930,27 +982,6 @@ mod tests {
                     IB20::allowanceCall { owner: alice, spender },
                 ),
                 U256::from(50u64).abi_encode(),
-            );
-        });
-    }
-
-    #[test]
-    fn test_factory_dispatch_reverts_with_abi_error() {
-        let creator = Address::repeat_byte(0xCA);
-        let salt = B256::repeat_byte(0x33);
-        let params = token_params("Bad Token", "BAD", 1);
-
-        let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
-        storage.set_caller(creator);
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            assert_output(
-                dispatch_factory_revert(
-                    ctx,
-                    create_call(ITokenFactory::TokenVariant::DEFAULT, params, salt),
-                ),
-                ITokenFactory::InvalidDecimals { decimals: 1 }.abi_encode(),
             );
         });
     }

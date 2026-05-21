@@ -21,11 +21,9 @@ sol! {
         error InvalidPolicyType();
         error ZeroAddress();
         error NoPendingAdmin();
-        error StaticCallNotAllowed();
-        error CounterExhausted();
-        error BatchTooLarge();
+        error MalformedPolicyId(uint64 policyId);
 
-        event PolicyCreated(uint64 indexed policyId, address indexed creator, uint8 policyType);
+        event PolicyCreated(uint64 indexed policyId, address indexed creator, PolicyType policyType);
         event PolicyAdminStaged(uint64 indexed policyId, address indexed previousAdmin, address indexed newAdmin);
         event PolicyAdminUpdated(uint64 indexed policyId, address indexed previousAdmin, address indexed newAdmin);
         event AllowlistUpdated(uint64 indexed policyId, address indexed updater, bool allowed, address[] accounts);
@@ -40,7 +38,6 @@ sol! {
         function updateAllowlist(uint64 policyId, bool allowed, address[] calldata accounts) external;
         function updateBlocklist(uint64 policyId, bool blocked, address[] calldata accounts) external;
         function isAuthorized(uint64 policyId, address account) external view returns (bool);
-        function nextPolicyId(PolicyType policyType) external view returns (uint64);
         function policyExists(uint64 policyId) external view returns (bool);
         function policyType(uint64 policyId) external view returns (PolicyType);
         function policyAdmin(uint64 policyId) external view returns (address);
