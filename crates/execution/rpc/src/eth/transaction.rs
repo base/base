@@ -6,9 +6,12 @@ use std::{
     time::Duration,
 };
 
+use alloy_consensus::Typed2718;
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
-use base_common_consensus::{BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt};
+use base_common_consensus::{
+    BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
+};
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_primitives_traits::{Recovered, SignedTransaction, SignerRecoverable, WithEncoded};
@@ -24,7 +27,7 @@ use reth_transaction_pool::{
 };
 use tracing::{debug, warn};
 
-use crate::{BaseEthApi, BaseEthApiError, SequencerClient};
+use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerClient};
 
 impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
 where
@@ -46,6 +49,10 @@ where
         tx: WithEncoded<Recovered<PoolPooledTx<Self::Pool>>>,
     ) -> Result<B256, Self::Error> {
         let (tx, recovered) = tx.split();
+
+        if recovered.ty() == EIP8130_TX_TYPE_ID {
+            return Err(BaseInvalidTransactionError::Eip8130NotEnabled.into());
+        }
 
         // broadcast raw transaction to subscribers if there is any.
         self.eth_api().broadcast_raw_transaction(tx.clone());

@@ -75,6 +75,19 @@ pub enum BaseInvalidTransactionError {
     /// The encoded transaction was missing during evm execution.
     #[error("missing enveloped transaction bytes")]
     MissingEnvelopedTx,
+    /// An EIP-8130 (account-abstraction) transaction was submitted via RPC before
+    /// the EIP-8130 hardfork is enabled on this node.
+    ///
+    /// The transaction type byte (`0x7D`) is recognised by the consensus layer for
+    /// decoding/serialization purposes, but no validation, mempool admission, or
+    /// execution path exists yet. Submitting one through `eth_sendRawTransaction`
+    /// must therefore be rejected at the RPC boundary so it cannot leak into the
+    /// pool or be silently dropped.
+    #[error(
+        "EIP-8130 (account abstraction) transactions are not yet enabled; \
+         eth_sendRawTransaction does not accept transaction type 0x7D"
+    )]
+    Eip8130NotEnabled,
 }
 
 impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
@@ -82,7 +95,8 @@ impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'
         match err {
             BaseInvalidTransactionError::DepositSystemTxPostRegolith
             | BaseInvalidTransactionError::HaltedDepositPostRegolith
-            | BaseInvalidTransactionError::MissingEnvelopedTx => {
+            | BaseInvalidTransactionError::MissingEnvelopedTx
+            | BaseInvalidTransactionError::Eip8130NotEnabled => {
                 rpc_err(EthRpcErrorCode::TransactionRejected.code(), err.to_string(), None)
             }
         }

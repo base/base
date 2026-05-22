@@ -223,6 +223,15 @@ impl IngressService {
         let envelope = BaseTxEnvelope::decode_2718_exact(data.iter().as_slice())
             .map_err(|_| EthApiError::FailedToDecodeSignedTransaction.into_rpc_err())?;
 
+        if envelope.is_eip8130() {
+            return Err(EthApiError::InvalidParams(
+                "EIP-8130 (account abstraction) transactions are not yet enabled; \
+                 eth_sendRawTransaction does not accept transaction type 0x7D"
+                    .into(),
+            )
+            .into_rpc_err());
+        }
+
         let transaction = envelope
             .try_into_recovered()
             .map_err(|_| EthApiError::FailedToDecodeSignedTransaction.into_rpc_err())?;
