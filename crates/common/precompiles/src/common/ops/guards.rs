@@ -59,15 +59,15 @@ impl B20Guards {
     /// All policy IDs, including built-ins, are delegated to the configured policy registry.
     pub fn ensure_policy<T: Token + ?Sized>(
         token: &T,
-        policy_type: B256,
+        policy_scope: B256,
         account: Address,
     ) -> Result<()> {
-        let policy_id = token.accounting().policy_id(policy_type)?;
+        let policy_id = token.accounting().policy_id(policy_scope)?;
         if token.policy().is_authorized(policy_id, account)? {
             Ok(())
         } else {
             Err(BasePrecompileError::revert(IB20::PolicyForbids {
-                policyScope: policy_type,
+                policyScope: policy_scope,
                 policyId: policy_id,
             }))
         }
@@ -77,8 +77,8 @@ impl B20Guards {
     ///
     /// Accounts are blocked when the configured registry policy does not authorize them.
     pub fn ensure_blocked<T: Token + ?Sized>(token: &T, account: Address) -> Result<()> {
-        let policy_type = B20PolicyType::TransferSender.id();
-        let policy_id = token.accounting().policy_id(policy_type)?;
+        let policy_scope = B20PolicyType::TransferSender.id();
+        let policy_id = token.accounting().policy_id(policy_scope)?;
         if token.policy().is_authorized(policy_id, account)? {
             Err(BasePrecompileError::revert(IB20::AccountNotBlocked { account }))
         } else {
