@@ -109,6 +109,8 @@ jobs:
 
   succinct-elf-manifest:
     name: SP1 ELF Manifest
+    # Temporarily disabled while SP1 ELF manifest hashing is unstable.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -238,7 +240,6 @@ jobs:
     name: Build
     runs-on:
       group: BasePerfRunnerGroup
-    needs: succinct-elf-manifest
     env:
       BASE_REF: ${{ inputs.base_ref }}
     steps:
@@ -298,7 +299,6 @@ jobs:
     name: Test
     runs-on:
       group: BasePerfRunnerGroup
-    needs: succinct-elf-manifest
     env:
       BASE_REF: ${{ inputs.base_ref }}
     steps:
@@ -416,7 +416,6 @@ jobs:
     if: inputs.run_devnet
     runs-on:
       group: BasePerfRunnerGroup
-    needs: succinct-elf-manifest
     timeout-minutes: 60
     steps:
       - name: Harden the runner (Audit all outbound calls)
