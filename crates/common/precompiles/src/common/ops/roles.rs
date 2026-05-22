@@ -7,16 +7,6 @@ use base_precompile_storage::{BasePrecompileError, Result};
 use super::guards::B20Guards;
 use crate::{IB20, Token, TokenAccounting};
 
-const MINT_ROLE: B256 = b256!("154c00819833dac601ee5ddded6fda79d9d8b506b911b3dbd54cdb95fe6c3686");
-const BURN_ROLE: B256 = b256!("e97b137254058bd94f28d2f3eb79e2d34074ffb488d042e3bc958e0a57d2fa22");
-const BURN_BLOCKED_ROLE: B256 =
-    b256!("7408fdc0d31c7bcb349eab611f5d1168acd4303574993f8cdc98b1cd18c41cae");
-const PAUSE_ROLE: B256 = b256!("139c2898040ef16910dc9f44dc697df79363da767d8bc92f2e310312b816e46d");
-const UNPAUSE_ROLE: B256 =
-    b256!("265b220c5a8891efdd9e1b1b7fa72f257bd5169f8d87e319cf3dad6ff52b94ae");
-const METADATA_ROLE: B256 =
-    b256!("6bd6b5318a46e5fff572d5e4258a20774aab40cc35ac7680654b9081fcc82f80");
-
 /// Built-in B-20 roles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum B20TokenRole {
@@ -41,12 +31,24 @@ impl B20TokenRole {
     pub const fn id(self) -> B256 {
         match self {
             Self::DefaultAdmin => B256::ZERO,
-            Self::Mint => MINT_ROLE,
-            Self::Burn => BURN_ROLE,
-            Self::BurnBlocked => BURN_BLOCKED_ROLE,
-            Self::Pause => PAUSE_ROLE,
-            Self::Unpause => UNPAUSE_ROLE,
-            Self::Metadata => METADATA_ROLE,
+            Self::Mint => {
+                b256!("154c00819833dac601ee5ddded6fda79d9d8b506b911b3dbd54cdb95fe6c3686")
+            }
+            Self::Burn => {
+                b256!("e97b137254058bd94f28d2f3eb79e2d34074ffb488d042e3bc958e0a57d2fa22")
+            }
+            Self::BurnBlocked => {
+                b256!("7408fdc0d31c7bcb349eab611f5d1168acd4303574993f8cdc98b1cd18c41cae")
+            }
+            Self::Pause => {
+                b256!("139c2898040ef16910dc9f44dc697df79363da767d8bc92f2e310312b816e46d")
+            }
+            Self::Unpause => {
+                b256!("265b220c5a8891efdd9e1b1b7fa72f257bd5169f8d87e319cf3dad6ff52b94ae")
+            }
+            Self::Metadata => {
+                b256!("6bd6b5318a46e5fff572d5e4258a20774aab40cc35ac7680654b9081fcc82f80")
+            }
         }
     }
 }
@@ -237,7 +239,7 @@ pub trait RoleManaged: Token {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, U256};
+    use alloy_primitives::{Address, B256, U256, keccak256};
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::BasePrecompileError;
 
@@ -264,6 +266,17 @@ mod tests {
         accounting.roles.insert((B20TokenRole::DefaultAdmin.id(), ADMIN), true);
         accounting.role_member_counts.insert(B20TokenRole::DefaultAdmin.id(), U256::ONE);
         TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+    }
+
+    #[test]
+    fn role_id_constants_match_canonical_names() {
+        assert_eq!(B20TokenRole::DefaultAdmin.id(), B256::ZERO);
+        assert_eq!(B20TokenRole::Mint.id(), keccak256("MINT_ROLE"));
+        assert_eq!(B20TokenRole::Burn.id(), keccak256("BURN_ROLE"));
+        assert_eq!(B20TokenRole::BurnBlocked.id(), keccak256("BURN_BLOCKED_ROLE"));
+        assert_eq!(B20TokenRole::Pause.id(), keccak256("PAUSE_ROLE"));
+        assert_eq!(B20TokenRole::Unpause.id(), keccak256("UNPAUSE_ROLE"));
+        assert_eq!(B20TokenRole::Metadata.id(), keccak256("METADATA_ROLE"));
     }
 
     #[test]
