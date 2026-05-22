@@ -552,7 +552,7 @@ const ZERONET: ChainConfig = ChainConfig {
     protocol_versions_address: address!("646c8604cf62b23e0cf094f2e790c6c75547ff85"),
 
     unsafe_block_signer: Some(address!("cf17274338d3128f6C96d9af54511a17e8b38a08")),
-    activation_admin_address: None,
+    activation_admin_address: Some(address!("9965507D1a55bcC2695C58ba16FB37d819B0A4dc")),
 
     max_gas_limit: 25_000_000,
     prune_delete_limit: 10_000,

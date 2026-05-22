@@ -13,8 +13,8 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_network::Base;
 use base_common_precompiles::{
-    ActivationRegistryStorage, B20PausableFeature, IActivationRegistry, IB20, ITokenFactory,
-    TokenFactoryStorage, TokenVariant,
+    ActivationRegistryStorage, B20FactoryStorage, B20PausableFeature, B20Variant,
+    IActivationRegistry, IB20, IB20Factory,
 };
 use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
 use eyre::{ContextCompat, Result, WrapErr, ensure};
@@ -23,8 +23,8 @@ use tokio::time::{sleep, timeout};
 /// Creation settings used by the devnet B-20 factory client.
 #[derive(Debug, Clone)]
 pub struct B20CreateConfig {
-    /// ABI-level creation params sent to `ITokenFactory.createToken`.
-    pub create: ITokenFactory::B20CreateParams,
+    /// ABI-level creation params sent to `IB20Factory.createB20`.
+    pub create: IB20Factory::B20CreateParams,
     /// Initial supply to mint during the factory init-call window.
     pub initial_supply: U256,
     /// Account receiving the initial supply.
@@ -110,8 +110,8 @@ impl<'a> B20PrecompileClient<'a> {
         initial_supply_recipient: Address,
     ) -> B20CreateConfig {
         B20CreateConfig {
-            create: ITokenFactory::B20CreateParams {
-                version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
+            create: IB20Factory::B20CreateParams {
+                version: B20FactoryStorage::CREATE_TOKEN_VERSION,
                 name: name.to_string(),
                 symbol: symbol.to_string(),
                 initialAdmin: initial_admin,
@@ -126,7 +126,7 @@ impl<'a> B20PrecompileClient<'a> {
     /// Creates a B-20 token through the factory and returns the deterministic token address.
     pub async fn create_token(
         &self,
-        variant: TokenVariant,
+        variant: B20Variant,
         params: B20CreateConfig,
         salt: B256,
     ) -> Result<Address> {
@@ -152,13 +152,13 @@ impl<'a> B20PrecompileClient<'a> {
                 IB20::updateContractURICall { newURI: params.contract_uri }.abi_encode().into(),
             );
         }
-        let call = ITokenFactory::createTokenCall {
+        let call = IB20Factory::createB20Call {
             variant: variant.abi(),
             salt,
             params: params.create.abi_encode().into(),
             initCalls: init_calls,
         };
-        self.send_call(TokenFactoryStorage::ADDRESS, call, "create B-20 token").await?;
+        self.send_call(B20FactoryStorage::ADDRESS, call, "create B-20 token").await?;
         Ok(token)
     }
 
@@ -183,7 +183,7 @@ impl<'a> B20PrecompileClient<'a> {
     }
 
     /// Computes the token address a factory creation call will use.
-    pub fn predict_token_address(&self, variant: TokenVariant, salt: B256) -> Address {
+    pub fn predict_token_address(&self, variant: B20Variant, salt: B256) -> Address {
         variant.compute_address(self.signer.address(), salt).0
     }
 
@@ -215,13 +215,13 @@ impl<'a> B20PrecompileClient<'a> {
     }
 
     /// Reads the variant encoded in a token address.
-    pub async fn variant_of(&self, token: Address) -> Result<TokenVariant> {
-        TokenVariant::from_address(token).wrap_err("Token address is not a supported B-20 token")
+    pub async fn variant_of(&self, token: Address) -> Result<B20Variant> {
+        B20Variant::from_address(token).wrap_err("Token address is not a supported B-20 token")
     }
 
     /// Reads the fixed decimals for the token variant encoded in an address.
     pub async fn decimals_of(&self, token: Address) -> Result<u8> {
-        TokenVariant::decimals_of(token).wrap_err("Token address is not a supported B-20 token")
+        B20Variant::decimals_of(token).wrap_err("Token address is not a supported B-20 token")
     }
 
     /// Mints B-20 tokens to an account.
@@ -386,30 +386,26 @@ impl<'a> B20PrecompileClient<'a> {
     /// Returns true if `token` is a deployed B-20 via the factory.
     pub async fn is_b20(&self, token: Address) -> Result<bool> {
         let output =
-            self.call(TokenFactoryStorage::ADDRESS, ITokenFactory::isB20Call { token }).await?;
-        ITokenFactory::isB20Call::abi_decode_returns(output.as_ref())
+            self.call(B20FactoryStorage::ADDRESS, IB20Factory::isB20Call { token }).await?;
+        IB20Factory::isB20Call::abi_decode_returns(output.as_ref())
             .wrap_err("Failed to decode isB20")
     }
 
-    /// Calls `getTokenAddress` on the factory precompile via RPC.
+    /// Calls `getB20Address` on the factory precompile via RPC.
     pub async fn predict_token_address_rpc(
         &self,
         creator: Address,
-        variant: TokenVariant,
+        variant: B20Variant,
         salt: B256,
     ) -> Result<Address> {
         let output = self
             .call(
-                TokenFactoryStorage::ADDRESS,
-                ITokenFactory::getTokenAddressCall {
-                    variant: variant.abi(),
-                    sender: creator,
-                    salt,
-                },
+                B20FactoryStorage::ADDRESS,
+                IB20Factory::getB20AddressCall { variant: variant.abi(), sender: creator, salt },
             )
             .await?;
-        ITokenFactory::getTokenAddressCall::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode getTokenAddress")
+        IB20Factory::getB20AddressCall::abi_decode_returns(output.as_ref())
+            .wrap_err("Failed to decode getB20Address")
     }
 
     /// Sends a transaction and returns `true` if it succeeded, `false` if it reverted.

@@ -9,7 +9,7 @@ use base_precompile_storage::{
 };
 
 use super::{accounting::SecurityAccounting, ids::REDEEM_SENDER_POLICY};
-use crate::{B20CoreStorage, B20PolicyType, B20TokenRole, IB20, TokenAccounting, TokenVariant};
+use crate::{B20CoreStorage, B20PolicyType, B20TokenRole, B20Variant, IB20, TokenAccounting};
 
 /// WAD precision for share ratio arithmetic: 1e18.
 const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
@@ -144,8 +144,7 @@ impl TokenAccounting for B20SecurityStorage<'_> {
     }
 
     fn decimals(&self) -> Result<u8> {
-        Ok(TokenVariant::from_address(ContractStorage::address(self))
-            .map_or(0, TokenVariant::decimals))
+        Ok(B20Variant::from_address(ContractStorage::address(self)).map_or(0, B20Variant::decimals))
     }
 
     fn paused(&self) -> Result<U256> {

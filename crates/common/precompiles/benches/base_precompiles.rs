@@ -5,8 +5,8 @@ use std::hint::black_box;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolValue;
 use base_common_precompiles::{
-    B20Token, B20TokenStorage, Burnable, Configurable, IB20, ITokenFactory, Mintable, Pausable,
-    PolicyHandle, Token, TokenAccounting, TokenFactoryStorage, TokenVariant, Transferable,
+    B20FactoryStorage, B20Token, B20TokenStorage, B20Variant, Burnable, Configurable, IB20,
+    IB20Factory, Mintable, Pausable, PolicyHandle, Token, TokenAccounting, Transferable,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -26,9 +26,9 @@ impl BaseTokenBenchSetup {
         Address::repeat_byte(0xcd)
     }
 
-    fn token_params(name: &str, symbol: &str) -> ITokenFactory::B20CreateParams {
-        ITokenFactory::B20CreateParams {
-            version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
+    fn token_params(name: &str, symbol: &str) -> IB20Factory::B20CreateParams {
+        IB20Factory::B20CreateParams {
+            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
             name: name.to_string(),
             symbol: symbol.to_string(),
             initialAdmin: Self::admin(),
@@ -38,18 +38,18 @@ impl BaseTokenBenchSetup {
     fn create_b20(
         ctx: StorageCtx<'_>,
         caller: Address,
-        params: ITokenFactory::B20CreateParams,
+        params: IB20Factory::B20CreateParams,
         salt: B256,
         _initial_supply: U256,
     ) -> Address {
-        let call = ITokenFactory::createTokenCall {
-            variant: ITokenFactory::TokenVariant::DEFAULT,
+        let call = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::DEFAULT,
             salt,
             params: params.abi_encode().into(),
             initCalls: Vec::new(),
         };
-        let mut factory = TokenFactoryStorage::new(ctx);
-        factory.create_token(caller, call).unwrap()
+        let mut factory = B20FactoryStorage::new(ctx);
+        factory.create_b20(caller, call).unwrap()
     }
 
     fn create_token<'a>(
@@ -402,8 +402,8 @@ fn base_token_mutate(c: &mut Criterion) {
     });
 }
 
-fn base_token_factory_mutate(c: &mut Criterion) {
-    c.bench_function("base_token_factory_create_b20", |b| {
+fn base_b20_factory_mutate(c: &mut Criterion) {
+    c.bench_function("base_b20_factory_create_b20", |b| {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let caller = BaseTokenBenchSetup::caller();
@@ -420,44 +420,44 @@ fn base_token_factory_mutate(c: &mut Criterion) {
     });
 }
 
-fn base_token_factory_view(c: &mut Criterion) {
-    c.bench_function("base_token_factory_predict_b20_address", |b| {
+fn base_b20_factory_view(c: &mut Criterion) {
+    c.bench_function("base_b20_factory_predict_b20_address", |b| {
         let caller = BaseTokenBenchSetup::caller();
         let salt = B256::repeat_byte(0x21);
 
         b.iter(|| {
             let caller = black_box(caller);
             let salt = black_box(salt);
-            let result = TokenVariant::B20.compute_address(caller, salt);
+            let result = B20Variant::B20.compute_address(caller, salt);
             black_box(result);
         });
     });
 
-    c.bench_function("base_token_factory_predict_stablecoin_address", |b| {
+    c.bench_function("base_b20_factory_predict_stablecoin_address", |b| {
         let caller = BaseTokenBenchSetup::caller();
         let salt = B256::repeat_byte(0x22);
 
         b.iter(|| {
             let caller = black_box(caller);
             let salt = black_box(salt);
-            let result = TokenVariant::Stablecoin.compute_address(caller, salt);
+            let result = B20Variant::Stablecoin.compute_address(caller, salt);
             black_box(result);
         });
     });
 
-    c.bench_function("base_token_factory_predict_security_address", |b| {
+    c.bench_function("base_b20_factory_predict_security_address", |b| {
         let caller = BaseTokenBenchSetup::caller();
         let salt = B256::repeat_byte(0x23);
 
         b.iter(|| {
             let caller = black_box(caller);
             let salt = black_box(salt);
-            let result = TokenVariant::Security.compute_address(caller, salt);
+            let result = B20Variant::Security.compute_address(caller, salt);
             black_box(result);
         });
     });
 
-    c.bench_function("base_token_factory_is_b20", |b| {
+    c.bench_function("base_b20_factory_is_b20", |b| {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let params = BaseTokenBenchSetup::token_params("FactoryToken", "FACT");
@@ -468,7 +468,7 @@ fn base_token_factory_view(c: &mut Criterion) {
                 B256::repeat_byte(0x24),
                 U256::ZERO,
             );
-            let factory = TokenFactoryStorage::new(ctx);
+            let factory = B20FactoryStorage::new(ctx);
 
             b.iter(|| {
                 let factory = black_box(&factory);
@@ -479,13 +479,13 @@ fn base_token_factory_view(c: &mut Criterion) {
         });
     });
 
-    c.bench_function("base_token_factory_get_token_variant", |b| {
-        let (token_address, _) = TokenVariant::B20
-            .compute_address(BaseTokenBenchSetup::caller(), B256::repeat_byte(0x25));
+    c.bench_function("base_b20_factory_get_token_variant", |b| {
+        let (token_address, _) =
+            B20Variant::B20.compute_address(BaseTokenBenchSetup::caller(), B256::repeat_byte(0x25));
 
         b.iter(|| {
             let token_address = black_box(token_address);
-            let result = TokenVariant::from_address(token_address);
+            let result = B20Variant::from_address(token_address);
             black_box(result);
         });
     });
@@ -496,7 +496,7 @@ criterion_group!(
     base_token_metadata,
     base_token_view,
     base_token_mutate,
-    base_token_factory_mutate,
-    base_token_factory_view,
+    base_b20_factory_mutate,
+    base_b20_factory_view,
 );
 criterion_main!(benches);

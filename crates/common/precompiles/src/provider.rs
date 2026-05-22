@@ -13,8 +13,8 @@ use revm::{
 };
 
 use crate::{
-    ActivationRegistry, B20SecurityPrecompile, B20StablecoinPrecompile, B20TokenPrecompile,
-    BasePrecompileSpec, PolicyRegistryPrecompile, TokenFactory, TokenVariant, bls12_381,
+    ActivationRegistry, B20Factory, B20SecurityPrecompile, B20StablecoinPrecompile,
+    B20TokenPrecompile, B20Variant, BasePrecompileSpec, PolicyRegistryPrecompile, bls12_381,
     bn254_pair,
 };
 
@@ -25,10 +25,10 @@ use crate::{
 /// lifetime, and because successive `set_precompile_lookup` calls replace rather
 /// than chain the previous lookup.
 fn b20_token_lookup(address: &Address) -> Option<alloy_evm::precompiles::DynPrecompile> {
-    match TokenVariant::from_address(*address)? {
-        TokenVariant::B20 => Some(B20TokenPrecompile::create_precompile(*address)),
-        TokenVariant::Stablecoin => Some(B20StablecoinPrecompile::create_precompile(*address)),
-        TokenVariant::Security => Some(B20SecurityPrecompile::create_precompile(*address)),
+    match B20Variant::from_address(*address)? {
+        B20Variant::B20 => Some(B20TokenPrecompile::create_precompile(*address)),
+        B20Variant::Stablecoin => Some(B20StablecoinPrecompile::create_precompile(*address)),
+        B20Variant::Security => Some(B20SecurityPrecompile::create_precompile(*address)),
     }
 }
 
@@ -185,7 +185,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     pub fn install(self) -> PrecompilesMap {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
-            TokenFactory::install(&mut precompiles);
+            B20Factory::install(&mut precompiles);
             // A single combined lookup covers all B-20 variants:
             // set_precompile_lookup replaces, not chains, so we cannot call install twice.
             precompiles.set_precompile_lookup(b20_token_lookup);
@@ -251,9 +251,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{
-        ActivationRegistryStorage, TokenFactoryStorage, TokenVariant, bls12_381, bn254_pair,
-    };
+    use crate::{ActivationRegistryStorage, B20FactoryStorage, B20Variant, bls12_381, bn254_pair};
 
     type TestPrecompiles = BasePrecompiles<BaseUpgrade>;
 
@@ -520,9 +518,9 @@ mod tests {
     fn install_routes_b20_precompiles_by_fork(#[case] spec: BaseUpgrade, #[case] expected: bool) {
         let precompiles = BasePrecompiles::new_with_spec(spec).install();
         let (token, _) =
-            TokenVariant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+            B20Variant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
 
-        assert_eq!(precompiles.get(&TokenFactoryStorage::ADDRESS).is_some(), expected);
+        assert_eq!(precompiles.get(&B20FactoryStorage::ADDRESS).is_some(), expected);
         assert_eq!(precompiles.get(&token).is_some(), expected);
         assert!(precompiles.get(&Address::repeat_byte(0x42)).is_none());
     }

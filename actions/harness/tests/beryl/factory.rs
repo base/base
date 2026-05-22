@@ -4,7 +4,7 @@ use alloy_consensus::TxReceipt;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use base_common_consensus::BaseBlock;
-use base_common_precompiles::{ITokenFactory, TokenFactoryStorage};
+use base_common_precompiles::{B20FactoryStorage, IB20Factory};
 
 use crate::env::BerylTestEnv;
 
@@ -95,7 +95,7 @@ async fn b20_creation_reverts_while_factory_feature_is_deactivated() {
     let block1 = env.sequencer.build_empty_block().await;
     let activation_block = B20FactoryPrecompiles::activate(&mut env).await;
 
-    let deactivate_factory = env.deactivate_feature_tx(BerylTestEnv::token_factory_feature());
+    let deactivate_factory = env.deactivate_feature_tx(BerylTestEnv::b20_factory_feature());
     let block2 = env.sequencer.build_next_block_with_transactions(vec![deactivate_factory]).await;
 
     assert!(env.user_tx_succeeded(&block2, 0), "TOKEN_FACTORY deactivation must succeed");
@@ -109,7 +109,7 @@ async fn b20_creation_reverts_while_factory_feature_is_deactivated() {
         "token creation must revert when TOKEN_FACTORY is deactivated"
     );
 
-    let reactivate_factory = env.activate_feature_tx(BerylTestEnv::token_factory_feature());
+    let reactivate_factory = env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
     let block4 = env.sequencer.build_next_block_with_transactions(vec![reactivate_factory]).await;
 
     assert!(env.user_tx_succeeded(&block4, 0), "TOKEN_FACTORY re-activation must succeed");
@@ -131,7 +131,7 @@ async fn b20_creation_reverts_while_factory_feature_is_deactivated() {
 }
 
 #[tokio::test]
-async fn token_factory_views_and_events_are_available_after_beryl_activation() {
+async fn b20_factory_views_and_events_are_available_after_beryl_activation() {
     let mut env = BerylTestEnv::new();
     let token = env.b20_token_address();
 
@@ -144,15 +144,15 @@ async fn token_factory_views_and_events_are_available_after_beryl_activation() {
     assert!(env.user_tx_succeeded(&block2, 0), "B-20 creation transaction must succeed");
     assert_token_created_log(&env, &block2, token);
 
-    let (probe, deploy_probe) = env.deploy_staticcall_probe_tx(TokenFactoryStorage::ADDRESS);
+    let (probe, deploy_probe) = env.deploy_staticcall_probe_tx(B20FactoryStorage::ADDRESS);
     let block3 = env.sequencer.build_next_block_with_transactions(vec![deploy_probe]).await;
     assert!(env.user_tx_succeeded(&block3, 0), "factory staticcall probe must deploy");
 
     let get_token_address = env.call_staticcall_probe_tx(
         probe,
         Bytes::from(
-            ITokenFactory::getTokenAddressCall {
-                variant: ITokenFactory::TokenVariant::DEFAULT,
+            IB20Factory::getB20AddressCall {
+                variant: IB20Factory::B20Variant::DEFAULT,
                 sender: BerylTestEnv::alice(),
                 salt: BerylTestEnv::b20_token_salt(),
             }
@@ -162,16 +162,16 @@ async fn token_factory_views_and_events_are_available_after_beryl_activation() {
     );
     let block4 = env.sequencer.build_next_block_with_transactions(vec![get_token_address]).await;
 
-    assert!(env.probe_call_succeeded(probe), "getTokenAddress() staticcall must succeed");
+    assert!(env.probe_call_succeeded(probe), "getB20Address() staticcall must succeed");
     assert_eq!(
         env.probe_return_word(probe),
         word_from_address(token),
-        "getTokenAddress() must return the deterministic token address"
+        "getB20Address() must return the deterministic token address"
     );
 
     let is_b20 = env.call_staticcall_probe_tx(
         probe,
-        Bytes::from(ITokenFactory::isB20Call { token }.abi_encode()),
+        Bytes::from(IB20Factory::isB20Call { token }.abi_encode()),
         BerylTestEnv::B20_PROBE_GAS_LIMIT,
     );
     let block5 = env.sequencer.build_next_block_with_transactions(vec![is_b20]).await;
@@ -181,7 +181,7 @@ async fn token_factory_views_and_events_are_available_after_beryl_activation() {
 
     let is_not_b20 = env.call_staticcall_probe_tx(
         probe,
-        Bytes::from(ITokenFactory::isB20Call { token: TokenFactoryStorage::ADDRESS }.abi_encode()),
+        Bytes::from(IB20Factory::isB20Call { token: B20FactoryStorage::ADDRESS }.abi_encode()),
         BerylTestEnv::B20_PROBE_GAS_LIMIT,
     );
     let block6 = env.sequencer.build_next_block_with_transactions(vec![is_not_b20]).await;
@@ -191,31 +191,31 @@ async fn token_factory_views_and_events_are_available_after_beryl_activation() {
 
     let is_initialized = env.call_staticcall_probe_tx(
         probe,
-        Bytes::from(ITokenFactory::isInitializedCall { token }.abi_encode()),
+        Bytes::from(IB20Factory::isB20InitializedCall { token }.abi_encode()),
         BerylTestEnv::B20_PROBE_GAS_LIMIT,
     );
     let block7 = env.sequencer.build_next_block_with_transactions(vec![is_initialized]).await;
 
-    assert!(env.probe_call_succeeded(probe), "isInitialized() staticcall must succeed");
+    assert!(env.probe_call_succeeded(probe), "isB20Initialized() staticcall must succeed");
     assert_eq!(env.probe_return_word(probe), U256::ONE, "created token must be initialized");
 
     let is_not_initialized = env.call_staticcall_probe_tx(
         probe,
         Bytes::from(
-            ITokenFactory::isInitializedCall { token: Address::repeat_byte(0xab) }.abi_encode(),
+            IB20Factory::isB20InitializedCall { token: Address::repeat_byte(0xab) }.abi_encode(),
         ),
         BerylTestEnv::B20_PROBE_GAS_LIMIT,
     );
     let block8 = env.sequencer.build_next_block_with_transactions(vec![is_not_initialized]).await;
 
-    assert!(env.probe_call_succeeded(probe), "isInitialized(non-token) staticcall must succeed");
+    assert!(env.probe_call_succeeded(probe), "isB20Initialized(non-token) staticcall must succeed");
     assert_eq!(env.probe_return_word(probe), U256::ZERO, "non-token must not be initialized");
 
     let invalid_variant_create = env.create_tx(
-        TxKind::Call(TokenFactoryStorage::ADDRESS),
+        TxKind::Call(B20FactoryStorage::ADDRESS),
         Bytes::from(
-            ITokenFactory::createTokenCall {
-                variant: ITokenFactory::TokenVariant::STABLECOIN,
+            IB20Factory::createB20Call {
+                variant: IB20Factory::B20Variant::STABLECOIN,
                 salt: BerylTestEnv::ALT_SALT,
                 params: Bytes::new(),
                 initCalls: Vec::new(),
@@ -251,7 +251,7 @@ struct B20FactoryPrecompiles;
 
 impl B20FactoryPrecompiles {
     async fn activate(env: &mut BerylTestEnv) -> BaseBlock {
-        let activate_factory = env.activate_feature_tx(BerylTestEnv::token_factory_feature());
+        let activate_factory = env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let activate_b20 = env.activate_feature_tx(BerylTestEnv::b20_token_feature());
         let block = env
             .sequencer
@@ -266,9 +266,9 @@ impl B20FactoryPrecompiles {
 }
 
 fn assert_token_created_log(env: &BerylTestEnv, block: &BaseBlock, token: Address) {
-    let expected = ITokenFactory::TokenCreated {
+    let expected = IB20Factory::B20Created {
         token,
-        variant: ITokenFactory::TokenVariant::DEFAULT,
+        variant: IB20Factory::B20Variant::DEFAULT,
         name: "Action B20".to_string(),
         symbol: "AB20".to_string(),
         decimals: BerylTestEnv::B20_DECIMALS,
@@ -278,8 +278,8 @@ fn assert_token_created_log(env: &BerylTestEnv, block: &BaseBlock, token: Addres
         env.user_tx_receipt(block, 0)
             .logs()
             .iter()
-            .any(|log| log.address == TokenFactoryStorage::ADDRESS && log.data == expected),
-        "createToken() must emit TokenCreated"
+            .any(|log| log.address == B20FactoryStorage::ADDRESS && log.data == expected),
+        "createB20() must emit B20Created"
     );
 }
 

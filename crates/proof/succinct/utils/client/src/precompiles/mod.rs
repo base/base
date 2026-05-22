@@ -195,7 +195,7 @@ mod tests {
     use alloy_primitives::{B256, Bytes, U256};
     use base_common_evm::{BaseContext, BaseUpgrade, DefaultBase as _};
     use base_common_precompiles::{
-        ActivationRegistryStorage, PolicyRegistryStorage, TokenFactoryStorage, TokenVariant,
+        ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
     };
     use revm::{
         Context,
@@ -423,10 +423,10 @@ mod tests {
     #[test]
     fn test_zkvm_precompiles_match_beryl_dynamic_installation() {
         let (token_address, _) =
-            TokenVariant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+            B20Variant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
 
         let installed_addresses = [
-            TokenFactoryStorage::ADDRESS,
+            B20FactoryStorage::ADDRESS,
             PolicyRegistryStorage::ADDRESS,
             ActivationRegistryStorage::ADDRESS,
             token_address,
