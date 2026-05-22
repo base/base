@@ -3,7 +3,7 @@
 //! The policy registry precompile is live on Beryl, but B20 tokens do not yet
 //! expose a `setPolicy` method to wire a named policy to transfer enforcement.
 //! Until that wiring lands, tokens always transfer freely regardless of policy
-//! membership (the ALWAYS_ALLOW built-in is effectively in effect for every
+//! membership (the `ALWAYS_ALLOW` built-in is effectively in effect for every
 //! transfer).
 //!
 //! Each test below:
@@ -22,7 +22,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use base_common_network::Base;
 use base_common_precompiles::{
-    ActivationRegistryStorage, IB20, IPolicyRegistry, PolicyRegistryStorage, TokenVariant,
+    ActivationFeature, IB20, IPolicyRegistry, PolicyRegistryStorage, TokenVariant,
 };
 use devnet::{
     B20PrecompileClient,
@@ -30,7 +30,6 @@ use devnet::{
 };
 use eyre::{Result, WrapErr};
 
-const TOKEN_DECIMALS: u8 = 6;
 const INITIAL_SUPPLY: u64 = 1_000_000;
 const TRANSFER_AMOUNT: u64 = 100_000;
 
@@ -39,7 +38,7 @@ const SALT_ALLOWLIST: B256 = B256::repeat_byte(0x50);
 const SALT_BLOCKLIST: B256 = B256::repeat_byte(0x51);
 const SALT_ALWAYS_BLOCK: B256 = B256::repeat_byte(0x52);
 
-/// Activates TOKEN_FACTORY, B20_TOKEN, and POLICY_REGISTRY features, then
+/// Activates `TOKEN_FACTORY`, `B20_TOKEN`, and `POLICY_REGISTRY` features, then
 /// returns a [`B20PrecompileClient`] ready for precompile calls.
 async fn activated_client<'a>(
     provider: &'a RootProvider<Base>,
@@ -47,25 +46,36 @@ async fn activated_client<'a>(
 ) -> Result<B20PrecompileClient<'a>> {
     let client = B20PrecompileClient::new(provider, admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
-    client.activate_feature(ActivationRegistryStorage::TOKEN_FACTORY).await?;
-    client.activate_feature(ActivationRegistryStorage::B20_TOKEN).await?;
-    client.activate_feature(ActivationRegistryStorage::POLICY_REGISTRY).await?;
+    client.activate_feature(ActivationFeature::TokenFactory.id()).await?;
+    client.activate_feature(ActivationFeature::B20Token.id()).await?;
+    client.activate_feature(ActivationFeature::PolicyRegistry.id()).await?;
     Ok(client)
 }
 
-/// Reads the next policy ID for `policy_type` from the policy registry.
-async fn next_policy_id(
+/// Creates a policy and returns its assigned ID.
+///
+/// Simulates the call first (`eth_call`) to obtain the ID the registry will
+/// assign, then dispatches the real transaction.  Because the devnet is
+/// single-sender the counter cannot advance between the simulation and the
+/// actual transaction.
+async fn create_policy(
     client: &B20PrecompileClient<'_>,
+    admin: Address,
     policy_type: IPolicyRegistry::PolicyType,
+    label: &'static str,
 ) -> Result<u64> {
-    let output = client
-        .call(
+    let call = IPolicyRegistry::createPolicyCall { admin, policyType: policy_type };
+    let output = client.call(PolicyRegistryStorage::ADDRESS, call).await?;
+    let policy_id = IPolicyRegistry::createPolicyCall::abi_decode_returns(output.as_ref())
+        .wrap_err("Failed to decode createPolicy return")?;
+    client
+        .send_call(
             PolicyRegistryStorage::ADDRESS,
-            IPolicyRegistry::nextPolicyIdCall { policyType: policy_type },
+            IPolicyRegistry::createPolicyCall { admin, policyType: policy_type },
+            label,
         )
         .await?;
-    IPolicyRegistry::nextPolicyIdCall::abi_decode_returns(output.as_ref())
-        .wrap_err("Failed to decode nextPolicyId")
+    Ok(policy_id)
 }
 
 /// Queries `isAuthorized(policy_id, account)` from the policy registry.
@@ -92,14 +102,8 @@ async fn create_token(
     name: &str,
     symbol: &str,
 ) -> Result<Address> {
-    let params = B20PrecompileClient::token_params(
-        name,
-        symbol,
-        TOKEN_DECIMALS,
-        admin,
-        U256::from(INITIAL_SUPPLY),
-        admin,
-    );
+    let params =
+        B20PrecompileClient::token_params(name, symbol, admin, U256::from(INITIAL_SUPPLY), admin);
     let token = client.create_token(TokenVariant::B20, params, salt).await?;
     client
         .wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL)
@@ -125,8 +129,7 @@ async fn create_token(
 async fn test_allowlist_gates_transfer() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
 
-    let admin =
-        PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
+    let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
     let non_member =
         PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_7.private_key).wrap_err("non-member key")?;
     let recipient = ANVIL_ACCOUNT_6.address;
@@ -137,19 +140,13 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
     let client = activated_client(&provider, &admin).await?;
 
     // --- Create ALLOWLIST policy ---
-    let predicted_id =
-        next_policy_id(&client, IPolicyRegistry::PolicyType::ALLOWLIST).await?;
-    client
-        .send_call(
-            PolicyRegistryStorage::ADDRESS,
-            IPolicyRegistry::createPolicyCall {
-                admin: admin.address(),
-                policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
-            },
-            "createPolicy ALLOWLIST",
-        )
-        .await?;
-    let policy_id = predicted_id;
+    let policy_id = create_policy(
+        &client,
+        admin.address(),
+        IPolicyRegistry::PolicyType::ALLOWLIST,
+        "createPolicy ALLOWLIST",
+    )
+    .await?;
 
     // Non-member is not authorized under the allowlist.
     assert!(
@@ -158,15 +155,12 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
     );
 
     // --- Create B20 token ---
-    let token = create_token(&client, admin.address(), SALT_ALLOWLIST, "Allowlist Token", "ALT")
-        .await?;
+    let token =
+        create_token(&client, admin.address(), SALT_ALLOWLIST, "Allowlist Token", "ALT").await?;
 
     // Seed the non-member with tokens so they have a balance to transfer from.
     client.transfer(token, non_member.address(), U256::from(TRANSFER_AMOUNT)).await?;
-    assert_eq!(
-        client.balance_of(token, non_member.address()).await?,
-        U256::from(TRANSFER_AMOUNT),
-    );
+    assert_eq!(client.balance_of(token, non_member.address()).await?, U256::from(TRANSFER_AMOUNT),);
 
     // Transfer from non-member succeeds today because IB20 has no setPolicy.
     // TODO(BOP-125): This should revert once the allowlist is wired to the token.
@@ -226,8 +220,7 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
 async fn test_blocklist_gates_transfer() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
 
-    let admin =
-        PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
+    let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
     let blocked_sender =
         PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_7.private_key).wrap_err("blocked key")?;
     let recipient = ANVIL_ACCOUNT_6.address;
@@ -238,19 +231,13 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
     let client = activated_client(&provider, &admin).await?;
 
     // --- Create BLOCKLIST policy ---
-    let predicted_id =
-        next_policy_id(&client, IPolicyRegistry::PolicyType::BLOCKLIST).await?;
-    client
-        .send_call(
-            PolicyRegistryStorage::ADDRESS,
-            IPolicyRegistry::createPolicyCall {
-                admin: admin.address(),
-                policyType: IPolicyRegistry::PolicyType::BLOCKLIST,
-            },
-            "createPolicy BLOCKLIST",
-        )
-        .await?;
-    let policy_id = predicted_id;
+    let policy_id = create_policy(
+        &client,
+        admin.address(),
+        IPolicyRegistry::PolicyType::BLOCKLIST,
+        "createPolicy BLOCKLIST",
+    )
+    .await?;
 
     // The sender is not on the blocklist; they are authorized.
     assert!(
@@ -259,8 +246,8 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
     );
 
     // --- Create B20 token ---
-    let token = create_token(&client, admin.address(), SALT_BLOCKLIST, "Blocklist Token", "BLT")
-        .await?;
+    let token =
+        create_token(&client, admin.address(), SALT_BLOCKLIST, "Blocklist Token", "BLT").await?;
 
     // Seed the sender with tokens.
     client.transfer(token, blocked_sender.address(), U256::from(TRANSFER_AMOUNT)).await?;
@@ -270,9 +257,8 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
     );
 
     // Transfer from the (not-yet-blocked) sender succeeds.
-    let sender_client =
-        B20PrecompileClient::new(&provider, &blocked_sender, common::L2_CHAIN_ID)
-            .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    let sender_client = B20PrecompileClient::new(&provider, &blocked_sender, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
     let first_transfer = sender_client
         .try_send_call(
             token,
@@ -320,23 +306,22 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
 
 /// `test_always_block_policy_blocks_transfer`
 ///
-/// Verifies that the built-in ALWAYS_BLOCK policy (id = 1) denies every
+/// Verifies that the built-in `ALWAYS_BLOCK` policy (id = 1) denies every
 /// account via `isAuthorized`.
 ///
 /// Also demonstrates that B20 transfers currently succeed even when the token
-/// is conceptually under an ALWAYS_BLOCK policy, because `IB20` does not yet
+/// is conceptually under an `ALWAYS_BLOCK` policy, because `IB20` does not yet
 /// expose `setPolicy`.
 ///
 /// TODO(BOP-125): Once `setPolicy` (or an init-call hook) lands on `IB20`,
 /// extend this test to:
-///   1. Wire ALWAYS_BLOCK_ID to the token via `setPolicy`.
+///   1. Wire `ALWAYS_BLOCK_ID` to the token via `setPolicy`.
 ///   2. Assert that ALL transfers from ANY address revert.
 #[tokio::test]
 async fn test_always_block_policy_blocks_transfer() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
 
-    let admin =
-        PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
+    let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
     let anyone = ANVIL_ACCOUNT_6.address;
 
     common::wait_for_balance(&provider, admin.address()).await?;
@@ -366,8 +351,7 @@ async fn test_always_block_policy_blocks_transfer() -> Result<()> {
 
     // --- Create B20 token ---
     let token =
-        create_token(&client, admin.address(), SALT_ALWAYS_BLOCK, "Blocked Token", "BLKD")
-            .await?;
+        create_token(&client, admin.address(), SALT_ALWAYS_BLOCK, "Blocked Token", "BLKD").await?;
 
     // Transfer from admin succeeds today because IB20 has no setPolicy.
     // TODO(BOP-125): Once setPolicy exists, configure the token with
@@ -379,10 +363,7 @@ async fn test_always_block_policy_blocks_transfer() -> Result<()> {
             "transfer under ALWAYS_BLOCK (no wiring yet)",
         )
         .await?;
-    assert!(
-        transfer_succeeded,
-        "transfer must succeed today (ALWAYS_BLOCK not yet wired to IB20)",
-    );
+    assert!(transfer_succeeded, "transfer must succeed today (ALWAYS_BLOCK not yet wired to IB20)",);
 
     Ok(())
 }
