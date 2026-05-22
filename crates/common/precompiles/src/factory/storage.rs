@@ -8,8 +8,8 @@ use revm::state::Bytecode;
 
 use super::variant::TokenVariant;
 use crate::{
-    B20SecurityStorage, B20SecurityToken, B20Token, B20TokenRole, B20TokenStorage, ITokenFactory,
-    PolicyHandle, RoleManaged, Token,
+    B20SecurityStorage, B20SecurityToken, B20Token, B20TokenInit, B20TokenRole, B20TokenStorage,
+    ITokenFactory, PolicyHandle, RoleManaged, Token,
 };
 
 /// The B-20 token factory precompile.
@@ -92,12 +92,13 @@ impl<'a> TokenFactoryStorage<'a> {
             B20TokenStorage::from_address(token_address, self.storage),
             PolicyHandle::new(self.storage),
         );
-        token.accounting_mut().name.write(common.name.clone())?;
-        token.accounting_mut().symbol.write(common.symbol.clone())?;
-        token.accounting_mut().supply_cap.write(Self::DEFAULT_SUPPLY_CAP)?;
-        token.accounting_mut().minimum_redeemable.write(U256::ZERO)?;
-        token.accounting_mut().stablecoin_currency.write(stablecoin_currency)?;
-        token.accounting_mut().security_isin.write(String::new())?;
+        token.accounting_mut().initialize(B20TokenInit {
+            name: common.name.clone(),
+            symbol: common.symbol.clone(),
+            supply_cap: Self::DEFAULT_SUPPLY_CAP,
+            minimum_redeemable: U256::ZERO,
+            stablecoin_currency,
+        })?;
 
         self.emit_event(ITokenFactory::TokenCreated {
             token: token_address,

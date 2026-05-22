@@ -3,6 +3,18 @@
 use alloc::string::String;
 
 use alloy_primitives::{Address, B256, LogData, U256};
+
+/// Creation-time parameters for a B-20 token.
+///
+/// Passed to [`B20TokenStorage::initialize`] to write all fields atomically.
+#[derive(Debug)]
+pub struct B20TokenInit {
+    pub name: String,
+    pub symbol: String,
+    pub supply_cap: U256,
+    pub minimum_redeemable: U256,
+    pub stablecoin_currency: String,
+}
 use base_precompile_macros::contract;
 use base_precompile_storage::{
     BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
@@ -41,10 +53,12 @@ impl<'a> B20TokenStorage<'a> {
     }
 
     /// Writes all creation-time fields atomically.
-    pub fn initialize(&mut self, name: String, symbol: String, supply_cap: U256) -> Result<()> {
-        self.name.write(name)?;
-        self.symbol.write(symbol)?;
-        self.supply_cap.write(supply_cap)?;
+    pub fn initialize(&mut self, init: B20TokenInit) -> Result<()> {
+        self.name.write(init.name)?;
+        self.symbol.write(init.symbol)?;
+        self.supply_cap.write(init.supply_cap)?;
+        self.minimum_redeemable.write(init.minimum_redeemable)?;
+        self.stablecoin_currency.write(init.stablecoin_currency)?;
         Ok(())
     }
 }
