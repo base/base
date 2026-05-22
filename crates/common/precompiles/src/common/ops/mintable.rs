@@ -20,9 +20,6 @@ pub trait Mintable: Token {
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
-        if amount.is_zero() {
-            return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
-        }
         let supply = self.accounting().total_supply()?;
         let cap = self.accounting().supply_cap()?;
         let new_supply =
@@ -105,16 +102,6 @@ mod tests {
         assert_eq!(
             token.mint(CALLER, Address::ZERO, U256::ONE, true).unwrap_err(),
             BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
-        );
-    }
-
-    #[test]
-    fn mint_zero_amount_reverts() {
-        let mut token = make_token();
-
-        assert_eq!(
-            token.mint(CALLER, ALICE, U256::ZERO, true).unwrap_err(),
-            BasePrecompileError::revert(IB20::InvalidAmount {})
         );
     }
 

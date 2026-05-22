@@ -22,9 +22,6 @@ pub trait Burnable: Token {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Burn)?;
         }
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
-        if amount.is_zero() {
-            return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
-        }
         let balance = self.accounting().balance_of(from)?;
         if balance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
@@ -120,16 +117,6 @@ mod tests {
     }
 
     #[test]
-    fn burn_zero_amount_reverts() {
-        let mut token = token_with_balance(U256::from(100u64));
-
-        assert_eq!(
-            token.burn(CALLER, ALICE, U256::ZERO, true).unwrap_err(),
-            BasePrecompileError::revert(IB20::InvalidAmount {})
-        );
-    }
-
-    #[test]
     fn burn_insufficient_balance_reverts() {
         let mut token = token_with_balance(U256::from(10u64));
 
@@ -188,22 +175,6 @@ mod tests {
         assert_eq!(
             token.burn_blocked(CALLER, ALICE, U256::ONE, true).unwrap_err(),
             BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE })
-        );
-    }
-
-    #[test]
-    fn burn_blocked_zero_amount_reverts() {
-        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
-        accounting.balances.insert(ALICE, U256::from(10u64));
-        accounting.total_supply = U256::from(10u64);
-        accounting
-            .policy_ids
-            .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
-
-        assert_eq!(
-            token.burn_blocked(CALLER, ALICE, U256::ZERO, true).unwrap_err(),
-            BasePrecompileError::revert(IB20::InvalidAmount {})
         );
     }
 
