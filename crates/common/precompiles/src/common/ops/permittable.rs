@@ -45,7 +45,8 @@ impl PermitArgs {
     /// Hashes the EIP-2612 `Permit` struct for `nonce`.
     pub fn struct_hash(&self, nonce: U256) -> B256 {
         keccak256(
-            (Self::TYPEHASH, self.owner, self.spender, self.value, nonce, self.deadline).abi_encode(),
+            (Self::TYPEHASH, self.owner, self.spender, self.value, nonce, self.deadline)
+                .abi_encode(),
         )
     }
 
@@ -72,7 +73,8 @@ impl PermitArgs {
             }
         };
 
-        let sig = alloy_primitives::Signature::from_scalars_and_parity(self.r, self.s, odd_y_parity);
+        let sig =
+            alloy_primitives::Signature::from_scalars_and_parity(self.r, self.s, odd_y_parity);
         sig.recover_address_from_prehash(&signing_hash).map_err(|_| {
             BasePrecompileError::revert(IB20::InvalidSigner {
                 signer: Address::ZERO,
@@ -117,7 +119,9 @@ pub trait Permittable: Transferable {
     /// Domain: `(chainId, verifyingContract)`; `name` and `version` are empty.
     fn permit(&mut self, chain_id: u64, now: U256, args: PermitArgs) -> Result<()> {
         if now > args.deadline {
-            return Err(BasePrecompileError::revert(IB20::ExpiredSignature { deadline: args.deadline }));
+            return Err(BasePrecompileError::revert(IB20::ExpiredSignature {
+                deadline: args.deadline,
+            }));
         }
 
         let domain_sep = self.domain_separator(chain_id)?;
@@ -144,10 +148,13 @@ mod tests {
     use k256::ecdsa::SigningKey;
 
     use super::{DOMAIN_TYPEHASH, PermitArgs, Permittable};
-    use crate::{IB20, common::{
-        Token, TokenAccounting,
-        test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
-    }};
+    use crate::{
+        IB20,
+        common::{
+            Token, TokenAccounting,
+            test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
+        },
+    };
     use base_precompile_storage::BasePrecompileError;
 
     const CHAIN_ID: u64 = 1;
@@ -197,7 +204,8 @@ mod tests {
     ) -> PermitArgs {
         let domain_sep = domain_separator_for_token(token, CHAIN_ID);
         let nonce = token.accounting().nonce(owner).unwrap();
-        let mut args = PermitArgs { owner, spender, value, deadline, v: 0, r: B256::ZERO, s: B256::ZERO };
+        let mut args =
+            PermitArgs { owner, spender, value, deadline, v: 0, r: B256::ZERO, s: B256::ZERO };
         let signing_hash = args.signing_hash(domain_sep, nonce);
 
         let signing_key = SigningKey::from_slice(&PRIVATE_KEY).unwrap();
@@ -232,7 +240,8 @@ mod tests {
         let owner = owner_address();
         let args = sample_permit_args(owner);
         let nonce = U256::ZERO;
-        let domain_sep = keccak256((DOMAIN_TYPEHASH, U256::from(CHAIN_ID), TOKEN_ADDR).abi_encode());
+        let domain_sep =
+            keccak256((DOMAIN_TYPEHASH, U256::from(CHAIN_ID), TOKEN_ADDR).abi_encode());
         let struct_hash = args.struct_hash(nonce);
         let mut expected_preimage = [0u8; 66];
         expected_preimage[..2].copy_from_slice(&[0x19, 0x01]);
@@ -248,7 +257,10 @@ mod tests {
         let args = sample_permit_args(owner);
         let domain_sep = B256::repeat_byte(0x42);
 
-        assert_ne!(args.signing_hash(domain_sep, U256::ZERO), args.signing_hash(domain_sep, U256::ONE));
+        assert_ne!(
+            args.signing_hash(domain_sep, U256::ZERO),
+            args.signing_hash(domain_sep, U256::ONE)
+        );
     }
 
     #[test]
