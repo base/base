@@ -16,7 +16,7 @@ use reth_node_core::{
     node_config::NodeConfig,
     version,
 };
-use reth_rpc_server_types::{DefaultRpcModuleValidator, RpcModuleValidator};
+use reth_rpc_server_types::{LenientRpcModuleValidator, RpcModuleValidator};
 use tracing::info;
 
 use crate::{RpcStandardNodeArgs, StandardNodeArgs};
@@ -206,6 +206,6 @@ impl ExecutionNodeLaunchConfig {
 
     /// Launches the execution node with the default RPC module validator.
     pub async fn launch_default(self, ctx: CliContext) -> eyre::Result<LaunchedBaseNode> {
-        self.launch::<DefaultRpcModuleValidator>(ctx).await
+        self.launch::<LenientRpcModuleValidator>(ctx).await
     }
 }
