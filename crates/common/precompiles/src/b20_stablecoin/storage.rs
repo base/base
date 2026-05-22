@@ -166,7 +166,7 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
 
     fn role_member_count(&self, role: B256) -> Result<U256> {
         if role == B20TokenRole::DefaultAdmin.id() {
-            Ok(Self::read_admin_count(self.b20.admin_count_and_initialized.read()?))
+            self.b20.admin_count.read()
         } else {
             Ok(U256::ZERO)
         }
@@ -174,8 +174,7 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
 
     fn set_role_member_count(&mut self, role: B256, count: U256) -> Result<()> {
         if role == B20TokenRole::DefaultAdmin.id() {
-            let packed = self.b20.admin_count_and_initialized.read()?;
-            self.b20.admin_count_and_initialized.write(Self::write_admin_count(packed, count)?)
+            self.b20.admin_count.write(count)
         } else {
             Ok(())
         }
@@ -260,28 +259,11 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
 }
 
 impl B20StablecoinStorage<'_> {
-    const ADMIN_COUNT_BITS: usize = 248;
     const TRANSFER_SENDER_POLICY_LANE: usize = 0;
     const TRANSFER_RECEIVER_POLICY_LANE: usize = 1;
     const TRANSFER_EXECUTOR_POLICY_LANE: usize = 2;
     const MINT_RECEIVER_POLICY_LANE: usize = 0;
     const POLICY_LANE_BITS: usize = 64;
-
-    fn admin_count_mask() -> U256 {
-        (U256::ONE << Self::ADMIN_COUNT_BITS) - U256::ONE
-    }
-
-    fn read_admin_count(packed: U256) -> U256 {
-        packed & Self::admin_count_mask()
-    }
-
-    fn write_admin_count(packed: U256, count: U256) -> Result<U256> {
-        let mask = Self::admin_count_mask();
-        if count > mask {
-            return Err(BasePrecompileError::under_overflow());
-        }
-        Ok((packed & !mask) | count)
-    }
 
     fn require_policy_type(policy_type: B256) -> Result<B20PolicyType> {
         B20PolicyType::from_id(policy_type).ok_or_else(|| {
