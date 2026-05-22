@@ -41,6 +41,25 @@ pub struct B20SecurityStorage {
     pub redeem: B20RedeemStorage,
 }
 
+/// Creation-time parameters for a security B-20 token.
+///
+/// Passed to [`B20SecurityStorage::initialize`] to write all fields atomically.
+#[derive(Debug)]
+pub struct B20SecurityInit {
+    /// ERC-20 token name.
+    pub name: String,
+    /// ERC-20 token symbol.
+    pub symbol: String,
+    /// Maximum total supply.
+    pub supply_cap: U256,
+    /// Share-to-token conversion ratio at WAD precision.
+    pub shares_to_tokens_ratio: U256,
+    /// ISIN identifier stored under the `"ISIN"` key.
+    pub isin: String,
+    /// Minimum redeemable amount; `0` allows any non-zero redemption.
+    pub minimum_redeemable: U256,
+}
+
 impl<'a> B20SecurityStorage<'a> {
     /// Creates a `B20SecurityStorage` instance targeting `addr`.
     pub fn from_address(addr: Address, storage: StorageCtx<'a>) -> Self {
@@ -49,24 +68,16 @@ impl<'a> B20SecurityStorage<'a> {
 
     /// Writes all creation-time fields atomically.
     ///
-    /// `initial_isin` may be empty; when non-empty it is stored under the raw
-    /// `"ISIN"` key in the security identifiers mapping.
-    pub fn initialize(
-        &mut self,
-        name: String,
-        symbol: String,
-        supply_cap: U256,
-        initial_shares_to_tokens_ratio: U256,
-        initial_isin: String,
-        minimum_redeemable: U256,
-    ) -> Result<()> {
-        self.b20.name.write(name)?;
-        self.b20.symbol.write(symbol)?;
-        self.b20.supply_cap.write(supply_cap)?;
-        self.security.shares_to_tokens_ratio.write(initial_shares_to_tokens_ratio)?;
-        self.redeem.minimum_redeemable.write(minimum_redeemable)?;
-        if !initial_isin.is_empty() {
-            self.security.identifiers.at_mut(&String::from("ISIN")).write(initial_isin)?;
+    /// `isin` may be empty; when non-empty it is stored under the `"ISIN"` key
+    /// in the security identifiers mapping.
+    pub fn initialize(&mut self, init: B20SecurityInit) -> Result<()> {
+        self.b20.name.write(init.name)?;
+        self.b20.symbol.write(init.symbol)?;
+        self.b20.supply_cap.write(init.supply_cap)?;
+        self.security.shares_to_tokens_ratio.write(init.shares_to_tokens_ratio)?;
+        self.redeem.minimum_redeemable.write(init.minimum_redeemable)?;
+        if !init.isin.is_empty() {
+            self.security.identifiers.at_mut(&String::from("ISIN")).write(init.isin)?;
         }
         Ok(())
     }

@@ -28,6 +28,21 @@ pub struct B20StablecoinStorage {
     pub stablecoin: B20StablecoinExtensionStorage,
 }
 
+/// Creation-time parameters for a stablecoin B-20 token.
+///
+/// Passed to [`B20StablecoinStorage::initialize`] to write all fields atomically.
+#[derive(Debug)]
+pub struct B20StablecoinInit {
+    /// ERC-20 token name.
+    pub name: String,
+    /// ERC-20 token symbol.
+    pub symbol: String,
+    /// Maximum total supply.
+    pub supply_cap: U256,
+    /// ISO 4217 fiat currency code (e.g. `"USD"`).
+    pub currency: String,
+}
+
 impl<'a> B20StablecoinStorage<'a> {
     /// Creates a `B20StablecoinStorage` instance targeting `addr`.
     pub fn from_address(addr: Address, storage: StorageCtx<'a>) -> Self {
@@ -38,21 +53,15 @@ impl<'a> B20StablecoinStorage<'a> {
     ///
     /// Validates that `currency` is a recognised ISO 4217 code before writing
     /// anything; reverts `IB20Stablecoin::InvalidCurrency` otherwise.
-    pub fn initialize(
-        &mut self,
-        name: String,
-        symbol: String,
-        supply_cap: U256,
-        currency: String,
-    ) -> Result<()> {
+    pub fn initialize(&mut self, init: B20StablecoinInit) -> Result<()> {
         #[cfg(feature = "std")]
-        if Currency::from_code(&currency).is_none() {
+        if Currency::from_code(&init.currency).is_none() {
             return Err(BasePrecompileError::revert(IB20Stablecoin::InvalidCurrency {}));
         }
-        self.b20.name.write(name)?;
-        self.b20.symbol.write(symbol)?;
-        self.b20.supply_cap.write(supply_cap)?;
-        self.stablecoin.currency.write(currency)
+        self.b20.name.write(init.name)?;
+        self.b20.symbol.write(init.symbol)?;
+        self.b20.supply_cap.write(init.supply_cap)?;
+        self.stablecoin.currency.write(init.currency)
     }
 }
 

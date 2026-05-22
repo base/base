@@ -1,4 +1,4 @@
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, Bytes, U256, address};
@@ -11,7 +11,15 @@ use super::variant::TokenVariant;
 use crate::{
     B20SecurityStorage, B20SecurityToken, B20StablecoinStorage, B20StablecoinToken, B20Token,
     B20TokenInit, B20TokenRole, B20TokenStorage, ITokenFactory, PolicyHandle, RoleManaged, Token,
+    b20_security::B20SecurityInit, b20_stablecoin::B20StablecoinInit,
 };
+
+/// Maximum total supply for all newly-created B-20 tokens.
+const DEFAULT_SUPPLY_CAP: U256 = U256::MAX;
+
+/// Initial share-to-token ratio at WAD precision (1:1).
+const INITIAL_SHARES_TO_TOKENS_RATIO: U256 =
+    U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
 
 /// The B-20 token factory precompile.
 #[contract(addr = Self::ADDRESS)]
@@ -25,7 +33,7 @@ impl<'a> TokenFactoryStorage<'a> {
     pub const CREATE_TOKEN_VERSION: u8 = 1;
 
     /// Initial supply cap for newly created default B-20 tokens.
-    pub const DEFAULT_SUPPLY_CAP: U256 = U256::MAX;
+    pub const DEFAULT_SUPPLY_CAP: U256 = DEFAULT_SUPPLY_CAP;
 
     /// Creates a token at a deterministic address derived from `(caller, variant, salt)`.
     pub fn create_token(
@@ -54,20 +62,14 @@ impl<'a> TokenFactoryStorage<'a> {
 
         let init_calls = call.initCalls;
         match params {
-            TokenCreateParams::B20(common) => {
-                self.init_b20_token(token_address, common, init_calls)?;
+            TokenCreateParams::B20 { common, init } => {
+                self.init_b20_token(token_address, common, init, init_calls)?;
             }
-            TokenCreateParams::Stablecoin { common, currency } => {
-                self.init_stablecoin(token_address, common, currency, init_calls)?;
+            TokenCreateParams::Stablecoin { common, init } => {
+                self.init_stablecoin(token_address, common, init, init_calls)?;
             }
-            TokenCreateParams::Security { common, minimum_redeemable, isin } => {
-                self.init_security_token(
-                    token_address,
-                    common,
-                    minimum_redeemable,
-                    isin,
-                    init_calls,
-                )?;
+            TokenCreateParams::Security { common, init } => {
+                self.init_security_token(token_address, common, init, init_calls)?;
             }
         }
 
@@ -91,23 +93,21 @@ impl<'a> TokenFactoryStorage<'a> {
         &mut self,
         token_address: Address,
         common: CommonParams,
+        init: B20TokenInit,
         init_calls: Vec<Bytes>,
     ) -> Result<()> {
         let mut token = B20Token::with_storage_and_policy(
             B20TokenStorage::from_address(token_address, self.storage),
             PolicyHandle::new(self.storage),
         );
-        token.accounting_mut().initialize(B20TokenInit {
-            name: common.name.clone(),
-            symbol: common.symbol.clone(),
-            supply_cap: Self::DEFAULT_SUPPLY_CAP,
-        })?;
+        let (name, symbol) = (init.name.clone(), init.symbol.clone());
+        token.accounting_mut().initialize(init)?;
 
         self.emit_event(ITokenFactory::TokenCreated {
             token: token_address,
             variant: TokenVariant::B20.abi(),
-            name: common.name.clone(),
-            symbol: common.symbol.clone(),
+            name,
+            symbol,
             decimals: TokenVariant::B20.decimals(),
         })?;
 
@@ -131,30 +131,23 @@ impl<'a> TokenFactoryStorage<'a> {
         &mut self,
         token_address: Address,
         common: CommonParams,
-        currency: String,
+        init: B20StablecoinInit,
         init_calls: Vec<Bytes>,
     ) -> Result<()> {
-        let mut token
-         = B20StablecoinToken::with_storage_and_policy(
+        let mut token = B20StablecoinToken::with_storage_and_policy(
             B20StablecoinStorage::from_address(token_address, self.storage),
             PolicyHandle::new(self.storage),
         );
-        token.accounting_mut().initialize(
-            common.name.clone(),
-            common.symbol.clone(),
-            Self::DEFAULT_SUPPLY_CAP,
-            currency,
-        )?;
+        let (name, symbol) = (init.name.clone(), init.symbol.clone());
+        token.accounting_mut().initialize(init)?;
 
         self.emit_event(ITokenFactory::TokenCreated {
             token: token_address,
             variant: TokenVariant::Stablecoin.abi(),
-            name: common.name.clone(),
-            symbol: common.symbol.clone(),
+            name,
+            symbol,
             decimals: TokenVariant::Stablecoin.decimals(),
         })?;
-
-
 
         if !common.initial_admin.is_zero() {
             token.grant_role_unchecked(
@@ -176,25 +169,18 @@ impl<'a> TokenFactoryStorage<'a> {
         &mut self,
         token_address: Address,
         common: CommonParams,
-        minimum_redeemable: U256,
-        isin: String,
+        init: B20SecurityInit,
         init_calls: Vec<Bytes>,
     ) -> Result<()> {
         let mut storage = B20SecurityStorage::from_address(token_address, self.storage);
-        storage.initialize(
-            common.name.clone(),
-            common.symbol.clone(),
-            Self::DEFAULT_SUPPLY_CAP,
-            alloy_primitives::U256::from(1_000_000_000_000_000_000u128), // 1:1 ratio
-            isin,
-            minimum_redeemable,
-        )?;
+        let (name, symbol) = (init.name.clone(), init.symbol.clone());
+        storage.initialize(init)?;
 
         self.emit_event(ITokenFactory::TokenCreated {
             token: token_address,
             variant: TokenVariant::Security.abi(),
-            name: common.name,
-            symbol: common.symbol,
+            name,
+            symbol,
             decimals: TokenVariant::Security.decimals(),
         })?;
 
@@ -241,24 +227,22 @@ impl<'a> TokenFactoryStorage<'a> {
     }
 }
 
-/// Creation fields shared by every token variant.
+/// Control-flow fields shared by every token variant (not written to storage).
 #[derive(Debug)]
 struct CommonParams {
     version: u8,
-    name: String,
-    symbol: String,
     initial_admin: Address,
 }
 
 /// Decoded creation parameters typed per token variant.
 ///
-/// Each arm carries only the fields meaningful to that variant, replacing a flat
-/// struct that used sentinel empty values for fields irrelevant to the active variant.
+/// Each arm carries a typed `init` struct that maps 1-to-1 to its storage
+/// `initialize()` call, plus the shared control-flow fields in `common`.
 #[derive(Debug)]
 enum TokenCreateParams {
-    B20(CommonParams),
-    Stablecoin { common: CommonParams, currency: String },
-    Security { common: CommonParams, minimum_redeemable: U256, isin: String },
+    B20 { common: CommonParams, init: B20TokenInit },
+    Stablecoin { common: CommonParams, init: B20StablecoinInit },
+    Security { common: CommonParams, init: B20SecurityInit },
 }
 
 impl TokenCreateParams {
@@ -267,52 +251,51 @@ impl TokenCreateParams {
             TokenVariant::B20 => {
                 let p = ITokenFactory::B20CreateParams::abi_decode(params)
                     .map_err(Self::invalid_params)?;
-                Ok(Self::B20(CommonParams {
-                    version: p.version,
-                    name: p.name,
-                    symbol: p.symbol,
-                    initial_admin: p.initialAdmin,
-                }))
+                Ok(Self::B20 {
+                    common: CommonParams { version: p.version, initial_admin: p.initialAdmin },
+                    init: B20TokenInit {
+                        name: p.name,
+                        symbol: p.symbol,
+                        supply_cap: DEFAULT_SUPPLY_CAP,
+                    },
+                })
             }
             TokenVariant::Stablecoin => {
                 let p = ITokenFactory::B20StablecoinCreateParams::abi_decode(params)
                     .map_err(Self::invalid_params)?;
                 Ok(Self::Stablecoin {
-                    common: CommonParams {
-                        version: p.version,
+                    common: CommonParams { version: p.version, initial_admin: p.initialAdmin },
+                    init: B20StablecoinInit {
                         name: p.name,
                         symbol: p.symbol,
-                        initial_admin: p.initialAdmin,
+                        supply_cap: DEFAULT_SUPPLY_CAP,
+                        currency: p.currency,
                     },
-                    currency: p.currency,
                 })
             }
             TokenVariant::Security => {
                 let p = ITokenFactory::B20SecurityCreateParams::abi_decode(params)
                     .map_err(Self::invalid_params)?;
                 Ok(Self::Security {
-                    common: CommonParams {
-                        version: p.version,
+                    common: CommonParams { version: p.version, initial_admin: p.initialAdmin },
+                    init: B20SecurityInit {
                         name: p.name,
                         symbol: p.symbol,
-                        initial_admin: p.initialAdmin,
+                        supply_cap: DEFAULT_SUPPLY_CAP,
+                        shares_to_tokens_ratio: INITIAL_SHARES_TO_TOKENS_RATIO,
+                        isin: p.isin,
+                        minimum_redeemable: p.minimumRedeemable,
                     },
-                    minimum_redeemable: p.minimumRedeemable,
-                    isin: p.isin,
                 })
             }
         }
     }
 
     const fn version(&self) -> u8 {
-        self.common_ref().version
-    }
-
-    const fn common_ref(&self) -> &CommonParams {
         match self {
-            Self::B20(c)
-            | Self::Stablecoin { common: c, .. }
-            | Self::Security { common: c, .. } => c,
+            Self::B20 { common, .. }
+            | Self::Stablecoin { common, .. }
+            | Self::Security { common, .. } => common.version,
         }
     }
 
@@ -322,30 +305,24 @@ impl TokenCreateParams {
     /// so that version errors always take precedence over field-level errors.
     fn validate(&self) -> Result<()> {
         match self {
-            Self::B20(common) => Self::validate_b20(common),
-            Self::Stablecoin { common, currency } => Self::validate_stablecoin(common, currency),
-            Self::Security { common, minimum_redeemable, isin } => {
-                Self::validate_security(common, minimum_redeemable, isin)
-            }
+            Self::B20 { init, .. } => Self::validate_b20(init),
+            Self::Stablecoin { init, .. } => Self::validate_stablecoin(init),
+            Self::Security { init, .. } => Self::validate_security(init),
         }
     }
 
-    const fn validate_b20(_common: &CommonParams) -> Result<()> {
+    const fn validate_b20(_init: &B20TokenInit) -> Result<()> {
         Ok(())
     }
 
-    const fn validate_stablecoin(_common: &CommonParams, _currency: &str) -> Result<()> {
+    const fn validate_stablecoin(_init: &B20StablecoinInit) -> Result<()> {
         // Currency validation is delegated to `B20StablecoinStorage::initialize`, which rejects
         // all invalid values (including empty) with `InvalidCurrency`.
         Ok(())
     }
 
-    fn validate_security(
-        _common: &CommonParams,
-        _minimum_redeemable: &U256,
-        isin: &str,
-    ) -> Result<()> {
-        if isin.is_empty() {
+    fn validate_security(init: &B20SecurityInit) -> Result<()> {
+        if init.isin.is_empty() {
             return Err(BasePrecompileError::revert(ITokenFactory::MissingRequiredField {}));
         }
         Ok(())
