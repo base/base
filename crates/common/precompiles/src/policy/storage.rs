@@ -1080,6 +1080,19 @@ mod tests {
         assert_eq!(pending, Address::ZERO);
     }
 
+    #[test]
+    fn pending_policy_admin_nonexistent_well_formed_policy_returns_zero_address() {
+        // A well-formed ID (type byte in range) that was never created: storage
+        // slot is unwritten, so the read returns Address::ZERO without reverting.
+        let mut s = storage();
+        let nonexistent = PolicyRegistryStorage::make_id(0, 999);
+        let pending = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).pending_policy_admin(nonexistent)
+        })
+        .unwrap();
+        assert_eq!(pending, Address::ZERO);
+    }
+
     // --- builtin policies block mutations via Unauthorized ---
 
     #[test]
