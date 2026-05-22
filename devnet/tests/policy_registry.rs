@@ -43,10 +43,7 @@ async fn read_is_authorized(
         .wrap_err("Failed to decode isAuthorized")
 }
 
-async fn read_policy_admin(
-    client: &B20PrecompileClient<'_>,
-    policy_id: u64,
-) -> Result<Address> {
+async fn read_policy_admin(client: &B20PrecompileClient<'_>, policy_id: u64) -> Result<Address> {
     let out = client
         .call(
             PolicyRegistryStorage::ADDRESS,
@@ -117,8 +114,7 @@ async fn test_policy_registry_policy_exists() -> Result<()> {
 #[tokio::test]
 async fn test_create_allowlist_policy_and_authorize() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
-    let admin =
-        PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
+    let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
     let member = ANVIL_ACCOUNT_7.address;
     let non_member = ANVIL_ACCOUNT_8.address;
     common::wait_for_balance(&provider, admin.address()).await?;
@@ -126,8 +122,7 @@ async fn test_create_allowlist_policy_and_authorize() -> Result<()> {
     let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
-    let policy_id =
-        read_next_policy_id(&client, IPolicyRegistry::PolicyType::ALLOWLIST).await?;
+    let policy_id = read_next_policy_id(&client, IPolicyRegistry::PolicyType::ALLOWLIST).await?;
 
     client
         .send_call(
@@ -170,8 +165,7 @@ async fn test_create_allowlist_policy_and_authorize() -> Result<()> {
 #[tokio::test]
 async fn test_create_blocklist_policy_and_block() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
-    let admin =
-        PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
+    let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
     let blocked = ANVIL_ACCOUNT_7.address;
     let non_blocked = ANVIL_ACCOUNT_8.address;
     common::wait_for_balance(&provider, admin.address()).await?;
@@ -179,8 +173,7 @@ async fn test_create_blocklist_policy_and_block() -> Result<()> {
     let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
-    let policy_id =
-        read_next_policy_id(&client, IPolicyRegistry::PolicyType::BLOCKLIST).await?;
+    let policy_id = read_next_policy_id(&client, IPolicyRegistry::PolicyType::BLOCKLIST).await?;
 
     client
         .send_call(
@@ -223,8 +216,7 @@ async fn test_create_blocklist_policy_and_block() -> Result<()> {
 #[tokio::test]
 async fn test_two_step_admin_transfer() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
-    let admin =
-        PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
+    let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
     let new_admin =
         PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_6.private_key).wrap_err("new_admin key")?;
     common::wait_for_balance(&provider, admin.address()).await?;
@@ -298,15 +290,13 @@ async fn test_two_step_admin_transfer() -> Result<()> {
 #[tokio::test]
 async fn test_renounce_admin() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
-    let admin =
-        PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
+    let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
     common::wait_for_balance(&provider, admin.address()).await?;
 
     let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
-    let policy_id =
-        read_next_policy_id(&client, IPolicyRegistry::PolicyType::ALLOWLIST).await?;
+    let policy_id = read_next_policy_id(&client, IPolicyRegistry::PolicyType::ALLOWLIST).await?;
 
     client
         .send_call(
@@ -341,16 +331,14 @@ async fn test_renounce_admin() -> Result<()> {
 #[tokio::test]
 async fn test_policy_views() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
-    let admin =
-        PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
+    let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key).wrap_err("admin key")?;
     common::wait_for_balance(&provider, admin.address()).await?;
 
     let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
     // Snapshot the predicted policy ID before any creation.
-    let predicted_id =
-        read_next_policy_id(&client, IPolicyRegistry::PolicyType::ALLOWLIST).await?;
+    let predicted_id = read_next_policy_id(&client, IPolicyRegistry::PolicyType::ALLOWLIST).await?;
 
     client
         .send_call(
@@ -384,10 +372,7 @@ async fn test_policy_views() -> Result<()> {
     // The counter must have advanced so the next ID differs from the one we just created.
     let next_id_after =
         read_next_policy_id(&client, IPolicyRegistry::PolicyType::ALLOWLIST).await?;
-    assert_ne!(
-        next_id_after, predicted_id,
-        "nextPolicyId should advance after createPolicy",
-    );
+    assert_ne!(next_id_after, predicted_id, "nextPolicyId should advance after createPolicy",);
 
     Ok(())
 }
