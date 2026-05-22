@@ -145,6 +145,7 @@ pub trait Permittable: Transferable {
 mod tests {
     use alloy_primitives::{Address, B256, U256, keccak256};
     use alloy_sol_types::SolValue;
+    use base_precompile_storage::BasePrecompileError;
     use k256::ecdsa::SigningKey;
 
     use super::{DOMAIN_TYPEHASH, PermitArgs, Permittable};
@@ -155,7 +156,6 @@ mod tests {
             test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
         },
     };
-    use base_precompile_storage::BasePrecompileError;
 
     const CHAIN_ID: u64 = 1;
     const SPENDER: Address = Address::repeat_byte(0xbb);

@@ -12,16 +12,16 @@ use crate::{B20PolicyType, B20TokenRole, IB20, Token, TokenAccounting};
 pub trait Mintable: Token {
     /// Creates `amount` tokens at `to`. Enforces supply cap. Emits `Transfer(0x0, to, amount)`.
     fn mint(&mut self, caller: Address, to: Address, amount: U256, privileged: bool) -> Result<()> {
-        if !privileged {
-            B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Mint)?;
-        }
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::MINT)?;
-        B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::MintReceiver, to)?;
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
         if amount.is_zero() {
             return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
+        }
+        if !privileged {
+            B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Mint)?;
+            B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::MINT)?;
+            B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::MintReceiver, to)?;
         }
         let supply = self.accounting().total_supply()?;
         let cap = self.accounting().supply_cap()?;
