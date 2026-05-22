@@ -6,6 +6,13 @@ use base_precompile_storage::Result;
 use crate::IPolicyRegistry::PolicyType;
 
 /// Minimal read-only policy interface consulted by B-20 tokens on every transfer, mint, and redeem.
+///
+/// # `is_authorized` vs `policy_exists`
+///
+/// These two methods can diverge for never-created BLOCKLIST IDs: `policy_exists` returns `false`
+/// (the slot was never written) while `is_authorized` returns `true` (empty blocklist allows
+/// everyone). Do not gate `is_authorized` calls on a prior `policy_exists` check — call
+/// `is_authorized` directly; it handles all cases correctly on its own.
 pub trait Policy {
     /// Returns `true` if `account` is authorized under the given `policy_id`.
     fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool>;

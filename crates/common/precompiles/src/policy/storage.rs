@@ -370,7 +370,7 @@ impl PolicyRegistryStorage<'_> {
         match Self::policy_id_type(policy_id) {
             Self::ALLOWLIST_TYPE => Ok(member),
             Self::BLOCKLIST_TYPE => Ok(!member),
-            _ => Err(BasePrecompileError::enum_conversion_error()),
+            _ => unreachable!("type byte > 1 was rejected by the malformed-ID guard above"),
         }
     }
 
