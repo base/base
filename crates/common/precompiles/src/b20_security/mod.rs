@@ -8,6 +8,8 @@ pub use accounting::SecurityAccounting;
 
 mod dispatch;
 
+mod ids;
+
 mod precompile;
 pub use precompile::B20SecurityPrecompile;
 

@@ -1,4 +1,4 @@
-//! Unsigned [EIP-8130] Account Abstraction transaction body ([`TxAa8130`]).
+//! Unsigned [EIP-8130] Account Abstraction transaction body ([`TxEip8130`]).
 //!
 //! This module defines the unsigned payload of an EIP-8130 transaction. The
 //! signed envelope (which wraps this type alongside the `sender_auth` and
@@ -16,16 +16,16 @@ use alloy_primitives::{
 };
 use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
 
-use crate::transaction::aa8130::{
-    account_changes::AccountChange, call::Call, constants::Aa8130Constants,
+use crate::transaction::eip8130::{
+    account_changes::AccountChange, call::Call, constants::Eip8130Constants,
 };
 
 /// Unsigned body of an [EIP-8130] Account Abstraction transaction.
 ///
-/// On the wire, the signed form (an [`super::AaSigned`]) is
-/// `AA_TX_TYPE || rlp([...all fields..., sender_auth, payer_auth])`. The
+/// On the wire, the signed form (an [`super::Eip8130Signed`]) is
+/// `EIP8130_TX_TYPE || rlp([...all fields..., sender_auth, payer_auth])`. The
 /// unsigned struct here carries only the consensus fields; signature material
-/// is held by [`super::AaSigned`].
+/// is held by [`super::Eip8130Signed`].
 ///
 /// Field semantics follow the [EIP-8130] draft. Two fields are nullable on the
 /// wire (encoded as a zero-length byte string when absent):
@@ -41,7 +41,7 @@ use crate::transaction::aa8130::{
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct TxAa8130 {
+pub struct TxEip8130 {
     /// EIP-155 chain ID this transaction is bound to.
     pub chain_id: ChainId,
     /// Explicit sender account address, or `None` for the EOA path.
@@ -68,7 +68,7 @@ pub struct TxAa8130 {
     pub payer: Option<Address>,
 }
 
-impl TxAa8130 {
+impl TxEip8130 {
     /// Encodes an `Option<Address>` as the AA wire format: zero-length byte
     /// string when `None`, 20-byte string when `Some`.
     fn encode_address_opt(addr: &Option<Address>, out: &mut dyn BufMut) {
@@ -201,26 +201,26 @@ impl TxAa8130 {
 
     /// Signing-hash preimage for the sender, per [EIP-8130].
     ///
-    /// `keccak256(AA_TX_TYPE || rlp([...unsigned body fields...]))`.
+    /// `keccak256(EIP8130_TX_TYPE || rlp([...unsigned body fields...]))`.
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
     pub fn sender_signature_hash(&self) -> B256 {
         let mut buf = Vec::with_capacity(self.rlp_encoded_length() + 1);
-        buf.put_u8(Aa8130Constants::AA_TX_TYPE);
+        buf.put_u8(Eip8130Constants::EIP8130_TX_TYPE);
         self.rlp_encode(&mut buf);
         keccak256(&buf)
     }
 
     /// Signing-hash preimage for the payer, per [EIP-8130].
     ///
-    /// `keccak256(AA_PAYER_TYPE || rlp(unsigned body fields with the
+    /// `keccak256(EIP8130_PAYER_TYPE || rlp(unsigned body fields with the
     /// `sender` slot replaced by the recovered sender address))`.
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
     pub fn payer_signature_hash(&self, resolved_sender: Address) -> B256 {
         let with_resolved = Self { sender: Some(resolved_sender), ..self.clone() };
         let mut buf = Vec::with_capacity(with_resolved.rlp_encoded_length() + 1);
-        buf.put_u8(Aa8130Constants::AA_PAYER_TYPE);
+        buf.put_u8(Eip8130Constants::EIP8130_PAYER_TYPE);
         with_resolved.rlp_encode(&mut buf);
         keccak256(&buf)
     }
@@ -241,7 +241,7 @@ impl TxAa8130 {
     }
 }
 
-impl Encodable for TxAa8130 {
+impl Encodable for TxEip8130 {
     fn encode(&self, out: &mut dyn BufMut) {
         self.rlp_encode(out);
     }
@@ -251,7 +251,7 @@ impl Encodable for TxAa8130 {
     }
 }
 
-impl Decodable for TxAa8130 {
+impl Decodable for TxEip8130 {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         let header = Header::decode(buf)?;
         if !header.list {
@@ -270,25 +270,25 @@ impl Decodable for TxAa8130 {
     }
 }
 
-impl Typed2718 for TxAa8130 {
+impl Typed2718 for TxEip8130 {
     fn ty(&self) -> u8 {
-        Aa8130Constants::AA_TX_TYPE
+        Eip8130Constants::EIP8130_TX_TYPE
     }
 }
 
-impl IsTyped2718 for TxAa8130 {
+impl IsTyped2718 for TxEip8130 {
     fn is_type(ty: u8) -> bool {
-        ty == Aa8130Constants::AA_TX_TYPE
+        ty == Eip8130Constants::EIP8130_TX_TYPE
     }
 }
 
-impl InMemorySize for TxAa8130 {
+impl InMemorySize for TxEip8130 {
     fn size(&self) -> usize {
         Self::size(self)
     }
 }
 
-impl Transaction for TxAa8130 {
+impl Transaction for TxEip8130 {
     fn chain_id(&self) -> Option<ChainId> {
         Some(self.chain_id)
     }
@@ -361,13 +361,13 @@ impl Transaction for TxAa8130 {
     }
 }
 
-impl SignableTransaction<Signature> for TxAa8130 {
+impl SignableTransaction<Signature> for TxEip8130 {
     fn set_chain_id(&mut self, chain_id: ChainId) {
         self.chain_id = chain_id;
     }
 
     fn encode_for_signing(&self, out: &mut dyn BufMut) {
-        out.put_u8(Aa8130Constants::AA_TX_TYPE);
+        out.put_u8(Eip8130Constants::EIP8130_TX_TYPE);
         self.rlp_encode(out);
     }
 
@@ -381,10 +381,10 @@ mod tests {
     use alloy_primitives::{address, bytes};
 
     use super::*;
-    use crate::transaction::aa8130::account_changes::Delegation;
+    use crate::transaction::eip8130::account_changes::Delegation;
 
-    fn sample_tx() -> TxAa8130 {
-        TxAa8130 {
+    fn sample_tx() -> TxEip8130 {
+        TxEip8130 {
             chain_id: 8453,
             sender: Some(address!("0x00000000000000000000000000000000000000aa")),
             nonce_key: U256::from(0x1234u64),
@@ -410,7 +410,7 @@ mod tests {
         let mut buf = Vec::new();
         tx.rlp_encode(&mut buf);
         assert_eq!(buf.len(), tx.rlp_encoded_length());
-        let decoded = TxAa8130::rlp_decode_fields(&mut {
+        let decoded = TxEip8130::rlp_decode_fields(&mut {
             let header = Header::decode(&mut &buf[..]).unwrap();
             assert!(header.list);
             &buf[buf.len() - header.payload_length..]
@@ -424,25 +424,25 @@ mod tests {
         let tx = sample_tx();
         let mut buf = Vec::new();
         tx.encode(&mut buf);
-        let decoded = TxAa8130::decode(&mut buf.as_slice()).unwrap();
+        let decoded = TxEip8130::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(tx, decoded);
     }
 
     #[test]
     fn rlp_roundtrip_minimal_empty() {
-        let tx = TxAa8130::default();
+        let tx = TxEip8130::default();
         let mut buf = Vec::new();
         tx.encode(&mut buf);
-        let decoded = TxAa8130::decode(&mut buf.as_slice()).unwrap();
+        let decoded = TxEip8130::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(tx, decoded);
     }
 
     #[test]
     fn address_opt_roundtrip_none() {
         let mut buf = Vec::new();
-        TxAa8130::encode_address_opt(&None, &mut buf);
+        TxEip8130::encode_address_opt(&None, &mut buf);
         assert_eq!(buf, vec![0x80]);
-        let decoded = TxAa8130::decode_address_opt(&mut buf.as_slice()).unwrap();
+        let decoded = TxEip8130::decode_address_opt(&mut buf.as_slice()).unwrap();
         assert_eq!(decoded, None);
     }
 
@@ -450,8 +450,8 @@ mod tests {
     fn address_opt_roundtrip_some() {
         let addr = address!("0x00000000000000000000000000000000000000ff");
         let mut buf = Vec::new();
-        TxAa8130::encode_address_opt(&Some(addr), &mut buf);
-        let decoded = TxAa8130::decode_address_opt(&mut buf.as_slice()).unwrap();
+        TxEip8130::encode_address_opt(&Some(addr), &mut buf);
+        let decoded = TxEip8130::decode_address_opt(&mut buf.as_slice()).unwrap();
         assert_eq!(decoded, Some(addr));
     }
 
@@ -459,7 +459,7 @@ mod tests {
     fn address_opt_rejects_wrong_length() {
         let mut buf = Vec::new();
         Bytes::copy_from_slice(&[0u8; 19]).encode(&mut buf);
-        let res = TxAa8130::decode_address_opt(&mut buf.as_slice());
+        let res = TxEip8130::decode_address_opt(&mut buf.as_slice());
         assert!(res.is_err());
     }
 
@@ -481,14 +481,14 @@ mod tests {
 
     #[test]
     fn ty_byte_matches_constant() {
-        assert_eq!(sample_tx().ty(), Aa8130Constants::AA_TX_TYPE);
-        assert!(<TxAa8130 as IsTyped2718>::is_type(Aa8130Constants::AA_TX_TYPE));
-        assert!(!<TxAa8130 as IsTyped2718>::is_type(0x00));
+        assert_eq!(sample_tx().ty(), Eip8130Constants::EIP8130_TX_TYPE);
+        assert!(<TxEip8130 as IsTyped2718>::is_type(Eip8130Constants::EIP8130_TX_TYPE));
+        assert!(!<TxEip8130 as IsTyped2718>::is_type(0x00));
     }
 
     #[test]
     fn nested_calls_roundtrip() {
-        let tx = TxAa8130 {
+        let tx = TxEip8130 {
             chain_id: 1,
             calls: vec![
                 vec![Call { to: Address::ZERO, data: bytes!("01") }],
@@ -502,13 +502,13 @@ mod tests {
         };
         let mut buf = Vec::new();
         tx.encode(&mut buf);
-        let decoded = TxAa8130::decode(&mut buf.as_slice()).unwrap();
+        let decoded = TxEip8130::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(tx, decoded);
     }
 
     #[test]
     fn account_change_roundtrip_in_tx() {
-        let tx = TxAa8130 {
+        let tx = TxEip8130 {
             chain_id: 1,
             account_changes: vec![
                 AccountChange::Delegation(Delegation { target: Address::ZERO }),
@@ -520,7 +520,7 @@ mod tests {
         };
         let mut buf = Vec::new();
         tx.encode(&mut buf);
-        let decoded = TxAa8130::decode(&mut buf.as_slice()).unwrap();
+        let decoded = TxEip8130::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(tx.account_changes, decoded.account_changes);
     }
 
@@ -531,9 +531,9 @@ mod tests {
         let resolved = address!("0x00000000000000000000000000000000000000dd");
         let payer_hash_v1 = tx.payer_signature_hash(resolved);
 
-        let tx2 = TxAa8130 { sender: Some(resolved), ..tx };
+        let tx2 = TxEip8130 { sender: Some(resolved), ..tx };
         let mut buf = Vec::with_capacity(tx2.rlp_encoded_length() + 1);
-        buf.put_u8(Aa8130Constants::AA_PAYER_TYPE);
+        buf.put_u8(Eip8130Constants::EIP8130_PAYER_TYPE);
         tx2.rlp_encode(&mut buf);
         let payer_hash_v2 = keccak256(&buf);
         assert_eq!(payer_hash_v1, payer_hash_v2);

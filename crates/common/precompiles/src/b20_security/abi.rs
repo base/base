@@ -40,7 +40,7 @@ sol! {
         event Redeemed(address indexed from, uint256 amt, uint256 sharesToTokensRatio);
 
         /// Emitted by `updateMinimumRedeemable`.
-        event MinimumRedeemableUpdated(uint256 newMinimumRedeemable);
+        event MinimumRedeemableUpdated(address indexed caller, uint256 newMinimumRedeemable);
 
         /// Emitted by `updateShareRatio`.
         event ShareRatioUpdated(uint256 sharesToTokensRatio);
@@ -65,8 +65,8 @@ sol! {
         /// Fixed-point precision for `sharesToTokensRatio`: `1e18` (one WAD).
         function WAD_PRECISION() external view returns (uint256);
 
-        /// `keccak256("REDEEMER_SENDER_POLICY")` — consulted on `redeem`/`redeemWithMemo`.
-        function REDEEMER_SENDER_POLICY() external view returns (bytes32);
+        /// `keccak256("REDEEM_SENDER_POLICY")` — consulted on `redeem`/`redeemWithMemo`.
+        function REDEEM_SENDER_POLICY() external view returns (bytes32);
 
         // ── Announcements ────────────────────────────────────────────────────
 
@@ -127,5 +127,30 @@ sol! {
             string calldata identifierType,
             string calldata value
         ) external;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{b256, keccak256};
+    use alloy_sol_types::{SolCall, SolEvent};
+
+    use super::IB20Security;
+
+    #[test]
+    fn redeem_sender_policy_selector_matches_solidity_interface() {
+        assert_eq!(IB20Security::REDEEM_SENDER_POLICYCall::SELECTOR, [0x1c, 0x6f, 0x9d, 0x42]);
+    }
+
+    #[test]
+    fn minimum_redeemable_updated_topic_matches_solidity_interface() {
+        assert_eq!(
+            IB20Security::MinimumRedeemableUpdated::SIGNATURE_HASH,
+            b256!("7fdd6ea6dad98bfcd2c5ec538e748a5e8ecc40d0fc824f55dfc7397fe78a183b")
+        );
+        assert_eq!(
+            IB20Security::MinimumRedeemableUpdated::SIGNATURE_HASH,
+            keccak256("MinimumRedeemableUpdated(address,uint256)")
+        );
     }
 }

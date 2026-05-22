@@ -12,7 +12,7 @@ use alloy_rlp::{RlpDecodable, RlpEncodable};
 /// ETH transfers must be performed by the wallet bytecode via the `CALL` opcode.
 ///
 /// AA transactions group calls into phases (`Vec<Vec<Call>>`); see
-/// [`super::tx::TxAa8130::calls`].
+/// [`super::tx::TxEip8130::calls`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

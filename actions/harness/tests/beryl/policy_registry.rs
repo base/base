@@ -372,6 +372,118 @@ async fn policy_registry_action_tests_cover_policy_lifecycle_and_views() {
     scenario.derive().await;
 }
 
+#[tokio::test]
+async fn policy_registry_action_tests_cover_error_paths() {
+    let mut scenario = PolicyRegistryScenario::new().await;
+    let allowlist_id = policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
+    let blocklist_id = policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 3);
+
+    // Setup: create an allowlist policy and a blocklist policy, both with alice as admin.
+    let create_allowlist = scenario.tx(IPolicyRegistry::createPolicyCall {
+        admin: BerylTestEnv::alice(),
+        policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
+    });
+    let block = scenario.build_block_with_transactions(vec![create_allowlist]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "createPolicy(ALLOWLIST) setup must succeed"
+    );
+
+    let create_blocklist = scenario.tx(IPolicyRegistry::createPolicyCall {
+        admin: BerylTestEnv::alice(),
+        policyType: IPolicyRegistry::PolicyType::BLOCKLIST,
+    });
+    let block = scenario.build_block_with_transactions(vec![create_blocklist]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "createPolicy(BLOCKLIST) setup must succeed"
+    );
+
+    // Unauthorized: bob calls updateAllowlist on alice's allowlist policy.
+    let unauthorized = scenario.bob_tx(IPolicyRegistry::updateAllowlistCall {
+        policyId: allowlist_id,
+        allowed: true,
+        accounts: vec![BerylTestEnv::bob()],
+    });
+    let block = scenario.build_block_with_transactions(vec![unauthorized]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "updateAllowlist() by non-admin must revert with Unauthorized"
+    );
+
+    // PolicyNotFound: operate on a policy id that does not exist.
+    let not_found = scenario.tx(IPolicyRegistry::updateAllowlistCall {
+        policyId: 999,
+        allowed: true,
+        accounts: vec![BerylTestEnv::alice()],
+    });
+    let block = scenario.build_block_with_transactions(vec![not_found]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "updateAllowlist() on nonexistent policy must revert with PolicyNotFound"
+    );
+
+    // IncompatiblePolicyType: updateAllowlist on a BLOCKLIST policy.
+    let allowlist_on_blocklist = scenario.tx(IPolicyRegistry::updateAllowlistCall {
+        policyId: blocklist_id,
+        allowed: true,
+        accounts: vec![BerylTestEnv::alice()],
+    });
+    let block = scenario.build_block_with_transactions(vec![allowlist_on_blocklist]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "updateAllowlist() on a BLOCKLIST policy must revert with IncompatiblePolicyType"
+    );
+
+    // IncompatiblePolicyType: updateBlocklist on an ALLOWLIST policy.
+    let blocklist_on_allowlist = scenario.tx(IPolicyRegistry::updateBlocklistCall {
+        policyId: allowlist_id,
+        blocked: true,
+        accounts: vec![BerylTestEnv::alice()],
+    });
+    let block = scenario.build_block_with_transactions(vec![blocklist_on_allowlist]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "updateBlocklist() on an ALLOWLIST policy must revert with IncompatiblePolicyType"
+    );
+
+    // StaticCallNotAllowed: route createPolicy through the probe, which issues a STATICCALL.
+    // The probe tx itself succeeds (it stores the call outcome), but the inner STATICCALL must
+    // fail because createPolicy is a mutating function.
+    let probe = scenario.probe;
+    let staticcall_tx = scenario.env.call_staticcall_probe_tx(
+        probe,
+        Bytes::from(
+            IPolicyRegistry::createPolicyCall {
+                admin: BerylTestEnv::alice(),
+                policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
+            }
+            .abi_encode(),
+        ),
+        BerylTestEnv::B20_PROBE_GAS_LIMIT,
+    );
+    let block = scenario.build_block_with_transactions(vec![staticcall_tx]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "probe tx for StaticCallNotAllowed must succeed (probe stores the result)"
+    );
+    assert!(
+        !scenario.env.probe_call_succeeded(probe),
+        "createPolicy() via STATICCALL must fail with StaticCallNotAllowed"
+    );
+
+    // NoPendingAdmin: finalizeUpdateAdmin before any stageUpdateAdmin call.
+    let no_pending =
+        scenario.tx(IPolicyRegistry::finalizeUpdateAdminCall { policyId: allowlist_id });
+    let block = scenario.build_block_with_transactions(vec![no_pending]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "finalizeUpdateAdmin() without a pending admin must revert with NoPendingAdmin"
+    );
+
+    scenario.derive().await;
+}
+
 struct PolicyRegistryScenario {
     env: BerylTestEnv,
     probe: alloy_primitives::Address,

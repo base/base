@@ -1,11 +1,11 @@
-//! Signed [EIP-8130] Account Abstraction transaction envelope ([`AaSigned`]).
+//! Signed [EIP-8130] Account Abstraction transaction envelope ([`Eip8130Signed`]).
 //!
-//! [`AaSigned`] wraps a [`TxAa8130`] together with the two opaque byte strings
+//! [`Eip8130Signed`] wraps a [`TxEip8130`] together with the two opaque byte strings
 //! `sender_auth` and `payer_auth` that authenticate the sender and (optional)
 //! payer respectively. The wire format is:
 //!
 //! ```text
-//! AA_TX_TYPE || rlp([...TxAa8130 fields..., sender_auth, payer_auth])
+//! EIP8130_TX_TYPE || rlp([...TxEip8130 fields..., sender_auth, payer_auth])
 //! ```
 //!
 //! [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
@@ -21,22 +21,22 @@ use alloy_eips::{
 use alloy_primitives::{Address, B256, Bytes, ChainId, TxKind, U256, bytes::BufMut, keccak256};
 use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
 
-use crate::transaction::aa8130::{constants::Aa8130Constants, tx::TxAa8130};
+use crate::transaction::eip8130::{constants::Eip8130Constants, tx::TxEip8130};
 
 /// Signed [EIP-8130] Account Abstraction transaction envelope.
 ///
-/// Holds the unsigned [`TxAa8130`] body plus the two authentication byte
+/// Holds the unsigned [`TxEip8130`] body plus the two authentication byte
 /// strings. The transaction hash is computed at construction and cached.
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct AaSigned {
+pub struct Eip8130Signed {
     /// Unsigned transaction body.
-    tx: TxAa8130,
+    tx: TxEip8130,
     /// Sender authentication payload.
     ///
     /// On the EOA path (`tx.sender == None`) this is a 65-byte ECDSA signature
-    /// (`r || s || v`) over [`TxAa8130::sender_signature_hash`].
+    /// (`r || s || v`) over [`TxEip8130::sender_signature_hash`].
     /// On the configured-owner path (`tx.sender == Some(_)`) this is
     /// `verifier(20) || verifier_data`.
     sender_auth: Bytes,
@@ -44,7 +44,7 @@ pub struct AaSigned {
     ///
     /// When `tx.payer.is_some()` this carries the payer's authorization,
     /// formatted as `verifier(20) || verifier_data` and validated against
-    /// [`TxAa8130::payer_signature_hash`] (with the resolved sender substituted).
+    /// [`TxEip8130::payer_signature_hash`] (with the resolved sender substituted).
     /// When `tx.payer.is_none()` this is empty.
     payer_auth: Bytes,
     /// Cached EIP-2718 transaction hash (`keccak256(encode_2718(self))`).
@@ -55,22 +55,22 @@ pub struct AaSigned {
 mod serde_impl {
     use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
-    use super::{AaSigned, Bytes, TxAa8130};
+    use super::{Bytes, Eip8130Signed, TxEip8130};
 
     #[derive(Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]
-    struct AaSignedRepr {
-        tx: TxAa8130,
+    struct Eip8130SignedRepr {
+        tx: TxEip8130,
         sender_auth: Bytes,
         payer_auth: Bytes,
     }
 
-    impl Serialize for AaSigned {
+    impl Serialize for Eip8130Signed {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            AaSignedRepr {
+            Eip8130SignedRepr {
                 tx: self.tx.clone(),
                 sender_auth: self.sender_auth.clone(),
                 payer_auth: self.payer_auth.clone(),
@@ -79,40 +79,40 @@ mod serde_impl {
         }
     }
 
-    impl<'de> Deserialize<'de> for AaSigned {
+    impl<'de> Deserialize<'de> for Eip8130Signed {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
             D: Deserializer<'de>,
         {
-            let repr = AaSignedRepr::deserialize(deserializer).map_err(de::Error::custom)?;
+            let repr = Eip8130SignedRepr::deserialize(deserializer).map_err(de::Error::custom)?;
             Ok(Self::new(repr.tx, repr.sender_auth, repr.payer_auth))
         }
     }
 }
 
 #[cfg(feature = "arbitrary")]
-impl<'a> arbitrary::Arbitrary<'a> for AaSigned {
+impl<'a> arbitrary::Arbitrary<'a> for Eip8130Signed {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(Self::new(TxAa8130::arbitrary(u)?, Bytes::arbitrary(u)?, Bytes::arbitrary(u)?))
+        Ok(Self::new(TxEip8130::arbitrary(u)?, Bytes::arbitrary(u)?, Bytes::arbitrary(u)?))
     }
 }
 
-impl AaSigned {
-    /// Constructs a new [`AaSigned`] from its parts, computing and caching
+impl Eip8130Signed {
+    /// Constructs a new [`Eip8130Signed`] from its parts, computing and caching
     /// the EIP-2718 transaction hash.
-    pub fn new(tx: TxAa8130, sender_auth: Bytes, payer_auth: Bytes) -> Self {
+    pub fn new(tx: TxEip8130, sender_auth: Bytes, payer_auth: Bytes) -> Self {
         let mut this = Self { tx, sender_auth, payer_auth, hash: B256::ZERO };
         this.hash = this.recompute_hash();
         this
     }
 
     /// Returns the unsigned transaction body.
-    pub const fn tx(&self) -> &TxAa8130 {
+    pub const fn tx(&self) -> &TxEip8130 {
         &self.tx
     }
 
     /// Consumes the envelope and returns the unsigned transaction body.
-    pub fn into_tx(self) -> TxAa8130 {
+    pub fn into_tx(self) -> TxEip8130 {
         self.tx
     }
 
@@ -172,7 +172,7 @@ impl AaSigned {
             return Err(alloy_rlp::Error::UnexpectedString);
         }
         let started = buf.len();
-        let tx = TxAa8130::rlp_decode_fields(buf)?;
+        let tx = TxEip8130::rlp_decode_fields(buf)?;
         let sender_auth = Bytes::decode(buf)?;
         let payer_auth = Bytes::decode(buf)?;
         let consumed = started - buf.len();
@@ -186,7 +186,7 @@ impl AaSigned {
     }
 }
 
-impl Encodable for AaSigned {
+impl Encodable for Eip8130Signed {
     fn encode(&self, out: &mut dyn BufMut) {
         let len = self.encode_2718_len();
         Header { list: false, payload_length: len }.encode(out);
@@ -199,7 +199,7 @@ impl Encodable for AaSigned {
     }
 }
 
-impl Decodable for AaSigned {
+impl Decodable for Eip8130Signed {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         let header = Header::decode(buf)?;
         if header.list {
@@ -219,21 +219,21 @@ impl Decodable for AaSigned {
     }
 }
 
-impl Typed2718 for AaSigned {
+impl Typed2718 for Eip8130Signed {
     fn ty(&self) -> u8 {
-        Aa8130Constants::AA_TX_TYPE
+        Eip8130Constants::EIP8130_TX_TYPE
     }
 }
 
-impl IsTyped2718 for AaSigned {
+impl IsTyped2718 for Eip8130Signed {
     fn is_type(ty: u8) -> bool {
-        ty == Aa8130Constants::AA_TX_TYPE
+        ty == Eip8130Constants::EIP8130_TX_TYPE
     }
 }
 
-impl Encodable2718 for AaSigned {
+impl Encodable2718 for Eip8130Signed {
     fn type_flag(&self) -> Option<u8> {
-        Some(Aa8130Constants::AA_TX_TYPE)
+        Some(Eip8130Constants::EIP8130_TX_TYPE)
     }
 
     fn encode_2718_len(&self) -> usize {
@@ -241,7 +241,7 @@ impl Encodable2718 for AaSigned {
     }
 
     fn encode_2718(&self, out: &mut dyn BufMut) {
-        out.put_u8(Aa8130Constants::AA_TX_TYPE);
+        out.put_u8(Eip8130Constants::EIP8130_TX_TYPE);
         self.rlp_encode_signed(out);
     }
 
@@ -250,9 +250,9 @@ impl Encodable2718 for AaSigned {
     }
 }
 
-impl Decodable2718 for AaSigned {
+impl Decodable2718 for Eip8130Signed {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> Eip2718Result<Self> {
-        if ty != Aa8130Constants::AA_TX_TYPE {
+        if ty != Eip8130Constants::EIP8130_TX_TYPE {
             return Err(Eip2718Error::UnexpectedType(ty));
         }
         Self::rlp_decode_signed(buf).map_err(Into::into)
@@ -263,13 +263,13 @@ impl Decodable2718 for AaSigned {
     }
 }
 
-impl InMemorySize for AaSigned {
+impl InMemorySize for Eip8130Signed {
     fn size(&self) -> usize {
         InMemorySize::size(&self.tx) + self.sender_auth.len() + self.payer_auth.len()
     }
 }
 
-impl Transaction for AaSigned {
+impl Transaction for Eip8130Signed {
     fn chain_id(&self) -> Option<ChainId> {
         self.tx.chain_id()
     }
@@ -344,13 +344,13 @@ mod tests {
     use alloy_primitives::{address, bytes};
 
     use super::*;
-    use crate::transaction::aa8130::{
+    use crate::transaction::eip8130::{
         account_changes::{AccountChange, Delegation},
         call::Call,
     };
 
-    fn sample_signed(payer_present: bool) -> AaSigned {
-        let tx = TxAa8130 {
+    fn sample_signed(payer_present: bool) -> Eip8130Signed {
+        let tx = TxEip8130 {
             chain_id: 8453,
             sender: Some(address!("0x00000000000000000000000000000000000000aa")),
             nonce_key: U256::from(7u64),
@@ -370,7 +370,7 @@ mod tests {
                 None
             },
         };
-        AaSigned::new(
+        Eip8130Signed::new(
             tx,
             bytes!("deadbeef"),
             if payer_present { bytes!("cafebabe") } else { Bytes::new() },
@@ -382,10 +382,10 @@ mod tests {
         let signed = sample_signed(false);
         let mut buf = Vec::new();
         signed.encode_2718(&mut buf);
-        assert_eq!(buf[0], Aa8130Constants::AA_TX_TYPE);
+        assert_eq!(buf[0], Eip8130Constants::EIP8130_TX_TYPE);
         assert_eq!(buf.len(), signed.encode_2718_len());
 
-        let decoded = AaSigned::decode_2718(&mut buf.as_slice()).unwrap();
+        let decoded = Eip8130Signed::decode_2718(&mut buf.as_slice()).unwrap();
         assert_eq!(signed, decoded);
     }
 
@@ -394,7 +394,7 @@ mod tests {
         let signed = sample_signed(true);
         let mut buf = Vec::new();
         signed.encode_2718(&mut buf);
-        let decoded = AaSigned::decode_2718(&mut buf.as_slice()).unwrap();
+        let decoded = Eip8130Signed::decode_2718(&mut buf.as_slice()).unwrap();
         assert_eq!(signed, decoded);
     }
 
@@ -403,7 +403,7 @@ mod tests {
         let signed = sample_signed(true);
         let mut buf = Vec::new();
         signed.encode(&mut buf);
-        let decoded = AaSigned::decode(&mut buf.as_slice()).unwrap();
+        let decoded = Eip8130Signed::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(signed, decoded);
     }
 
@@ -424,8 +424,8 @@ mod tests {
     #[test]
     fn ty_byte() {
         let signed = sample_signed(false);
-        assert_eq!(signed.ty(), Aa8130Constants::AA_TX_TYPE);
-        assert_eq!(signed.type_flag(), Some(Aa8130Constants::AA_TX_TYPE));
+        assert_eq!(signed.ty(), Eip8130Constants::EIP8130_TX_TYPE);
+        assert_eq!(signed.type_flag(), Some(Eip8130Constants::EIP8130_TX_TYPE));
     }
 
     #[test]
@@ -433,7 +433,7 @@ mod tests {
         let signed = sample_signed(false);
         let mut buf = Vec::new();
         signed.rlp_encode_signed(&mut buf);
-        let res = AaSigned::typed_decode(0x00, &mut buf.as_slice());
+        let res = Eip8130Signed::typed_decode(0x00, &mut buf.as_slice());
         assert!(res.is_err());
     }
 
@@ -454,7 +454,7 @@ mod tests {
 
         assert!(!json.contains("\"hash\""));
 
-        let decoded: AaSigned = serde_json::from_str(&json).unwrap();
+        let decoded: Eip8130Signed = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, signed);
         assert_eq!(decoded.hash(), signed.hash());
     }
@@ -469,7 +469,7 @@ mod tests {
             .unwrap()
             .insert("hash".to_string(), serde_json::Value::String(format!("{:?}", B256::ZERO)));
 
-        let decoded: AaSigned = serde_json::from_value(value).unwrap();
+        let decoded: Eip8130Signed = serde_json::from_value(value).unwrap();
         assert_eq!(*decoded.hash(), *signed.hash());
         assert_ne!(*decoded.hash(), B256::ZERO);
     }

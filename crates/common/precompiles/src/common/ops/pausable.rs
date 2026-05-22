@@ -21,8 +21,6 @@ pub trait Pausable: Token {
     fn paused_features(&self) -> Result<Vec<IB20::PausableFeature>> {
         let paused = self.accounting().paused()?;
         let mut features = Vec::new();
-        // REDEEM is reserved for a future redeem operation. It can be toggled and surfaced through
-        // pausedFeatures, but no current B-20 operation checks it.
         for feature in [
             IB20::PausableFeature::TRANSFER,
             IB20::PausableFeature::MINT,

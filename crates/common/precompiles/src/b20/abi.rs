@@ -12,7 +12,7 @@ sol! {
             MINT,
             /// Burn operations.
             BURN,
-            /// Reserved for future redeem operations; no current B-20 operation checks this flag.
+            /// Redeem operations.
             REDEEM
         }
 

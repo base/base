@@ -242,10 +242,10 @@ impl FromTxWithEncoded<BaseTxEnvelope> for BaseTransaction<TxEnv> {
                 enveloped_tx: Some(encoded),
                 deposit: Default::default(),
             },
-            BaseTxEnvelope::Deposit(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
-            BaseTxEnvelope::Aa8130(_) => {
+            BaseTxEnvelope::Eip8130(_) => {
                 unimplemented!("EVM execution for EIP-8130 BaseTxEnvelope is not yet implemented")
             }
+            BaseTxEnvelope::Deposit(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
         }
     }
 }

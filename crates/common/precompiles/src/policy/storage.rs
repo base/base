@@ -493,6 +493,7 @@ mod tests {
     fn packed_policy_zero_signals_never_created() {
         let p = PackedPolicy::from_raw(U256::ZERO);
         assert!(!p.exists());
+        assert_eq!(p.admin(), Address::ZERO, "zero word admin must be Address::ZERO");
     }
 
     #[test]
@@ -515,6 +516,34 @@ mod tests {
     fn packed_policy_different_admins_produce_different_words() {
         let other = address!("0x2000000000000000000000000000000000000002");
         assert_ne!(PackedPolicy::new(ADMIN), PackedPolicy::new(other));
+    }
+
+    #[test]
+    fn packed_policy_new_roundtrips_admin_for_various_addresses() {
+        // Verify that admin round-trips correctly for a range of addresses.
+        let addrs = [
+            ADMIN,
+            Address::ZERO,
+            address!("0xffffffffffffffffffffffffffffffffffffffff"),
+            address!("0x2000000000000000000000000000000000000002"),
+        ];
+        for addr in addrs {
+            let p = PackedPolicy::new(addr);
+            assert_eq!(p.admin(), addr, "admin must round-trip for address {addr}");
+            assert!(p.exists(), "exists must be true for any new PackedPolicy");
+        }
+    }
+
+    #[test]
+    fn exists_bit_does_not_bleed_into_admin_bits() {
+        // The EXISTS_BIT is at bit 255; the admin is extracted from bits [159:0].
+        // These must not overlap.
+        let p = PackedPolicy::new(ADMIN);
+        assert_eq!(p.admin(), ADMIN, "exists bit must not corrupt the admin field");
+        // A raw word with only the exists bit set should have zero admin.
+        let exists_only = PackedPolicy::from_raw(PackedPolicy::EXISTS_BIT);
+        assert_eq!(exists_only.admin(), Address::ZERO, "exists-only word must have zero admin");
+        assert!(exists_only.exists());
     }
 
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
