@@ -384,14 +384,20 @@ async fn policy_registry_action_tests_cover_error_paths() {
         policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
     });
     let block = scenario.build_block_with_transactions(vec![create_allowlist]).await;
-    assert!(scenario.env.user_tx_succeeded(&block, 0), "createPolicy(ALLOWLIST) setup must succeed");
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "createPolicy(ALLOWLIST) setup must succeed"
+    );
 
     let create_blocklist = scenario.tx(IPolicyRegistry::createPolicyCall {
         admin: BerylTestEnv::alice(),
         policyType: IPolicyRegistry::PolicyType::BLOCKLIST,
     });
     let block = scenario.build_block_with_transactions(vec![create_blocklist]).await;
-    assert!(scenario.env.user_tx_succeeded(&block, 0), "createPolicy(BLOCKLIST) setup must succeed");
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "createPolicy(BLOCKLIST) setup must succeed"
+    );
 
     // Unauthorized: bob calls updateAllowlist on alice's allowlist policy.
     let unauthorized = scenario.bob_tx(IPolicyRegistry::updateAllowlistCall {
@@ -467,9 +473,8 @@ async fn policy_registry_action_tests_cover_error_paths() {
     );
 
     // NoPendingAdmin: finalizeUpdateAdmin before any stageUpdateAdmin call.
-    let no_pending = scenario.tx(IPolicyRegistry::finalizeUpdateAdminCall {
-        policyId: allowlist_id,
-    });
+    let no_pending =
+        scenario.tx(IPolicyRegistry::finalizeUpdateAdminCall { policyId: allowlist_id });
     let block = scenario.build_block_with_transactions(vec![no_pending]).await;
     assert!(
         !scenario.env.user_tx_succeeded(&block, 0),
