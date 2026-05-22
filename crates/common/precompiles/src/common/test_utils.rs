@@ -3,7 +3,12 @@
 //! Use these for capability/ops logic tests (Transferable, Mintable, …).
 //! For factory, dispatch, and storage-layout tests keep the EVM harness.
 
-use std::collections::{HashMap, HashSet};
+use alloc::{
+    borrow::ToOwned,
+    collections::{BTreeMap, BTreeSet},
+    string::String,
+    vec::Vec,
+};
 
 use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_storage::Result;
@@ -26,7 +31,7 @@ pub type TestToken = B20Token<InMemoryTokenAccounting, InMemoryPolicy>;
 /// Use this in unit tests instead of spelling out the full generic each time.
 pub type TestStablecoinToken = B20StablecoinToken<InMemoryTokenAccounting, InMemoryPolicy>;
 
-/// HashMap-backed [`TokenAccounting`] for unit tests.
+/// BTreeMap-backed [`TokenAccounting`] for unit tests.
 ///
 /// Collect emitted events via the public `events` field after calling token ops.
 #[derive(Debug)]
@@ -35,9 +40,9 @@ pub struct InMemoryTokenAccounting {
     /// Whether `is_initialized` returns `true`.
     pub initialized: bool,
     /// Per-account token balances.
-    pub balances: HashMap<Address, U256>,
+    pub balances: BTreeMap<Address, U256>,
     /// Approved spending allowances keyed by `(owner, spender)`.
-    pub allowances: HashMap<(Address, Address), U256>,
+    pub allowances: BTreeMap<(Address, Address), U256>,
     /// Current total token supply.
     pub total_supply: U256,
     /// Defaults to `U256::MAX` so mint tests don't need to set a cap explicitly.
@@ -55,37 +60,37 @@ pub struct InMemoryTokenAccounting {
     /// Bitmask of active pause vectors.
     pub paused: U256,
     /// Per-account EIP-2612 nonces.
-    pub nonces: HashMap<Address, U256>,
+    pub nonces: BTreeMap<Address, U256>,
     /// Minimum amount required for a redeem operation.
     pub minimum_redeemable: U256,
     /// URI pointing to the contract-level metadata.
     pub contract_uri: String,
     /// Role membership keyed by `(role, account)`.
-    pub roles: HashMap<(B256, Address), bool>,
+    pub roles: BTreeMap<(B256, Address), bool>,
     /// Number of accounts assigned to each role.
-    pub role_member_counts: HashMap<B256, U256>,
+    pub role_member_counts: BTreeMap<B256, U256>,
     /// Admin role for each role.
-    pub role_admins: HashMap<B256, B256>,
+    pub role_admins: BTreeMap<B256, B256>,
     /// Policy IDs keyed by policy type.
-    pub policy_ids: HashMap<B256, u64>,
+    pub policy_ids: BTreeMap<B256, u64>,
     /// Share-to-tokens ratio scaled to WAD (1e18). Security tokens only.
     pub shares_to_tokens_ratio: U256,
     /// Security identifier values keyed by raw `identifier_type`. Security tokens only.
-    pub security_identifiers: HashMap<String, String>,
+    pub security_identifiers: BTreeMap<String, String>,
     /// Consumed announcement ids keyed by raw announcement id. Security tokens only.
-    pub announcement_ids_used: HashSet<String>,
+    pub announcement_ids_used: BTreeSet<String>,
     /// Events collected by `emit_event`; does not produce real EVM logs.
     pub events: Vec<LogData>,
 }
 
 impl InMemoryTokenAccounting {
     /// Creates an initialized accounting instance at `address` with sensible defaults.
-    pub fn new(address: Address) -> Self {
+    pub const fn new(address: Address) -> Self {
         Self {
             address,
             initialized: true,
-            balances: HashMap::new(),
-            allowances: HashMap::new(),
+            balances: BTreeMap::new(),
+            allowances: BTreeMap::new(),
             total_supply: U256::ZERO,
             supply_cap: U256::MAX,
             name: String::new(),
@@ -94,16 +99,16 @@ impl InMemoryTokenAccounting {
             currency: String::new(),
             security_isin: String::new(),
             paused: U256::ZERO,
-            nonces: HashMap::new(),
+            nonces: BTreeMap::new(),
             minimum_redeemable: U256::ZERO,
             contract_uri: String::new(),
-            roles: HashMap::new(),
-            role_member_counts: HashMap::new(),
-            role_admins: HashMap::new(),
-            policy_ids: HashMap::new(),
+            roles: BTreeMap::new(),
+            role_member_counts: BTreeMap::new(),
+            role_admins: BTreeMap::new(),
+            policy_ids: BTreeMap::new(),
             shares_to_tokens_ratio: U256::ZERO,
-            security_identifiers: HashMap::new(),
-            announcement_ids_used: HashSet::new(),
+            security_identifiers: BTreeMap::new(),
+            announcement_ids_used: BTreeSet::new(),
             events: Vec::new(),
         }
     }
@@ -264,16 +269,16 @@ impl StablecoinAccounting for InMemoryTokenAccounting {
 #[derive(Debug)]
 pub struct InMemoryPolicy {
     /// Authorization grants keyed by `(policy_id, account)`.
-    pub authorizations: HashMap<(u64, Address), bool>,
+    pub authorizations: BTreeMap<(u64, Address), bool>,
     /// Policy IDs that should be treated as existing.
-    pub policies: HashSet<u64>,
+    pub policies: BTreeSet<u64>,
     /// Next custom policy counter for tests that exercise registry creation.
     pub next_policy_counter: u64,
 }
 
 impl Default for InMemoryPolicy {
     fn default() -> Self {
-        Self { authorizations: HashMap::new(), policies: HashSet::new(), next_policy_counter: 2 }
+        Self { authorizations: BTreeMap::new(), policies: BTreeSet::new(), next_policy_counter: 2 }
     }
 }
 

@@ -473,6 +473,8 @@ impl crate::PolicyRegistry for PolicyRegistryStorage<'_> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use alloy_primitives::{Address, U256, address, uint};
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx, StorageKey};

@@ -10,7 +10,7 @@ use super::variant::TokenVariant;
 use crate::{
     B20SecurityInit, B20SecurityStorage, B20SecurityToken, B20StablecoinInit, B20StablecoinStorage,
     B20StablecoinToken, B20Token, B20TokenInit, B20TokenRole, B20TokenStorage, ITokenFactory,
-    PolicyHandle, RoleManaged, Token,
+    Iso4217, PolicyHandle, RoleManaged, Token,
 };
 
 /// Maximum total supply for all newly-created B-20 tokens.
@@ -314,9 +314,12 @@ impl TokenCreateParams {
         Ok(())
     }
 
-    const fn validate_stablecoin(_init: &B20StablecoinInit) -> Result<()> {
-        // Currency validation is delegated to `B20StablecoinStorage::initialize`, which rejects
-        // all invalid values (including empty) with `InvalidCurrency`.
+    fn validate_stablecoin(init: &B20StablecoinInit) -> Result<()> {
+        if !Iso4217::is_valid_fiat_code(&init.currency) {
+            return Err(BasePrecompileError::revert(ITokenFactory::InvalidCurrency {
+                code: init.currency.clone(),
+            }));
+        }
         Ok(())
     }
 
@@ -337,6 +340,8 @@ impl TokenCreateParams {
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::{String, ToString};
+
     use alloy_primitives::{B256, address};
     use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
@@ -387,6 +392,22 @@ mod tests {
 
     fn b20_call(salt: B256) -> ITokenFactory::createTokenCall {
         create_call(ITokenFactory::TokenVariant::DEFAULT, token_params("Test", "TST"), salt)
+    }
+
+    fn stablecoin_call(currency: &str, salt: B256) -> ITokenFactory::createTokenCall {
+        let params = ITokenFactory::B20StablecoinCreateParams {
+            version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
+            name: "Stablecoin Token".to_string(),
+            symbol: "USD".to_string(),
+            initialAdmin: Address::repeat_byte(0xAB),
+            currency: currency.to_string(),
+        };
+        ITokenFactory::createTokenCall {
+            variant: ITokenFactory::TokenVariant::STABLECOIN,
+            salt,
+            params: params.abi_encode().into(),
+            initCalls: Vec::new(),
+        }
     }
 
     fn token_at<'a>(
@@ -607,19 +628,7 @@ mod tests {
     fn test_create_token_reverts_for_missing_stablecoin_currency() {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
-        let params = ITokenFactory::B20StablecoinCreateParams {
-            version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
-            name: "Stablecoin Token".to_string(),
-            symbol: "USD".to_string(),
-            initialAdmin: Address::repeat_byte(0xAB),
-            currency: String::new(),
-        };
-        let call = ITokenFactory::createTokenCall {
-            variant: ITokenFactory::TokenVariant::STABLECOIN,
-            salt: B256::repeat_byte(0x06),
-            params: params.abi_encode().into(),
-            initCalls: Vec::new(),
-        };
+        let call = stablecoin_call("", B256::repeat_byte(0x06));
 
         StorageCtx::enter(&mut storage, |ctx| {
             assert_output(
@@ -627,6 +636,24 @@ mod tests {
                 ITokenFactory::InvalidCurrency { code: String::new() }.abi_encode(),
             );
         });
+    }
+
+    #[test]
+    fn test_create_token_rejects_non_allowlist_stablecoin_currencies() {
+        for (index, currency) in
+            ["usd", "USDC", "BTC", "XAU", "XDR", "XXX", "BOV", "ZZZ"].into_iter().enumerate()
+        {
+            let mut storage = HashMapStorageProvider::new(1);
+            activate_precompiles(&mut storage);
+            let call = stablecoin_call(currency, B256::repeat_byte(index as u8 + 1));
+
+            StorageCtx::enter(&mut storage, |ctx| {
+                assert_output(
+                    dispatch_factory_revert(ctx, call),
+                    ITokenFactory::InvalidCurrency { code: currency.to_string() }.abi_encode(),
+                );
+            });
+        }
     }
 
     #[test]
@@ -663,19 +690,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
 
-        let stablecoin_params = ITokenFactory::B20StablecoinCreateParams {
-            version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
-            name: "Stablecoin Token".to_string(),
-            symbol: "USD".to_string(),
-            initialAdmin: Address::repeat_byte(0xAB),
-            currency: "USD".to_string(),
-        };
-        let stablecoin_call = ITokenFactory::createTokenCall {
-            variant: ITokenFactory::TokenVariant::STABLECOIN,
-            salt: B256::repeat_byte(0x08),
-            params: stablecoin_params.abi_encode().into(),
-            initCalls: Vec::new(),
-        };
+        let stablecoin_call = stablecoin_call("USD", B256::repeat_byte(0x08));
 
         StorageCtx::enter(&mut storage, |ctx| {
             let stablecoin_addr = ITokenFactory::createTokenCall::abi_decode_returns(

@@ -2,6 +2,8 @@
 //!
 //! Validates that the macro generates correct storage layout,
 //! typed getter/setter fields work round-trip, and collision detection fires.
+extern crate alloc;
+
 use alloy_primitives::{Address, U256, address, keccak256};
 use base_precompile_macros::contract;
 use base_precompile_storage::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};

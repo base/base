@@ -54,7 +54,6 @@ std = [
 	"base-common-chains/std",
 	"base-common-consensus/std",
 	"base-common-flz/std",
-	"base-common-precompiles/std",
 	"revm/std",
 	"serde?/std",
 	"thiserror/std",

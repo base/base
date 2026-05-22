@@ -27,7 +27,7 @@ base-precompile-storage.workspace = true
 revm.workspace = true
 
 # misc
-iso_currency = { workspace = true, optional = true }
+iso4217-static.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
@@ -41,16 +41,7 @@ harness = false
 required-features = ["test-utils"]
 
 [features]
-default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
-std = [
-	"alloy-evm/std",
-	"alloy-primitives/std",
-	"alloy-sol-types/std",
-	"base-common-chains/std",
-	"base-precompile-storage/std",
-	"dep:iso_currency",
-	"revm/std",
-]
+default = [ "blst", "c-kzg", "portable", "secp256k1" ]
 bn = [ "revm/bn" ]
 blst = [ "revm/blst" ]
 c-kzg = [ "revm/c-kzg" ]
@@ -63,4 +54,7 @@ optional_eip3607 = [ "revm/optional_eip3607" ]
 optional_fee_charge = [ "revm/optional_fee_charge" ]
 optional_balance_check = [ "revm/optional_balance_check" ]
 optional_block_gas_limit = [ "revm/optional_block_gas_limit" ]
-test-utils = [ "base-precompile-storage/test-utils" ]
+test-utils = [
+	"base-common-chains/test-utils",
+	"base-precompile-storage/test-utils",
+]

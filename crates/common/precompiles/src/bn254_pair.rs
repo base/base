@@ -34,6 +34,8 @@ pub(crate) const JOVIAN: Precompile =
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use revm::{
         precompile::{PrecompileError, bn254},
         primitives::hex,

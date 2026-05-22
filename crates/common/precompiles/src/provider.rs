@@ -242,7 +242,7 @@ impl<S: BasePrecompileSpec> Default for BasePrecompiles<S> {
 
 #[cfg(test)]
 mod tests {
-    use std::vec;
+    use alloc::{vec, vec::Vec};
 
     use alloy_primitives::{Address, B256};
     use revm::{

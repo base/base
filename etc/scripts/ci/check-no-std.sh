@@ -11,6 +11,8 @@ no_std_packages=(
   base-common-chains
   base-common-rpc-types
   base-common-rpc-types-engine
+  base-precompile-storage
+  base-common-precompiles
 
   # consensus protocol crates
   base-metrics

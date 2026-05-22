@@ -3409,7 +3409,7 @@ dependencies = [
  "base-precompile-macros",
  "base-precompile-storage",
  "criterion",
- "iso_currency",
+ "iso4217-static",
  "k256",
  "revm",
  "rstest",
@@ -10980,23 +10980,74 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
-name = "iso_country"
-version = "0.1.4"
+name = "iso3166-macros"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20633e788d3948ea7336861fdb09ec247f5dae4267e8f0743fa97de26c28624d"
+checksum = "731b1db633b63cb5e90312b6ae8ad4821d54709285de1bbc6ec32fab64438525"
 dependencies = [
- "lazy_static",
+ "heck",
+ "iso3166-parsers",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn 2.0.117",
 ]
 
 [[package]]
-name = "iso_currency"
-version = "0.5.3"
+name = "iso3166-parsers"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fed4b3f0921193400b1df556228bfd917c57c7fa38bda904d552653c5c3b641b"
+checksum = "754672b76089b19c687be1d743c32277d059566f469a8f549f28b8f900b64240"
 dependencies = [
- "iso_country",
+ "serde",
+]
+
+[[package]]
+name = "iso3166-static"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e2db16976004b25b80b54acefcb121b40bcdcd8eff142d74ea746d7620ebb23"
+dependencies = [
+ "iso3166-macros",
+]
+
+[[package]]
+name = "iso4217-macros"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "136a1ef24bd5f95a4b74598722bb83265fd52e3f1655b35d26c5d0e2d3c7a340"
+dependencies = [
+ "chrono",
+ "heck",
+ "iso4217-parser",
  "proc-macro2",
+ "quick-xml",
  "quote",
+ "serde",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "iso4217-parser"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "500ca119265ca61f9838fda0be789c8b9bfae4e7d56f75afa6ddb2fb29165ebd"
+dependencies = [
+ "chrono",
+ "serde",
+]
+
+[[package]]
+name = "iso4217-static"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dacfb059186f5aa948a900742cd5f30cac3bfd9c2a85c16a2fd8fcc02f0d2c52"
+dependencies = [
+ "cfg-if",
+ "chrono",
+ "iso3166-static",
+ "iso4217-macros",
 ]
 
 [[package]]
@@ -15147,6 +15198,16 @@ dependencies = [
  "quick-protobuf",
  "thiserror 1.0.69",
  "unsigned-varint 0.8.0",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.39.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdcc8dd4e2f670d309a5f0e83fe36dfdc05af317008fea29144da1a2ac858e5e"
+dependencies = [
+ "memchr",
+ "serde",
 ]
 
 [[package]]

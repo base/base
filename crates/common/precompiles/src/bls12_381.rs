@@ -98,6 +98,8 @@ pub(crate) const JOVIAN_PAIRING: Precompile = Precompile::new(
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use revm::{precompile::PrecompileError, primitives::Bytes};
     use rstest::rstest;
 

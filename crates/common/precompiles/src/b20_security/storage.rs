@@ -376,6 +376,8 @@ impl SecurityAccounting for B20SecurityStorage<'_> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::String;
+
     use alloy_primitives::{Address, U256, address, uint};
     use base_precompile_storage::{Handler, StorableType, StorageCtx, StorageKey, setup_storage};
 
