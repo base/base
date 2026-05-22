@@ -51,7 +51,7 @@ where
         let (tx, recovered) = tx.split();
 
         if recovered.ty() == EIP8130_TX_TYPE_ID {
-            return Err(BaseInvalidTransactionError::Eip8130NotEnabled.into());
+            return Err(BaseInvalidTransactionError::Eip8130NotAccepted.into());
         }
 
         // broadcast raw transaction to subscribers if there is any.

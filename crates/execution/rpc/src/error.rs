@@ -75,19 +75,19 @@ pub enum BaseInvalidTransactionError {
     /// The encoded transaction was missing during evm execution.
     #[error("missing enveloped transaction bytes")]
     MissingEnvelopedTx,
-    /// An EIP-8130 (account-abstraction) transaction was submitted via RPC before
-    /// the EIP-8130 hardfork is enabled on this node.
+    /// An EIP-8130 (account-abstraction) transaction was submitted via
+    /// `eth_sendRawTransaction` and rejected at the RPC ingress boundary.
     ///
     /// The transaction type byte (`0x7D`) is recognised by the consensus layer for
     /// decoding/serialization purposes, but no validation, mempool admission, or
-    /// execution path exists yet. Submitting one through `eth_sendRawTransaction`
-    /// must therefore be rejected at the RPC boundary so it cannot leak into the
-    /// pool or be silently dropped.
+    /// execution path exists yet. The rejection is unconditional (not gated on any
+    /// fork activation) and is mirrored by the txpool validator so EIP-8130
+    /// transactions are also dropped if they arrive over devp2p.
     #[error(
-        "EIP-8130 (account abstraction) transactions are not yet enabled; \
+        "EIP-8130 (account abstraction) transactions are not currently accepted via RPC; \
          eth_sendRawTransaction does not accept transaction type 0x7D"
     )]
-    Eip8130NotEnabled,
+    Eip8130NotAccepted,
 }
 
 impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
@@ -96,7 +96,7 @@ impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'
             BaseInvalidTransactionError::DepositSystemTxPostRegolith
             | BaseInvalidTransactionError::HaltedDepositPostRegolith
             | BaseInvalidTransactionError::MissingEnvelopedTx
-            | BaseInvalidTransactionError::Eip8130NotEnabled => {
+            | BaseInvalidTransactionError::Eip8130NotAccepted => {
                 rpc_err(EthRpcErrorCode::TransactionRejected.code(), err.to_string(), None)
             }
         }
