@@ -153,7 +153,11 @@ mod tests {
     use alloy_primitives::{Address, U256};
 
     use super::*;
-    use crate::{hashmap::setup_storage, provider::{Handler, LayoutCtx, StorableType}, storage_ctx::StorageCtx};
+    use crate::{
+        hashmap::setup_storage,
+        provider::{Handler, LayoutCtx, StorableType},
+        storage_ctx::StorageCtx,
+    };
 
     // -- Packed arrays (T::BYTES <= 16, multiple elements per slot) ---------------
 
@@ -259,7 +263,12 @@ mod tests {
             for (i, &expected) in data.iter().enumerate() {
                 let raw_slot = U256::handle(base + U256::from(i), LayoutCtx::FULL, address, ctx);
                 let raw_value = raw_slot.read().unwrap();
-                assert_eq!(raw_value, expected, "raw slot {i} (slot {}) has wrong value", base + U256::from(i));
+                assert_eq!(
+                    raw_value,
+                    expected,
+                    "raw slot {i} (slot {}) has wrong value",
+                    base + U256::from(i)
+                );
             }
         });
     }
@@ -307,7 +316,11 @@ mod tests {
             // Verify via raw slot reads that each slot was zeroed
             for i in 0..3usize {
                 let raw_slot = U256::handle(base + U256::from(i), LayoutCtx::FULL, address, ctx);
-                assert_eq!(raw_slot.read().unwrap(), U256::ZERO, "slot {i} should be zero after delete");
+                assert_eq!(
+                    raw_slot.read().unwrap(),
+                    U256::ZERO,
+                    "slot {i} should be zero after delete"
+                );
             }
         });
     }
@@ -327,13 +340,29 @@ mod tests {
             handler.t_write(transient_data).unwrap();
 
             // Transient and persistent reads must return their respective values
-            assert_eq!(handler.read().unwrap(), persistent_data, "persistent read should be unaffected by t_write");
-            assert_eq!(handler.t_read().unwrap(), transient_data, "t_read should return transient value");
+            assert_eq!(
+                handler.read().unwrap(),
+                persistent_data,
+                "persistent read should be unaffected by t_write"
+            );
+            assert_eq!(
+                handler.t_read().unwrap(),
+                transient_data,
+                "t_read should return transient value"
+            );
 
             handler.t_delete().unwrap();
-            assert_eq!(handler.t_read().unwrap(), [U256::ZERO; 2], "t_delete should clear transient storage");
+            assert_eq!(
+                handler.t_read().unwrap(),
+                [U256::ZERO; 2],
+                "t_delete should clear transient storage"
+            );
             // Persistent storage must remain intact
-            assert_eq!(handler.read().unwrap(), persistent_data, "persistent storage must survive t_delete");
+            assert_eq!(
+                handler.read().unwrap(),
+                persistent_data,
+                "persistent storage must survive t_delete"
+            );
         });
     }
 
@@ -344,11 +373,8 @@ mod tests {
         let (mut storage, address) = setup_storage();
         StorageCtx::enter(&mut storage, |ctx| {
             let base = U256::from(400u64);
-            let data: [Address; 3] = [
-                Address::from([0x11; 20]),
-                Address::from([0x22; 20]),
-                Address::from([0x33; 20]),
-            ];
+            let data: [Address; 3] =
+                [Address::from([0x11; 20]), Address::from([0x22; 20]), Address::from([0x33; 20])];
             let mut handler = ArrayHandler::<Address, 3>::new(base, address, ctx);
             handler.write(data).unwrap();
             assert_eq!(handler.read().unwrap(), data);
