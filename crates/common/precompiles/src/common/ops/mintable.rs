@@ -20,9 +20,9 @@ pub trait Mintable: Token {
         }
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Mint)?;
-            B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::MINT)?;
-            B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::MintReceiver, to)?;
         }
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::MINT)?;
+        B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::MintReceiver, to)?;
         let supply = self.accounting().total_supply()?;
         let cap = self.accounting().supply_cap()?;
         let new_supply =
