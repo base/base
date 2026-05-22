@@ -12,7 +12,9 @@ mod precompile;
 pub use precompile::B20SecurityPrecompile;
 
 mod storage;
-pub use storage::{B20RedeemStorage, B20SecurityExtensionStorage, B20SecurityStorage};
+pub use storage::{
+    B20RedeemStorage, B20SecurityExtensionStorage, B20SecurityInit, B20SecurityStorage,
+};
 
 mod token;
 pub use token::B20SecurityToken;
