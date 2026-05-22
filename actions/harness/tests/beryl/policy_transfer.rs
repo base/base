@@ -5,7 +5,7 @@
 //! configured `TRANSFER_SENDER_POLICY`, and the result drives allow/block decisions end-to-end.
 
 use alloy_primitives::{Address, Bytes, TxKind, U256};
-use alloy_sol_types::{SolCall, SolValue};
+use alloy_sol_types::SolCall;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_precompiles::{
     B20PolicyType, IB20, IPolicyRegistry, ITokenFactory, PolicyRegistryStorage, TokenFactoryStorage,
