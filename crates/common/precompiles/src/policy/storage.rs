@@ -54,6 +54,7 @@ impl PackedPolicy {
 ///
 /// Slots are append-only — never reorder across hardforks.
 #[contract(addr = Self::ADDRESS)]
+#[namespace("base.policy_registry")]
 pub struct PolicyRegistryStorage {
     pub policies: Mapping<u64, U256>,                  // slot 0
     pub members: Mapping<u64, Mapping<Address, bool>>, // slot 1
@@ -472,9 +473,9 @@ impl crate::PolicyRegistry for PolicyRegistryStorage<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256, address};
+    use alloy_primitives::{Address, U256, address, uint};
     use alloy_sol_types::SolEvent;
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+    use base_precompile_storage::{HashMapStorageProvider, StorageCtx, StorageKey};
 
     use super::*;
     use crate::IPolicyRegistry;
@@ -520,6 +521,8 @@ mod tests {
     const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
     const BOB: Address = address!("0xB000000000000000000000000000000000000001");
     const NEW_ADMIN: Address = address!("0x2000000000000000000000000000000000000002");
+    const POLICY_REGISTRY_ROOT: U256 =
+        uint!(0x00503aeb06982fa1fe3151dc68f90b3946c55c449dfd447e49dcaece71ba4a00_U256);
 
     /// Returns a storage provider with both built-in policies pre-written.
     fn storage() -> HashMapStorageProvider {
@@ -548,6 +551,36 @@ mod tests {
             PolicyRegistryStorage::new(ctx).is_authorized(policy_id, account)
         })
         .unwrap()
+    }
+
+    #[test]
+    fn policy_registry_namespace_matches_base_std_root() {
+        assert_eq!(slots::POLICIES, POLICY_REGISTRY_ROOT);
+        assert_eq!(slots::MEMBERS, POLICY_REGISTRY_ROOT + U256::from(1));
+        assert_eq!(slots::PENDING_ADMINS, POLICY_REGISTRY_ROOT + U256::from(2));
+        assert_eq!(slots::NEXT_COUNTER, POLICY_REGISTRY_ROOT + U256::from(3));
+    }
+
+    #[test]
+    fn policy_registry_writes_use_base_std_namespace_slots() {
+        let mut s = storage();
+        let id = create_allowlist(&mut s);
+
+        StorageCtx::enter(&mut s, |ctx| {
+            assert_ne!(
+                ctx.sload(PolicyRegistryStorage::ADDRESS, id.mapping_slot(slots::POLICIES))
+                    .unwrap(),
+                U256::ZERO
+            );
+            assert_eq!(
+                ctx.sload(PolicyRegistryStorage::ADDRESS, slots::NEXT_COUNTER).unwrap(),
+                U256::from(3)
+            );
+            assert_eq!(
+                ctx.sload(PolicyRegistryStorage::ADDRESS, id.mapping_slot(U256::ZERO)).unwrap(),
+                U256::ZERO
+            );
+        });
     }
 
     // --- built-in IDs ---
