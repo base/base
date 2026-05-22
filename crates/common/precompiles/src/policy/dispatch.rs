@@ -60,10 +60,6 @@ impl PolicyRegistryStorage<'_> {
                 let exists = self.policy_exists(call.policyId)?;
                 Ok(IPolicyRegistry::policyExistsCall::abi_encode_returns(&exists).into())
             }
-            C::policyType(call) => {
-                let pt = self.get_policy_type(call.policyId)?;
-                Ok(IPolicyRegistry::policyTypeCall::abi_encode_returns(&pt).into())
-            }
             C::policyAdmin(call) => {
                 let admin = self.get_policy_admin(call.policyId)?;
                 Ok(IPolicyRegistry::policyAdminCall::abi_encode_returns(&admin).into())
@@ -329,23 +325,6 @@ mod tests {
         })
         .unwrap();
         assert!(!out.reverted);
-    }
-
-    #[test]
-    fn dispatch_policy_type() {
-        let mut storage = HashMapStorageProvider::new(1);
-        activate_and_init(&mut storage);
-
-        let calldata =
-            IPolicyRegistry::policyTypeCall { policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID }
-                .abi_encode();
-        let out = StorageCtx::enter(&mut storage, |ctx| {
-            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
-        })
-        .unwrap();
-        assert!(!out.reverted);
-        let pt = IPolicyRegistry::policyTypeCall::abi_decode_returns(&out.bytes).unwrap();
-        assert_eq!(pt, IPolicyRegistry::PolicyType::BLOCKLIST);
     }
 
     #[test]

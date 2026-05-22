@@ -379,17 +379,6 @@ impl PolicyRegistryStorage<'_> {
         Ok(packed.exists())
     }
 
-    /// Returns the `PolicyType` of `policy_id`.
-    pub fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType> {
-        Self::require_well_formed(policy_id)?;
-        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
-        if !packed.exists() {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
-        }
-        PolicyType::try_from(Self::policy_id_type(policy_id))
-            .map_err(|_| BasePrecompileError::enum_conversion_error())
-    }
-
     /// Returns the current admin of `policy_id`, or `address(0)` for policies with renounced admin.
     pub fn get_policy_admin(&self, policy_id: u64) -> Result<Address> {
         Self::require_well_formed(policy_id)?;
@@ -459,10 +448,6 @@ impl crate::PolicyRegistry for PolicyRegistryStorage<'_> {
         accounts: alloc::vec::Vec<Address>,
     ) -> Result<()> {
         PolicyRegistryStorage::update_blocklist(self, policy_id, blocked, accounts)
-    }
-
-    fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType> {
-        PolicyRegistryStorage::get_policy_type(self, policy_id)
     }
 
     fn get_policy_admin(&self, policy_id: u64) -> Result<Address> {
@@ -994,29 +979,6 @@ mod tests {
         );
     }
 
-    // --- get_policy_type for built-in IDs ---
-
-    #[test]
-    fn get_policy_type_builtin_ids() {
-        let mut s = storage();
-        assert_eq!(
-            StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx)
-                    .get_policy_type(PolicyRegistryStorage::ALWAYS_ALLOW_ID)
-            })
-            .unwrap(),
-            PolicyType::BLOCKLIST
-        );
-        assert_eq!(
-            StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx)
-                    .get_policy_type(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
-            })
-            .unwrap(),
-            PolicyType::ALLOWLIST
-        );
-    }
-
     // --- get_policy_admin for built-in IDs ---
 
     #[test]
@@ -1214,17 +1176,6 @@ mod tests {
         })
         .unwrap();
         assert!(exists);
-    }
-
-    #[test]
-    fn trait_get_policy_type_delegates() {
-        let mut s = storage();
-        let pt = StorageCtx::enter(&mut s, |ctx| {
-            let reg = PolicyRegistryStorage::new(ctx);
-            crate::PolicyRegistry::get_policy_type(&reg, PolicyRegistryStorage::ALWAYS_ALLOW_ID)
-        })
-        .unwrap();
-        assert_eq!(pt, PolicyType::BLOCKLIST);
     }
 
     #[test]

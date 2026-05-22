@@ -85,10 +85,6 @@ impl PolicyRegistry for PolicyHandle<'_> {
         self.inner.update_blocklist(policy_id, blocked, accounts)
     }
 
-    fn get_policy_type(&self, policy_id: u64) -> Result<PolicyType> {
-        self.inner.get_policy_type(policy_id)
-    }
-
     fn get_policy_admin(&self, policy_id: u64) -> Result<Address> {
         self.inner.get_policy_admin(policy_id)
     }
@@ -174,22 +170,6 @@ mod tests {
 
         StorageCtx::enter(&mut s, |ctx| {
             assert_eq!(PolicyHandle::new(ctx).get_policy_admin(id).unwrap(), NEW_ADMIN);
-        });
-    }
-
-    #[test]
-    fn policy_registry_trait_get_policy_type() {
-        let mut s = storage();
-        StorageCtx::enter(&mut s, |ctx| {
-            let handle = PolicyHandle::new(ctx);
-            assert_eq!(
-                handle.get_policy_type(PolicyRegistryStorage::ALWAYS_ALLOW_ID).unwrap(),
-                IPolicyRegistry::PolicyType::BLOCKLIST
-            );
-            assert_eq!(
-                handle.get_policy_type(PolicyRegistryStorage::ALWAYS_BLOCK_ID).unwrap(),
-                IPolicyRegistry::PolicyType::ALLOWLIST
-            );
         });
     }
 }
