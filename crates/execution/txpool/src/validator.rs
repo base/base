@@ -9,6 +9,7 @@ use std::{
 use alloy_consensus::{BlockHeader, Transaction};
 use alloy_primitives::U256;
 use base_common_chains::Upgrades;
+use base_common_consensus::EIP8130_TX_TYPE_ID;
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use parking_lot::RwLock;
@@ -187,6 +188,7 @@ where
     /// This behaves the same as [`EthTransactionValidator::validate_one_with_state`], but in
     /// addition applies Base-specific validity checks:
     /// - ensures tx is not eip4844
+    /// - ensures tx is not eip8130 (account abstraction; no validation/execution path exists yet)
     /// - ensures that the account has enough balance to cover the L1 gas cost
     pub async fn validate_one_with_state(
         &self,
@@ -195,6 +197,13 @@ where
         state: &mut Option<Box<dyn AccountInfoReader + Send>>,
     ) -> TransactionValidationOutcome<Tx> {
         if transaction.is_eip4844() {
+            return TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidTransactionError::TxTypeNotSupported.into(),
+            );
+        }
+
+        if transaction.ty() == EIP8130_TX_TYPE_ID {
             return TransactionValidationOutcome::Invalid(
                 transaction,
                 InvalidTransactionError::TxTypeNotSupported.into(),
