@@ -380,18 +380,29 @@ impl PolicyRegistryStorage<'_> {
     }
 
     /// Returns the current admin of `policy_id`, or `address(0)` for policies with renounced admin.
+    ///
+    /// Returns `address(0)` without reverting for malformed policy IDs (type byte > 1) and for
+    /// policy IDs that have never been written to storage.
     pub fn get_policy_admin(&self, policy_id: u64) -> Result<Address> {
-        Self::require_well_formed(policy_id)?;
+        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
+            return Ok(Address::ZERO);
+        }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         if !packed.exists() {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
+            return Ok(Address::ZERO);
         }
         Ok(packed.admin())
     }
 
     /// Returns the pending admin staged for `policy_id`, or `address(0)` if none.
+    ///
+    /// Returns `address(0)` without reverting for malformed policy IDs (type byte > 1). For
+    /// policy IDs that exist but have no pending transfer, the storage slot returns `address(0)`
+    /// naturally.
     pub fn pending_policy_admin(&self, policy_id: u64) -> Result<Address> {
-        Self::require_well_formed(policy_id)?;
+        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
+            return Ok(Address::ZERO);
+        }
         self.pending_admins.at(&policy_id).read()
     }
 }
@@ -1030,6 +1041,40 @@ mod tests {
         let mut s = storage();
         let pending = StorageCtx::enter(&mut s, |ctx| {
             PolicyRegistryStorage::new(ctx).pending_policy_admin(0xdeadbeef)
+        })
+        .unwrap();
+        assert_eq!(pending, Address::ZERO);
+    }
+
+    // A policy ID whose type byte is 2 (> ALLOWLIST=1) is malformed.
+    const MALFORMED_POLICY_ID: u64 = (2u64 << 56) | 42;
+
+    #[test]
+    fn get_policy_admin_malformed_policy_id_returns_zero_address() {
+        let mut s = storage();
+        let admin = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).get_policy_admin(MALFORMED_POLICY_ID)
+        })
+        .unwrap();
+        assert_eq!(admin, Address::ZERO);
+    }
+
+    #[test]
+    fn get_policy_admin_nonexistent_policy_returns_zero_address() {
+        let mut s = storage();
+        // 0xdeadbeef has type byte 0, so it is well-formed but was never created.
+        let admin = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).get_policy_admin(0xdeadbeef)
+        })
+        .unwrap();
+        assert_eq!(admin, Address::ZERO);
+    }
+
+    #[test]
+    fn pending_policy_admin_malformed_policy_id_returns_zero_address() {
+        let mut s = storage();
+        let pending = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).pending_policy_admin(MALFORMED_POLICY_ID)
         })
         .unwrap();
         assert_eq!(pending, Address::ZERO);
