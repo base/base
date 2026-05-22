@@ -1,5 +1,4 @@
-use alloc::string::ToString;
-use alloc::vec::Vec;
+use alloc::{string::ToString, vec::Vec};
 
 use alloy_primitives::{Address, Bytes, U256, address};
 use alloy_sol_types::{SolCall, SolValue};
