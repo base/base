@@ -111,7 +111,9 @@ impl PolicyRegistryStorage<'_> {
 
     fn require_account_batch_size(accounts: &[Address]) -> Result<()> {
         if accounts.len() > Self::MAX_ACCOUNTS_PER_BATCH {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::TooManyAccounts {}));
+            return Err(BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
+                maxBatchSize: U256::from(Self::MAX_ACCOUNTS_PER_BATCH),
+            }));
         }
         Ok(())
     }
@@ -841,7 +843,12 @@ mod tests {
             PolicyRegistryStorage::new(ctx).update_allowlist(id, true, accounts)
         })
         .unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::TooManyAccounts {}));
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
+                maxBatchSize: U256::from(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH),
+            })
+        );
     }
 
     #[test]
@@ -937,7 +944,12 @@ mod tests {
             PolicyRegistryStorage::new(ctx).update_blocklist(id, true, accounts)
         })
         .unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::TooManyAccounts {}));
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
+                maxBatchSize: U256::from(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH),
+            })
+        );
     }
 
     // --- createPolicyWithAccounts ---
@@ -1072,7 +1084,12 @@ mod tests {
             )
         })
         .unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::TooManyAccounts {}));
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
+                maxBatchSize: U256::from(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH),
+            })
+        );
     }
 
     #[test]
