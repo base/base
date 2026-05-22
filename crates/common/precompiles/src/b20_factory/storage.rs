@@ -460,11 +460,11 @@ mod tests {
     fn test_supported_variants_are_b20_prefixes() {
         let creator = Address::repeat_byte(0x11);
         let salt = B256::repeat_byte(0x44);
-        let (stablecoin, _) = B20Variant::compute_address_for_discriminant(creator, 2, salt);
-        let (security, _) = B20Variant::compute_address_for_discriminant(creator, 3, salt);
+        let (stablecoin, _) = B20Variant::compute_address_for_discriminant(creator, 1, salt);
+        let (security, _) = B20Variant::compute_address_for_discriminant(creator, 2, salt);
 
+        assert!(B20Variant::is_supported_discriminant(1));
         assert!(B20Variant::is_supported_discriminant(2));
-        assert!(B20Variant::is_supported_discriminant(3));
         assert!(B20Variant::is_b20_address(stablecoin));
         assert!(B20Variant::is_b20_address(security));
         assert_eq!(B20Variant::from_address(stablecoin), Some(B20Variant::Stablecoin));

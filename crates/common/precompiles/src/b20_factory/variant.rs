@@ -5,24 +5,25 @@ use alloy_sol_types::SolValue;
 
 use crate::IB20Factory;
 
-/// B-20 token variant encoded in the token address prefix.
+/// B-20 token variant encoded in token address byte `[10]`.
+///
+/// Discriminant values match the `B20Variant` ABI enum ordinals directly
+/// (DEFAULT=0, STABLECOIN=1, SECURITY=2), so `uint8(variant)` in Solidity
+/// equals the byte written at address position `[10]` with no offset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum B20Variant {
-    /// B-20 token.
-    B20 = 1,
+    /// Default B-20 token.
+    B20 = 0,
     /// Stablecoin B-20 token.
-    Stablecoin = 2,
+    Stablecoin = 1,
     /// Security B-20 token.
-    Security = 3,
+    Security = 2,
 }
 
 impl B20Variant {
     /// First byte of every B-20 address.
     pub const PREFIX_BYTE: u8 = 0xb2;
-
-    /// Variant discriminant returned by `getB20Variant` when address has no B-20 prefix.
-    pub const NONE_DISCRIMINANT: u8 = 0;
 
     /// Variant discriminant for default B-20 tokens.
     pub const B20_DISCRIMINANT: u8 = Self::B20 as u8;
