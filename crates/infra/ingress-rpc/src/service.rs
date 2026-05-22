@@ -6,6 +6,7 @@ use std::{
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
+use alloy_rpc_types_eth::error::EthRpcErrorCode;
 use audit_archiver_lib::BundleEvent;
 use base_bundles::{AcceptedBundle, Bundle, BundleExtensions, MeterBundleResponse, ParsedBundle};
 use base_common_consensus::BaseTxEnvelope;
@@ -16,6 +17,7 @@ use jsonrpsee::{
 };
 use moka::future::Cache;
 use reth_rpc_eth_types::EthApiError;
+use reth_rpc_server_types::result::rpc_err;
 use tokio::{
     sync::{broadcast, mpsc},
     time::{Duration, Instant, timeout},
@@ -224,12 +226,15 @@ impl IngressService {
             .map_err(|_| EthApiError::FailedToDecodeSignedTransaction.into_rpc_err())?;
 
         if envelope.is_eip8130() {
-            return Err(EthApiError::InvalidParams(
-                "EIP-8130 (account abstraction) transactions are not yet enabled; \
-                 eth_sendRawTransaction does not accept transaction type 0x7D"
-                    .into(),
-            )
-            .into_rpc_err());
+            // Mirror the rejection used by `BaseEthApi::send_raw_transaction` so the
+            // ingress and execution RPC surfaces return the same JSON-RPC error code
+            // (-32003, TransactionRejected) for the same condition.
+            return Err(rpc_err(
+                EthRpcErrorCode::TransactionRejected.code(),
+                "EIP-8130 (account abstraction) transactions are not currently accepted \
+                 via RPC; eth_sendRawTransaction does not accept transaction type 0x7D",
+                None,
+            ));
         }
 
         let transaction = envelope
