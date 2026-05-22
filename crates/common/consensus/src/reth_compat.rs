@@ -24,7 +24,7 @@ use reth_ethereum_primitives as _;
 
 use crate::{
     BaseBlock, BasePooledTransaction, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction,
-    DEPOSIT_TX_TYPE_ID, DepositReceipt, EIP8130_TX_TYPE_ID, OpTxType, TxEip8130, TxDeposit,
+    DEPOSIT_TX_TYPE_ID, DepositReceipt, EIP8130_TX_TYPE_ID, OpTxType, TxDeposit, TxEip8130,
     transaction::Eip8130Signed,
 };
 
@@ -88,8 +88,8 @@ impl reth_primitives_traits::InMemorySize for BaseTypedTransaction {
             Self::Eip2930(tx) => tx.size(),
             Self::Eip1559(tx) => tx.size(),
             Self::Eip7702(tx) => tx.size(),
-            Self::Deposit(tx) => tx.size(),
             Self::Eip8130(tx) => tx.size(),
+            Self::Deposit(tx) => tx.size(),
         }
     }
 }
@@ -113,8 +113,8 @@ impl reth_primitives_traits::InMemorySize for BaseTxEnvelope {
             Self::Eip2930(tx) => tx.size(),
             Self::Eip1559(tx) => tx.size(),
             Self::Eip7702(tx) => tx.size(),
-            Self::Deposit(tx) => tx.size(),
             Self::Eip8130(tx) => tx.size(),
+            Self::Deposit(tx) => tx.size(),
         }
     }
 }

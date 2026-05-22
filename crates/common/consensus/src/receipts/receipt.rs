@@ -50,8 +50,8 @@ impl<T> BaseReceipt<T> {
             Self::Eip2930(_) => OpTxType::Eip2930,
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
-            Self::Deposit(_) => OpTxType::Deposit,
             Self::Eip8130(_) => OpTxType::Eip8130,
+            Self::Deposit(_) => OpTxType::Deposit,
         }
     }
 
@@ -100,8 +100,8 @@ impl<T> BaseReceipt<T> {
             Self::Eip2930(receipt) => BaseReceipt::Eip2930(receipt.map_logs(f)),
             Self::Eip1559(receipt) => BaseReceipt::Eip1559(receipt.map_logs(f)),
             Self::Eip7702(receipt) => BaseReceipt::Eip7702(receipt.map_logs(f)),
-            Self::Deposit(receipt) => BaseReceipt::Deposit(receipt.map_logs(f)),
             Self::Eip8130(receipt) => BaseReceipt::Eip8130(receipt.map_logs(f)),
+            Self::Deposit(receipt) => BaseReceipt::Deposit(receipt.map_logs(f)),
         }
     }
 
@@ -181,15 +181,15 @@ impl<T> BaseReceipt<T> {
                     RlpDecodableReceipt::rlp_decode_with_bloom(buf)?;
                 Ok(ReceiptWithBloom { receipt: Self::Eip7702(receipt), logs_bloom })
             }
-            OpTxType::Deposit => {
-                let ReceiptWithBloom { receipt, logs_bloom } =
-                    RlpDecodableReceipt::rlp_decode_with_bloom(buf)?;
-                Ok(ReceiptWithBloom { receipt: Self::Deposit(receipt), logs_bloom })
-            }
             OpTxType::Eip8130 => {
                 let ReceiptWithBloom { receipt, logs_bloom } =
                     RlpDecodableReceipt::rlp_decode_with_bloom(buf)?;
                 Ok(ReceiptWithBloom { receipt: Self::Eip8130(receipt), logs_bloom })
+            }
+            OpTxType::Deposit => {
+                let ReceiptWithBloom { receipt, logs_bloom } =
+                    RlpDecodableReceipt::rlp_decode_with_bloom(buf)?;
+                Ok(ReceiptWithBloom { receipt: Self::Deposit(receipt), logs_bloom })
             }
         }
     }
@@ -275,12 +275,12 @@ impl<T> BaseReceipt<T> {
             OpTxType::Eip2930 => Ok(Self::Eip2930(Receipt { status, cumulative_gas_used, logs })),
             OpTxType::Eip1559 => Ok(Self::Eip1559(Receipt { status, cumulative_gas_used, logs })),
             OpTxType::Eip7702 => Ok(Self::Eip7702(Receipt { status, cumulative_gas_used, logs })),
+            OpTxType::Eip8130 => Ok(Self::Eip8130(Receipt { status, cumulative_gas_used, logs })),
             OpTxType::Deposit => Ok(Self::Deposit(DepositReceipt {
                 inner: Receipt { status, cumulative_gas_used, logs },
                 deposit_nonce,
                 deposit_receipt_version,
             })),
-            OpTxType::Eip8130 => Ok(Self::Eip8130(Receipt { status, cumulative_gas_used, logs })),
         }
     }
 }
@@ -462,12 +462,12 @@ impl From<super::BaseReceiptEnvelope> for BaseReceipt {
             super::BaseReceiptEnvelope::Eip2930(receipt) => Self::Eip2930(receipt.receipt),
             super::BaseReceiptEnvelope::Eip1559(receipt) => Self::Eip1559(receipt.receipt),
             super::BaseReceiptEnvelope::Eip7702(receipt) => Self::Eip7702(receipt.receipt),
+            super::BaseReceiptEnvelope::Eip8130(receipt) => Self::Eip8130(receipt.receipt),
             super::BaseReceiptEnvelope::Deposit(receipt) => Self::Deposit(DepositReceipt {
                 deposit_nonce: receipt.receipt.deposit_nonce,
                 deposit_receipt_version: receipt.receipt.deposit_receipt_version,
                 inner: receipt.receipt.inner,
             }),
-            super::BaseReceiptEnvelope::Eip8130(receipt) => Self::Eip8130(receipt.receipt),
         }
     }
 }
@@ -486,10 +486,12 @@ impl From<ReceiptWithBloom<BaseReceipt>> for BaseReceiptEnvelope {
             BaseReceipt::Eip7702(receipt) => {
                 Self::Eip7702(ReceiptWithBloom { receipt, logs_bloom })
             }
+            BaseReceipt::Eip8130(receipt) => {
+                Self::Eip8130(ReceiptWithBloom { receipt, logs_bloom })
+            }
             BaseReceipt::Deposit(receipt) => {
                 Self::Deposit(ReceiptWithBloom { receipt, logs_bloom })
             }
-            BaseReceipt::Eip8130(receipt) => Self::Eip8130(ReceiptWithBloom { receipt, logs_bloom }),
         }
     }
 }
@@ -538,8 +540,8 @@ pub(super) mod serde_bincode_compat {
                 super::BaseReceipt::Eip2930(receipt) => Self::Eip2930(receipt.into()),
                 super::BaseReceipt::Eip1559(receipt) => Self::Eip1559(receipt.into()),
                 super::BaseReceipt::Eip7702(receipt) => Self::Eip7702(receipt.into()),
-                super::BaseReceipt::Deposit(receipt) => Self::Deposit(receipt.into()),
                 super::BaseReceipt::Eip8130(receipt) => Self::Eip8130(receipt.into()),
+                super::BaseReceipt::Deposit(receipt) => Self::Deposit(receipt.into()),
             }
         }
     }
@@ -551,8 +553,8 @@ pub(super) mod serde_bincode_compat {
                 BaseReceipt::Eip2930(receipt) => Self::Eip2930(receipt.into()),
                 BaseReceipt::Eip1559(receipt) => Self::Eip1559(receipt.into()),
                 BaseReceipt::Eip7702(receipt) => Self::Eip7702(receipt.into()),
-                BaseReceipt::Deposit(receipt) => Self::Deposit(receipt.into()),
                 BaseReceipt::Eip8130(receipt) => Self::Eip8130(receipt.into()),
+                BaseReceipt::Deposit(receipt) => Self::Deposit(receipt.into()),
             }
         }
     }

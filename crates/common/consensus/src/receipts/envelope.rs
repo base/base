@@ -84,6 +84,9 @@ impl BaseReceiptEnvelope {
             OpTxType::Eip7702 => {
                 Self::Eip7702(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
+            OpTxType::Eip8130 => {
+                Self::Eip8130(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
+            }
             OpTxType::Deposit => {
                 let inner = DepositReceiptWithBloom {
                     receipt: DepositReceipt {
@@ -94,9 +97,6 @@ impl BaseReceiptEnvelope {
                     logs_bloom,
                 };
                 Self::Deposit(inner)
-            }
-            OpTxType::Eip8130 => {
-                Self::Eip8130(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
         }
     }
@@ -110,8 +110,8 @@ impl BaseReceiptEnvelope {
             Self::Eip2930(_) => OpTxType::Eip2930,
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
-            Self::Deposit(_) => OpTxType::Deposit,
             Self::Eip8130(_) => OpTxType::Eip8130,
+            Self::Deposit(_) => OpTxType::Deposit,
         }
     }
 
@@ -286,8 +286,8 @@ impl Typed2718 for BaseReceiptEnvelope {
             Self::Eip2930(_) => OpTxType::Eip2930,
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
-            Self::Deposit(_) => OpTxType::Deposit,
             Self::Eip8130(_) => OpTxType::Eip8130,
+            Self::Deposit(_) => OpTxType::Deposit,
         };
         ty as u8
     }
@@ -310,12 +310,12 @@ impl Encodable2718 for BaseReceiptEnvelope {
             Some(ty) => out.put_u8(ty),
         }
         match self {
-            Self::Deposit(t) => t.encode(out),
             Self::Legacy(t)
             | Self::Eip2930(t)
             | Self::Eip1559(t)
             | Self::Eip7702(t)
             | Self::Eip8130(t) => t.encode(out),
+            Self::Deposit(t) => t.encode(out),
         }
     }
 }
@@ -330,8 +330,8 @@ impl Decodable2718 for BaseReceiptEnvelope {
             OpTxType::Eip1559 => Ok(Self::Eip1559(Decodable::decode(buf)?)),
             OpTxType::Eip7702 => Ok(Self::Eip7702(Decodable::decode(buf)?)),
             OpTxType::Eip2930 => Ok(Self::Eip2930(Decodable::decode(buf)?)),
-            OpTxType::Deposit => Ok(Self::Deposit(Decodable::decode(buf)?)),
             OpTxType::Eip8130 => Ok(Self::Eip8130(Decodable::decode(buf)?)),
+            OpTxType::Deposit => Ok(Self::Deposit(Decodable::decode(buf)?)),
         }
     }
 

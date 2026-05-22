@@ -37,7 +37,7 @@ impl Display for OpTxType {
 impl OpTxType {
     /// List of all variants.
     pub const ALL: [Self; 6] =
-        [Self::Legacy, Self::Eip2930, Self::Eip1559, Self::Eip7702, Self::Deposit, Self::Eip8130];
+        [Self::Legacy, Self::Eip2930, Self::Eip1559, Self::Eip7702, Self::Eip8130, Self::Deposit];
 
     /// Returns `true` if the type is [`OpTxType::Deposit`].
     pub const fn is_deposit(&self) -> bool {
@@ -73,8 +73,8 @@ mod tests {
             OpTxType::Eip2930,
             OpTxType::Eip1559,
             OpTxType::Eip7702,
-            OpTxType::Deposit,
             OpTxType::Eip8130,
+            OpTxType::Deposit,
         ];
         assert_eq!(OpTxType::ALL.to_vec(), all);
     }
