@@ -464,7 +464,7 @@ async fn test_b20_create_token_duplicate_reverts() -> Result<()> {
                 params: params.create.abi_encode().into(),
                 initCalls: Vec::new(),
             },
-            "createToken (duplicate salt)",
+            "createB20 (duplicate salt)",
         )
         .await?;
     assert!(!succeeded, "creating a token with the same salt should revert on-chain");
