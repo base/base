@@ -1,11 +1,20 @@
-use base_zk_client::{GetProofRequest, GetProofResponse, ProofJobStatus, ReceiptType};
+use base_zk_client::{
+    ExecutionStats, GetProofRequest, GetProofResponse, ProofJobStatus, ReceiptType,
+};
 use base_zk_db::ProofStatus;
 use sp1_sdk::SP1ProofWithPublicValues;
 use tonic::{Request, Response, Status};
 use tracing::{Instrument, info};
 use uuid::Uuid;
 
-use crate::{metrics, server::ProverServiceServer};
+use crate::{
+    backends::{
+        OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY,
+        OpSuccinctStoredExecutionStats,
+    },
+    metrics,
+    server::ProverServiceServer,
+};
 
 /// Helper function to get the appropriate receipt based on requested type.
 fn get_receipt_by_type(
@@ -38,6 +47,16 @@ fn get_receipt_by_type(
     }
 }
 
+fn execution_stats_from_metadata(metadata: &serde_json::Value) -> Option<ExecutionStats> {
+    if !metadata.get(OP_SUCCINCT_DRY_RUN_METADATA_KEY)?.as_bool()? {
+        return None;
+    }
+
+    let stats = metadata.get(OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY)?;
+    let stored = serde_json::from_value::<OpSuccinctStoredExecutionStats>(stats.clone()).ok()?;
+    Some(stored.into())
+}
+
 impl ProverServiceServer {
     /// Returns current proof status and receipt bytes for `session_id=<uuid>`.
     pub async fn get_proof_impl(
@@ -57,6 +76,40 @@ impl ProverServiceServer {
         metrics::record_response_latency("GetProof", success, elapsed_ms);
 
         result
+    }
+
+    async fn execution_stats_for_request(
+        &self,
+        proof_request_id: Uuid,
+    ) -> Result<Option<ExecutionStats>, Status> {
+        let sessions = self
+            .repo
+            .get_sessions_for_request(proof_request_id)
+            .await
+            .map_err(|e| Status::internal(format!("Database error: {e}")))?;
+
+        Ok(sessions
+            .iter()
+            .filter_map(|session| session.metadata.as_ref())
+            .find_map(execution_stats_from_metadata))
+    }
+
+    async fn succeeded_payload(
+        &self,
+        proof_req: &base_zk_db::ProofRequest,
+        requested_receipt_type: ReceiptType,
+    ) -> Result<(Vec<u8>, Option<ExecutionStats>), Status> {
+        if proof_req.stark_receipt.is_none() && proof_req.snark_receipt.is_none() {
+            // Receipt absence is only a fast path before touching session metadata; the dry-run
+            // marker remains the authoritative check inside `execution_stats_from_metadata`.
+            let execution_stats = self.execution_stats_for_request(proof_req.id).await?;
+            if execution_stats.is_some() {
+                return Ok((vec![], execution_stats));
+            }
+        }
+
+        let receipt = get_receipt_by_type(proof_req, requested_receipt_type)?;
+        Ok((receipt, None))
     }
 
     async fn get_proof_inner(
@@ -90,9 +143,9 @@ impl ProverServiceServer {
             .ok_or_else(|| Status::not_found("Proof request not found"))?;
 
         // Map database status to proto status
-        let (proto_status, receipt_bytes, error_message) = match proof_req.status {
-            ProofStatus::Created => (ProofJobStatus::Created, vec![], None),
-            ProofStatus::Pending => (ProofJobStatus::Pending, vec![], None),
+        let (proto_status, receipt_bytes, error_message, execution_stats) = match proof_req.status {
+            ProofStatus::Created => (ProofJobStatus::Created, vec![], None, None),
+            ProofStatus::Pending => (ProofJobStatus::Pending, vec![], None, None),
             ProofStatus::Running => {
                 // Sync sessions and update proof status, with a tracing span so all
                 // nested log lines carry proof_request_id.
@@ -117,28 +170,34 @@ impl ProverServiceServer {
                 // Map updated status to response
                 match updated_proof_req.status {
                     ProofStatus::Succeeded => {
-                        let receipt =
-                            get_receipt_by_type(&updated_proof_req, requested_receipt_type)?;
-                        (ProofJobStatus::Succeeded, receipt, None)
+                        let (receipt, execution_stats) = self
+                            .succeeded_payload(&updated_proof_req, requested_receipt_type)
+                            .await?;
+                        (ProofJobStatus::Succeeded, receipt, None, execution_stats)
                     }
                     ProofStatus::Failed => {
-                        (ProofJobStatus::Failed, vec![], updated_proof_req.error_message)
+                        (ProofJobStatus::Failed, vec![], updated_proof_req.error_message, None)
                     }
                     _ => {
                         // Still RUNNING or PENDING
-                        (ProofJobStatus::Running, vec![], None)
+                        (ProofJobStatus::Running, vec![], None, None)
                     }
                 }
             }
             ProofStatus::Succeeded => {
-                let receipt_buf = get_receipt_by_type(&proof_req, requested_receipt_type)?;
-                (ProofJobStatus::Succeeded, receipt_buf, None)
+                let (receipt, execution_stats) =
+                    self.succeeded_payload(&proof_req, requested_receipt_type).await?;
+                (ProofJobStatus::Succeeded, receipt, None, execution_stats)
             }
-            ProofStatus::Failed => (ProofJobStatus::Failed, vec![], proof_req.error_message),
+            ProofStatus::Failed => (ProofJobStatus::Failed, vec![], proof_req.error_message, None),
         };
 
-        let response =
-            GetProofResponse { status: proto_status.into(), receipt: receipt_bytes, error_message };
+        let response = GetProofResponse {
+            status: proto_status.into(),
+            receipt: receipt_bytes,
+            error_message,
+            execution_stats,
+        };
 
         Ok(Response::new(response))
     }
@@ -146,10 +205,20 @@ impl ProverServiceServer {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use base_zk_db::{ProofRequest, ProofType};
     use chrono::Utc;
 
     use super::*;
+
+    fn metadata_with_execution_stats(stats: serde_json::Value) -> serde_json::Value {
+        let mut metadata = serde_json::Map::new();
+        metadata
+            .insert(OP_SUCCINCT_DRY_RUN_METADATA_KEY.to_string(), serde_json::Value::Bool(true));
+        metadata.insert(OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY.to_string(), stats);
+        serde_json::Value::Object(metadata)
+    }
 
     fn load_snark_fixture() -> Vec<u8> {
         let path =
@@ -180,6 +249,58 @@ mod tests {
             completed_at: Some(now),
             retry_count: 0,
         }
+    }
+
+    #[test]
+    fn test_execution_stats_from_metadata_deserializes_stored_stats() {
+        let stored_stats = OpSuccinctStoredExecutionStats {
+            total_instruction_cycles: 100,
+            total_sp1_gas: 200,
+            cycle_tracker: HashMap::from([("range".to_string(), 42)]),
+            witness_generation_ms: 12.5,
+            execution_ms: 34.5,
+        };
+        let metadata =
+            metadata_with_execution_stats(serde_json::to_value(stored_stats).expect("serialize"));
+
+        let stats = execution_stats_from_metadata(&metadata).expect("execution stats");
+
+        assert_eq!(stats.total_instruction_cycles, 100);
+        assert_eq!(stats.total_sp1_gas, 200);
+        assert_eq!(stats.cycle_tracker.get("range"), Some(&42));
+        assert_eq!(stats.witness_generation_ms, 12.5);
+        assert_eq!(stats.execution_ms, 34.5);
+    }
+
+    #[test]
+    fn test_execution_stats_from_metadata_rejects_invalid_schema() {
+        let metadata = metadata_with_execution_stats(serde_json::json!({
+            "total_instruction_cycles": "100",
+            "total_sp1_gas": 200,
+            "cycle_tracker": {},
+            "witness_generation_ms": 12.5,
+            "execution_ms": 34.5,
+        }));
+
+        assert!(execution_stats_from_metadata(&metadata).is_none());
+    }
+
+    #[test]
+    fn test_execution_stats_from_metadata_requires_dry_run_marker() {
+        let stored_stats = OpSuccinctStoredExecutionStats {
+            total_instruction_cycles: 100,
+            total_sp1_gas: 200,
+            cycle_tracker: HashMap::new(),
+            witness_generation_ms: 12.5,
+            execution_ms: 34.5,
+        };
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY.to_string(),
+            serde_json::to_value(stored_stats).expect("serialize"),
+        );
+
+        assert!(execution_stats_from_metadata(&serde_json::Value::Object(metadata)).is_none());
     }
 
     #[test]

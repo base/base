@@ -36,7 +36,6 @@ sol! {
         function updateBlocklist(uint64 policyId, bool blocked, address[] calldata accounts) external;
         function isAuthorized(uint64 policyId, address account) external view returns (bool);
         function policyExists(uint64 policyId) external view returns (bool);
-        function policyType(uint64 policyId) external view returns (PolicyType);
         function policyAdmin(uint64 policyId) external view returns (address);
         function pendingPolicyAdmin(uint64 policyId) external view returns (address);
     }

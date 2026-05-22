@@ -626,6 +626,9 @@ services:
       - ../../.devnet/l2/configs:/genesis/l2:ro
     environment:
       - OTEL_SERVICE_NAME=base-rpc
+      - BASE_CHAIN_NAME=dev
+      - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
+      - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
     entrypoint: /app/base
     command:
       - rpc

@@ -171,13 +171,6 @@ async fn policy_registry_action_tests_cover_policy_lifecycle_and_views() {
         .await;
     scenario
         .assert_probe_word(
-            "policyType(allowlist)",
-            IPolicyRegistry::policyTypeCall { policyId: allowlist_id }.abi_encode(),
-            U256::from(IPolicyRegistry::PolicyType::ALLOWLIST as u8),
-        )
-        .await;
-    scenario
-        .assert_probe_word(
             "policyAdmin(allowlist)",
             IPolicyRegistry::policyAdminCall { policyId: allowlist_id }.abi_encode(),
             word_from_address(BerylTestEnv::alice()),
