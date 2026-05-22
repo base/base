@@ -34,9 +34,9 @@ impl<'a> TokenFactoryStorage<'a> {
     ) -> Result<Address> {
         let variant = TokenVariant::from_abi(call.variant)
             .ok_or_else(|| BasePrecompileError::revert(ITokenFactory::InvalidVariant {}))?;
-        let token_params = DecodedCreateParams::decode(variant, &call.params)?;
-        Self::check_version(token_params.version)?;
-        token_params.validate()?;
+        let params = TokenCreateParams::decode(variant, &call.params)?;
+        Self::check_version(params.version())?;
+        params.validate()?;
         let (token_address, _) = variant.compute_address(caller, call.salt);
 
         let already_deployed =
@@ -51,75 +51,16 @@ impl<'a> TokenFactoryStorage<'a> {
         let stub = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
         self.storage.set_code(token_address, stub)?;
 
-        match variant {
-            TokenVariant::B20 | TokenVariant::Stablecoin => {
-                let mut token = B20Token::with_storage_and_policy(
-                    B20TokenStorage::from_address(token_address, self.storage),
-                    PolicyHandle::new(self.storage),
-                );
-                token.accounting_mut().name.write(token_params.name.clone())?;
-                token.accounting_mut().symbol.write(token_params.symbol.clone())?;
-                token.accounting_mut().supply_cap.write(Self::DEFAULT_SUPPLY_CAP)?;
-                token.accounting_mut().minimum_redeemable.write(token_params.minimum_redeemable)?;
-                token
-                    .accounting_mut()
-                    .stablecoin_currency
-                    .write(token_params.stablecoin_currency)?;
-                token.accounting_mut().security_isin.write(token_params.security_isin)?;
-
-                self.emit_event(ITokenFactory::TokenCreated {
-                    token: token_address,
-                    variant: call.variant,
-                    name: token_params.name,
-                    symbol: token_params.symbol,
-                    decimals: token_params.decimals,
-                })?;
-
-                if !token_params.initial_admin.is_zero() {
-                    token.grant_role_unchecked(
-                        B20TokenRole::DefaultAdmin.id(),
-                        token_params.initial_admin,
-                        Self::ADDRESS,
-                    )?;
-                }
-
-                for (index, calldata) in call.initCalls.into_iter().enumerate() {
-                    token
-                        .inner_with_privilege(self.storage, &calldata, true)
-                        .map_err(|err| Self::map_init_call_error(index, err))?;
-                }
+        let init_calls = call.initCalls;
+        match params {
+            TokenCreateParams::B20(common) => {
+                self.init_b20_token(token_address, common, String::new(), variant, init_calls)?;
             }
-            TokenVariant::Security => {
-                let mut storage = B20SecurityStorage::from_address(token_address, self.storage);
-                storage.initialize(
-                    token_params.name.clone(),
-                    token_params.symbol.clone(),
-                    Self::DEFAULT_SUPPLY_CAP,
-                    alloy_primitives::U256::from(1_000_000_000_000_000_000u128), // 1:1 ratio
-                    token_params.security_isin,
-                    token_params.minimum_redeemable,
-                )?;
-
-                self.emit_event(ITokenFactory::TokenCreated {
-                    token: token_address,
-                    variant: call.variant,
-                    name: token_params.name,
-                    symbol: token_params.symbol,
-                    decimals: token_params.decimals,
-                })?;
-
-                for (index, calldata) in call.initCalls.into_iter().enumerate() {
-                    B20SecurityToken::with_storage_and_policy(
-                        B20SecurityStorage::from_address(token_address, self.storage),
-                        PolicyHandle::new(self.storage),
-                    )
-                    .inner(self.storage, &calldata)
-                    .map_err(|_| {
-                        BasePrecompileError::revert(ITokenFactory::InitCallFailed {
-                            index: U256::from(index),
-                        })
-                    })?;
-                }
+            TokenCreateParams::Stablecoin { common, currency } => {
+                self.init_b20_token(token_address, common, currency, variant, init_calls)?;
+            }
+            TokenCreateParams::Security { common, minimum_redeemable, isin } => {
+                self.init_security_token(token_address, common, minimum_redeemable, isin, init_calls)?;
             }
         }
 
@@ -137,6 +78,90 @@ impl<'a> TokenFactoryStorage<'a> {
     /// Returns whether `token` has been initialized by this factory.
     pub fn is_initialized(&self, token: Address) -> Result<bool> {
         self.storage.with_account_info(token, |info| Ok(!info.is_empty_code_hash()))
+    }
+
+    fn init_b20_token(
+        &mut self,
+        token_address: Address,
+        common: CommonParams,
+        stablecoin_currency: String,
+        variant: TokenVariant,
+        init_calls: Vec<Bytes>,
+    ) -> Result<()> {
+        let mut token = B20Token::with_storage_and_policy(
+            B20TokenStorage::from_address(token_address, self.storage),
+            PolicyHandle::new(self.storage),
+        );
+        token.accounting_mut().name.write(common.name.clone())?;
+        token.accounting_mut().symbol.write(common.symbol.clone())?;
+        token.accounting_mut().supply_cap.write(Self::DEFAULT_SUPPLY_CAP)?;
+        token.accounting_mut().minimum_redeemable.write(U256::ZERO)?;
+        token.accounting_mut().stablecoin_currency.write(stablecoin_currency)?;
+        token.accounting_mut().security_isin.write(String::new())?;
+
+        self.emit_event(ITokenFactory::TokenCreated {
+            token: token_address,
+            variant: variant.abi(),
+            name: common.name.clone(),
+            symbol: common.symbol.clone(),
+            decimals: variant.decimals(),
+        })?;
+
+        if !common.initial_admin.is_zero() {
+            token.grant_role_unchecked(
+                B20TokenRole::DefaultAdmin.id(),
+                common.initial_admin,
+                Self::ADDRESS,
+            )?;
+        }
+
+        for (index, calldata) in init_calls.into_iter().enumerate() {
+            token
+                .inner_with_privilege(self.storage, &calldata, true)
+                .map_err(|err| Self::map_init_call_error(index, err))?;
+        }
+        Ok(())
+    }
+
+    fn init_security_token(
+        &mut self,
+        token_address: Address,
+        common: CommonParams,
+        minimum_redeemable: U256,
+        isin: String,
+        init_calls: Vec<Bytes>,
+    ) -> Result<()> {
+        let mut storage = B20SecurityStorage::from_address(token_address, self.storage);
+        storage.initialize(
+            common.name.clone(),
+            common.symbol.clone(),
+            Self::DEFAULT_SUPPLY_CAP,
+            alloy_primitives::U256::from(1_000_000_000_000_000_000u128), // 1:1 ratio
+            isin,
+            minimum_redeemable,
+        )?;
+
+        self.emit_event(ITokenFactory::TokenCreated {
+            token: token_address,
+            variant: TokenVariant::Security.abi(),
+            name: common.name,
+            symbol: common.symbol,
+            decimals: TokenVariant::Security.decimals(),
+        })?;
+
+        for (index, calldata) in init_calls.into_iter().enumerate() {
+            B20SecurityToken::with_storage_and_policy(
+                B20SecurityStorage::from_address(token_address, self.storage),
+                PolicyHandle::new(self.storage),
+            )
+            .inner(self.storage, &calldata)
+            .map_err(|_| {
+                BasePrecompileError::revert(ITokenFactory::InitCallFailed {
+                    index: U256::from(index),
+                })
+            })?;
+        }
+        Ok(())
     }
 
     fn check_version(version: u8) -> Result<()> {
@@ -159,83 +184,94 @@ impl<'a> TokenFactoryStorage<'a> {
     }
 }
 
+/// Creation fields shared by every token variant.
 #[derive(Debug)]
-struct DecodedCreateParams {
-    variant: TokenVariant,
+struct CommonParams {
     version: u8,
     name: String,
     symbol: String,
     initial_admin: Address,
-    decimals: u8,
-    minimum_redeemable: U256,
-    stablecoin_currency: String,
-    security_isin: String,
 }
 
-impl DecodedCreateParams {
+/// Decoded creation parameters typed per token variant.
+///
+/// Each arm carries only the fields meaningful to that variant, replacing a flat
+/// struct that used sentinel empty values for fields irrelevant to the active variant.
+#[derive(Debug)]
+enum TokenCreateParams {
+    B20(CommonParams),
+    Stablecoin { common: CommonParams, currency: String },
+    Security { common: CommonParams, minimum_redeemable: U256, isin: String },
+}
+
+impl TokenCreateParams {
     fn decode(variant: TokenVariant, params: &Bytes) -> Result<Self> {
         match variant {
             TokenVariant::B20 => {
-                let params = ITokenFactory::B20CreateParams::abi_decode(params)
+                let p = ITokenFactory::B20CreateParams::abi_decode(params)
                     .map_err(Self::invalid_params)?;
-                Ok(Self {
-                    variant,
-                    version: params.version,
-                    name: params.name,
-                    symbol: params.symbol,
-                    initial_admin: params.initialAdmin,
-                    decimals: TokenVariant::B20.decimals(),
-                    minimum_redeemable: U256::ZERO,
-                    stablecoin_currency: String::new(),
-                    security_isin: String::new(),
-                })
+                Ok(Self::B20(CommonParams {
+                    version: p.version,
+                    name: p.name,
+                    symbol: p.symbol,
+                    initial_admin: p.initialAdmin,
+                }))
             }
             TokenVariant::Stablecoin => {
-                let params = ITokenFactory::B20StablecoinCreateParams::abi_decode(params)
+                let p = ITokenFactory::B20StablecoinCreateParams::abi_decode(params)
                     .map_err(Self::invalid_params)?;
-                Ok(Self {
-                    variant,
-                    version: params.version,
-                    name: params.name,
-                    symbol: params.symbol,
-                    initial_admin: params.initialAdmin,
-                    decimals: TokenVariant::Stablecoin.decimals(),
-                    minimum_redeemable: U256::ZERO,
-                    stablecoin_currency: params.currency,
-                    security_isin: String::new(),
+                Ok(Self::Stablecoin {
+                    common: CommonParams {
+                        version: p.version,
+                        name: p.name,
+                        symbol: p.symbol,
+                        initial_admin: p.initialAdmin,
+                    },
+                    currency: p.currency,
                 })
             }
             TokenVariant::Security => {
-                let params = ITokenFactory::B20SecurityCreateParams::abi_decode(params)
+                let p = ITokenFactory::B20SecurityCreateParams::abi_decode(params)
                     .map_err(Self::invalid_params)?;
-                Ok(Self {
-                    variant,
-                    version: params.version,
-                    name: params.name,
-                    symbol: params.symbol,
-                    initial_admin: params.initialAdmin,
-                    decimals: TokenVariant::Security.decimals(),
-                    minimum_redeemable: params.minimumRedeemable,
-                    stablecoin_currency: String::new(),
-                    security_isin: params.isin,
+                Ok(Self::Security {
+                    common: CommonParams {
+                        version: p.version,
+                        name: p.name,
+                        symbol: p.symbol,
+                        initial_admin: p.initialAdmin,
+                    },
+                    minimum_redeemable: p.minimumRedeemable,
+                    isin: p.isin,
                 })
             }
         }
+    }
+
+    fn version(&self) -> u8 {
+        self.common_ref().version
+    }
+
+    fn common_ref(&self) -> &CommonParams {
+        match self {
+            Self::B20(c) => c,
+            Self::Stablecoin { common, .. } => common,
+            Self::Security { common, .. } => common,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if let Self::Stablecoin { currency, .. } = self {
+            if currency.is_empty() {
+                return Err(BasePrecompileError::revert(ITokenFactory::MissingRequiredField {}));
+            }
+        }
+        Ok(())
     }
 
     fn invalid_params(error: impl core::fmt::Display) -> BasePrecompileError {
         BasePrecompileError::AbiDecodeFailed {
             selector: ITokenFactory::createTokenCall::SELECTOR,
             error: error.to_string(),
-        }
-    }
-
-    fn validate(&self) -> Result<()> {
-        match self.variant {
-            TokenVariant::Stablecoin if self.stablecoin_currency.is_empty() => {
-                Err(BasePrecompileError::revert(ITokenFactory::MissingRequiredField {}))
-            }
-            _ => Ok(()),
         }
     }
 }
