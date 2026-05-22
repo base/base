@@ -238,8 +238,8 @@ async fn policy_registry_action_tests_cover_policy_lifecycle_and_views() {
         0,
         IPolicyRegistry::PolicyAdminStaged {
             policyId: allowlist_id,
-            previousAdmin: BerylTestEnv::alice(),
-            newAdmin: BerylTestEnv::bob(),
+            currentAdmin: BerylTestEnv::alice(),
+            pendingAdmin: BerylTestEnv::bob(),
         }
         .encode_log_data(),
     );
