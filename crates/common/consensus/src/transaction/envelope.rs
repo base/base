@@ -19,7 +19,7 @@ use revm::context::TxEnv;
 
 use crate::{
     BasePooledTransaction, TxDeposit,
-    transaction::{BaseTransactionInfo, DepositInfo},
+    transaction::{AaSigned, BaseTransactionInfo, DepositInfo, TxAa8130},
 };
 
 /// The Ethereum [EIP-2718] Transaction Envelope, modified for Base.
@@ -52,6 +52,11 @@ pub enum BaseTxEnvelope {
     #[envelope(ty = 126)]
     #[serde(serialize_with = "crate::serde_deposit_tx_rpc")]
     Deposit(Sealed<TxDeposit>),
+    /// An [EIP-8130] Account Abstraction transaction tagged with type 0x7D.
+    ///
+    /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
+    #[envelope(ty = 125, typed = TxAa8130)]
+    Aa8130(AaSigned),
 }
 
 /// Represents a transaction envelope for Base chains.
@@ -152,6 +157,17 @@ impl From<Signed<BaseTypedTransaction>> for BaseTxEnvelope {
                 Self::Eip7702(tx)
             }
             BaseTypedTransaction::Deposit(tx) => Self::Deposit(Sealed::new_unchecked(tx, hash)),
+            BaseTypedTransaction::Aa8130(tx) => {
+                debug_assert!(
+                    tx.sender.is_none(),
+                    "configured-owner EIP-8130 transactions must not be wrapped through the ECDSA Signed<BaseTypedTransaction> path; route them via BaseTxEnvelope::Aa8130 directly with the appropriate sender_auth",
+                );
+                debug_assert!(
+                    tx.payer.is_none(),
+                    "sponsored EIP-8130 transactions must not be wrapped through the ECDSA Signed<BaseTypedTransaction> path; the payer_auth would be silently dropped",
+                );
+                Self::Aa8130(AaSigned::new(tx, sig.as_bytes().into(), Bytes::new()))
+            }
         }
     }
 }
@@ -199,6 +215,9 @@ impl FromRecoveredTx<BaseTxEnvelope> for TxEnv {
             BaseTxEnvelope::Eip2930(tx) => Self::from_recovered_tx(tx.tx(), caller),
             BaseTxEnvelope::Eip7702(tx) => Self::from_recovered_tx(tx.tx(), caller),
             BaseTxEnvelope::Deposit(tx) => Self::from_recovered_tx(tx.inner(), caller),
+            BaseTxEnvelope::Aa8130(_) => {
+                unimplemented!("EIP-8130 AA transactions cannot be converted to TxEnv yet")
+            }
         }
     }
 }
@@ -223,6 +242,9 @@ impl From<BaseTxEnvelope> for alloy_rpc_types_eth::TransactionRequest {
             BaseTxEnvelope::Eip7702(tx) => tx.into_parts().0.into(),
             BaseTxEnvelope::Deposit(tx) => tx.into_inner().into(),
             BaseTxEnvelope::Legacy(tx) => tx.into_parts().0.into(),
+            BaseTxEnvelope::Aa8130(_) => unimplemented!(
+                "BaseTxEnvelope::Aa8130 cannot be converted to an alloy TransactionRequest; AA transactions have no single sender/recipient/value to project into the legacy request shape"
+            ),
         }
     }
 }
@@ -321,17 +343,27 @@ impl BaseTxEnvelope {
             Self::Deposit(tx) => {
                 Err(ValueError::new(tx.into(), "Deposit transactions cannot be pooled"))
             }
+            Self::Aa8130(tx) => Ok(tx.into()),
         }
     }
 
     /// Attempts to convert the envelope into the ethereum pooled variant.
     ///
-    /// Returns an error if the envelope's variant is incompatible with the pooled format:
-    /// [`TxDeposit`].
+    /// Returns an error if the envelope's variant is incompatible with the ethereum pooled
+    /// format: [`TxDeposit`] (not pooled at all) or [`AaSigned`] (pooled, but has no
+    /// ethereum-format representation since the alloy `PooledTransaction` enum has no
+    /// EIP-8130 variant). Rejecting [`AaSigned`] here prevents
+    /// `From<BasePooledTransaction> for alloy_consensus::PooledTransaction` from panicking.
     pub fn try_into_eth_pooled(
         self,
     ) -> Result<alloy_consensus::transaction::PooledTransaction, ValueError<Self>> {
-        self.try_into_pooled().map(Into::into)
+        match self {
+            tx @ Self::Aa8130(_) => Err(ValueError::new(
+                tx,
+                "EIP-8130 transactions cannot be converted to ethereum PooledTransaction",
+            )),
+            other => other.try_into_pooled().map(Into::into),
+        }
     }
 
     /// Attempts to convert the L2 variant into an ethereum [`TxEnvelope`].
@@ -346,6 +378,10 @@ impl BaseTxEnvelope {
             tx @ Self::Deposit(_) => Err(ValueError::new(
                 tx,
                 "Deposit transactions cannot be converted to ethereum transaction",
+            )),
+            tx @ Self::Aa8130(_) => Err(ValueError::new(
+                tx,
+                "EIP-8130 transactions cannot be converted to ethereum transaction",
             )),
         }
     }
@@ -384,14 +420,20 @@ impl BaseTxEnvelope {
     /// Returns mutable access to the input bytes.
     ///
     /// Caution: modifying this will cause side-effects on the hash.
+    ///
+    /// Panics for [`Self::Aa8130`] since EIP-8130 transactions have no single
+    /// input field; their payload is a list of calls.
     #[doc(hidden)]
-    pub const fn input_mut(&mut self) -> &mut Bytes {
+    pub fn input_mut(&mut self) -> &mut Bytes {
         match self {
             Self::Eip1559(tx) => &mut tx.tx_mut().input,
             Self::Eip2930(tx) => &mut tx.tx_mut().input,
             Self::Legacy(tx) => &mut tx.tx_mut().input,
             Self::Eip7702(tx) => &mut tx.tx_mut().input,
             Self::Deposit(tx) => &mut tx.inner_mut().input,
+            Self::Aa8130(_) => {
+                unimplemented!("EIP-8130 transactions have no single input field")
+            }
         }
     }
 
@@ -426,6 +468,12 @@ impl BaseTxEnvelope {
         matches!(self, Self::Deposit(_))
     }
 
+    /// Returns true if the transaction is an EIP-8130 AA transaction.
+    #[inline]
+    pub const fn is_aa8130(&self) -> bool {
+        matches!(self, Self::Aa8130(_))
+    }
+
     /// Returns the [`TxLegacy`] variant if the transaction is a legacy transaction.
     pub const fn as_legacy(&self) -> Option<&Signed<TxLegacy>> {
         match self {
@@ -458,16 +506,24 @@ impl BaseTxEnvelope {
         }
     }
 
+    /// Returns the [`AaSigned`] variant if the transaction is an EIP-8130 AA transaction.
+    pub const fn as_aa8130(&self) -> Option<&AaSigned> {
+        match self {
+            Self::Aa8130(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
     /// Return the reference to signature.
     ///
-    /// Returns `None` if this is a deposit variant.
+    /// Returns `None` if this is a deposit or EIP-8130 variant.
     pub const fn signature(&self) -> Option<&Signature> {
         match self {
             Self::Legacy(tx) => Some(tx.signature()),
             Self::Eip2930(tx) => Some(tx.signature()),
             Self::Eip1559(tx) => Some(tx.signature()),
             Self::Eip7702(tx) => Some(tx.signature()),
-            Self::Deposit(_) => None,
+            Self::Deposit(_) | Self::Aa8130(_) => None,
         }
     }
 
@@ -479,6 +535,7 @@ impl BaseTxEnvelope {
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::Deposit(_) => OpTxType::Deposit,
+            Self::Aa8130(_) => OpTxType::Aa8130,
         }
     }
 
@@ -490,6 +547,7 @@ impl BaseTxEnvelope {
             Self::Eip2930(tx) => tx.hash(),
             Self::Eip7702(tx) => tx.hash(),
             Self::Deposit(tx) => tx.hash_ref(),
+            Self::Aa8130(tx) => tx.hash(),
         }
     }
 
@@ -506,6 +564,7 @@ impl BaseTxEnvelope {
             Self::Eip1559(t) => t.eip2718_encoded_length(),
             Self::Eip7702(t) => t.eip2718_encoded_length(),
             Self::Deposit(t) => t.eip2718_encoded_length(),
+            Self::Aa8130(t) => t.encode_2718_len(),
         }
     }
 }
@@ -529,13 +588,19 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             // The Deposit transaction does not have a signature. Directly return the
             // `from` address.
             Self::Deposit(tx) => return Ok(tx.from),
+            Self::Aa8130(tx) => match tx.explicit_sender() {
+                Some(sender) => return Ok(sender),
+                None => return Err(alloy_consensus::crypto::RecoveryError::new()),
+            },
         };
         let signature = match self {
             Self::Legacy(tx) => tx.signature(),
             Self::Eip2930(tx) => tx.signature(),
             Self::Eip1559(tx) => tx.signature(),
             Self::Eip7702(tx) => tx.signature(),
-            Self::Deposit(_) => unreachable!("Deposit transactions should not be handled here"),
+            Self::Deposit(_) | Self::Aa8130(_) => {
+                unreachable!("non-ECDSA variants short-circuit above")
+            }
         };
         alloy_consensus::crypto::secp256k1::recover_signer(signature, signature_hash)
     }
@@ -551,13 +616,19 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             // The Deposit transaction does not have a signature. Directly return the
             // `from` address.
             Self::Deposit(tx) => return Ok(tx.from),
+            Self::Aa8130(tx) => match tx.explicit_sender() {
+                Some(sender) => return Ok(sender),
+                None => return Err(alloy_consensus::crypto::RecoveryError::new()),
+            },
         };
         let signature = match self {
             Self::Legacy(tx) => tx.signature(),
             Self::Eip2930(tx) => tx.signature(),
             Self::Eip1559(tx) => tx.signature(),
             Self::Eip7702(tx) => tx.signature(),
-            Self::Deposit(_) => unreachable!("Deposit transactions should not be handled here"),
+            Self::Deposit(_) | Self::Aa8130(_) => {
+                unreachable!("non-ECDSA variants short-circuit above")
+            }
         };
         alloy_consensus::crypto::secp256k1::recover_signer_unchecked(signature, signature_hash)
     }
@@ -580,6 +651,9 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
                 alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
             }
             Self::Deposit(tx) => Ok(tx.from),
+            Self::Aa8130(tx) => {
+                tx.explicit_sender().ok_or_else(alloy_consensus::crypto::RecoveryError::new)
+            }
         }
     }
 }
@@ -595,7 +669,7 @@ pub(super) mod serde_bincode_compat {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
-    use crate::serde_bincode_compat::TxDeposit;
+    use crate::{serde_bincode_compat::TxDeposit, transaction::AaSigned};
 
     /// Bincode-compatible representation of an [`BaseTxEnvelope`].
     #[derive(Debug, Serialize, Deserialize)]
@@ -635,6 +709,16 @@ pub(super) mod serde_bincode_compat {
             /// Borrowed deposit transaction data.
             transaction: TxDeposit<'a>,
         },
+        /// EIP-8130 Account Abstraction variant.
+        Aa8130 {
+            /// Owned [`AaSigned`] envelope.
+            ///
+            /// The [`AaSigned`] payload includes variable-length `calls`,
+            /// `account_changes`, and authentication buffers, so we serialize
+            /// it directly instead of borrowing a flattened bincode-friendly
+            /// projection.
+            transaction: AaSigned,
+        },
     }
 
     impl<'a> From<&'a super::BaseTxEnvelope> for BaseTxEnvelope<'a> {
@@ -660,6 +744,9 @@ pub(super) mod serde_bincode_compat {
                     hash: sealed_deposit.seal(),
                     transaction: sealed_deposit.inner().into(),
                 },
+                super::BaseTxEnvelope::Aa8130(aa_signed) => {
+                    Self::Aa8130 { transaction: aa_signed.clone() }
+                }
             }
         }
     }
@@ -682,6 +769,7 @@ pub(super) mod serde_bincode_compat {
                 BaseTxEnvelope::Deposit { hash, transaction } => {
                     Self::Deposit(Sealed::new_unchecked(transaction.into(), hash))
                 }
+                BaseTxEnvelope::Aa8130 { transaction } => Self::Aa8130(transaction),
             }
         }
     }
@@ -752,6 +840,7 @@ impl InMemorySize for BaseTxEnvelope {
             Self::Eip1559(tx) => tx.size(),
             Self::Eip7702(tx) => tx.size(),
             Self::Deposit(tx) => tx.size(),
+            Self::Aa8130(tx) => tx.size(),
         }
     }
 }

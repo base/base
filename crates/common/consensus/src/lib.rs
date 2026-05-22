@@ -24,8 +24,10 @@ mod transaction;
 #[cfg(feature = "serde")]
 pub use transaction::serde_deposit_tx_rpc;
 pub use transaction::{
-    BasePooledTransaction, BaseTransaction, BaseTransactionInfo, BaseTxEnvelope,
-    BaseTypedTransaction, DEPOSIT_TX_TYPE_ID, DepositInfo, DepositTransaction, OpTxType, TxDeposit,
+    Aa8130Constants, AaSigned, AccountChange, BasePooledTransaction, BaseTransaction,
+    BaseTransactionInfo, BaseTxEnvelope, BaseTypedTransaction, Call, ConfigChange, CreateEntry,
+    DEPOSIT_TX_TYPE_ID, Delegation, DepositInfo, DepositTransaction, EIP8130_TX_TYPE_ID,
+    InitialOwner, OpTxType, OwnerChange, OwnerChangeType, Scope, TxAa8130, TxDeposit,
 };
 
 mod extra;

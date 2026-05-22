@@ -303,6 +303,7 @@ impl BaseReceiptBuilder {
                 BaseReceipt::Eip1559(receipt) => BaseReceipt::Eip1559(map_logs(receipt)),
                 BaseReceipt::Eip7702(receipt) => BaseReceipt::Eip7702(map_logs(receipt)),
                 BaseReceipt::Deposit(receipt) => BaseReceipt::Deposit(receipt.map_inner(map_logs)),
+                BaseReceipt::Aa8130(receipt) => BaseReceipt::Aa8130(map_logs(receipt)),
             };
             mapped_receipt.into_with_bloom()
         });

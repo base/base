@@ -253,6 +253,9 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
                 };
                 Self::Deposit(consensus_receipt)
             }
+            BaseReceipt::Aa8130(receipt) => {
+                Self::Aa8130(convert_standard_receipt(receipt, logs_bloom))
+            }
         }
     }
 }
