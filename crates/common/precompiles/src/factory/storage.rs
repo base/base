@@ -906,10 +906,6 @@ mod tests {
                 U256::from(1_000u64).abi_encode(),
             );
             assert_output(
-                dispatch_b20_success(ctx, expected_token, IB20::minimumRedeemableCall {}),
-                U256::ZERO.abi_encode(),
-            );
-            assert_output(
                 dispatch_b20_success(ctx, expected_token, IB20::contractURICall {}),
                 "ipfs://dispatch".to_string().abi_encode(),
             );

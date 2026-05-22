@@ -102,7 +102,7 @@ mod tests {
     /// Activates the policy registry and writes the built-in policies to storage.
     ///
     /// Call this instead of `activate_policy_registry` when the test needs to query
-    /// built-in policy IDs (ALWAYS_ALLOW_ID, ALWAYS_BLOCK_ID) directly.
+    /// built-in policy IDs (`ALWAYS_ALLOW_ID`, `ALWAYS_BLOCK_ID`) directly.
     fn activate_and_init(storage: &mut HashMapStorageProvider) {
         activate_policy_registry(storage);
         StorageCtx::enter(storage, |ctx| PolicyRegistryStorage::new(ctx).write_builtins()).unwrap();

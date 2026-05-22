@@ -118,14 +118,6 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
             .map_or(0, TokenVariant::decimals))
     }
 
-    fn currency(&self) -> Result<String> {
-        self.stablecoin.currency.read()
-    }
-
-    fn security_identifier(&self, _identifier_type: &str) -> Result<String> {
-        Ok(String::new())
-    }
-
     fn paused(&self) -> Result<U256> {
         self.b20.paused.read()
     }
@@ -143,14 +135,6 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
         let next =
             current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
         self.b20.nonces.at_mut(&owner).write(next)
-    }
-
-    fn minimum_redeemable(&self) -> Result<U256> {
-        Ok(U256::ZERO)
-    }
-
-    fn set_minimum_redeemable(&mut self, _minimum: U256) -> Result<()> {
-        Ok(())
     }
 
     fn contract_uri(&self) -> Result<String> {
@@ -306,6 +290,10 @@ impl B20StablecoinStorage<'_> {
 }
 
 impl StablecoinAccounting for B20StablecoinStorage<'_> {
+    fn currency(&self) -> Result<String> {
+        self.stablecoin.currency.read()
+    }
+
     fn set_currency(&mut self, currency: String) -> Result<()> {
         self.stablecoin.currency.write(currency)
     }

@@ -77,9 +77,6 @@ sol! {
         function symbol() external view returns (string);
         function decimals() external view returns (uint8);
         function totalSupply() external view returns (uint256);
-        function minimumRedeemable() external view returns (uint256);
-        function currency() external view returns (string);
-        function securityIdentifier(string calldata identifierType) external view returns (string);
         function balanceOf(address account) external view returns (uint256);
         function allowance(address owner, address spender) external view returns (uint256);
         function transfer(address to, uint256 amount) external returns (bool);

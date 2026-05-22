@@ -114,6 +114,9 @@ sol! {
         /// Sets the minimum-redeemable threshold in shares. Requires `DEFAULT_ADMIN_ROLE`.
         function updateMinimumRedeemable(uint256 newMinimumRedeemable) external;
 
+        /// Returns the minimum-redeemable threshold in shares.
+        function minimumRedeemable() external view returns (uint256);
+
         // ── Security identifiers ─────────────────────────────────────────────
 
         /// Returns the value of the named identifier (e.g. ISIN, CUSIP). Empty string if not set.

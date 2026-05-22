@@ -134,14 +134,6 @@ impl TokenAccounting for B20SecurityStorage<'_> {
             .map_or(0, TokenVariant::decimals))
     }
 
-    fn currency(&self) -> Result<String> {
-        Ok(String::new())
-    }
-
-    fn security_identifier(&self, identifier_type: &str) -> Result<String> {
-        self.security.identifiers.at(&String::from(identifier_type)).read()
-    }
-
     fn paused(&self) -> Result<U256> {
         self.b20.paused.read()
     }
@@ -159,14 +151,6 @@ impl TokenAccounting for B20SecurityStorage<'_> {
         let next =
             current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
         self.b20.nonces.at_mut(&owner).write(next)
-    }
-
-    fn minimum_redeemable(&self) -> Result<U256> {
-        self.redeem.minimum_redeemable.read()
-    }
-
-    fn set_minimum_redeemable(&mut self, minimum: U256) -> Result<()> {
-        self.redeem.minimum_redeemable.write(minimum)
     }
 
     fn contract_uri(&self) -> Result<String> {
@@ -330,6 +314,10 @@ impl SecurityAccounting for B20SecurityStorage<'_> {
         self.security.shares_to_tokens_ratio.write(ratio)
     }
 
+    fn security_identifier(&self, identifier_type: &str) -> Result<String> {
+        self.security.identifiers.at(&String::from(identifier_type)).read()
+    }
+
     fn set_security_identifier_value(
         &mut self,
         identifier_type: &str,
@@ -341,6 +329,14 @@ impl SecurityAccounting for B20SecurityStorage<'_> {
         } else {
             self.security.identifiers.at_mut(&key).write(value)
         }
+    }
+
+    fn minimum_redeemable(&self) -> Result<U256> {
+        self.redeem.minimum_redeemable.read()
+    }
+
+    fn set_minimum_redeemable(&mut self, minimum: U256) -> Result<()> {
+        self.redeem.minimum_redeemable.write(minimum)
     }
 
     fn is_announcement_id_used(&self, id: &str) -> Result<bool> {

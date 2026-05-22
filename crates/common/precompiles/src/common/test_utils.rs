@@ -176,17 +176,6 @@ impl TokenAccounting for InMemoryTokenAccounting {
         Ok(self.decimals)
     }
 
-    fn currency(&self) -> Result<String> {
-        Ok(self.currency.clone())
-    }
-
-    fn security_identifier(&self, identifier_type: &str) -> Result<String> {
-        if let Some(val) = self.security_identifiers.get(identifier_type) {
-            return Ok(val.clone());
-        }
-        if identifier_type == "ISIN" { Ok(self.security_isin.clone()) } else { Ok(String::new()) }
-    }
-
     fn paused(&self) -> Result<U256> {
         Ok(self.paused)
     }
@@ -203,15 +192,6 @@ impl TokenAccounting for InMemoryTokenAccounting {
     fn increment_nonce(&mut self, owner: Address) -> Result<()> {
         let n = self.nonces.entry(owner).or_default();
         *n += U256::from(1u64);
-        Ok(())
-    }
-
-    fn minimum_redeemable(&self) -> Result<U256> {
-        Ok(self.minimum_redeemable)
-    }
-
-    fn set_minimum_redeemable(&mut self, minimum: U256) -> Result<()> {
-        self.minimum_redeemable = minimum;
         Ok(())
     }
 
@@ -267,6 +247,10 @@ impl TokenAccounting for InMemoryTokenAccounting {
 }
 
 impl StablecoinAccounting for InMemoryTokenAccounting {
+    fn currency(&self) -> Result<String> {
+        Ok(self.currency.clone())
+    }
+
     fn set_currency(&mut self, currency: String) -> Result<()> {
         self.currency = currency;
         Ok(())
@@ -414,6 +398,13 @@ impl SecurityAccounting for InMemoryTokenAccounting {
         Ok(())
     }
 
+    fn security_identifier(&self, identifier_type: &str) -> Result<String> {
+        if let Some(val) = self.security_identifiers.get(identifier_type) {
+            return Ok(val.clone());
+        }
+        if identifier_type == "ISIN" { Ok(self.security_isin.clone()) } else { Ok(String::new()) }
+    }
+
     fn set_security_identifier_value(
         &mut self,
         identifier_type: &str,
@@ -424,6 +415,15 @@ impl SecurityAccounting for InMemoryTokenAccounting {
         } else {
             self.security_identifiers.insert(identifier_type.to_owned(), value);
         }
+        Ok(())
+    }
+
+    fn minimum_redeemable(&self) -> Result<U256> {
+        Ok(self.minimum_redeemable)
+    }
+
+    fn set_minimum_redeemable(&mut self, minimum: U256) -> Result<()> {
+        self.minimum_redeemable = minimum;
         Ok(())
     }
 

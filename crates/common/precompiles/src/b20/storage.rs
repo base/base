@@ -129,14 +129,6 @@ impl TokenAccounting for B20TokenStorage<'_> {
             .map_or(0, TokenVariant::decimals))
     }
 
-    fn currency(&self) -> Result<String> {
-        Ok(String::new())
-    }
-
-    fn security_identifier(&self, _identifier_type: &str) -> Result<String> {
-        Ok(String::new())
-    }
-
     fn paused(&self) -> Result<U256> {
         self.b20.paused.read()
     }
@@ -154,14 +146,6 @@ impl TokenAccounting for B20TokenStorage<'_> {
         let next =
             current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
         self.b20.nonces.at_mut(&owner).write(next)
-    }
-
-    fn minimum_redeemable(&self) -> Result<U256> {
-        Ok(U256::ZERO)
-    }
-
-    fn set_minimum_redeemable(&mut self, _minimum: U256) -> Result<()> {
-        Ok(())
     }
 
     fn contract_uri(&self) -> Result<String> {

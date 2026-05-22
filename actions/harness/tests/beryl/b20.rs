@@ -291,11 +291,6 @@ async fn b20_staticcall_abi_covers_all_read_methods() {
                 U256::from(BerylTestEnv::B20_BOB_ALLOWANCE),
             ),
             StaticcallCase::word(
-                "minimumRedeemable",
-                IB20::minimumRedeemableCall {}.abi_encode(),
-                U256::ZERO,
-            ),
-            StaticcallCase::word(
                 "pausedFeatures",
                 IB20::pausedFeaturesCall {}.abi_encode(),
                 U256::from(32),
@@ -476,11 +471,6 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
                 "supplyCap after update",
                 IB20::supplyCapCall {}.abi_encode(),
                 new_cap,
-            ),
-            StaticcallCase::word(
-                "minimumRedeemable",
-                IB20::minimumRedeemableCall {}.abi_encode(),
-                U256::ZERO,
             ),
         ])
         .await;

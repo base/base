@@ -215,19 +215,6 @@ fn base_token_view(c: &mut Criterion) {
             });
         });
     });
-
-    c.bench_function("base_token_minimum_redeemable", |b| {
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageCtx::enter(&mut storage, |ctx| {
-            let token = BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x0b), U256::ZERO);
-
-            b.iter(|| {
-                let token = black_box(&token);
-                let result = token.accounting().minimum_redeemable().unwrap();
-                black_box(result);
-            });
-        });
-    });
 }
 
 fn base_token_mutate(c: &mut Criterion) {
