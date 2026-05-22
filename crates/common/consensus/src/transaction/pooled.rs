@@ -55,7 +55,7 @@ impl BasePooledTransaction {
             Self::Eip1559(tx) => tx.signature_hash(),
             Self::Eip7702(tx) => tx.signature_hash(),
             Self::Aa8130(_) => {
-                unreachable!("BasePooledTransaction::signature_hash invoked on EIP-8130 variant")
+                unimplemented!("BasePooledTransaction::signature_hash invoked on EIP-8130 variant")
             }
         }
     }
@@ -82,7 +82,7 @@ impl BasePooledTransaction {
             Self::Eip1559(tx) => tx.signature(),
             Self::Eip7702(tx) => tx.signature(),
             Self::Aa8130(_) => {
-                unreachable!("BasePooledTransaction::signature invoked on EIP-8130 variant")
+                unimplemented!("BasePooledTransaction::signature invoked on EIP-8130 variant")
             }
         }
     }
@@ -110,7 +110,7 @@ impl BasePooledTransaction {
             Self::Eip1559(tx) => tx.into(),
             Self::Eip7702(tx) => tx.into(),
             Self::Aa8130(_) => {
-                unreachable!("BasePooledTransaction::into_envelope invoked on EIP-8130 variant")
+                unimplemented!("BasePooledTransaction::into_envelope invoked on EIP-8130 variant")
             }
         }
     }
@@ -204,7 +204,7 @@ impl From<BasePooledTransaction> for alloy_consensus::transaction::PooledTransac
             BasePooledTransaction::Eip2930(tx) => tx.into(),
             BasePooledTransaction::Eip1559(tx) => tx.into(),
             BasePooledTransaction::Eip7702(tx) => tx.into(),
-            BasePooledTransaction::Aa8130(_) => unreachable!(
+            BasePooledTransaction::Aa8130(_) => unimplemented!(
                 "EIP-8130 transactions cannot be converted to ethereum PooledTransaction"
             ),
         }

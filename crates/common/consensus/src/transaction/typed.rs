@@ -160,7 +160,7 @@ impl BaseTypedTransaction {
             Self::Eip1559(tx) => tx.tx_hash(signature),
             Self::Eip7702(tx) => tx.tx_hash(signature),
             Self::Deposit(tx) => tx.tx_hash(),
-            Self::Aa8130(_) => unreachable!(
+            Self::Aa8130(_) => unimplemented!(
                 "BaseTypedTransaction::tx_hash invoked on an EIP-8130 variant; use AaSigned::hash via the envelope path"
             ),
         }
@@ -225,7 +225,7 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
             Self::Eip1559(tx) => tx.eip2718_encode_with_type(signature, tx.ty(), out),
             Self::Eip7702(tx) => tx.eip2718_encode_with_type(signature, tx.ty(), out),
             Self::Deposit(tx) => tx.encode_2718(out),
-            Self::Aa8130(_) => unreachable!(
+            Self::Aa8130(_) => unimplemented!(
                 "BaseTypedTransaction::eip2718_encode_with_type invoked on EIP-8130 variant; use AaSigned::encode_2718"
             ),
         }
@@ -238,7 +238,7 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
             Self::Eip1559(tx) => tx.eip2718_encode(signature, out),
             Self::Eip7702(tx) => tx.eip2718_encode(signature, out),
             Self::Deposit(tx) => tx.encode_2718(out),
-            Self::Aa8130(_) => unreachable!(
+            Self::Aa8130(_) => unimplemented!(
                 "BaseTypedTransaction::eip2718_encode invoked on EIP-8130 variant; use AaSigned::encode_2718"
             ),
         }
@@ -251,7 +251,7 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
             Self::Eip1559(tx) => tx.network_encode_with_type(signature, tx.ty(), out),
             Self::Eip7702(tx) => tx.network_encode_with_type(signature, tx.ty(), out),
             Self::Deposit(tx) => tx.network_encode(out),
-            Self::Aa8130(_) => unreachable!(
+            Self::Aa8130(_) => unimplemented!(
                 "BaseTypedTransaction::network_encode_with_type invoked on EIP-8130 variant"
             ),
         }
@@ -265,7 +265,7 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
             Self::Eip7702(tx) => tx.network_encode(signature, out),
             Self::Deposit(tx) => tx.network_encode(out),
             Self::Aa8130(_) => {
-                unreachable!("BaseTypedTransaction::network_encode invoked on EIP-8130 variant")
+                unimplemented!("BaseTypedTransaction::network_encode invoked on EIP-8130 variant")
             }
         }
     }
@@ -278,7 +278,9 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
             Self::Eip7702(tx) => tx.tx_hash_with_type(signature, tx.ty()),
             Self::Deposit(tx) => tx.tx_hash(),
             Self::Aa8130(_) => {
-                unreachable!("BaseTypedTransaction::tx_hash_with_type invoked on EIP-8130 variant")
+                unimplemented!(
+                    "BaseTypedTransaction::tx_hash_with_type invoked on EIP-8130 variant"
+                )
             }
         }
     }
@@ -291,7 +293,7 @@ impl RlpEcdsaEncodableTx for BaseTypedTransaction {
             Self::Eip7702(tx) => tx.tx_hash(signature),
             Self::Deposit(tx) => tx.tx_hash(),
             Self::Aa8130(_) => {
-                unreachable!("BaseTypedTransaction::tx_hash invoked on EIP-8130 variant")
+                unimplemented!("BaseTypedTransaction::tx_hash invoked on EIP-8130 variant")
             }
         }
     }
