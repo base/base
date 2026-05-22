@@ -95,7 +95,7 @@ async fn b20_creation_reverts_while_factory_feature_is_deactivated() {
     let block1 = env.sequencer.build_empty_block().await;
     let activation_block = B20FactoryPrecompiles::activate(&mut env).await;
 
-    let deactivate_factory = env.deactivate_feature_tx(BerylTestEnv::token_factory_feature());
+    let deactivate_factory = env.deactivate_feature_tx(BerylTestEnv::b20_factory_feature());
     let block2 = env.sequencer.build_next_block_with_transactions(vec![deactivate_factory]).await;
 
     assert!(env.user_tx_succeeded(&block2, 0), "TOKEN_FACTORY deactivation must succeed");
@@ -109,7 +109,7 @@ async fn b20_creation_reverts_while_factory_feature_is_deactivated() {
         "token creation must revert when TOKEN_FACTORY is deactivated"
     );
 
-    let reactivate_factory = env.activate_feature_tx(BerylTestEnv::token_factory_feature());
+    let reactivate_factory = env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
     let block4 = env.sequencer.build_next_block_with_transactions(vec![reactivate_factory]).await;
 
     assert!(env.user_tx_succeeded(&block4, 0), "TOKEN_FACTORY re-activation must succeed");
@@ -131,7 +131,7 @@ async fn b20_creation_reverts_while_factory_feature_is_deactivated() {
 }
 
 #[tokio::test]
-async fn token_factory_views_and_events_are_available_after_beryl_activation() {
+async fn b20_factory_views_and_events_are_available_after_beryl_activation() {
     let mut env = BerylTestEnv::new();
     let token = env.b20_token_address();
 
@@ -251,7 +251,7 @@ struct B20FactoryPrecompiles;
 
 impl B20FactoryPrecompiles {
     async fn activate(env: &mut BerylTestEnv) -> BaseBlock {
-        let activate_factory = env.activate_feature_tx(BerylTestEnv::token_factory_feature());
+        let activate_factory = env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let activate_b20 = env.activate_feature_tx(BerylTestEnv::b20_token_feature());
         let block = env
             .sequencer
