@@ -253,7 +253,9 @@ impl alloy_consensus::transaction::SignerRecoverable for BasePooledTransaction {
             Self::Eip7702(tx) => {
                 alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
             }
-            Self::Aa8130(tx) => Ok(tx.explicit_sender().unwrap_or(alloy_primitives::Address::ZERO)),
+            Self::Aa8130(tx) => {
+                tx.explicit_sender().ok_or_else(alloy_consensus::crypto::RecoveryError::new)
+            }
         }
     }
 }

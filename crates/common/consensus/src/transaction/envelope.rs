@@ -569,9 +569,10 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             // The Deposit transaction does not have a signature. Directly return the
             // `from` address.
             Self::Deposit(tx) => return Ok(tx.from),
-            Self::Aa8130(tx) => {
-                return Ok(tx.explicit_sender().unwrap_or(alloy_primitives::Address::ZERO));
-            }
+            Self::Aa8130(tx) => match tx.explicit_sender() {
+                Some(sender) => return Ok(sender),
+                None => return Err(alloy_consensus::crypto::RecoveryError::new()),
+            },
         };
         let signature = match self {
             Self::Legacy(tx) => tx.signature(),
@@ -596,9 +597,10 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             // The Deposit transaction does not have a signature. Directly return the
             // `from` address.
             Self::Deposit(tx) => return Ok(tx.from),
-            Self::Aa8130(tx) => {
-                return Ok(tx.explicit_sender().unwrap_or(alloy_primitives::Address::ZERO));
-            }
+            Self::Aa8130(tx) => match tx.explicit_sender() {
+                Some(sender) => return Ok(sender),
+                None => return Err(alloy_consensus::crypto::RecoveryError::new()),
+            },
         };
         let signature = match self {
             Self::Legacy(tx) => tx.signature(),
@@ -630,7 +632,9 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
                 alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
             }
             Self::Deposit(tx) => Ok(tx.from),
-            Self::Aa8130(tx) => Ok(tx.explicit_sender().unwrap_or(alloy_primitives::Address::ZERO)),
+            Self::Aa8130(tx) => {
+                tx.explicit_sender().ok_or_else(alloy_consensus::crypto::RecoveryError::new)
+            }
         }
     }
 }
