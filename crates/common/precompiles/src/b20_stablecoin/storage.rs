@@ -2,12 +2,12 @@
 
 use alloc::string::String;
 
+use super::accounting::StablecoinAccounting;
+use super::{IB20Stablecoin, IsoCurrency};
+use crate::{B20CoreStorage, B20PolicyType, B20TokenRole, IB20, TokenAccounting, TokenVariant};
 use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_macros::{Storable, contract};
 use base_precompile_storage::{BasePrecompileError, ContractStorage, Handler, Result, StorageCtx};
-use super::{IB20Stablecoin, IsoCurrency};
-use super::accounting::StablecoinAccounting;
-use crate::{B20CoreStorage, B20PolicyType, B20TokenRole, IB20, TokenAccounting, TokenVariant};
 
 /// Stablecoin-specific B-20 storage rooted at the `base.b20.stablecoin` ERC-7201 namespace.
 #[derive(Debug, Clone, Storable)]

@@ -45,7 +45,7 @@ mod tests {
         assert!(IsoCurrency::from_code("").is_none());
         assert!(IsoCurrency::from_code("usd").is_none()); // lowercase
         assert!(IsoCurrency::from_code("Usd").is_none()); // mixed case
-        assert!(IsoCurrency::from_code("US").is_none());  // too short
+        assert!(IsoCurrency::from_code("US").is_none()); // too short
         assert!(IsoCurrency::from_code("USDD").is_none()); // too long
         assert!(IsoCurrency::from_code("XYZ").is_none()); // plausible but not on allowlist
         assert!(IsoCurrency::from_code("BTC").is_none()); // crypto
