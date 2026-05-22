@@ -35,6 +35,7 @@ impl BaseReceiptBuilder for BaseRethReceiptBuilder {
                     OpTxType::Eip2930 => BaseReceipt::Eip2930(receipt),
                     OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
                     OpTxType::Deposit => unreachable!(),
+                    OpTxType::Aa8130 => BaseReceipt::Aa8130(receipt),
                 })
             }
         }

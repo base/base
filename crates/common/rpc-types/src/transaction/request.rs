@@ -196,6 +196,7 @@ impl From<BaseTypedTransaction> for BaseTransactionRequest {
             BaseTypedTransaction::Eip1559(tx) => Self(tx.into()),
             BaseTypedTransaction::Eip7702(tx) => Self(tx.into()),
             BaseTypedTransaction::Deposit(tx) => tx.into(),
+            BaseTypedTransaction::Aa8130(_) => Self::default(),
         }
     }
 }
@@ -208,6 +209,7 @@ impl From<BaseTxEnvelope> for BaseTransactionRequest {
             BaseTxEnvelope::Eip1559(tx) => tx.into(),
             BaseTxEnvelope::Eip7702(tx) => tx.into(),
             BaseTxEnvelope::Deposit(tx) => tx.into(),
+            BaseTxEnvelope::Aa8130(_) => Self::default(),
         }
     }
 }
