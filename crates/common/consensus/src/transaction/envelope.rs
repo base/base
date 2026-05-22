@@ -242,7 +242,9 @@ impl From<BaseTxEnvelope> for alloy_rpc_types_eth::TransactionRequest {
             BaseTxEnvelope::Eip7702(tx) => tx.into_parts().0.into(),
             BaseTxEnvelope::Deposit(tx) => tx.into_inner().into(),
             BaseTxEnvelope::Legacy(tx) => tx.into_parts().0.into(),
-            BaseTxEnvelope::Aa8130(_) => Self::default(),
+            BaseTxEnvelope::Aa8130(_) => unimplemented!(
+                "BaseTxEnvelope::Aa8130 cannot be converted to an alloy TransactionRequest; AA transactions have no single sender/recipient/value to project into the legacy request shape"
+            ),
         }
     }
 }

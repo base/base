@@ -66,7 +66,9 @@ impl From<BaseTypedTransaction> for alloy_rpc_types_eth::TransactionRequest {
             BaseTypedTransaction::Eip1559(tx) => tx.into(),
             BaseTypedTransaction::Eip7702(tx) => tx.into(),
             BaseTypedTransaction::Deposit(tx) => tx.into(),
-            BaseTypedTransaction::Aa8130(_) => Self::default(),
+            BaseTypedTransaction::Aa8130(_) => unimplemented!(
+                "BaseTypedTransaction::Aa8130 cannot be converted to an alloy TransactionRequest; AA transactions have no single sender/recipient/value to project into the legacy request shape"
+            ),
         }
     }
 }
