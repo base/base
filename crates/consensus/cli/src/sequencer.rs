@@ -80,6 +80,7 @@ impl SequencerArgs {
             sequencer_recovery_mode: self.recover,
             conductor_rpc_url: self.conductor_rpc.clone(),
             conductor_binary_commit: self.conductor_binary_commit,
+            conductor_rpc_timeout: self.conductor_rpc_timeout,
             l1_conf_delay: self.l1_confs,
         }
     }

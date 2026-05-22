@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, time::Duration};
 
 use async_trait::async_trait;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
@@ -82,8 +82,8 @@ impl Conductor for ConductorClient {
 impl ConductorClient {
     /// Creates a new conductor client using HTTP transport (JSON-RPC for all
     /// methods).
-    pub fn new_http(url: Url) -> Result<Self, ConductorError> {
-        let inner = HttpClientBuilder::default().build(url)?;
+    pub fn new_http(url: Url, timeout: Duration) -> Result<Self, ConductorError> {
+        let inner = HttpClientBuilder::default().request_timeout(timeout).build(url)?;
         Ok(Self { inner, binary: None })
     }
 
@@ -91,9 +91,12 @@ impl ConductorClient {
     /// SSZ-binary endpoint at `<url>/commit-unsafe-payload` and the other RPCs
     /// stay on JSON-RPC. The conductor must be running with the binary
     /// endpoint enabled.
-    pub fn new_http_with_binary_commit(url: Url) -> Result<Self, ConductorError> {
-        let inner = HttpClientBuilder::default().build(url.clone())?;
-        let binary = BinaryCommitClient::new(url)?;
+    pub fn new_http_with_binary_commit(
+        url: Url,
+        timeout: Duration,
+    ) -> Result<Self, ConductorError> {
+        let inner = HttpClientBuilder::default().request_timeout(timeout).build(url.clone())?;
+        let binary = BinaryCommitClient::new(url, timeout)?;
         Ok(Self { inner, binary: Some(binary) })
     }
 }
@@ -108,7 +111,8 @@ impl ConductorClient {
 ///         prefix; for V3+ payloads the parent_beacon_block_root is the first
 ///         32 bytes per `<BaseExecutionPayloadEnvelope as ssz::Encode>`).
 /// ```
-/// Returns `Ok(())` on 200, `ConductorError::Binary` otherwise.
+/// Returns `Ok(())` on 200, `ConductorError::BinaryRejected` on non-success status codes,
+/// or `ConductorError::BinaryRequest` on transport failures.
 #[derive(Debug, Clone)]
 struct BinaryCommitClient {
     http: reqwest::Client,
@@ -116,13 +120,9 @@ struct BinaryCommitClient {
 }
 
 impl BinaryCommitClient {
-    fn new(base_url: Url) -> Result<Self, ConductorError> {
-        let endpoint = base_url
-            .join(COMMIT_UNSAFE_PAYLOAD_PATH)
-            .map_err(|e| ConductorError::Binary(format!("invalid conductor url: {e}")))?;
-        let http = reqwest::Client::builder()
-            .build()
-            .map_err(|e| ConductorError::Binary(format!("build http client: {e}")))?;
+    fn new(base_url: Url, timeout: Duration) -> Result<Self, ConductorError> {
+        let endpoint = base_url.join(COMMIT_UNSAFE_PAYLOAD_PATH)?;
+        let http = reqwest::Client::builder().timeout(timeout).build()?;
         Ok(Self { http, endpoint })
     }
 
@@ -137,14 +137,13 @@ impl BinaryCommitClient {
             .header(reqwest::header::CONTENT_TYPE, SSZ_CONTENT_TYPE)
             .body(body)
             .send()
-            .await
-            .map_err(|e| ConductorError::Binary(format!("send: {e}")))?;
+            .await?;
         if resp.status().is_success() {
             return Ok(());
         }
         let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        Err(ConductorError::Binary(format!("{status}: {}", text.trim())))
+        let body = resp.text().await.unwrap_or_default().trim().to_string();
+        Err(ConductorError::BinaryRejected { status, body })
     }
 }
 
@@ -157,7 +156,19 @@ pub enum ConductorError {
     /// The conductor rejected the payload because this node is not the leader.
     #[error("not the conductor leader")]
     NotLeader,
-    /// An error occurred while talking to the conductor's binary commit endpoint.
-    #[error("binary commit error: {0}")]
-    Binary(String),
+    /// A transport-level error on the binary commit endpoint (connection refused, timeout, TLS,
+    /// client construction failure, etc.).
+    #[error("binary commit request failed")]
+    BinaryRequest(#[from] reqwest::Error),
+    /// The conductor's binary commit endpoint returned a non-success HTTP status.
+    #[error("binary commit rejected: {status}")]
+    BinaryRejected {
+        /// HTTP status code returned by the conductor.
+        status: reqwest::StatusCode,
+        /// Response body, typically an error message from the conductor.
+        body: String,
+    },
+    /// The conductor URL could not be parsed into a valid endpoint.
+    #[error("invalid conductor url: {0}")]
+    InvalidUrl(#[from] url::ParseError),
 }

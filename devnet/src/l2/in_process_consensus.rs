@@ -179,10 +179,7 @@ impl InProcessConsensus {
         if config.mode == NodeMode::Sequencer {
             builder = builder.with_sequencer_config(SequencerConfig {
                 sequencer_stopped: config.sequencer_stopped,
-                sequencer_recovery_mode: false,
-                conductor_rpc_url: None,
-                conductor_binary_commit: false,
-                l1_conf_delay: 0,
+                ..Default::default()
             });
         }
 

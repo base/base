@@ -391,15 +391,16 @@ impl RollupNode {
         // SSZ-binary endpoint; the other RPCs (leader, active, override_leader)
         // continue to use JSON-RPC.
         let binary_commit = self.sequencer_config.conductor_binary_commit;
+        let conductor_timeout = self.sequencer_config.conductor_rpc_timeout;
         let conductor: Option<ConductorClient> = self
             .sequencer_config
             .conductor_rpc_url
             .clone()
             .map(|url| {
                 if binary_commit {
-                    ConductorClient::new_http_with_binary_commit(url)
+                    ConductorClient::new_http_with_binary_commit(url, conductor_timeout)
                 } else {
-                    ConductorClient::new_http(url)
+                    ConductorClient::new_http(url, conductor_timeout)
                 }
             })
             .transpose()
