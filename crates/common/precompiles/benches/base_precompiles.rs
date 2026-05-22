@@ -282,7 +282,7 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let from = black_box(from);
-                token.transfer(from, to, U256::ONE).unwrap();
+                token.transfer(from, to, U256::ONE, false).unwrap();
             });
         });
     });
@@ -303,7 +303,7 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let spender = black_box(spender);
-                token.transfer_from(spender, owner, recipient, U256::ONE).unwrap();
+                token.transfer_from(spender, owner, recipient, U256::ONE, false).unwrap();
             });
         });
     });
@@ -323,7 +323,7 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let from = black_box(from);
-                token.transfer_with_memo(from, to, U256::ONE, memo).unwrap();
+                token.transfer_with_memo(from, to, U256::ONE, memo, false).unwrap();
             });
         });
     });
@@ -345,7 +345,9 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let spender = black_box(spender);
-                token.transfer_from_with_memo(spender, owner, recipient, U256::ONE, memo).unwrap();
+                token
+                    .transfer_from_with_memo(spender, owner, recipient, U256::ONE, memo, false)
+                    .unwrap();
             });
         });
     });

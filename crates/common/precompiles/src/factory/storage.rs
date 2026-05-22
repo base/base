@@ -823,7 +823,7 @@ mod tests {
             let mut token = token_at(token_addr, ctx);
 
             token.mint(alice, alice, U256::from(1_000u64), true).unwrap();
-            token.transfer(alice, bob, U256::from(300u64)).unwrap();
+            token.transfer(alice, bob, U256::from(300u64), false).unwrap();
             token.mint(alice, alice, U256::from(200u64), true).unwrap();
 
             assert_eq!(token.accounting().balance_of(alice).unwrap(), U256::from(900u64));

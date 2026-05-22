@@ -11,15 +11,26 @@ use crate::{B20PolicyType, IB20, Token, TokenAccounting};
 /// Implement this trait with an empty body to opt in.
 pub trait Transferable: Token {
     /// Moves `amount` tokens from `from` to `to`. Emits `Transfer`.
-    fn transfer(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::TRANSFER)?;
-        B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferSender, from)?;
-        B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferReceiver, to)?;
+    ///
+    /// When `privileged` is true (factory bootstrap window) the pause and
+    /// policy checks are skipped; balance invariants are always enforced.
+    fn transfer(
+        &mut self,
+        from: Address,
+        to: Address,
+        amount: U256,
+        privileged: bool,
+    ) -> Result<()> {
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        if !privileged {
+            B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::TRANSFER)?;
+            B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferSender, from)?;
+            B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferReceiver, to)?;
         }
         let from_balance = self.accounting().balance_of(from)?;
         if from_balance < amount {
@@ -29,43 +40,48 @@ pub trait Transferable: Token {
                 needed: amount,
             }));
         }
-        self.accounting_mut().set_balance(from, from_balance - amount)?;
         let to_balance = self.accounting().balance_of(to)?;
         let new_to_balance =
             to_balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        let new_from_balance =
+            from_balance.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.accounting_mut().set_balance(from, new_from_balance)?;
         self.accounting_mut().set_balance(to, new_to_balance)?;
         self.accounting_mut().emit_event(IB20::Transfer { from, to, amount }.encode_log_data())
     }
 
     /// Moves `amount` tokens from `from` to `to` using `spender`'s allowance.
     /// Emits `Transfer`. Skips allowance decrement when allowance is `U256::MAX`.
+    ///
+    /// When `privileged` is true the executor policy check is skipped; the
+    /// inner `transfer` call also receives `privileged`.
     fn transfer_from(
         &mut self,
         spender: Address,
         from: Address,
         to: Address,
         amount: U256,
+        privileged: bool,
     ) -> Result<()> {
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
-        if spender != from {
+        if !privileged && spender != from {
             B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferExecutor, spender)?;
         }
         let allowance = self.accounting().allowance(from, spender)?;
-        if allowance != U256::MAX {
-            if allowance < amount {
-                return Err(BasePrecompileError::revert(IB20::InsufficientAllowance {
-                    spender,
-                    allowance,
-                    needed: amount,
-                }));
-            }
-            self.transfer(from, to, amount)?;
-            self.accounting_mut().set_allowance(from, spender, allowance - amount)
-        } else {
-            self.transfer(from, to, amount)
+        if allowance == U256::MAX {
+            return self.transfer(from, to, amount, privileged);
         }
+        if allowance < amount {
+            return Err(BasePrecompileError::revert(IB20::InsufficientAllowance {
+                spender,
+                allowance,
+                needed: amount,
+            }));
+        }
+        self.transfer(from, to, amount, privileged)?;
+        self.accounting_mut().set_allowance(from, spender, allowance - amount)
     }
 
     /// Sets `spender`'s allowance from `owner` to `amount`. Emits `Approval`.
@@ -88,8 +104,9 @@ pub trait Transferable: Token {
         to: Address,
         amount: U256,
         memo: B256,
+        privileged: bool,
     ) -> Result<()> {
-        self.transfer(from, to, amount)?;
+        self.transfer(from, to, amount, privileged)?;
         self.accounting_mut().emit_event(IB20::Memo { memo }.encode_log_data())
     }
 
@@ -101,8 +118,9 @@ pub trait Transferable: Token {
         to: Address,
         amount: U256,
         memo: B256,
+        privileged: bool,
     ) -> Result<()> {
-        self.transfer_from(spender, from, to, amount)?;
+        self.transfer_from(spender, from, to, amount, privileged)?;
         self.accounting_mut().emit_event(IB20::Memo { memo }.encode_log_data())
     }
 }
@@ -110,6 +128,7 @@ pub trait Transferable: Token {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256};
+    use alloy_sol_types::SolEvent;
     use base_precompile_storage::BasePrecompileError;
 
     use super::Transferable;
@@ -143,7 +162,7 @@ mod tests {
     fn transfer_moves_balances_and_emits_event() {
         let mut token = token_with_balance(U256::from(100u64));
 
-        token.transfer(ALICE, BOB, U256::from(40u64)).unwrap();
+        token.transfer(ALICE, BOB, U256::from(40u64), false).unwrap();
 
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
         assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
@@ -155,7 +174,7 @@ mod tests {
         let mut token = make_token();
 
         assert_eq!(
-            token.transfer(Address::ZERO, BOB, U256::ONE).unwrap_err(),
+            token.transfer(Address::ZERO, BOB, U256::ONE, false).unwrap_err(),
             BasePrecompileError::revert(IB20::InvalidSender { sender: Address::ZERO })
         );
     }
@@ -165,7 +184,7 @@ mod tests {
         let mut token = token_with_balance(U256::from(100u64));
 
         assert_eq!(
-            token.transfer(ALICE, Address::ZERO, U256::ONE).unwrap_err(),
+            token.transfer(ALICE, Address::ZERO, U256::ONE, false).unwrap_err(),
             BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
         );
     }
@@ -175,7 +194,7 @@ mod tests {
         let mut token = token_with_balance(U256::from(5u64));
 
         assert_eq!(
-            token.transfer(ALICE, BOB, U256::from(10u64)).unwrap_err(),
+            token.transfer(ALICE, BOB, U256::from(10u64), false).unwrap_err(),
             BasePrecompileError::revert(IB20::InsufficientBalance {
                 sender: ALICE,
                 balance: U256::from(5u64),
@@ -219,7 +238,7 @@ mod tests {
         let mut token = token_with_balance(U256::from(100u64));
         token.accounting_mut().allowances.insert((ALICE, SPENDER), U256::from(30u64));
 
-        token.transfer_from(SPENDER, ALICE, BOB, U256::from(20u64)).unwrap();
+        token.transfer_from(SPENDER, ALICE, BOB, U256::from(20u64), false).unwrap();
 
         assert_eq!(token.accounting().allowance(ALICE, SPENDER).unwrap(), U256::from(10u64));
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(80u64));
@@ -231,7 +250,7 @@ mod tests {
         let mut token = token_with_balance(U256::from(100u64));
         token.accounting_mut().allowances.insert((ALICE, SPENDER), U256::MAX);
 
-        token.transfer_from(SPENDER, ALICE, BOB, U256::from(20u64)).unwrap();
+        token.transfer_from(SPENDER, ALICE, BOB, U256::from(20u64), false).unwrap();
 
         assert_eq!(token.accounting().allowance(ALICE, SPENDER).unwrap(), U256::MAX);
         assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(20u64));
@@ -243,7 +262,7 @@ mod tests {
         token.accounting_mut().allowances.insert((ALICE, SPENDER), U256::from(5u64));
 
         assert_eq!(
-            token.transfer_from(SPENDER, ALICE, BOB, U256::from(10u64)).unwrap_err(),
+            token.transfer_from(SPENDER, ALICE, BOB, U256::from(10u64), false).unwrap_err(),
             BasePrecompileError::revert(IB20::InsufficientAllowance {
                 spender: SPENDER,
                 allowance: U256::from(5u64),
@@ -256,7 +275,9 @@ mod tests {
     fn transfer_with_memo_emits_transfer_and_memo() {
         let mut token = token_with_balance(U256::from(100u64));
 
-        token.transfer_with_memo(ALICE, BOB, U256::from(10u64), B256::repeat_byte(0x42)).unwrap();
+        token
+            .transfer_with_memo(ALICE, BOB, U256::from(10u64), B256::repeat_byte(0x42), false)
+            .unwrap();
 
         assert_eq!(token.accounting().events.len(), 2);
     }
@@ -269,7 +290,7 @@ mod tests {
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
-            token.transfer(ALICE, BOB, U256::ONE).unwrap_err(),
+            token.transfer(ALICE, BOB, U256::ONE, false).unwrap_err(),
             BasePrecompileError::revert(IB20::ContractPaused {
                 feature: IB20::PausableFeature::TRANSFER,
             })
@@ -286,7 +307,7 @@ mod tests {
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
-            token.transfer(ALICE, BOB, U256::ONE).unwrap_err(),
+            token.transfer(ALICE, BOB, U256::ONE, false).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
                 policyType: B20PolicyType::TransferSender.id(),
                 policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
@@ -304,7 +325,7 @@ mod tests {
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
-            token.transfer(ALICE, BOB, U256::ONE).unwrap_err(),
+            token.transfer(ALICE, BOB, U256::ONE, false).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
                 policyType: B20PolicyType::TransferReceiver.id(),
                 policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
@@ -323,11 +344,209 @@ mod tests {
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
-            token.transfer_from(SPENDER, ALICE, BOB, U256::ONE).unwrap_err(),
+            token.transfer_from(SPENDER, ALICE, BOB, U256::ONE, false).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
                 policyType: B20PolicyType::TransferExecutor.id(),
                 policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
             })
         );
+    }
+
+    #[test]
+    fn transfer_privileged_skips_pause_check() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::TRANSFER);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        token.transfer(ALICE, BOB, U256::ONE, true).unwrap();
+
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(9u64));
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::ONE);
+    }
+
+    #[test]
+    fn transfer_privileged_skips_sender_policy() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        token.transfer(ALICE, BOB, U256::ONE, true).unwrap();
+
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::ONE);
+    }
+
+    #[test]
+    fn transfer_privileged_skips_receiver_policy() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferReceiver.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        token.transfer(ALICE, BOB, U256::ONE, true).unwrap();
+
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::ONE);
+    }
+
+    #[test]
+    fn transfer_from_privileged_skips_executor_policy() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        accounting.allowances.insert((ALICE, SPENDER), U256::from(10u64));
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferExecutor.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        token.transfer_from(SPENDER, ALICE, BOB, U256::ONE, true).unwrap();
+
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::ONE);
+    }
+
+    // ---- Balance checks ----
+
+    #[test]
+    fn transfer_exact_balance_succeeds_and_drains_sender() {
+        let mut token = token_with_balance(U256::from(50u64));
+
+        token.transfer(ALICE, BOB, U256::from(50u64), false).unwrap();
+
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::ZERO);
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+    }
+
+    #[test]
+    fn transfer_from_reverts_when_sender_has_insufficient_balance() {
+        let mut token = make_token(); // ALICE has zero balance
+        token.accounting_mut().allowances.insert((ALICE, SPENDER), U256::MAX);
+
+        assert_eq!(
+            token.transfer_from(SPENDER, ALICE, BOB, U256::ONE, false).unwrap_err(),
+            BasePrecompileError::revert(IB20::InsufficientBalance {
+                sender: ALICE,
+                balance: U256::ZERO,
+                needed: U256::ONE,
+            })
+        );
+    }
+
+    // ---- Overflow ----
+
+    #[test]
+    fn transfer_reverts_on_receiver_balance_overflow() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::ONE);
+        accounting.balances.insert(BOB, U256::MAX);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        token.transfer(ALICE, BOB, U256::ONE, true).unwrap_err();
+
+        // Sender balance must be unchanged on overflow revert.
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::ONE);
+    }
+
+    // ---- Policy guards (external policy registry path) ----
+
+    #[test]
+    fn transfer_allowed_by_external_sender_policy_succeeds() {
+        const POLICY_ID: u64 = 7;
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), POLICY_ID);
+        let mut policy = InMemoryPolicy::new();
+        policy.allow(POLICY_ID, ALICE);
+        let mut token = TestToken::with_storage_and_policy(accounting, policy);
+
+        token.transfer(ALICE, BOB, U256::ONE, false).unwrap();
+
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::ONE);
+    }
+
+    #[test]
+    fn transfer_reverts_when_denied_by_external_sender_policy() {
+        const POLICY_ID: u64 = 7;
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), POLICY_ID);
+        // ALICE is not in the allow-list so the external policy denies her.
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(
+            token.transfer(ALICE, BOB, U256::ONE, false).unwrap_err(),
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyType: B20PolicyType::TransferSender.id(),
+                policyId: POLICY_ID,
+            })
+        );
+    }
+
+    #[test]
+    fn transfer_allowed_by_external_receiver_policy_succeeds() {
+        const POLICY_ID: u64 = 8;
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        accounting.policy_ids.insert(B20PolicyType::TransferReceiver.id(), POLICY_ID);
+        let mut policy = InMemoryPolicy::new();
+        policy.allow(POLICY_ID, BOB);
+        let mut token = TestToken::with_storage_and_policy(accounting, policy);
+
+        token.transfer(ALICE, BOB, U256::ONE, false).unwrap();
+
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::ONE);
+    }
+
+    // ---- Event content ----
+
+    #[test]
+    fn transfer_emits_transfer_event_with_correct_fields() {
+        let mut token = token_with_balance(U256::from(100u64));
+
+        token.transfer(ALICE, BOB, U256::from(40u64), false).unwrap();
+
+        assert_eq!(token.accounting().events.len(), 1);
+        let decoded = IB20::Transfer::decode_log_data(&token.accounting().events[0]).unwrap();
+        assert_eq!(decoded.from, ALICE);
+        assert_eq!(decoded.to, BOB);
+        assert_eq!(decoded.amount, U256::from(40u64));
+    }
+
+    #[test]
+    fn transfer_from_emits_transfer_event_with_correct_fields() {
+        let mut token = token_with_balance(U256::from(100u64));
+        token.accounting_mut().allowances.insert((ALICE, SPENDER), U256::MAX);
+
+        token.transfer_from(SPENDER, ALICE, BOB, U256::from(30u64), false).unwrap();
+
+        assert_eq!(token.accounting().events.len(), 1);
+        let decoded = IB20::Transfer::decode_log_data(&token.accounting().events[0]).unwrap();
+        assert_eq!(decoded.from, ALICE);
+        assert_eq!(decoded.to, BOB);
+        assert_eq!(decoded.amount, U256::from(30u64));
+    }
+
+    #[test]
+    fn transfer_from_with_memo_emits_transfer_then_memo() {
+        let mut token = token_with_balance(U256::from(100u64));
+        token.accounting_mut().allowances.insert((ALICE, SPENDER), U256::MAX);
+
+        token
+            .transfer_from_with_memo(
+                SPENDER,
+                ALICE,
+                BOB,
+                U256::from(10u64),
+                B256::repeat_byte(0x42),
+                false,
+            )
+            .unwrap();
+
+        assert_eq!(token.accounting().events.len(), 2);
+        // First event must be the Transfer.
+        IB20::Transfer::decode_log_data(&token.accounting().events[0]).unwrap();
     }
 }

@@ -98,12 +98,12 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             // --- ERC-20 mutating ---
             C::transfer(c) => {
                 let caller = ctx.caller();
-                self.transfer(caller, c.to, c.amount)?;
+                self.transfer(caller, c.to, c.amount, privileged)?;
                 true.abi_encode().into()
             }
             C::transferFrom(c) => {
                 let caller = ctx.caller();
-                self.transfer_from(caller, c.from, c.to, c.amount)?;
+                self.transfer_from(caller, c.from, c.to, c.amount, privileged)?;
                 true.abi_encode().into()
             }
             C::approve(c) => {
@@ -113,12 +113,12 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             }
             C::transferWithMemo(c) => {
                 let caller = ctx.caller();
-                self.transfer_with_memo(caller, c.to, c.amount, c.memo)?;
+                self.transfer_with_memo(caller, c.to, c.amount, c.memo, privileged)?;
                 true.abi_encode().into()
             }
             C::transferFromWithMemo(c) => {
                 let caller = ctx.caller();
-                self.transfer_from_with_memo(caller, c.from, c.to, c.amount, c.memo)?;
+                self.transfer_from_with_memo(caller, c.from, c.to, c.amount, c.memo, privileged)?;
                 true.abi_encode().into()
             }
 
