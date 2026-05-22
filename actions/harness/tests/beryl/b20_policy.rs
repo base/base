@@ -221,7 +221,7 @@ impl B20PolicyScenario {
 
         scenario.build_block(vec![]).await;
 
-        let act_factory = scenario.env.activate_feature_tx(BerylTestEnv::token_factory_feature());
+        let act_factory = scenario.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let act_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_token_feature());
         let act_policy = scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
         let block = scenario.build_block(vec![act_factory, act_b20, act_policy]).await;

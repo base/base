@@ -8,7 +8,7 @@ use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_precompiles::{
-    B20PolicyType, IB20, IPolicyRegistry, ITokenFactory, PolicyRegistryStorage, TokenFactoryStorage,
+    B20FactoryStorage, B20PolicyType, IB20, IB20Factory, IPolicyRegistry, PolicyRegistryStorage,
 };
 
 use crate::env::BerylTestEnv;
@@ -255,7 +255,7 @@ impl PolicyTransferScenario {
 
         // Activate all three features in one block.
         let activate_factory =
-            scenario.env.activate_feature_tx(BerylTestEnv::token_factory_feature());
+            scenario.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_token_feature());
         let activate_registry =
             scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
@@ -308,7 +308,7 @@ impl PolicyTransferScenario {
         scenario.push_block(beryl_boundary);
 
         let activate_factory =
-            scenario.env.activate_feature_tx(BerylTestEnv::token_factory_feature());
+            scenario.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_token_feature());
         let activate_registry =
             scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
@@ -345,7 +345,7 @@ impl PolicyTransferScenario {
         scenario.push_block(beryl_boundary);
 
         let activate_factory =
-            scenario.env.activate_feature_tx(BerylTestEnv::token_factory_feature());
+            scenario.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_token_feature());
         let block =
             scenario.build_block_with_transactions(vec![activate_factory, activate_b20]).await;
@@ -388,10 +388,10 @@ impl PolicyTransferScenario {
         ));
 
         self.env.create_tx(
-            TxKind::Call(TokenFactoryStorage::ADDRESS),
+            TxKind::Call(B20FactoryStorage::ADDRESS),
             Bytes::from(
-                ITokenFactory::createTokenCall {
-                    variant: ITokenFactory::TokenVariant::DEFAULT,
+                IB20Factory::createB20Call {
+                    variant: IB20Factory::B20Variant::DEFAULT,
                     salt: BerylTestEnv::b20_token_salt(),
                     params: Self::token_params().abi_encode().into(),
                     initCalls: init_calls,
@@ -435,9 +435,9 @@ impl PolicyTransferScenario {
         self.env.derive_blocks(self.blocks, expected_safe_head).await;
     }
 
-    fn token_params() -> ITokenFactory::B20CreateParams {
-        ITokenFactory::B20CreateParams {
-            version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
+    fn token_params() -> IB20Factory::B20CreateParams {
+        IB20Factory::B20CreateParams {
+            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
             name: "Policy B20".to_string(),
             symbol: "PB20".to_string(),
             initialAdmin: BerylTestEnv::alice(),
