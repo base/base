@@ -1293,7 +1293,11 @@ where
         } else if total_count == 0 {
             true
         } else {
-            reachable_count.saturating_mul(2) > total_count
+            // Plain `* 2` (rather than `saturating_mul`) — `reachable_count`
+            // is bounded above by `total_count = instances.len()`, so the
+            // doubling can only overflow on a list with `usize::MAX / 2`
+            // entries, which is physically impossible.
+            reachable_count * 2 > total_count
         };
 
         Ok(DiscoveryResolution {
