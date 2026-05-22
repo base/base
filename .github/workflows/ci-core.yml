@@ -110,6 +110,7 @@ jobs:
   succinct-elf-manifest:
     name: SP1 ELF Manifest
     runs-on: ubuntu-latest
+    if: false # Temporarily disabled while SP1 dependencies are in flux.
     permissions:
       contents: read
       issues: write
@@ -239,6 +240,7 @@ jobs:
     runs-on:
       group: BasePerfRunnerGroup
     needs: succinct-elf-manifest
+    if: ${{ always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     env:
       BASE_REF: ${{ inputs.base_ref }}
     steps:
@@ -299,6 +301,7 @@ jobs:
     runs-on:
       group: BasePerfRunnerGroup
     needs: succinct-elf-manifest
+    if: ${{ always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     env:
       BASE_REF: ${{ inputs.base_ref }}
     steps:
@@ -413,7 +416,7 @@ jobs:
 
   devnet-tests:
     name: Devnet Tests
-    if: inputs.run_devnet
+    if: ${{ always() && inputs.run_devnet && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     runs-on:
       group: BasePerfRunnerGroup
     needs: succinct-elf-manifest
