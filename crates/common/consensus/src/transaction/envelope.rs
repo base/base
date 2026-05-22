@@ -162,6 +162,10 @@ impl From<Signed<BaseTypedTransaction>> for BaseTxEnvelope {
                     tx.sender.is_none(),
                     "configured-owner EIP-8130 transactions must not be wrapped through the ECDSA Signed<BaseTypedTransaction> path; route them via BaseTxEnvelope::Aa8130 directly with the appropriate sender_auth",
                 );
+                debug_assert!(
+                    tx.payer.is_none(),
+                    "sponsored EIP-8130 transactions must not be wrapped through the ECDSA Signed<BaseTypedTransaction> path; the payer_auth would be silently dropped",
+                );
                 Self::Aa8130(AaSigned::new(tx, sig.as_bytes().into(), Bytes::new()))
             }
         }
