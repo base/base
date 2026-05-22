@@ -2,7 +2,12 @@ use alloc::string::{String, ToString};
 use core::result;
 
 use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::{Panic, PanicKind, SolError};
+use alloy_sol_types::{Panic, PanicKind, SolError, sol};
+
+sol! {
+    /// Precompile cannot be executed via delegatecall or callcode.
+    error DelegateCallNotAllowed();
+}
 use revm::{
     context::journaled_state::JournalLoadError,
     precompile::{PrecompileError, PrecompileOutput, PrecompileResult},
@@ -25,9 +30,25 @@ pub enum BasePrecompileError {
     #[error("Unknown function selector: {0:?}")]
     UnknownFunctionSelector([u8; 4]),
 
+    /// The calldata selector is known, but its arguments failed ABI decoding.
+    #[error("ABI decode failed for selector {selector:?}: {error}")]
+    AbiDecodeFailed {
+        /// The matched calldata selector.
+        selector: [u8; 4],
+        /// The ABI decoder error.
+        error: String,
+    },
+
     /// Storage slot arithmetic overflow.
     #[error("Slot overflow")]
     SlotOverflow,
+
+    /// State mutation attempted inside a STATICCALL context.
+    ///
+    /// Reverts the current call frame without consuming all gas, matching the EVM's
+    /// `StateChangeDuringStaticCall` behaviour for SSTORE/LOG in static contexts.
+    #[error("State mutation in static call")]
+    StaticCallViolation,
 
     /// ABI-encoded revert from a contract-defined error (e.g. `InvalidSender`).
     #[error("Revert")]
@@ -79,6 +100,9 @@ impl BasePrecompileError {
     }
 
     /// ABI-encodes this error and wraps it as a [`PrecompileResult`] (revert or fatal error).
+    ///
+    /// Internal dispatch diagnostics use compact, non-ABI revert data: unknown selectors return the
+    /// raw selector bytes, and decode failures return `selector || utf8_error_string`.
     pub fn into_precompile_result(self, gas: u64) -> PrecompileResult {
         let bytes: Bytes = match self {
             Self::Revert(bytes) => bytes,
@@ -93,7 +117,13 @@ impl BasePrecompileError {
             Self::Fatal(msg) => {
                 return Err(PrecompileError::Fatal(msg));
             }
+            Self::StaticCallViolation => Bytes::new(),
             Self::UnknownFunctionSelector(sel) => sel.to_vec().into(),
+            Self::AbiDecodeFailed { selector, error } => {
+                let mut bytes = selector.to_vec();
+                bytes.extend_from_slice(error.as_bytes());
+                bytes.into()
+            }
         };
         // revm 32.x: revert is Ok with reverted=true
         Ok(PrecompileOutput::new_reverted(gas, bytes))
@@ -120,5 +150,22 @@ impl<T> IntoPrecompileResult<T> for Result<T> {
             Ok(res) => Ok(PrecompileOutput::new(gas, encode_ok(res))),
             Err(err) => err.into_precompile_result(gas),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_sol_types::SolError;
+
+    use super::*;
+
+    #[test]
+    fn delegate_call_not_allowed_encodes_to_typed_revert() {
+        let expected: Bytes = DelegateCallNotAllowed {}.abi_encode().into();
+        let result =
+            BasePrecompileError::revert(DelegateCallNotAllowed {}).into_precompile_result(0);
+        let output = result.unwrap();
+        assert!(output.reverted);
+        assert_eq!(output.bytes, expected);
     }
 }

@@ -17,7 +17,10 @@ use alloy_primitives::{Address, Bytes, U256, keccak256};
 
 use crate::{
     error::{BasePrecompileError, Result},
-    provider::{Handler, Layout, LayoutCtx, Storable, StorableType, StorageOps},
+    provider::{
+        Handler, Layout, LayoutCtx, Storable, StorableType, StorageKey, StorageOps,
+        sealed::OnlyPrimitives,
+    },
     types::Slot,
 };
 
@@ -153,6 +156,23 @@ impl Storable for String {
     fn delete<S: StorageOps>(storage: &mut S, slot: U256, ctx: LayoutCtx) -> Result<()> {
         debug_assert_eq!(ctx, LayoutCtx::FULL, "String cannot be packed");
         delete_bytes_like(storage, slot)
+    }
+}
+
+impl OnlyPrimitives for String {}
+
+impl StorageKey for String {
+    #[inline]
+    fn as_storage_bytes(&self) -> impl AsRef<[u8]> {
+        self.as_bytes()
+    }
+
+    #[inline]
+    fn mapping_slot(&self, slot: U256) -> U256 {
+        let mut buf = Vec::with_capacity(self.len() + 32);
+        buf.extend_from_slice(self.as_bytes());
+        buf.extend_from_slice(&slot.to_be_bytes::<32>());
+        U256::from_be_bytes(keccak256(buf).0)
     }
 }
 

@@ -23,7 +23,10 @@ use reth_trie_common::{BranchNodeCompact, Nibbles};
 
 use crate::{
     BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,
-    api::{BaseProofsInitialStateStore, InitialStateAnchor, OperationDurations, WriteCounts},
+    api::{
+        BaseProofsBatchStore, BaseProofsInitialStateStore, InitialStateAnchor, OperationDurations,
+        WriteCounts,
+    },
     cursor,
 };
 
@@ -479,6 +482,24 @@ where
     ) -> BaseProofsStorageResult<()> {
         BlockMetrics::earliest_number().set(block_number as f64);
         self.storage.set_earliest_block_number(block_number, hash)
+    }
+}
+
+impl<S> BaseProofsBatchStore for BaseProofsStorageWithMetrics<S>
+where
+    S: BaseProofsBatchStore + 'static,
+{
+    type BatchSession<'a>
+        = S::BatchSession<'a>
+    where
+        Self: 'a;
+
+    #[inline]
+    fn with_batch_session<R, F>(&self, f: F) -> BaseProofsStorageResult<R>
+    where
+        F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>,
+    {
+        self.storage.with_batch_session(f)
     }
 }
 

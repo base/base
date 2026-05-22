@@ -17,6 +17,7 @@ workspace = true
 alloy-evm.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
+
 # base
 base-common-chains.workspace = true
 base-precompile-macros.workspace = true
@@ -25,10 +26,14 @@ base-precompile-storage.workspace = true
 # revm
 revm.workspace = true
 
+# misc
+iso_currency = { workspace = true, optional = true }
+
 [dev-dependencies]
 rstest.workspace = true
 criterion.workspace = true
 base-precompile-storage = { workspace = true, features = ["test-utils"] }
+k256 = { workspace = true, features = ["ecdsa"] }
 
 [[bench]]
 name = "base_precompiles"
@@ -39,9 +44,11 @@ required-features = ["test-utils"]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
 std = [
 	"alloy-evm/std",
+	"alloy-primitives/std",
 	"alloy-sol-types/std",
 	"base-common-chains/std",
 	"base-precompile-storage/std",
+	"dep:iso_currency",
 	"revm/std",
 ]
 bn = [ "revm/bn" ]

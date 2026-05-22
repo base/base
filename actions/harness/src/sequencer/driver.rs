@@ -6,7 +6,7 @@ use std::{
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::StatefulAttributesBuilder;
 use base_consensus_node::{
@@ -115,6 +115,11 @@ impl L2Sequencer {
     /// Check whether an account has non-empty code deployed via the engine client.
     pub fn has_code(&self, address: Address) -> bool {
         self.engine_client.has_code(address)
+    }
+
+    /// Return receipts for an executed block number.
+    pub fn receipts_at(&self, block_number: u64) -> Option<Vec<BaseReceipt>> {
+        self.engine_client.receipts_at(block_number)
     }
 
     /// Pin the L1 origin to the given block, bypassing automatic epoch advance.

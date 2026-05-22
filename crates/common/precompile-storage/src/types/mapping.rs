@@ -152,6 +152,16 @@ mod tests {
     }
 
     #[test]
+    fn test_string_mapping_slot_matches_solidity_packed_encoding() {
+        let slot = U256::from(123u64);
+        let key = "ISIN".to_owned();
+        let mut buf = key.as_bytes().to_vec();
+        buf.extend_from_slice(&slot.to_be_bytes::<32>());
+
+        assert_eq!(key.mapping_slot(slot), U256::from_be_bytes(keccak256(buf).0));
+    }
+
+    #[test]
     fn test_mapping_basic_properties() {
         let address = Address::from([0x10; 20]);
         let base_slot = U256::from(1u64);

@@ -24,6 +24,10 @@ pub use vec::VecHandler;
 ///
 /// Enables `Index` implementations on handlers by storing child handlers and
 /// returning references that remain valid across insertions.
+///
+/// INVARIANT: Once an entry is pushed, it must never be removed or replaced.
+/// `get_or_insert` returns references into heap-allocated handlers that would
+/// dangle if entries were evicted.
 #[derive(Debug, Default)]
 pub struct HandlerCache<K, H> {
     inner: RefCell<BTreeMap<K, Box<H>>>,

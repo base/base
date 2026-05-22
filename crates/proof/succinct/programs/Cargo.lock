@@ -868,7 +868,11 @@ name = "base-common-precompiles"
 version = "0.0.0"
 dependencies = [
  "alloy-evm",
+ "alloy-primitives",
+ "alloy-sol-types",
  "base-common-chains",
+ "base-precompile-macros",
+ "base-precompile-storage",
  "revm",
 ]
 
@@ -921,6 +925,29 @@ dependencies = [
 [[package]]
 name = "base-metrics"
 version = "0.0.0"
+
+[[package]]
+name = "base-precompile-macros"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "base-precompile-storage"
+version = "0.0.0"
+dependencies = [
+ "alloy-evm",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "base-precompile-macros",
+ "derive_more",
+ "revm",
+ "thiserror",
+]
 
 [[package]]
 name = "base-proof"

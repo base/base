@@ -27,9 +27,12 @@ use crate::{
     BaseProofsStorageError,
     BaseProofsStorageError::NoBlocksFound,
     BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,
-    api::{BaseProofsInitialStateStore, InitialStateAnchor, InitialStateStatus, WriteCounts},
+    api::{
+        BaseProofsBatchStore, BaseProofsInitialStateStore, InitialStateAnchor, InitialStateStatus,
+        WriteCounts,
+    },
     db::{
-        MdbxAccountCursor, MdbxStorageCursor, MdbxTrieCursor,
+        MdbxAccountCursor, MdbxBatchSession, MdbxStorageCursor, MdbxTrieCursor,
         cursor::Dup,
         models::{
             AccountTrieHistory, BlockChangeSet, ChangeSet, HashedAccountHistory,
@@ -77,7 +80,7 @@ impl MdbxProofsStorage {
         Ok(Self { env })
     }
 
-    fn inner_get_latest_block_number_hash(
+    pub(crate) fn inner_get_latest_block_number_hash(
         &self,
         tx: &impl DbTx,
     ) -> BaseProofsStorageResult<Option<(u64, B256)>> {
@@ -86,6 +89,13 @@ impl MdbxProofsStorage {
             return Ok(block);
         }
 
+        self.inner_get_block_number_hash(tx, ProofWindowKey::EarliestBlock)
+    }
+
+    pub(crate) fn inner_get_earliest_block_number_hash(
+        &self,
+        tx: &impl DbTx,
+    ) -> BaseProofsStorageResult<Option<(u64, B256)>> {
         self.inner_get_block_number_hash(tx, ProofWindowKey::EarliestBlock)
     }
 
@@ -270,45 +280,47 @@ impl MdbxProofsStorage {
                 return Ok(None);
             }
 
-            // 1. Accumulate latest block per key using HashMap for O(1) deduplication
-            // This is memory-efficient for high-churn scenarios (many updates to same keys).
-            let mut acc_candidates: HashMap<StoredNibbles, u64> = HashMap::default();
-            let mut storage_candidates: HashMap<StorageTrieKey, u64> = HashMap::default();
-            let mut hashed_acc_candidates: HashMap<B256, u64> = HashMap::default();
-            let mut hashed_storage_candidates: HashMap<HashedStorageKey, u64> = HashMap::default();
+            // Walk the change set in REVERSE so the first time we see a key, its block_number
+            // is by definition the latest version in [earliest+1, target_block] — the only
+            // one that must survive. This lets us use `or_insert` instead of an
+            // `and_modify(max).or_insert` per key, halving the per-insert work.
+            //
+            // HashMaps are pre-sized to bound rehash overhead. The chosen capacity is a rough
+            // average of unique keys per block on Base mainnet; the maps grow if exceeded.
+            const PER_BLOCK_CAPACITY_HINT: usize = 4096;
+            let blocks_in_range =
+                target_block.saturating_sub(earliest).try_into().unwrap_or(usize::MAX);
+            let cap = blocks_in_range.saturating_mul(PER_BLOCK_CAPACITY_HINT).min(1 << 20);
 
-            let range = (earliest + 1)..=target_block;
+            let mut acc_candidates: HashMap<StoredNibbles, u64> =
+                HashMap::with_capacity_and_hasher(cap, Default::default());
+            let mut storage_candidates: HashMap<StorageTrieKey, u64> =
+                HashMap::with_capacity_and_hasher(cap, Default::default());
+            let mut hashed_acc_candidates: HashMap<B256, u64> =
+                HashMap::with_capacity_and_hasher(cap, Default::default());
+            let mut hashed_storage_candidates: HashMap<HashedStorageKey, u64> =
+                HashMap::with_capacity_and_hasher(cap, Default::default());
+
             let mut cs_cursor = tx.cursor_read::<BlockChangeSet>()?;
-            let mut walker = cs_cursor.walk_range(range)?;
-
+            let mut walker = cs_cursor.walk_back(Some(target_block))?;
             while let Some(Ok((block_number, cs))) = walker.next() {
+                if block_number <= earliest {
+                    break;
+                }
                 for k in cs.account_trie_keys {
-                    acc_candidates
-                        .entry(k)
-                        .and_modify(|curr| *curr = (*curr).max(block_number))
-                        .or_insert(block_number);
+                    acc_candidates.entry(k).or_insert(block_number);
                 }
                 for k in cs.storage_trie_keys {
-                    storage_candidates
-                        .entry(k)
-                        .and_modify(|curr| *curr = (*curr).max(block_number))
-                        .or_insert(block_number);
+                    storage_candidates.entry(k).or_insert(block_number);
                 }
                 for k in cs.hashed_account_keys {
-                    hashed_acc_candidates
-                        .entry(k)
-                        .and_modify(|curr| *curr = (*curr).max(block_number))
-                        .or_insert(block_number);
+                    hashed_acc_candidates.entry(k).or_insert(block_number);
                 }
                 for k in cs.hashed_storage_keys {
-                    hashed_storage_candidates
-                        .entry(k)
-                        .and_modify(|curr| *curr = (*curr).max(block_number))
-                        .or_insert(block_number);
+                    hashed_storage_candidates.entry(k).or_insert(block_number);
                 }
             }
 
-            // 2. Convert map to sorted survivors list for efficient sequential db write
             Ok(Some(PrunePlan {
                 earliest_block: earliest,
                 acc_survivors: Self::flatten_and_sort(acc_candidates),
@@ -346,39 +358,31 @@ impl MdbxProofsStorage {
         let mut deleted_count = 0;
         let mut cur = tx.cursor_dup_write::<T>()?;
         for (key, survivor_block) in cutoff_items {
-            // Seek to the start of history for this key (Block 0)
-            if let Some(mut entry) = cur.seek_by_key_subkey(key.clone(), 0)? {
-                loop {
-                    if entry.block_number >= survivor_block {
-                        // Reached the survivor version (or newer). Stop deleting for this key.
-
-                        // If the survivor is a tombstone (None), delete it too.
-                        // Since we just deleted all older history, a tombstone at the start of
-                        // history is redundant (it implies "does not
-                        // exist").
-                        if entry.block_number == survivor_block && entry.value.0.is_none() {
-                            cur.delete_current()?;
-                            deleted_count += 1;
-                        }
-
-                        break;
+            let Some(mut entry) = cur.seek_by_key_subkey(key, 0)? else { continue };
+            loop {
+                if entry.block_number >= survivor_block {
+                    // Reached the survivor version (or newer). Stop deleting for this key.
+                    // If the survivor is a tombstone (None), delete it too — with all older
+                    // history already gone, a tombstone at the new earliest is redundant
+                    // (it implies "does not exist").
+                    if entry.block_number == survivor_block && entry.value.0.is_none() {
+                        cur.delete_current()?;
+                        deleted_count += 1;
                     }
+                    break;
+                }
 
-                    // Entry is strictly older than survivor. Delete it.
-                    cur.delete_current()?;
-                    deleted_count += 1;
+                // Entry is strictly older than survivor. Delete it.
+                cur.delete_current()?;
+                deleted_count += 1;
 
-                    // MDBX delete_current() automatically advances the cursor to the next item.
-                    // We check if the next item is still the same key.
-                    match cur.current() {
-                        Ok(Some((k, v))) => {
-                            if k != key {
-                                break; // Moved past the key
-                            }
-                            entry = v;
-                        }
-                        _ => break, // End of table or error
-                    }
+                // libmdbx semantics: after `delete_current()` the cursor sits directly
+                // before the just-deleted slot, so `next_dup_val` (MDBX_NEXT_DUP) yields the
+                // following dup of the same key, or `None` once this key's dup-group is
+                // exhausted. That bound removes the need for an explicit key comparison.
+                match cur.next_dup_val()? {
+                    Some(next_entry) => entry = next_entry,
+                    None => break,
                 }
             }
         }
@@ -518,7 +522,15 @@ impl MdbxProofsStorage {
         let mut storage_trie_keys = Vec::<StorageTrieKey>::with_capacity(storage_trie_len);
         for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
             if nodes.is_deleted && append_mode {
-                let mut ro = self.storage_trie_cursor(*hashed_address, block_number - 1)?;
+                // Lookback must use the active tx so it sees uncommitted writes from earlier
+                // blocks in the same batch session. Opening a fresh RO tx here would read the
+                // pre-batch committed snapshot and emit wrong tombstones for wipe blocks whose
+                // parent is staged in the same batch.
+                let mut ro = MdbxTrieCursor::<StorageTrieHistory, _>::new(
+                    tx.cursor_dup_read::<StorageTrieHistory>()?,
+                    block_number - 1,
+                    Some(*hashed_address),
+                );
                 let keys = self.wipe_and_overlay(
                     tx,
                     block_number,
@@ -546,7 +558,12 @@ impl MdbxProofsStorage {
         let mut hashed_storage_keys = Vec::<HashedStorageKey>::with_capacity(hashed_storage_len);
         for (hashed_address, storage) in sorted_post_state.storages {
             if append_mode && storage.is_wiped() {
-                let mut ro = self.storage_hashed_cursor(hashed_address, block_number - 1)?;
+                // See lookback note above: must use the active tx, not a fresh RO tx.
+                let mut ro = MdbxStorageCursor::new(
+                    tx.cursor_dup_read::<HashedStorageHistory>()?,
+                    block_number - 1,
+                    hashed_address,
+                );
                 let keys = self.wipe_and_overlay(
                     tx,
                     block_number,
@@ -582,7 +599,7 @@ impl MdbxProofsStorage {
 
     /// Append-only writer for a block: validates parent, persists diff (soft-delete=true),
     /// records a `BlockChangeSet`, and advances `ProofWindow::LatestBlock`.
-    fn store_trie_updates_append_only(
+    pub(crate) fn store_trie_updates_append_only(
         &self,
         tx: &<DatabaseEnv as Database>::TXMut,
         block_ref: BlockWithParent,
@@ -664,7 +681,7 @@ impl BaseProofsStore for MdbxProofsStorage {
     }
 
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
-        self.env.view(|tx| self.inner_get_block_number_hash(tx, ProofWindowKey::EarliestBlock))?
+        self.env.view(|tx| self.inner_get_earliest_block_number_hash(tx))?
     }
 
     fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
@@ -1025,6 +1042,28 @@ impl BaseProofsStore for MdbxProofsStorage {
         hash: B256,
     ) -> BaseProofsStorageResult<()> {
         self.set_earliest_block_number_hash(block_number, hash)
+    }
+}
+
+impl BaseProofsBatchStore for MdbxProofsStorage {
+    type BatchSession<'a>
+        = MdbxBatchSession<'a>
+    where
+        Self: 'a;
+
+    fn with_batch_session<R, F>(&self, f: F) -> BaseProofsStorageResult<R>
+    where
+        F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>,
+    {
+        let tx = self.env.tx_mut()?;
+        let mut session = MdbxBatchSession::new(self, tx);
+        match f(&mut session) {
+            Ok(result) => {
+                session.commit()?;
+                Ok(result)
+            }
+            Err(err) => Err(err),
+        }
     }
 }
 

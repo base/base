@@ -23,7 +23,7 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
                 .chain(BaseChainSpec::mainnet().chain)
                 .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
                 .build()
-                .into(),
+                .inner,
         ))
         .with_network(NetworkSetup::single_node());
 
@@ -68,7 +68,7 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
                 .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
                 .isthmus_activated()
                 .build()
-                .into(),
+                .inner,
         ))
         .with_network(NetworkSetup::single_node());
 

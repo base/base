@@ -903,7 +903,7 @@ impl BasePayloadBuilderCtx {
                 return Ok(diag);
             }
 
-            let tx_simulation_start_time = Instant::now();
+            let execution_start_time = Instant::now();
             let ResultAndState { result, state } = match evm.transact(&tx) {
                 Ok(res) => res,
                 Err(err) => {
@@ -938,11 +938,13 @@ impl BasePayloadBuilderCtx {
                 }
             };
 
-            let actual_execution_time_us = tx_simulation_start_time.elapsed().as_micros();
+            let execution_time = execution_start_time.elapsed();
 
-            BuilderMetrics::tx_simulation_duration().record(tx_simulation_start_time.elapsed());
+            // The "simulation" terminology comes from upstream op-rbuilder's name for
+            // locally executing a candidate transaction before committing it to the payload;
+            // this is not metering service simulation data from MeterBundleResponse.
+            BuilderMetrics::tx_simulation_duration().record(execution_time);
             BuilderMetrics::tx_byte_size().record(tx.inner().size() as f64);
-            BuilderMetrics::tx_actual_execution_time_us().record(actual_execution_time_us as f64);
             num_txs_simulated += 1;
 
             // Record state modification counts (trie work proxy)
@@ -954,12 +956,12 @@ impl BasePayloadBuilderCtx {
             // Record execution time for unmetered transactions (race condition indicator)
             if resource_usage.is_none() {
                 BuilderMetrics::unmetered_tx_actual_execution_time_us()
-                    .record(actual_execution_time_us as f64);
+                    .record(execution_time.as_micros() as f64);
             }
 
             // Record prediction accuracy
             if let Some(predicted_us) = predicted_execution_time_us {
-                let error = predicted_us as f64 - actual_execution_time_us as f64;
+                let error = predicted_us as f64 - execution_time.as_micros() as f64;
                 BuilderMetrics::execution_time_prediction_error_us().record(error);
             }
 
@@ -1344,7 +1346,7 @@ mod tests {
         let genesis = serde_json::from_value(genesis).expect("valid genesis");
         let inner =
             ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
-        let chain_spec = Arc::new(BaseChainSpec { inner });
+        let chain_spec = Arc::new(BaseChainSpec::from(inner));
         let parent_header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
         let parent = Arc::new(SealedHeader::seal_slow(parent_header));
 

@@ -207,6 +207,112 @@ pub trait BaseProofsStore: Send + Sync + Debug {
     ) -> BaseProofsStorageResult<()>;
 }
 
+/// Session-scoped store of trie updates that share a single underlying transaction.
+///
+/// A session opened via [`BaseProofsBatchStore::with_batch_session`] amortizes MDBX commit
+/// cost across multiple block writes: reads through the session observe uncommitted writes
+/// from earlier `store_trie_updates` calls in the same session, enabling cold catch-up of
+/// `block N+1` against `block N` written but not yet committed.
+///
+/// All cursor methods mirror [`BaseProofsStore`] but read from the active transaction.
+#[auto_impl(&mut)]
+pub trait BaseProofsBatchSession: Send + Sync + Debug {
+    /// Cursor for iterating over storage trie branches in the active session.
+    type StorageTrieCursor<'a>: TrieStorageCursor + 'a
+    where
+        Self: 'a;
+
+    /// Cursor for iterating over account trie branches in the active session.
+    type AccountTrieCursor<'a>: TrieCursor + 'a
+    where
+        Self: 'a;
+
+    /// Cursor for iterating over storage leaves in the active session.
+    type StorageCursor<'a>: HashedStorageCursor<Value = U256> + Send + Sync + 'a
+    where
+        Self: 'a;
+
+    /// Cursor for iterating over account leaves in the active session.
+    type AccountHashedCursor<'a>: HashedCursor<Value = Account> + Send + Sync + 'a
+    where
+        Self: 'a;
+
+    /// Earliest stored block number/hash visible to the active transaction.
+    fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>>;
+
+    /// Latest stored block number/hash visible to the active transaction (including
+    /// uncommitted writes from earlier calls in this session).
+    fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>>;
+
+    /// Storage trie cursor reading through the active transaction.
+    fn storage_trie_cursor(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'_>>;
+
+    /// Account trie cursor reading through the active transaction.
+    fn account_trie_cursor(
+        &self,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'_>>;
+
+    /// Storage hashed cursor reading through the active transaction.
+    fn storage_hashed_cursor(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'_>>;
+
+    /// Account hashed cursor reading through the active transaction.
+    fn account_hashed_cursor(
+        &self,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'_>>;
+
+    /// Append-only write of `block_state_diff` for `block_ref` to the active transaction.
+    /// Subsequent reads through this session observe the new state immediately, but the
+    /// changes are not durable until the enclosing session commits.
+    fn store_trie_updates(
+        &mut self,
+        block_ref: BlockWithParent,
+        block_state_diff: BlockStateDiff,
+    ) -> BaseProofsStorageResult<WriteCounts>;
+}
+
+/// Storage that can open a [`BaseProofsBatchSession`] holding a single underlying
+/// transaction across multiple block writes.
+///
+/// The MDBX implementation commits atomically on `Ok` and aborts on `Err`, leaving no
+/// writes visible to subsequent reads. The in-memory implementation is a test double
+/// that lacks transactional rollback — partial writes from a failing batch remain
+/// visible. Production code must rely on MDBX semantics.
+pub trait BaseProofsBatchStore: BaseProofsStore {
+    /// Session type bound to the active transaction.
+    type BatchSession<'a>: BaseProofsBatchSession + 'a
+    where
+        Self: 'a;
+
+    /// Run `f` inside one batch session. Commits if `f` returns `Ok`, aborts on `Err`.
+    fn with_batch_session<R, F>(&self, f: F) -> BaseProofsStorageResult<R>
+    where
+        F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>;
+}
+
+impl<T: BaseProofsBatchStore + 'static> BaseProofsBatchStore for std::sync::Arc<T> {
+    type BatchSession<'a>
+        = T::BatchSession<'a>
+    where
+        Self: 'a;
+
+    fn with_batch_session<R, F>(&self, f: F) -> BaseProofsStorageResult<R>
+    where
+        F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>,
+    {
+        (**self).with_batch_session(f)
+    }
+}
+
 /// Status of the initial state anchor.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum InitialStateStatus {

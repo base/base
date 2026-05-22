@@ -150,9 +150,17 @@ impl<'a> StorageCtx<'a> {
     pub fn gas_used(&self) -> u64 {
         self.with_storage(|s| s.gas_used())
     }
+    /// Returns the state-creating gas spent so far (EIP-8037).
+    pub fn state_gas_used(&self) -> u64 {
+        self.with_storage(|s| s.state_gas_used())
+    }
     /// Returns the gas refunded so far.
     pub fn gas_refunded(&self) -> i64 {
         self.with_storage(|s| s.gas_refunded())
+    }
+    /// Returns the remaining EIP-8037 state-gas reservoir.
+    pub fn reservoir(&self) -> u64 {
+        self.with_storage(|s| s.reservoir())
     }
     /// Returns whether the current call context is static.
     pub fn is_static(&self) -> bool {
@@ -179,9 +187,17 @@ impl<'a> StorageCtx<'a> {
         CheckpointGuard { storage: *self, checkpoint: Some(checkpoint) }
     }
 
-    /// Returns a success [`PrecompileOutput`] with the current gas used.
+    /// Returns a success [`PrecompileOutput`] with the current gas used and accumulated refund.
+    ///
+    /// The `gas_refunded` field is populated so revm's frame handler can propagate it to the
+    /// transaction-level refund counter, where the EIP-3529 cap (`gas_used / 5`) is applied.
     pub fn success_output(&self, output: Bytes) -> PrecompileOutput {
-        PrecompileOutput::new(self.gas_used(), output)
+        PrecompileOutput {
+            gas_used: self.gas_used(),
+            gas_refunded: self.gas_refunded(),
+            bytes: output,
+            reverted: false,
+        }
     }
 
     /// Returns an ABI-encoded success output.

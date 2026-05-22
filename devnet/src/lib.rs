@@ -11,7 +11,7 @@ mod utils;
 pub use utils::unique_name;
 
 mod b20;
-pub use b20::B20PrecompileClient;
+pub use b20::{B20CreateConfig, B20PrecompileClient};
 
 pub mod config;
 pub mod containers;
