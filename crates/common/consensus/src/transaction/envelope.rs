@@ -158,6 +158,10 @@ impl From<Signed<BaseTypedTransaction>> for BaseTxEnvelope {
             }
             BaseTypedTransaction::Deposit(tx) => Self::Deposit(Sealed::new_unchecked(tx, hash)),
             BaseTypedTransaction::Aa8130(tx) => {
+                debug_assert!(
+                    tx.sender.is_none(),
+                    "configured-owner EIP-8130 transactions must not be wrapped through the ECDSA Signed<BaseTypedTransaction> path; route them via BaseTxEnvelope::Aa8130 directly with the appropriate sender_auth",
+                );
                 Self::Aa8130(AaSigned::new(tx, sig.as_bytes().into(), Bytes::new()))
             }
         }
