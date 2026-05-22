@@ -1,15 +1,14 @@
 //! Policy-gated B-20 transfer action tests across the Base Beryl boundary.
 //!
 //! These tests verify the cross-precompile integration between the B-20 token precompile and
-//! the PolicyRegistry precompile: every transfer call checks the sender against the token's
-//! configured TRANSFER_SENDER_POLICY, and the result drives allow/block decisions end-to-end.
+//! the `PolicyRegistry` precompile: every transfer call checks the sender against the token's
+//! configured `TRANSFER_SENDER_POLICY`, and the result drives allow/block decisions end-to-end.
 
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_precompiles::{
-    B20PolicyType, IB20, IPolicyRegistry, ITokenFactory, POLICY_ALWAYS_BLOCK,
-    PolicyRegistryStorage, TokenFactoryStorage,
+    B20PolicyType, IB20, IPolicyRegistry, ITokenFactory, PolicyRegistryStorage, TokenFactoryStorage,
 };
 
 use crate::env::BerylTestEnv;
@@ -21,8 +20,9 @@ const TRANSFER_AMOUNT: u64 = 1_000;
 
 /// Computes the expected policy ID for a custom policy.
 ///
-/// IDs are encoded as `(type_discriminant << 56) | counter` where the counter
-/// is a global monotonic sequence starting at 0.
+/// IDs are encoded as `(type_discriminant << 56) | counter` where the counter is a
+/// global monotonic sequence. Counters 0 and 1 are reserved for the built-in policies
+/// written by `write_builtins`, so the first custom policy always gets counter 2.
 const fn policy_id(policy_type: IPolicyRegistry::PolicyType, counter: u64) -> u64 {
     (policy_type as u64) << 56 | counter
 }
@@ -31,7 +31,7 @@ const fn policy_id(policy_type: IPolicyRegistry::PolicyType, counter: u64) -> u6
 
 #[tokio::test]
 async fn allowlist_policy_gates_b20_transfers() {
-    let allowlist_id = policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 0);
+    let allowlist_id = policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
     let mut scenario = PolicyTransferScenario::new_with_custom_policy(
         IPolicyRegistry::PolicyType::ALLOWLIST,
         allowlist_id,
@@ -104,7 +104,7 @@ async fn allowlist_policy_gates_b20_transfers() {
 
 #[tokio::test]
 async fn blocklist_policy_gates_b20_transfers() {
-    let blocklist_id = policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 0);
+    let blocklist_id = policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 2);
     let mut scenario = PolicyTransferScenario::new_with_custom_policy(
         IPolicyRegistry::PolicyType::BLOCKLIST,
         blocklist_id,
@@ -206,7 +206,9 @@ async fn always_allow_policy_never_blocks_b20_transfers() {
 #[tokio::test]
 async fn always_block_policy_always_blocks_b20_transfers() {
     // ALWAYS_BLOCK_ID = 1; set via updatePolicy init call.
-    let mut scenario = PolicyTransferScenario::new_with_builtin_policy(POLICY_ALWAYS_BLOCK).await;
+    let mut scenario =
+        PolicyTransferScenario::new_with_builtin_policy(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
+            .await;
 
     let blocked = scenario.env.transfer_b20_tx(
         scenario.token,
@@ -228,7 +230,7 @@ async fn always_block_policy_always_blocks_b20_transfers() {
 // Scenario helpers
 // ---------------------------------------------------------------------------
 
-/// Test fixture: a funded B-20 token whose TRANSFER_SENDER_POLICY is pre-configured.
+/// Test fixture: a funded B-20 token whose `TRANSFER_SENDER_POLICY` is pre-configured.
 struct PolicyTransferScenario {
     env: BerylTestEnv,
     token: Address,
@@ -236,9 +238,9 @@ struct PolicyTransferScenario {
 }
 
 impl PolicyTransferScenario {
-    /// Sets up with TOKEN_FACTORY, B20_TOKEN, and POLICY_REGISTRY active, creates a custom
+    /// Sets up with `TOKEN_FACTORY`, `B20_TOKEN`, and `POLICY_REGISTRY` active, creates a custom
     /// `policy_type` policy (Alice as admin), then deploys a B-20 token with the
-    /// TRANSFER_SENDER_POLICY wired to that policy via an `updatePolicy` init call.
+    /// `TRANSFER_SENDER_POLICY` wired to that policy via an `updatePolicy` init call.
     async fn new_with_custom_policy(
         policy_type: IPolicyRegistry::PolicyType,
         policy_id: u64,
@@ -296,7 +298,7 @@ impl PolicyTransferScenario {
     }
 
     /// Sets up with all three features active, then deploys a B-20 token with the
-    /// TRANSFER_SENDER_POLICY set to one of the built-in IDs via an `updatePolicy` init call.
+    /// `TRANSFER_SENDER_POLICY` set to one of the built-in IDs via an `updatePolicy` init call.
     async fn new_with_builtin_policy(builtin_policy_id: u64) -> Self {
         let env = BerylTestEnv::new();
         let token = env.b20_token_address();
@@ -331,8 +333,8 @@ impl PolicyTransferScenario {
         scenario
     }
 
-    /// Sets up with TOKEN_FACTORY and B20_TOKEN active, then deploys a B-20 token without
-    /// an `updatePolicy` init call. The TRANSFER_SENDER_POLICY slot defaults to ALWAYS_ALLOW (0),
+    /// Sets up with `TOKEN_FACTORY` and `B20_TOKEN` active, then deploys a B-20 token without
+    /// an `updatePolicy` init call. The `TRANSFER_SENDER_POLICY` slot defaults to `ALWAYS_ALLOW` (0),
     /// so all transfers are permitted.
     async fn new_with_default_policy() -> Self {
         let env = BerylTestEnv::new();
@@ -362,8 +364,8 @@ impl PolicyTransferScenario {
     /// Builds a `createToken` transaction.
     ///
     /// When `transfer_sender_policy_id` is `Some`, an `updatePolicy` init call wires the
-    /// TRANSFER_SENDER_POLICY to that ID before minting the initial supply to Alice.
-    /// When `None`, only the mint init call is included (default ALWAYS_ALLOW semantics).
+    /// `TRANSFER_SENDER_POLICY` to that ID before minting the initial supply to Alice.
+    /// When `None`, only the mint init call is included (default `ALWAYS_ALLOW` semantics).
     fn create_token_tx(&self, transfer_sender_policy_id: Option<u64>) -> BaseTxEnvelope {
         let mut init_calls: Vec<Bytes> = Vec::new();
 
@@ -400,7 +402,7 @@ impl PolicyTransferScenario {
         )
     }
 
-    /// Creates a transaction that calls the PolicyRegistry precompile, signed by Alice.
+    /// Creates a transaction that calls the `PolicyRegistry` precompile, signed by Alice.
     fn policy_tx(&self, call: impl SolCall) -> BaseTxEnvelope {
         self.env.create_tx(
             TxKind::Call(PolicyRegistryStorage::ADDRESS),
