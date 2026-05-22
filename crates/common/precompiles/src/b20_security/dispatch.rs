@@ -33,14 +33,38 @@ const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// Ensures `policy_scope` names either an inherited B-20 policy slot or the
     /// security redeem slot.
+    fn is_supported_policy_scope(policy_scope: B256) -> bool {
+        policy_scope == REDEEM_SENDER_POLICY || B20PolicyType::from_id(policy_scope).is_some()
+    }
+
     fn ensure_supported_policy_type(policy_scope: B256) -> base_precompile_storage::Result<()> {
-        if B20PolicyType::from_id(policy_scope).is_some() || policy_scope == REDEEM_SENDER_POLICY {
+        if Self::is_supported_policy_scope(policy_scope) {
             Ok(())
         } else {
             Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
                 policyScope: policy_scope,
             }))
         }
+    }
+
+    fn ensure_security_operator(
+        &self,
+        caller: Address,
+        privileged: bool,
+    ) -> base_precompile_storage::Result<()> {
+        if privileged { Ok(()) } else { self.ensure_role(caller, SECURITY_OPERATOR_ROLE) }
+    }
+
+    fn ensure_default_admin(
+        &self,
+        caller: Address,
+        privileged: bool,
+    ) -> base_precompile_storage::Result<()> {
+        if privileged { Ok(()) } else { self.ensure_role(caller, Self::default_admin_role()) }
+    }
+
+    fn ensure_burn_from_role(&self, caller: Address) -> base_precompile_storage::Result<()> {
+        self.ensure_role(caller, BURN_FROM_ROLE)
     }
 
     /// Returns the configured policy ID for `policy_scope`.
@@ -120,7 +144,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
         // Security-specific and overridden selectors are caught here first.
         if let Ok(call) = IB20Security::IB20SecurityCalls::abi_decode(calldata) {
-            return self.handle_security_call(ctx, call);
+            return self.handle_security_call(ctx, call, privileged);
         }
 
         // Fall through to inherited IB20 selectors.
@@ -338,6 +362,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         &mut self,
         ctx: StorageCtx<'_>,
         call: SC,
+        privileged: bool,
     ) -> base_precompile_storage::Result<Bytes> {
         let encoded: Bytes = match call {
             // --- Role / precision constants ---
@@ -369,7 +394,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             // --- Share ratio mutations ---
             SC::updateShareRatio(c) => {
                 let caller = ctx.caller();
-                B20Guards::ensure_role::<Self>(self, caller, SECURITY_OPERATOR_ROLE)?;
+                self.ensure_security_operator(caller, privileged)?;
                 self.accounting_mut().set_shares_to_tokens_ratio(c.newSharesToTokensRatio)?;
                 self.accounting_mut().emit_event(
                     IB20Security::ShareRatioUpdated {
@@ -382,17 +407,17 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
             // --- Announcement ---
             SC::announce(c) => {
-                self.announce(ctx, c.internalCalls, c.id, c.description, c.uri)?;
+                self.announce(ctx, c.internalCalls, c.id, c.description, c.uri, privileged)?;
                 Bytes::new()
             }
 
             // --- Batched mint / burn ---
             SC::batchMint(c) => {
-                self.batch_mint(ctx.caller(), c.recipients, c.amounts)?;
+                self.batch_mint(ctx, c.recipients, c.amounts, privileged)?;
                 Bytes::new()
             }
             SC::batchBurn(c) => {
-                self.batch_burn(ctx.caller(), c.accounts, c.amounts)?;
+                self.batch_burn(ctx, c.accounts, c.amounts)?;
                 Bytes::new()
             }
 
@@ -412,7 +437,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             SC::minimumRedeemable(_) => self.accounting.minimum_redeemable()?.abi_encode().into(),
             SC::updateMinimumRedeemable(c) => {
                 let caller = ctx.caller();
-                B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::DefaultAdmin)?;
+                self.ensure_default_admin(caller, privileged)?;
                 self.accounting_mut().set_minimum_redeemable(c.newMinimumRedeemable)?;
                 self.accounting_mut().emit_event(
                     IB20Security::MinimumRedeemableUpdated {
@@ -427,7 +452,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             // --- Security identifier mutations ---
             SC::updateSecurityIdentifier(c) => {
                 let caller = ctx.caller();
-                B20Guards::ensure_role::<Self>(self, caller, SECURITY_OPERATOR_ROLE)?;
+                self.ensure_security_operator(caller, privileged)?;
                 if c.identifierType.is_empty() {
                     return Err(BasePrecompileError::revert(
                         IB20Security::InvalidIdentifierType {},
@@ -460,7 +485,8 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         caller: Address,
         amount: U256,
     ) -> base_precompile_storage::Result<()> {
-        self.security_redeem_inner(caller, amount, None)
+        let ratio = self.security_redeem_burn(caller, amount)?;
+        self.emit_redeemed(caller, amount, ratio)
     }
 
     /// [`Self::security_redeem`] with a memo emitted between `Transfer` and `Redeemed`.
@@ -470,17 +496,22 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         amount: U256,
         memo: B256,
     ) -> base_precompile_storage::Result<()> {
-        self.security_redeem_inner(caller, amount, Some(memo))
+        let ratio = self.security_redeem_burn(caller, amount)?;
+        self.accounting_mut().emit_event(IB20::Memo { caller, memo }.encode_log_data())?;
+        self.emit_redeemed(caller, amount, ratio)
     }
 
-    fn security_redeem_inner(
+    /// Performs the shared security redeem burn and returns the ratio used for the floor check.
+    fn security_redeem_burn(
         &mut self,
         caller: Address,
         amount: U256,
-        memo: Option<B256>,
-    ) -> base_precompile_storage::Result<()> {
+    ) -> base_precompile_storage::Result<U256> {
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::REDEEM)?;
         B20Guards::ensure_policy::<Self>(self, REDEEM_SENDER_POLICY, caller)?;
+        if amount.is_zero() {
+            return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
+        }
         let ratio = self.accounting.shares_to_tokens_ratio()?;
         let shares = amount.saturating_mul(ratio) / WAD;
         let minimum = self.accounting.minimum_redeemable()?;
@@ -504,9 +535,15 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         self.accounting_mut().emit_event(
             IB20::Transfer { from: caller, to: Address::ZERO, amount }.encode_log_data(),
         )?;
-        if let Some(memo) = memo {
-            self.accounting_mut().emit_event(IB20::Memo { caller, memo }.encode_log_data())?;
-        }
+        Ok(ratio)
+    }
+
+    fn emit_redeemed(
+        &mut self,
+        caller: Address,
+        amount: U256,
+        ratio: U256,
+    ) -> base_precompile_storage::Result<()> {
         self.accounting_mut().emit_event(
             IB20Security::Redeemed { from: caller, amt: amount, sharesToTokensRatio: ratio }
                 .encode_log_data(),
@@ -516,9 +553,10 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// Mints tokens to multiple recipients. All-or-nothing.
     fn batch_mint(
         &mut self,
-        caller: Address,
+        ctx: StorageCtx<'_>,
         recipients: Vec<Address>,
         amounts: Vec<U256>,
+        privileged: bool,
     ) -> base_precompile_storage::Result<()> {
         if recipients.is_empty() {
             return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
@@ -529,23 +567,25 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
                 rightLen: U256::from(amounts.len()),
             }));
         }
+        let caller = ctx.caller();
         for (recipient, amount) in recipients.into_iter().zip(amounts) {
-            self.mint(caller, recipient, amount, false)?;
+            self.mint(caller, recipient, amount, privileged)?;
         }
         Ok(())
     }
 
     /// Burns tokens from multiple accounts unconditionally. All-or-nothing.
     ///
-    /// Unlike `burnBlocked`, this path has no policy precondition; `BURN_FROM_ROLE` is the
-    /// on-chain authorization.
+    /// Unlike `burnBlocked`, this path has no policy precondition. The
+    /// `BURN_FROM_ROLE` authorization and burn pause check are the only gates.
     fn batch_burn(
         &mut self,
-        caller: Address,
+        ctx: StorageCtx<'_>,
         accounts: Vec<Address>,
         amounts: Vec<U256>,
     ) -> base_precompile_storage::Result<()> {
-        B20Guards::ensure_role::<Self>(self, caller, BURN_FROM_ROLE)?;
+        let caller = ctx.caller();
+        self.ensure_burn_from_role(caller)?;
         if accounts.len() != amounts.len() {
             return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
                 leftLen: U256::from(accounts.len()),
@@ -557,6 +597,9 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         }
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         for (account, amount) in accounts.into_iter().zip(amounts) {
+            if amount.is_zero() {
+                return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
+            }
             let balance = self.accounting.balance_of(account)?;
             if balance < amount {
                 return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
@@ -585,13 +628,13 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         id: String,
         description: String,
         uri: String,
+        privileged: bool,
     ) -> base_precompile_storage::Result<()> {
+        let caller = ctx.caller();
+        self.ensure_security_operator(caller, privileged)?;
         if self.in_announcement {
             return Err(BasePrecompileError::revert(IB20Security::AnnouncementInProgress {}));
         }
-
-        let caller = ctx.caller();
-        B20Guards::ensure_role::<Self>(self, caller, SECURITY_OPERATOR_ROLE)?;
 
         if self.accounting.is_announcement_id_used(id.as_str())? {
             return Err(BasePrecompileError::revert(IB20Security::AnnouncementIdAlreadyUsed {
@@ -614,9 +657,10 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
                     call: call.clone(),
                 }));
             }
-            // `in_announcement == true` causes recursive announce calls to revert via the
-            // guard at the top of this function. No separate selector check needed.
-            self.inner(ctx, call_bytes).map_err(|_| {
+            if call_bytes[..4] == IB20Security::announceCall::SELECTOR {
+                return Err(BasePrecompileError::revert(IB20Security::AnnouncementInProgress {}));
+            }
+            self.inner_with_privilege(ctx, call_bytes, privileged).map_err(|_| {
                 BasePrecompileError::revert(IB20Security::InternalCallFailed { call: call.clone() })
             })?;
         }
@@ -646,15 +690,53 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         }
         Ok(())
     }
+
+    fn batch_burn_test(
+        &mut self,
+        accounts: alloc::vec::Vec<Address>,
+        amounts: alloc::vec::Vec<U256>,
+    ) -> base_precompile_storage::Result<()> {
+        if accounts.is_empty() {
+            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
+        }
+        if accounts.len() != amounts.len() {
+            return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
+                leftLen: U256::from(accounts.len()),
+                rightLen: U256::from(amounts.len()),
+            }));
+        }
+        for (account, amount) in accounts.into_iter().zip(amounts) {
+            if amount.is_zero() {
+                return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
+            }
+            let balance = self.accounting.balance_of(account)?;
+            if balance < amount {
+                return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
+                    sender: account,
+                    balance,
+                    needed: amount,
+                }));
+            }
+            self.accounting_mut().set_balance(account, balance - amount)?;
+            let supply = self.accounting.total_supply()?;
+            self.accounting_mut().set_total_supply(supply.saturating_sub(amount))?;
+            self.accounting_mut().emit_event(
+                IB20::Transfer { from: account, to: Address::ZERO, amount }.encode_log_data(),
+            )?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256};
     use alloy_sol_types::SolEvent;
-    use base_precompile_storage::{BasePrecompileError, StorageCtx, setup_storage};
+    use base_precompile_storage::{
+        BasePrecompileError, HashMapStorageProvider, StorageCtx, setup_storage,
+    };
 
-    use super::{BURN_FROM_ROLE, REDEEM_SENDER_POLICY, SECURITY_OPERATOR_ROLE};
+    use super::{BURN_FROM_ROLE, REDEEM_SENDER_POLICY};
     use crate::{
         B20PausableFeature, IB20, PolicyHandle, PolicyRegistryStorage, Token, TokenAccounting,
         b20_security::{B20SecurityStorage, B20SecurityToken, IB20Security, SecurityAccounting},
@@ -671,11 +753,15 @@ mod tests {
     fn make_token() -> TestSecurityToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         accounting.shares_to_tokens_ratio = WAD; // 1:1 ratio
-        accounting.roles.insert((BURN_FROM_ROLE, ALICE), true);
-        accounting.roles.insert((SECURITY_OPERATOR_ROLE, ALICE), true);
         // Explicitly open redemption so non-policy tests are not blocked by the ALWAYS_BLOCK default.
         accounting.policy_ids.insert(REDEEM_SENDER_POLICY, PolicyRegistryStorage::ALWAYS_ALLOW_ID);
         TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+    }
+
+    fn storage_with_caller(caller: Address) -> HashMapStorageProvider {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(caller);
+        storage
     }
 
     #[test]
@@ -714,7 +800,7 @@ mod tests {
         token.accounting_mut().balances.insert(ALICE, U256::from(500u64));
         token.accounting_mut().total_supply = U256::from(500u64);
 
-        token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::from(200u64)]).unwrap();
+        token.batch_burn_test(alloc::vec![ALICE], alloc::vec![U256::from(200u64)]).unwrap();
 
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(300u64));
         assert_eq!(token.accounting().total_supply().unwrap(), U256::from(300u64));
@@ -726,24 +812,73 @@ mod tests {
         let mut token = make_token();
         token.accounting_mut().balances.insert(ALICE, U256::from(10u64));
         assert!(
-            token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::from(100u64)]).is_err()
+            token.batch_burn_test(alloc::vec![ALICE], alloc::vec![U256::from(100u64)]).is_err()
         );
     }
 
     #[test]
-    fn batch_burn_rejects_missing_burn_from_role() {
+    fn batch_burn_requires_burn_from_role() {
         let mut token = make_token();
-        token.accounting_mut().roles.remove(&(BURN_FROM_ROLE, ALICE));
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(100u64);
+        token.accounting_mut().balances.insert(BOB, U256::from(50u64));
+        token.accounting_mut().total_supply = U256::from(50u64);
+        let mut storage = storage_with_caller(ALICE);
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            token.batch_burn(ctx, alloc::vec![BOB], alloc::vec![U256::from(10u64)])
+        })
+        .unwrap_err();
 
         assert_eq!(
-            token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::from(1u64)]).unwrap_err(),
+            err,
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: ALICE,
                 neededRole: BURN_FROM_ROLE,
             })
         );
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(50u64));
+    }
+
+    #[test]
+    fn batch_burn_with_role_decrements_balances() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
+        token.accounting_mut().balances.insert(BOB, U256::from(50u64));
+        token.accounting_mut().total_supply = U256::from(50u64);
+        let mut storage = storage_with_caller(ALICE);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            token.batch_burn(ctx, alloc::vec![BOB], alloc::vec![U256::from(10u64)])
+        })
+        .unwrap();
+
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(40u64));
+        assert_eq!(token.accounting().events.len(), 1);
+    }
+
+    #[test]
+    fn batch_burn_respects_burn_pause() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
+        token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
+        token.accounting_mut().balances.insert(BOB, U256::from(50u64));
+        token.accounting_mut().total_supply = U256::from(50u64);
+        let mut storage = storage_with_caller(ALICE);
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            token.batch_burn(ctx, alloc::vec![BOB], alloc::vec![U256::from(10u64)])
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::BURN,
+            })
+        );
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(50u64));
     }
 
     #[test]
@@ -774,11 +909,11 @@ mod tests {
     #[test]
     fn security_redeem_rejects_zero_shares() {
         let mut token = make_token();
-        token.accounting_mut().shares_to_tokens_ratio = WAD / U256::from(2u64);
+        token.accounting_mut().shares_to_tokens_ratio = U256::ONE;
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
         token.accounting_mut().total_supply = U256::from(100u64);
 
-        // 1 token * 0.5 WAD / WAD truncates to 0 shares, which is always rejected.
+        // 1 token-wei * 1 / WAD rounds down to 0 shares, which is always rejected.
         assert!(token.security_redeem(ALICE, U256::ONE).is_err());
     }
 
@@ -864,28 +999,41 @@ mod tests {
     #[test]
     fn batch_burn_rejects_empty() {
         let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
+        let mut storage = storage_with_caller(ALICE);
 
-        assert_eq!(
-            token.batch_burn(ALICE, alloc::vec![], alloc::vec![]).unwrap_err(),
-            BasePrecompileError::revert(IB20Security::EmptyBatch {})
-        );
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            token.batch_burn(ctx, alloc::vec![], alloc::vec![])
+        })
+        .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20Security::EmptyBatch {}));
     }
 
     #[test]
     fn batch_burn_rejects_length_mismatch() {
         let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
+        let mut storage = storage_with_caller(ALICE);
 
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            token.batch_burn(ctx, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
+        })
+        .unwrap_err();
         assert_eq!(
-            token
-                .batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
-                .unwrap_err(),
+            err,
             BasePrecompileError::revert(IB20Security::LengthMismatch {
                 leftLen: U256::ONE,
                 rightLen: U256::from(2u64),
             })
         );
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            token.batch_burn(ctx, alloc::vec![], alloc::vec![U256::ONE])
+        })
+        .unwrap_err();
         assert_eq!(
-            token.batch_burn(ALICE, alloc::vec![], alloc::vec![U256::ONE]).unwrap_err(),
+            err,
             BasePrecompileError::revert(IB20Security::LengthMismatch {
                 leftLen: U256::ZERO,
                 rightLen: U256::ONE,
@@ -896,21 +1044,41 @@ mod tests {
     #[test]
     fn batch_burn_validates_batch_shape_before_pause() {
         let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
         token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
+        let mut storage = storage_with_caller(ALICE);
 
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            token.batch_burn(ctx, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
+        })
+        .unwrap_err();
         assert_eq!(
-            token
-                .batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
-                .unwrap_err(),
+            err,
             BasePrecompileError::revert(IB20Security::LengthMismatch {
                 leftLen: U256::ONE,
                 rightLen: U256::from(2u64),
             })
         );
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            token.batch_burn(ctx, alloc::vec![], alloc::vec![])
+        })
+        .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IB20Security::EmptyBatch {}));
+    }
+
+    #[test]
+    fn batch_burn_rejects_zero_amount() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(100u64);
+
         assert_eq!(
-            token.batch_burn(ALICE, alloc::vec![], alloc::vec![]).unwrap_err(),
-            BasePrecompileError::revert(IB20Security::EmptyBatch {})
+            token.batch_burn_test(alloc::vec![ALICE], alloc::vec![U256::ZERO]).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidAmount {})
         );
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
+        assert_eq!(token.accounting().events.len(), 0);
     }
 
     #[test]
@@ -920,8 +1088,7 @@ mod tests {
         token.accounting_mut().balances.insert(BOB, U256::from(200u64));
         token.accounting_mut().total_supply = U256::from(300u64);
         token
-            .batch_burn(
-                ALICE,
+            .batch_burn_test(
                 alloc::vec![ALICE, BOB],
                 alloc::vec![U256::from(100u64), U256::from(200u64)],
             )

@@ -269,8 +269,8 @@ fn assert_token_created_log(env: &BerylTestEnv, block: &BaseBlock, token: Addres
     let expected = IB20Factory::B20Created {
         token,
         variant: IB20Factory::B20Variant::DEFAULT,
-        name: "Action B20".to_string(),
-        symbol: "AB20".to_string(),
+        name: BerylTestEnv::B20_NAME.to_string(),
+        symbol: BerylTestEnv::B20_SYMBOL.to_string(),
         decimals: BerylTestEnv::B20_DECIMALS,
     }
     .encode_log_data();

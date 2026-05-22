@@ -481,6 +481,7 @@ mod tests {
 
         assert!(B20Variant::is_supported_discriminant(1));
         assert!(B20Variant::is_supported_discriminant(2));
+        assert!(!B20Variant::is_supported_discriminant(3));
         assert!(B20Variant::is_b20_address(stablecoin));
         assert!(B20Variant::is_b20_address(security));
         assert_eq!(B20Variant::from_address(stablecoin), Some(B20Variant::Stablecoin));

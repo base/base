@@ -208,11 +208,6 @@ impl PolicyRegistryStorage<'_> {
         accounts: Vec<Address>,
     ) -> Result<u64> {
         Self::require_account_batch_size(&accounts)?;
-        for account in &accounts {
-            if account.is_zero() {
-                return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
-            }
-        }
         let policy_id = self.create_policy(admin, policy_type)?;
         let caller = self.storage.caller();
         for account in &accounts {
@@ -1054,17 +1049,19 @@ mod tests {
     // --- create_policy_with_accounts edge cases ---
 
     #[test]
-    fn create_policy_with_accounts_zero_account_reverts() {
+    fn create_policy_with_accounts_zero_account_is_seeded() {
         let mut s = storage();
-        let err = StorageCtx::enter(&mut s, |ctx| {
+        let id = StorageCtx::enter(&mut s, |ctx| {
             PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
                 ADMIN,
                 PolicyType::ALLOWLIST,
                 vec![ALICE, Address::ZERO],
             )
         })
-        .unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
+        .unwrap();
+        StorageCtx::enter(&mut s, |ctx| {
+            assert!(PolicyRegistryStorage::new(ctx).is_authorized(id, Address::ZERO).unwrap());
+        });
     }
 
     #[test]

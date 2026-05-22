@@ -63,6 +63,12 @@ impl BerylTestEnv {
     /// Fixed decimals for the default B-20 token variant.
     pub(crate) const B20_DECIMALS: u8 = 18;
 
+    /// Name for the default B-20 token variant.
+    pub(crate) const B20_NAME: &str = "Action B20";
+
+    /// Symbol for the default B-20 token variant.
+    pub(crate) const B20_SYMBOL: &str = "AB20";
+
     /// Initial B-20 supply minted to Alice.
     pub(crate) const B20_INITIAL_SUPPLY: u64 = 1_000_000;
 
@@ -492,8 +498,8 @@ impl BerylTestEnv {
     fn b20_token_params(&self) -> IB20Factory::B20CreateParams {
         IB20Factory::B20CreateParams {
             version: B20FactoryStorage::CREATE_TOKEN_VERSION,
-            name: "Action B20".to_string(),
-            symbol: "AB20".to_string(),
+            name: Self::B20_NAME.to_string(),
+            symbol: Self::B20_SYMBOL.to_string(),
             initialAdmin: Self::alice(),
         }
     }
