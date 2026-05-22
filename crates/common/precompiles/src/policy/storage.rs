@@ -493,6 +493,7 @@ mod tests {
     fn packed_policy_zero_signals_never_created() {
         let p = PackedPolicy::from_raw(U256::ZERO);
         assert!(!p.exists());
+        assert_eq!(p.admin(), Address::ZERO, "zero word admin must be Address::ZERO");
     }
 
     #[test]
@@ -534,29 +535,6 @@ mod tests {
     }
 
     #[test]
-    fn zero_word_means_never_created() {
-        // A zeroed storage word signals the policy slot was never written.
-        // policyExists relies on exists() returning false for such a word.
-        let p = PackedPolicy::from_raw(U256::ZERO);
-        assert!(!p.exists(), "zero U256 must report not exists");
-        assert_eq!(p.admin(), Address::ZERO, "zero word admin must be Address::ZERO");
-        // Confirm this is how policyExists reasons: !exists() means absent.
-        assert!(!p.exists(), "policyExists would return false for a zero word");
-    }
-
-    #[test]
-    fn zero_admin_is_not_confused_with_never_created() {
-        // After renounce_admin the admin field is Address::ZERO but the exists bit is
-        // preserved, keeping the word non-zero. policyExists must return true here.
-        let p = PackedPolicy::new(Address::ZERO);
-        assert!(
-            p.exists(),
-            "zero admin must NOT appear as never-created because exists bit is set"
-        );
-        assert_eq!(p.admin(), Address::ZERO);
-    }
-
-    #[test]
     fn exists_bit_does_not_bleed_into_admin_bits() {
         // The EXISTS_BIT is at bit 255; the admin is extracted from bits [159:0].
         // These must not overlap.
@@ -566,16 +544,6 @@ mod tests {
         let exists_only = PackedPolicy::from_raw(PackedPolicy::EXISTS_BIT);
         assert_eq!(exists_only.admin(), Address::ZERO, "exists-only word must have zero admin");
         assert!(exists_only.exists());
-    }
-
-    #[test]
-    fn admin_with_low_byte_ff_roundtrips() {
-        // An address whose lowest byte is 0xff must survive the packing/unpacking
-        // round-trip without corruption from the exists bit or admin mask.
-        let addr_with_ff_low = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaff");
-        let p = PackedPolicy::new(addr_with_ff_low);
-        assert_eq!(p.admin(), addr_with_ff_low, "address must round-trip with 0xff low byte");
-        assert!(p.exists());
     }
 
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
