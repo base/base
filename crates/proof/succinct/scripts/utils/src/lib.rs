@@ -1,5 +1,4 @@
-//! Shared CLI argument types and configuration helpers for succinct scripts.
-
+#![doc = include_str!("../README.md")]
 use std::path::PathBuf;
 
 use clap::Parser;
