@@ -189,35 +189,27 @@ async fn token_factory_views_and_events_are_available_after_beryl_activation() {
     assert!(env.probe_call_succeeded(probe), "isB20(non-token) staticcall must succeed");
     assert_eq!(env.probe_return_word(probe), U256::ZERO, "factory singleton must not be B-20");
 
-    let get_variant = env.call_staticcall_probe_tx(
+    let is_initialized = env.call_staticcall_probe_tx(
         probe,
-        Bytes::from(ITokenFactory::getTokenVariantCall { token }.abi_encode()),
+        Bytes::from(ITokenFactory::isInitializedCall { token }.abi_encode()),
         BerylTestEnv::B20_PROBE_GAS_LIMIT,
     );
-    let block7 = env.sequencer.build_next_block_with_transactions(vec![get_variant]).await;
+    let block7 = env.sequencer.build_next_block_with_transactions(vec![is_initialized]).await;
 
-    assert!(env.probe_call_succeeded(probe), "getTokenVariant() staticcall must succeed");
-    assert_eq!(
-        env.probe_return_word(probe),
-        U256::from(ITokenFactory::TokenVariant::DEFAULT as u8),
-        "created token variant must be DEFAULT"
-    );
+    assert!(env.probe_call_succeeded(probe), "isInitialized() staticcall must succeed");
+    assert_eq!(env.probe_return_word(probe), U256::ONE, "created token must be initialized");
 
-    let get_none_variant = env.call_staticcall_probe_tx(
+    let is_not_initialized = env.call_staticcall_probe_tx(
         probe,
         Bytes::from(
-            ITokenFactory::getTokenVariantCall { token: Address::repeat_byte(0xab) }.abi_encode(),
+            ITokenFactory::isInitializedCall { token: Address::repeat_byte(0xab) }.abi_encode(),
         ),
         BerylTestEnv::B20_PROBE_GAS_LIMIT,
     );
-    let block8 = env.sequencer.build_next_block_with_transactions(vec![get_none_variant]).await;
+    let block8 = env.sequencer.build_next_block_with_transactions(vec![is_not_initialized]).await;
 
-    assert!(env.probe_call_succeeded(probe), "getTokenVariant(non-token) staticcall must succeed");
-    assert_eq!(
-        env.probe_return_word(probe),
-        U256::from(ITokenFactory::TokenVariant::NONE as u8),
-        "non-token variant must be NONE"
-    );
+    assert!(env.probe_call_succeeded(probe), "isInitialized(non-token) staticcall must succeed");
+    assert_eq!(env.probe_return_word(probe), U256::ZERO, "non-token must not be initialized");
 
     let invalid_variant_create = env.create_tx(
         TxKind::Call(TokenFactoryStorage::ADDRESS),

@@ -213,14 +213,9 @@ impl<'a> B20PrecompileClient<'a> {
             .wrap_err("Failed to decode balanceOf")
     }
 
-    /// Reads the variant encoded in a token address via the factory.
+    /// Reads the variant encoded in a token address.
     pub async fn variant_of(&self, token: Address) -> Result<TokenVariant> {
-        let output = self
-            .call(TokenFactoryStorage::ADDRESS, ITokenFactory::getTokenVariantCall { token })
-            .await?;
-        let variant = ITokenFactory::getTokenVariantCall::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode getTokenVariant")?;
-        TokenVariant::from_abi(variant).map_err(|_| eyre::eyre!("invalid B-20 variant"))
+        TokenVariant::from_address(token).wrap_err("Token address is not a supported B-20 token")
     }
 
     /// Reads the fixed decimals for the token variant encoded in an address.
