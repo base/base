@@ -11,6 +11,7 @@ use crate::IActivationRegistry;
 
 /// Runtime activation registry for Base-native features.
 #[contract(addr = Self::ADDRESS)]
+#[namespace("base.activation_registry")]
 pub struct ActivationRegistryStorage {
     /// Runtime activation flags keyed by feature id.
     pub features: Mapping<B256, bool>,
@@ -166,8 +167,8 @@ impl ActivationRegistryStorage<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, address, keccak256};
-    use base_precompile_storage::{HashMapStorageProvider, Result, StorageCtx};
+    use alloy_primitives::{B256, U256, address, keccak256, uint};
+    use base_precompile_storage::{HashMapStorageProvider, Result, StorageCtx, StorageKey};
     use revm::precompile::PrecompileOutput;
     use rstest::rstest;
 
@@ -175,6 +176,8 @@ mod tests {
 
     const FEATURE: B256 = ActivationFeature::B20Security.id();
     const ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
+    const ACTIVATION_REGISTRY_ROOT: U256 =
+        uint!(0x43ee1bbe25e988521cccd8b2c8fbd38c8287ebff8e074e825a70dfd3885cce00_U256);
 
     #[derive(Debug, Clone, Copy)]
     enum Transition {
@@ -275,6 +278,36 @@ mod tests {
         assert_eq!(ActivationFeature::PolicyRegistry.id(), keccak256("base.policy_registry"));
         assert_eq!(ActivationFeature::B20Stablecoin.id(), keccak256("base.b20_stablecoin"));
         assert_eq!(ActivationFeature::B20Security.id(), keccak256("base.b20_security"));
+    }
+
+    #[test]
+    fn activation_registry_namespace_matches_base_std_root() {
+        assert_eq!(slots::NAMESPACE_ID, "base.activation_registry");
+        assert_eq!(slots::NAMESPACE_ROOT, ACTIVATION_REGISTRY_ROOT);
+        assert_eq!(slots::FEATURES, ACTIVATION_REGISTRY_ROOT);
+    }
+
+    #[test]
+    fn activation_registry_writes_use_base_std_namespace_slots() {
+        let mut storage = HashMapStorageProvider::new(1);
+
+        activate_feature(&mut storage).unwrap();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_eq!(
+                ctx.sload(
+                    ActivationRegistryStorage::ADDRESS,
+                    FEATURE.mapping_slot(slots::FEATURES)
+                )
+                .unwrap(),
+                U256::ONE
+            );
+            assert_eq!(
+                ctx.sload(ActivationRegistryStorage::ADDRESS, FEATURE.mapping_slot(U256::ZERO))
+                    .unwrap(),
+                U256::ZERO
+            );
+        });
     }
 
     #[test]
