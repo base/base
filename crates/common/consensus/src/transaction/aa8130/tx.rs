@@ -79,7 +79,7 @@ impl TxAa8130 {
     }
 
     /// Length contribution of an `Option<Address>` under [`Self::encode_address_opt`].
-    fn address_opt_encoded_length(addr: &Option<Address>) -> usize {
+    const fn address_opt_encoded_length(addr: &Option<Address>) -> usize {
         match addr {
             None => 1,
             Some(_) => 21,
@@ -213,8 +213,8 @@ impl TxAa8130 {
 
     /// Signing-hash preimage for the payer, per [EIP-8130].
     ///
-    /// `keccak256(AA_PAYER_TYPE || rlp([...unsigned body fields with sender
-    /// substituted by `resolved_sender`...]))`.
+    /// `keccak256(AA_PAYER_TYPE || rlp(unsigned body fields with the
+    /// `sender` slot replaced by the recovered sender address))`.
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
     pub fn payer_signature_hash(&self, resolved_sender: Address) -> B256 {
@@ -322,13 +322,9 @@ impl Transaction for TxAa8130 {
     }
 
     fn effective_gas_price(&self, base_fee: Option<u64>) -> u128 {
-        match base_fee {
-            Some(bf) => {
-                let bf = bf as u128;
-                bf.saturating_add(self.max_priority_fee_per_gas).min(self.max_fee_per_gas)
-            }
-            None => self.max_fee_per_gas,
-        }
+        base_fee.map_or(self.max_fee_per_gas, |bf| {
+            (bf as u128).saturating_add(self.max_priority_fee_per_gas).min(self.max_fee_per_gas)
+        })
     }
 
     fn is_dynamic_fee(&self) -> bool {

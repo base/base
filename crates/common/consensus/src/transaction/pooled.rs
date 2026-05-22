@@ -12,10 +12,7 @@ use alloy_consensus::{
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{B256, Signature, TxHash, bytes};
 
-use crate::{
-    BaseTxEnvelope,
-    transaction::{AaSigned, TxAa8130},
-};
+use crate::{BaseTxEnvelope, transaction::AaSigned};
 
 /// All possible transactions that can be included in a response to `GetPooledTransactions`.
 /// A response to `GetPooledTransactions`. This can include a typed signed transaction, but cannot

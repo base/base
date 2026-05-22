@@ -94,8 +94,7 @@ impl BaseTypedTransaction {
             Self::Eip2930(tx) => Some(tx.signature_hash()),
             Self::Eip1559(tx) => Some(tx.signature_hash()),
             Self::Eip7702(tx) => Some(tx.signature_hash()),
-            Self::Deposit(_) => None,
-            Self::Aa8130(_) => None,
+            Self::Deposit(_) | Self::Aa8130(_) => None,
         }
     }
 
