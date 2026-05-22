@@ -344,8 +344,7 @@ mod tests {
     use super::*;
     use crate::{
         ActivationFeature, ActivationRegistryStorage, B20SecurityStorage, B20Token,
-        B20TokenStorage, IB20, IB20Stablecoin, Mintable, Permittable, Token, TokenAccounting,
-        Transferable,
+        B20TokenStorage, IB20, Mintable, Permittable, Token, TokenAccounting, Transferable,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -625,7 +624,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             assert_output(
                 dispatch_factory_revert(ctx, call),
-                IB20Stablecoin::InvalidCurrency {}.abi_encode(),
+                ITokenFactory::InvalidCurrency { code: String::new() }.abi_encode(),
             );
         });
     }
