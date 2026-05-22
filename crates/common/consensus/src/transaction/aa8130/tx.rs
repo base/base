@@ -378,7 +378,7 @@ impl SignableTransaction<Signature> for TxAa8130 {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256, bytes};
+    use alloy_primitives::{address, bytes};
 
     use super::*;
     use crate::transaction::aa8130::account_changes::Delegation;
@@ -531,7 +531,7 @@ mod tests {
         let resolved = address!("0x00000000000000000000000000000000000000dd");
         let payer_hash_v1 = tx.payer_signature_hash(resolved);
 
-        let tx2 = TxAa8130 { sender: Some(resolved), ..tx.clone() };
+        let tx2 = TxAa8130 { sender: Some(resolved), ..tx };
         let mut buf = Vec::with_capacity(tx2.rlp_encoded_length() + 1);
         buf.put_u8(Aa8130Constants::AA_PAYER_TYPE);
         tx2.rlp_encode(&mut buf);

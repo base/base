@@ -53,8 +53,9 @@ pub struct AaSigned {
 
 #[cfg(feature = "serde")]
 mod serde_impl {
-    use super::{AaSigned, Bytes, TxAa8130};
     use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+
+    use super::{AaSigned, Bytes, TxAa8130};
 
     #[derive(Serialize, Deserialize)]
     #[serde(rename_all = "camelCase")]

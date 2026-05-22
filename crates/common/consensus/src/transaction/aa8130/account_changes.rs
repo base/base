@@ -5,6 +5,8 @@
 //!
 //! [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 
+use alloc::vec::Vec;
+
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::{
     Buf, BufMut, Decodable, Encodable, Header, RlpDecodable, RlpEncodable, length_of_length,
