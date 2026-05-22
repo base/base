@@ -68,7 +68,7 @@ pub struct PolicyRegistryStorage {
 
 impl PolicyRegistryStorage<'_> {
     /// Singleton precompile address for the `PolicyRegistry`.
-    pub const ADDRESS: Address = address!("b030000000000000000000000000000000000000");
+    pub const ADDRESS: Address = address!("8453000000000000000000000000000000000002");
 
     /// Built-in policy ID that always authorizes every account.
     /// Encoded as BLOCKLIST (type=0) with counter=0 — an empty blocklist authorizes everyone.

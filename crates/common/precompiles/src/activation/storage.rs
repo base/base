@@ -65,7 +65,7 @@ impl From<ActivationFeature> for B256 {
 
 impl ActivationRegistryStorage<'_> {
     /// Activation registry precompile address.
-    pub const ADDRESS: Address = address!("0x84530000000000000000000000000000000000ff");
+    pub const ADDRESS: Address = address!("8453000000000000000000000000000000000001");
 
     /// Returns the activation admin.
     pub const fn admin(&self, activation_admin_address: Option<Address>) -> Address {
