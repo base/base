@@ -190,6 +190,18 @@ impl<'a> TokenFactoryStorage<'a> {
             decimals: TokenVariant::Security.decimals(),
         })?;
 
+        if !common.initial_admin.is_zero() {
+            let mut token = B20SecurityToken::with_storage_and_policy(
+                B20SecurityStorage::from_address(token_address, self.storage),
+                PolicyHandle::new(self.storage),
+            );
+            token.grant_role_unchecked(
+                B20TokenRole::DefaultAdmin.id(),
+                common.initial_admin,
+                Self::ADDRESS,
+            )?;
+        }
+
         for (index, calldata) in init_calls.into_iter().enumerate() {
             B20SecurityToken::with_storage_and_policy(
                 B20SecurityStorage::from_address(token_address, self.storage),
@@ -284,23 +296,47 @@ impl TokenCreateParams {
         }
     }
 
-    fn version(&self) -> u8 {
+    const fn version(&self) -> u8 {
         self.common_ref().version
     }
 
-    fn common_ref(&self) -> &CommonParams {
+    const fn common_ref(&self) -> &CommonParams {
         match self {
-            Self::B20(c) => c,
-            Self::Stablecoin { common, .. } => common,
-            Self::Security { common, .. } => common,
+            Self::B20(c) | Self::Stablecoin { common: c, .. } | Self::Security { common: c, .. } => c,
         }
     }
 
+    /// Validates variant-specific invariants after the shared version check.
+    ///
+    /// Each arm owns its own rules. Version is checked first by the caller (`check_version`)
+    /// so that version errors always take precedence over field-level errors.
     fn validate(&self) -> Result<()> {
-        if let Self::Stablecoin { currency, .. } = self {
-            if currency.is_empty() {
-                return Err(BasePrecompileError::revert(ITokenFactory::MissingRequiredField {}));
+        match self {
+            Self::B20(common) => Self::validate_b20(common),
+            Self::Stablecoin { common, currency } => Self::validate_stablecoin(common, currency),
+            Self::Security { common, minimum_redeemable, isin } => {
+                Self::validate_security(common, minimum_redeemable, isin)
             }
+        }
+    }
+
+    const fn validate_b20(_common: &CommonParams) -> Result<()> {
+        Ok(())
+    }
+
+    const fn validate_stablecoin(_common: &CommonParams, _currency: &str) -> Result<()> {
+        // Currency validation is delegated to `B20StablecoinStorage::initialize`, which rejects
+        // all invalid values (including empty) with `InvalidCurrency`.
+        Ok(())
+    }
+
+    fn validate_security(
+        _common: &CommonParams,
+        _minimum_redeemable: &U256,
+        isin: &str,
+    ) -> Result<()> {
+        if isin.is_empty() {
+            return Err(BasePrecompileError::revert(ITokenFactory::MissingRequiredField {}));
         }
         Ok(())
     }
@@ -317,12 +353,13 @@ impl TokenCreateParams {
 mod tests {
     use alloy_primitives::{B256, address};
     use alloy_sol_types::{SolCall, SolError, SolValue};
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
 
     use super::*;
     use crate::{
         ActivationFeature, ActivationRegistryStorage, B20SecurityStorage, B20Token,
-        B20TokenStorage, IB20, Mintable, Permittable, Token, TokenAccounting, Transferable,
+        B20TokenStorage, IB20, IB20Stablecoin, Mintable, Permittable, Token, TokenAccounting,
+        Transferable,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -538,7 +575,7 @@ mod tests {
             assert!(factory.create_token(caller, bad_version).is_err());
 
             let bad_variant = ITokenFactory::createTokenCall {
-                variant: ITokenFactory::TokenVariant::NONE,
+                variant: ITokenFactory::TokenVariant::__Invalid,
                 salt: B256::repeat_byte(0x02),
                 params: token_params("Bad Variant", "BAD").abi_encode().into(),
                 initCalls: Vec::new(),
@@ -602,7 +639,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             assert_output(
                 dispatch_factory_revert(ctx, call),
-                ITokenFactory::MissingRequiredField {}.abi_encode(),
+                IB20Stablecoin::InvalidCurrency {}.abi_encode(),
             );
         });
     }
@@ -882,7 +919,7 @@ mod tests {
                 dispatch_factory_revert(
                     ctx,
                     ITokenFactory::getTokenAddressCall {
-                        variant: ITokenFactory::TokenVariant::NONE,
+                        variant: ITokenFactory::TokenVariant::__Invalid,
                         sender: creator,
                         salt,
                     },
@@ -899,15 +936,6 @@ mod tests {
             assert_output(
                 dispatch_factory_success(ctx, ITokenFactory::isB20Call { token: expected_token }),
                 ITokenFactory::isB20Call::abi_encode_returns(&true),
-            );
-            assert_output(
-                dispatch_factory_success(
-                    ctx,
-                    ITokenFactory::getTokenVariantCall { token: expected_token },
-                ),
-                ITokenFactory::getTokenVariantCall::abi_encode_returns(
-                    &ITokenFactory::TokenVariant::DEFAULT,
-                ),
             );
 
             assert_output(
@@ -1036,6 +1064,123 @@ mod tests {
                     IB20::allowanceCall { owner: alice, spender },
                 ),
                 U256::from(50u64).abi_encode(),
+            );
+        });
+    }
+
+    #[test]
+    fn test_create_security_token_grants_default_admin_role() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let caller = Address::repeat_byte(0x55);
+        let initial_admin = Address::repeat_byte(0xAB);
+
+        let params = ITokenFactory::B20SecurityCreateParams {
+            version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
+            name: "Security Token".to_string(),
+            symbol: "SEC".to_string(),
+            initialAdmin: initial_admin,
+            isin: "US0000000001".to_string(),
+            minimumRedeemable: U256::ZERO,
+        };
+        let call = ITokenFactory::createTokenCall {
+            variant: ITokenFactory::TokenVariant::SECURITY,
+            salt: B256::repeat_byte(0x50),
+            params: params.abi_encode().into(),
+            initCalls: Vec::new(),
+        };
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = TokenFactoryStorage::new(ctx);
+            let token_addr = factory.create_token(caller, call).unwrap();
+
+            let token = B20SecurityToken::with_storage_and_policy(
+                B20SecurityStorage::from_address(token_addr, ctx),
+                PolicyHandle::new(ctx),
+            );
+            assert!(token.has_role(B20TokenRole::DefaultAdmin.id(), initial_admin).unwrap());
+            assert!(!token.has_role(B20TokenRole::DefaultAdmin.id(), Address::ZERO).unwrap());
+        });
+
+        // Zero initialAdmin grants no role.
+        let params_no_admin = ITokenFactory::B20SecurityCreateParams {
+            version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
+            name: "No Admin".to_string(),
+            symbol: "NA".to_string(),
+            initialAdmin: Address::ZERO,
+            isin: "US0000000002".to_string(),
+            minimumRedeemable: U256::ZERO,
+        };
+        let call_no_admin = ITokenFactory::createTokenCall {
+            variant: ITokenFactory::TokenVariant::SECURITY,
+            salt: B256::repeat_byte(0x51),
+            params: params_no_admin.abi_encode().into(),
+            initCalls: Vec::new(),
+        };
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = TokenFactoryStorage::new(ctx);
+            let token_addr = factory.create_token(caller, call_no_admin).unwrap();
+
+            let token = B20SecurityToken::with_storage_and_policy(
+                B20SecurityStorage::from_address(token_addr, ctx),
+                PolicyHandle::new(ctx),
+            );
+            assert!(!token.has_role(B20TokenRole::DefaultAdmin.id(), initial_admin).unwrap());
+            assert!(!token.has_role(B20TokenRole::DefaultAdmin.id(), Address::ZERO).unwrap());
+        });
+    }
+
+    #[test]
+    fn test_create_security_token_reverts_for_empty_isin() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+
+        let params = ITokenFactory::B20SecurityCreateParams {
+            version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
+            name: "Security Token".to_string(),
+            symbol: "SEC".to_string(),
+            initialAdmin: Address::repeat_byte(0xAB),
+            isin: String::new(),
+            minimumRedeemable: U256::ZERO,
+        };
+        let call = ITokenFactory::createTokenCall {
+            variant: ITokenFactory::TokenVariant::SECURITY,
+            salt: B256::repeat_byte(0x52),
+            params: params.abi_encode().into(),
+            initCalls: Vec::new(),
+        };
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_output(
+                dispatch_factory_revert(ctx, call),
+                ITokenFactory::MissingRequiredField {}.abi_encode(),
+            );
+        });
+
+        // Bad version with empty ISIN reverts with UnsupportedVersion, not MissingRequiredField.
+        let params_bad_version = ITokenFactory::B20SecurityCreateParams {
+            version: TokenFactoryStorage::CREATE_TOKEN_VERSION + 1,
+            name: "Security Token".to_string(),
+            symbol: "SEC".to_string(),
+            initialAdmin: Address::repeat_byte(0xAB),
+            isin: String::new(),
+            minimumRedeemable: U256::ZERO,
+        };
+        let call_bad_version = ITokenFactory::createTokenCall {
+            variant: ITokenFactory::TokenVariant::SECURITY,
+            salt: B256::repeat_byte(0x53),
+            params: params_bad_version.abi_encode().into(),
+            initCalls: Vec::new(),
+        };
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_output(
+                dispatch_factory_revert(ctx, call_bad_version),
+                ITokenFactory::UnsupportedVersion {
+                    version: TokenFactoryStorage::CREATE_TOKEN_VERSION + 1,
+                }
+                .abi_encode(),
             );
         });
     }
