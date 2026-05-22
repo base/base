@@ -14,12 +14,31 @@ use crate::transaction::aa8130::constants::Aa8130Constants;
 
 /// Bitmask describing the contexts in which an owner is valid.
 ///
-/// See `SCOPE_*` constants on [`Aa8130Constants`].
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
+/// On the wire, `Scope` is encoded as a single RLP-encoded byte (matching the
+/// EIP-8130 `uint8` spec), not as a one-element list. The derived RLP impls
+/// from `alloy_rlp` would wrap the inner byte in a list header, so the
+/// `Encodable`/`Decodable` impls are written by hand.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Scope(pub u8);
+
+impl Encodable for Scope {
+    fn encode(&self, out: &mut dyn BufMut) {
+        self.0.encode(out);
+    }
+
+    fn length(&self) -> usize {
+        self.0.length()
+    }
+}
+
+impl Decodable for Scope {
+    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        u8::decode(buf).map(Self)
+    }
+}
 
 impl Scope {
     /// Unrestricted scope (owner valid in all contexts).
@@ -393,5 +412,25 @@ mod tests {
         let mut slice = &buf[..];
         let res = AccountChange::decode(&mut slice);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn scope_encodes_as_bare_uint8() {
+        let mut buf = Vec::new();
+        Scope(0x05).encode(&mut buf);
+        assert_eq!(buf, vec![0x05], "Scope must serialize as a single RLP byte, not a list");
+
+        let mut zero = Vec::new();
+        Scope(0x00).encode(&mut zero);
+        assert_eq!(zero, vec![0x80], "Zero byte RLP encodes as 0x80");
+
+        let mut high = Vec::new();
+        Scope(0x80).encode(&mut high);
+        assert_eq!(high, vec![0x81, 0x80], "High-bit byte RLP encodes as 0x81 0x80");
+
+        let mut slice = buf.as_slice();
+        let decoded = Scope::decode(&mut slice).unwrap();
+        assert_eq!(decoded, Scope(0x05));
+        assert!(slice.is_empty());
     }
 }
