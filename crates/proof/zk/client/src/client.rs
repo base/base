@@ -75,7 +75,7 @@ impl ZkProofClient {
     pub fn new(config: &ZkProofClientConfig) -> Result<Self, ZkProofError> {
         let endpoint_str = config.endpoint.as_str();
 
-        let channel = Endpoint::from_shared(endpoint_str.to_owned())
+        let channel = Endpoint::new(endpoint_str.to_owned())
             .map_err(|e| ZkProofError::InvalidUrl(format!("{}: {e}", config.endpoint)))?
             .connect_timeout(config.connect_timeout)
             .timeout(config.request_timeout)

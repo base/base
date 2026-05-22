@@ -1,0 +1,37 @@
+# ZK fork dispute config - Base Zeronet.
+#
+# Zeronet L1 archive RPC used by the just recipe to start the local fork.
+l1_fork_url: "https://zeronet-l1-archive-rpc.example.invalid"
+
+# `l1_rpc_url` must point at the local fork where the invalid dispute game exists.
+# Do not point this test directly at live L1.
+# Override this with BASE_ZK_FORK_L1_RPC_URL if your fork runs elsewhere.
+l1_rpc_url: "http://localhost:8545"
+
+# Base Zeronet RPC used to compute canonical output roots when a specific
+# already-invalid game_address/game_index is provided. Auto-patching uses the
+# selected game's existing roots and does not need historical eth_getProof.
+l2_rpc_url: "https://base-zeronet-archive-rpc.example.invalid"
+
+# Base Zeronet rollup RPC used by the fork test and local prover for
+# optimism_* methods such as optimism_rollupConfig.
+rollup_rpc_url: "https://base-zeronet-rollup-rpc.example.invalid"
+prover_l2_node_rpc_url: "https://base-zeronet-rollup-rpc.example.invalid"
+
+# Zeronet beacon RPC used by the local prover witness generation.
+l1_beacon_rpc_url: "https://zeronet-beacon-rpc.example.invalid"
+
+# Replace with the Base Zeronet DisputeGameFactory address.
+dispute_game_factory: "0xd6E6dBf4F7EA0ac412fD8b65ED297e64BB7a06E1"
+
+# Local prover service. Override with BASE_ZK_FORK_PROVER_GRPC_URL if needed.
+prover_grpc_url: "http://localhost:9000"
+
+# Optional: use a specific game_address or game_index. If omitted, the test
+# selects the newest factory game on the fork and patches one intermediate root.
+# game_address: "0x0000000000000000000000000000000000000000"
+# game_index: 0
+
+intent: "nullify"
+poll_interval_secs: 30
+poll_timeout_secs: 14400

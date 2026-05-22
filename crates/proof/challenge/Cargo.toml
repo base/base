@@ -84,8 +84,13 @@ serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
+serde_yaml.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 base-challenger = { path = ".", features = ["test-utils"] }
+
+[[test]]
+name = "zk_fork_dispute"
+path = "fork-tests/zk-fork-dispute/zk_fork_dispute.rs"
 
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
