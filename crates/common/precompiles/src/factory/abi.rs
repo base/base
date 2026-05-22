@@ -54,6 +54,9 @@ sol! {
         /// A required string argument was empty.
         error MissingRequiredField();
 
+        /// The stablecoin `currency` field was not on the ISO 4217 fiat allowlist.
+        error InvalidCurrency(string code);
+
         /// One of the post-creation init calls failed.
         error InitCallFailed(uint256 index);
 

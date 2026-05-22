@@ -98,17 +98,7 @@ impl PolicyRegistryStorage<'_> {
         (policy_id >> Self::POLICY_ID_TYPE_SHIFT) as u8
     }
 
-    fn require_well_formed(policy_id: u64) -> Result<()> {
-        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::MalformedPolicyId {
-                policyId: policy_id,
-            }));
-        }
-        Ok(())
-    }
-
     fn require_custom(&self, policy_id: u64) -> Result<PackedPolicy> {
-        Self::require_well_formed(policy_id)?;
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         if !packed.exists() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
@@ -168,9 +158,6 @@ impl PolicyRegistryStorage<'_> {
     pub fn create_policy(&mut self, admin: Address, policy_type: PolicyType) -> Result<u64> {
         self.require_write()?;
         let policy_type_u8 = policy_type.as_discriminant();
-        if policy_type_u8 > Self::ALLOWLIST_TYPE {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::InvalidPolicyType {}));
-        }
         if admin == Address::ZERO {
             return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
         }
@@ -230,7 +217,7 @@ impl PolicyRegistryStorage<'_> {
                 blocked: true,
                 accounts,
             })?,
-            _ => return Err(BasePrecompileError::revert(IPolicyRegistry::InvalidPolicyType {})),
+            _ => return Err(BasePrecompileError::enum_conversion_error()),
         }
         Ok(policy_id)
     }
@@ -247,8 +234,8 @@ impl PolicyRegistryStorage<'_> {
         }
         self.emit_event(IPolicyRegistry::PolicyAdminStaged {
             policyId: policy_id,
-            previousAdmin: caller,
-            newAdmin: new_admin,
+            currentAdmin: caller,
+            pendingAdmin: new_admin,
         })?;
         Ok(())
     }
