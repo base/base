@@ -572,7 +572,7 @@ impl B20TokenScenario {
         scenario.build_block_with_transactions(Vec::new()).await;
 
         let activate_factory =
-            scenario.env.activate_feature_tx(BerylTestEnv::token_factory_feature());
+            scenario.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_token_feature());
         let block =
             scenario.build_block_with_transactions(vec![activate_factory, activate_b20]).await;

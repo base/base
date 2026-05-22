@@ -25,8 +25,8 @@ pub struct ActivationRegistryStorage {
 pub enum ActivationFeature {
     /// `keccak256("base.b20_token")`
     B20Token,
-    /// `keccak256("base.token_factory")`
-    TokenFactory,
+    /// `keccak256("base.b20_factory")`
+    B20Factory,
     /// `keccak256("base.policy_registry")`
     PolicyRegistry,
     /// `keccak256("base.b20_stablecoin")`
@@ -42,8 +42,8 @@ impl ActivationFeature {
             Self::B20Token => {
                 b256!("0x47a1afe8d3d691b87e090ee972d223a11f4da971ff5416c04985bb2393aca752")
             }
-            Self::TokenFactory => {
-                b256!("0xceff857b4173841a3aef07ca52b183282fe74fe117e8f9dda0dcb3ddafd18a5b")
+            Self::B20Factory => {
+                b256!("0x78751e29c8bcc0d609ab18e9fbc4158e73f7db25ae2ee095dad42e2578b1e800")
             }
             Self::PolicyRegistry => {
                 b256!("0xb582ebae03f16fee49a6763f78df482fb11ae73f103ed0d330bbe556aa90a43f")
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn feature_id_constants_match_canonical_names() {
         assert_eq!(ActivationFeature::B20Token.id(), keccak256("base.b20_token"));
-        assert_eq!(ActivationFeature::TokenFactory.id(), keccak256("base.token_factory"));
+        assert_eq!(ActivationFeature::B20Factory.id(), keccak256("base.b20_factory"));
         assert_eq!(ActivationFeature::PolicyRegistry.id(), keccak256("base.policy_registry"));
         assert_eq!(ActivationFeature::B20Stablecoin.id(), keccak256("base.b20_stablecoin"));
         assert_eq!(ActivationFeature::B20Security.id(), keccak256("base.b20_security"));

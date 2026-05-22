@@ -625,10 +625,10 @@ services:
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
     environment:
-      - OTEL_SERVICE_NAME=base-rpc
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
       - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
+      - OTEL_SERVICE_NAME=base-rpc
     entrypoint: /app/base
     command:
       - rpc
@@ -699,6 +699,69 @@ services:
         ipv4_address: ${L2_BASE_RPC_ADVERTISE_IP}
         aliases:
           - base-rpc-cl
+    restart: unless-stopped
+
+  zk-prover-postgres:
+    image: postgres:17-alpine
+    container_name: zk-prover-postgres
+    ports:
+      - "${ZK_PROVER_POSTGRES_PORT}:5432"
+    environment:
+      - POSTGRES_DB=prover
+      - POSTGRES_USER=prover
+      - POSTGRES_PASSWORD=prover
+    volumes:
+      - ../../.devnet/zk-prover/postgres:/var/lib/postgresql/data
+      - ../../crates/proof/zk/db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prover -d prover"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
+
+  base-prover-zk:
+    image: base-prover-zk:local
+    build:
+      <<: *rust-service-build
+      target: zk-prover
+    container_name: base-prover-zk
+    depends_on:
+      l1-el:
+        condition: service_healthy
+      l1-cl:
+        condition: service_healthy
+      base-rpc:
+        condition: service_healthy
+      zk-prover-postgres:
+        condition: service_healthy
+    ports:
+      - "${ZK_PROVER_GRPC_PORT}:9000"
+    volumes:
+      - ../../.devnet/l1/configs/el/chain-config.json:/app/configs/L1/${L1_CHAIN_ID}.json:ro
+    environment:
+      - SP1_PROVER=dry-run
+      - PROXY_ENABLE=false
+      - GRPC_LISTEN_ADDR=0.0.0.0:9000
+      - BASE_CONSENSUS_ADDRESS=http://base-rpc:${L2_BASE_RPC_CL_RPC_PORT}
+      - L1_NODE_ADDRESS=http://l1-el:${L1_HTTP_PORT}
+      - L1_BEACON_ADDRESS=http://l1-cl:${L1_CL_HTTP_PORT}
+      - L2_NODE_ADDRESS=http://base-rpc:${L2_BASE_RPC_HTTP_PORT}
+      - DEFAULT_SEQUENCE_WINDOW=50
+      - POSTGRES_HOST=zk-prover-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=prover
+      - POSTGRES_USER=prover
+      - POSTGRES_PASSWORD=prover
+      - POSTGRES_SSLMODE=disable
+      - OTEL_SERVICE_NAME=base-prover-zk
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
     restart: unless-stopped
 
   jaeger:
