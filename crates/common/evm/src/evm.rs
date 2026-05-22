@@ -493,7 +493,7 @@ mod tests {
             internals: EvmInternals::from_context(ctx),
         });
         assert!(
-            matches!(&result, Ok(output) if output.halt_reason().is_some()),
+            result.is_err(),
             "precompile {address} should fail over max input size, got {result:?}"
         );
     }
