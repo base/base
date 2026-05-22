@@ -8,7 +8,7 @@ use base_precompile_storage::{
     BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
 };
 
-use crate::{B20PolicyType, B20TokenRole, IB20, TokenAccounting, TokenVariant};
+use crate::{B20PolicyType, B20TokenRole, B20Variant, IB20, TokenAccounting};
 
 /// Creation-time parameters for a B-20 token.
 ///
@@ -138,8 +138,7 @@ impl TokenAccounting for B20TokenStorage<'_> {
     }
 
     fn decimals(&self) -> Result<u8> {
-        Ok(TokenVariant::from_address(ContractStorage::address(self))
-            .map_or(0, TokenVariant::decimals))
+        Ok(B20Variant::from_address(ContractStorage::address(self)).map_or(0, B20Variant::decimals))
     }
 
     fn paused(&self) -> Result<U256> {

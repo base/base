@@ -1,14 +1,14 @@
-//! `TokenFactory` native precompile — creates B-20 tokens at deterministic prefix-encoded addresses.
+//! `B20Factory` native precompile — creates B-20 tokens at deterministic prefix-encoded addresses.
 
 mod abi;
 mod dispatch;
-pub use abi::ITokenFactory;
+pub use abi::IB20Factory;
 
 mod precompile;
-pub use precompile::TokenFactory;
+pub use precompile::B20Factory;
 
 mod storage;
-pub use storage::TokenFactoryStorage;
+pub use storage::B20FactoryStorage;
 
 mod variant;
-pub use variant::TokenVariant;
+pub use variant::B20Variant;

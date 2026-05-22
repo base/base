@@ -4,7 +4,7 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::Address;
 
 use super::{B20StablecoinToken, storage::B20StablecoinStorage};
-use crate::{PolicyHandle, TokenVariant, macros::base_precompile};
+use crate::{B20Variant, PolicyHandle, macros::base_precompile};
 
 /// Entry point for the stablecoin B-20 token precompile.
 ///
@@ -21,8 +21,8 @@ impl B20StablecoinPrecompile {
 
     /// Returns the stablecoin precompile for `address`, if it encodes a stablecoin token.
     pub fn lookup(address: &Address) -> Option<DynPrecompile> {
-        match TokenVariant::from_address(*address)? {
-            TokenVariant::Stablecoin => Some(Self::create_precompile(*address)),
+        match B20Variant::from_address(*address)? {
+            B20Variant::Stablecoin => Some(Self::create_precompile(*address)),
             _ => None,
         }
     }

@@ -54,7 +54,7 @@ pub use b20_stablecoin::{
 };
 
 mod factory;
-pub use factory::{ITokenFactory, TokenFactory, TokenFactoryStorage, TokenVariant};
+pub use factory::{B20Factory, B20FactoryStorage, B20Variant, IB20Factory};
 
 mod policy;
 pub use policy::{IPolicyRegistry, PolicyHandle, PolicyRegistryPrecompile, PolicyRegistryStorage};

@@ -3,12 +3,12 @@
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_sol_types::SolValue;
 
-use crate::ITokenFactory;
+use crate::IB20Factory;
 
 /// B-20 token variant encoded in the token address prefix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum TokenVariant {
+pub enum B20Variant {
     /// B-20 token.
     B20 = 1,
     /// Stablecoin B-20 token.
@@ -17,11 +17,11 @@ pub enum TokenVariant {
     Security = 3,
 }
 
-impl TokenVariant {
+impl B20Variant {
     /// First byte of every B-20 address.
     pub const PREFIX_BYTE: u8 = 0xb2;
 
-    /// Variant discriminant returned by `getTokenVariant` when address has no B-20 prefix.
+    /// Variant discriminant returned by `getB20Variant` when address has no B-20 prefix.
     pub const NONE_DISCRIMINANT: u8 = 0;
 
     /// Variant discriminant for default B-20 tokens.
@@ -44,12 +44,12 @@ impl TokenVariant {
     }
 
     /// Returns the supported token variant for an ABI enum value, or `None` for unknown variants.
-    pub const fn from_abi(variant: ITokenFactory::TokenVariant) -> Option<Self> {
+    pub const fn from_abi(variant: IB20Factory::B20Variant) -> Option<Self> {
         match variant {
-            ITokenFactory::TokenVariant::DEFAULT => Some(Self::B20),
-            ITokenFactory::TokenVariant::STABLECOIN => Some(Self::Stablecoin),
-            ITokenFactory::TokenVariant::SECURITY => Some(Self::Security),
-            ITokenFactory::TokenVariant::__Invalid => None,
+            IB20Factory::B20Variant::DEFAULT => Some(Self::B20),
+            IB20Factory::B20Variant::STABLECOIN => Some(Self::Stablecoin),
+            IB20Factory::B20Variant::SECURITY => Some(Self::Security),
+            IB20Factory::B20Variant::__Invalid => None,
         }
     }
 
@@ -82,11 +82,11 @@ impl TokenVariant {
     }
 
     /// Returns this variant as the generated ABI enum.
-    pub const fn abi(self) -> ITokenFactory::TokenVariant {
+    pub const fn abi(self) -> IB20Factory::B20Variant {
         match self {
-            Self::B20 => ITokenFactory::TokenVariant::DEFAULT,
-            Self::Stablecoin => ITokenFactory::TokenVariant::STABLECOIN,
-            Self::Security => ITokenFactory::TokenVariant::SECURITY,
+            Self::B20 => IB20Factory::B20Variant::DEFAULT,
+            Self::Stablecoin => IB20Factory::B20Variant::STABLECOIN,
+            Self::Security => IB20Factory::B20Variant::SECURITY,
         }
     }
 

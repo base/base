@@ -10,7 +10,7 @@ use iso_currency::Currency;
 
 use super::accounting::StablecoinAccounting;
 use crate::{
-    B20CoreStorage, B20PolicyType, B20TokenRole, IB20, ITokenFactory, TokenAccounting, TokenVariant,
+    B20CoreStorage, B20PolicyType, B20TokenRole, B20Variant, IB20, IB20Factory, TokenAccounting,
 };
 
 /// Stablecoin-specific B-20 storage rooted at the `base.b20.stablecoin` ERC-7201 namespace.
@@ -52,11 +52,11 @@ impl<'a> B20StablecoinStorage<'a> {
     /// Writes all creation-time fields atomically.
     ///
     /// Validates that `currency` is a recognised ISO 4217 code before writing
-    /// anything; reverts `ITokenFactory::InvalidCurrency` otherwise.
+    /// anything; reverts `IB20Factory::InvalidCurrency` otherwise.
     pub fn initialize(&mut self, init: B20StablecoinInit) -> Result<()> {
         #[cfg(feature = "std")]
         if Currency::from_code(&init.currency).is_none() {
-            return Err(BasePrecompileError::revert(ITokenFactory::InvalidCurrency {
+            return Err(BasePrecompileError::revert(IB20Factory::InvalidCurrency {
                 code: init.currency,
             }));
         }
@@ -125,8 +125,7 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
     }
 
     fn decimals(&self) -> Result<u8> {
-        Ok(TokenVariant::from_address(ContractStorage::address(self))
-            .map_or(0, TokenVariant::decimals))
+        Ok(B20Variant::from_address(ContractStorage::address(self)).map_or(0, B20Variant::decimals))
     }
 
     fn paused(&self) -> Result<U256> {

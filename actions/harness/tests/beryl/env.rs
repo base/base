@@ -149,7 +149,7 @@ impl BerylTestEnv {
 
     /// Activation registry feature ID for the token factory precompile.
     pub(crate) const fn token_factory_feature() -> B256 {
-        ActivationFeature::TokenFactory.id()
+        ActivationFeature::B20Factory.id()
     }
 
     /// Activation registry feature ID for the B-20 token precompile.

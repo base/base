@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-factory-live.sh — end-to-end validation of the B-20 TokenFactory precompile
+# check-factory-live.sh — end-to-end validation of the B-20 B20Factory precompile
 # against a running devnet node using real cast transactions.
 #
 # Prerequisites:
@@ -197,10 +197,10 @@ IS_B20=$(ccall "$FACTORY" "isB20(address)(bool)" "$TOKEN")
 IS_B20=$(trim "$IS_B20")
 assert_eq "isB20 is true after creation" "true" "$IS_B20"
 
-# getTokenVariant must return 1 (VARIANT_DEFAULT)
-VARIANT=$(ccall "$FACTORY" "getTokenVariant(address)(uint8)" "$TOKEN")
+# getB20Variant must return 1 (VARIANT_DEFAULT)
+VARIANT=$(ccall "$FACTORY" "getB20Variant(address)(uint8)" "$TOKEN")
 VARIANT=$(trim "$VARIANT")
-assert_eq "getTokenVariant returns 1 (DEFAULT)" "1" "$VARIANT"
+assert_eq "getB20Variant returns 1 (DEFAULT)" "1" "$VARIANT"
 
 pass "Factory state is correct"
 
@@ -272,7 +272,7 @@ echo ""
 echo "Verified:"
 echo "  • getTokenAddress → deterministic address with B-20 marker and variant"
 echo "  • isB20 = true before and after creation"
-echo "  • getTokenVariant = 1 (DEFAULT)"
+echo "  • getB20Variant = 1 (DEFAULT)"
 echo "  • name='$TOKEN_NAME'  symbol='$TOKEN_SYMBOL'  decimals=$TOKEN_DECIMALS"
 echo "  • totalSupply=$INITIAL_SUPPLY  balanceOf(alice)=$ALICE_TOKEN_BAL"
 echo "  • transfer($TRANSFER_AMOUNT to bob) → alice=$EXPECTED_ALICE  bob=$TRANSFER_AMOUNT"
