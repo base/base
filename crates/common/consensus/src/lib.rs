@@ -26,8 +26,8 @@ pub use transaction::serde_deposit_tx_rpc;
 pub use transaction::{
     Aa8130Constants, AaSigned, AccountChange, BasePooledTransaction, BaseTransaction,
     BaseTransactionInfo, BaseTxEnvelope, BaseTypedTransaction, Call, ConfigChange, CreateEntry,
-    DEPOSIT_TX_TYPE_ID, Delegation, DepositInfo, DepositTransaction, InitialOwner, OpTxType,
-    OwnerChange, OwnerChangeType, Scope, TxAa8130, TxDeposit,
+    DEPOSIT_TX_TYPE_ID, Delegation, DepositInfo, DepositTransaction, EIP8130_TX_TYPE_ID,
+    InitialOwner, OpTxType, OwnerChange, OwnerChangeType, Scope, TxAa8130, TxDeposit,
 };
 
 mod extra;

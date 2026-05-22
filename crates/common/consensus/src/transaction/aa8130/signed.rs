@@ -26,8 +26,7 @@ use crate::transaction::aa8130::{constants::Aa8130Constants, tx::TxAa8130};
 /// Signed [EIP-8130] Account Abstraction transaction envelope.
 ///
 /// Holds the unsigned [`TxAa8130`] body plus the two authentication byte
-/// strings. The transaction hash is recomputed on each [`Self::hash`] call;
-/// callers that need caching should wrap in an outer cache.
+/// strings. The transaction hash is computed at construction and cached.
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -51,12 +50,17 @@ pub struct AaSigned {
     /// [`TxAa8130::payer_signature_hash`] (with the resolved sender substituted).
     /// When `tx.payer.is_none()` this is empty.
     payer_auth: Bytes,
+    /// Cached EIP-2718 transaction hash (`keccak256(encode_2718(self))`).
+    hash: B256,
 }
 
 impl AaSigned {
-    /// Constructs a new [`AaSigned`] from its parts.
-    pub const fn new(tx: TxAa8130, sender_auth: Bytes, payer_auth: Bytes) -> Self {
-        Self { tx, sender_auth, payer_auth }
+    /// Constructs a new [`AaSigned`] from its parts, computing and caching
+    /// the EIP-2718 transaction hash.
+    pub fn new(tx: TxAa8130, sender_auth: Bytes, payer_auth: Bytes) -> Self {
+        let mut this = Self { tx, sender_auth, payer_auth, hash: B256::ZERO };
+        this.hash = this.recompute_hash();
+        this
     }
 
     /// Returns the unsigned transaction body.
@@ -79,9 +83,12 @@ impl AaSigned {
         &self.payer_auth
     }
 
-    /// Returns the EIP-2718 transaction hash, computed as
-    /// `keccak256(encode_2718(self))`. Not cached.
-    pub fn hash(&self) -> B256 {
+    /// Returns the cached EIP-2718 transaction hash.
+    pub const fn hash(&self) -> &B256 {
+        &self.hash
+    }
+
+    fn recompute_hash(&self) -> B256 {
         let mut buf = Vec::with_capacity(self.encode_2718_len());
         self.encode_2718(&mut buf);
         keccak256(&buf)
@@ -196,7 +203,7 @@ impl Encodable2718 for AaSigned {
     }
 
     fn trie_hash(&self) -> B256 {
-        self.hash()
+        self.hash
     }
 }
 
@@ -362,7 +369,7 @@ mod tests {
         let signed = sample_signed(false);
         let mut buf = Vec::new();
         signed.encode_2718(&mut buf);
-        assert_eq!(signed.hash(), keccak256(&buf));
+        assert_eq!(*signed.hash(), keccak256(&buf));
     }
 
     #[test]
