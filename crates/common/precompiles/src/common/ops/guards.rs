@@ -54,7 +54,7 @@ impl B20Guards {
         Self::ensure_policy(token, policy_type.id(), account)
     }
 
-    /// Ensures `account` is allowed by the raw `policy_type`.
+    /// Ensures `account` is allowed by the raw `policy_scope`.
     ///
     /// All policy IDs, including built-ins, are delegated to the configured policy registry.
     pub fn ensure_policy<T: Token + ?Sized>(
