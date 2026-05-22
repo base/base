@@ -86,24 +86,29 @@ impl PolicyRegistryStorage<'_> {
     const POLICY_ID_TYPE_SHIFT: usize = 56;
     /// Number of built-in policies; the counter is set to this value after `write_builtins`.
     const BUILTIN_POLICY_COUNT: u64 = 2;
-
-    fn require_write(&self) -> Result<()> {
-        if self.storage.is_static() {
-            return Err(BasePrecompileError::StaticCallViolation);
-        }
-        Ok(())
-    }
+    /// Maximum number of accounts per membership batch (`createPolicyWithAccounts`,
+    /// `updateAllowlist`, `updateBlocklist`).
+    const MAX_ACCOUNTS_PER_BATCH: usize = 64;
 
     const fn policy_id_type(policy_id: u64) -> u8 {
         (policy_id >> Self::POLICY_ID_TYPE_SHIFT) as u8
     }
 
     fn require_custom(&self, policy_id: u64) -> Result<PackedPolicy> {
-        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
+        let packed: PackedPolicy = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         if !packed.exists() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
         Ok(packed)
+    }
+
+    fn require_account_batch_size(accounts: &[Address]) -> Result<()> {
+        if accounts.len() > Self::MAX_ACCOUNTS_PER_BATCH {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
+                maxBatchSize: U256::from(Self::MAX_ACCOUNTS_PER_BATCH),
+            }));
+        }
+        Ok(())
     }
 
     fn next_counter(&self) -> Result<u64> {
@@ -117,7 +122,6 @@ impl PolicyRegistryStorage<'_> {
     /// Validates the policy exists and the caller is its current admin.
     /// Returns `(packed, caller)` on success.
     fn require_admin(&self, policy_id: u64) -> Result<(PackedPolicy, Address)> {
-        self.require_write()?;
         let packed = self.require_custom(policy_id)?;
         let caller = self.storage.caller();
         if packed.admin() != caller {
@@ -156,7 +160,6 @@ impl PolicyRegistryStorage<'_> {
 
     /// Creates a new ALLOWLIST or BLOCKLIST policy, returning its encoded ID.
     pub fn create_policy(&mut self, admin: Address, policy_type: PolicyType) -> Result<u64> {
-        self.require_write()?;
         let policy_type_u8 = policy_type.as_discriminant();
         if admin == Address::ZERO {
             return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
@@ -199,6 +202,12 @@ impl PolicyRegistryStorage<'_> {
         policy_type: PolicyType,
         accounts: Vec<Address>,
     ) -> Result<u64> {
+        Self::require_account_batch_size(&accounts)?;
+        for account in &accounts {
+            if account.is_zero() {
+                return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
+            }
+        }
         let policy_id = self.create_policy(admin, policy_type)?;
         let caller = self.storage.caller();
         for account in &accounts {
@@ -242,7 +251,6 @@ impl PolicyRegistryStorage<'_> {
 
     /// Completes a pending admin transfer; caller must be the staged pending admin.
     pub fn finalize_update_admin(&mut self, policy_id: u64) -> Result<()> {
-        self.require_write()?;
         let packed = self.require_custom(policy_id)?;
         let pending = self.pending_admins.at(&policy_id).read()?;
         if pending == Address::ZERO {
@@ -319,6 +327,7 @@ impl PolicyRegistryStorage<'_> {
         if Self::policy_id_type(policy_id) != expected_type {
             return Err(BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
         }
+        Self::require_account_batch_size(accounts)?;
         for account in accounts {
             if add {
                 self.members.at_mut(&policy_id).at_mut(account).write(true)?;
@@ -402,6 +411,9 @@ impl PolicyRegistryStorage<'_> {
     /// naturally.
     pub fn pending_policy_admin(&self, policy_id: u64) -> Result<Address> {
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
+            return Ok(Address::ZERO);
+        }
+        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(Address::ZERO);
         }
         self.pending_admins.at(&policy_id).read()
@@ -580,6 +592,10 @@ mod tests {
             PolicyRegistryStorage::new(ctx).is_authorized(policy_id, account)
         })
         .unwrap()
+    }
+
+    fn many_accounts(count: usize) -> Vec<Address> {
+        (0..count).map(|i| Address::from_word(U256::from(i as u64 + 1).into())).collect()
     }
 
     #[test]
@@ -809,6 +825,34 @@ mod tests {
     }
 
     #[test]
+    fn update_allowlist_too_many_accounts_reverts() {
+        let mut s = storage();
+        let id = create_allowlist(&mut s);
+        let accounts = many_accounts(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH + 1);
+        let err = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, accounts)
+        })
+        .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
+                maxBatchSize: U256::from(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH),
+            })
+        );
+    }
+
+    #[test]
+    fn update_allowlist_max_batch_size_succeeds() {
+        let mut s = storage();
+        let id = create_allowlist(&mut s);
+        let accounts = many_accounts(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH);
+        StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, accounts)
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn allowlist_readding_existing_member_is_idempotent() {
         let mut s = storage();
         let id = create_allowlist(&mut s);
@@ -879,6 +923,23 @@ mod tests {
         })
         .unwrap_err();
         assert!(matches!(err, BasePrecompileError::Revert(_)));
+    }
+
+    #[test]
+    fn update_blocklist_too_many_accounts_reverts() {
+        let mut s = storage();
+        let id = create_blocklist(&mut s);
+        let accounts = many_accounts(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH + 1);
+        let err = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).update_blocklist(id, true, accounts)
+        })
+        .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
+                maxBatchSize: U256::from(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH),
+            })
+        );
     }
 
     // --- createPolicyWithAccounts ---
@@ -986,6 +1047,40 @@ mod tests {
     }
 
     // --- create_policy_with_accounts edge cases ---
+
+    #[test]
+    fn create_policy_with_accounts_zero_account_reverts() {
+        let mut s = storage();
+        let err = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
+                ADMIN,
+                PolicyType::ALLOWLIST,
+                vec![ALICE, Address::ZERO],
+            )
+        })
+        .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
+    }
+
+    #[test]
+    fn create_policy_with_accounts_too_many_accounts_reverts() {
+        let mut s = storage();
+        let accounts = many_accounts(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH + 1);
+        let err = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
+                ADMIN,
+                PolicyType::ALLOWLIST,
+                accounts,
+            )
+        })
+        .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
+                maxBatchSize: U256::from(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH),
+            })
+        );
+    }
 
     #[test]
     fn create_policy_with_accounts_blocklist_seeds_blocked_members() {
@@ -1126,6 +1221,51 @@ mod tests {
             .unwrap(),
             Address::ZERO
         );
+    }
+
+    #[test]
+    fn pending_policy_admin_builtin_ids_short_circuit_staged_slot() {
+        let mut s = storage();
+        for policy_id in
+            [PolicyRegistryStorage::ALWAYS_ALLOW_ID, PolicyRegistryStorage::ALWAYS_BLOCK_ID]
+        {
+            StorageCtx::enter(&mut s, |ctx| {
+                PolicyRegistryStorage::new(ctx).pending_admins.at_mut(&policy_id).write(NEW_ADMIN)
+            })
+            .unwrap();
+
+            let pending = StorageCtx::enter(&mut s, |ctx| {
+                PolicyRegistryStorage::new(ctx).pending_policy_admin(policy_id)
+            })
+            .unwrap();
+            assert_eq!(
+                pending,
+                Address::ZERO,
+                "built-in policy {policy_id} must ignore a staged pending slot"
+            );
+        }
+    }
+
+    #[test]
+    fn pending_policy_admin_counter_one_blocklist_reads_staged_slot() {
+        // BLOCKLIST counter=1 is not ALWAYS_BLOCK_ID, which is ALLOWLIST counter=1.
+        let counter_one_blocklist = PolicyRegistryStorage::make_id(PolicyType::BLOCKLIST as u8, 1);
+        assert_ne!(counter_one_blocklist, PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+
+        let mut s = storage();
+        StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx)
+                .pending_admins
+                .at_mut(&counter_one_blocklist)
+                .write(NEW_ADMIN)
+        })
+        .unwrap();
+
+        let pending = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).pending_policy_admin(counter_one_blocklist)
+        })
+        .unwrap();
+        assert_eq!(pending, NEW_ADMIN);
     }
 
     #[test]

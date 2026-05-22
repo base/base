@@ -104,6 +104,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         key: U256,
         value: U256,
     ) -> Result<(), BasePrecompileError> {
+        if self.is_static {
+            return Err(BasePrecompileError::StaticCallViolation);
+        }
         self.counter_sstore += 1;
         self.internals.insert((address, key), value);
         Ok(())
@@ -115,11 +118,17 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         key: U256,
         value: U256,
     ) -> Result<(), BasePrecompileError> {
+        if self.is_static {
+            return Err(BasePrecompileError::StaticCallViolation);
+        }
         self.transient.insert((address, key), value);
         Ok(())
     }
 
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<(), BasePrecompileError> {
+        if self.is_static {
+            return Err(BasePrecompileError::StaticCallViolation);
+        }
         self.events.entry(address).or_default().push(event);
         Ok(())
     }

@@ -639,12 +639,12 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 mod tests {
     use alloy_primitives::{Address, B256, U256};
     use alloy_sol_types::SolEvent;
-    use base_precompile_storage::BasePrecompileError;
+    use base_precompile_storage::{BasePrecompileError, StorageCtx, setup_storage};
 
     use super::{BURN_FROM_ROLE, REDEEM_SENDER_POLICY, SECURITY_OPERATOR_ROLE};
     use crate::{
-        B20PausableFeature, IB20, Token, TokenAccounting,
-        b20_security::{B20SecurityToken, IB20Security, SecurityAccounting},
+        B20PausableFeature, IB20, PolicyHandle, Token, TokenAccounting,
+        b20_security::{B20SecurityStorage, B20SecurityToken, IB20Security, SecurityAccounting},
         common::test_utils::{InMemoryPolicy, InMemoryTokenAccounting},
     };
 
@@ -759,12 +759,12 @@ mod tests {
     #[test]
     fn security_redeem_rejects_zero_shares() {
         let mut token = make_token();
-        token.accounting_mut().shares_to_tokens_ratio = U256::ZERO;
+        token.accounting_mut().shares_to_tokens_ratio = WAD / U256::from(2u64);
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
         token.accounting_mut().total_supply = U256::from(100u64);
 
-        // 0 ratio → 0 shares → always rejected
-        assert!(token.security_redeem(ALICE, U256::from(50u64)).is_err());
+        // 1 token * 0.5 WAD / WAD truncates to 0 shares, which is always rejected.
+        assert!(token.security_redeem(ALICE, U256::ONE).is_err());
     }
 
     #[test]
@@ -1017,6 +1017,27 @@ mod tests {
         // sharesOf(account) = toShares(balanceOf(account))
         let balance = token.accounting().balance_of(ALICE).unwrap();
         assert_eq!(token.to_shares(balance).unwrap(), U256::from(75u64));
+    }
+
+    #[test]
+    fn storage_backed_redeem_uses_wad_when_share_ratio_slot_is_unset() {
+        let (mut storage, _) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20SecurityToken::with_storage_and_policy(
+                B20SecurityStorage::from_address(TOKEN, ctx),
+                PolicyHandle::new(ctx),
+            );
+            token.accounting_mut().set_balance(ALICE, U256::from(100u64)).unwrap();
+            token.accounting_mut().set_total_supply(U256::from(100u64)).unwrap();
+            token.accounting_mut().set_minimum_redeemable(U256::from(10u64)).unwrap();
+
+            assert_eq!(token.accounting().shares_to_tokens_ratio().unwrap(), WAD);
+            token.security_redeem(ALICE, U256::from(10u64)).unwrap();
+
+            assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(90u64));
+            assert_eq!(token.accounting().total_supply().unwrap(), U256::from(90u64));
+        });
     }
 
     // --- updateShareRatio: persistence ---
