@@ -30,9 +30,6 @@ use crate::transaction::aa8130::{constants::Aa8130Constants, tx::TxAa8130};
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct AaSigned {
     /// Unsigned transaction body.
     tx: TxAa8130,
@@ -52,6 +49,51 @@ pub struct AaSigned {
     payer_auth: Bytes,
     /// Cached EIP-2718 transaction hash (`keccak256(encode_2718(self))`).
     hash: B256,
+}
+
+#[cfg(feature = "serde")]
+mod serde_impl {
+    use super::{AaSigned, Bytes, TxAa8130};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct AaSignedRepr {
+        tx: TxAa8130,
+        sender_auth: Bytes,
+        payer_auth: Bytes,
+    }
+
+    impl Serialize for AaSigned {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            AaSignedRepr {
+                tx: self.tx.clone(),
+                sender_auth: self.sender_auth.clone(),
+                payer_auth: self.payer_auth.clone(),
+            }
+            .serialize(serializer)
+        }
+    }
+
+    impl<'de> Deserialize<'de> for AaSigned {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let repr = AaSignedRepr::deserialize(deserializer).map_err(de::Error::custom)?;
+            Ok(Self::new(repr.tx, repr.sender_auth, repr.payer_auth))
+        }
+    }
+}
+
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for AaSigned {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(Self::new(TxAa8130::arbitrary(u)?, Bytes::arbitrary(u)?, Bytes::arbitrary(u)?))
+    }
 }
 
 impl AaSigned {
@@ -401,5 +443,33 @@ mod tests {
             signed.explicit_sender(),
             Some(address!("0x00000000000000000000000000000000000000aa"))
         );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_roundtrip_recomputes_hash() {
+        let signed = sample_signed(true);
+        let json = serde_json::to_string(&signed).unwrap();
+
+        assert!(!json.contains("\"hash\""));
+
+        let decoded: AaSigned = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, signed);
+        assert_eq!(decoded.hash(), signed.hash());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_deserialize_computes_hash_from_payload() {
+        let signed = sample_signed(false);
+        let mut value = serde_json::to_value(&signed).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("hash".to_string(), serde_json::Value::String(format!("{:?}", B256::ZERO)));
+
+        let decoded: AaSigned = serde_json::from_value(value).unwrap();
+        assert_eq!(*decoded.hash(), *signed.hash());
+        assert_ne!(*decoded.hash(), B256::ZERO);
     }
 }
