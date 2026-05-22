@@ -2,7 +2,12 @@ use alloc::string::{String, ToString};
 use core::result;
 
 use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::{Panic, PanicKind, SolError};
+use alloy_sol_types::{Panic, PanicKind, SolError, sol};
+
+sol! {
+    /// Precompile cannot be executed via delegatecall or callcode.
+    error DelegateCallNotAllowed();
+}
 use revm::{
     context::journaled_state::JournalLoadError,
     precompile::{PrecompileError, PrecompileOutput, PrecompileResult},
@@ -145,5 +150,22 @@ impl<T> IntoPrecompileResult<T> for Result<T> {
             Ok(res) => Ok(PrecompileOutput::new(gas, encode_ok(res))),
             Err(err) => err.into_precompile_result(gas),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_sol_types::SolError;
+
+    use super::*;
+
+    #[test]
+    fn delegate_call_not_allowed_encodes_to_typed_revert() {
+        let expected: Bytes = DelegateCallNotAllowed {}.abi_encode().into();
+        let result =
+            BasePrecompileError::revert(DelegateCallNotAllowed {}).into_precompile_result(0);
+        let output = result.unwrap();
+        assert!(output.reverted);
+        assert_eq!(output.bytes, expected);
     }
 }

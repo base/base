@@ -595,8 +595,19 @@ mod tests {
     }
 
     #[test]
-    fn activation_admin_is_unset_by_default() {
-        assert_eq!(BaseChainSpec::mainnet().activation_admin_address(), None);
+    fn activation_admin_matches_chain_config() {
+        assert_eq!(
+            BaseChainSpec::mainnet().activation_admin_address(),
+            Some(address!("331C9d37BbcebBC9dfAf98FBE3C5B8A39Dd6E771"))
+        );
+        assert_eq!(
+            BaseChainSpec::sepolia().activation_admin_address(),
+            Some(address!("5Be7Dd3678e999D5F7bC508c413db239F7D4Ac59"))
+        );
+    }
+
+    #[test]
+    fn activation_admin_is_unset_for_default_genesis() {
         assert_eq!(
             BaseChainSpec::from_genesis(Genesis::default()).activation_admin_address(),
             None

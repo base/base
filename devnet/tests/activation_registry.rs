@@ -4,7 +4,7 @@ mod common;
 
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
-use base_common_precompiles::{ActivationRegistryStorage, IActivationRegistry};
+use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 use devnet::{
     B20PrecompileClient,
     config::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6},
@@ -25,9 +25,7 @@ async fn test_activation_registry_is_activated_default() -> Result<()> {
     let output = client
         .call(
             ActivationRegistryStorage::ADDRESS,
-            IActivationRegistry::isActivatedCall {
-                feature: ActivationRegistryStorage::SECURITIES_TOKEN_CREATION,
-            },
+            IActivationRegistry::isActivatedCall { feature: ActivationFeature::B20Security.id() },
         )
         .await?;
     let is_activated = IActivationRegistry::isActivatedCall::abi_decode_returns(output.as_ref())
@@ -73,9 +71,7 @@ async fn test_activation_registry_unauthorized_activate_reverts() -> Result<()> 
     let succeeded = client
         .try_send_call(
             ActivationRegistryStorage::ADDRESS,
-            IActivationRegistry::activateCall {
-                feature: ActivationRegistryStorage::SECURITIES_TOKEN_CREATION,
-            },
+            IActivationRegistry::activateCall { feature: ActivationFeature::B20Security.id() },
             "activate (unauthorized)",
         )
         .await?;
@@ -86,9 +82,7 @@ async fn test_activation_registry_unauthorized_activate_reverts() -> Result<()> 
     let output = client
         .call(
             ActivationRegistryStorage::ADDRESS,
-            IActivationRegistry::isActivatedCall {
-                feature: ActivationRegistryStorage::SECURITIES_TOKEN_CREATION,
-            },
+            IActivationRegistry::isActivatedCall { feature: ActivationFeature::B20Security.id() },
         )
         .await?;
     let is_activated = IActivationRegistry::isActivatedCall::abi_decode_returns(output.as_ref())

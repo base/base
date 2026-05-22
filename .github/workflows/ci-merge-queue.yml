@@ -10,8 +10,9 @@ concurrency:
 permissions:
   checks: write
   contents: read
+  issues: write
   packages: read
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   ci:

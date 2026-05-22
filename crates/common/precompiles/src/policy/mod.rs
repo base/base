@@ -6,7 +6,7 @@ pub use abi::IPolicyRegistry;
 mod dispatch;
 
 mod precompile;
-pub use precompile::PolicyRegistry;
+pub use precompile::PolicyRegistryPrecompile;
 
 mod handle;
 pub use handle::PolicyHandle;

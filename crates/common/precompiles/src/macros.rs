@@ -6,10 +6,10 @@ macro_rules! base_precompile {
             ::revm::precompile::PrecompileId::Custom($id.into()),
             move |input| {
                 if !input.is_direct_call() {
-                    return Ok(::revm::precompile::PrecompileOutput::new_reverted(
-                        0,
-                        ::alloy_primitives::Bytes::new(),
-                    ));
+                    return ::base_precompile_storage::BasePrecompileError::revert(
+                        ::base_precompile_storage::DelegateCallNotAllowed {},
+                    )
+                    .into_precompile_result(0);
                 }
 
                 let $calldata: ::alloy_primitives::Bytes = input.data.to_vec().into();
@@ -27,10 +27,10 @@ macro_rules! base_precompile {
             ::revm::precompile::PrecompileId::Custom($id.into()),
             move |$input| {
                 if !$input.is_direct_call() {
-                    return Ok(::revm::precompile::PrecompileOutput::new_reverted(
-                        0,
-                        ::alloy_primitives::Bytes::new(),
-                    ));
+                    return ::base_precompile_storage::BasePrecompileError::revert(
+                        ::base_precompile_storage::DelegateCallNotAllowed {},
+                    )
+                    .into_precompile_result(0);
                 }
 
                 let $calldata: ::alloy_primitives::Bytes = $input.data.to_vec().into();
@@ -44,6 +44,20 @@ macro_rules! base_precompile {
 }
 
 pub(crate) use base_precompile;
+
+macro_rules! deduct_calldata_cost {
+    ($ctx:expr, $calldata:expr $(,)?) => {{
+        const G_SHA3WORD: u64 = 6;
+
+        let calldata_len = $calldata.len();
+        let calldata_cost = calldata_len.div_ceil(32).saturating_mul(G_SHA3WORD as usize) as u64;
+        if let Err(e) = $ctx.deduct_gas(calldata_cost) {
+            return e.into_precompile_result($ctx.gas_used());
+        }
+    }};
+}
+
+pub(crate) use deduct_calldata_cost;
 
 macro_rules! decode_precompile_call {
     ($calldata:expr, $call_ty:ty $(,)?) => {{
@@ -98,9 +112,9 @@ mod tests {
 
     #[test]
     fn decode_precompile_call_decodes_known_call() {
-        let calldata = IPolicyRegistry::helloWorldCall {}.abi_encode();
+        let calldata = IPolicyRegistry::policyExistsCall { policyId: 0 }.abi_encode();
         let call = decode_policy_call(&calldata).unwrap();
 
-        assert!(matches!(call, IPolicyRegistry::IPolicyRegistryCalls::helloWorld(_)));
+        assert!(matches!(call, IPolicyRegistry::IPolicyRegistryCalls::policyExists(_)));
     }
 }

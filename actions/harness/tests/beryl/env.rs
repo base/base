@@ -1,7 +1,7 @@
 //! Shared test environment for Base Beryl action tests.
 
 use alloy_consensus::TxReceipt;
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, uint};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, L2Sequencer,
@@ -9,10 +9,10 @@ use base_action_harness::{
     VerifierPipeline,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_precompiles::{
-    ActivationRegistryStorage, IActivationRegistry, IB20, ITokenFactory, TokenFactoryStorage,
-    TokenVariant,
+    ActivationFeature, ActivationRegistryStorage, IActivationRegistry, IB20, ITokenFactory,
+    TokenFactoryStorage, TokenVariant,
 };
 use base_precompile_storage::StorageKey;
 use base_test_utils::Account;
@@ -21,13 +21,16 @@ use base_test_utils::Account;
 pub(crate) const BERYL_ACTIVATION_TIMESTAMP: u64 = 4;
 
 /// B-20 token storage slot for `total_supply`.
-const B20_TOTAL_SUPPLY_SLOT: U256 = U256::ZERO;
+const B20_TOTAL_SUPPLY_SLOT: U256 =
+    uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434003_U256);
 
 /// B-20 token storage slot for `balances`.
-const B20_BALANCES_SLOT: U256 = U256::from_limbs([2, 0, 0, 0]);
+const B20_BALANCES_SLOT: U256 =
+    uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434004_U256);
 
 /// B-20 token storage slot for `allowances`.
-const B20_ALLOWANCES_SLOT: U256 = U256::from_limbs([3, 0, 0, 0]);
+const B20_ALLOWANCES_SLOT: U256 =
+    uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434005_U256);
 
 /// Storage slot where staticcall probes store the call success flag.
 const PROBE_CALL_SUCCESS_SLOT: U256 = U256::ZERO;
@@ -54,8 +57,8 @@ impl BerylTestEnv {
     /// Gas limit used for B-20 staticcall probe transactions.
     pub(crate) const B20_PROBE_GAS_LIMIT: u64 = 1_000_000;
 
-    /// Token decimals encoded into the test B-20 address.
-    pub(crate) const B20_DECIMALS: u8 = 6;
+    /// Fixed decimals for the default B-20 token variant.
+    pub(crate) const B20_DECIMALS: u8 = 18;
 
     /// Initial B-20 supply minted to Alice.
     pub(crate) const B20_INITIAL_SUPPLY: u64 = 1_000_000;
@@ -129,19 +132,34 @@ impl BerylTestEnv {
         account.create_tx(self.chain_id, to, input, U256::ZERO, gas_limit)
     }
 
+    /// Creates and signs a transaction from Bob's account.
+    pub(crate) fn create_bob_tx(
+        &mut self,
+        to: TxKind,
+        input: Bytes,
+        gas_limit: u64,
+    ) -> BaseTxEnvelope {
+        Self::create_account_tx(self.chain_id, &mut self.bob_account, to, input, gas_limit)
+    }
+
+    /// Returns the L2 chain ID used by the Beryl test environment.
+    pub(crate) const fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
     /// Activation registry feature ID for the token factory precompile.
     pub(crate) const fn token_factory_feature() -> B256 {
-        ActivationRegistryStorage::TOKEN_FACTORY
+        ActivationFeature::TokenFactory.id()
     }
 
     /// Activation registry feature ID for the B-20 token precompile.
     pub(crate) const fn b20_token_feature() -> B256 {
-        ActivationRegistryStorage::B20_TOKEN
+        ActivationFeature::B20Token.id()
     }
 
     /// Activation registry feature ID for the policy registry precompile.
     pub(crate) const fn policy_registry_feature() -> B256 {
-        ActivationRegistryStorage::POLICY_REGISTRY
+        ActivationFeature::PolicyRegistry.id()
     }
 
     /// Alternate salt for a second token creation used in deactivation/re-activation tests.
@@ -154,9 +172,7 @@ impl BerylTestEnv {
 
     /// Returns the deterministic B-20 token address created by Alice.
     pub(crate) fn b20_token_address(&self) -> Address {
-        TokenVariant::B20
-            .compute_address(Self::alice(), Self::B20_DECIMALS, Self::b20_token_salt())
-            .0
+        TokenVariant::B20.compute_address(Self::alice(), Self::b20_token_salt()).0
     }
 
     /// Creates a transaction that calls the B-20 token factory with the default salt.
@@ -186,6 +202,16 @@ impl BerylTestEnv {
             Self::B20_PROBE_GAS_LIMIT,
         );
         (address, tx)
+    }
+
+    /// Creates a transaction that calls a deployed staticcall probe with arbitrary calldata.
+    pub(crate) fn call_staticcall_probe_tx(
+        &self,
+        probe: Address,
+        input: Bytes,
+        gas_limit: u64,
+    ) -> BaseTxEnvelope {
+        self.create_tx(TxKind::Call(probe), input, gas_limit)
     }
 
     /// Creates a transaction that transfers B-20 tokens from Alice to `to`.
@@ -336,6 +362,24 @@ impl BerylTestEnv {
         self.user_tx_receipt(block, user_tx_index).status()
     }
 
+    /// Returns the receipt for a non-deposit transaction in `block`.
+    pub(crate) fn user_tx_receipt(&self, block: &BaseBlock, user_tx_index: usize) -> BaseReceipt {
+        let deposit_count = block
+            .body
+            .transactions
+            .iter()
+            .take_while(|tx| matches!(tx, BaseTxEnvelope::Deposit(_)))
+            .count();
+        let receipts = self
+            .sequencer
+            .receipts_at(block.header.number)
+            .unwrap_or_else(|| panic!("receipts must exist for L2 block {}", block.header.number));
+        receipts
+            .into_iter()
+            .nth(deposit_count + user_tx_index)
+            .unwrap_or_else(|| panic!("user tx receipt {user_tx_index} must exist"))
+    }
+
     /// Returns whether a user transaction emitted the expected B-20 `Transfer` event.
     pub(crate) fn b20_transfer_log_emitted(
         &self,
@@ -433,34 +477,12 @@ impl BerylTestEnv {
         Bytes::from(init_code)
     }
 
-    fn user_tx_receipt(
-        &self,
-        block: &BaseBlock,
-        user_tx_index: usize,
-    ) -> base_common_consensus::BaseReceipt {
-        let deposit_count = block
-            .body
-            .transactions
-            .iter()
-            .take_while(|tx| matches!(tx, BaseTxEnvelope::Deposit(_)))
-            .count();
-        let receipts = self
-            .sequencer
-            .receipts_at(block.header.number)
-            .unwrap_or_else(|| panic!("receipts must exist for L2 block {}", block.header.number));
-        receipts
-            .into_iter()
-            .nth(deposit_count + user_tx_index)
-            .unwrap_or_else(|| panic!("user tx receipt {user_tx_index} must exist"))
-    }
-
     fn b20_token_params(&self) -> ITokenFactory::B20CreateParams {
         ITokenFactory::B20CreateParams {
             version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
             name: "Action B20".to_string(),
             symbol: "AB20".to_string(),
             initialAdmin: Self::alice(),
-            decimals: Self::B20_DECIMALS,
         }
     }
 

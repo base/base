@@ -4,6 +4,7 @@ use syn::{Expr, Ident, Visibility};
 use crate::{
     FieldKind,
     packing::{self, LayoutField, PackingConstants, SlotAssignment},
+    utils::NamespaceInfo,
 };
 
 pub(crate) fn gen_handler_field_decl(field: &LayoutField<'_>) -> proc_macro2::TokenStream {
@@ -44,33 +45,24 @@ pub(crate) fn gen_handler_field_init(
         quote! { base_slot.saturating_add(::alloy_primitives::U256::from_limbs([#const_mod::#loc_const.offset_slots as u64, 0, 0, 0])) }
     };
 
+    let shares_slot_check =
+        gen_shares_slot_check(field, field_idx, all_fields, const_mod, is_contract);
+
     match &field.kind {
         FieldKind::Direct(ty) => {
-            let (prev_slot_const_ref, next_slot_const_ref) = packing::get_neighbor_slot_refs(
-                field_idx,
-                all_fields,
-                const_mod,
-                |f| f.name,
-                is_contract,
-            );
-
             let layout_ctx = if is_contract {
                 packing::gen_layout_ctx_expr(
                     ty,
                     matches!(field.assigned_slot, SlotAssignment::Manual(_)),
-                    quote! { #const_mod::#slot_const },
                     quote! { #const_mod::#offset_const },
-                    prev_slot_const_ref,
-                    next_slot_const_ref,
+                    shares_slot_check,
                 )
             } else {
                 packing::gen_layout_ctx_expr(
                     ty,
                     false,
-                    quote! { #const_mod::#loc_const.offset_slots },
                     quote! { #const_mod::#loc_const.offset_bytes },
-                    prev_slot_const_ref,
-                    next_slot_const_ref,
+                    shares_slot_check,
                 )
             };
 
@@ -88,6 +80,41 @@ pub(crate) fn gen_handler_field_init(
             }
         }
     }
+}
+
+fn gen_shares_slot_check(
+    field: &LayoutField<'_>,
+    field_idx: usize,
+    all_fields: &[LayoutField<'_>],
+    const_mod: &Ident,
+    is_contract: bool,
+) -> Option<proc_macro2::TokenStream> {
+    let current_consts = PackingConstants::new(field.name);
+    let current_slot = if is_contract {
+        let current_slot = current_consts.slot();
+        quote! { #const_mod::#current_slot }
+    } else {
+        let current_loc = current_consts.location();
+        quote! { #const_mod::#current_loc.offset_slots }
+    };
+
+    let checks: Vec<_> = all_fields
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| *idx != field_idx)
+        .map(|(_, other)| {
+            let other_consts = PackingConstants::new(other.name);
+            if is_contract {
+                let other_slot = other_consts.slot();
+                quote! { #current_slot == #const_mod::#other_slot }
+            } else {
+                let other_loc = other_consts.location();
+                quote! { #current_slot == #const_mod::#other_loc.offset_slots }
+            }
+        })
+        .collect();
+
+    if checks.is_empty() { None } else { Some(quote! { false #(|| #checks)* }) }
 }
 
 pub(crate) fn gen_struct(
@@ -203,7 +230,11 @@ pub(crate) fn gen_contract_storage_impl(name: &Ident) -> proc_macro2::TokenStrea
     }
 }
 
-pub(crate) fn gen_slots_module(allocated_fields: &[LayoutField<'_>]) -> proc_macro2::TokenStream {
+pub(crate) fn gen_slots_module(
+    allocated_fields: &[LayoutField<'_>],
+    namespace: Option<&NamespaceInfo>,
+) -> proc_macro2::TokenStream {
+    let namespace_constants = namespace.map(gen_namespace_constants);
     let constants = packing::gen_constants_from_ir(allocated_fields, false);
     let collision_checks = gen_collision_checks(allocated_fields);
 
@@ -212,9 +243,24 @@ pub(crate) fn gen_slots_module(allocated_fields: &[LayoutField<'_>]) -> proc_mac
         pub mod slots {
             use super::*;
 
+            #namespace_constants
             #constants
             #collision_checks
         }
+    }
+}
+
+fn gen_namespace_constants(namespace: &NamespaceInfo) -> proc_macro2::TokenStream {
+    let id = &namespace.id;
+    let limbs = *namespace.root.as_limbs();
+
+    quote! {
+        /// ERC-7201 namespace identifier for this contract storage layout.
+        pub const NAMESPACE_ID: &str = #id;
+
+        /// ERC-7201 namespace root slot for this contract storage layout.
+        pub const NAMESPACE_ROOT: ::alloy_primitives::U256 =
+            ::alloy_primitives::U256::from_limbs([#(#limbs),*]);
     }
 }
 

@@ -7,18 +7,6 @@ extern crate alloc;
 
 mod macros;
 
-/// Gas cost for ABI-decoding calldata of the given byte length.
-///
-/// Charges `G_sha3word` (6 gas) per 32-byte word, rounded up — the same rate the EVM uses for
-/// data-processing operations (keccak256). The EVM has no universal precompile input cost;
-/// each precompile defines its own. Using `G_sha3word` is the natural choice because ABI decoding
-/// is proportional data-processing work, and it prevents large calldata from being free to
-/// process — a potential attack vector without this charge.
-pub const fn input_cost(calldata_len: usize) -> u64 {
-    const G_SHA3WORD: u64 = 6;
-    calldata_len.div_ceil(32).saturating_mul(G_SHA3WORD as usize) as u64
-}
-
 mod provider;
 pub use provider::BasePrecompiles;
 
@@ -26,7 +14,9 @@ mod spec;
 pub use spec::BasePrecompileSpec;
 
 mod activation;
-pub use activation::{ActivationRegistry, ActivationRegistryStorage, IActivationRegistry};
+pub use activation::{
+    ActivationFeature, ActivationRegistry, ActivationRegistryStorage, IActivationRegistry,
+};
 
 mod bn254_pair;
 
@@ -34,17 +24,32 @@ mod bls12_381;
 
 mod common;
 pub use common::{
-    Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, Mintable, Pausable,
-    Permittable, Policy, Redeemable, Token, TokenAccounting, Transferable,
+    B20Guards, B20TokenRole, Burnable, Configurable, Mintable, Pausable, Permittable, Policy,
+    PolicyRegistry, RoleManaged, Token, TokenAccounting, Transferable,
 };
 #[cfg(any(test, feature = "test-utils"))]
-pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestToken};
+pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
 
 mod b20;
-pub use b20::{B20Token, B20TokenPrecompile, B20TokenStorage, IB20};
+pub use b20::{
+    B20CoreStorage, B20PausableFeature, B20PolicyType, B20Token, B20TokenPrecompile,
+    B20TokenStorage, IB20,
+};
+
+mod b20_security;
+pub use b20_security::{
+    B20RedeemStorage, B20SecurityExtensionStorage, B20SecurityPrecompile, B20SecurityStorage,
+    B20SecurityToken, IB20Security, SecurityAccounting,
+};
+
+mod b20_stablecoin;
+pub use b20_stablecoin::{
+    B20StablecoinExtensionStorage, B20StablecoinPrecompile, B20StablecoinStorage,
+    B20StablecoinToken, IB20Stablecoin, StablecoinAccounting,
+};
 
 mod factory;
 pub use factory::{ITokenFactory, TokenFactory, TokenFactoryStorage, TokenVariant};
 
 mod policy;
-pub use policy::{IPolicyRegistry, PolicyHandle, PolicyRegistry, PolicyRegistryStorage};
+pub use policy::{IPolicyRegistry, PolicyHandle, PolicyRegistryPrecompile, PolicyRegistryStorage};

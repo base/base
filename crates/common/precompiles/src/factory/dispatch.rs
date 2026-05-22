@@ -6,16 +6,14 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ActivationRegistryStorage, ITokenFactory, TokenFactoryStorage, TokenVariant,
-    macros::decode_precompile_call,
+    ActivationFeature, ActivationRegistryStorage, ITokenFactory, TokenFactoryStorage, TokenVariant,
+    macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
 impl<'a> TokenFactoryStorage<'a> {
     /// ABI-dispatches `calldata` to the appropriate `ITokenFactory` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        if let Err(e) = ctx.deduct_gas(crate::input_cost(calldata.len())) {
-            return e.into_precompile_result(ctx.gas_used());
-        }
+        deduct_calldata_cost!(ctx, calldata);
         let result = self.inner(ctx, calldata);
         let gas = ctx.gas_used();
         result.into_precompile_result(gas, |b| b)
@@ -27,7 +25,7 @@ impl<'a> TokenFactoryStorage<'a> {
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
         ActivationRegistryStorage::new(ctx)
-            .ensure_activated(ActivationRegistryStorage::TOKEN_FACTORY)?;
+            .ensure_activated(ActivationFeature::TokenFactory.id())?;
 
         match decode_precompile_call!(calldata, ITokenFactory::ITokenFactoryCalls) {
             ITokenFactory::ITokenFactoryCalls::createToken(call) => {
@@ -39,7 +37,7 @@ impl<'a> TokenFactoryStorage<'a> {
                 let Some(variant) = TokenFactoryStorage::token_variant(call.variant) else {
                     return Err(BasePrecompileError::revert(ITokenFactory::InvalidVariant {}));
                 };
-                let (addr, _) = variant.compute_address(call.sender, call.decimals, call.salt);
+                let (addr, _) = variant.compute_address(call.sender, call.salt);
                 Ok(ITokenFactory::getTokenAddressCall::abi_encode_returns(&addr).into())
             }
             ITokenFactory::ITokenFactoryCalls::isB20(call) => {

@@ -83,14 +83,14 @@ FACTORY="0xb20f00000000000000000000000000000000000f"
 # Token creation parameters
 TOKEN_NAME="Base USD"
 TOKEN_SYMBOL="BUSD"
-TOKEN_DECIMALS=6
-INITIAL_SUPPLY=1000000          # 1 BUSD (6 decimals → 1.000000)
-SUPPLY_CAP=1000000000000        # 1 000 000 BUSD
+TOKEN_DECIMALS=18
+INITIAL_SUPPLY=1000000000000000000  # 1 BUSD (18 decimals → 1.000000)
+SUPPLY_CAP=1000000000000000000000000 # 1 000 000 BUSD
 # Unique salt per run so repeated executions always create a fresh token.
 SALT="0x$(cast keccak "check-factory-live-$$-$(date +%s)" | sed 's/0x//')"
 
-# Transfer amount: 300_000 micro-BUSD = 0.3 BUSD
-TRANSFER_AMOUNT=300000
+# Transfer amount: 0.3 BUSD
+TRANSFER_AMOUNT=300000000000000000
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -134,20 +134,20 @@ pass "Alice is funded ($ALICE_ADDR)" "balance=$(cast from-wei "$ALICE_BAL") ETH"
 section "1/5  Predict token address (read-only)"
 
 PREDICTED=$(ccall "$FACTORY" \
-    "getTokenAddress(uint8,uint8,address,bytes32)(address)" \
-    1 "$TOKEN_DECIMALS" "$ALICE_ADDR" "$SALT") || fail "getTokenAddress call failed" "$PREDICTED"
+    "getTokenAddress(uint8,address,bytes32)(address)" \
+    1 "$ALICE_ADDR" "$SALT") || fail "getTokenAddress call failed" "$PREDICTED"
 PREDICTED=$(trim "$PREDICTED")
 [[ "$PREDICTED" =~ ^0x[0-9a-fA-F]{40}$ ]] || \
     fail "getTokenAddress returned bad address" "$PREDICTED"
 info "Predicted token address: $PREDICTED"
 pass "getTokenAddress returned a valid address"
 
-# Verify the prefix encodes the B-20 marker, variant=DEFAULT, and decimals.
-PREFIX=$(echo "${PREDICTED:2:24}" | tr '[:upper:]' '[:lower:]')
-EXPECTED_PREFIX=$(printf "b200000000000000000001%02x" "$TOKEN_DECIMALS")
+# Verify the prefix encodes the B-20 marker and variant=DEFAULT.
+PREFIX=$(echo "${PREDICTED:2:22}" | tr '[:upper:]' '[:lower:]')
+EXPECTED_PREFIX="b200000000000000000001"
 [[ "$PREFIX" == "$EXPECTED_PREFIX" ]] || \
-    fail "Token address does not encode DEFAULT variant and decimals" "expected prefix: 0x$EXPECTED_PREFIX got prefix: 0x$PREFIX"
-pass "Address prefix encodes B-20 marker, DEFAULT variant, and decimals"
+    fail "Token address does not encode DEFAULT variant" "expected prefix: 0x$EXPECTED_PREFIX got prefix: 0x$PREFIX"
+pass "Address prefix encodes B-20 marker and DEFAULT variant"
 
 # isB20 is a prefix check and returns true before bytecode is installed.
 IS_B20_BEFORE=$(ccall "$FACTORY" "isB20(address)(bool)" "$PREDICTED")
@@ -160,8 +160,8 @@ section "2/5  Create token (real transaction)"
 
 # Build B20CreateParams, then configure optional state through initCalls.
 CREATE_PARAMS=$(cast abi-encode \
-    "params(uint8,string,string,address,uint8)" \
-    1 "$TOKEN_NAME" "$TOKEN_SYMBOL" "$ALICE_ADDR" "$TOKEN_DECIMALS")
+    "params(uint8,string,string,address)" \
+    1 "$TOKEN_NAME" "$TOKEN_SYMBOL" "$ALICE_ADDR")
 
 MINT_CALL=$(cast calldata "mint(address,uint256)" "$ALICE_ADDR" "$INITIAL_SUPPLY")
 SUPPLY_CAP_CALL=$(cast calldata "setSupplyCap(uint256)" "$SUPPLY_CAP")
@@ -270,7 +270,7 @@ echo ""
 echo "Token: $TOKEN  (chain $CHAIN_ID, RPC $RPC_URL)"
 echo ""
 echo "Verified:"
-echo "  • getTokenAddress → deterministic address with B-20 marker, variant, and decimals"
+echo "  • getTokenAddress → deterministic address with B-20 marker and variant"
 echo "  • isB20 = true before and after creation"
 echo "  • getTokenVariant = 1 (DEFAULT)"
 echo "  • name='$TOKEN_NAME'  symbol='$TOKEN_SYMBOL'  decimals=$TOKEN_DECIMALS"

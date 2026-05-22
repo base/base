@@ -2,6 +2,9 @@
 
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_sol_types::SolValue;
+use base_precompile_storage::{BasePrecompileError, Result};
+
+use crate::ITokenFactory;
 
 /// B-20 token variant encoded in the token address prefix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +44,18 @@ impl TokenVariant {
         }
     }
 
+    /// Returns the supported token variant for an ABI enum value.
+    pub fn from_abi(variant: ITokenFactory::TokenVariant) -> Result<Self> {
+        match variant {
+            ITokenFactory::TokenVariant::DEFAULT => Ok(Self::B20),
+            ITokenFactory::TokenVariant::STABLECOIN => Ok(Self::Stablecoin),
+            ITokenFactory::TokenVariant::SECURITY => Ok(Self::Security),
+            ITokenFactory::TokenVariant::NONE | ITokenFactory::TokenVariant::__Invalid => {
+                Err(BasePrecompileError::revert(ITokenFactory::InvalidVariant {}))
+            }
+        }
+    }
+
     /// Returns whether `variant` is supported by this factory.
     pub const fn is_supported_discriminant(variant: u8) -> bool {
         Self::from_discriminant(variant).is_some()
@@ -69,48 +84,61 @@ impl TokenVariant {
         self as u8
     }
 
-    /// Builds this variant's B-20 address prefix for `decimals`.
-    pub const fn address_prefix(self, decimals: u8) -> [u8; 12] {
-        [Self::PREFIX_BYTE, 0, 0, 0, 0, 0, 0, 0, 0, 0, self.discriminant(), decimals]
+    /// Returns this variant as the generated ABI enum.
+    pub const fn abi(self) -> ITokenFactory::TokenVariant {
+        match self {
+            Self::B20 => ITokenFactory::TokenVariant::DEFAULT,
+            Self::Stablecoin => ITokenFactory::TokenVariant::STABLECOIN,
+            Self::Security => ITokenFactory::TokenVariant::SECURITY,
+        }
     }
 
-    /// Computes this variant's deterministic token address for `creator`, `decimals`, and `salt`.
+    /// Returns this variant's fixed decimal precision.
+    pub const fn decimals(self) -> u8 {
+        match self {
+            Self::B20 => 18,
+            Self::Stablecoin | Self::Security => 6,
+        }
+    }
+
+    /// Builds this variant's B-20 address prefix.
+    pub const fn address_prefix(self) -> [u8; 11] {
+        [Self::PREFIX_BYTE, 0, 0, 0, 0, 0, 0, 0, 0, 0, self.discriminant()]
+    }
+
+    /// Computes this variant's deterministic token address for `creator` and `salt`.
     ///
-    /// Returns the address and the lower 8 bytes of the hash as a `u64`.
-    pub fn compute_address(self, creator: Address, decimals: u8, salt: B256) -> (Address, u64) {
+    /// Returns the address and the 9-byte hash tail embedded in the address.
+    pub fn compute_address(self, creator: Address, salt: B256) -> (Address, [u8; 9]) {
         let hash = keccak256((creator, salt).abi_encode());
 
-        let mut lower_bytes_buf = [0u8; 8];
-        lower_bytes_buf.copy_from_slice(&hash[..8]);
-        let lower_bytes = u64::from_be_bytes(lower_bytes_buf);
+        let mut tail = [0u8; 9];
+        tail.copy_from_slice(&hash[..9]);
 
         let mut addr_bytes = [0u8; 20];
-        addr_bytes[..12].copy_from_slice(&self.address_prefix(decimals));
-        addr_bytes[12..].copy_from_slice(&hash[..8]);
+        addr_bytes[..11].copy_from_slice(&self.address_prefix());
+        addr_bytes[11..].copy_from_slice(&tail);
 
-        (Address::from(addr_bytes), lower_bytes)
+        (Address::from(addr_bytes), tail)
     }
 
     /// Computes a deterministic B-20 token address for an ABI discriminant.
     pub fn compute_address_for_discriminant(
         creator: Address,
         variant: u8,
-        decimals: u8,
         salt: B256,
-    ) -> (Address, u64) {
+    ) -> (Address, [u8; 9]) {
         let hash = keccak256((creator, salt).abi_encode());
 
-        let mut lower_bytes_buf = [0u8; 8];
-        lower_bytes_buf.copy_from_slice(&hash[..8]);
-        let lower_bytes = u64::from_be_bytes(lower_bytes_buf);
+        let mut tail = [0u8; 9];
+        tail.copy_from_slice(&hash[..9]);
 
         let mut addr_bytes = [0u8; 20];
         addr_bytes[0] = Self::PREFIX_BYTE;
         addr_bytes[10] = variant;
-        addr_bytes[11] = decimals;
-        addr_bytes[12..].copy_from_slice(&hash[..8]);
+        addr_bytes[11..].copy_from_slice(&tail);
 
-        (Address::from(addr_bytes), lower_bytes)
+        (Address::from(addr_bytes), tail)
     }
 
     /// Returns `true` when `address` has a supported B-20 token variant prefix.
@@ -118,9 +146,14 @@ impl TokenVariant {
         Self::from_address(address).is_some()
     }
 
-    /// Returns the decimals encoded in `address` when it has a supported B-20 prefix.
-    pub fn decimals_of(address: Address) -> Option<u8> {
+    /// Returns the variant discriminant encoded in `address`, if supported.
+    pub fn variant_of(address: Address) -> Option<u8> {
         Self::from_address(address)?;
-        Some(address.as_slice()[11])
+        Some(address.as_slice()[10])
+    }
+
+    /// Returns the fixed decimals for the variant encoded in `address`.
+    pub fn decimals_of(address: Address) -> Option<u8> {
+        Some(Self::from_address(address)?.decimals())
     }
 }

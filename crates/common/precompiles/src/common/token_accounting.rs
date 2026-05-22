@@ -1,7 +1,7 @@
 //! `TokenAccounting` — the driven port all token storage adapters implement.
 use alloc::string::String;
 
-use alloy_primitives::{Address, LogData, U256};
+use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_storage::Result;
 
 /// Outbound port: all data reads and writes the core business logic requires.
@@ -68,13 +68,6 @@ pub trait TokenAccounting {
     /// Increments the EIP-2612 permit nonce for `owner` by one.
     fn increment_nonce(&mut self, owner: Address) -> Result<()>;
 
-    // --- Redeem ---
-
-    /// Returns the minimum amount that may be redeemed in a single call.
-    fn minimum_redeemable(&self) -> Result<U256>;
-    /// Overwrites the minimum redeemable amount.
-    fn set_minimum_redeemable(&mut self, minimum: U256) -> Result<()>;
-
     // --- Contract URI ---
 
     /// Returns the off-chain metadata URI for this token (ERC-7572).
@@ -82,10 +75,27 @@ pub trait TokenAccounting {
     /// Overwrites the contract URI.
     fn set_contract_uri(&mut self, uri: String) -> Result<()>;
 
-    // --- Capabilities ---
+    // --- Roles ---
 
-    /// Returns the immutable capability bitfield assigned at creation.
-    fn capabilities(&self) -> Result<U256>;
+    /// Returns whether `account` has `role`.
+    fn has_role(&self, role: B256, account: Address) -> Result<bool>;
+    /// Sets whether `account` has `role`.
+    fn set_role(&mut self, role: B256, account: Address, enabled: bool) -> Result<()>;
+    /// Returns the number of accounts holding `role`.
+    fn role_member_count(&self, role: B256) -> Result<U256>;
+    /// Overwrites the number of accounts holding `role`.
+    fn set_role_member_count(&mut self, role: B256, count: U256) -> Result<()>;
+    /// Returns the admin role for `role`.
+    fn role_admin(&self, role: B256) -> Result<B256>;
+    /// Overwrites the admin role for `role`.
+    fn set_role_admin(&mut self, role: B256, admin_role: B256) -> Result<()>;
+
+    // --- Policies ---
+
+    /// Returns the policy ID assigned to `policy_type`.
+    fn policy_id(&self, policy_type: B256) -> Result<u64>;
+    /// Overwrites the policy ID assigned to `policy_type`.
+    fn set_policy_id(&mut self, policy_type: B256, policy_id: u64) -> Result<()>;
 
     // --- Event emission ---
 

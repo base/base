@@ -13,9 +13,24 @@ use revm::{
 };
 
 use crate::{
-    ActivationRegistry, B20TokenPrecompile, BasePrecompileSpec, PolicyRegistry, TokenFactory,
-    bls12_381, bn254_pair,
+    ActivationRegistry, B20SecurityPrecompile, B20StablecoinPrecompile, B20TokenPrecompile,
+    BasePrecompileSpec, PolicyRegistryPrecompile, TokenFactory, TokenVariant, bls12_381,
+    bn254_pair,
 };
+
+/// Combined lookup for all B-20 token variants.
+///
+/// A single named function is required because `set_precompile_lookup` accepts
+/// function pointers (which are lifetime-generic) but not closures with a specific
+/// lifetime, and because successive `set_precompile_lookup` calls replace rather
+/// than chain the previous lookup.
+fn b20_token_lookup(address: &Address) -> Option<alloy_evm::precompiles::DynPrecompile> {
+    match TokenVariant::from_address(*address)? {
+        TokenVariant::B20 => Some(B20TokenPrecompile::create_precompile(*address)),
+        TokenVariant::Stablecoin => Some(B20StablecoinPrecompile::create_precompile(*address)),
+        TokenVariant::Security => Some(B20SecurityPrecompile::create_precompile(*address)),
+    }
+}
 
 /// Base precompile provider.
 #[derive(Debug, Clone)]
@@ -172,8 +187,10 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
             TokenFactory::install(&mut precompiles);
-            B20TokenPrecompile::install(&mut precompiles);
-            PolicyRegistry::install(&mut precompiles);
+            // A single combined lookup covers all B-20 variants:
+            // set_precompile_lookup replaces, not chains, so we cannot call install twice.
+            precompiles.set_precompile_lookup(b20_token_lookup);
+            PolicyRegistryPrecompile::install(&mut precompiles);
             ActivationRegistry::install(&mut precompiles, self.activation_admin_address);
         }
         precompiles
@@ -528,11 +545,8 @@ mod tests {
     #[case::beryl(BaseUpgrade::Beryl, true)]
     fn install_routes_b20_precompiles_by_fork(#[case] spec: BaseUpgrade, #[case] expected: bool) {
         let precompiles = BasePrecompiles::new_with_spec(spec).install();
-        let (token, _) = TokenVariant::B20.compute_address(
-            Address::repeat_byte(0x11),
-            18,
-            B256::repeat_byte(0x22),
-        );
+        let (token, _) =
+            TokenVariant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
 
         assert_eq!(precompiles.get(&TokenFactoryStorage::ADDRESS).is_some(), expected);
         assert_eq!(precompiles.get(&token).is_some(), expected);

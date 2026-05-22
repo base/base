@@ -3,8 +3,9 @@
 
 Usage::
 
-    check_manifest.py <manifest.toml> <cache_dir>          # verify, print status
-    check_manifest.py --write <manifest.toml> <cache_dir>   # rewrite sha256 fields
+    check_manifest.py <manifest.toml> <cache_dir>                 # verify, print status
+    check_manifest.py --write <manifest.toml> <cache_dir>          # rewrite sha256 fields
+    check_manifest.py --print-hashes <manifest.toml> <cache_dir>   # print expected/actual hashes
 
 Verify mode exit code is always 0; the resulting status is printed to stdout as
 one of ``match``, ``missing:<name>``, or ``mismatch:<name>`` so the just recipe
@@ -84,19 +85,47 @@ def write(manifest_path: Path, cache_dir: Path) -> None:
     manifest_path.write_text(text)
 
 
+def print_hashes(manifest_path: Path, cache_dir: Path) -> None:
+    """Print the manifest hash and current cache hash for each ELF."""
+    entries = parse_manifest(manifest_path.read_text())
+    if not entries:
+        print("empty-manifest")
+        return
+    for name, expected in entries:
+        target = cache_dir / name
+        actual = sha256_of(target) if target.exists() else "<missing>"
+        print(f'{name}: expected="{expected}" actual="{actual}"')
+
+
 def main(argv: list[str]) -> None:
     args = argv[1:]
     write_mode = False
-    if args and args[0] == "--write":
-        write_mode = True
+    print_hashes_mode = False
+    while args and args[0].startswith("--"):
+        flag = args[0]
+        if flag == "--write":
+            write_mode = True
+        elif flag == "--print-hashes":
+            print_hashes_mode = True
+        else:
+            print(f"unknown option: {flag}", file=sys.stderr)
+            sys.exit(2)
         args = args[1:]
     if len(args) != 2:
-        print("usage: check_manifest.py [--write] <manifest.toml> <cache_dir>", file=sys.stderr)
+        print(
+            "usage: check_manifest.py [--write] [--print-hashes] <manifest.toml> <cache_dir>",
+            file=sys.stderr,
+        )
         sys.exit(2)
     manifest_path = Path(args[0])
     cache_dir = Path(args[1])
     if write_mode:
         write(manifest_path, cache_dir)
+        if print_hashes_mode:
+            print_hashes(manifest_path, cache_dir)
+        return
+    if print_hashes_mode:
+        print_hashes(manifest_path, cache_dir)
     else:
         print(verify(manifest_path, cache_dir))
 
