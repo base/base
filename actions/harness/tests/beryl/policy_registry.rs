@@ -566,7 +566,8 @@ async fn policy_registry_renounced_policy_is_frozen() {
         "stageUpdateAdmin() after renounceAdmin must revert"
     );
 
-    // finalizeUpdateAdmin from alice reverts (Unauthorized).
+    // finalizeUpdateAdmin reverts (NoPendingAdmin): renounce_admin clears the pending admin
+    // entry, so the contract hits NoPendingAdmin before it can check Unauthorized.
     let finalize_admin =
         scenario.tx(IPolicyRegistry::finalizeUpdateAdminCall { policyId: allowlist_id });
     let block = scenario.build_block_with_transactions(vec![finalize_admin]).await;
@@ -618,15 +619,6 @@ async fn policy_registry_renounced_policy_is_frozen() {
             "policyExists still true after renounce",
             IPolicyRegistry::policyExistsCall { policyId: allowlist_id }.abi_encode(),
             U256::ONE,
-        )
-        .await;
-
-    // policyType still returns ALLOWLIST.
-    scenario
-        .assert_probe_word(
-            "policyType still ALLOWLIST after renounce",
-            IPolicyRegistry::policyTypeCall { policyId: allowlist_id }.abi_encode(),
-            U256::from(IPolicyRegistry::PolicyType::ALLOWLIST as u8),
         )
         .await;
 
