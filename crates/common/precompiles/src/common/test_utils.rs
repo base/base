@@ -231,12 +231,12 @@ impl TokenAccounting for InMemoryTokenAccounting {
         Ok(())
     }
 
-    fn policy_id(&self, policy_type: B256) -> Result<u64> {
-        Ok(*self.policy_ids.get(&policy_type).unwrap_or(&PolicyRegistryStorage::ALWAYS_ALLOW_ID))
+    fn policy_id(&self, policy_scope: B256) -> Result<u64> {
+        Ok(*self.policy_ids.get(&policy_scope).unwrap_or(&PolicyRegistryStorage::ALWAYS_ALLOW_ID))
     }
 
-    fn set_policy_id(&mut self, policy_type: B256, policy_id: u64) -> Result<()> {
-        self.policy_ids.insert(policy_type, policy_id);
+    fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
+        self.policy_ids.insert(policy_scope, policy_id);
         Ok(())
     }
 

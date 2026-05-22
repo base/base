@@ -200,7 +200,7 @@ mod tests {
         assert_eq!(
             token.mint(CALLER, ALICE, U256::ONE, true).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
-                policyType: B20PolicyType::MintReceiver.id(),
+                policyScope: B20PolicyType::MintReceiver.id(),
                 policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
             })
         );

@@ -11,8 +11,8 @@ use base_action_harness::{
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_precompiles::{
-    ActivationFeature, ActivationRegistryStorage, IActivationRegistry, IB20, ITokenFactory,
-    TokenFactoryStorage, TokenVariant,
+    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
+    IActivationRegistry, IB20, IB20Factory,
 };
 use base_precompile_storage::StorageKey;
 use base_test_utils::Account;
@@ -148,8 +148,8 @@ impl BerylTestEnv {
     }
 
     /// Activation registry feature ID for the token factory precompile.
-    pub(crate) const fn token_factory_feature() -> B256 {
-        ActivationFeature::TokenFactory.id()
+    pub(crate) const fn b20_factory_feature() -> B256 {
+        ActivationFeature::B20Factory.id()
     }
 
     /// Activation registry feature ID for the B-20 token precompile.
@@ -172,7 +172,7 @@ impl BerylTestEnv {
 
     /// Returns the deterministic B-20 token address created by Alice.
     pub(crate) fn b20_token_address(&self) -> Address {
-        TokenVariant::B20.compute_address(Self::alice(), Self::b20_token_salt()).0
+        B20Variant::B20.compute_address(Self::alice(), Self::b20_token_salt()).0
     }
 
     /// Creates a transaction that calls the B-20 token factory with the default salt.
@@ -183,7 +183,7 @@ impl BerylTestEnv {
     /// Creates a transaction that calls the B-20 token factory with the given `salt`.
     pub(crate) fn create_b20_token_with_salt_tx(&self, salt: B256) -> BaseTxEnvelope {
         self.create_tx(
-            TxKind::Call(TokenFactoryStorage::ADDRESS),
+            TxKind::Call(B20FactoryStorage::ADDRESS),
             Bytes::from(self.create_b20_token_call_with_salt(salt).abi_encode()),
             Self::B20_GAS_LIMIT,
         )
@@ -442,9 +442,9 @@ impl BerylTestEnv {
         );
     }
 
-    fn create_b20_token_call_with_salt(&self, salt: B256) -> ITokenFactory::createTokenCall {
-        ITokenFactory::createTokenCall {
-            variant: ITokenFactory::TokenVariant::DEFAULT,
+    fn create_b20_token_call_with_salt(&self, salt: B256) -> IB20Factory::createB20Call {
+        IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::DEFAULT,
             salt,
             params: self.b20_token_params().abi_encode().into(),
             initCalls: vec![
@@ -477,9 +477,9 @@ impl BerylTestEnv {
         Bytes::from(init_code)
     }
 
-    fn b20_token_params(&self) -> ITokenFactory::B20CreateParams {
-        ITokenFactory::B20CreateParams {
-            version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
+    fn b20_token_params(&self) -> IB20Factory::B20CreateParams {
+        IB20Factory::B20CreateParams {
+            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
             name: "Action B20".to_string(),
             symbol: "AB20".to_string(),
             initialAdmin: Self::alice(),
