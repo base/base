@@ -23,7 +23,7 @@ use tokio::time::{sleep, timeout};
 /// Creation settings used by the devnet B-20 factory client.
 #[derive(Debug, Clone)]
 pub struct B20CreateConfig {
-    /// ABI-level creation params sent to `IB20Factory.createToken`.
+    /// ABI-level creation params sent to `IB20Factory.createB20`.
     pub create: IB20Factory::B20CreateParams,
     /// Initial supply to mint during the factory init-call window.
     pub initial_supply: U256,
@@ -391,7 +391,7 @@ impl<'a> B20PrecompileClient<'a> {
             .wrap_err("Failed to decode isB20")
     }
 
-    /// Calls `getTokenAddress` on the factory precompile via RPC.
+    /// Calls `getB20Address` on the factory precompile via RPC.
     pub async fn predict_token_address_rpc(
         &self,
         creator: Address,
@@ -405,7 +405,7 @@ impl<'a> B20PrecompileClient<'a> {
             )
             .await?;
         IB20Factory::getB20AddressCall::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode getTokenAddress")
+            .wrap_err("Failed to decode getB20Address")
     }
 
     /// Sends a transaction and returns `true` if it succeeded, `false` if it reverted.
