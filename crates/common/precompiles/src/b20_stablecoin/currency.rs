@@ -5,8 +5,8 @@
 pub struct IsoCurrency;
 
 impl IsoCurrency {
-    /// Returns `Some(())` if `code` is on the supported currency allowlist, `None` otherwise.
-    pub fn from_code(code: &str) -> Option<()> {
+    /// Returns `Some(Self)` if `code` is on the supported currency allowlist, `None` otherwise.
+    pub fn from_code(code: &str) -> Option<Self> {
         match code {
             "AED" | "AFN" | "ALL" | "AMD" | "ANG" | "AOA" | "ARS" | "AUD" | "AWG" | "AZN"
             | "BAM" | "BBD" | "BDT" | "BGN" | "BHD" | "BIF" | "BMD" | "BND" | "BOB" | "BRL"
@@ -23,7 +23,7 @@ impl IsoCurrency {
             | "SLE" | "SOS" | "SRD" | "SSP" | "STN" | "SVC" | "SYP" | "SZL" | "THB" | "TJS"
             | "TMT" | "TND" | "TOP" | "TRY" | "TTD" | "TWD" | "TZS" | "UAH" | "UGX" | "USD"
             | "UYU" | "UZS" | "VED" | "VES" | "VND" | "VUV" | "WST" | "XAF" | "XCD" | "XOF"
-            | "XPF" | "YER" | "ZAR" | "ZMW" | "ZWG" => Some(()),
+            | "XPF" | "YER" | "ZAR" | "ZMW" | "ZWG" => Some(Self),
             _ => None,
         }
     }
