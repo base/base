@@ -49,7 +49,7 @@ impl BaseTokenBenchSetup {
             initCalls: Vec::new(),
         };
         let mut factory = B20FactoryStorage::new(ctx);
-        factory.create_token(caller, call).unwrap()
+        factory.create_b20(caller, call).unwrap()
     }
 
     fn create_token<'a>(
