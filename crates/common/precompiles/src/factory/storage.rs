@@ -1,4 +1,5 @@
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use alloy_primitives::{Address, Bytes, U256, address};
 use alloy_sol_types::{SolCall, SolValue};
@@ -133,8 +134,12 @@ impl<'a> TokenFactoryStorage<'a> {
         currency: String,
         init_calls: Vec<Bytes>,
     ) -> Result<()> {
-        let mut storage = B20StablecoinStorage::from_address(token_address, self.storage);
-        storage.initialize(
+        let mut token
+         = B20StablecoinToken::with_storage_and_policy(
+            B20StablecoinStorage::from_address(token_address, self.storage),
+            PolicyHandle::new(self.storage),
+        );
+        token.accounting_mut().initialize(
             common.name.clone(),
             common.symbol.clone(),
             Self::DEFAULT_SUPPLY_CAP,
@@ -149,10 +154,7 @@ impl<'a> TokenFactoryStorage<'a> {
             decimals: TokenVariant::Stablecoin.decimals(),
         })?;
 
-        let mut token = B20StablecoinToken::with_storage_and_policy(
-            B20StablecoinStorage::from_address(token_address, self.storage),
-            PolicyHandle::new(self.storage),
-        );
+
 
         if !common.initial_admin.is_zero() {
             token.grant_role_unchecked(
