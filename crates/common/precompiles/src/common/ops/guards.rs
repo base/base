@@ -67,7 +67,7 @@ impl B20Guards {
             Ok(())
         } else {
             Err(BasePrecompileError::revert(IB20::PolicyForbids {
-                policyType: policy_type,
+                policyScope: policy_type,
                 policyId: policy_id,
             }))
         }
@@ -118,7 +118,7 @@ mod tests {
             B20Guards::ensure_policy_type(&token, B20PolicyType::TransferSender, denied)
                 .unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
-                policyType: B20PolicyType::TransferSender.id(),
+                policyScope: B20PolicyType::TransferSender.id(),
                 policyId: EXTERNAL_POLICY_ID,
             })
         );

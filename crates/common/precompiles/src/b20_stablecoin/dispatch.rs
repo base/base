@@ -88,7 +88,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             C::hasRole(c) => self.has_role(c.role, c.account)?.abi_encode().into(),
             C::getRoleAdmin(c) => self.role_admin(c.role)?.abi_encode().into(),
             C::pausedFeatures(_) => self.paused_features()?.abi_encode().into(),
-            C::policyId(c) => self.policy_id(c.policyType)?.abi_encode().into(),
+            C::policyId(c) => self.policy_id(c.policyScope)?.abi_encode().into(),
 
             // --- Domain reads (light logic) ---
             C::isPaused(c) => self.is_paused(c.feature)?.abi_encode().into(),
@@ -215,7 +215,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             }
             C::updatePolicy(c) => {
                 let caller = ctx.caller();
-                self.update_policy(caller, c.policyType, c.newPolicyId, privileged)?;
+                self.update_policy(caller, c.policyScope, c.newPolicyId, privileged)?;
                 Bytes::new()
             }
 

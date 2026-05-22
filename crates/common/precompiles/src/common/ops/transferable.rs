@@ -346,7 +346,7 @@ mod tests {
         assert_eq!(
             token.transfer(ALICE, BOB, U256::ONE, false).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
-                policyType: B20PolicyType::TransferSender.id(),
+                policyScope: B20PolicyType::TransferSender.id(),
                 policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
             })
         );
@@ -364,7 +364,7 @@ mod tests {
         assert_eq!(
             token.transfer(ALICE, BOB, U256::ONE, false).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
-                policyType: B20PolicyType::TransferReceiver.id(),
+                policyScope: B20PolicyType::TransferReceiver.id(),
                 policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
             })
         );
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(
             token.transfer_from(SPENDER, ALICE, BOB, U256::ONE, false).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
-                policyType: B20PolicyType::TransferExecutor.id(),
+                policyScope: B20PolicyType::TransferExecutor.id(),
                 policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
             })
         );
@@ -513,7 +513,7 @@ mod tests {
         assert_eq!(
             token.transfer(ALICE, BOB, U256::ONE, false).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
-                policyType: B20PolicyType::TransferSender.id(),
+                policyScope: B20PolicyType::TransferSender.id(),
                 policyId: POLICY_ID,
             })
         );

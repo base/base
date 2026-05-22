@@ -30,9 +30,9 @@ sol! {
         error EmptyFeatureSet();
         error InvalidSupplyCap(uint256 currentSupply, uint256 proposedCap);
         error SupplyCapExceeded(uint256 cap, uint256 attempted);
-        error PolicyForbids(bytes32 policyType, uint64 policyId);
+        error PolicyForbids(bytes32 policyScope, uint64 policyId);
         error PolicyNotFound(uint64 policyId);
-        error UnsupportedPolicyType(bytes32 policyType);
+        error UnsupportedPolicyType(bytes32 policyScope);
         error AccountNotBlocked(address account);
         error ExpiredSignature(uint256 deadline);
         error InvalidSigner(address signer, address owner);
@@ -51,7 +51,7 @@ sol! {
         event LastAdminRenounced(address indexed previousAdmin);
         event Paused(address indexed updater, PausableFeature[] features);
         event Unpaused(address indexed updater, PausableFeature[] features);
-        event PolicyUpdated(bytes32 indexed policyType, uint64 oldPolicyId, uint64 newPolicyId);
+        event PolicyUpdated(bytes32 indexed policyScope, uint64 oldPolicyId, uint64 newPolicyId);
         event SupplyCapUpdated(address indexed updater, uint256 oldSupplyCap, uint256 newSupplyCap);
         event ContractURIUpdated();
         event NameUpdated(address indexed updater, string newName);
@@ -114,8 +114,8 @@ sol! {
         function unpause(PausableFeature[] calldata features) external;
 
         // Policy
-        function policyId(bytes32 policyType) external view returns (uint64);
-        function updatePolicy(bytes32 policyType, uint64 newPolicyId) external;
+        function policyId(bytes32 policyScope) external view returns (uint64);
+        function updatePolicy(bytes32 policyScope, uint64 newPolicyId) external;
 
         // Supply cap
         function supplyCap() external view returns (uint256);

@@ -38,7 +38,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             Ok(())
         } else {
             Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
-                policyType: policy_type,
+                policyScope: policy_type,
             }))
         }
     }
@@ -70,7 +70,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         self.accounting_mut().set_policy_id(policy_type, new_policy_id)?;
         self.accounting_mut().emit_event(
             IB20::PolicyUpdated {
-                policyType: policy_type,
+                policyScope: policy_type,
                 oldPolicyId: old_policy_id,
                 newPolicyId: new_policy_id,
             }
@@ -162,7 +162,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             C::isPaused(c) => self.is_paused(c.feature)?.abi_encode().into(),
 
             // --- Policy reads ---
-            C::policyId(c) => self.policy_id_checked(c.policyType)?.abi_encode().into(),
+            C::policyId(c) => self.policy_id_checked(c.policyScope)?.abi_encode().into(),
 
             // --- Domain reads ---
             C::DOMAIN_SEPARATOR(_) => self.domain_separator(ctx.chain_id())?.abi_encode().into(),
@@ -292,7 +292,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             // --- Policy mutations ---
             C::updatePolicy(c) => {
                 let caller = ctx.caller();
-                self.update_policy(caller, c.policyType, c.newPolicyId, privileged)?;
+                self.update_policy(caller, c.policyScope, c.newPolicyId, privileged)?;
                 Bytes::new()
             }
 
@@ -797,7 +797,7 @@ mod tests {
         assert_eq!(
             token.security_redeem(ALICE, U256::from(1u64)).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
-                policyType: REDEEM_SENDER_POLICY,
+                policyScope: REDEEM_SENDER_POLICY,
                 policyId: policy_id,
             })
         );

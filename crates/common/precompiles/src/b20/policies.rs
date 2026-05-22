@@ -103,7 +103,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         self.accounting_mut().set_policy_id(policy_type, new_policy_id)?;
         self.accounting_mut().emit_event(
             IB20::PolicyUpdated {
-                policyType: policy_type,
+                policyScope: policy_type,
                 oldPolicyId: old_policy_id,
                 newPolicyId: new_policy_id,
             }
@@ -117,7 +117,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
             Ok(())
         } else {
             Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
-                policyType: policy_type,
+                policyScope: policy_type,
             }))
         }
     }
@@ -147,7 +147,7 @@ mod tests {
 
         assert_eq!(
             token.policy_id(policy_type).unwrap_err(),
-            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: policy_type })
         );
     }
 

@@ -108,7 +108,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         self.accounting_mut().set_policy_id(policy_type, new_policy_id)?;
         self.accounting_mut().emit_event(
             IB20::PolicyUpdated {
-                policyType: policy_type,
+                policyScope: policy_type,
                 oldPolicyId: old_policy_id,
                 newPolicyId: new_policy_id,
             }
@@ -122,7 +122,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             Ok(())
         } else {
             Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
-                policyType: policy_type,
+                policyScope: policy_type,
             }))
         }
     }

@@ -280,7 +280,7 @@ impl B20TokenStorage<'_> {
 
     fn require_policy_type(policy_type: B256) -> Result<B20PolicyType> {
         B20PolicyType::from_id(policy_type).ok_or_else(|| {
-            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: policy_type })
         })
     }
 
