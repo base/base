@@ -349,12 +349,21 @@ impl BaseTxEnvelope {
 
     /// Attempts to convert the envelope into the ethereum pooled variant.
     ///
-    /// Returns an error if the envelope's variant is incompatible with the pooled format:
-    /// [`TxDeposit`].
+    /// Returns an error if the envelope's variant is incompatible with the ethereum pooled
+    /// format: [`TxDeposit`] (not pooled at all) or [`AaSigned`] (pooled, but has no
+    /// ethereum-format representation since the alloy `PooledTransaction` enum has no
+    /// EIP-8130 variant). Rejecting [`AaSigned`] here prevents
+    /// `From<BasePooledTransaction> for alloy_consensus::PooledTransaction` from panicking.
     pub fn try_into_eth_pooled(
         self,
     ) -> Result<alloy_consensus::transaction::PooledTransaction, ValueError<Self>> {
-        self.try_into_pooled().map(Into::into)
+        match self {
+            tx @ Self::Aa8130(_) => Err(ValueError::new(
+                tx,
+                "EIP-8130 transactions cannot be converted to ethereum PooledTransaction",
+            )),
+            other => other.try_into_pooled().map(Into::into),
+        }
     }
 
     /// Attempts to convert the L2 variant into an ethereum [`TxEnvelope`].
