@@ -3,13 +3,13 @@ use alloc::string::{String, ToString};
 use alloy_primitives::{Address, Bytes, U256, address};
 use alloy_sol_types::{SolCall, SolValue};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Result};
+use base_precompile_storage::{BasePrecompileError, Result};
 use revm::state::Bytecode;
 
 use super::variant::TokenVariant;
 use crate::{
-    B20SecurityStorage, B20SecurityToken, B20Token, B20TokenInit, B20TokenRole, B20TokenStorage,
-    ITokenFactory, PolicyHandle, RoleManaged, Token,
+    B20SecurityStorage, B20SecurityToken, B20StablecoinStorage, B20StablecoinToken, B20Token,
+    B20TokenInit, B20TokenRole, B20TokenStorage, ITokenFactory, PolicyHandle, RoleManaged, Token,
 };
 
 /// The B-20 token factory precompile.
@@ -86,27 +86,6 @@ impl<'a> TokenFactoryStorage<'a> {
         common: CommonParams,
         init_calls: Vec<Bytes>,
     ) -> Result<()> {
-        self.init_b20_like(token_address, common, TokenVariant::B20, init_calls)
-    }
-
-    fn init_stablecoin(
-        &mut self,
-        token_address: Address,
-        common: CommonParams,
-        // TODO: write currency to B20StablecoinExtensionStorage once wired.
-        _currency: String,
-        init_calls: Vec<Bytes>,
-    ) -> Result<()> {
-        self.init_b20_like(token_address, common, TokenVariant::Stablecoin, init_calls)
-    }
-
-    fn init_b20_like(
-        &mut self,
-        token_address: Address,
-        common: CommonParams,
-        variant: TokenVariant,
-        init_calls: Vec<Bytes>,
-    ) -> Result<()> {
         let mut token = B20Token::with_storage_and_policy(
             B20TokenStorage::from_address(token_address, self.storage),
             PolicyHandle::new(self.storage),
@@ -119,11 +98,55 @@ impl<'a> TokenFactoryStorage<'a> {
 
         self.emit_event(ITokenFactory::TokenCreated {
             token: token_address,
-            variant: variant.abi(),
+            variant: TokenVariant::B20.abi(),
             name: common.name.clone(),
             symbol: common.symbol.clone(),
-            decimals: variant.decimals(),
+            decimals: TokenVariant::B20.decimals(),
         })?;
+
+        if !common.initial_admin.is_zero() {
+            token.grant_role_unchecked(
+                B20TokenRole::DefaultAdmin.id(),
+                common.initial_admin,
+                Self::ADDRESS,
+            )?;
+        }
+
+        for (index, calldata) in init_calls.into_iter().enumerate() {
+            token
+                .inner_with_privilege(self.storage, &calldata, true)
+                .map_err(|err| Self::map_init_call_error(index, err))?;
+        }
+        Ok(())
+    }
+
+    fn init_stablecoin(
+        &mut self,
+        token_address: Address,
+        common: CommonParams,
+        currency: String,
+        init_calls: Vec<Bytes>,
+    ) -> Result<()> {
+        let mut storage = B20StablecoinStorage::from_address(token_address, self.storage);
+        storage.initialize(
+            common.name.clone(),
+            common.symbol.clone(),
+            Self::DEFAULT_SUPPLY_CAP,
+            currency,
+        )?;
+
+        self.emit_event(ITokenFactory::TokenCreated {
+            token: token_address,
+            variant: TokenVariant::Stablecoin.abi(),
+            name: common.name.clone(),
+            symbol: common.symbol.clone(),
+            decimals: TokenVariant::Stablecoin.decimals(),
+        })?;
+
+        let mut token = B20StablecoinToken::with_storage_and_policy(
+            B20StablecoinStorage::from_address(token_address, self.storage),
+            PolicyHandle::new(self.storage),
+        );
 
         if !common.initial_admin.is_zero() {
             token.grant_role_unchecked(

@@ -4,21 +4,24 @@ use alloc::string::String;
 
 use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_macros::{Storable, contract};
+use base_precompile_storage::{
+    BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
+};
+
+use crate::{B20PolicyType, B20TokenRole, IB20, TokenAccounting, TokenVariant};
 
 /// Creation-time parameters for a B-20 token.
 ///
 /// Passed to [`B20TokenStorage::initialize`] to write all fields atomically.
 #[derive(Debug)]
 pub struct B20TokenInit {
+    /// Token name.
     pub name: String,
+    /// Token symbol.
     pub symbol: String,
+    /// Maximum total supply allowed.
     pub supply_cap: U256,
 }
-use base_precompile_storage::{
-    BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
-};
-
-use crate::{B20PolicyType, B20TokenRole, IB20, TokenAccounting, TokenVariant};
 
 /// Core B-20 storage rooted at the `base.b20` ERC-7201 namespace.
 #[derive(Debug, Clone, Storable)]
