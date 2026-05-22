@@ -38,12 +38,30 @@ resolve_endpoint() {
 }
 
 resolve_flags() {
-  case "$1" in
-    devnet | localhost:* | 127.*) echo "${ZK_PROVER_DEVNET_GRPCURL_FLAGS:--plaintext}" ;;
+  local target="$1"
+  local endpoint="$2"
+
+  case "$target" in
+    devnet)
+      if [ -n "${ZK_PROVER_DEVNET_GRPCURL_FLAGS+x}" ]; then
+        echo "${ZK_PROVER_DEVNET_GRPCURL_FLAGS}"
+        return
+      fi
+
+      case "$endpoint" in
+        localhost:* | 127.*) echo "--plaintext" ;;
+        *) echo "${ZK_PROVER_GRPCURL_FLAGS:-}" ;;
+      esac
+      ;;
     zeronet) echo "${ZK_PROVER_ZERONET_GRPCURL_FLAGS:-}" ;;
     sepolia) echo "${ZK_PROVER_SEPOLIA_GRPCURL_FLAGS:-}" ;;
     mainnet) echo "${ZK_PROVER_MAINNET_GRPCURL_FLAGS:-}" ;;
-    *) echo "${ZK_PROVER_GRPCURL_FLAGS:-}" ;;
+    *)
+      case "$endpoint" in
+        localhost:* | 127.*) echo "${ZK_PROVER_GRPCURL_FLAGS:--plaintext}" ;;
+        *) echo "${ZK_PROVER_GRPCURL_FLAGS:-}" ;;
+      esac
+      ;;
   esac
 }
 
@@ -53,7 +71,7 @@ run_grpcurl() {
 
   local endpoint flags
   endpoint="$(resolve_endpoint "$target")"
-  flags="$(resolve_flags "$target")"
+  flags="$(resolve_flags "$target" "$endpoint")"
 
   # Intentionally allow grpcurl flags to split so callers can pass multiple flags
   # through ZK_PROVER_*_GRPCURL_FLAGS.
@@ -67,7 +85,7 @@ run_grpcurl_with_data() {
 
   local endpoint flags
   endpoint="$(resolve_endpoint "$target")"
-  flags="$(resolve_flags "$target")"
+  flags="$(resolve_flags "$target" "$endpoint")"
 
   # Intentionally allow grpcurl flags to split so callers can pass multiple flags
   # through ZK_PROVER_*_GRPCURL_FLAGS.
