@@ -530,16 +530,16 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         amounts: Vec<U256>,
     ) -> base_precompile_storage::Result<()> {
         B20Guards::ensure_role::<Self>(self, caller, BURN_FROM_ROLE)?;
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
-        if accounts.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
-        }
         if accounts.len() != amounts.len() {
             return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
                 leftLen: U256::from(accounts.len()),
                 rightLen: U256::from(amounts.len()),
             }));
         }
+        if accounts.is_empty() {
+            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
+        }
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         for (account, amount) in accounts.into_iter().zip(amounts) {
             if amount.is_zero() {
                 return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
@@ -859,14 +859,52 @@ mod tests {
     #[test]
     fn batch_burn_rejects_empty() {
         let mut token = make_token();
-        assert!(token.batch_burn(ALICE, alloc::vec![], alloc::vec![]).is_err());
+
+        assert_eq!(
+            token.batch_burn(ALICE, alloc::vec![], alloc::vec![]).unwrap_err(),
+            BasePrecompileError::revert(IB20Security::EmptyBatch {})
+        );
     }
 
     #[test]
     fn batch_burn_rejects_length_mismatch() {
         let mut token = make_token();
-        assert!(
-            token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err()
+
+        assert_eq!(
+            token
+                .batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
+                .unwrap_err(),
+            BasePrecompileError::revert(IB20Security::LengthMismatch {
+                leftLen: U256::ONE,
+                rightLen: U256::from(2u64),
+            })
+        );
+        assert_eq!(
+            token.batch_burn(ALICE, alloc::vec![], alloc::vec![U256::ONE]).unwrap_err(),
+            BasePrecompileError::revert(IB20Security::LengthMismatch {
+                leftLen: U256::ZERO,
+                rightLen: U256::ONE,
+            })
+        );
+    }
+
+    #[test]
+    fn batch_burn_validates_batch_shape_before_pause() {
+        let mut token = make_token();
+        token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
+
+        assert_eq!(
+            token
+                .batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
+                .unwrap_err(),
+            BasePrecompileError::revert(IB20Security::LengthMismatch {
+                leftLen: U256::ONE,
+                rightLen: U256::from(2u64),
+            })
+        );
+        assert_eq!(
+            token.batch_burn(ALICE, alloc::vec![], alloc::vec![]).unwrap_err(),
+            BasePrecompileError::revert(IB20Security::EmptyBatch {})
         );
     }
 
