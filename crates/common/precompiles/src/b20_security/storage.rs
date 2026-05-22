@@ -8,7 +8,7 @@ use base_precompile_storage::{
     BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
 };
 
-use super::accounting::SecurityAccounting;
+use super::{accounting::SecurityAccounting, ids::REDEEM_SENDER_POLICY};
 use crate::{B20CoreStorage, B20PolicyType, B20TokenRole, IB20, TokenAccounting, TokenVariant};
 
 /// Security-specific B-20 storage rooted at the `base.b20.security` ERC-7201 namespace.
@@ -211,7 +211,13 @@ impl TokenAccounting for B20SecurityStorage<'_> {
     }
 
     fn policy_id(&self, policy_type: B256) -> Result<u64> {
-        let policy_type = Self::require_policy_type(policy_type)?;
+        if policy_type == REDEEM_SENDER_POLICY {
+            return Ok(Self::read_policy_lane(
+                self.redeem.redeem_policy_ids.read()?,
+                Self::REDEEM_SENDER_POLICY_LANE,
+            ));
+        }
+        let policy_type = Self::require_b20_policy_type(policy_type)?;
         match policy_type {
             B20PolicyType::TransferSender => Ok(Self::read_policy_lane(
                 self.b20.transfer_policy_ids.read()?,
@@ -233,7 +239,15 @@ impl TokenAccounting for B20SecurityStorage<'_> {
     }
 
     fn set_policy_id(&mut self, policy_type: B256, policy_id: u64) -> Result<()> {
-        let policy_type = Self::require_policy_type(policy_type)?;
+        if policy_type == REDEEM_SENDER_POLICY {
+            let packed = Self::write_policy_lane(
+                self.redeem.redeem_policy_ids.read()?,
+                Self::REDEEM_SENDER_POLICY_LANE,
+                policy_id,
+            );
+            return self.redeem.redeem_policy_ids.write(packed);
+        }
+        let policy_type = Self::require_b20_policy_type(policy_type)?;
         match policy_type {
             B20PolicyType::TransferSender => {
                 let packed = Self::write_policy_lane(
@@ -281,6 +295,7 @@ impl B20SecurityStorage<'_> {
     const TRANSFER_RECEIVER_POLICY_LANE: usize = 1;
     const TRANSFER_EXECUTOR_POLICY_LANE: usize = 2;
     const MINT_RECEIVER_POLICY_LANE: usize = 0;
+    const REDEEM_SENDER_POLICY_LANE: usize = 0;
     const POLICY_LANE_BITS: usize = 64;
 
     fn admin_count_mask() -> U256 {
@@ -299,7 +314,7 @@ impl B20SecurityStorage<'_> {
         Ok((packed & !mask) | count)
     }
 
-    fn require_policy_type(policy_type: B256) -> Result<B20PolicyType> {
+    fn require_b20_policy_type(policy_type: B256) -> Result<B20PolicyType> {
         B20PolicyType::from_id(policy_type).ok_or_else(|| {
             BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
         })
@@ -366,9 +381,9 @@ mod tests {
 
     use super::{
         __packing_b20_redeem_storage, __packing_b20_security_extension_storage, B20RedeemStorage,
-        B20SecurityExtensionStorage, B20SecurityStorage, slots,
+        B20SecurityExtensionStorage, B20SecurityStorage, REDEEM_SENDER_POLICY, slots,
     };
-    use crate::B20CoreStorage;
+    use crate::{B20CoreStorage, TokenAccounting};
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b021");
     const B20_ROOT: U256 =
@@ -451,6 +466,24 @@ mod tests {
                 short_string_word(&identifier_value)
             );
             assert_eq!(ctx.sload(TOKEN, minimum_slot).unwrap(), U256::from(10u64));
+        });
+    }
+
+    #[test]
+    fn redeem_sender_policy_uses_redeem_storage_lane() {
+        let (mut storage, _) = setup_storage();
+        let policy_id = 42u64;
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            {
+                let mut token = B20SecurityStorage::from_address(TOKEN, ctx);
+                token.set_policy_id(REDEEM_SENDER_POLICY, policy_id).unwrap();
+                assert_eq!(token.policy_id(REDEEM_SENDER_POLICY).unwrap(), policy_id);
+            }
+
+            let redeem_policy_slot = REDEEM_ROOT
+                + U256::from(__packing_b20_redeem_storage::REDEEM_POLICY_IDS_LOC.offset_slots);
+            assert_eq!(ctx.sload(TOKEN, redeem_policy_slot).unwrap(), U256::from(policy_id));
         });
     }
 

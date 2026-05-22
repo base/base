@@ -8,7 +8,7 @@
 
 use alloc::{string::String, vec::Vec};
 
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
@@ -17,9 +17,10 @@ use super::{
     B20SecurityToken,
     abi::{IB20Security, IB20Security::IB20SecurityCalls as SC},
     accounting::SecurityAccounting,
+    ids::{BURN_FROM_ROLE, REDEEM_SENDER_POLICY, SECURITY_OPERATOR_ROLE},
 };
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20PolicyType, B20TokenRole, Burnable,
+    ActivationFeature, ActivationRegistryStorage, B20Guards, B20PolicyType, B20TokenRole, Burnable,
     Configurable,
     IB20::{self, IB20Calls as C},
     Mintable, Pausable, Permittable, Policy, RoleManaged, Token, Transferable,
@@ -30,11 +31,21 @@ use crate::{
 const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
 impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
+    /// Ensures `policy_type` names either an inherited B-20 policy slot or the
+    /// security redeem slot.
+    fn ensure_supported_policy_type(policy_type: B256) -> base_precompile_storage::Result<()> {
+        if B20PolicyType::from_id(policy_type).is_some() || policy_type == REDEEM_SENDER_POLICY {
+            Ok(())
+        } else {
+            Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
+                policyType: policy_type,
+            }))
+        }
+    }
+
     /// Returns the configured policy ID for `policy_type`.
     fn policy_id_checked(&self, policy_type: B256) -> base_precompile_storage::Result<u64> {
-        B20PolicyType::from_id(policy_type).ok_or_else(|| {
-            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
-        })?;
+        Self::ensure_supported_policy_type(policy_type)?;
         self.accounting.policy_id(policy_type)
     }
 
@@ -46,9 +57,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         new_policy_id: u64,
         privileged: bool,
     ) -> base_precompile_storage::Result<()> {
-        B20PolicyType::from_id(policy_type).ok_or_else(|| {
-            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
-        })?;
+        Self::ensure_supported_policy_type(policy_type)?;
         if !privileged {
             self.ensure_role(caller, Self::default_admin_role())?;
         }
@@ -313,14 +322,10 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     ) -> base_precompile_storage::Result<Bytes> {
         let encoded: Bytes = match call {
             // --- Role / precision constants ---
-            SC::SECURITY_OPERATOR_ROLE(_) => {
-                keccak256(b"SECURITY_OPERATOR_ROLE").abi_encode().into()
-            }
-            SC::BURN_FROM_ROLE(_) => keccak256(b"BURN_FROM_ROLE").abi_encode().into(),
+            SC::SECURITY_OPERATOR_ROLE(_) => SECURITY_OPERATOR_ROLE.abi_encode().into(),
+            SC::BURN_FROM_ROLE(_) => BURN_FROM_ROLE.abi_encode().into(),
             SC::WAD_PRECISION(_) => WAD.abi_encode().into(),
-            SC::REDEEMER_SENDER_POLICY(_) => {
-                keccak256(b"REDEEMER_SENDER_POLICY").abi_encode().into()
-            }
+            SC::REDEEM_SENDER_POLICY(_) => REDEEM_SENDER_POLICY.abi_encode().into(),
 
             // --- Share ratio reads ---
             SC::sharesToTokensRatio(_) => {
@@ -344,6 +349,8 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
             // --- Share ratio mutations ---
             SC::updateShareRatio(c) => {
+                let caller = ctx.caller();
+                B20Guards::ensure_role::<Self>(self, caller, SECURITY_OPERATOR_ROLE)?;
                 self.accounting_mut().set_shares_to_tokens_ratio(c.newSharesToTokensRatio)?;
                 self.accounting_mut().emit_event(
                     IB20Security::ShareRatioUpdated {
@@ -362,11 +369,11 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
             // --- Batched mint / burn ---
             SC::batchMint(c) => {
-                self.batch_mint(ctx, c.recipients, c.amounts)?;
+                self.batch_mint(ctx.caller(), c.recipients, c.amounts)?;
                 Bytes::new()
             }
             SC::batchBurn(c) => {
-                self.batch_burn(c.accounts, c.amounts)?;
+                self.batch_burn(ctx.caller(), c.accounts, c.amounts)?;
                 Bytes::new()
             }
 
@@ -378,18 +385,19 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }
             SC::redeemWithMemo(c) => {
                 let caller = ctx.caller();
-                self.security_redeem(caller, c.amount)?;
-                self.accounting_mut()
-                    .emit_event(IB20::Memo { caller, memo: c.memo }.encode_log_data())?;
+                self.security_redeem_with_memo(caller, c.amount, c.memo)?;
                 Bytes::new()
             }
 
             // --- Minimum redeemable (security version, in shares) ---
             SC::minimumRedeemable(_) => self.accounting.minimum_redeemable()?.abi_encode().into(),
             SC::updateMinimumRedeemable(c) => {
+                let caller = ctx.caller();
+                B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::DefaultAdmin)?;
                 self.accounting_mut().set_minimum_redeemable(c.newMinimumRedeemable)?;
                 self.accounting_mut().emit_event(
                     IB20Security::MinimumRedeemableUpdated {
+                        caller,
                         newMinimumRedeemable: c.newMinimumRedeemable,
                     }
                     .encode_log_data(),
@@ -399,6 +407,8 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
             // --- Security identifier mutations ---
             SC::updateSecurityIdentifier(c) => {
+                let caller = ctx.caller();
+                B20Guards::ensure_role::<Self>(self, caller, SECURITY_OPERATOR_ROLE)?;
                 if c.identifierType.is_empty() {
                     return Err(BasePrecompileError::revert(
                         IB20Security::InvalidIdentifierType {},
@@ -431,6 +441,27 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         caller: Address,
         amount: U256,
     ) -> base_precompile_storage::Result<()> {
+        self.security_redeem_inner(caller, amount, None)
+    }
+
+    /// [`Self::security_redeem`] with a memo emitted between `Transfer` and `Redeemed`.
+    fn security_redeem_with_memo(
+        &mut self,
+        caller: Address,
+        amount: U256,
+        memo: B256,
+    ) -> base_precompile_storage::Result<()> {
+        self.security_redeem_inner(caller, amount, Some(memo))
+    }
+
+    fn security_redeem_inner(
+        &mut self,
+        caller: Address,
+        amount: U256,
+        memo: Option<B256>,
+    ) -> base_precompile_storage::Result<()> {
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::REDEEM)?;
+        B20Guards::ensure_policy::<Self>(self, REDEEM_SENDER_POLICY, caller)?;
         if amount.is_zero() {
             return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
         }
@@ -457,6 +488,9 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         self.accounting_mut().emit_event(
             IB20::Transfer { from: caller, to: Address::ZERO, amount }.encode_log_data(),
         )?;
+        if let Some(memo) = memo {
+            self.accounting_mut().emit_event(IB20::Memo { caller, memo }.encode_log_data())?;
+        }
         self.accounting_mut().emit_event(
             IB20Security::Redeemed { from: caller, amt: amount, sharesToTokensRatio: ratio }
                 .encode_log_data(),
@@ -466,7 +500,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// Mints tokens to multiple recipients. All-or-nothing.
     fn batch_mint(
         &mut self,
-        ctx: StorageCtx<'_>,
+        caller: Address,
         recipients: Vec<Address>,
         amounts: Vec<U256>,
     ) -> base_precompile_storage::Result<()> {
@@ -479,23 +513,24 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
                 rightLen: U256::from(amounts.len()),
             }));
         }
-        let caller = ctx.caller();
         for (recipient, amount) in recipients.into_iter().zip(amounts) {
-            self.mint(caller, recipient, amount, true)?;
+            self.mint(caller, recipient, amount, false)?;
         }
         Ok(())
     }
 
     /// Burns tokens from multiple accounts unconditionally. All-or-nothing.
     ///
-    /// Unlike `burnBlocked`, this path has no policy precondition — the
-    /// `BURN_FROM_ROLE` authorization is the sole gate (role checks are a TODO
-    /// matching the rest of the codebase).
+    /// Unlike `burnBlocked`, this path has no policy precondition; `BURN_FROM_ROLE` is the
+    /// on-chain authorization.
     fn batch_burn(
         &mut self,
+        caller: Address,
         accounts: Vec<Address>,
         amounts: Vec<U256>,
     ) -> base_precompile_storage::Result<()> {
+        B20Guards::ensure_role::<Self>(self, caller, BURN_FROM_ROLE)?;
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         if accounts.is_empty() {
             return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
         }
@@ -542,6 +577,9 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             return Err(BasePrecompileError::revert(IB20Security::AnnouncementInProgress {}));
         }
 
+        let caller = ctx.caller();
+        B20Guards::ensure_role::<Self>(self, caller, SECURITY_OPERATOR_ROLE)?;
+
         if self.accounting.is_announcement_id_used(id.as_str())? {
             return Err(BasePrecompileError::revert(IB20Security::AnnouncementIdAlreadyUsed {
                 id,
@@ -549,7 +587,6 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         }
         self.accounting_mut().mark_announcement_id_used(id.as_str())?;
 
-        let caller = ctx.caller();
         self.accounting_mut().emit_event(
             IB20Security::Announcement { caller, id: id.clone(), description, uri }
                 .encode_log_data(),
@@ -600,12 +637,14 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::{Address, B256, U256};
+    use alloy_sol_types::SolEvent;
     use base_precompile_storage::BasePrecompileError;
 
+    use super::{BURN_FROM_ROLE, REDEEM_SENDER_POLICY, SECURITY_OPERATOR_ROLE};
     use crate::{
-        IB20, Token, TokenAccounting,
-        b20_security::{B20SecurityToken, SecurityAccounting},
+        B20PausableFeature, IB20, Token, TokenAccounting,
+        b20_security::{B20SecurityToken, IB20Security, SecurityAccounting},
         common::test_utils::{InMemoryPolicy, InMemoryTokenAccounting},
     };
 
@@ -619,6 +658,8 @@ mod tests {
     fn make_token() -> TestSecurityToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         accounting.shares_to_tokens_ratio = WAD; // 1:1 ratio
+        accounting.roles.insert((BURN_FROM_ROLE, ALICE), true);
+        accounting.roles.insert((SECURITY_OPERATOR_ROLE, ALICE), true);
         TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
     }
 
@@ -653,24 +694,12 @@ mod tests {
     }
 
     #[test]
-    fn batch_mint_rejects_empty() {
-        let mut token = make_token();
-        assert!(token.batch_burn(alloc::vec![], alloc::vec![]).is_err());
-    }
-
-    #[test]
-    fn batch_mint_rejects_length_mismatch() {
-        let mut token = make_token();
-        assert!(token.batch_burn(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err());
-    }
-
-    #[test]
     fn batch_burn_decrements_balances() {
         let mut token = make_token();
         token.accounting_mut().balances.insert(ALICE, U256::from(500u64));
         token.accounting_mut().total_supply = U256::from(500u64);
 
-        token.batch_burn(alloc::vec![ALICE], alloc::vec![U256::from(200u64)]).unwrap();
+        token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::from(200u64)]).unwrap();
 
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(300u64));
         assert_eq!(token.accounting().total_supply().unwrap(), U256::from(300u64));
@@ -681,7 +710,25 @@ mod tests {
     fn batch_burn_rejects_insufficient_balance() {
         let mut token = make_token();
         token.accounting_mut().balances.insert(ALICE, U256::from(10u64));
-        assert!(token.batch_burn(alloc::vec![ALICE], alloc::vec![U256::from(100u64)]).is_err());
+        assert!(
+            token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::from(100u64)]).is_err()
+        );
+    }
+
+    #[test]
+    fn batch_burn_rejects_missing_burn_from_role() {
+        let mut token = make_token();
+        token.accounting_mut().roles.remove(&(BURN_FROM_ROLE, ALICE));
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(100u64);
+
+        assert_eq!(
+            token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::from(1u64)]).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ALICE,
+                neededRole: BURN_FROM_ROLE,
+            })
+        );
     }
 
     #[test]
@@ -718,6 +765,42 @@ mod tests {
 
         // 0 ratio → 0 shares → always rejected
         assert!(token.security_redeem(ALICE, U256::from(50u64)).is_err());
+    }
+
+    #[test]
+    fn security_redeem_rejects_when_redeem_feature_paused() {
+        let mut token = make_token();
+        token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::REDEEM);
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(100u64);
+
+        assert_eq!(
+            token.security_redeem(ALICE, U256::from(1u64)).unwrap_err(),
+            BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::REDEEM,
+            })
+        );
+    }
+
+    #[test]
+    fn security_redeem_rejects_when_sender_policy_denies() {
+        let policy_id = 7;
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.shares_to_tokens_ratio = WAD;
+        accounting.balances.insert(ALICE, U256::from(100u64));
+        accounting.total_supply = U256::from(100u64);
+        accounting.policy_ids.insert(REDEEM_SENDER_POLICY, policy_id);
+        let mut policy = InMemoryPolicy::new();
+        policy.create_existing_policy(policy_id);
+        let mut token = TestSecurityToken::with_storage_and_policy(accounting, policy);
+
+        assert_eq!(
+            token.security_redeem(ALICE, U256::from(1u64)).unwrap_err(),
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyType: REDEEM_SENDER_POLICY,
+                policyId: policy_id,
+            })
+        );
     }
 
     #[test]
@@ -776,13 +859,15 @@ mod tests {
     #[test]
     fn batch_burn_rejects_empty() {
         let mut token = make_token();
-        assert!(token.batch_burn(alloc::vec![], alloc::vec![]).is_err());
+        assert!(token.batch_burn(ALICE, alloc::vec![], alloc::vec![]).is_err());
     }
 
     #[test]
     fn batch_burn_rejects_length_mismatch() {
         let mut token = make_token();
-        assert!(token.batch_burn(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err());
+        assert!(
+            token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err()
+        );
     }
 
     #[test]
@@ -792,7 +877,7 @@ mod tests {
         token.accounting_mut().total_supply = U256::from(100u64);
 
         assert_eq!(
-            token.batch_burn(alloc::vec![ALICE], alloc::vec![U256::ZERO]).unwrap_err(),
+            token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ZERO]).unwrap_err(),
             BasePrecompileError::revert(IB20::InvalidAmount {})
         );
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
@@ -807,6 +892,7 @@ mod tests {
         token.accounting_mut().total_supply = U256::from(300u64);
         token
             .batch_burn(
+                ALICE,
                 alloc::vec![ALICE, BOB],
                 alloc::vec![U256::from(100u64), U256::from(200u64)],
             )
@@ -879,6 +965,32 @@ mod tests {
         token.security_redeem(ALICE, U256::from(10u64)).unwrap();
         // "Emits Transfer(caller, address(0), amount) followed by Redeemed(caller, amount, ratio)"
         assert_eq!(token.accounting().events.len(), 2);
+    }
+
+    #[test]
+    fn security_redeem_with_memo_emits_memo_before_redeemed() {
+        let mut token = make_token();
+        let amount = U256::from(10u64);
+        let memo = B256::repeat_byte(0x42);
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(100u64);
+        token.accounting_mut().minimum_redeemable = U256::from(1u64);
+
+        token.security_redeem_with_memo(ALICE, amount, memo).unwrap();
+
+        assert_eq!(
+            token.accounting().events[0],
+            IB20::Transfer { from: ALICE, to: Address::ZERO, amount }.encode_log_data()
+        );
+        assert_eq!(
+            token.accounting().events[1],
+            IB20::Memo { caller: ALICE, memo }.encode_log_data()
+        );
+        assert_eq!(
+            token.accounting().events[2],
+            IB20Security::Redeemed { from: ALICE, amt: amount, sharesToTokensRatio: WAD }
+                .encode_log_data()
+        );
     }
 
     // --- toShares: zero balance / sub-WAD truncation / sharesOf delegation ---
