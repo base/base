@@ -16,7 +16,7 @@ impl<'a> B20FactoryStorage<'a> {
         deduct_calldata_cost!(ctx, calldata);
         let result = self.inner(ctx, calldata);
         let gas = ctx.gas_used();
-        result.into_precompile_result(gas, |b| b)
+        result.into_precompile_result(gas, ctx.state_gas_used(), |b| b)
     }
 
     fn inner(

@@ -88,11 +88,15 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             Ok(true) => {}
             Ok(false) => {
                 return BasePrecompileError::Revert(Bytes::new())
-                    .into_precompile_result(ctx.gas_used());
+                    .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
             }
-            Err(e) => return e.into_precompile_result(ctx.gas_used()),
+            Err(e) => return e.into_precompile_result(ctx.gas_used(), ctx.state_gas_used()),
         }
-        self.inner(ctx, calldata).into_precompile_result(ctx.gas_used(), |b| b)
+        self.inner(ctx, calldata).into_precompile_result(
+            ctx.gas_used(),
+            ctx.state_gas_used(),
+            |b| b,
+        )
     }
 
     /// Decodes calldata and executes the matching `IB20Security` or inherited `IB20` operation.
