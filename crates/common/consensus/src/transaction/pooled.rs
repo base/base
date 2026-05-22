@@ -134,6 +134,11 @@ impl BasePooledTransaction {
         }
     }
 
+    /// Returns `true` if the transaction is an EIP-8130 (account-abstraction) transaction.
+    pub const fn is_eip8130(&self) -> bool {
+        matches!(self, Self::Eip8130(_))
+    }
+
     /// Returns the [`TxLegacy`] variant if the transaction is a legacy transaction.
     pub const fn as_legacy(&self) -> Option<&TxLegacy> {
         match self {
