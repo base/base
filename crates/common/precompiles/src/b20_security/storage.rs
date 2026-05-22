@@ -11,6 +11,9 @@ use base_precompile_storage::{
 use super::{accounting::SecurityAccounting, ids::REDEEM_SENDER_POLICY};
 use crate::{B20CoreStorage, B20PolicyType, B20TokenRole, IB20, TokenAccounting, TokenVariant};
 
+/// WAD precision for share ratio arithmetic: 1e18.
+const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+
 /// Security-specific B-20 storage rooted at the `base.b20.security` ERC-7201 namespace.
 #[derive(Debug, Clone, Storable)]
 #[namespace("base.b20.security")]
@@ -333,7 +336,8 @@ impl B20SecurityStorage<'_> {
 
 impl SecurityAccounting for B20SecurityStorage<'_> {
     fn shares_to_tokens_ratio(&self) -> Result<U256> {
-        self.security.shares_to_tokens_ratio.read()
+        let ratio = self.security.shares_to_tokens_ratio.read()?;
+        Ok(if ratio.is_zero() { WAD } else { ratio })
     }
 
     fn set_shares_to_tokens_ratio(&mut self, ratio: U256) -> Result<()> {
@@ -381,9 +385,9 @@ mod tests {
 
     use super::{
         __packing_b20_redeem_storage, __packing_b20_security_extension_storage, B20RedeemStorage,
-        B20SecurityExtensionStorage, B20SecurityStorage, REDEEM_SENDER_POLICY, slots,
+        B20SecurityExtensionStorage, B20SecurityStorage, REDEEM_SENDER_POLICY, WAD, slots,
     };
-    use crate::{B20CoreStorage, TokenAccounting};
+    use crate::{B20CoreStorage, SecurityAccounting, TokenAccounting};
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b021");
     const B20_ROOT: U256 =
@@ -425,6 +429,43 @@ mod tests {
         assert_eq!(__packing_b20_security_extension_storage::IDENTIFIERS_LOC.offset_slots, 2);
         assert_eq!(__packing_b20_redeem_storage::MINIMUM_REDEEMABLE_LOC.offset_slots, 0);
         assert_eq!(__packing_b20_redeem_storage::REDEEM_POLICY_IDS_LOC.offset_slots, 1);
+    }
+
+    #[test]
+    fn shares_to_tokens_ratio_defaults_unset_slot_to_wad() {
+        let (mut storage, _) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = B20SecurityStorage::from_address(TOKEN, ctx);
+            let ratio_slot = SECURITY_ROOT
+                + U256::from(
+                    __packing_b20_security_extension_storage::SHARES_TO_TOKENS_RATIO_LOC
+                        .offset_slots,
+                );
+
+            assert_eq!(ctx.sload(TOKEN, ratio_slot).unwrap(), U256::ZERO);
+            assert_eq!(token.shares_to_tokens_ratio().unwrap(), WAD);
+        });
+    }
+
+    #[test]
+    fn shares_to_tokens_ratio_preserves_configured_value() {
+        let (mut storage, _) = setup_storage();
+        let configured_ratio = WAD * U256::from(3u64);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20SecurityStorage::from_address(TOKEN, ctx);
+            token.set_shares_to_tokens_ratio(configured_ratio).unwrap();
+
+            let ratio_slot = SECURITY_ROOT
+                + U256::from(
+                    __packing_b20_security_extension_storage::SHARES_TO_TOKENS_RATIO_LOC
+                        .offset_slots,
+                );
+
+            assert_eq!(ctx.sload(TOKEN, ratio_slot).unwrap(), configured_ratio);
+            assert_eq!(token.shares_to_tokens_ratio().unwrap(), configured_ratio);
+        });
     }
 
     #[test]

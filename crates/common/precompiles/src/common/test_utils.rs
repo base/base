@@ -385,7 +385,8 @@ impl PolicyRegistry for InMemoryPolicy {
 
 impl SecurityAccounting for InMemoryTokenAccounting {
     fn shares_to_tokens_ratio(&self) -> Result<U256> {
-        Ok(self.shares_to_tokens_ratio)
+        const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+        Ok(if self.shares_to_tokens_ratio.is_zero() { WAD } else { self.shares_to_tokens_ratio })
     }
 
     fn set_shares_to_tokens_ratio(&mut self, ratio: U256) -> Result<()> {
