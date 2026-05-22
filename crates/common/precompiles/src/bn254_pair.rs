@@ -98,7 +98,9 @@ mod tests {
       ",
         )
         .unwrap();
-        assert!(matches!(run_pair_granite(&bad_input, 260_000, 0), Err(PrecompileError::Fatal(_))));
+        assert!(
+            matches!(run_pair_granite(&bad_input, 260_000, 0), Ok(o) if o.halt_reason().is_some())
+        );
 
         // Valid input length shorter than 112687 - halts are wrapped in Ok
         let at_gas_limit = vec![1u8; 586 * bn254::PAIR_ELEMENT_LEN];
