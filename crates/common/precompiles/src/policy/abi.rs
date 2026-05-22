@@ -16,6 +16,7 @@ sol! {
         error PolicyNotFound();
         error IncompatiblePolicyType();
         error ZeroAddress();
+        error TooManyAccounts();
         error NoPendingAdmin();
 
         event PolicyCreated(uint64 indexed policyId, address indexed creator, PolicyType policyType);
