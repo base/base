@@ -4,7 +4,7 @@ This directory contains the Dockerfiles and Compose configuration for the Base n
 
 ## Dockerfiles
 
-`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. It provides `client`, `builder`, `consensus`, `proposer`, `websocket-proxy`, `ingress-rpc`, `audit-archiver`, and `batcher` targets.
+`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. It provides `client`, `builder`, `consensus`, `proposer`, `websocket-proxy`, `ingress-rpc`, `audit-archiver`, `batcher`, and `zk-prover` targets.
 
 `Dockerfile.devnet` builds a utility image containing genesis generation tools (`eth-genesis-state-generator`, `eth2-val-tools`, `op-deployer`) and setup scripts. This image bootstraps L1 and L2 chain configurations for local development.
 
@@ -18,6 +18,7 @@ The `docker-compose.yml` orchestrates a complete local devnet environment with b
 - The Base builder and client nodes on L2
 - Base consensus layer nodes (`base-consensus`) for both builder and client
 - The `base-batcher` for submitting L2 data to L1
+- The `base-prover-zk` service in `SP1_PROVER=dry-run` mode with local Postgres storage
 
 All services read configuration from `devnet-env` in this directory. The devnet stores chain data in `.devnet/` which is created on first run.
 

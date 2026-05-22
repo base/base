@@ -7,7 +7,7 @@ ARG MOLD_SHA256_ARM=d82792748a81202423ddd2496fc8719404fe694493abdef691cc080392ee
 ARG MOLD_SHA256_X86_64=4c999e19ffa31afa5aa429c679b665d5e2ca5a6b6832ad4b79668e8dcf3d8ec1
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      git libclang-dev pkg-config curl build-essential cmake && \
+      git libclang-dev libssl-dev pkg-config curl build-essential cmake && \
     rm -rf /var/lib/apt/lists/*
 RUN set -eux; \
     case "$(uname -m)" in \
@@ -21,6 +21,35 @@ RUN set -eux; \
     tar -xzf /tmp/mold.tar.gz -C /tmp; \
     cp /tmp/mold-${MOLD_VERSION}-${MOLD_ARCH}-linux/bin/* /usr/local/bin/; \
     rm -rf /tmp/mold*
+
+FROM rust-builder-base AS zk-builder-base
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends unzip && \
+    rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    GO_VERSION=1.23.3; \
+    case "$(uname -m)" in \
+      x86_64) GO_ARCH=amd64; GO_SHA256=a0afb9744c00648bafb1b90b4aba5bdb86f424f02f9275399ce0c20b93a2c3a8 ;; \
+      aarch64|arm64) GO_ARCH=arm64; GO_SHA256=1f7cbd7f668ea32a107ecd41b6488aaee1f5d77a66efd885b175494439d4e1ce ;; \
+      *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz" -o /tmp/go.tar.gz; \
+    echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c -; \
+    tar -C /usr/local -xzf /tmp/go.tar.gz; \
+    rm /tmp/go.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}"
+RUN set -eux; \
+    PROTOC_VERSION=33.4; \
+    case "$(uname -m)" in \
+      x86_64) PROTOC_ARCH=x86_64; PROTOC_SHA256=c0040ea9aef08fdeb2c74ca609b18d5fdbfc44ea0042fcfbfb38860d35f7dd66 ;; \
+      aarch64|arm64) PROTOC_ARCH=aarch_64; PROTOC_SHA256=15aa988f4a6090636525ec236a8e4b3aab41eef402751bd5bb2df6afd9b7b5a5 ;; \
+      *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip"; \
+    curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ZIP}" -o /tmp/protoc.zip; \
+    echo "${PROTOC_SHA256}  /tmp/protoc.zip" | sha256sum -c -; \
+    unzip /tmp/protoc.zip -d /usr/local; \
+    rm /tmp/protoc.zip
 
 FROM rust-builder-base AS source
 COPY . .
@@ -97,6 +126,17 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --package base-batcher-bin --bin base-batcher && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-batcher /app/base-batcher
 
+FROM zk-builder-base AS zk-source
+COPY . .
+
+FROM zk-source AS zk-prover-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=zk-prover-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-prover-zk --bin base-prover-zk && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-zk /app/base-prover-zk
+
 FROM public.ecr.aws/docker/library/debian:trixie-slim AS runtime-base
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
@@ -139,3 +179,8 @@ ENTRYPOINT ["./audit-archiver"]
 FROM runtime-base AS batcher
 COPY --from=batcher-builder /app/base-batcher ./base-batcher
 ENTRYPOINT ["./base-batcher"]
+
+FROM runtime-base AS zk-prover
+COPY --from=zk-prover-builder /app/base-prover-zk ./base-prover-zk
+EXPOSE 9000
+ENTRYPOINT ["./base-prover-zk"]
