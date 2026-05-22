@@ -5,6 +5,7 @@ use alloc::string::String;
 use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_macros::{Storable, contract};
 use base_precompile_storage::{BasePrecompileError, ContractStorage, Handler, Result, StorageCtx};
+
 use super::accounting::StablecoinAccounting;
 use crate::{
     B20CoreStorage, B20PolicyType, B20TokenRole, IB20, ITokenFactory, TokenAccounting, TokenVariant,
