@@ -603,9 +603,7 @@ mod tests {
     }
 
     fn many_accounts(count: usize) -> Vec<Address> {
-        (0..count)
-            .map(|i| Address::from_word(U256::from(i as u64 + 1).into()))
-            .collect()
+        (0..count).map(|i| Address::from_word(U256::from(i as u64 + 1).into())).collect()
     }
 
     #[test]
@@ -1225,10 +1223,7 @@ mod tests {
             [PolicyRegistryStorage::ALWAYS_ALLOW_ID, PolicyRegistryStorage::ALWAYS_BLOCK_ID]
         {
             StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx)
-                    .pending_admins
-                    .at_mut(&policy_id)
-                    .write(NEW_ADMIN)
+                PolicyRegistryStorage::new(ctx).pending_admins.at_mut(&policy_id).write(NEW_ADMIN)
             })
             .unwrap();
 
@@ -1247,8 +1242,7 @@ mod tests {
     #[test]
     fn pending_policy_admin_counter_one_blocklist_reads_staged_slot() {
         // BLOCKLIST counter=1 is not ALWAYS_BLOCK_ID, which is ALLOWLIST counter=1.
-        let counter_one_blocklist =
-            PolicyRegistryStorage::make_id(PolicyType::BLOCKLIST as u8, 1);
+        let counter_one_blocklist = PolicyRegistryStorage::make_id(PolicyType::BLOCKLIST as u8, 1);
         assert_ne!(counter_one_blocklist, PolicyRegistryStorage::ALWAYS_BLOCK_ID);
 
         let mut s = storage();
