@@ -32,8 +32,8 @@ pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, T
 
 mod b20;
 pub use b20::{
-    B20CoreStorage, B20PausableFeature, B20PolicyType, B20Token,
-    B20TokenPrecompile, B20TokenStorage, IB20, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK,
+    B20CoreStorage, B20PausableFeature, B20PolicyType, B20Token, B20TokenPrecompile,
+    B20TokenStorage, IB20, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK,
 };
 
 mod b20_security;
@@ -44,8 +44,8 @@ pub use b20_security::{
 
 mod b20_stablecoin;
 pub use b20_stablecoin::{
-    B20StablecoinPrecompile, B20StablecoinStorage, B20StablecoinToken, IB20Stablecoin,
-    StablecoinAccounting,
+    B20StablecoinExtensionStorage, B20StablecoinPrecompile, B20StablecoinStorage,
+    B20StablecoinToken, IB20Stablecoin, StablecoinAccounting,
 };
 
 mod factory;
