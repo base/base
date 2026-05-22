@@ -83,10 +83,7 @@ pub enum BaseInvalidTransactionError {
     /// execution path exists yet. The rejection is unconditional (not gated on any
     /// fork activation) and is mirrored by the txpool validator so EIP-8130
     /// transactions are also dropped if they arrive over devp2p.
-    #[error(
-        "EIP-8130 (account abstraction) transactions are not currently accepted via RPC; \
-         eth_sendRawTransaction does not accept transaction type 0x7D"
-    )]
+    #[error("{}", base_common_consensus::EIP8130_REJECTION_MSG)]
     Eip8130NotAccepted,
 }
 

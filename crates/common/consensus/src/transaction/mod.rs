@@ -10,7 +10,7 @@ pub use eip8130::{
 };
 
 mod tx_type;
-pub use tx_type::{DEPOSIT_TX_TYPE_ID, EIP8130_TX_TYPE_ID};
+pub use tx_type::{DEPOSIT_TX_TYPE_ID, EIP8130_REJECTION_MSG, EIP8130_TX_TYPE_ID};
 
 mod envelope;
 pub use envelope::{BaseTransaction, BaseTxEnvelope, OpTxType};
