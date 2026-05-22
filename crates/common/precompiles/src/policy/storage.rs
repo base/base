@@ -366,10 +366,10 @@ impl PolicyRegistryStorage<'_> {
 
     /// Returns `true` if `policy_id` refers to an existing policy.
     ///
-    /// Before `write_builtins` has run, built-in IDs return `false` here. That is
-    /// intentional: an unwritten slot (value 0) and `ALWAYS_ALLOW_ID = 0` are the same
-    /// thing in storage, so there is nothing to distinguish "exists" from "not written yet."
-    /// `is_authorized` handles this case with an explicit fast-path.
+    /// Built-in IDs always return `true` via a fast-path, without reading storage.
+    /// This is necessary because `ALWAYS_ALLOW_ID = 0` is the EVM default for any
+    /// uninitialized policy field, so it must be recognized as valid before
+    /// `write_builtins` has run.
     pub fn policy_exists(&self, policy_id: u64) -> Result<bool> {
         Self::require_well_formed(policy_id)?;
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
