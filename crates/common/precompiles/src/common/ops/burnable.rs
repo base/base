@@ -20,8 +20,8 @@ pub trait Burnable: Token {
     ) -> Result<()> {
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Burn)?;
+            B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         }
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         if amount.is_zero() {
             return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
         }
@@ -67,8 +67,6 @@ pub trait Burnable: Token {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::BurnBlocked)?;
         }
         B20Guards::ensure_blocked::<Self>(self, from)?;
-        // Intentional asymmetry: BURN_BLOCKED_ROLE replaces BURN_ROLE, but emergency burn pauses
-        // still halt every burn path, including burnBlocked.
         self.burn(caller, from, amount, true)?;
         self.accounting_mut()
             .emit_event(IB20::BurnedBlocked { caller, from, amount }.encode_log_data())
@@ -171,14 +169,28 @@ mod tests {
         accounting.balances.insert(ALICE, U256::from(10u64));
         accounting.total_supply = U256::from(10u64);
         accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
+        accounting.roles.insert((B20TokenRole::Burn.id(), CALLER), true);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
-            token.burn(CALLER, ALICE, U256::ONE, true).unwrap_err(),
+            token.burn(CALLER, ALICE, U256::ONE, false).unwrap_err(),
             BasePrecompileError::revert(IB20::ContractPaused {
                 feature: IB20::PausableFeature::BURN,
             })
         );
+    }
+
+    #[test]
+    fn privileged_burn_succeeds_when_burn_feature_paused() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        accounting.total_supply = U256::from(10u64);
+        accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        token.burn(CALLER, ALICE, U256::ONE, true).unwrap();
+
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(9u64));
     }
 
     #[test]

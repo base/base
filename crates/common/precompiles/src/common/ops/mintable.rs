@@ -14,8 +14,8 @@ pub trait Mintable: Token {
     fn mint(&mut self, caller: Address, to: Address, amount: U256, privileged: bool) -> Result<()> {
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Mint)?;
+            B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::MINT)?;
         }
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::MINT)?;
         B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::MintReceiver, to)?;
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
@@ -179,14 +179,26 @@ mod tests {
     fn mint_reverts_when_mint_feature_paused() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::MINT);
+        accounting.roles.insert((B20TokenRole::Mint.id(), CALLER), true);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
-            token.mint(CALLER, ALICE, U256::ONE, true).unwrap_err(),
+            token.mint(CALLER, ALICE, U256::ONE, false).unwrap_err(),
             BasePrecompileError::revert(IB20::ContractPaused {
                 feature: IB20::PausableFeature::MINT,
             })
         );
+    }
+
+    #[test]
+    fn privileged_mint_succeeds_when_mint_feature_paused() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::MINT);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        token.mint(CALLER, ALICE, U256::ONE, true).unwrap();
+
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::ONE);
     }
 
     #[test]
