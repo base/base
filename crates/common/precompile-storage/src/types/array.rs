@@ -184,8 +184,8 @@ mod tests {
             let mut handler = ArrayHandler::<u8, 32>::new(base, address, ctx);
             handler.write(data).unwrap();
             let loaded = handler.read().unwrap();
-            for i in 0..32usize {
-                assert_eq!(loaded[i], i as u8, "mismatch at index {i}");
+            for (i, val) in loaded.iter().enumerate() {
+                assert_eq!(*val, i as u8, "mismatch at index {i}");
             }
         });
     }
@@ -232,7 +232,7 @@ mod tests {
         });
     }
 
-    // -- Unpacked arrays (T::BYTES == 32, one element per slot) ------------------
+    // -- Unpacked arrays (T::BYTES > 16, one element per slot) -------------------
 
     #[test]
     fn test_unpacked_array_write_read_whole() {
