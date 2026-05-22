@@ -3793,7 +3793,6 @@ dependencies = [
  "base-precompile-macros",
  "base-precompile-storage",
  "criterion",
- "iso_currency",
  "k256",
  "revm",
  "rstest",
@@ -11271,26 +11270,6 @@ name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
-
-[[package]]
-name = "iso_country"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20633e788d3948ea7336861fdb09ec247f5dae4267e8f0743fa97de26c28624d"
-dependencies = [
- "lazy_static",
-]
-
-[[package]]
-name = "iso_currency"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fed4b3f0921193400b1df556228bfd917c57c7fa38bda904d552653c5c3b641b"
-dependencies = [
- "iso_country",
- "proc-macro2",
- "quote",
-]
 
 [[package]]
 name = "itertools"
