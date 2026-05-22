@@ -315,16 +315,6 @@ impl HashMapStorageProvider {
     pub fn set_gas_params(&mut self, gas_params: GasParams) {
         self.gas_params = gas_params;
     }
-
-    /// Returns the cumulative state gas charged so far (test-utils only).
-    pub fn get_state_gas_used(&self) -> u64 {
-        self.state_gas_used
-    }
-
-    /// Resets the state gas used counter (test-utils only).
-    pub fn reset_state_gas_used(&mut self) {
-        self.state_gas_used = 0;
-    }
 }
 
 /// Test helper: returns a fresh `(HashMapStorageProvider, precompile_address)` pair.
