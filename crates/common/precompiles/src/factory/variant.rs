@@ -2,7 +2,6 @@
 
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_sol_types::SolValue;
-use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::ITokenFactory;
 
@@ -44,15 +43,13 @@ impl TokenVariant {
         }
     }
 
-    /// Returns the supported token variant for an ABI enum value.
-    pub fn from_abi(variant: ITokenFactory::TokenVariant) -> Result<Self> {
+    /// Returns the supported token variant for an ABI enum value, or `None` for unknown variants.
+    pub const fn from_abi(variant: ITokenFactory::TokenVariant) -> Option<Self> {
         match variant {
-            ITokenFactory::TokenVariant::DEFAULT => Ok(Self::B20),
-            ITokenFactory::TokenVariant::STABLECOIN => Ok(Self::Stablecoin),
-            ITokenFactory::TokenVariant::SECURITY => Ok(Self::Security),
-            ITokenFactory::TokenVariant::NONE | ITokenFactory::TokenVariant::__Invalid => {
-                Err(BasePrecompileError::revert(ITokenFactory::InvalidVariant {}))
-            }
+            ITokenFactory::TokenVariant::DEFAULT => Some(Self::B20),
+            ITokenFactory::TokenVariant::STABLECOIN => Some(Self::Stablecoin),
+            ITokenFactory::TokenVariant::SECURITY => Some(Self::Security),
+            ITokenFactory::TokenVariant::__Invalid => None,
         }
     }
 

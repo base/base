@@ -32,9 +32,8 @@ impl<'a> TokenFactoryStorage<'a> {
         caller: Address,
         call: ITokenFactory::createTokenCall,
     ) -> Result<Address> {
-        let Some(variant) = Self::token_variant(call.variant) else {
-            return Err(BasePrecompileError::revert(ITokenFactory::InvalidVariant {}));
-        };
+        let variant = TokenVariant::from_abi(call.variant)
+            .ok_or_else(|| BasePrecompileError::revert(ITokenFactory::InvalidVariant {}))?;
         let token_params = DecodedCreateParams::decode(variant, &call.params)?;
         Self::check_version(token_params.version)?;
         token_params.validate()?;
@@ -135,24 +134,9 @@ impl<'a> TokenFactoryStorage<'a> {
         Ok(TokenVariant::has_b20_prefix(token))
     }
 
-    pub(super) const fn token_variant(
-        variant: ITokenFactory::TokenVariant,
-    ) -> Option<TokenVariant> {
-        match variant {
-            ITokenFactory::TokenVariant::DEFAULT => Some(TokenVariant::B20),
-            ITokenFactory::TokenVariant::STABLECOIN => Some(TokenVariant::Stablecoin),
-            ITokenFactory::TokenVariant::SECURITY => Some(TokenVariant::Security),
-            ITokenFactory::TokenVariant::NONE | ITokenFactory::TokenVariant::__Invalid => None,
-        }
-    }
-
-    pub(super) const fn abi_variant(variant: Option<TokenVariant>) -> ITokenFactory::TokenVariant {
-        match variant {
-            Some(TokenVariant::B20) => ITokenFactory::TokenVariant::DEFAULT,
-            Some(TokenVariant::Stablecoin) => ITokenFactory::TokenVariant::STABLECOIN,
-            Some(TokenVariant::Security) => ITokenFactory::TokenVariant::SECURITY,
-            None => ITokenFactory::TokenVariant::NONE,
-        }
+    /// Returns whether `token` has been initialized by this factory.
+    pub fn is_initialized(&self, token: Address) -> Result<bool> {
+        self.storage.with_account_info(token, |info| Ok(!info.is_empty_code_hash()))
     }
 
     fn check_version(version: u8) -> Result<()> {

@@ -8,8 +8,6 @@ sol! {
         // ── Structs ─────────────────────────────────────────────────────────
 
         enum TokenVariant {
-            /// Address is not a factory-created B-20 token.
-            NONE,
             /// Default B-20 token variant.
             DEFAULT,
             /// Stablecoin B-20 token variant.
@@ -90,8 +88,7 @@ sol! {
         /// Returns `true` if `token` has the B-20 address prefix.
         function isB20(address token) external view returns (bool);
 
-        /// Returns the variant of `token` or `NONE` if it is not a B-20 token.
-        /// Decoded from the address prefix with no storage read.
-        function getTokenVariant(address token) external view returns (TokenVariant);
+        /// Returns `true` if `token` has been initialized by this factory.
+        function isInitialized(address token) external view returns (bool);
     }
 }

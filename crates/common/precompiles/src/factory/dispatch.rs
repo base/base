@@ -34,9 +34,8 @@ impl<'a> TokenFactoryStorage<'a> {
                 Ok(ITokenFactory::createTokenCall::abi_encode_returns(&token).into())
             }
             ITokenFactory::ITokenFactoryCalls::getTokenAddress(call) => {
-                let Some(variant) = TokenFactoryStorage::token_variant(call.variant) else {
-                    return Err(BasePrecompileError::revert(ITokenFactory::InvalidVariant {}));
-                };
+                let variant = TokenVariant::from_abi(call.variant)
+                    .ok_or_else(|| BasePrecompileError::revert(ITokenFactory::InvalidVariant {}))?;
                 let (addr, _) = variant.compute_address(call.sender, call.salt);
                 Ok(ITokenFactory::getTokenAddressCall::abi_encode_returns(&addr).into())
             }
@@ -44,10 +43,9 @@ impl<'a> TokenFactoryStorage<'a> {
                 let result = self.is_b20(call.token)?;
                 Ok(ITokenFactory::isB20Call::abi_encode_returns(&result).into())
             }
-            ITokenFactory::ITokenFactoryCalls::getTokenVariant(call) => {
-                let variant =
-                    TokenFactoryStorage::abi_variant(TokenVariant::from_address(call.token));
-                Ok(ITokenFactory::getTokenVariantCall::abi_encode_returns(&variant).into())
+            ITokenFactory::ITokenFactoryCalls::isInitialized(call) => {
+                let initialized = self.is_initialized(call.token)?;
+                Ok(ITokenFactory::isInitializedCall::abi_encode_returns(&initialized).into())
             }
         }
     }
