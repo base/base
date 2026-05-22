@@ -22,7 +22,7 @@ use reth_codecs::{
 
 use crate::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, DEPOSIT_TX_TYPE_ID,
-    DepositReceipt, EIP8130_TX_TYPE_ID, OpTxType, TxDeposit, TxEip8130,
+    DepositReceipt, EIP8130_TX_TYPE_ID, OpTxType, TxDeposit,
 };
 
 // ---------------------------------------------------------------------------
