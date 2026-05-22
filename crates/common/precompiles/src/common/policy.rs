@@ -48,8 +48,10 @@ pub trait PolicyRegistry: Policy {
         blocked: bool,
         accounts: alloc::vec::Vec<Address>,
     ) -> Result<()>;
-    /// Returns the current admin of `policy_id`.
+    /// Returns the current admin of `policy_id`, or `address(0)` if the policy does not exist
+    /// or the policy ID is malformed. Never reverts.
     fn get_policy_admin(&self, policy_id: u64) -> Result<Address>;
-    /// Returns the staged pending admin for `policy_id`, or `address(0)` if none.
+    /// Returns the staged pending admin for `policy_id`, or `address(0)` if none, the policy
+    /// does not exist, or the policy ID is malformed. Never reverts.
     fn pending_policy_admin(&self, policy_id: u64) -> Result<Address>;
 }
