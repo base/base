@@ -322,6 +322,7 @@ mod tests {
     use crate::{B20TokenRole, TokenAccounting};
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b020");
+    const ALICE: Address = Address::repeat_byte(0xaa);
     const B20_ROOT: U256 =
         uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434000_U256);
 
@@ -349,6 +350,115 @@ mod tests {
         assert_eq!(__packing_b20_core_storage::PAUSED_LOC.offset_slots, 11);
         assert_eq!(__packing_b20_core_storage::SUPPLY_CAP_LOC.offset_slots, 12);
         assert_eq!(__packing_b20_core_storage::NONCES_LOC.offset_slots, 13);
+    }
+
+    // --- role_member_count / set_role_member_count ---
+
+    #[test]
+    fn role_member_count_is_zero_by_default() {
+        let (mut storage, _) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = B20TokenStorage::from_address(TOKEN, ctx);
+            assert_eq!(
+                token.role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
+                U256::ZERO
+            );
+        });
+    }
+
+    #[test]
+    fn set_role_member_count_persists_for_admin_role() {
+        let (mut storage, _) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20TokenStorage::from_address(TOKEN, ctx);
+            token.set_role_member_count(B20TokenRole::DefaultAdmin.id(), U256::from(3)).unwrap();
+            assert_eq!(
+                token.role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
+                U256::from(3)
+            );
+        });
+    }
+
+    #[test]
+    fn role_member_count_increments_correctly_for_admin() {
+        let (mut storage, _) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20TokenStorage::from_address(TOKEN, ctx);
+            let role = B20TokenRole::DefaultAdmin.id();
+            token.set_role_member_count(role, U256::ONE).unwrap();
+            let current = token.role_member_count(role).unwrap();
+            token.set_role_member_count(role, current + U256::ONE).unwrap();
+            assert_eq!(token.role_member_count(role).unwrap(), U256::from(2));
+        });
+    }
+
+    // --- has_role / set_role ---
+
+    #[test]
+    fn has_role_is_false_by_default() {
+        let (mut storage, _) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = B20TokenStorage::from_address(TOKEN, ctx);
+            assert!(!token.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+        });
+    }
+
+    #[test]
+    fn set_role_true_grants_membership() {
+        let (mut storage, _) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20TokenStorage::from_address(TOKEN, ctx);
+            token.set_role(B20TokenRole::Mint.id(), ALICE, true).unwrap();
+            assert!(token.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+        });
+    }
+
+    #[test]
+    fn set_role_false_revokes_membership() {
+        let (mut storage, _) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20TokenStorage::from_address(TOKEN, ctx);
+            let role = B20TokenRole::Burn.id();
+            token.set_role(role, ALICE, true).unwrap();
+            token.set_role(role, ALICE, false).unwrap();
+            assert!(!token.has_role(role, ALICE).unwrap());
+        });
+    }
+
+    // --- role_admin / set_role_admin ---
+
+    #[test]
+    fn role_admin_defaults_to_default_admin_role() {
+        let (mut storage, _) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = B20TokenStorage::from_address(TOKEN, ctx);
+            assert_eq!(
+                token.role_admin(B20TokenRole::Mint.id()).unwrap(),
+                B20TokenRole::DefaultAdmin.id()
+            );
+        });
+    }
+
+    #[test]
+    fn role_admin_for_default_admin_role_returns_itself() {
+        let (mut storage, _) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let token = B20TokenStorage::from_address(TOKEN, ctx);
+            assert_eq!(
+                token.role_admin(B20TokenRole::DefaultAdmin.id()).unwrap(),
+                B20TokenRole::DefaultAdmin.id()
+            );
+        });
+    }
+
+    #[test]
+    fn set_role_admin_persists_and_reads_back() {
+        let (mut storage, _) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20TokenStorage::from_address(TOKEN, ctx);
+            token.set_role_admin(B20TokenRole::Mint.id(), B20TokenRole::Burn.id()).unwrap();
+            assert_eq!(token.role_admin(B20TokenRole::Mint.id()).unwrap(), B20TokenRole::Burn.id());
+        });
     }
 
     #[test]

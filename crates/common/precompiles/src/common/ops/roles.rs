@@ -268,6 +268,22 @@ mod tests {
         TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
     }
 
+    fn token_with_two_admins() -> TestToken {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.roles.insert((B20TokenRole::DefaultAdmin.id(), ADMIN), true);
+        accounting.roles.insert((B20TokenRole::DefaultAdmin.id(), ALICE), true);
+        accounting.role_member_counts.insert(B20TokenRole::DefaultAdmin.id(), U256::from(2));
+        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+    }
+
+    fn token_with_admin_and_mint_alice() -> TestToken {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.roles.insert((B20TokenRole::DefaultAdmin.id(), ADMIN), true);
+        accounting.role_member_counts.insert(B20TokenRole::DefaultAdmin.id(), U256::ONE);
+        accounting.roles.insert((B20TokenRole::Mint.id(), ALICE), true);
+        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+    }
+
     #[test]
     fn role_id_constants_match_canonical_names() {
         assert_eq!(B20TokenRole::DefaultAdmin.id(), B256::ZERO);
@@ -348,6 +364,153 @@ mod tests {
                 newAdminRole: B20TokenRole::Mint.id(),
             }
             .encode_log_data()
+        );
+    }
+
+    #[test]
+    fn set_role_admin_without_admin_reverts() {
+        let mut token = make_token();
+
+        assert_eq!(
+            token.set_role_admin(ALICE, CUSTOM_ROLE, B20TokenRole::Mint.id(), false).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ALICE,
+                neededRole: B256::ZERO,
+            })
+        );
+    }
+
+    // --- grant_role ---
+
+    #[test]
+    fn grant_role_is_noop_when_account_already_has_role() {
+        let mut token = token_with_default_admin();
+
+        token.grant_role(ADMIN, B20TokenRole::Mint.id(), ALICE, false).unwrap();
+        let event_count = token.accounting().events.len();
+
+        token.grant_role(ADMIN, B20TokenRole::Mint.id(), ALICE, false).unwrap();
+
+        assert_eq!(token.accounting().events.len(), event_count);
+    }
+
+    #[test]
+    fn grant_role_privileged_bypasses_admin_check() {
+        let mut token = make_token();
+
+        token.grant_role(ALICE, B20TokenRole::Mint.id(), ALICE, true).unwrap();
+
+        assert!(token.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+    }
+
+    // --- revoke_role ---
+
+    #[test]
+    fn revoke_role_revokes_membership_and_emits_role_revoked() {
+        let mut token = token_with_admin_and_mint_alice();
+
+        token.revoke_role(ADMIN, B20TokenRole::Mint.id(), ALICE, false).unwrap();
+
+        assert!(!token.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+        assert_eq!(
+            token.accounting().events[0],
+            IB20::RoleRevoked { role: B20TokenRole::Mint.id(), account: ALICE, sender: ADMIN }
+                .encode_log_data()
+        );
+    }
+
+    #[test]
+    fn revoke_role_without_admin_reverts() {
+        let mut token = token_with_admin_and_mint_alice();
+
+        assert_eq!(
+            token.revoke_role(ALICE, B20TokenRole::Mint.id(), ADMIN, false).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ALICE,
+                neededRole: B256::ZERO,
+            })
+        );
+    }
+
+    #[test]
+    fn revoke_role_is_noop_when_account_lacks_role() {
+        let mut token = token_with_default_admin();
+
+        token.revoke_role(ADMIN, B20TokenRole::Mint.id(), ALICE, false).unwrap();
+
+        assert!(token.accounting().events.is_empty());
+    }
+
+    // --- renounce_role ---
+
+    #[test]
+    fn renounce_role_revokes_own_role_and_emits_role_revoked() {
+        let mut token = token_with_admin_and_mint_alice();
+
+        token.renounce_role(ALICE, B20TokenRole::Mint.id(), ALICE).unwrap();
+
+        assert!(!token.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+        assert_eq!(
+            token.accounting().events[0],
+            IB20::RoleRevoked { role: B20TokenRole::Mint.id(), account: ALICE, sender: ALICE }
+                .encode_log_data()
+        );
+    }
+
+    #[test]
+    fn renounce_role_rejects_bad_confirmation() {
+        let mut token = token_with_default_admin();
+
+        assert_eq!(
+            token.renounce_role(ADMIN, B20TokenRole::Mint.id(), ALICE).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlBadConfirmation {})
+        );
+    }
+
+    // --- renounce_last_admin ---
+
+    #[test]
+    fn renounce_last_admin_reverts_when_caller_lacks_admin() {
+        let mut token = token_with_default_admin();
+
+        assert_eq!(
+            token.renounce_last_admin(ALICE).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ALICE,
+                neededRole: B256::ZERO,
+            })
+        );
+    }
+
+    #[test]
+    fn renounce_last_admin_reverts_when_multiple_admins_remain() {
+        let mut token = token_with_two_admins();
+
+        assert_eq!(
+            token.renounce_last_admin(ADMIN).unwrap_err(),
+            BasePrecompileError::revert(IB20::NotSoleAdmin {})
+        );
+    }
+
+    #[test]
+    fn renounce_last_admin_emits_role_revoked_then_last_admin_renounced() {
+        let mut token = token_with_default_admin();
+
+        token.renounce_last_admin(ADMIN).unwrap();
+
+        assert_eq!(token.accounting().events.len(), 2);
+        assert_eq!(
+            token.accounting().events[0],
+            IB20::RoleRevoked {
+                role: B20TokenRole::DefaultAdmin.id(),
+                account: ADMIN,
+                sender: ADMIN,
+            }
+            .encode_log_data()
+        );
+        assert_eq!(
+            token.accounting().events[1],
+            IB20::LastAdminRenounced { previousAdmin: ADMIN }.encode_log_data()
         );
     }
 }
