@@ -136,4 +136,8 @@ target "zk-prover" {
     PROFILE = "${ZK_PROVER_PROFILE}"
   }
   tags = ["base-prover-zk:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-zk-prover-${PLATFORM_PAIR}",
+  ]
 }
