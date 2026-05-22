@@ -222,6 +222,9 @@ impl alloy_consensus::transaction::SignerRecoverable for BasePooledTransaction {
     fn recover_signer(
         &self,
     ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
+        if let Self::Aa8130(tx) = self {
+            return tx.explicit_sender().ok_or_else(alloy_consensus::crypto::RecoveryError::new);
+        }
         let signature_hash = self.signature_hash();
         alloy_consensus::crypto::secp256k1::recover_signer(self.signature(), signature_hash)
     }
@@ -229,6 +232,9 @@ impl alloy_consensus::transaction::SignerRecoverable for BasePooledTransaction {
     fn recover_signer_unchecked(
         &self,
     ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
+        if let Self::Aa8130(tx) = self {
+            return tx.explicit_sender().ok_or_else(alloy_consensus::crypto::RecoveryError::new);
+        }
         let signature_hash = self.signature_hash();
         alloy_consensus::crypto::secp256k1::recover_signer_unchecked(
             self.signature(),
