@@ -56,6 +56,7 @@ sol! {
         event ContractURIUpdated();
         event NameUpdated(address indexed updater, string newName);
         event SymbolUpdated(address indexed updater, string newSymbol);
+        event EIP712DomainChanged();
 
         // Role identifiers
         function DEFAULT_ADMIN_ROLE() external view returns (bytes32);

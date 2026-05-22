@@ -37,14 +37,15 @@ pub trait Configurable: Token {
         )
     }
 
-    /// Updates the token name. Emits `NameUpdated`.
+    /// Updates the token name. Emits `NameUpdated` and `EIP712DomainChanged` (ERC-5267).
     fn update_name(&mut self, caller: Address, name: String, privileged: bool) -> Result<()> {
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Metadata)?;
         }
         self.accounting_mut().set_name(name.clone())?;
         self.accounting_mut()
-            .emit_event(IB20::NameUpdated { updater: caller, newName: name }.encode_log_data())
+            .emit_event(IB20::NameUpdated { updater: caller, newName: name }.encode_log_data())?;
+        self.accounting_mut().emit_event(IB20::EIP712DomainChanged {}.encode_log_data())
     }
 
     /// Updates the token symbol. Emits `SymbolUpdated`.
@@ -134,7 +135,7 @@ mod tests {
         token.update_name(CALLER, "MyToken".into(), true).unwrap();
 
         assert_eq!(token.accounting().name().unwrap(), "MyToken");
-        assert_eq!(token.accounting().events.len(), 1);
+        assert_eq!(token.accounting().events.len(), 2);
     }
 
     #[test]
@@ -184,6 +185,6 @@ mod tests {
         assert_eq!(token.accounting().name().unwrap(), "MyToken");
         assert_eq!(token.accounting().symbol().unwrap(), "MTK");
         assert_eq!(token.accounting().contract_uri().unwrap(), "ipfs://abc");
-        assert_eq!(token.accounting().events.len(), 4);
+        assert_eq!(token.accounting().events.len(), 5);
     }
 }

@@ -84,9 +84,11 @@ impl PermitArgs {
     }
 }
 
-// keccak256("EIP712Domain(uint256 chainId,address verifyingContract)")
+// keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")
 const DOMAIN_TYPEHASH: B256 =
-    alloy_primitives::b256!("47e79534a245952e8b16893a336b85a3d9ea9fa8c573f3d803afb92a79469218");
+    alloy_primitives::b256!("8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f");
+
+const VERSION: &[u8] = b"1";
 
 /// EIP-2612 permit and EIP-712 domain operations.
 ///
@@ -95,19 +97,26 @@ const DOMAIN_TYPEHASH: B256 =
 pub trait Permittable: Transferable {
     /// Computes the EIP-712 domain separator for this token.
     ///
-    /// Domain: `(chainId, verifyingContract)` only — `name` and `version`
-    /// are intentionally empty per the `IB20` spec.
+    /// Domain: `(name, version, chainId, verifyingContract)` — the canonical EIP-712 shape.
+    /// `version` is pinned to `"1"`; `name` is read live from token storage so that
+    /// a successful `updateName` invalidates outstanding permit signatures.
     fn domain_separator(&self, chain_id: u64) -> Result<B256> {
-        let encoded = (DOMAIN_TYPEHASH, U256::from(chain_id), self.token_address()).abi_encode();
+        let name = self.accounting().name()?;
+        let name_hash = keccak256(name.as_bytes());
+        let version_hash = keccak256(VERSION);
+        let encoded =
+            (DOMAIN_TYPEHASH, name_hash, version_hash, U256::from(chain_id), self.token_address())
+                .abi_encode();
         Ok(keccak256(&encoded))
     }
 
     /// Returns the ERC-5267 `eip712Domain()` tuple for this token.
     fn eip712_domain(&self, chain_id: u64) -> Result<Eip712Domain> {
+        let name = self.accounting().name()?;
         Ok((
-            FixedBytes::<1>::from([0x0c]), // bits 2+3: chainId + verifyingContract
-            String::new(),
-            String::new(),
+            FixedBytes::<1>::from([0x0f]), // bits 0+1+2+3: name + version + chainId + verifyingContract
+            name,
+            String::from("1"),
             U256::from(chain_id),
             self.token_address(),
             B256::ZERO,
@@ -116,7 +125,6 @@ pub trait Permittable: Transferable {
     }
 
     /// EIP-2612 permit. EOA signatures only (no ERC-1271).
-    /// Domain: `(chainId, verifyingContract)`; `name` and `version` are empty.
     fn permit(&mut self, chain_id: u64, now: U256, args: PermitArgs) -> Result<()> {
         if now > args.deadline {
             return Err(BasePrecompileError::revert(IB20::ExpiredSignature {
@@ -148,7 +156,7 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
     use k256::ecdsa::SigningKey;
 
-    use super::{DOMAIN_TYPEHASH, PermitArgs, Permittable};
+    use super::{DOMAIN_TYPEHASH, PermitArgs, Permittable, VERSION};
     use crate::{
         IB20,
         common::{
@@ -160,16 +168,16 @@ mod tests {
     const CHAIN_ID: u64 = 1;
     const SPENDER: Address = Address::repeat_byte(0xbb);
     const TOKEN_ADDR: Address = Address::repeat_byte(1);
+    const TOKEN_NAME: &str = "TestToken";
 
     // Anvil/Hardhat account 0 — well-known test key, never use in production.
     const PRIVATE_KEY: [u8; 32] =
         alloy_primitives::hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
     fn make_token() -> TestToken {
-        TestToken::with_storage_and_policy(
-            InMemoryTokenAccounting::new(TOKEN_ADDR),
-            InMemoryPolicy::new(),
-        )
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.name = TOKEN_NAME.to_string();
+        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
     }
 
     fn owner_address() -> Address {
@@ -240,8 +248,12 @@ mod tests {
         let owner = owner_address();
         let args = sample_permit_args(owner);
         let nonce = U256::ZERO;
-        let domain_sep =
-            keccak256((DOMAIN_TYPEHASH, U256::from(CHAIN_ID), TOKEN_ADDR).abi_encode());
+        let name_hash = keccak256(TOKEN_NAME.as_bytes());
+        let version_hash = keccak256(super::VERSION);
+        let domain_sep = keccak256(
+            (DOMAIN_TYPEHASH, name_hash, version_hash, U256::from(CHAIN_ID), TOKEN_ADDR)
+                .abi_encode(),
+        );
         let struct_hash = args.struct_hash(nonce);
         let mut expected_preimage = [0u8; 66];
         expected_preimage[..2].copy_from_slice(&[0x19, 0x01]);
@@ -298,7 +310,8 @@ mod tests {
 
     #[test]
     fn domain_typehash_matches_eip712_domain_type() {
-        let domain_type = b"EIP712Domain(uint256 chainId,address verifyingContract)";
+        let domain_type =
+            b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
         assert_eq!(DOMAIN_TYPEHASH, keccak256(domain_type));
     }
 
@@ -329,12 +342,22 @@ mod tests {
         let (fields, name, version, chain_id, verifying, _salt, extensions) =
             token.eip712_domain(CHAIN_ID).unwrap();
 
-        assert_eq!(fields.as_slice(), &[0x0c]);
-        assert!(name.is_empty());
-        assert!(version.is_empty());
+        assert_eq!(fields.as_slice(), &[0x0f]);
+        assert_eq!(name, TOKEN_NAME);
+        assert_eq!(version, "1");
         assert_eq!(chain_id, U256::from(CHAIN_ID));
         assert_eq!(verifying, TOKEN_ADDR);
         assert!(extensions.is_empty());
+    }
+
+    #[test]
+    fn domain_separator_differs_by_name() {
+        let token = make_token();
+        let sep_a = token.domain_separator(CHAIN_ID).unwrap();
+        let mut token2 = make_token();
+        token2.accounting_mut().set_name("OtherToken".to_string()).unwrap();
+        let sep_b = token2.domain_separator(CHAIN_ID).unwrap();
+        assert_ne!(sep_a, sep_b);
     }
 
     #[test]
