@@ -41,12 +41,17 @@ pub trait Transferable: Token {
             }));
         }
         let to_balance = self.accounting().balance_of(to)?;
+        let to_balance = self.accounting().balance_of(to)?;
         let new_to_balance =
             to_balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        let new_from_balance =
-            from_balance.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        self.accounting_mut().set_balance(from, new_from_balance)?;
-        self.accounting_mut().set_balance(to, new_to_balance)?;
+        let new_from_balance = from_balance.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        if from == to {
+            // Self-transfer: balance is unchanged, but we still validated
+            // no overflow/underflow above. Just emit the event.
+        } else {
+            self.accounting_mut().set_balance(from, new_from_balance)?;
+            self.accounting_mut().set_balance(to, new_to_balance)?;
+        }
         self.accounting_mut().emit_event(IB20::Transfer { from, to, amount }.encode_log_data())
     }
 
