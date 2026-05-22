@@ -9,9 +9,9 @@ use revm::state::Bytecode;
 
 use super::variant::TokenVariant;
 use crate::{
-    B20SecurityStorage, B20SecurityToken, B20StablecoinStorage, B20StablecoinToken, B20Token,
-    B20TokenInit, B20TokenRole, B20TokenStorage, ITokenFactory, PolicyHandle, RoleManaged, Token,
-    b20_security::B20SecurityInit, b20_stablecoin::B20StablecoinInit,
+    B20SecurityInit, B20SecurityStorage, B20SecurityToken, B20StablecoinInit, B20StablecoinStorage,
+    B20StablecoinToken, B20Token, B20TokenInit, B20TokenRole, B20TokenStorage, ITokenFactory,
+    PolicyHandle, RoleManaged, Token,
 };
 
 /// Maximum total supply for all newly-created B-20 tokens.
