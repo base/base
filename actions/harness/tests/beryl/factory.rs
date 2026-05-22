@@ -206,8 +206,7 @@ async fn token_factory_views_and_events_are_available_after_beryl_activation() {
         ),
         BerylTestEnv::B20_PROBE_GAS_LIMIT,
     );
-    let block8 =
-        env.sequencer.build_next_block_with_transactions(vec![is_not_initialized]).await;
+    let block8 = env.sequencer.build_next_block_with_transactions(vec![is_not_initialized]).await;
 
     assert!(env.probe_call_succeeded(probe), "isInitialized(non-token) staticcall must succeed");
     assert_eq!(env.probe_return_word(probe), U256::ZERO, "non-token must not be initialized");
