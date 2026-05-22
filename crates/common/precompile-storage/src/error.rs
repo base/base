@@ -163,7 +163,7 @@ mod tests {
         let result =
             BasePrecompileError::revert(DelegateCallNotAllowed {}).into_precompile_result(0);
         let output = result.unwrap();
-        assert!(output.reverted);
+        assert!(output.is_revert());
         assert_eq!(output.bytes, expected);
     }
 }

@@ -374,7 +374,7 @@ mod tests {
 
         let output = assert_activated_output(&mut storage);
 
-        assert!(output.reverted);
+        assert!(output.is_revert());
         assert_eq!(storage.get_events(ActivationRegistryStorage::ADDRESS).len(), 0);
     }
 

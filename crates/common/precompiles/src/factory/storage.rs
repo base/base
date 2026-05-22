@@ -971,7 +971,7 @@ mod tests {
             let result = token.dispatch(ctx, &IB20::nameCall {}.abi_encode()).unwrap();
 
             assert!(result.is_revert());
-            assert_eq!(result.bytes.as_ref(), IB20::Uninitialized {}.abi_encode());
+            assert!(result.bytes.is_empty());
         });
     }
 

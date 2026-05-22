@@ -202,7 +202,6 @@ mod tests {
         database::EmptyDB,
         handler::PrecompileProvider,
         interpreter::{CallInput, CallScheme, CallValue, InstructionResult},
-        precompile::PrecompileError,
     };
     use revm_precompile::secp256r1;
 
