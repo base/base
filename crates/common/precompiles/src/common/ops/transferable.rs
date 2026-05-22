@@ -90,7 +90,7 @@ pub trait Transferable: Token {
         memo: B256,
     ) -> Result<()> {
         self.transfer(from, to, amount)?;
-        self.accounting_mut().emit_event(IB20::Memo { memo }.encode_log_data())
+        self.accounting_mut().emit_event(IB20::Memo { caller: from, memo }.encode_log_data())
     }
 
     /// [`Self::transfer_from`] followed by a `Memo` event.
@@ -103,7 +103,7 @@ pub trait Transferable: Token {
         memo: B256,
     ) -> Result<()> {
         self.transfer_from(spender, from, to, amount)?;
-        self.accounting_mut().emit_event(IB20::Memo { memo }.encode_log_data())
+        self.accounting_mut().emit_event(IB20::Memo { caller: spender, memo }.encode_log_data())
     }
 }
 

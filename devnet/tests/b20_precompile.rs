@@ -190,6 +190,21 @@ async fn test_b20_mint_and_burn() -> Result<()> {
     )
     .await?;
 
+    let zero_mint_succeeded = b20
+        .try_send_call(
+            token,
+            IB20::mintCall { to: admin.address(), amount: U256::ZERO },
+            "zero amount B-20 mint",
+        )
+        .await?;
+    assert!(!zero_mint_succeeded, "zero amount B-20 mint should revert");
+
+    let zero_burn_succeeded = b20
+        .try_send_call(token, IB20::burnCall { amount: U256::ZERO }, "zero amount B-20 burn")
+        .await?;
+    assert!(!zero_burn_succeeded, "zero amount B-20 burn should revert");
+    assert_eq!(b20.total_supply(token).await?, supply_before);
+
     b20.mint(token, admin.address(), U256::from(MINT_AMOUNT)).await?;
     assert_eq!(b20.total_supply(token).await?, supply_before + U256::from(MINT_AMOUNT));
     assert_eq!(
@@ -267,15 +282,15 @@ async fn test_b20_supply_cap() -> Result<()> {
     assert!(
         !b20.try_send_call(
             token,
-            IB20::setSupplyCapCall { newSupplyCap: U256::from(INITIAL_SUPPLY - 1) },
-            "setSupplyCap below current supply",
+            IB20::updateSupplyCapCall { newSupplyCap: U256::from(INITIAL_SUPPLY - 1) },
+            "updateSupplyCap below current supply",
         )
         .await?,
-        "setSupplyCap below total supply should revert",
+        "updateSupplyCap below total supply should revert",
     );
 
     // Tighten cap to exactly the current supply.
-    b20.set_supply_cap(token, U256::from(INITIAL_SUPPLY)).await?;
+    b20.update_supply_cap(token, U256::from(INITIAL_SUPPLY)).await?;
     assert_eq!(b20.supply_cap(token).await?, U256::from(INITIAL_SUPPLY));
 
     // Minting past the cap reverts.
@@ -311,9 +326,9 @@ async fn test_b20_metadata_updates() -> Result<()> {
     let token = b20.create_token(TokenVariant::B20, params, salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
-    b20.set_name(token, "New Name").await?;
-    b20.set_symbol(token, "NEW").await?;
-    b20.set_contract_uri(token, "ipfs://QmTest").await?;
+    b20.update_name(token, "New Name").await?;
+    b20.update_symbol(token, "NEW").await?;
+    b20.update_contract_uri(token, "ipfs://QmTest").await?;
 
     assert_eq!(b20.name(token).await?, "New Name");
     assert_eq!(b20.symbol(token).await?, "NEW");

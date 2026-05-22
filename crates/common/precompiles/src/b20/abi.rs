@@ -26,6 +26,7 @@ sol! {
         error InvalidReceiver(address receiver);
         error InvalidApprover(address approver);
         error InvalidSpender(address spender);
+        error InvalidAmount();
         error EmptyFeatureSet();
         error InvalidSupplyCap(uint256 currentSupply, uint256 proposedCap);
         error SupplyCapExceeded(uint256 cap, uint256 attempted);
@@ -35,7 +36,6 @@ sol! {
         error AccountNotBlocked(address account);
         error ExpiredSignature(uint256 deadline);
         error InvalidSigner(address signer, address owner);
-        error Uninitialized();
         error LastAdminCannotRenounce();
         error NotSoleAdmin();
         error AccessControlBadConfirmation();
@@ -43,7 +43,7 @@ sol! {
         // Events
         event Transfer(address indexed from, address indexed to, uint256 amount);
         event Approval(address indexed owner, address indexed spender, uint256 amount);
-        event Memo(bytes32 indexed memo);
+        event Memo(address indexed caller, bytes32 indexed memo);
         event BurnedBlocked(address indexed caller, address indexed from, uint256 amount);
         event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
         event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
@@ -84,8 +84,8 @@ sol! {
         function approve(address spender, uint256 amount) external returns (bool);
 
         // Metadata updates
-        function setName(string calldata newName) external;
-        function setSymbol(string calldata newSymbol) external;
+        function updateName(string calldata newName) external;
+        function updateSymbol(string calldata newSymbol) external;
 
         // Memo transfer variants
         function transferWithMemo(address to, uint256 amount, bytes32 memo) external returns (bool);
@@ -119,7 +119,7 @@ sol! {
 
         // Supply cap
         function supplyCap() external view returns (uint256);
-        function setSupplyCap(uint256 newSupplyCap) external;
+        function updateSupplyCap(uint256 newSupplyCap) external;
 
         // Permit (EIP-2612 + ERC-5267)
         function DOMAIN_SEPARATOR() external view returns (bytes32);
@@ -129,6 +129,6 @@ sol! {
 
         // Contract URI (ERC-7572)
         function contractURI() external view returns (string);
-        function setContractURI(string calldata newURI) external;
+        function updateContractURI(string calldata newURI) external;
     }
 }

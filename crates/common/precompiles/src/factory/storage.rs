@@ -747,7 +747,7 @@ mod tests {
         let salt = B256::repeat_byte(0xDD);
         let mut call = b20_call(salt);
         call.initCalls
-            .push(IB20::setNameCall { newName: "Configured".to_string() }.abi_encode().into());
+            .push(IB20::updateNameCall { newName: "Configured".to_string() }.abi_encode().into());
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = TokenFactoryStorage::new(ctx);
@@ -882,7 +882,9 @@ mod tests {
                 .into(),
         );
         call.initCalls.push(
-            IB20::setContractURICall { newURI: "ipfs://dispatch".to_string() }.abi_encode().into(),
+            IB20::updateContractURICall { newURI: "ipfs://dispatch".to_string() }
+                .abi_encode()
+                .into(),
         );
 
         let mut storage = HashMapStorageProvider::new(1);
@@ -970,7 +972,7 @@ mod tests {
             let result = token.dispatch(ctx, &IB20::nameCall {}.abi_encode()).unwrap();
 
             assert!(result.reverted);
-            assert_eq!(result.bytes.as_ref(), IB20::Uninitialized {}.abi_encode());
+            assert!(result.bytes.is_empty());
         });
     }
 

@@ -32,7 +32,7 @@ pub enum B20TokenRole {
     Pause,
     /// Role required for `unpause`.
     Unpause,
-    /// Role required for `setName` and `setSymbol`.
+    /// Role required for `updateName` and `updateSymbol`.
     Metadata,
 }
 
@@ -86,7 +86,7 @@ pub trait RoleManaged: Token {
         B20TokenRole::Unpause.id()
     }
 
-    /// Role required for `setName` and `setSymbol`.
+    /// Role required for `updateName` and `updateSymbol`.
     fn metadata_role() -> B256 {
         B20TokenRole::Metadata.id()
     }

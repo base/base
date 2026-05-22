@@ -381,7 +381,7 @@ fn base_token_mutate(c: &mut Criterion) {
         });
     });
 
-    c.bench_function("base_token_set_supply_cap", |b| {
+    c.bench_function("base_token_update_supply_cap", |b| {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let admin = BaseTokenBenchSetup::admin();
@@ -394,7 +394,7 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let admin = black_box(admin);
-                token.set_supply_cap(admin, U256::from(10_000u64), true).unwrap();
+                token.update_supply_cap(admin, U256::from(10_000u64), true).unwrap();
             });
         });
     });
