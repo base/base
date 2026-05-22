@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     ActivationFeature, ActivationRegistryStorage, B20TokenRole, Burnable, Configurable, Mintable,
-    Pausable, Permittable, Policy, RoleManaged, TokenAccounting, Transferable,
+    Pausable, PermitArgs, Permittable, Policy, RoleManaged, TokenAccounting, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
@@ -210,13 +210,15 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
                 self.permit(
                     ctx.chain_id(),
                     ctx.timestamp(),
-                    c.owner,
-                    c.spender,
-                    c.value,
-                    c.deadline,
-                    c.v,
-                    c.r,
-                    c.s,
+                    PermitArgs {
+                        owner: c.owner,
+                        spender: c.spender,
+                        value: c.value,
+                        deadline: c.deadline,
+                        v: c.v,
+                        r: c.r,
+                        s: c.s,
+                    },
                 )?;
                 Bytes::new()
             }

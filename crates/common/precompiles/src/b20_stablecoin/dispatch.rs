@@ -18,7 +18,7 @@ use super::{
 use crate::{
     ActivationFeature, ActivationRegistryStorage, B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
-    Mintable, Pausable, Permittable, Policy, RoleManaged, Transferable,
+    Mintable, Pausable, PermitArgs, Permittable, Policy, RoleManaged, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
@@ -224,13 +224,15 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                 self.permit(
                     ctx.chain_id(),
                     ctx.timestamp(),
-                    c.owner,
-                    c.spender,
-                    c.value,
-                    c.deadline,
-                    c.v,
-                    c.r,
-                    c.s,
+                    PermitArgs {
+                        owner: c.owner,
+                        spender: c.spender,
+                        value: c.value,
+                        deadline: c.deadline,
+                        v: c.v,
+                        r: c.r,
+                        s: c.s,
+                    },
                 )?;
                 Bytes::new()
             }

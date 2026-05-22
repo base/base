@@ -2,8 +2,8 @@
 
 mod ops;
 pub use ops::{
-    B20Guards, B20TokenRole, Burnable, Configurable, Mintable, Pausable, Permittable, RoleManaged,
-    Transferable,
+    B20Guards, B20TokenRole, Burnable, Configurable, Mintable, Pausable, PermitArgs, Permittable,
+    RoleManaged, Transferable,
 };
 
 mod policy;

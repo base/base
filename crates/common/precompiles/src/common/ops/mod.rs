@@ -23,7 +23,7 @@ mod pausable;
 pub use pausable::Pausable;
 
 mod permittable;
-pub use permittable::Permittable;
+pub use permittable::{PermitArgs, Permittable};
 
 mod roles;
 pub use roles::{B20TokenRole, RoleManaged};
