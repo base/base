@@ -367,6 +367,9 @@ impl PolicyRegistryStorage<'_> {
     /// Returns `true` if `policy_id` refers to an existing policy.
     pub fn policy_exists(&self, policy_id: u64) -> Result<bool> {
         Self::require_well_formed(policy_id)?;
+        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
+            return Ok(true);
+        }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         Ok(packed.exists())
     }
@@ -969,7 +972,7 @@ mod tests {
 
     #[test]
     fn policy_exists_builtin_ids_always_return_true() {
-        let mut s = storage();
+        let mut s = HashMapStorageProvider::new(1);
         assert!(
             StorageCtx::enter(&mut s, |ctx| {
                 PolicyRegistryStorage::new(ctx)
