@@ -6,10 +6,10 @@ macro_rules! base_precompile {
             ::revm::precompile::PrecompileId::Custom($id.into()),
             move |input| {
                 if !input.is_direct_call() {
-                    return Ok(::revm::precompile::PrecompileOutput::new_reverted(
-                        0,
-                        ::alloy_primitives::Bytes::new(),
-                    ));
+                    return ::base_precompile_storage::BasePrecompileError::revert(
+                        ::base_precompile_storage::DelegateCallNotAllowed {},
+                    )
+                    .into_precompile_result(0);
                 }
 
                 let $calldata: ::alloy_primitives::Bytes = input.data.to_vec().into();
@@ -27,10 +27,10 @@ macro_rules! base_precompile {
             ::revm::precompile::PrecompileId::Custom($id.into()),
             move |$input| {
                 if !$input.is_direct_call() {
-                    return Ok(::revm::precompile::PrecompileOutput::new_reverted(
-                        0,
-                        ::alloy_primitives::Bytes::new(),
-                    ));
+                    return ::base_precompile_storage::BasePrecompileError::revert(
+                        ::base_precompile_storage::DelegateCallNotAllowed {},
+                    )
+                    .into_precompile_result(0);
                 }
 
                 let $calldata: ::alloy_primitives::Bytes = $input.data.to_vec().into();

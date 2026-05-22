@@ -55,11 +55,6 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
             C::symbol(_) => self.accounting.symbol()?.abi_encode().into(),
             C::decimals(_) => U256::from(self.accounting.decimals()?).abi_encode().into(),
             C::totalSupply(_) => self.accounting.total_supply()?.abi_encode().into(),
-            C::minimumRedeemable(_) => self.accounting.minimum_redeemable()?.abi_encode().into(),
-            C::currency(_) => self.accounting.currency()?.abi_encode().into(),
-            C::securityIdentifier(c) => {
-                self.accounting.security_identifier(&c.identifierType)?.abi_encode().into()
-            }
             C::balanceOf(c) => self.accounting.balance_of(c.account)?.abi_encode().into(),
             C::allowance(c) => self.accounting.allowance(c.owner, c.spender)?.abi_encode().into(),
             C::supplyCap(_) => self.accounting.supply_cap()?.abi_encode().into(),

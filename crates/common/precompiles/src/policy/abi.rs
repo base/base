@@ -1,18 +1,15 @@
 use alloy_sol_types::sol;
-use base_precompile_storage::{BasePrecompileError, Result};
 
 sol! {
     #[derive(Debug, PartialEq, Eq)]
     interface IPolicyRegistry {
         enum PolicyType {
-            /// Authorizes all accounts unconditionally.
-            ALWAYS_ALLOW,
-            /// Rejects all accounts unconditionally.
-            ALWAYS_BLOCK,
-            /// Authorizes only accounts explicitly added to the allowlist.
-            ALLOWLIST,
             /// Rejects only accounts explicitly added to the blocklist.
-            BLOCKLIST
+            /// An empty blocklist authorizes everyone.
+            BLOCKLIST,
+            /// Authorizes only accounts explicitly added to the allowlist.
+            /// An empty allowlist rejects everyone.
+            ALLOWLIST
         }
 
         error Unauthorized();
@@ -46,12 +43,8 @@ sol! {
 }
 
 impl IPolicyRegistry::PolicyType {
-    /// Returns the raw `u8` discriminant for ALLOWLIST or BLOCKLIST.
-    /// Reverts with `InvalidPolicyType` for built-in sentinels (`ALWAYS_ALLOW`, `ALWAYS_BLOCK`).
-    pub fn as_discriminant(self) -> Result<u8> {
-        match self {
-            Self::ALLOWLIST | Self::BLOCKLIST => Ok(self as u8),
-            _ => Err(BasePrecompileError::revert(IPolicyRegistry::InvalidPolicyType {})),
-        }
+    /// Returns the raw `u8` discriminant for this policy type.
+    pub const fn as_discriminant(self) -> u8 {
+        self as u8
     }
 }

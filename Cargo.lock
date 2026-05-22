@@ -670,7 +670,6 @@ dependencies = [
  "alloy-rpc-types-debug",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
- "alloy-rpc-types-txpool",
  "alloy-serde",
  "serde",
 ]
@@ -12339,36 +12338,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
-]
-
-[[package]]
-name = "mempool-rebroadcaster"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
- "alloy-rpc-types-eth",
- "alloy-trie",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "mempool-rebroadcaster-bin"
-version = "0.0.0"
-dependencies = [
- "base-cli-utils",
- "clap",
- "dotenvy",
- "mempool-rebroadcaster",
- "serde",
- "tokio",
- "tracing",
 ]
 
 [[package]]

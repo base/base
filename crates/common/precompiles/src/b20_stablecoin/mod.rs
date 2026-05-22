@@ -12,7 +12,7 @@ mod precompile;
 pub use precompile::B20StablecoinPrecompile;
 
 mod storage;
-pub use storage::B20StablecoinStorage;
+pub use storage::{B20StablecoinExtensionStorage, B20StablecoinStorage};
 
 mod token;
 pub use token::B20StablecoinToken;

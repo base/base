@@ -9,7 +9,7 @@ use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_storage::Result;
 
 use crate::{
-    IPolicyRegistry, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK, PolicyRegistry,
+    IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage,
     b20::B20Token,
     b20_security::SecurityAccounting,
     b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
@@ -70,10 +70,10 @@ pub struct InMemoryTokenAccounting {
     pub policy_ids: HashMap<B256, u64>,
     /// Share-to-tokens ratio scaled to WAD (1e18). Security tokens only.
     pub shares_to_tokens_ratio: U256,
-    /// Security identifier values keyed by `keccak256(identifier_type)`. Security tokens only.
-    pub security_identifiers: HashMap<B256, String>,
-    /// Consumed announcement ids (stored as `keccak256(id)`). Security tokens only.
-    pub announcement_ids_used: HashSet<B256>,
+    /// Security identifier values keyed by raw `identifier_type`. Security tokens only.
+    pub security_identifiers: HashMap<String, String>,
+    /// Consumed announcement ids keyed by raw announcement id. Security tokens only.
+    pub announcement_ids_used: HashSet<String>,
     /// Events collected by `emit_event`; does not produce real EVM logs.
     pub events: Vec<LogData>,
 }
@@ -176,18 +176,6 @@ impl TokenAccounting for InMemoryTokenAccounting {
         Ok(self.decimals)
     }
 
-    fn currency(&self) -> Result<String> {
-        Ok(self.currency.clone())
-    }
-
-    fn security_identifier(&self, identifier_type: &str) -> Result<String> {
-        let key = alloy_primitives::keccak256(identifier_type.as_bytes());
-        if let Some(val) = self.security_identifiers.get(&key) {
-            return Ok(val.clone());
-        }
-        if identifier_type == "ISIN" { Ok(self.security_isin.clone()) } else { Ok(String::new()) }
-    }
-
     fn paused(&self) -> Result<U256> {
         Ok(self.paused)
     }
@@ -204,15 +192,6 @@ impl TokenAccounting for InMemoryTokenAccounting {
     fn increment_nonce(&mut self, owner: Address) -> Result<()> {
         let n = self.nonces.entry(owner).or_default();
         *n += U256::from(1u64);
-        Ok(())
-    }
-
-    fn minimum_redeemable(&self) -> Result<U256> {
-        Ok(self.minimum_redeemable)
-    }
-
-    fn set_minimum_redeemable(&mut self, minimum: U256) -> Result<()> {
-        self.minimum_redeemable = minimum;
         Ok(())
     }
 
@@ -253,7 +232,7 @@ impl TokenAccounting for InMemoryTokenAccounting {
     }
 
     fn policy_id(&self, policy_type: B256) -> Result<u64> {
-        Ok(*self.policy_ids.get(&policy_type).unwrap_or(&POLICY_ALWAYS_ALLOW))
+        Ok(*self.policy_ids.get(&policy_type).unwrap_or(&PolicyRegistryStorage::ALWAYS_ALLOW_ID))
     }
 
     fn set_policy_id(&mut self, policy_type: B256, policy_id: u64) -> Result<()> {
@@ -268,6 +247,10 @@ impl TokenAccounting for InMemoryTokenAccounting {
 }
 
 impl StablecoinAccounting for InMemoryTokenAccounting {
+    fn currency(&self) -> Result<String> {
+        Ok(self.currency.clone())
+    }
+
     fn set_currency(&mut self, currency: String) -> Result<()> {
         self.currency = currency;
         Ok(())
@@ -315,15 +298,15 @@ impl InMemoryPolicy {
 impl Policy for InMemoryPolicy {
     fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
         match policy_id {
-            POLICY_ALWAYS_ALLOW => Ok(true),
-            POLICY_ALWAYS_BLOCK => Ok(false),
+            PolicyRegistryStorage::ALWAYS_ALLOW_ID => Ok(true),
+            PolicyRegistryStorage::ALWAYS_BLOCK_ID => Ok(false),
             _ => Ok(*self.authorizations.get(&(policy_id, account)).unwrap_or(&false)),
         }
     }
 
     fn policy_exists(&self, policy_id: u64) -> Result<bool> {
-        Ok(policy_id == POLICY_ALWAYS_ALLOW
-            || policy_id == POLICY_ALWAYS_BLOCK
+        Ok(policy_id == PolicyRegistryStorage::ALWAYS_ALLOW_ID
+            || policy_id == PolicyRegistryStorage::ALWAYS_BLOCK_ID
             || self.policies.contains(&policy_id))
     }
 }
@@ -392,13 +375,8 @@ impl PolicyRegistry for InMemoryPolicy {
     }
 
     fn get_policy_type(&self, policy_id: u64) -> Result<IPolicyRegistry::PolicyType> {
-        Ok(match policy_id {
-            POLICY_ALWAYS_ALLOW => IPolicyRegistry::PolicyType::ALWAYS_ALLOW,
-            POLICY_ALWAYS_BLOCK => IPolicyRegistry::PolicyType::ALWAYS_BLOCK,
-            _ => IPolicyRegistry::PolicyType::try_from((policy_id >> 56) as u8).map_err(|_| {
-                base_precompile_storage::BasePrecompileError::enum_conversion_error()
-            })?,
-        })
+        IPolicyRegistry::PolicyType::try_from((policy_id >> 56) as u8)
+            .map_err(|_| base_precompile_storage::BasePrecompileError::enum_conversion_error())
     }
 
     fn get_policy_admin(&self, _policy_id: u64) -> Result<Address> {
@@ -420,26 +398,41 @@ impl SecurityAccounting for InMemoryTokenAccounting {
         Ok(())
     }
 
+    fn security_identifier(&self, identifier_type: &str) -> Result<String> {
+        if let Some(val) = self.security_identifiers.get(identifier_type) {
+            return Ok(val.clone());
+        }
+        if identifier_type == "ISIN" { Ok(self.security_isin.clone()) } else { Ok(String::new()) }
+    }
+
     fn set_security_identifier_value(
         &mut self,
         identifier_type: &str,
         value: String,
     ) -> Result<()> {
-        let key = alloy_primitives::keccak256(identifier_type.as_bytes());
         if value.is_empty() {
-            self.security_identifiers.remove(&key);
+            self.security_identifiers.remove(identifier_type);
         } else {
-            self.security_identifiers.insert(key, value);
+            self.security_identifiers.insert(identifier_type.to_owned(), value);
         }
         Ok(())
     }
 
-    fn is_announcement_id_used(&self, id_hash: B256) -> Result<bool> {
-        Ok(self.announcement_ids_used.contains(&id_hash))
+    fn minimum_redeemable(&self) -> Result<U256> {
+        Ok(self.minimum_redeemable)
     }
 
-    fn mark_announcement_id_used(&mut self, id_hash: B256) -> Result<()> {
-        self.announcement_ids_used.insert(id_hash);
+    fn set_minimum_redeemable(&mut self, minimum: U256) -> Result<()> {
+        self.minimum_redeemable = minimum;
+        Ok(())
+    }
+
+    fn is_announcement_id_used(&self, id: &str) -> Result<bool> {
+        Ok(self.announcement_ids_used.contains(id))
+    }
+
+    fn mark_announcement_id_used(&mut self, id: &str) -> Result<()> {
+        self.announcement_ids_used.insert(id.to_owned());
         Ok(())
     }
 }

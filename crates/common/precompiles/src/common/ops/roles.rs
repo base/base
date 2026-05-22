@@ -111,11 +111,13 @@ pub trait RoleManaged: Token {
         if self.accounting().has_role(role, account)? {
             return Ok(());
         }
-        let current = self.accounting().role_member_count(role)?;
-        let next =
-            current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
         self.accounting_mut().set_role(role, account, true)?;
-        self.accounting_mut().set_role_member_count(role, next)?;
+        if role == Self::default_admin_role() {
+            let current = self.accounting().role_member_count(role)?;
+            let next =
+                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
+            self.accounting_mut().set_role_member_count(role, next)?;
+        }
         self.accounting_mut()
             .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
     }
@@ -130,11 +132,13 @@ pub trait RoleManaged: Token {
         if !self.accounting().has_role(role, account)? {
             return Ok(());
         }
-        let current = self.accounting().role_member_count(role)?;
-        let next =
-            current.checked_sub(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
         self.accounting_mut().set_role(role, account, false)?;
-        self.accounting_mut().set_role_member_count(role, next)?;
+        if role == Self::default_admin_role() {
+            let current = self.accounting().role_member_count(role)?;
+            let next =
+                current.checked_sub(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
+            self.accounting_mut().set_role_member_count(role, next)?;
+        }
         self.accounting_mut()
             .emit_event(IB20::RoleRevoked { role, account, sender }.encode_log_data())
     }
@@ -269,10 +273,6 @@ mod tests {
         token.grant_role(ADMIN, B20TokenRole::Mint.id(), ALICE, false).unwrap();
 
         assert!(token.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
-        assert_eq!(
-            token.accounting().role_member_count(B20TokenRole::Mint.id()).unwrap(),
-            U256::ONE
-        );
         assert_eq!(
             token.accounting().events[0],
             IB20::RoleGranted { role: B20TokenRole::Mint.id(), account: ALICE, sender: ADMIN }

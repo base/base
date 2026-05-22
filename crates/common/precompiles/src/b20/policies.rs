@@ -7,11 +7,6 @@ use base_precompile_storage::{BasePrecompileError, Result};
 use super::token::B20Token;
 use crate::{B20Guards, B20TokenRole, IB20, Policy, Token, TokenAccounting};
 
-/// Built-in policy ID that authorizes every account.
-pub const POLICY_ALWAYS_ALLOW: u64 = 0;
-/// Built-in policy ID that authorizes no account.
-pub const POLICY_ALWAYS_BLOCK: u64 = 1;
-
 const TRANSFER_SENDER_POLICY: B256 =
     b256!("b81736c875ab819dd97f59f2a6542cfb731ad52b4ae15a6f24df2fb02b0327f5");
 const TRANSFER_RECEIVER_POLICY: B256 =
@@ -114,11 +109,6 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
             }
             .encode_log_data(),
         )
-    }
-
-    /// Returns whether `policy_id` is one of the built-in global policies.
-    pub const fn is_builtin_policy(policy_id: u64) -> bool {
-        policy_id == POLICY_ALWAYS_ALLOW || policy_id == POLICY_ALWAYS_BLOCK
     }
 
     /// Ensures `policy_type` names a B-20 policy slot.

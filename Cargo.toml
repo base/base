@@ -220,7 +220,6 @@ audit-archiver-lib = { path = "crates/infra/audit" }
 base-load-tests = { path = "crates/infra/load-tests" }
 ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 websocket-proxy = { path = "crates/infra/websocket-proxy" }
-mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
 # Proof
 base-proof-rpc = { path = "crates/proof/rpc" }

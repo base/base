@@ -114,7 +114,7 @@ mod tests {
 
     use super::Transferable;
     use crate::{
-        B20PausableFeature, B20PolicyType, IB20, POLICY_ALWAYS_BLOCK,
+        B20PausableFeature, B20PolicyType, IB20, PolicyRegistryStorage,
         common::{
             Token, TokenAccounting,
             test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
@@ -280,14 +280,16 @@ mod tests {
     fn transfer_reverts_when_sender_policy_denies() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::from(10u64));
-        accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), POLICY_ALWAYS_BLOCK);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
             token.transfer(ALICE, BOB, U256::ONE).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
                 policyType: B20PolicyType::TransferSender.id(),
-                policyId: POLICY_ALWAYS_BLOCK,
+                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
             })
         );
     }
@@ -296,14 +298,16 @@ mod tests {
     fn transfer_reverts_when_receiver_policy_denies() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::from(10u64));
-        accounting.policy_ids.insert(B20PolicyType::TransferReceiver.id(), POLICY_ALWAYS_BLOCK);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferReceiver.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
             token.transfer(ALICE, BOB, U256::ONE).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
                 policyType: B20PolicyType::TransferReceiver.id(),
-                policyId: POLICY_ALWAYS_BLOCK,
+                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
             })
         );
     }
@@ -313,14 +317,16 @@ mod tests {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::from(10u64));
         accounting.allowances.insert((ALICE, SPENDER), U256::from(10u64));
-        accounting.policy_ids.insert(B20PolicyType::TransferExecutor.id(), POLICY_ALWAYS_BLOCK);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferExecutor.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
             token.transfer_from(SPENDER, ALICE, BOB, U256::ONE).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
                 policyType: B20PolicyType::TransferExecutor.id(),
-                policyId: POLICY_ALWAYS_BLOCK,
+                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
             })
         );
     }

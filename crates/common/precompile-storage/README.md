@@ -58,6 +58,8 @@ slot(key, base) = keccak256(lpad32(key) ‖ to_be32(base))
 
 This matches Solidity's `keccak256(abi.encode(key, slot))` for:
 - Unsigned integers, `Address`, `FixedBytes<32>` — identical encoding
+- `String` — uses `keccak256(bytes(key) ‖ to_be32(base))`, matching Solidity's string-keyed
+  mapping derivation
 - Signed integers — diverges (we zero-left-pad the two's complement bits; Solidity sign-extends)
 - `FixedBytes<N>` for N < 32 — diverges (we left-pad; Solidity right-pads)
 

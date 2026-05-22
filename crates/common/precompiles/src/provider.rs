@@ -13,11 +13,12 @@ use revm::{
 };
 
 use crate::{
-    ActivationRegistry, B20SecurityPrecompile, B20TokenPrecompile, BasePrecompileSpec,
-    PolicyRegistryPrecompile, TokenFactory, TokenVariant, bls12_381, bn254_pair,
+    ActivationRegistry, B20SecurityPrecompile, B20StablecoinPrecompile, B20TokenPrecompile,
+    BasePrecompileSpec, PolicyRegistryPrecompile, TokenFactory, TokenVariant, bls12_381,
+    bn254_pair,
 };
 
-/// Combined lookup for all B-20 token variants (default and security).
+/// Combined lookup for all B-20 token variants.
 ///
 /// A single named function is required because `set_precompile_lookup` accepts
 /// function pointers (which are lifetime-generic) but not closures with a specific
@@ -26,8 +27,8 @@ use crate::{
 fn b20_token_lookup(address: &Address) -> Option<alloy_evm::precompiles::DynPrecompile> {
     match TokenVariant::from_address(*address)? {
         TokenVariant::B20 => Some(B20TokenPrecompile::create_precompile(*address)),
+        TokenVariant::Stablecoin => Some(B20StablecoinPrecompile::create_precompile(*address)),
         TokenVariant::Security => Some(B20SecurityPrecompile::create_precompile(*address)),
-        TokenVariant::Stablecoin => None,
     }
 }
 

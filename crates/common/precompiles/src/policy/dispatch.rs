@@ -99,6 +99,15 @@ mod tests {
         });
     }
 
+    /// Activates the policy registry and writes the built-in policies to storage.
+    ///
+    /// Call this instead of `activate_policy_registry` when the test needs to query
+    /// built-in policy IDs (`ALWAYS_ALLOW_ID`, `ALWAYS_BLOCK_ID`) directly.
+    fn activate_and_init(storage: &mut HashMapStorageProvider) {
+        activate_policy_registry(storage);
+        StorageCtx::enter(storage, |ctx| PolicyRegistryStorage::new(ctx).write_builtins()).unwrap();
+    }
+
     #[test]
     fn dispatch_reverts_when_policy_registry_is_inactive() {
         let mut storage = HashMapStorageProvider::new(1);
@@ -115,8 +124,10 @@ mod tests {
     #[test]
     fn dispatch_succeeds_when_policy_registry_is_active() {
         let mut storage = HashMapStorageProvider::new(1);
-        activate_policy_registry(&mut storage);
-        let calldata = IPolicyRegistry::policyExistsCall { policyId: 0 }.abi_encode();
+        activate_and_init(&mut storage);
+        let calldata =
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID }
+                .abi_encode();
 
         let output = StorageCtx::enter(&mut storage, |ctx| {
             PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
@@ -151,7 +162,7 @@ mod tests {
     #[test]
     fn dispatch_is_authorized_always_allow_returns_true() {
         let mut storage = HashMapStorageProvider::new(1);
-        activate_policy_registry(&mut storage);
+        activate_and_init(&mut storage);
         let calldata = IPolicyRegistry::isAuthorizedCall {
             policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID,
             account: ALICE,
@@ -323,7 +334,7 @@ mod tests {
     #[test]
     fn dispatch_policy_type() {
         let mut storage = HashMapStorageProvider::new(1);
-        activate_policy_registry(&mut storage);
+        activate_and_init(&mut storage);
 
         let calldata =
             IPolicyRegistry::policyTypeCall { policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID }
@@ -334,7 +345,7 @@ mod tests {
         .unwrap();
         assert!(!out.reverted);
         let pt = IPolicyRegistry::policyTypeCall::abi_decode_returns(&out.bytes).unwrap();
-        assert_eq!(pt, IPolicyRegistry::PolicyType::ALWAYS_ALLOW);
+        assert_eq!(pt, IPolicyRegistry::PolicyType::BLOCKLIST);
     }
 
     #[test]

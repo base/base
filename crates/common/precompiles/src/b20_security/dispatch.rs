@@ -109,12 +109,6 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             C::symbol(_) => self.accounting.symbol()?.abi_encode().into(),
             C::decimals(_) => U256::from(self.accounting.decimals()?).abi_encode().into(),
             C::totalSupply(_) => self.accounting.total_supply()?.abi_encode().into(),
-            C::minimumRedeemable(_) => self.accounting.minimum_redeemable()?.abi_encode().into(),
-            C::currency(_) => self.accounting.currency()?.abi_encode().into(),
-            // securityIdentifier also caught by IB20Security above; repeated for exhaustiveness.
-            C::securityIdentifier(c) => {
-                self.accounting.security_identifier(&c.identifierType)?.abi_encode().into()
-            }
             C::balanceOf(c) => self.accounting.balance_of(c.account)?.abi_encode().into(),
             C::allowance(c) => self.accounting.allowance(c.owner, c.spender)?.abi_encode().into(),
             C::supplyCap(_) => self.accounting.supply_cap()?.abi_encode().into(),
@@ -326,8 +320,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
             // --- Announcement reads ---
             SC::isAnnouncementIdUsed(c) => {
-                let id_hash = keccak256(c.id.as_bytes());
-                self.accounting.is_announcement_id_used(id_hash)?.abi_encode().into()
+                self.accounting.is_announcement_id_used(c.id.as_str())?.abi_encode().into()
             }
 
             // --- Security identifier reads ---
@@ -377,6 +370,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }
 
             // --- Minimum redeemable (security version, in shares) ---
+            SC::minimumRedeemable(_) => self.accounting.minimum_redeemable()?.abi_encode().into(),
             SC::updateMinimumRedeemable(c) => {
                 self.accounting_mut().set_minimum_redeemable(c.newMinimumRedeemable)?;
                 self.accounting_mut().emit_event(
@@ -527,13 +521,12 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             return Err(BasePrecompileError::revert(IB20Security::AnnouncementInProgress {}));
         }
 
-        let id_hash: B256 = keccak256(id.as_bytes());
-        if self.accounting.is_announcement_id_used(id_hash)? {
+        if self.accounting.is_announcement_id_used(id.as_str())? {
             return Err(BasePrecompileError::revert(IB20Security::AnnouncementIdAlreadyUsed {
                 id,
             }));
         }
-        self.accounting_mut().mark_announcement_id_used(id_hash)?;
+        self.accounting_mut().mark_announcement_id_used(id.as_str())?;
 
         let caller = ctx.caller();
         self.accounting_mut().emit_event(
@@ -586,7 +579,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256, keccak256};
+    use alloy_primitives::{Address, U256};
 
     use crate::{
         Token, TokenAccounting,
@@ -708,11 +701,11 @@ mod tests {
     #[test]
     fn announce_marks_id_used() {
         let mut token = make_token();
-        let id_hash = keccak256(b"2026-Q1-split");
+        let id = "2026-Q1-split";
 
-        assert!(!token.accounting().is_announcement_id_used(id_hash).unwrap());
-        token.accounting_mut().mark_announcement_id_used(id_hash).unwrap();
-        assert!(token.accounting().is_announcement_id_used(id_hash).unwrap());
+        assert!(!token.accounting().is_announcement_id_used(id).unwrap());
+        token.accounting_mut().mark_announcement_id_used(id).unwrap();
+        assert!(token.accounting().is_announcement_id_used(id).unwrap());
     }
 
     #[test]
@@ -903,8 +896,8 @@ mod tests {
     #[test]
     fn announcement_id_not_used_initially() {
         let token = make_token();
-        let id_hash = keccak256(b"2026-Q1-split");
+        let id = "2026-Q1-split";
         // "Returns true if id has previously been consumed by announce" → false for new id
-        assert!(!token.accounting().is_announcement_id_used(id_hash).unwrap());
+        assert!(!token.accounting().is_announcement_id_used(id).unwrap());
     }
 }

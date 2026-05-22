@@ -79,7 +79,7 @@ mod tests {
 
     use super::Burnable;
     use crate::{
-        B20PausableFeature, B20PolicyType, B20TokenRole, IB20, POLICY_ALWAYS_BLOCK,
+        B20PausableFeature, B20PolicyType, B20TokenRole, IB20, PolicyRegistryStorage,
         common::{
             Token, TokenAccounting,
             test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
@@ -183,7 +183,9 @@ mod tests {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::from(100u64));
         accounting.total_supply = U256::from(100u64);
-        accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), POLICY_ALWAYS_BLOCK);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         token.burn_blocked(CALLER, ALICE, U256::from(25u64), true).unwrap();
@@ -198,7 +200,9 @@ mod tests {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::from(10u64));
         accounting.total_supply = U256::from(10u64);
-        accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), POLICY_ALWAYS_BLOCK);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(

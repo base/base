@@ -113,6 +113,7 @@ mod tests {
     fn storage() -> HashMapStorageProvider {
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
+        StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).write_builtins()).unwrap();
         s
     }
 
@@ -183,11 +184,11 @@ mod tests {
             let handle = PolicyHandle::new(ctx);
             assert_eq!(
                 handle.get_policy_type(PolicyRegistryStorage::ALWAYS_ALLOW_ID).unwrap(),
-                IPolicyRegistry::PolicyType::ALWAYS_ALLOW
+                IPolicyRegistry::PolicyType::BLOCKLIST
             );
             assert_eq!(
                 handle.get_policy_type(PolicyRegistryStorage::ALWAYS_BLOCK_ID).unwrap(),
-                IPolicyRegistry::PolicyType::ALWAYS_BLOCK
+                IPolicyRegistry::PolicyType::ALLOWLIST
             );
         });
     }

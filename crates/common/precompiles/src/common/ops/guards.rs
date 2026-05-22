@@ -92,10 +92,7 @@ mod tests {
     use alloy_primitives::Address;
 
     use super::*;
-    use crate::{
-        InMemoryPolicy, InMemoryTokenAccounting, POLICY_ALWAYS_ALLOW, POLICY_ALWAYS_BLOCK,
-        TestToken,
-    };
+    use crate::{InMemoryPolicy, InMemoryTokenAccounting, PolicyRegistryStorage, TestToken};
 
     const EXTERNAL_POLICY_ID: u64 = 7;
 
@@ -144,13 +141,17 @@ mod tests {
     fn test_ensure_blocked_preserves_global_block_semantics() {
         let account = Address::repeat_byte(0xaa);
         let mut accounting = InMemoryTokenAccounting::new(Address::repeat_byte(0x20));
-        accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), POLICY_ALWAYS_BLOCK);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         let token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         B20Guards::ensure_blocked(&token, account).unwrap();
 
         let mut accounting = InMemoryTokenAccounting::new(Address::repeat_byte(0x20));
-        accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), POLICY_ALWAYS_ALLOW);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_ALLOW_ID);
         let token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(

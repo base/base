@@ -60,7 +60,7 @@ mod tests {
 
     use super::Mintable;
     use crate::{
-        B20PausableFeature, B20PolicyType, B20TokenRole, IB20, POLICY_ALWAYS_BLOCK,
+        B20PausableFeature, B20PolicyType, B20TokenRole, IB20, PolicyRegistryStorage,
         common::{
             Token, TokenAccounting,
             test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
@@ -179,14 +179,16 @@ mod tests {
     #[test]
     fn mint_reverts_when_receiver_policy_denies() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
-        accounting.policy_ids.insert(B20PolicyType::MintReceiver.id(), POLICY_ALWAYS_BLOCK);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::MintReceiver.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
             token.mint(CALLER, ALICE, U256::ONE, true).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
                 policyType: B20PolicyType::MintReceiver.id(),
-                policyId: POLICY_ALWAYS_BLOCK,
+                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
             })
         );
     }
