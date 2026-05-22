@@ -107,7 +107,7 @@ pub trait Transferable: Token {
         privileged: bool,
     ) -> Result<()> {
         self.transfer(from, to, amount, privileged)?;
-        self.accounting_mut().emit_event(IB20::Memo { memo }.encode_log_data())
+        self.accounting_mut().emit_event(IB20::Memo { caller: from, memo }.encode_log_data())
     }
 
     /// [`Self::transfer_from`] followed by a `Memo` event.
@@ -121,7 +121,7 @@ pub trait Transferable: Token {
         privileged: bool,
     ) -> Result<()> {
         self.transfer_from(spender, from, to, amount, privileged)?;
-        self.accounting_mut().emit_event(IB20::Memo { memo }.encode_log_data())
+        self.accounting_mut().emit_event(IB20::Memo { caller: spender, memo }.encode_log_data())
     }
 }
 
@@ -178,12 +178,7 @@ mod tests {
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
         assert_eq!(
             token.accounting().events[0],
-            IB20::Transfer {
-                from: ALICE,
-                to: ALICE,
-                amount: U256::from(30u64),
-            }
-            .encode_log_data()
+            IB20::Transfer { from: ALICE, to: ALICE, amount: U256::from(30u64) }.encode_log_data()
         );
     }
 

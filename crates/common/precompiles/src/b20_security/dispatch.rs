@@ -78,7 +78,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         match self.accounting.is_initialized() {
             Ok(true) => {}
             Ok(false) => {
-                return BasePrecompileError::revert(IB20::Uninitialized {})
+                return BasePrecompileError::Revert(Bytes::new())
                     .into_precompile_result(ctx.gas_used());
             }
             Err(e) => return e.into_precompile_result(ctx.gas_used()),
@@ -230,24 +230,24 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }
 
             // --- Admin ---
-            C::setSupplyCap(c) => {
+            C::updateSupplyCap(c) => {
                 let caller = ctx.caller();
-                Configurable::set_supply_cap(self, caller, c.newSupplyCap, privileged)?;
+                Configurable::update_supply_cap(self, caller, c.newSupplyCap, privileged)?;
                 Bytes::new()
             }
-            C::setName(c) => {
+            C::updateName(c) => {
                 let caller = ctx.caller();
-                Configurable::set_name(self, caller, c.newName, privileged)?;
+                Configurable::update_name(self, caller, c.newName, privileged)?;
                 Bytes::new()
             }
-            C::setSymbol(c) => {
+            C::updateSymbol(c) => {
                 let caller = ctx.caller();
-                Configurable::set_symbol(self, caller, c.newSymbol, privileged)?;
+                Configurable::update_symbol(self, caller, c.newSymbol, privileged)?;
                 Bytes::new()
             }
-            C::setContractURI(c) => {
+            C::updateContractURI(c) => {
                 let caller = ctx.caller();
-                Configurable::set_contract_uri(self, caller, c.newURI, privileged)?;
+                Configurable::update_contract_uri(self, caller, c.newURI, privileged)?;
                 Bytes::new()
             }
 
@@ -379,7 +379,8 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             SC::redeemWithMemo(c) => {
                 let caller = ctx.caller();
                 self.security_redeem(caller, c.amount)?;
-                self.accounting_mut().emit_event(IB20::Memo { memo: c.memo }.encode_log_data())?;
+                self.accounting_mut()
+                    .emit_event(IB20::Memo { caller, memo: c.memo }.encode_log_data())?;
                 Bytes::new()
             }
 
@@ -430,6 +431,9 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         caller: Address,
         amount: U256,
     ) -> base_precompile_storage::Result<()> {
+        if amount.is_zero() {
+            return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
+        }
         let ratio = self.accounting.shares_to_tokens_ratio()?;
         let shares = amount.saturating_mul(ratio) / WAD;
         let minimum = self.accounting.minimum_redeemable()?;
@@ -502,6 +506,9 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }));
         }
         for (account, amount) in accounts.into_iter().zip(amounts) {
+            if amount.is_zero() {
+                return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
+            }
             let balance = self.accounting.balance_of(account)?;
             if balance < amount {
                 return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
@@ -594,9 +601,10 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
+    use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        Token, TokenAccounting,
+        IB20, Token, TokenAccounting,
         b20_security::{B20SecurityToken, SecurityAccounting},
         common::test_utils::{InMemoryPolicy, InMemoryTokenAccounting},
     };
@@ -753,6 +761,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn batch_mint_test_rejects_zero_amount() {
+        let mut token = make_token();
+
+        assert_eq!(
+            token.batch_mint_test(alloc::vec![ALICE], alloc::vec![U256::ZERO]).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidAmount {})
+        );
+    }
+
     // --- batchBurn: EmptyBatch / LengthMismatch / multi-account Transfer events ---
 
     #[test]
@@ -765,6 +783,20 @@ mod tests {
     fn batch_burn_rejects_length_mismatch() {
         let mut token = make_token();
         assert!(token.batch_burn(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err());
+    }
+
+    #[test]
+    fn batch_burn_rejects_zero_amount() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(100u64);
+
+        assert_eq!(
+            token.batch_burn(alloc::vec![ALICE], alloc::vec![U256::ZERO]).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidAmount {})
+        );
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
+        assert_eq!(token.accounting().events.len(), 0);
     }
 
     #[test]
@@ -796,6 +828,18 @@ mod tests {
         assert!(token.security_redeem(ALICE, U256::from(100u64)).is_err());
         // no state mutation on failure
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
+    }
+
+    #[test]
+    fn security_redeem_rejects_zero_amount() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(ALICE, U256::from(10u64));
+        token.accounting_mut().total_supply = U256::from(10u64);
+
+        assert_eq!(
+            token.security_redeem(ALICE, U256::ZERO).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidAmount {})
+        );
     }
 
     #[test]

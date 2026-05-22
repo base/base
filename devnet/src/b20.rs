@@ -144,12 +144,13 @@ impl<'a> B20PrecompileClient<'a> {
         }
         if params.supply_cap != U256::MAX {
             init_calls.push(
-                IB20::setSupplyCapCall { newSupplyCap: params.supply_cap }.abi_encode().into(),
+                IB20::updateSupplyCapCall { newSupplyCap: params.supply_cap }.abi_encode().into(),
             );
         }
         if !params.contract_uri.is_empty() {
-            init_calls
-                .push(IB20::setContractURICall { newURI: params.contract_uri }.abi_encode().into());
+            init_calls.push(
+                IB20::updateContractURICall { newURI: params.contract_uri }.abi_encode().into(),
+            );
         }
         let call = ITokenFactory::createTokenCall {
             variant: variant.abi(),
@@ -313,32 +314,32 @@ impl<'a> B20PrecompileClient<'a> {
             .wrap_err("Failed to decode supplyCap")
     }
 
-    /// Sets the supply cap.
-    pub async fn set_supply_cap(&self, token: Address, new_cap: U256) -> Result<()> {
+    /// Updates the supply cap.
+    pub async fn update_supply_cap(&self, token: Address, new_cap: U256) -> Result<()> {
         self.send_call(
             token,
-            IB20::setSupplyCapCall { newSupplyCap: new_cap },
-            "setSupplyCap B-20 token",
+            IB20::updateSupplyCapCall { newSupplyCap: new_cap },
+            "updateSupplyCap B-20 token",
         )
         .await
     }
 
-    /// Sets the token name.
-    pub async fn set_name(&self, token: Address, new_name: &str) -> Result<()> {
+    /// Updates the token name.
+    pub async fn update_name(&self, token: Address, new_name: &str) -> Result<()> {
         self.send_call(
             token,
-            IB20::setNameCall { newName: new_name.to_string() },
-            "setName B-20 token",
+            IB20::updateNameCall { newName: new_name.to_string() },
+            "updateName B-20 token",
         )
         .await
     }
 
-    /// Sets the token symbol.
-    pub async fn set_symbol(&self, token: Address, new_symbol: &str) -> Result<()> {
+    /// Updates the token symbol.
+    pub async fn update_symbol(&self, token: Address, new_symbol: &str) -> Result<()> {
         self.send_call(
             token,
-            IB20::setSymbolCall { newSymbol: new_symbol.to_string() },
-            "setSymbol B-20 token",
+            IB20::updateSymbolCall { newSymbol: new_symbol.to_string() },
+            "updateSymbol B-20 token",
         )
         .await
     }
@@ -350,12 +351,12 @@ impl<'a> B20PrecompileClient<'a> {
             .wrap_err("Failed to decode contractURI")
     }
 
-    /// Sets the contract URI.
-    pub async fn set_contract_uri(&self, token: Address, new_uri: &str) -> Result<()> {
+    /// Updates the contract URI.
+    pub async fn update_contract_uri(&self, token: Address, new_uri: &str) -> Result<()> {
         self.send_call(
             token,
-            IB20::setContractURICall { newURI: new_uri.to_string() },
-            "setContractURI B-20 token",
+            IB20::updateContractURICall { newURI: new_uri.to_string() },
+            "updateContractURI B-20 token",
         )
         .await
     }

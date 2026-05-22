@@ -164,8 +164,8 @@ CREATE_PARAMS=$(cast abi-encode \
     1 "$TOKEN_NAME" "$TOKEN_SYMBOL" "$ALICE_ADDR")
 
 MINT_CALL=$(cast calldata "mint(address,uint256)" "$ALICE_ADDR" "$INITIAL_SUPPLY")
-SUPPLY_CAP_CALL=$(cast calldata "setSupplyCap(uint256)" "$SUPPLY_CAP")
-CONTRACT_URI_CALL=$(cast calldata "setContractURI(string)" "ipfs://check-factory-live")
+SUPPLY_CAP_CALL=$(cast calldata "updateSupplyCap(uint256)" "$SUPPLY_CAP")
+CONTRACT_URI_CALL=$(cast calldata "updateContractURI(string)" "ipfs://check-factory-live")
 INIT_CALLS="[$MINT_CALL,$SUPPLY_CAP_CALL,$CONTRACT_URI_CALL]"
 
 info "Sending createToken transaction …"

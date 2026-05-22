@@ -21,7 +21,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         match self.accounting.is_initialized() {
             Ok(true) => {}
             Ok(false) => {
-                return BasePrecompileError::revert(IB20::Uninitialized {})
+                return BasePrecompileError::Revert(Bytes::new())
                     .into_precompile_result(ctx.gas_used());
             }
             Err(e) => return e.into_precompile_result(ctx.gas_used()),
@@ -152,24 +152,24 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
             }
 
             // --- Admin ---
-            C::setSupplyCap(c) => {
+            C::updateSupplyCap(c) => {
                 let caller = ctx.caller();
-                Configurable::set_supply_cap(self, caller, c.newSupplyCap, privileged)?;
+                Configurable::update_supply_cap(self, caller, c.newSupplyCap, privileged)?;
                 Bytes::new()
             }
-            C::setName(c) => {
+            C::updateName(c) => {
                 let caller = ctx.caller();
-                Configurable::set_name(self, caller, c.newName, privileged)?;
+                Configurable::update_name(self, caller, c.newName, privileged)?;
                 Bytes::new()
             }
-            C::setSymbol(c) => {
+            C::updateSymbol(c) => {
                 let caller = ctx.caller();
-                Configurable::set_symbol(self, caller, c.newSymbol, privileged)?;
+                Configurable::update_symbol(self, caller, c.newSymbol, privileged)?;
                 Bytes::new()
             }
-            C::setContractURI(c) => {
+            C::updateContractURI(c) => {
                 let caller = ctx.caller();
-                Configurable::set_contract_uri(self, caller, c.newURI, privileged)?;
+                Configurable::update_contract_uri(self, caller, c.newURI, privileged)?;
                 Bytes::new()
             }
             C::grantRole(c) => {

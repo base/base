@@ -363,12 +363,12 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
         amount: U256::from(5),
         memo: MEMO_TRANSFER_FROM,
     });
-    let set_supply_cap = scenario.call_tx(IB20::setSupplyCapCall { newSupplyCap: new_cap });
-    let set_name =
-        scenario.call_tx(IB20::setNameCall { newName: "Action B20 Updated".to_string() });
-    let set_symbol = scenario.call_tx(IB20::setSymbolCall { newSymbol: "AB20U".to_string() });
-    let set_contract_uri =
-        scenario.call_tx(IB20::setContractURICall { newURI: "ipfs://action".to_string() });
+    let update_supply_cap = scenario.call_tx(IB20::updateSupplyCapCall { newSupplyCap: new_cap });
+    let update_name =
+        scenario.call_tx(IB20::updateNameCall { newName: "Action B20 Updated".to_string() });
+    let update_symbol = scenario.call_tx(IB20::updateSymbolCall { newSymbol: "AB20U".to_string() });
+    let update_contract_uri =
+        scenario.call_tx(IB20::updateContractURICall { newURI: "ipfs://action".to_string() });
     let mint =
         scenario.call_tx(IB20::mintCall { to: BerylTestEnv::alice(), amount: U256::from(20) });
     let mint_with_memo = scenario.call_tx(IB20::mintWithMemoCall {
@@ -389,10 +389,10 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
             transfer_with_memo,
             approve_bob,
             transfer_from_with_memo,
-            set_supply_cap,
-            set_name,
-            set_symbol,
-            set_contract_uri,
+            update_supply_cap,
+            update_name,
+            update_symbol,
+            update_contract_uri,
             mint,
             mint_with_memo,
             burn,
@@ -409,8 +409,16 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
         );
     }
 
-    scenario.assert_log(&block, 0, IB20::Memo { memo: MEMO_TRANSFER }.encode_log_data());
-    scenario.assert_log(&block, 2, IB20::Memo { memo: MEMO_TRANSFER_FROM }.encode_log_data());
+    scenario.assert_log(
+        &block,
+        0,
+        IB20::Memo { caller: BerylTestEnv::alice(), memo: MEMO_TRANSFER }.encode_log_data(),
+    );
+    scenario.assert_log(
+        &block,
+        2,
+        IB20::Memo { caller: BerylTestEnv::bob(), memo: MEMO_TRANSFER_FROM }.encode_log_data(),
+    );
     scenario.assert_log(
         &block,
         3,
@@ -437,8 +445,16 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
             .encode_log_data(),
     );
     scenario.assert_log(&block, 6, IB20::ContractURIUpdated {}.encode_log_data());
-    scenario.assert_log(&block, 8, IB20::Memo { memo: MEMO_MINT }.encode_log_data());
-    scenario.assert_log(&block, 10, IB20::Memo { memo: MEMO_BURN }.encode_log_data());
+    scenario.assert_log(
+        &block,
+        8,
+        IB20::Memo { caller: BerylTestEnv::alice(), memo: MEMO_MINT }.encode_log_data(),
+    );
+    scenario.assert_log(
+        &block,
+        10,
+        IB20::Memo { caller: BerylTestEnv::alice(), memo: MEMO_BURN }.encode_log_data(),
+    );
     scenario.assert_log(
         &block,
         11,
@@ -460,6 +476,20 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
 
     scenario.assert_total_supply(initial + 20 + 30 - 2 - 3);
     scenario.assert_allowance(BerylTestEnv::alice(), BerylTestEnv::bob(), 45);
+
+    let zero_mint =
+        scenario.call_tx(IB20::mintCall { to: BerylTestEnv::alice(), amount: U256::ZERO });
+    let zero_burn = scenario.call_tx(IB20::burnCall { amount: U256::ZERO });
+    let block = scenario.build_block_with_transactions(vec![zero_mint, zero_burn]).await;
+
+    for index in 0..2 {
+        assert!(
+            !scenario.env.user_tx_succeeded(&block, index),
+            "zero-amount B-20 mutation {index} must revert"
+        );
+    }
+    scenario.assert_total_supply(initial + 20 + 30 - 2 - 3);
+
     scenario
         .assert_staticcall_cases(vec![
             StaticcallCase::word(

@@ -343,8 +343,17 @@ impl PolicyRegistryStorage<'_> {
     }
 
     /// Returns `true` if `account` is authorized under `policy_id`.
+    ///
+    /// Malformed policy IDs (type byte > 1) return `Ok(false)` rather than reverting.
+    ///
+    /// If the policy slot has never been written, the function falls back to default
+    /// semantics for that type: an ALLOWLIST with no members authorizes nobody (`false`),
+    /// a BLOCKLIST with no members blocks nobody (`true`). `PolicyNotFound` is never returned.
     pub fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
-        Self::require_well_formed(policy_id)?;
+        // Malformed IDs (type byte > 1) are treated as unauthorized rather than reverting.
+        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
+            return Ok(false);
+        }
         // Fast-paths for built-in IDs: ALWAYS_ALLOW_ID = 0 is the EVM default for any
         // uninitialized policy field, so this must work before write_builtins() has run.
         if policy_id == Self::ALWAYS_ALLOW_ID {
@@ -353,26 +362,30 @@ impl PolicyRegistryStorage<'_> {
         if policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(false);
         }
-        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
-        if !packed.exists() {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
-        }
+        // Read membership directly without requiring the policy slot to be written first.
+        // If the slot is unwritten the mapping returns false, which naturally gives:
+        //   ALLOWLIST  => false  (no members => not authorized)
+        //   BLOCKLIST  => !false (no members blocked => authorized)
         let member = self.members.at(&policy_id).at(&account).read()?;
         match Self::policy_id_type(policy_id) {
             Self::ALLOWLIST_TYPE => Ok(member),
             Self::BLOCKLIST_TYPE => Ok(!member),
-            _ => Err(BasePrecompileError::enum_conversion_error()),
+            _ => unreachable!("type byte > 1 was rejected by the malformed-ID guard above"),
         }
     }
 
     /// Returns `true` if `policy_id` refers to an existing policy.
     ///
+    /// Malformed policy IDs (type byte > 1) return `Ok(false)` rather than reverting.
     /// Built-in IDs always return `true` via a fast-path, without reading storage.
     /// This is necessary because `ALWAYS_ALLOW_ID = 0` is the EVM default for any
     /// uninitialized policy field, so it must be recognized as valid before
     /// `write_builtins` has run.
     pub fn policy_exists(&self, policy_id: u64) -> Result<bool> {
-        Self::require_well_formed(policy_id)?;
+        // Malformed IDs (type byte > 1) are not well-formed, so they do not exist.
+        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
+            return Ok(false);
+        }
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(true);
         }
@@ -600,13 +613,43 @@ mod tests {
     }
 
     #[test]
-    fn unknown_policy_id_returns_policy_not_found() {
+    fn unknown_blocklist_policy_id_authorizes_account() {
+        // 0xdeadbeef has type byte 0 (BLOCKLIST); no members blocked => authorized.
         let mut s = storage();
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).is_authorized(0xdeadbeef, ALICE)
+        assert!(is_authorized(&mut s, 0xdeadbeef, ALICE));
+    }
+
+    #[test]
+    fn unknown_allowlist_policy_id_does_not_authorize_account() {
+        // A well-formed ALLOWLIST ID that was never written to storage.
+        // No members exist => not authorized.
+        let unknown_allowlist = PolicyRegistryStorage::make_id(PolicyType::ALLOWLIST as u8, 9999);
+        let mut s = storage();
+        assert!(!is_authorized(&mut s, unknown_allowlist, ALICE));
+    }
+
+    #[test]
+    fn malformed_policy_id_is_authorized_returns_false() {
+        // Type byte > 1 => malformed; is_authorized must return false, not revert.
+        let malformed: u64 = (2u64 << 56) | 42;
+        let mut s = storage();
+        let result = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).is_authorized(malformed, ALICE)
         })
-        .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
+        .unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn malformed_policy_id_policy_exists_returns_false() {
+        // Type byte > 1 => malformed; policy_exists must return false, not revert.
+        let malformed: u64 = (5u64 << 56) | 100;
+        let mut s = storage();
+        let result = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).policy_exists(malformed)
+        })
+        .unwrap();
+        assert!(!result);
     }
 
     // --- write_builtins initialization ---
