@@ -63,7 +63,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
         // Security-specific and overridden selectors are caught here first.
         if let Ok(call) = IB20Security::IB20SecurityCalls::abi_decode(calldata) {
-            return self.handle_security_call(ctx, call);
+            return self.handle_security_call(ctx, call, privileged);
         }
 
         // Fall through to inherited IB20 selectors.
@@ -266,6 +266,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         &mut self,
         ctx: StorageCtx<'_>,
         call: SC,
+        privileged: bool,
     ) -> base_precompile_storage::Result<Bytes> {
         let encoded: Bytes = match call {
             // --- Role / precision constants ---
@@ -296,23 +297,23 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
             // --- Share ratio mutations ---
             SC::updateShareRatio(c) => {
-                self.update_share_ratio(ctx.caller(), c.newSharesToTokensRatio)?;
+                self.update_share_ratio(ctx.caller(), c.newSharesToTokensRatio, privileged)?;
                 Bytes::new()
             }
 
             // --- Announcement ---
             SC::announce(c) => {
-                self.announce(ctx, c.internalCalls, c.id, c.description, c.uri)?;
+                self.announce(ctx, c.internalCalls, c.id, c.description, c.uri, privileged)?;
                 Bytes::new()
             }
 
             // --- Batched mint / burn ---
             SC::batchMint(c) => {
-                self.batch_mint(ctx.caller(), c.recipients, c.amounts)?;
+                self.batch_mint(ctx.caller(), c.recipients, c.amounts, privileged)?;
                 Bytes::new()
             }
             SC::batchBurn(c) => {
-                self.batch_burn(ctx.caller(), c.accounts, c.amounts)?;
+                self.batch_burn(ctx.caller(), c.accounts, c.amounts, privileged)?;
                 Bytes::new()
             }
 
@@ -329,13 +330,18 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             // --- Minimum redeemable (security version, in shares) ---
             SC::minimumRedeemable(_) => self.accounting.minimum_redeemable()?.abi_encode().into(),
             SC::updateMinimumRedeemable(c) => {
-                self.update_minimum_redeemable(ctx.caller(), c.newMinimumRedeemable)?;
+                self.update_minimum_redeemable(ctx.caller(), c.newMinimumRedeemable, privileged)?;
                 Bytes::new()
             }
 
             // --- Security identifier mutations ---
             SC::updateSecurityIdentifier(c) => {
-                self.update_security_identifier(ctx.caller(), c.identifierType, c.value)?;
+                self.update_security_identifier(
+                    ctx.caller(),
+                    c.identifierType,
+                    c.value,
+                    privileged,
+                )?;
                 Bytes::new()
             }
         };

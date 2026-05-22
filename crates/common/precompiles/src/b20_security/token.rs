@@ -43,8 +43,11 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         &mut self,
         caller: Address,
         new_shares_to_tokens_ratio: U256,
+        privileged: bool,
     ) -> Result<()> {
-        B20Guards::ensure_role::<Self>(self, caller, SECURITY_OPERATOR_ROLE)?;
+        if !privileged {
+            B20Guards::ensure_role::<Self>(self, caller, SECURITY_OPERATOR_ROLE)?;
+        }
         self.accounting_mut().set_shares_to_tokens_ratio(new_shares_to_tokens_ratio)?;
         self.accounting_mut().emit_event(
             IB20Security::ShareRatioUpdated { sharesToTokensRatio: new_shares_to_tokens_ratio }
@@ -58,6 +61,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         caller: Address,
         recipients: Vec<Address>,
         amounts: Vec<U256>,
+        privileged: bool,
     ) -> Result<()> {
         if recipients.is_empty() {
             return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
@@ -69,7 +73,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }));
         }
         for (recipient, amount) in recipients.into_iter().zip(amounts) {
-            self.mint(caller, recipient, amount, false)?;
+            self.mint(caller, recipient, amount, privileged)?;
         }
         Ok(())
     }
@@ -83,9 +87,12 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         caller: Address,
         accounts: Vec<Address>,
         amounts: Vec<U256>,
+        privileged: bool,
     ) -> Result<()> {
-        B20Guards::ensure_role::<Self>(self, caller, BURN_FROM_ROLE)?;
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
+        if !privileged {
+            B20Guards::ensure_role::<Self>(self, caller, BURN_FROM_ROLE)?;
+            B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
+        }
         if accounts.is_empty() {
             return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
         }
@@ -128,13 +135,16 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         id: String,
         description: String,
         uri: String,
+        privileged: bool,
     ) -> Result<()> {
         if self.in_announcement {
             return Err(BasePrecompileError::revert(IB20Security::AnnouncementInProgress {}));
         }
 
         let caller = ctx.caller();
-        B20Guards::ensure_role::<Self>(self, caller, SECURITY_OPERATOR_ROLE)?;
+        if !privileged {
+            B20Guards::ensure_role::<Self>(self, caller, SECURITY_OPERATOR_ROLE)?;
+        }
 
         if self.accounting().is_announcement_id_used(id.as_str())? {
             return Err(BasePrecompileError::revert(IB20Security::AnnouncementIdAlreadyUsed {
@@ -239,8 +249,11 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         &mut self,
         caller: Address,
         new_minimum_redeemable: U256,
+        privileged: bool,
     ) -> Result<()> {
-        B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::DefaultAdmin)?;
+        if !privileged {
+            B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::DefaultAdmin)?;
+        }
         self.accounting_mut().set_minimum_redeemable(new_minimum_redeemable)?;
         self.accounting_mut().emit_event(
             IB20Security::MinimumRedeemableUpdated {
@@ -257,8 +270,11 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         caller: Address,
         identifier_type: String,
         value: String,
+        privileged: bool,
     ) -> Result<()> {
-        B20Guards::ensure_role::<Self>(self, caller, SECURITY_OPERATOR_ROLE)?;
+        if !privileged {
+            B20Guards::ensure_role::<Self>(self, caller, SECURITY_OPERATOR_ROLE)?;
+        }
         if identifier_type.is_empty() {
             return Err(BasePrecompileError::revert(IB20Security::InvalidIdentifierType {}));
         }
@@ -349,10 +365,10 @@ impl<S: SecurityAccounting, P: Policy> RoleManaged for B20SecurityToken<S, P> {}
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::String;
     use alloy_primitives::{Address, B256, U256};
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{BasePrecompileError, StorageCtx, setup_storage};
-    use alloc::string::String;
 
     use super::*;
     use crate::{
@@ -388,7 +404,7 @@ mod tests {
         let mut token = make_token();
         let new_ratio = WAD * U256::from(3u64);
 
-        token.update_share_ratio(ALICE, new_ratio).unwrap();
+        token.update_share_ratio(ALICE, new_ratio, false).unwrap();
 
         assert_eq!(token.accounting().shares_to_tokens_ratio().unwrap(), new_ratio);
         assert_eq!(token.accounting().events.len(), 1);
@@ -404,7 +420,7 @@ mod tests {
         let new_ratio = WAD * U256::from(2u64);
 
         assert_eq!(
-            token.update_share_ratio(BOB, new_ratio).unwrap_err(),
+            token.update_share_ratio(BOB, new_ratio, false).unwrap_err(),
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: BOB,
                 neededRole: SECURITY_OPERATOR_ROLE,
@@ -422,6 +438,7 @@ mod tests {
                 ALICE,
                 alloc::vec![ALICE, BOB],
                 alloc::vec![U256::from(100u64), U256::from(200u64)],
+                false,
             )
             .unwrap();
 
@@ -434,14 +451,16 @@ mod tests {
     #[test]
     fn batch_mint_rejects_empty() {
         let mut token = make_token();
-        assert!(token.batch_mint(ALICE, alloc::vec![], alloc::vec![]).is_err());
+        assert!(token.batch_mint(ALICE, alloc::vec![], alloc::vec![], false).is_err());
     }
 
     #[test]
     fn batch_mint_rejects_length_mismatch() {
         let mut token = make_token();
         assert!(
-            token.batch_mint(ALICE, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err()
+            token
+                .batch_mint(ALICE, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE], false)
+                .is_err()
         );
     }
 
@@ -450,7 +469,9 @@ mod tests {
         let mut token = make_token();
 
         assert_eq!(
-            token.batch_mint(ALICE, alloc::vec![ALICE], alloc::vec![U256::ZERO]).unwrap_err(),
+            token
+                .batch_mint(ALICE, alloc::vec![ALICE], alloc::vec![U256::ZERO], false)
+                .unwrap_err(),
             BasePrecompileError::revert(IB20::InvalidAmount {})
         );
     }
@@ -462,7 +483,7 @@ mod tests {
 
         assert_eq!(
             token
-                .batch_mint(ALICE, alloc::vec![BOB], alloc::vec![U256::from(1u64)])
+                .batch_mint(ALICE, alloc::vec![BOB], alloc::vec![U256::from(1u64)], false)
                 .unwrap_err(),
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: ALICE,
@@ -477,7 +498,9 @@ mod tests {
         token.accounting_mut().balances.insert(ALICE, U256::from(500u64));
         token.accounting_mut().total_supply = U256::from(500u64);
 
-        token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::from(200u64)]).unwrap();
+        token
+            .batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::from(200u64)], false)
+            .unwrap();
 
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(300u64));
         assert_eq!(token.accounting().total_supply().unwrap(), U256::from(300u64));
@@ -489,7 +512,9 @@ mod tests {
         let mut token = make_token();
         token.accounting_mut().balances.insert(ALICE, U256::from(10u64));
         assert!(
-            token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::from(100u64)]).is_err()
+            token
+                .batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::from(100u64)], false)
+                .is_err()
         );
     }
 
@@ -501,7 +526,9 @@ mod tests {
         token.accounting_mut().total_supply = U256::from(100u64);
 
         assert_eq!(
-            token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::from(1u64)]).unwrap_err(),
+            token
+                .batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::from(1u64)], false)
+                .unwrap_err(),
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: ALICE,
                 neededRole: BURN_FROM_ROLE,
@@ -512,14 +539,16 @@ mod tests {
     #[test]
     fn batch_burn_rejects_empty() {
         let mut token = make_token();
-        assert!(token.batch_burn(ALICE, alloc::vec![], alloc::vec![]).is_err());
+        assert!(token.batch_burn(ALICE, alloc::vec![], alloc::vec![], false).is_err());
     }
 
     #[test]
     fn batch_burn_rejects_length_mismatch() {
         let mut token = make_token();
         assert!(
-            token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err()
+            token
+                .batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE], false)
+                .is_err()
         );
     }
 
@@ -530,7 +559,9 @@ mod tests {
         token.accounting_mut().total_supply = U256::from(100u64);
 
         assert_eq!(
-            token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ZERO]).unwrap_err(),
+            token
+                .batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ZERO], false)
+                .unwrap_err(),
             BasePrecompileError::revert(IB20::InvalidAmount {})
         );
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
@@ -548,6 +579,7 @@ mod tests {
                 ALICE,
                 alloc::vec![ALICE, BOB],
                 alloc::vec![U256::from(100u64), U256::from(200u64)],
+                false,
             )
             .unwrap();
         assert_eq!(token.accounting().events.len(), 2);
@@ -570,7 +602,9 @@ mod tests {
 
         with_ctx(ALICE, |ctx| {
             assert!(!token.accounting().is_announcement_id_used(&id).unwrap());
-            token.announce(ctx, vec![], id.clone(), description.clone(), uri.clone()).unwrap();
+            token
+                .announce(ctx, vec![], id.clone(), description.clone(), uri.clone(), false)
+                .unwrap();
         });
 
         assert!(token.accounting().is_announcement_id_used(&id).unwrap());
@@ -594,7 +628,14 @@ mod tests {
 
         assert_eq!(
             with_ctx(ALICE, |ctx| {
-                token.announce(ctx, vec![], id.clone(), "Q1 split".into(), "https://x".into())
+                token.announce(
+                    ctx,
+                    vec![],
+                    id.clone(),
+                    "Q1 split".into(),
+                    "https://x".into(),
+                    false,
+                )
             })
             .unwrap_err(),
             BasePrecompileError::revert(IB20Security::AnnouncementIdAlreadyUsed { id })
@@ -614,6 +655,7 @@ mod tests {
                     "2026-Q1-split".into(),
                     "Q1 split".into(),
                     "https://x".into(),
+                    false,
                 )
             })
             .unwrap_err(),
@@ -877,5 +919,154 @@ mod tests {
         let floor = U256::from(42u64);
         token.accounting_mut().set_minimum_redeemable(floor).unwrap();
         assert_eq!(token.accounting().minimum_redeemable().unwrap(), floor);
+    }
+
+    // --- privileged bypass tests ---
+
+    #[test]
+    fn privileged_update_share_ratio_bypasses_security_operator_role() {
+        let mut token = make_token();
+        token.accounting_mut().roles.remove(&(SECURITY_OPERATOR_ROLE, ALICE));
+        let new_ratio = WAD * U256::from(2u64);
+
+        token.update_share_ratio(ALICE, new_ratio, true).unwrap();
+
+        assert_eq!(token.accounting().shares_to_tokens_ratio().unwrap(), new_ratio);
+    }
+
+    #[test]
+    fn non_privileged_update_share_ratio_rejects_missing_role() {
+        let mut token = make_token();
+        token.accounting_mut().roles.remove(&(SECURITY_OPERATOR_ROLE, ALICE));
+
+        assert_eq!(
+            token.update_share_ratio(ALICE, WAD, false).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ALICE,
+                neededRole: SECURITY_OPERATOR_ROLE,
+            })
+        );
+    }
+
+    #[test]
+    fn privileged_batch_mint_bypasses_mint_role() {
+        let mut token = make_token();
+        token.accounting_mut().roles.remove(&(B20TokenRole::Mint.id(), ALICE));
+
+        token.batch_mint(ALICE, alloc::vec![BOB], alloc::vec![U256::from(10u64)], true).unwrap();
+
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(10u64));
+    }
+
+    #[test]
+    fn privileged_batch_burn_bypasses_burn_from_role() {
+        let mut token = make_token();
+        token.accounting_mut().roles.remove(&(BURN_FROM_ROLE, ALICE));
+        token.accounting_mut().balances.insert(BOB, U256::from(50u64));
+        token.accounting_mut().total_supply = U256::from(50u64);
+
+        token.batch_burn(ALICE, alloc::vec![BOB], alloc::vec![U256::from(10u64)], true).unwrap();
+
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
+    }
+
+    #[test]
+    fn privileged_batch_burn_bypasses_burn_feature_paused() {
+        let mut token = make_token();
+        token.accounting_mut().paused =
+            crate::B20PausableFeature::mask(IB20::PausableFeature::BURN);
+        token.accounting_mut().balances.insert(BOB, U256::from(50u64));
+        token.accounting_mut().total_supply = U256::from(50u64);
+
+        token.batch_burn(ALICE, alloc::vec![BOB], alloc::vec![U256::from(10u64)], true).unwrap();
+
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
+    }
+
+    #[test]
+    fn non_privileged_batch_burn_rejects_missing_burn_from_role() {
+        let mut token = make_token();
+        token.accounting_mut().roles.remove(&(BURN_FROM_ROLE, ALICE));
+        token.accounting_mut().balances.insert(BOB, U256::from(50u64));
+        token.accounting_mut().total_supply = U256::from(50u64);
+
+        assert_eq!(
+            token
+                .batch_burn(ALICE, alloc::vec![BOB], alloc::vec![U256::from(1u64)], false)
+                .unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ALICE,
+                neededRole: BURN_FROM_ROLE,
+            })
+        );
+    }
+
+    #[test]
+    fn privileged_announce_bypasses_security_operator_role() {
+        let mut token = make_token();
+        token.accounting_mut().roles.remove(&(SECURITY_OPERATOR_ROLE, ALICE));
+        let id = "2026-Q2-split".to_string();
+
+        with_ctx(ALICE, |ctx| {
+            token
+                .announce(ctx, vec![], id.clone(), "Q2 split".into(), "https://x".into(), true)
+                .unwrap();
+        });
+
+        assert!(token.accounting().is_announcement_id_used(&id).unwrap());
+    }
+
+    #[test]
+    fn privileged_update_minimum_redeemable_bypasses_admin_role() {
+        let mut token = make_token();
+        let floor = U256::from(99u64);
+
+        token.update_minimum_redeemable(BOB, floor, true).unwrap();
+
+        assert_eq!(token.accounting().minimum_redeemable().unwrap(), floor);
+    }
+
+    #[test]
+    fn non_privileged_update_minimum_redeemable_rejects_missing_admin_role() {
+        let mut token = make_token();
+
+        assert_eq!(
+            token.update_minimum_redeemable(BOB, U256::from(1u64), false).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: BOB,
+                neededRole: B20TokenRole::DefaultAdmin.id(),
+            })
+        );
+    }
+
+    #[test]
+    fn privileged_update_security_identifier_bypasses_security_operator_role() {
+        let mut token = make_token();
+        token.accounting_mut().roles.remove(&(SECURITY_OPERATOR_ROLE, ALICE));
+
+        token
+            .update_security_identifier(ALICE, "ISIN".into(), "US0000000001".into(), true)
+            .unwrap();
+
+        assert_eq!(
+            token.accounting().security_identifier("ISIN").unwrap(),
+            "US0000000001".to_string()
+        );
+    }
+
+    #[test]
+    fn non_privileged_update_security_identifier_rejects_missing_role() {
+        let mut token = make_token();
+        token.accounting_mut().roles.remove(&(SECURITY_OPERATOR_ROLE, ALICE));
+
+        assert_eq!(
+            token
+                .update_security_identifier(ALICE, "ISIN".into(), "US0000000001".into(), false)
+                .unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ALICE,
+                neededRole: SECURITY_OPERATOR_ROLE,
+            })
+        );
     }
 }
