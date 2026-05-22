@@ -398,6 +398,11 @@ impl reth_codecs::alloy::transaction::Envelope for BaseTxEnvelope {
             Self::Eip2930(tx) => tx.signature(),
             Self::Eip1559(tx) => tx.signature(),
             Self::Eip7702(tx) => tx.signature(),
+            // The `Envelope` trait forces a `&Signature` return, so neither variant can
+            // signal absence the way `BaseTxEnvelope::signature` (which returns `Option`)
+            // does. Both Deposit and EIP-8130 AA transactions carry their own auth model
+            // and have no meaningful ECDSA signature: callers MUST NOT feed this value
+            // into ECDSA recovery — it is an all-zero placeholder.
             Self::Deposit(_) | Self::Aa8130(_) => &DEPOSIT_SIGNATURE,
         }
     }
