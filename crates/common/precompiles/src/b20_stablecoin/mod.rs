@@ -3,6 +3,9 @@
 mod abi;
 pub use abi::IB20Stablecoin;
 
+mod currency;
+pub use currency::IsoCurrency;
+
 mod accounting;
 pub use accounting::StablecoinAccounting;
 

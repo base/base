@@ -5,11 +5,7 @@ use alloc::string::String;
 use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_macros::{Storable, contract};
 use base_precompile_storage::{BasePrecompileError, ContractStorage, Handler, Result, StorageCtx};
-#[cfg(feature = "std")]
-use iso_currency::Currency;
-
-#[cfg(feature = "std")]
-use super::IB20Stablecoin;
+use super::{IB20Stablecoin, IsoCurrency};
 use super::accounting::StablecoinAccounting;
 use crate::{B20CoreStorage, B20PolicyType, B20TokenRole, IB20, TokenAccounting, TokenVariant};
 
@@ -54,8 +50,7 @@ impl<'a> B20StablecoinStorage<'a> {
     /// Validates that `currency` is a recognised ISO 4217 code before writing
     /// anything; reverts `IB20Stablecoin::InvalidCurrency` otherwise.
     pub fn initialize(&mut self, init: B20StablecoinInit) -> Result<()> {
-        #[cfg(feature = "std")]
-        if Currency::from_code(&init.currency).is_none() {
+        if IsoCurrency::from_code(&init.currency).is_none() {
             return Err(BasePrecompileError::revert(IB20Stablecoin::InvalidCurrency {}));
         }
         self.b20.name.write(init.name)?;

@@ -45,7 +45,7 @@ pub use b20_security::{
 mod b20_stablecoin;
 pub use b20_stablecoin::{
     B20StablecoinExtensionStorage, B20StablecoinInit, B20StablecoinPrecompile,
-    B20StablecoinStorage, B20StablecoinToken, IB20Stablecoin, StablecoinAccounting,
+    B20StablecoinStorage, B20StablecoinToken, IB20Stablecoin, IsoCurrency, StablecoinAccounting,
 };
 
 mod factory;
