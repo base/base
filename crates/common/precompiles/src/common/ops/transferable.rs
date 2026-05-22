@@ -40,18 +40,13 @@ pub trait Transferable: Token {
                 needed: amount,
             }));
         }
-        let to_balance = self.accounting().balance_of(to)?;
+        let new_from_balance =
+            from_balance.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.accounting_mut().set_balance(from, new_from_balance)?;
         let to_balance = self.accounting().balance_of(to)?;
         let new_to_balance =
             to_balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        let new_from_balance = from_balance.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        if from == to {
-            // Self-transfer: balance is unchanged, but we still validated
-            // no overflow/underflow above. Just emit the event.
-        } else {
-            self.accounting_mut().set_balance(from, new_from_balance)?;
-            self.accounting_mut().set_balance(to, new_to_balance)?;
-        }
+        self.accounting_mut().set_balance(to, new_to_balance)?;
         self.accounting_mut().emit_event(IB20::Transfer { from, to, amount }.encode_log_data())
     }
 
@@ -172,6 +167,48 @@ mod tests {
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
         assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
         assert_eq!(token.accounting().events.len(), 1);
+    }
+
+    #[test]
+    fn transfer_to_self_preserves_balance_and_emits_event() {
+        let mut token = token_with_balance(U256::from(100u64));
+
+        token.transfer(ALICE, ALICE, U256::from(30u64), false).unwrap();
+
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
+        assert_eq!(
+            token.accounting().events[0],
+            IB20::Transfer {
+                from: ALICE,
+                to: ALICE,
+                amount: U256::from(30u64),
+            }
+            .encode_log_data()
+        );
+    }
+
+    /// Regression: self-transfers must not mint tokens.
+    ///
+    /// A naive two-write transfer computes `new_from = balance - amount` and
+    /// `new_to = balance + amount` from the same pre-debit read, then writes both
+    /// to the same slot when `from == to`. The second write wins at `balance + amount`,
+    /// inflating supply by `amount` on every self-transfer.
+    #[test]
+    fn transfer_to_self_repeated_calls_do_not_inflate_balance() {
+        let initial = U256::from(100u64);
+        let amount = U256::from(50u64);
+        let mut token = token_with_balance(initial);
+
+        for _ in 0..5 {
+            token.transfer(ALICE, ALICE, amount, false).unwrap();
+        }
+
+        assert_eq!(
+            token.accounting().balance_of(ALICE).unwrap(),
+            initial,
+            "each self-transfer must leave balance unchanged; a buggy dual absolute write would mint 50 tokens per call"
+        );
+        assert_eq!(token.accounting().events.len(), 5);
     }
 
     #[test]
@@ -449,10 +486,7 @@ mod tests {
         accounting.balances.insert(BOB, U256::MAX);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
-        token.transfer(ALICE, BOB, U256::ONE, true).unwrap_err();
-
-        // Sender balance must be unchanged on overflow revert.
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::ONE);
+        assert!(token.transfer(ALICE, BOB, U256::ONE, true).is_err());
     }
 
     // ---- Policy guards (external policy registry path) ----
