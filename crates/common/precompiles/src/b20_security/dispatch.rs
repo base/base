@@ -92,6 +92,16 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
+        self.inner_with_privilege(ctx, calldata, false)
+    }
+
+    /// Decodes calldata and executes it with optional factory-init privilege.
+    pub fn inner_with_privilege(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        privileged: bool,
+    ) -> base_precompile_storage::Result<Bytes> {
         ActivationRegistryStorage::new(ctx)
             .ensure_activated(ActivationFeature::B20Security.id())?;
 
@@ -179,16 +189,18 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             // --- Mint ---
             C::mint(c) => {
                 let caller = ctx.caller();
-                self.mint(caller, c.to, c.amount, false)?;
+                self.mint(caller, c.to, c.amount, privileged)?;
                 Bytes::new()
             }
             C::mintWithMemo(c) => {
                 let caller = ctx.caller();
-                self.mint_with_memo(caller, c.to, c.amount, c.memo, false)?;
+                self.mint_with_memo(caller, c.to, c.amount, c.memo, privileged)?;
                 Bytes::new()
             }
 
             // --- Burn ---
+            // Self-burn operations are never factory-privileged: during init the caller is the
+            // factory, not a token holder.
             C::burn(c) => {
                 let caller = ctx.caller();
                 self.burn(caller, caller, c.amount, false)?;
@@ -201,55 +213,57 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }
             C::burnBlocked(c) => {
                 let caller = ctx.caller();
-                self.burn_blocked(caller, c.from, c.amount, false)?;
+                self.burn_blocked(caller, c.from, c.amount, privileged)?;
                 Bytes::new()
             }
 
             // --- Pause ---
             C::pause(c) => {
                 let caller = ctx.caller();
-                self.pause(caller, c.features, false)?;
+                self.pause(caller, c.features, privileged)?;
                 Bytes::new()
             }
             C::unpause(c) => {
                 let caller = ctx.caller();
-                self.unpause(caller, c.features, false)?;
+                self.unpause(caller, c.features, privileged)?;
                 Bytes::new()
             }
 
             // --- Admin ---
             C::setSupplyCap(c) => {
                 let caller = ctx.caller();
-                Configurable::set_supply_cap(self, caller, c.newSupplyCap, false)?;
+                Configurable::set_supply_cap(self, caller, c.newSupplyCap, privileged)?;
                 Bytes::new()
             }
             C::setName(c) => {
                 let caller = ctx.caller();
-                Configurable::set_name(self, caller, c.newName, false)?;
+                Configurable::set_name(self, caller, c.newName, privileged)?;
                 Bytes::new()
             }
             C::setSymbol(c) => {
                 let caller = ctx.caller();
-                Configurable::set_symbol(self, caller, c.newSymbol, false)?;
+                Configurable::set_symbol(self, caller, c.newSymbol, privileged)?;
                 Bytes::new()
             }
             C::setContractURI(c) => {
                 let caller = ctx.caller();
-                Configurable::set_contract_uri(self, caller, c.newURI, false)?;
+                Configurable::set_contract_uri(self, caller, c.newURI, privileged)?;
                 Bytes::new()
             }
 
             // --- Role mutations ---
             C::grantRole(c) => {
                 let caller = ctx.caller();
-                self.grant_role(caller, c.role, c.account, false)?;
+                self.grant_role(caller, c.role, c.account, privileged)?;
                 Bytes::new()
             }
             C::revokeRole(c) => {
                 let caller = ctx.caller();
-                self.revoke_role(caller, c.role, c.account, false)?;
+                self.revoke_role(caller, c.role, c.account, privileged)?;
                 Bytes::new()
             }
+            // Renounce operations are never factory-privileged: they are only meaningful for the
+            // role holder making the call after token creation.
             C::renounceRole(c) => {
                 let caller = ctx.caller();
                 self.renounce_role(caller, c.role, c.callerConfirmation)?;
@@ -262,14 +276,14 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }
             C::setRoleAdmin(c) => {
                 let caller = ctx.caller();
-                self.set_role_admin(caller, c.role, c.newAdminRole, false)?;
+                self.set_role_admin(caller, c.role, c.newAdminRole, privileged)?;
                 Bytes::new()
             }
 
             // --- Policy mutations ---
             C::updatePolicy(c) => {
                 let caller = ctx.caller();
-                self.update_policy(caller, c.policyType, c.newPolicyId, false)?;
+                self.update_policy(caller, c.policyType, c.newPolicyId, privileged)?;
                 Bytes::new()
             }
 

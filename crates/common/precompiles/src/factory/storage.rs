@@ -195,12 +195,8 @@ impl<'a> TokenFactoryStorage<'a> {
                 B20SecurityStorage::from_address(token_address, self.storage),
                 PolicyHandle::new(self.storage),
             )
-            .inner(self.storage, &calldata)
-            .map_err(|_| {
-                BasePrecompileError::revert(ITokenFactory::InitCallFailed {
-                    index: U256::from(index),
-                })
-            })?;
+            .inner_with_privilege(self.storage, &calldata, true)
+            .map_err(|err| Self::map_init_call_error(index, err))?;
         }
         Ok(())
     }
