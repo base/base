@@ -196,8 +196,8 @@ impl From<BaseTypedTransaction> for BaseTransactionRequest {
             BaseTypedTransaction::Eip1559(tx) => Self(tx.into()),
             BaseTypedTransaction::Eip7702(tx) => Self(tx.into()),
             BaseTypedTransaction::Deposit(tx) => tx.into(),
-            BaseTypedTransaction::Aa8130(_) => unimplemented!(
-                "BaseTypedTransaction::Aa8130 cannot be projected onto BaseTransactionRequest; AA transactions have no single sender/recipient/value"
+            BaseTypedTransaction::Eip8130(_) => unimplemented!(
+                "BaseTypedTransaction::Eip8130 cannot be projected onto BaseTransactionRequest; AA transactions have no single sender/recipient/value"
             ),
         }
     }
@@ -211,8 +211,8 @@ impl From<BaseTxEnvelope> for BaseTransactionRequest {
             BaseTxEnvelope::Eip1559(tx) => tx.into(),
             BaseTxEnvelope::Eip7702(tx) => tx.into(),
             BaseTxEnvelope::Deposit(tx) => tx.into(),
-            BaseTxEnvelope::Aa8130(_) => unimplemented!(
-                "BaseTxEnvelope::Aa8130 cannot be projected onto BaseTransactionRequest; AA transactions have no single sender/recipient/value"
+            BaseTxEnvelope::Eip8130(_) => unimplemented!(
+                "BaseTxEnvelope::Eip8130 cannot be projected onto BaseTransactionRequest; AA transactions have no single sender/recipient/value"
             ),
         }
     }

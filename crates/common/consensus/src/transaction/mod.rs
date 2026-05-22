@@ -3,10 +3,10 @@
 mod deposit;
 pub use deposit::{DepositTransaction, TxDeposit};
 
-mod aa8130;
-pub use aa8130::{
-    Aa8130Constants, AaSigned, AccountChange, Call, ConfigChange, CreateEntry, Delegation,
-    InitialOwner, OwnerChange, OwnerChangeType, Scope, TxAa8130,
+mod eip8130;
+pub use eip8130::{
+    AccountChange, Call, ConfigChange, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed,
+    InitialOwner, OwnerChange, OwnerChangeType, Scope, TxEip8130,
 };
 
 mod tx_type;

@@ -1,6 +1,6 @@
 //! [EIP-8130] `account_changes` entry types.
 //!
-//! An [`AccountChange`] is a tagged-union entry inside `TxAa8130::account_changes`.
+//! An [`AccountChange`] is a tagged-union entry inside `TxEip8130::account_changes`.
 //! On the wire, each entry is encoded as `type_byte || rlp([entry_fields...])`.
 //!
 //! [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
@@ -12,7 +12,7 @@ use alloy_rlp::{
     Buf, BufMut, Decodable, Encodable, Header, RlpDecodable, RlpEncodable, length_of_length,
 };
 
-use crate::transaction::aa8130::constants::Aa8130Constants;
+use crate::transaction::eip8130::constants::Eip8130Constants;
 
 /// Bitmask describing the contexts in which an owner is valid.
 ///
@@ -44,7 +44,7 @@ impl Decodable for Scope {
 
 impl Scope {
     /// Unrestricted scope (owner valid in all contexts).
-    pub const UNRESTRICTED: Self = Self(Aa8130Constants::SCOPE_UNRESTRICTED);
+    pub const UNRESTRICTED: Self = Self(Eip8130Constants::SCOPE_UNRESTRICTED);
 
     /// Returns the raw bitmask.
     pub const fn bits(&self) -> u8 {
@@ -53,22 +53,22 @@ impl Scope {
 
     /// Returns true if the scope grants the `SCOPE_SIGNATURE` context.
     pub const fn has_signature(&self) -> bool {
-        self.0 & Aa8130Constants::SCOPE_SIGNATURE != 0
+        self.0 & Eip8130Constants::SCOPE_SIGNATURE != 0
     }
 
     /// Returns true if the scope grants the `SCOPE_SENDER` context.
     pub const fn has_sender(&self) -> bool {
-        self.0 & Aa8130Constants::SCOPE_SENDER != 0
+        self.0 & Eip8130Constants::SCOPE_SENDER != 0
     }
 
     /// Returns true if the scope grants the `SCOPE_PAYER` context.
     pub const fn has_payer(&self) -> bool {
-        self.0 & Aa8130Constants::SCOPE_PAYER != 0
+        self.0 & Eip8130Constants::SCOPE_PAYER != 0
     }
 
     /// Returns true if the scope grants the `SCOPE_CONFIG` context.
     pub const fn has_config(&self) -> bool {
-        self.0 & Aa8130Constants::SCOPE_CONFIG != 0
+        self.0 & Eip8130Constants::SCOPE_CONFIG != 0
     }
 }
 
@@ -101,16 +101,16 @@ impl OwnerChangeType {
     /// Returns the on-wire op byte.
     pub const fn op_byte(&self) -> u8 {
         match self {
-            Self::Authorize => Aa8130Constants::OWNER_CHANGE_AUTHORIZE,
-            Self::Revoke => Aa8130Constants::OWNER_CHANGE_REVOKE,
+            Self::Authorize => Eip8130Constants::OWNER_CHANGE_AUTHORIZE,
+            Self::Revoke => Eip8130Constants::OWNER_CHANGE_REVOKE,
         }
     }
 
     /// Parses a wire op byte.
     pub const fn from_op_byte(byte: u8) -> Option<Self> {
         match byte {
-            Aa8130Constants::OWNER_CHANGE_AUTHORIZE => Some(Self::Authorize),
-            Aa8130Constants::OWNER_CHANGE_REVOKE => Some(Self::Revoke),
+            Eip8130Constants::OWNER_CHANGE_AUTHORIZE => Some(Self::Authorize),
+            Eip8130Constants::OWNER_CHANGE_REVOKE => Some(Self::Revoke),
             _ => None,
         }
     }
@@ -222,7 +222,7 @@ pub struct Delegation {
     pub target: Address,
 }
 
-/// A tagged-union entry inside `TxAa8130::account_changes`.
+/// A tagged-union entry inside `TxEip8130::account_changes`.
 ///
 /// On the wire each entry is `type_byte || rlp([body_fields...])`:
 /// - `0x00` -> [`AccountChange::Create`]
@@ -247,9 +247,9 @@ impl AccountChange {
     /// Returns the on-wire type byte for this entry.
     pub const fn type_byte(&self) -> u8 {
         match self {
-            Self::Create(_) => Aa8130Constants::ACCOUNT_CHANGE_TYPE_CREATE,
-            Self::ConfigChange(_) => Aa8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG,
-            Self::Delegation(_) => Aa8130Constants::ACCOUNT_CHANGE_TYPE_DELEGATION,
+            Self::Create(_) => Eip8130Constants::ACCOUNT_CHANGE_TYPE_CREATE,
+            Self::ConfigChange(_) => Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG,
+            Self::Delegation(_) => Eip8130Constants::ACCOUNT_CHANGE_TYPE_DELEGATION,
         }
     }
 
@@ -285,13 +285,13 @@ impl Decodable for AccountChange {
         let type_byte = buf[0];
         buf.advance(1);
         match type_byte {
-            Aa8130Constants::ACCOUNT_CHANGE_TYPE_CREATE => {
+            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CREATE => {
                 CreateEntry::decode(buf).map(Self::Create)
             }
-            Aa8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG => {
+            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG => {
                 ConfigChange::decode(buf).map(Self::ConfigChange)
             }
-            Aa8130Constants::ACCOUNT_CHANGE_TYPE_DELEGATION => {
+            Eip8130Constants::ACCOUNT_CHANGE_TYPE_DELEGATION => {
                 Delegation::decode(buf).map(Self::Delegation)
             }
             _ => Err(alloy_rlp::Error::Custom("invalid AccountChange type byte")),
@@ -308,10 +308,10 @@ mod tests {
     #[test]
     fn scope_bit_helpers() {
         let s = Scope(
-            Aa8130Constants::SCOPE_SIGNATURE
-                | Aa8130Constants::SCOPE_SENDER
-                | Aa8130Constants::SCOPE_PAYER
-                | Aa8130Constants::SCOPE_CONFIG,
+            Eip8130Constants::SCOPE_SIGNATURE
+                | Eip8130Constants::SCOPE_SENDER
+                | Eip8130Constants::SCOPE_PAYER
+                | Eip8130Constants::SCOPE_CONFIG,
         );
         assert!(s.has_signature());
         assert!(s.has_sender());
@@ -335,7 +335,7 @@ mod tests {
             change_type: OwnerChangeType::Authorize,
             verifier: address!("0x00000000000000000000000000000000000000aa"),
             owner_id: b256!("0x1111111111111111111111111111111111111111111111111111111111111111"),
-            scope: Scope(Aa8130Constants::SCOPE_SIGNATURE | Aa8130Constants::SCOPE_SENDER),
+            scope: Scope(Eip8130Constants::SCOPE_SIGNATURE | Eip8130Constants::SCOPE_SENDER),
         };
         let mut buf = Vec::new();
         oc.encode(&mut buf);
@@ -354,12 +354,12 @@ mod tests {
                 owner_id: b256!(
                     "0x3333333333333333333333333333333333333333333333333333333333333333"
                 ),
-                scope: Scope(Aa8130Constants::SCOPE_SIGNATURE),
+                scope: Scope(Eip8130Constants::SCOPE_SIGNATURE),
             }],
         });
         let mut buf = Vec::new();
         ac.encode(&mut buf);
-        assert_eq!(buf[0], Aa8130Constants::ACCOUNT_CHANGE_TYPE_CREATE);
+        assert_eq!(buf[0], Eip8130Constants::ACCOUNT_CHANGE_TYPE_CREATE);
         assert_eq!(buf.len(), ac.length());
         let decoded = AccountChange::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(ac, decoded);
@@ -382,7 +382,7 @@ mod tests {
         });
         let mut buf = Vec::new();
         ac.encode(&mut buf);
-        assert_eq!(buf[0], Aa8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG);
+        assert_eq!(buf[0], Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG);
         let decoded = AccountChange::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(ac, decoded);
     }
@@ -394,7 +394,7 @@ mod tests {
         });
         let mut buf = Vec::new();
         ac.encode(&mut buf);
-        assert_eq!(buf[0], Aa8130Constants::ACCOUNT_CHANGE_TYPE_DELEGATION);
+        assert_eq!(buf[0], Eip8130Constants::ACCOUNT_CHANGE_TYPE_DELEGATION);
         let decoded = AccountChange::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(ac, decoded);
     }

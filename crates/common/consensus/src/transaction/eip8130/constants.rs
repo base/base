@@ -17,29 +17,29 @@ use alloy_primitives::U256;
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug)]
-pub struct Aa8130Constants;
+pub struct Eip8130Constants;
 
-impl Aa8130Constants {
-    /// [EIP-2718] transaction type byte for AA transactions (`AA_TX_TYPE`).
+impl Eip8130Constants {
+    /// [EIP-2718] transaction type byte for AA transactions (`EIP8130_TX_TYPE`).
     ///
     /// Spec value: TBD. We use `0x7D`, picked to live in the high "OP-style"
     /// type-byte range adjacent to (but distinct from) the deposit type `0x7E`,
     /// and to be easy to renumber once the EIP finalizes.
     ///
     /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
-    pub const AA_TX_TYPE: u8 = 0x7D;
+    pub const EIP8130_TX_TYPE: u8 = 0x7D;
 
-    /// Magic prefix byte for payer signature domain separation (`AA_PAYER_TYPE`).
+    /// Magic prefix byte for payer signature domain separation (`EIP8130_PAYER_TYPE`).
     ///
     /// Used in the payer signature preimage:
-    /// `keccak256(AA_PAYER_TYPE || rlp([...fields through calls...]))`.
+    /// `keccak256(EIP8130_PAYER_TYPE || rlp([...fields through calls...]))`.
     ///
     /// Spec value: TBD. We use `0xFA`, distinct from any registered EIP-2718
     /// transaction type byte to prevent cross-domain reuse.
-    pub const AA_PAYER_TYPE: u8 = 0xFA;
+    pub const EIP8130_PAYER_TYPE: u8 = 0xFA;
 
-    /// Base intrinsic gas cost for any AA transaction (`AA_BASE_COST`).
-    pub const AA_BASE_COST: u64 = 15_000;
+    /// Base intrinsic gas cost for any AA transaction (`EIP8130_BASE_COST`).
+    pub const EIP8130_BASE_COST: u64 = 15_000;
 
     /// Sentinel `nonce_key` value selecting nonce-free mode (`NONCE_KEY_MAX`).
     ///
@@ -104,21 +104,21 @@ mod tests {
 
     #[test]
     fn type_bytes_are_distinct() {
-        assert_ne!(Aa8130Constants::AA_TX_TYPE, Aa8130Constants::AA_PAYER_TYPE);
-        assert_ne!(Aa8130Constants::AA_TX_TYPE, LEGACY_TX_TYPE);
-        assert_ne!(Aa8130Constants::AA_TX_TYPE, EIP2930_TX_TYPE);
-        assert_ne!(Aa8130Constants::AA_TX_TYPE, EIP1559_TX_TYPE);
-        assert_ne!(Aa8130Constants::AA_TX_TYPE, EIP7702_TX_TYPE);
-        assert_ne!(Aa8130Constants::AA_TX_TYPE, DEPOSIT_TX_TYPE);
+        assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, Eip8130Constants::EIP8130_PAYER_TYPE);
+        assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, LEGACY_TX_TYPE);
+        assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, EIP2930_TX_TYPE);
+        assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, EIP1559_TX_TYPE);
+        assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, EIP7702_TX_TYPE);
+        assert_ne!(Eip8130Constants::EIP8130_TX_TYPE, DEPOSIT_TX_TYPE);
     }
 
     #[test]
     fn scope_bits_are_orthogonal() {
         let bits = [
-            Aa8130Constants::SCOPE_SIGNATURE,
-            Aa8130Constants::SCOPE_SENDER,
-            Aa8130Constants::SCOPE_PAYER,
-            Aa8130Constants::SCOPE_CONFIG,
+            Eip8130Constants::SCOPE_SIGNATURE,
+            Eip8130Constants::SCOPE_SENDER,
+            Eip8130Constants::SCOPE_PAYER,
+            Eip8130Constants::SCOPE_CONFIG,
         ];
         let mut acc: u8 = 0;
         for b in bits {
@@ -126,14 +126,14 @@ mod tests {
             assert_eq!(acc & b, 0, "scope bits must be orthogonal");
             acc |= b;
         }
-        assert_eq!(Aa8130Constants::SCOPE_UNRESTRICTED, 0);
+        assert_eq!(Eip8130Constants::SCOPE_UNRESTRICTED, 0);
     }
 
     #[test]
     fn delegation_indicator_size_matches_prefix_plus_address() {
         assert_eq!(
-            Aa8130Constants::DELEGATION_INDICATOR_SIZE,
-            Aa8130Constants::DELEGATION_INDICATOR_PREFIX.len() + 20
+            Eip8130Constants::DELEGATION_INDICATOR_SIZE,
+            Eip8130Constants::DELEGATION_INDICATOR_PREFIX.len() + 20
         );
     }
 }
