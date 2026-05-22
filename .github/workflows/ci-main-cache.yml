@@ -28,7 +28,10 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          fetch-depth: 1
+          fetch-depth: 2
+      - name: Detect SP1 ELF input changes
+        id: elf-inputs
+        run: python3 etc/scripts/ci/check-succinct-elf-inputs.py
       - uses: ./.github/actions/setup
         with:
           free-disk: "true"
@@ -39,4 +42,11 @@ jobs:
           elf-cache: "true"
           rust-cache-shared-key: "stable"
           rust-cache-save: "true"
-      - run: just build::ci
+      - name: Build CI cache
+        if: steps.elf-inputs.outputs.needs_rebuild != 'true'
+        run: just build::ci
+      - name: Build CI cache with stubbed SP1 ELFs
+        if: steps.elf-inputs.outputs.needs_rebuild == 'true'
+        run: |
+          just build::contracts
+          BASE_SUCCINCT_ELF_STUB=1 cargo build --locked --workspace --all-targets --profile ci

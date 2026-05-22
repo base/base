@@ -8,10 +8,10 @@ use base_precompile_storage::{BasePrecompileError, ContractStorage, Handler, Res
 #[cfg(feature = "std")]
 use iso_currency::Currency;
 
-#[cfg(feature = "std")]
-use super::IB20Stablecoin;
 use super::accounting::StablecoinAccounting;
-use crate::{B20CoreStorage, B20PolicyType, B20TokenRole, IB20, TokenAccounting, TokenVariant};
+use crate::{
+    B20CoreStorage, B20PolicyType, B20TokenRole, IB20, ITokenFactory, TokenAccounting, TokenVariant,
+};
 
 /// Stablecoin-specific B-20 storage rooted at the `base.b20.stablecoin` ERC-7201 namespace.
 #[derive(Debug, Clone, Storable)]
@@ -52,11 +52,13 @@ impl<'a> B20StablecoinStorage<'a> {
     /// Writes all creation-time fields atomically.
     ///
     /// Validates that `currency` is a recognised ISO 4217 code before writing
-    /// anything; reverts `IB20Stablecoin::InvalidCurrency` otherwise.
+    /// anything; reverts `ITokenFactory::InvalidCurrency` otherwise.
     pub fn initialize(&mut self, init: B20StablecoinInit) -> Result<()> {
         #[cfg(feature = "std")]
         if Currency::from_code(&init.currency).is_none() {
-            return Err(BasePrecompileError::revert(IB20Stablecoin::InvalidCurrency {}));
+            return Err(BasePrecompileError::revert(ITokenFactory::InvalidCurrency {
+                code: init.currency,
+            }));
         }
         self.b20.name.write(init.name)?;
         self.b20.symbol.write(init.symbol)?;

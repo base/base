@@ -15,13 +15,11 @@ sol! {
         error Unauthorized();
         error PolicyNotFound();
         error IncompatiblePolicyType();
-        error InvalidPolicyType();
         error ZeroAddress();
         error NoPendingAdmin();
-        error MalformedPolicyId(uint64 policyId);
 
         event PolicyCreated(uint64 indexed policyId, address indexed creator, PolicyType policyType);
-        event PolicyAdminStaged(uint64 indexed policyId, address indexed previousAdmin, address indexed newAdmin);
+        event PolicyAdminStaged(uint64 indexed policyId, address indexed currentAdmin, address indexed pendingAdmin);
         event PolicyAdminUpdated(uint64 indexed policyId, address indexed previousAdmin, address indexed newAdmin);
         event AllowlistUpdated(uint64 indexed policyId, address indexed updater, bool allowed, address[] accounts);
         event BlocklistUpdated(uint64 indexed policyId, address indexed updater, bool blocked, address[] accounts);
