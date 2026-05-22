@@ -60,7 +60,13 @@ impl<'a> TokenFactoryStorage<'a> {
                 self.init_stablecoin(token_address, common, currency, init_calls)?;
             }
             TokenCreateParams::Security { common, minimum_redeemable, isin } => {
-                self.init_security_token(token_address, common, minimum_redeemable, isin, init_calls)?;
+                self.init_security_token(
+                    token_address,
+                    common,
+                    minimum_redeemable,
+                    isin,
+                    init_calls,
+                )?;
             }
         }
 
@@ -302,7 +308,9 @@ impl TokenCreateParams {
 
     const fn common_ref(&self) -> &CommonParams {
         match self {
-            Self::B20(c) | Self::Stablecoin { common: c, .. } | Self::Security { common: c, .. } => c,
+            Self::B20(c)
+            | Self::Stablecoin { common: c, .. }
+            | Self::Security { common: c, .. } => c,
         }
     }
 
