@@ -150,7 +150,7 @@ impl ActivationRegistryStorage<'_> {
                 }));
             }
 
-            return Err(BasePrecompileError::revert(IActivationRegistry::AlreadyDeactivated {
+            return Err(BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated {
                 feature,
             }));
         }
@@ -378,7 +378,21 @@ mod tests {
 
         let result = apply_transition(&mut storage, transition);
 
-        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            match transition {
+                Transition::Activate => {
+                    BasePrecompileError::revert(IActivationRegistry::AlreadyActivated {
+                        feature: FEATURE,
+                    })
+                }
+                Transition::Deactivate => {
+                    BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated {
+                        feature: FEATURE,
+                    })
+                }
+            }
+        );
         assert_activated(&mut storage, initially_active);
         // A failed transition must not emit any events — guard against emit-then-revert bugs.
         assert_eq!(storage.get_events(ActivationRegistryStorage::ADDRESS).len(), events_before);
