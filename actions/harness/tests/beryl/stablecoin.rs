@@ -473,38 +473,3 @@ fn create_stablecoin_with_currency_tx(env: &BerylTestEnv, currency: &str) -> Bas
         BerylTestEnv::B20_GAS_LIMIT,
     )
 }
-
-fn assert_probe_returndata(
-    env: &BerylTestEnv,
-    probe: Address,
-    label: &str,
-    expected_returndata: &[u8],
-) {
-    assert_eq!(
-        env.probe_return_size(probe),
-        U256::from(expected_returndata.len()),
-        "{label} staticcall must return the expected byte length"
-    );
-    assert_eq!(
-        env.probe_return_hash(probe),
-        keccak256(expected_returndata),
-        "{label} staticcall must return the expected ABI payload"
-    );
-}
-
-fn string_ret(value: &str) -> Vec<u8> {
-    value.to_string().abi_encode()
-}
-
-fn first_word(returndata: &[u8]) -> U256 {
-    let mut word = [0u8; 32];
-    let copied = returndata.len().min(word.len());
-    word[..copied].copy_from_slice(&returndata[..copied]);
-    U256::from_be_bytes(word)
-}
-
-fn word_from_address(address: Address) -> U256 {
-    let mut word = [0u8; 32];
-    word[12..].copy_from_slice(address.as_slice());
-    U256::from_be_slice(&word)
-}

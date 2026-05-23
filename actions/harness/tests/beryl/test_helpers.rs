@@ -104,14 +104,14 @@ pub(crate) async fn assert_staticcall_cases(
             case.label
         );
         assert_eq!(
-            env.probe_return_length(*probe),
+            env.probe_return_size(*probe),
             U256::from(case.expected_returndata.len()),
             "{} staticcall must return the expected byte length",
             case.label
         );
         assert_eq!(
             env.probe_return_hash(*probe),
-            returndata_hash_word(&case.expected_returndata),
+            returndata_hash(&case.expected_returndata),
             "{} staticcall must return the expected ABI payload",
             case.label
         );
@@ -184,17 +184,17 @@ fn assert_probe_returndata(
     expected_returndata: &[u8],
 ) {
     assert_eq!(
-        env.probe_return_length(probe),
+        env.probe_return_size(probe),
         U256::from(expected_returndata.len()),
         "{label} staticcall must return the expected byte length"
     );
     assert_eq!(
         env.probe_return_hash(probe),
-        returndata_hash_word(expected_returndata),
+        returndata_hash(expected_returndata),
         "{label} staticcall must return the expected ABI payload"
     );
 }
 
-fn returndata_hash_word(returndata: &[u8]) -> U256 {
-    U256::from_be_slice(keccak256(returndata).as_slice())
+fn returndata_hash(returndata: &[u8]) -> B256 {
+    keccak256(returndata)
 }
