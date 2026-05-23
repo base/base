@@ -1,32 +1,18 @@
 //! Precompile entry point for the stablecoin B-20 variant.
 
-use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
+use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::Address;
 
 use super::{B20StablecoinToken, storage::B20StablecoinStorage};
-use crate::{B20Variant, PolicyHandle, macros::base_precompile};
+use crate::{PolicyHandle, macros::base_precompile};
 
 /// Entry point for the stablecoin B-20 token precompile.
 ///
-/// Wraps [`B20StablecoinToken`] dispatch behind a [`DynPrecompile`] for
-/// registration in a [`PrecompilesMap`].
+/// Wraps [`B20StablecoinToken`] dispatch behind a [`DynPrecompile`].
 #[derive(Debug)]
 pub struct B20StablecoinPrecompile;
 
 impl B20StablecoinPrecompile {
-    /// Installs the stablecoin dynamic precompile lookup into `precompiles`.
-    pub fn install(precompiles: &mut PrecompilesMap) {
-        precompiles.set_precompile_lookup(Self::lookup);
-    }
-
-    /// Returns the stablecoin precompile for `address`, if it encodes a stablecoin token.
-    pub fn lookup(address: &Address) -> Option<DynPrecompile> {
-        match B20Variant::from_address(*address)? {
-            B20Variant::Stablecoin => Some(Self::create_precompile(*address)),
-            _ => None,
-        }
-    }
-
     /// Returns a [`DynPrecompile`] that dispatches to [`B20StablecoinToken`] logic at
     /// `token_address`.
     pub fn create_precompile(token_address: Address) -> DynPrecompile {

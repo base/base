@@ -10,6 +10,9 @@ mod macros;
 mod provider;
 pub use provider::BasePrecompiles;
 
+mod lookup;
+pub use lookup::BerylLookup;
+
 mod spec;
 pub use spec::BasePrecompileSpec;
 

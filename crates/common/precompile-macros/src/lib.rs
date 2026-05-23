@@ -6,6 +6,7 @@ pub(crate) use contract::{FieldInfo, FieldKind};
 mod layout;
 mod namespace;
 mod packing;
+mod precompile;
 mod storable;
 mod storable_primitives;
 mod storable_tests;
@@ -29,6 +30,12 @@ pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn namespace(attr: TokenStream, item: TokenStream) -> TokenStream {
     namespace::expand(attr, item)
+}
+
+/// Generates EVM precompile constructor and optional singleton installation methods.
+#[proc_macro_attribute]
+pub fn precompile(attr: TokenStream, item: TokenStream) -> TokenStream {
+    precompile::expand(attr, item)
 }
 
 /// Derives the `Storable` trait for structs with named fields and `#[repr(u8)]` unit enums.
