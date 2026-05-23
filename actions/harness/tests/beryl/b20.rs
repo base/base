@@ -519,10 +519,10 @@ async fn b20_permit_updates_allowance_and_nonce() {
     let mut scenario = B20TokenScenario::new().await;
     let value = U256::from(123);
     let deadline = U256::MAX;
+    let domain_sep =
+        domain_separator(scenario.env.chain_id(), scenario.token, BerylTestEnv::B20_NAME);
     let (v, r, s) = sign_permit(
-        scenario.env.chain_id(),
-        scenario.token,
-        BerylTestEnv::B20_NAME,
+        domain_sep,
         BerylTestEnv::alice(),
         BerylTestEnv::bob(),
         value,
@@ -774,16 +774,13 @@ impl StaticcallCase {
 }
 
 fn sign_permit(
-    chain_id: u64,
-    token: Address,
-    name: &str,
+    domain_sep: B256,
     owner: Address,
     spender: Address,
     value: U256,
     nonce: U256,
     deadline: U256,
 ) -> (u8, B256, B256) {
-    let domain_sep = domain_separator(chain_id, token, name);
     let permit_typehash = keccak256(PERMIT_TYPE);
     let struct_hash =
         keccak256((permit_typehash, owner, spender, value, nonce, deadline).abi_encode());
@@ -816,7 +813,7 @@ fn domain_separator_word(chain_id: u64, token: Address, name: &str) -> U256 {
 
 const fn eip712_domain_fields_word() -> U256 {
     let mut word = [0u8; 32];
-    word[0] = 0x0c;
+    word[0] = 0x0f; // bits 0+1+2+3: name + version + chainId + verifyingContract
     U256::from_be_bytes(word)
 }
 
