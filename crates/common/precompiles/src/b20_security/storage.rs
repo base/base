@@ -9,7 +9,10 @@ use base_precompile_storage::{
 };
 
 use super::{accounting::SecurityAccounting, ids::REDEEM_SENDER_POLICY};
-use crate::{B20CoreStorage, B20PolicyType, B20TokenRole, B20Variant, IB20, TokenAccounting};
+use crate::{
+    B20CoreStorage, B20PolicyType, B20TokenRole, B20Variant, IB20, PolicyRegistryStorage,
+    TokenAccounting,
+};
 
 /// WAD precision for share ratio arithmetic: 1e18.
 const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
@@ -73,6 +76,9 @@ impl<'a> B20SecurityStorage<'a> {
     ///
     /// `isin` may be empty; when non-empty it is stored under the `"ISIN"` key
     /// in the security identifiers mapping.
+    ///
+    /// `REDEEM_SENDER_POLICY` is initialised to `ALWAYS_BLOCK_ID` so redemption
+    /// is closed by default; issuers must explicitly open it after creation.
     pub fn initialize(&mut self, init: B20SecurityInit) -> Result<()> {
         self.b20.name.write(init.name)?;
         self.b20.symbol.write(init.symbol)?;
@@ -82,6 +88,7 @@ impl<'a> B20SecurityStorage<'a> {
         if !init.isin.is_empty() {
             self.security.identifiers.at_mut(&String::from("ISIN")).write(init.isin)?;
         }
+        self.write_redeem_default_policy_ids()?;
         Ok(())
     }
 }
@@ -298,6 +305,17 @@ impl B20SecurityStorage<'_> {
     const REDEEM_SENDER_POLICY_LANE: usize = 0;
     const POLICY_LANE_BITS: usize = 64;
 
+    /// Writes the initial packed `redeem_policy_ids` word with `REDEEM_SENDER_POLICY`
+    /// set to `ALWAYS_BLOCK_ID`. Called once from [`initialize`].
+    fn write_redeem_default_policy_ids(&mut self) -> Result<()> {
+        let packed = Self::write_policy_lane(
+            U256::ZERO,
+            Self::REDEEM_SENDER_POLICY_LANE,
+            PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+        );
+        self.redeem.redeem_policy_ids.write(packed)
+    }
+
     fn require_b20_policy_type(policy_scope: B256) -> Result<B20PolicyType> {
         B20PolicyType::from_id(policy_scope).ok_or_else(|| {
             BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: policy_scope })
@@ -366,9 +384,10 @@ mod tests {
 
     use super::{
         __packing_b20_redeem_storage, __packing_b20_security_extension_storage, B20RedeemStorage,
-        B20SecurityExtensionStorage, B20SecurityStorage, REDEEM_SENDER_POLICY, WAD, slots,
+        B20SecurityExtensionStorage, B20SecurityInit, B20SecurityStorage, REDEEM_SENDER_POLICY,
+        WAD, slots,
     };
-    use crate::{B20CoreStorage, SecurityAccounting, TokenAccounting};
+    use crate::{B20CoreStorage, PolicyRegistryStorage, SecurityAccounting, TokenAccounting};
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b021");
     const B20_ROOT: U256 =
@@ -506,6 +525,31 @@ mod tests {
             let redeem_policy_slot = REDEEM_ROOT
                 + U256::from(__packing_b20_redeem_storage::REDEEM_POLICY_IDS_LOC.offset_slots);
             assert_eq!(ctx.sload(TOKEN, redeem_policy_slot).unwrap(), U256::from(policy_id));
+        });
+    }
+
+    #[test]
+    fn initialize_sets_redeem_sender_policy_to_always_block() {
+        let (mut storage, _) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20SecurityStorage::from_address(TOKEN, ctx);
+            token
+                .initialize(B20SecurityInit {
+                    name: String::from("Test"),
+                    symbol: String::from("TST"),
+                    supply_cap: U256::from(1_000_000u64),
+                    shares_to_tokens_ratio: WAD,
+                    isin: String::new(),
+                    minimum_redeemable: U256::ZERO,
+                })
+                .unwrap();
+
+            assert_eq!(
+                token.policy_id(REDEEM_SENDER_POLICY).unwrap(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+                "REDEEM_SENDER_POLICY must default to ALWAYS_BLOCK_ID at creation"
+            );
         });
     }
 

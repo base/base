@@ -643,7 +643,7 @@ mod tests {
 
     use super::{BURN_FROM_ROLE, REDEEM_SENDER_POLICY, SECURITY_OPERATOR_ROLE};
     use crate::{
-        B20PausableFeature, IB20, PolicyHandle, Token, TokenAccounting,
+        B20PausableFeature, IB20, PolicyHandle, PolicyRegistryStorage, Token, TokenAccounting,
         b20_security::{B20SecurityStorage, B20SecurityToken, IB20Security, SecurityAccounting},
         common::test_utils::{InMemoryPolicy, InMemoryTokenAccounting},
     };
@@ -660,6 +660,8 @@ mod tests {
         accounting.shares_to_tokens_ratio = WAD; // 1:1 ratio
         accounting.roles.insert((BURN_FROM_ROLE, ALICE), true);
         accounting.roles.insert((SECURITY_OPERATOR_ROLE, ALICE), true);
+        // Explicitly open redemption so non-policy tests are not blocked by the ALWAYS_BLOCK default.
+        accounting.policy_ids.insert(REDEEM_SENDER_POLICY, PolicyRegistryStorage::ALWAYS_ALLOW_ID);
         TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
     }
 

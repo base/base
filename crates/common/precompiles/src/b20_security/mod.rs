@@ -14,6 +14,7 @@ mod precompile;
 pub use precompile::B20SecurityPrecompile;
 
 mod storage;
+pub use ids::REDEEM_SENDER_POLICY;
 pub use storage::{
     B20RedeemStorage, B20SecurityExtensionStorage, B20SecurityInit, B20SecurityStorage,
 };
