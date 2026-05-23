@@ -56,11 +56,15 @@ jobs:
           git clone --depth 1 --single-branch --recurse-submodules --shallow-submodules \
             --branch "$BASE_STD_REF" \
             https://github.com/base/base-std.git "$workdir/base-std"
-          git clone --depth 1 --single-branch --branch "$BASE_ANVIL_REF" \
+          auth_header="$(printf 'x-access-token:%s' "$BASE_ANVIL_TOKEN" | base64 | tr -d '\n')"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth_header" \
+            clone --depth 1 --single-branch --branch "$BASE_ANVIL_REF" \
             https://github.com/base/base-anvil.git "$workdir/base-anvil"
 
           echo "BASE_STD_DIR=$workdir/base-std" >> "$GITHUB_ENV"
           echo "BASE_ANVIL_DIR=$workdir/base-anvil" >> "$GITHUB_ENV"
+        env:
+          BASE_ANVIL_TOKEN: ${{ secrets.BASE_ANVIL_READ_TOKEN || github.token }}
 
       - name: Build patched base-anvil binaries
         shell: bash
