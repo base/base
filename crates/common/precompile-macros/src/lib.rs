@@ -33,6 +33,10 @@ pub fn namespace(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Generates EVM precompile constructor and optional singleton installation methods.
+///
+/// By default this expands through `crate::macros::base_precompile!` in the invoking crate. Callers
+/// outside `base-common-precompiles` can pass `macro_path = path::to::wrapper_macro` to override the
+/// runtime wrapper macro.
 #[proc_macro_attribute]
 pub fn precompile(attr: TokenStream, item: TokenStream) -> TokenStream {
     precompile::expand(attr, item)

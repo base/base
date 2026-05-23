@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    Data, DeriveInput, Expr, Ident, LitStr, Token, Type, parenthesized,
+    Data, DeriveInput, Expr, Ident, LitStr, Path, Token, Type, parenthesized,
     parse::{Parse, ParseStream},
 };
 
@@ -34,6 +34,8 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
         let storage = format_ident!("{base_name}Storage", span = ident.span());
         syn::parse_quote!(#storage<'_>)
     });
+    let macro_path =
+        config.macro_path.unwrap_or_else(|| syn::parse_quote!(crate::macros::base_precompile));
     let args = config.args;
     let arg_defs = args.iter().map(PrecompileArg::definition);
     let install_arg_defs = args.iter().map(PrecompileArg::definition);
@@ -68,7 +70,7 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
 
             #[doc = #precompile_doc]
             pub fn precompile(#(#arg_defs),*) -> ::alloy_evm::precompiles::DynPrecompile {
-                crate::macros::base_precompile!(#id, |ctx, calldata| {
+                #macro_path!(#id, |ctx, calldata| {
                     <#storage>::new(ctx).dispatch(ctx, &calldata #(, #arg_names)*)
                 })
             }
@@ -79,6 +81,7 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
 struct PrecompileConfig {
     id: Option<Expr>,
     storage: Option<Type>,
+    macro_path: Option<Path>,
     args: Vec<PrecompileArg>,
     install: Option<InstallConfig>,
 }
@@ -87,34 +90,29 @@ impl Parse for PrecompileConfig {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
         let mut id = None;
         let mut storage = None;
+        let mut macro_path = None;
         let mut args = Vec::new();
         let mut install = None;
 
         while !input.is_empty() {
-            let fork = input.fork();
-            let Ok(key) = fork.parse::<Ident>() else {
-                reject_duplicate(&storage, &Ident::new("storage", input.span()))?;
-                storage = Some(input.parse()?);
-                if input.peek(Token![,]) {
-                    input.parse::<Token![,]>()?;
-                }
-                continue;
-            };
+            let key: Ident = input.parse()?;
             match key.to_string().as_str() {
                 "id" => {
-                    input.parse::<Ident>()?;
                     reject_duplicate(&id, &key)?;
                     input.parse::<Token![=]>()?;
                     id = Some(input.parse()?);
                 }
                 "storage" => {
-                    input.parse::<Ident>()?;
                     reject_duplicate(&storage, &key)?;
                     input.parse::<Token![=]>()?;
                     storage = Some(input.parse()?);
                 }
+                "macro_path" => {
+                    reject_duplicate(&macro_path, &key)?;
+                    input.parse::<Token![=]>()?;
+                    macro_path = Some(input.parse()?);
+                }
                 "args" => {
-                    input.parse::<Ident>()?;
                     if !args.is_empty() {
                         return Err(syn::Error::new_spanned(key, "duplicate `args` option"));
                     }
@@ -126,7 +124,6 @@ impl Parse for PrecompileConfig {
                         .collect();
                 }
                 "install" => {
-                    input.parse::<Ident>()?;
                     reject_duplicate(&install, &key)?;
                     install = if input.peek(syn::token::Paren) {
                         let content;
@@ -137,8 +134,10 @@ impl Parse for PrecompileConfig {
                     };
                 }
                 _ => {
-                    reject_duplicate(&storage, &key)?;
-                    storage = Some(input.parse()?);
+                    return Err(syn::Error::new_spanned(
+                        key,
+                        "expected `id`, `storage`, `macro_path`, `args`, or `install`",
+                    ));
                 }
             }
 
@@ -147,7 +146,7 @@ impl Parse for PrecompileConfig {
             }
         }
 
-        Ok(Self { id, storage, args, install })
+        Ok(Self { id, storage, macro_path, args, install })
     }
 }
 
@@ -210,4 +209,48 @@ fn reject_duplicate<T>(option: &Option<T>, ident: &Ident) -> syn::Result<()> {
 
 fn precompile_name(ident: &Ident) -> String {
     ident.to_string().trim_end_matches("Precompile").to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use proc_macro2::TokenStream as TokenStream2;
+    use quote::quote;
+
+    use super::PrecompileConfig;
+
+    fn parse_config(tokens: TokenStream2) -> syn::Result<PrecompileConfig> {
+        syn::parse2(tokens)
+    }
+
+    #[test]
+    fn config_rejects_unknown_options() {
+        let err = parse_config(quote! { instal }).err().unwrap();
+
+        assert!(
+            err.to_string()
+                .contains("expected `id`, `storage`, `macro_path`, `args`, or `install`")
+        );
+    }
+
+    #[test]
+    fn config_rejects_positional_storage() {
+        let err = parse_config(quote! { CustomStorage<'_> }).err().unwrap();
+
+        assert!(
+            err.to_string()
+                .contains("expected `id`, `storage`, `macro_path`, `args`, or `install`")
+        );
+    }
+
+    #[test]
+    fn config_accepts_explicit_storage_and_macro_path() {
+        let config = parse_config(quote! {
+            storage = CustomStorage<'_>,
+            macro_path = crate::macros::custom_precompile,
+        })
+        .unwrap();
+
+        assert!(config.storage.is_some());
+        assert!(config.macro_path.is_some());
+    }
 }
