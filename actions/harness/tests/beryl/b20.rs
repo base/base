@@ -13,7 +13,9 @@ use crate::env::BerylTestEnv;
 
 const PERMIT_TYPE: &[u8] =
     b"Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)";
-const DOMAIN_TYPE: &[u8] = b"EIP712Domain(uint256 chainId,address verifyingContract)";
+const DOMAIN_TYPE: &[u8] =
+    b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
+const DOMAIN_VERSION: &[u8] = b"1";
 const MEMO_TRANSFER: B256 = B256::repeat_byte(0x10);
 const MEMO_TRANSFER_FROM: B256 = B256::repeat_byte(0x11);
 const MEMO_MINT: B256 = B256::repeat_byte(0x12);
@@ -304,7 +306,11 @@ async fn b20_staticcall_abi_covers_all_read_methods() {
             StaticcallCase::word(
                 "DOMAIN_SEPARATOR",
                 IB20::DOMAIN_SEPARATORCall {}.abi_encode(),
-                domain_separator_word(scenario.env.chain_id(), scenario.token),
+                domain_separator_word(
+                    scenario.env.chain_id(),
+                    scenario.token,
+                    BerylTestEnv::B20_NAME,
+                ),
             ),
             StaticcallCase::word(
                 "nonces",
@@ -516,6 +522,7 @@ async fn b20_permit_updates_allowance_and_nonce() {
     let (v, r, s) = sign_permit(
         scenario.env.chain_id(),
         scenario.token,
+        BerylTestEnv::B20_NAME,
         BerylTestEnv::alice(),
         BerylTestEnv::bob(),
         value,
@@ -769,13 +776,14 @@ impl StaticcallCase {
 fn sign_permit(
     chain_id: u64,
     token: Address,
+    name: &str,
     owner: Address,
     spender: Address,
     value: U256,
     nonce: U256,
     deadline: U256,
 ) -> (u8, B256, B256) {
-    let domain_sep = domain_separator(chain_id, token);
+    let domain_sep = domain_separator(chain_id, token, name);
     let permit_typehash = keccak256(PERMIT_TYPE);
     let struct_hash =
         keccak256((permit_typehash, owner, spender, value, nonce, deadline).abi_encode());
@@ -795,13 +803,15 @@ fn sign_permit(
     (v, r, s)
 }
 
-fn domain_separator(chain_id: u64, token: Address) -> B256 {
+fn domain_separator(chain_id: u64, token: Address, name: &str) -> B256 {
     let domain_typehash = keccak256(DOMAIN_TYPE);
-    keccak256((domain_typehash, U256::from(chain_id), token).abi_encode())
+    let name_hash = keccak256(name.as_bytes());
+    let version_hash = keccak256(DOMAIN_VERSION);
+    keccak256((domain_typehash, name_hash, version_hash, U256::from(chain_id), token).abi_encode())
 }
 
-fn domain_separator_word(chain_id: u64, token: Address) -> U256 {
-    U256::from_be_slice(domain_separator(chain_id, token).as_slice())
+fn domain_separator_word(chain_id: u64, token: Address, name: &str) -> U256 {
+    U256::from_be_slice(domain_separator(chain_id, token, name).as_slice())
 }
 
 struct B20StaticcallProbes {

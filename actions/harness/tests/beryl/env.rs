@@ -51,6 +51,9 @@ pub(crate) struct BerylTestEnv {
 }
 
 impl BerylTestEnv {
+    /// Name of the default B-20 token created in tests.
+    pub(crate) const B20_NAME: &str = "Action B20";
+
     /// Gas limit used for B-20 precompile transactions.
     pub(crate) const B20_GAS_LIMIT: u64 = 10_000_000;
 
@@ -480,7 +483,7 @@ impl BerylTestEnv {
     fn b20_token_params(&self) -> ITokenFactory::B20CreateParams {
         ITokenFactory::B20CreateParams {
             version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
-            name: "Action B20".to_string(),
+            name: Self::B20_NAME.to_string(),
             symbol: "AB20".to_string(),
             initialAdmin: Self::alice(),
         }
