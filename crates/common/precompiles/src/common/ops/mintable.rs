@@ -15,9 +15,6 @@ pub trait Mintable: Token {
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
-        if amount.is_zero() {
-            return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
-        }
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Mint)?;
             B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::MintReceiver, to)?;
