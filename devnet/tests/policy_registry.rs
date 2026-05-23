@@ -14,18 +14,21 @@ use eyre::{Result, WrapErr};
 
 // --- read helpers ---
 
-async fn read_next_policy_id(
+/// Predicts the policy ID that a `createPolicy(admin, policy_type)` call would return,
+/// without committing state (uses `eth_call` simulation).
+async fn predict_policy_id(
     client: &B20PrecompileClient<'_>,
+    admin: Address,
     policy_type: IPolicyRegistry::PolicyType,
 ) -> Result<u64> {
     let out = client
         .call(
             PolicyRegistryStorage::ADDRESS,
-            IPolicyRegistry::nextPolicyIdCall { policyType: policy_type },
+            IPolicyRegistry::createPolicyCall { admin, policyType: policy_type },
         )
         .await?;
-    IPolicyRegistry::nextPolicyIdCall::abi_decode_returns(out.as_ref())
-        .wrap_err("Failed to decode nextPolicyId")
+    IPolicyRegistry::createPolicyCall::abi_decode_returns(out.as_ref())
+        .wrap_err("Failed to predict policy ID via createPolicy simulation")
 }
 
 async fn read_is_authorized(
@@ -68,20 +71,6 @@ async fn read_pending_policy_admin(
         .wrap_err("Failed to decode pendingPolicyAdmin")
 }
 
-async fn read_policy_type(
-    client: &B20PrecompileClient<'_>,
-    policy_id: u64,
-) -> Result<IPolicyRegistry::PolicyType> {
-    let out = client
-        .call(
-            PolicyRegistryStorage::ADDRESS,
-            IPolicyRegistry::policyTypeCall { policyId: policy_id },
-        )
-        .await?;
-    IPolicyRegistry::policyTypeCall::abi_decode_returns(out.as_ref())
-        .wrap_err("Failed to decode policyType")
-}
-
 // --- existing test ---
 
 /// `policyExists(0)` returns `true` once the Beryl fork is active.
@@ -122,7 +111,8 @@ async fn test_create_allowlist_policy_and_authorize() -> Result<()> {
     let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
-    let policy_id = read_next_policy_id(&client, IPolicyRegistry::PolicyType::ALLOWLIST).await?;
+    let policy_id =
+        predict_policy_id(&client, admin.address(), IPolicyRegistry::PolicyType::ALLOWLIST).await?;
 
     client
         .send_call(
@@ -173,7 +163,8 @@ async fn test_create_blocklist_policy_and_block() -> Result<()> {
     let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
-    let policy_id = read_next_policy_id(&client, IPolicyRegistry::PolicyType::BLOCKLIST).await?;
+    let policy_id =
+        predict_policy_id(&client, admin.address(), IPolicyRegistry::PolicyType::BLOCKLIST).await?;
 
     client
         .send_call(
@@ -228,7 +219,8 @@ async fn test_two_step_admin_transfer() -> Result<()> {
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
     let policy_id =
-        read_next_policy_id(&client_admin, IPolicyRegistry::PolicyType::ALLOWLIST).await?;
+        predict_policy_id(&client_admin, admin.address(), IPolicyRegistry::PolicyType::ALLOWLIST)
+            .await?;
 
     client_admin
         .send_call(
@@ -296,7 +288,8 @@ async fn test_renounce_admin() -> Result<()> {
     let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
-    let policy_id = read_next_policy_id(&client, IPolicyRegistry::PolicyType::ALLOWLIST).await?;
+    let policy_id =
+        predict_policy_id(&client, admin.address(), IPolicyRegistry::PolicyType::ALLOWLIST).await?;
 
     client
         .send_call(
@@ -326,8 +319,8 @@ async fn test_renounce_admin() -> Result<()> {
     Ok(())
 }
 
-/// Verifies that `nextPolicyId`, `policyType`, `policyAdmin`, and `pendingPolicyAdmin` all return
-/// correct values after policy creation.
+/// Verifies that `policyAdmin` and `pendingPolicyAdmin` return correct values after policy
+/// creation, and that the policy ID counter advances after each creation.
 #[tokio::test]
 async fn test_policy_views() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
@@ -338,7 +331,8 @@ async fn test_policy_views() -> Result<()> {
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
     // Snapshot the predicted policy ID before any creation.
-    let predicted_id = read_next_policy_id(&client, IPolicyRegistry::PolicyType::ALLOWLIST).await?;
+    let predicted_id =
+        predict_policy_id(&client, admin.address(), IPolicyRegistry::PolicyType::ALLOWLIST).await?;
 
     client
         .send_call(
@@ -350,12 +344,6 @@ async fn test_policy_views() -> Result<()> {
             "createPolicy(ALLOWLIST)",
         )
         .await?;
-
-    assert_eq!(
-        read_policy_type(&client, predicted_id).await?,
-        IPolicyRegistry::PolicyType::ALLOWLIST,
-        "policyType should be ALLOWLIST",
-    );
 
     assert_eq!(
         read_policy_admin(&client, predicted_id).await?,
@@ -371,7 +359,7 @@ async fn test_policy_views() -> Result<()> {
 
     // The counter must have advanced so the next ID differs from the one we just created.
     let next_id_after =
-        read_next_policy_id(&client, IPolicyRegistry::PolicyType::ALLOWLIST).await?;
+        predict_policy_id(&client, admin.address(), IPolicyRegistry::PolicyType::ALLOWLIST).await?;
     assert_ne!(next_id_after, predicted_id, "nextPolicyId should advance after createPolicy",);
 
     Ok(())
