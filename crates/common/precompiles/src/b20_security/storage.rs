@@ -88,7 +88,7 @@ impl<'a> B20SecurityStorage<'a> {
         if !init.isin.is_empty() {
             self.security.identifiers.at_mut(&String::from("ISIN")).write(init.isin)?;
         }
-        self.write_redeem_default_policy_ids()?;
+        self.write_redeem_policy_ids_default()?;
         Ok(())
     }
 }
@@ -307,7 +307,7 @@ impl B20SecurityStorage<'_> {
 
     /// Writes the initial packed `redeem_policy_ids` word with `REDEEM_SENDER_POLICY`
     /// set to `ALWAYS_BLOCK_ID`. Called once from [`initialize`].
-    fn write_redeem_default_policy_ids(&mut self) -> Result<()> {
+    fn write_redeem_policy_ids_default(&mut self) -> Result<()> {
         let packed = Self::write_policy_lane(
             U256::ZERO,
             Self::REDEEM_SENDER_POLICY_LANE,
