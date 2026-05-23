@@ -171,8 +171,13 @@ impl PolicyRegistryStorage<'_> {
         // charges warm/cold account-read gas before skipping repeated `set_code`.
         if !self.is_initialized()? {
             self.__initialize()?;
-            self.write_builtins()?;
         }
+        // Seed built-ins independently of bytecode presence: harnesses (e.g., anvil/foundry forks)
+        // may pre-warm precompile bytecode to satisfy Solidity's `EXTCODESIZE` check, which would
+        // otherwise short-circuit the lazy init above and leave `policies[ALWAYS_ALLOW_ID]` /
+        // `policies[ALWAYS_BLOCK_ID]` unset. `write_builtins` self-gates via `next_counter`, so
+        // the extra SLOAD on every subsequent `create_policy` is a no-op cost.
+        self.write_builtins()?;
 
         let counter = self.next_counter()?;
         let next = counter.checked_add(1).ok_or_else(BasePrecompileError::under_overflow)?;
