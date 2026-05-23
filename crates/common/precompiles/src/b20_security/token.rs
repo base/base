@@ -389,7 +389,6 @@ mod tests {
 
     fn make_token() -> TestSecurityToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = WAD;
         accounting.roles.insert((SECURITY_OPERATOR_ROLE, ALICE), true);
         accounting.roles.insert((B20TokenRole::Mint.id(), ALICE), true);
         accounting.roles.insert((BURN_FROM_ROLE, ALICE), true);
@@ -792,7 +791,6 @@ mod tests {
     fn security_redeem_rejects_when_sender_policy_denies() {
         let policy_id = 7;
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = WAD;
         accounting.balances.insert(ALICE, U256::from(100u64));
         accounting.total_supply = U256::from(100u64);
         accounting.policy_ids.insert(REDEEM_SENDER_POLICY, policy_id);
