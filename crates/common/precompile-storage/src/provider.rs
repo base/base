@@ -79,6 +79,8 @@ pub trait PrecompileStorageProvider {
 
     /// Returns the address that called this precompile.
     fn caller(&self) -> Address;
+    /// Replaces the current caller address and returns the previous caller.
+    fn replace_caller(&mut self, caller: Address) -> Address;
 
     /// Creates a new journal checkpoint for atomic state management.
     fn checkpoint(&mut self) -> JournalCheckpoint;

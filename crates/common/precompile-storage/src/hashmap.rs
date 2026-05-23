@@ -197,6 +197,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         self.caller
     }
 
+    fn replace_caller(&mut self, caller: Address) -> Address {
+        core::mem::replace(&mut self.caller, caller)
+    }
+
     fn checkpoint(&mut self) -> JournalCheckpoint {
         let idx = self.snapshots.len();
         self.snapshots

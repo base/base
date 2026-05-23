@@ -171,6 +171,15 @@ impl<'a> StorageCtx<'a> {
         self.with_storage(|s| s.caller())
     }
 
+    /// Executes `f` with a temporary caller override, restoring the previous caller on exit.
+    pub fn with_caller<R>(&self, caller: Address, f: impl FnOnce() -> R) -> R {
+        let previous = self.with_storage(|s| s.replace_caller(caller));
+        let guard = CallerGuard { storage: *self, previous: Some(previous) };
+        let result = f();
+        drop(guard);
+        result
+    }
+
     /// Deducts gas from the remaining gas, returning `OutOfGas` if insufficient.
     pub fn deduct_gas(&self, gas: u64) -> Result<()> {
         self.try_with_storage(|s| s.deduct_gas(gas))
@@ -215,6 +224,23 @@ impl<'a> StorageCtx<'a> {
     /// Returns a [`PrecompileResult`] constructed from the given error.
     pub fn error_result(&self, error: impl Into<BasePrecompileError>) -> PrecompileResult {
         error.into().into_precompile_result(self.gas_used(), self.state_gas_used())
+    }
+}
+
+/// RAII guard for temporary caller overrides.
+#[derive(Debug)]
+struct CallerGuard<'a> {
+    storage: StorageCtx<'a>,
+    previous: Option<Address>,
+}
+
+impl Drop for CallerGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            self.storage.with_storage(|s| {
+                s.replace_caller(previous);
+            });
+        }
     }
 }
 
@@ -346,6 +372,29 @@ mod tests {
     fn test_reentrant_with_storage_panics() {
         let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| ctx.with_storage(|_| ctx.with_storage(|_| ())));
+    }
+
+    #[test]
+    fn test_with_caller_restores_previous_caller() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        let original = Address::repeat_byte(0x11);
+        let outer = Address::repeat_byte(0x22);
+        let inner = Address::repeat_byte(0x33);
+        storage.set_caller(original);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_eq!(ctx.caller(), original);
+            let value = ctx.with_caller(outer, || {
+                assert_eq!(ctx.caller(), outer);
+                ctx.with_caller(inner, || {
+                    assert_eq!(ctx.caller(), inner);
+                    7
+                })
+            });
+
+            assert_eq!(value, 7);
+            assert_eq!(ctx.caller(), original);
+        });
     }
 
     #[test]

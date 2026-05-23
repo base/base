@@ -122,11 +122,14 @@ impl<'a> B20FactoryStorage<'a> {
             )?;
         }
 
-        for (index, calldata) in init_calls.into_iter().enumerate() {
-            token
-                .inner_with_privilege(self.storage, &calldata, true)
-                .map_err(|err| Self::map_init_call_error(index, err))?;
-        }
+        self.storage.with_caller(Self::ADDRESS, || {
+            for (index, calldata) in init_calls.into_iter().enumerate() {
+                token
+                    .inner_with_privilege(self.storage, &calldata, true)
+                    .map_err(|err| Self::map_init_call_error(index, err))?;
+            }
+            Ok::<(), BasePrecompileError>(())
+        })?;
         Ok(())
     }
 
@@ -160,11 +163,14 @@ impl<'a> B20FactoryStorage<'a> {
             )?;
         }
 
-        for (index, calldata) in init_calls.into_iter().enumerate() {
-            token
-                .inner_with_privilege(self.storage, &calldata, true)
-                .map_err(|err| Self::map_init_call_error(index, err))?;
-        }
+        self.storage.with_caller(Self::ADDRESS, || {
+            for (index, calldata) in init_calls.into_iter().enumerate() {
+                token
+                    .inner_with_privilege(self.storage, &calldata, true)
+                    .map_err(|err| Self::map_init_call_error(index, err))?;
+            }
+            Ok::<(), BasePrecompileError>(())
+        })?;
         Ok(())
     }
 
@@ -199,14 +205,17 @@ impl<'a> B20FactoryStorage<'a> {
             )?;
         }
 
-        for (index, calldata) in init_calls.into_iter().enumerate() {
-            B20SecurityToken::with_storage_and_policy(
-                B20SecurityStorage::from_address(token_address, self.storage),
-                PolicyHandle::new(self.storage),
-            )
-            .inner_with_privilege(self.storage, &calldata, true)
-            .map_err(|err| Self::map_init_call_error(index, err))?;
-        }
+        self.storage.with_caller(Self::ADDRESS, || {
+            for (index, calldata) in init_calls.into_iter().enumerate() {
+                B20SecurityToken::with_storage_and_policy(
+                    B20SecurityStorage::from_address(token_address, self.storage),
+                    PolicyHandle::new(self.storage),
+                )
+                .inner_with_privilege(self.storage, &calldata, true)
+                .map_err(|err| Self::map_init_call_error(index, err))?;
+            }
+            Ok::<(), BasePrecompileError>(())
+        })?;
         Ok(())
     }
 
@@ -537,6 +546,33 @@ mod tests {
 
             assert_eq!(token.b20.total_supply.read().unwrap(), supply);
             assert_eq!(token.balance_of(recipient).unwrap(), supply);
+        });
+    }
+
+    #[test]
+    fn test_create_token_init_calls_use_factory_caller_and_restore_creator() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let creator = Address::repeat_byte(0x55);
+        let spender = Address::repeat_byte(0x77);
+        let salt = B256::repeat_byte(0xCE);
+        let allowance = U256::from(123u64);
+        let mut call = create_call(
+            IB20Factory::B20Variant::DEFAULT,
+            token_params("Caller Token", "CALL"),
+            salt,
+        );
+        call.initCalls.push(IB20::approveCall { spender, amount: allowance }.abi_encode().into());
+        storage.set_caller(creator);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = B20FactoryStorage::new(ctx);
+            let token_addr = factory.create_b20(creator, call).unwrap();
+            let token = B20TokenStorage::from_address(token_addr, ctx);
+
+            assert_eq!(ctx.caller(), creator);
+            assert_eq!(token.allowance(B20FactoryStorage::ADDRESS, spender).unwrap(), allowance);
+            assert_eq!(token.allowance(creator, spender).unwrap(), U256::ZERO);
         });
     }
 
