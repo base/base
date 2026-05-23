@@ -6,7 +6,7 @@
 //! that provides `currency()` from the stablecoin extension namespace.
 
 use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::{SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
@@ -93,7 +93,20 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             // --- Domain reads (light logic) ---
             C::isPaused(c) => self.is_paused(c.feature)?.abi_encode().into(),
             C::DOMAIN_SEPARATOR(_) => self.domain_separator(ctx.chain_id())?.abi_encode().into(),
-            C::eip712Domain(_) => self.eip712_domain(ctx.chain_id())?.abi_encode().into(),
+            C::eip712Domain(_) => {
+                let (fields, name, version, chain_id, verifying_contract, salt, extensions) =
+                    self.eip712_domain(ctx.chain_id())?;
+                IB20::eip712DomainCall::abi_encode_returns(&IB20::eip712DomainReturn {
+                    fields,
+                    name,
+                    version,
+                    chainId: chain_id,
+                    verifyingContract: verifying_contract,
+                    salt,
+                    extensions,
+                })
+                .into()
+            }
 
             // --- ERC-20 mutating ---
             C::transfer(c) => {

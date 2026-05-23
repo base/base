@@ -314,7 +314,7 @@ async fn b20_staticcall_abi_covers_all_read_methods() {
             StaticcallCase::word(
                 "eip712Domain",
                 IB20::eip712DomainCall {}.abi_encode(),
-                U256::from(32),
+                eip712_domain_fields_word(),
             ),
             StaticcallCase::word(
                 "contractURI",
@@ -802,6 +802,12 @@ fn domain_separator(chain_id: u64, token: Address) -> B256 {
 
 fn domain_separator_word(chain_id: u64, token: Address) -> U256 {
     U256::from_be_slice(domain_separator(chain_id, token).as_slice())
+}
+
+fn eip712_domain_fields_word() -> U256 {
+    let mut word = [0u8; 32];
+    word[0] = 0x0c;
+    U256::from_be_bytes(word)
 }
 
 struct B20StaticcallProbes {

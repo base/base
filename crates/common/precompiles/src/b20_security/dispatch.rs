@@ -9,7 +9,7 @@
 use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_sol_types::{SolEvent, SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolEvent, SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
@@ -166,7 +166,20 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
             // --- Domain reads ---
             C::DOMAIN_SEPARATOR(_) => self.domain_separator(ctx.chain_id())?.abi_encode().into(),
-            C::eip712Domain(_) => self.eip712_domain(ctx.chain_id())?.abi_encode().into(),
+            C::eip712Domain(_) => {
+                let (fields, name, version, chain_id, verifying_contract, salt, extensions) =
+                    self.eip712_domain(ctx.chain_id())?;
+                IB20::eip712DomainCall::abi_encode_returns(&IB20::eip712DomainReturn {
+                    fields,
+                    name,
+                    version,
+                    chainId: chain_id,
+                    verifyingContract: verifying_contract,
+                    salt,
+                    extensions,
+                })
+                .into()
+            }
 
             // --- ERC-20 mutating ---
             C::transfer(c) => {
