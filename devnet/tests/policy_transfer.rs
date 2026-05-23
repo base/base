@@ -57,16 +57,10 @@ async fn create_policy(
     label: &'static str,
 ) -> Result<u64> {
     let call = IPolicyRegistry::createPolicyCall { admin, policyType: policy_type };
-    let output = client.call(PolicyRegistryStorage::ADDRESS, call).await?;
+    let output = client.call(PolicyRegistryStorage::ADDRESS, call.clone()).await?;
     let policy_id = IPolicyRegistry::createPolicyCall::abi_decode_returns(output.as_ref())
         .wrap_err("Failed to decode createPolicy return")?;
-    client
-        .send_call(
-            PolicyRegistryStorage::ADDRESS,
-            IPolicyRegistry::createPolicyCall { admin, policyType: policy_type },
-            label,
-        )
-        .await?;
+    client.send_call(PolicyRegistryStorage::ADDRESS, call, label).await?;
     Ok(policy_id)
 }
 
@@ -347,14 +341,14 @@ async fn test_always_block_policy_blocks_transfer() -> Result<()> {
     set_transfer_sender_policy(&client, token, PolicyRegistryStorage::ALWAYS_BLOCK_ID).await?;
 
     // Transfer from admin must revert: ALWAYS_BLOCK denies every sender unconditionally.
-    let transfer_reverted = client
+    let blocked = client
         .try_send_call(
             token,
             IB20::transferCall { to: anyone, amount: U256::from(TRANSFER_AMOUNT) },
             "transfer under ALWAYS_BLOCK (should revert)",
         )
         .await?;
-    assert!(!transfer_reverted, "transfer from admin must revert under ALWAYS_BLOCK policy");
+    assert!(!blocked, "transfer from admin must revert under ALWAYS_BLOCK policy");
 
     Ok(())
 }
