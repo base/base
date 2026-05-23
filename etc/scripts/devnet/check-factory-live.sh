@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-factory-live.sh — end-to-end validation of the B-20 TokenFactory precompile
+# check-factory-live.sh — end-to-end validation of the B-20 B20Factory precompile
 # against a running devnet node using real cast transactions.
 #
 # Prerequisites:
@@ -134,13 +134,13 @@ pass "Alice is funded ($ALICE_ADDR)" "balance=$(cast from-wei "$ALICE_BAL") ETH"
 section "1/5  Predict token address (read-only)"
 
 PREDICTED=$(ccall "$FACTORY" \
-    "getTokenAddress(uint8,address,bytes32)(address)" \
-    1 "$ALICE_ADDR" "$SALT") || fail "getTokenAddress call failed" "$PREDICTED"
+    "getB20Address(uint8,address,bytes32)(address)" \
+    1 "$ALICE_ADDR" "$SALT") || fail "getB20Address call failed" "$PREDICTED"
 PREDICTED=$(trim "$PREDICTED")
 [[ "$PREDICTED" =~ ^0x[0-9a-fA-F]{40}$ ]] || \
-    fail "getTokenAddress returned bad address" "$PREDICTED"
+    fail "getB20Address returned bad address" "$PREDICTED"
 info "Predicted token address: $PREDICTED"
-pass "getTokenAddress returned a valid address"
+pass "getB20Address returned a valid address"
 
 # Verify the prefix encodes the B-20 marker and variant=DEFAULT.
 PREFIX=$(echo "${PREDICTED:2:22}" | tr '[:upper:]' '[:lower:]')
@@ -168,21 +168,21 @@ SUPPLY_CAP_CALL=$(cast calldata "updateSupplyCap(uint256)" "$SUPPLY_CAP")
 CONTRACT_URI_CALL=$(cast calldata "updateContractURI(string)" "ipfs://check-factory-live")
 INIT_CALLS="[$MINT_CALL,$SUPPLY_CAP_CALL,$CONTRACT_URI_CALL]"
 
-info "Sending createToken transaction …"
+info "Sending createB20 transaction …"
 TX_OUTPUT=$(cast send \
     --rpc-url "$RPC_URL" \
     --private-key "$ALICE_KEY" \
     --json \
     --confirmations 2 \
     "$FACTORY" \
-    "createToken(uint8,bytes32,bytes,bytes[])" \
-    1 "$SALT" "$CREATE_PARAMS" "$INIT_CALLS") || fail "createToken transaction failed" "$TX_OUTPUT"
+    "createB20(uint8,bytes32,bytes,bytes[])" \
+    1 "$SALT" "$CREATE_PARAMS" "$INIT_CALLS") || fail "createB20 transaction failed" "$TX_OUTPUT"
 
 TX_HASH=$(echo "$TX_OUTPUT" | grep -o '"transactionHash":"[^"]*"' | cut -d'"' -f4)
 TX_STATUS=$(echo "$TX_OUTPUT" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
-[[ "$TX_STATUS" == "0x1" ]] || fail "createToken reverted (status=$TX_STATUS)" "tx=$TX_HASH"
+[[ "$TX_STATUS" == "0x1" ]] || fail "createB20 reverted (status=$TX_STATUS)" "tx=$TX_HASH"
 info "Transaction: $TX_HASH  (status=$TX_STATUS)"
-pass "createToken transaction mined and succeeded"
+pass "createB20 transaction mined and succeeded"
 
 # The token address must match the prediction
 TOKEN="$PREDICTED"
@@ -196,11 +196,6 @@ section "3/5  Verify factory state (read-only calls)"
 IS_B20=$(ccall "$FACTORY" "isB20(address)(bool)" "$TOKEN")
 IS_B20=$(trim "$IS_B20")
 assert_eq "isB20 is true after creation" "true" "$IS_B20"
-
-# getTokenVariant must return 1 (VARIANT_DEFAULT)
-VARIANT=$(ccall "$FACTORY" "getTokenVariant(address)(uint8)" "$TOKEN")
-VARIANT=$(trim "$VARIANT")
-assert_eq "getTokenVariant returns 1 (DEFAULT)" "1" "$VARIANT"
 
 pass "Factory state is correct"
 
@@ -270,9 +265,8 @@ echo ""
 echo "Token: $TOKEN  (chain $CHAIN_ID, RPC $RPC_URL)"
 echo ""
 echo "Verified:"
-echo "  • getTokenAddress → deterministic address with B-20 marker and variant"
+echo "  • getB20Address → deterministic address with B-20 marker and variant"
 echo "  • isB20 = true before and after creation"
-echo "  • getTokenVariant = 1 (DEFAULT)"
 echo "  • name='$TOKEN_NAME'  symbol='$TOKEN_SYMBOL'  decimals=$TOKEN_DECIMALS"
 echo "  • totalSupply=$INITIAL_SUPPLY  balanceOf(alice)=$ALICE_TOKEN_BAL"
 echo "  • transfer($TRANSFER_AMOUNT to bob) → alice=$EXPECTED_ALICE  bob=$TRANSFER_AMOUNT"

@@ -2,6 +2,8 @@
 # The kernels require Xcode (Metal) on macOS but are only needed for linking
 # (cargo build), not for type-checking (cargo check/clippy). CI builds run
 # on Linux where CPU kernels compile without issue.
+
+[private]
 _skip_kernels := if os() == "macos" { "RISC0_SKIP_BUILD_KERNELS=1" } else { "" }
 
 set positional-arguments := true
@@ -18,6 +20,8 @@ mod check 'etc/just/check.just'
 mod build 'etc/just/build.just'
 # SP1 / succinct ELF builds and proving helpers
 mod succinct 'etc/just/succinct.just'
+# ZK prover gRPC request helpers
+mod zk-prover 'etc/just/zk-prover.just'
 
 alias t := test
 alias f := fix
@@ -34,7 +38,7 @@ default:
 
 # Load test a network in continuous mode (Ctrl-C to stop)
 load-test-continuous network='devnet':
-    just load-test continuous {{network}}
+    just load-test continuous {{ network }}
 
 # One-time project setup: installs tooling and builds test contracts
 setup:
@@ -159,12 +163,12 @@ hack:
 
 # Fixes any formatting issues
 format-fix:
-    {{_skip_kernels}} BASE_SUCCINCT_ELF_STUB=1 cargo fix --allow-dirty --allow-staged --workspace
+    {{ _skip_kernels }} BASE_SUCCINCT_ELF_STUB=1 cargo fix --allow-dirty --allow-staged --workspace
     cargo +nightly fmt --all
 
 # Fixes any clippy issues
 clippy-fix:
-    {{_skip_kernels}} BASE_SUCCINCT_ELF_STUB=1 cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged
+    {{ _skip_kernels }} BASE_SUCCINCT_ELF_STUB=1 cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged
 
 # Cleans the workspace
 clean:

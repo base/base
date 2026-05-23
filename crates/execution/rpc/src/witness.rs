@@ -18,9 +18,9 @@ use reth_storage_api::{
     BlockReaderIdExt, NodePrimitivesProvider, StateProviderFactory,
     errors::{ProviderError, ProviderResult},
 };
-use reth_tasks::TaskSpawner;
+use reth_tasks::Runtime;
 use reth_transaction_pool::TransactionPool;
-use tokio::sync::oneshot;
+use tokio::sync::{Semaphore, oneshot};
 
 /// An extension to the `debug_` namespace of the RPC API.
 pub struct BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs> {
@@ -31,10 +31,11 @@ impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmCo
     /// Creates a new instance of the `BaseDebugWitnessApi`.
     pub fn new(
         provider: Provider,
-        task_spawner: Box<dyn TaskSpawner>,
+        task_spawner: Runtime,
         builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
     ) -> Self {
-        let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner };
+        let semaphore = Arc::new(Semaphore::new(3));
+        let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner, semaphore };
         Self { inner: Arc::new(inner) }
     }
 }
@@ -77,20 +78,23 @@ where
             NextBlockEnvCtx: BuildNextEnv<Attrs, Provider::Header, Provider::ChainSpec>,
         > + 'static,
     Attrs: Attributes<Transaction = TxTy<EvmConfig::Primitives>>,
+    Attrs::RpcPayloadAttributes: Send + Sync + 'static,
 {
     async fn execute_payload(
         &self,
         parent_block_hash: B256,
         attributes: Attrs::RpcPayloadAttributes,
     ) -> RpcResult<ExecutionWitness> {
+        let _permit = self.inner.semaphore.acquire().await;
+
         let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
 
         let (tx, rx) = oneshot::channel();
         let this = self.clone();
-        self.inner.task_spawner.spawn_blocking_task(Box::pin(async move {
+        self.inner.task_spawner.spawn_blocking_task(async move {
             let res = this.inner.builder.payload_witness(parent_header, attributes);
             let _ = tx.send(res);
-        }));
+        });
 
         rx.await
             .map_err(|err| internal_rpc_err(err.to_string()))?
@@ -116,5 +120,6 @@ impl<Pool, Provider, EvmConfig, Attrs> Debug
 struct BaseDebugWitnessApiInner<Pool, Provider, EvmConfig, Attrs> {
     provider: Provider,
     builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
-    task_spawner: Box<dyn TaskSpawner>,
+    task_spawner: Runtime,
+    semaphore: Arc<Semaphore>,
 }

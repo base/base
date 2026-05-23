@@ -189,7 +189,11 @@ impl BaseNodeExtension for FlashblocksTestExtension {
             // Register eth_subscribe subscription endpoint for flashblocks
             // Uses replace_configured since eth_subscribe already exists from reth's standard module
             // Pass eth_api to enable proxying standard subscription types to reth's implementation
-            let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), Arc::clone(&fb));
+            let eth_pubsub = EthPubSub::new(
+                ctx.registry.eth_api().clone(),
+                ctx.node().task_executor.clone(),
+                Arc::clone(&fb),
+            );
             ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
             let fb_for_task = fb;

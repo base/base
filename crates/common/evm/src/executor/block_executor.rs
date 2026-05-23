@@ -8,8 +8,8 @@ use alloy_evm::{
     Database, Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
-        ExecutableTx, OnStateHook, StateChangePostBlockSource, StateChangeSource, StateDB,
-        SystemCaller,
+        ExecutableTx, GasOutput, OnStateHook, StateChangePostBlockSource, StateChangeSource,
+        StateDB, SystemCaller,
         state_changes::{balance_increment_state, post_block_balance_increments},
     },
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
@@ -118,7 +118,10 @@ where
             DB: Database + DatabaseCommit + StateDB,
             Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
         >,
-    R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
+    R: BaseReceiptBuilder<
+            Transaction: Transaction + Encodable2718 + TransactionEnvelope<TxType: Send + 'static>,
+            Receipt: TxReceipt,
+        >,
     Spec: Upgrades,
 {
     type Transaction = R::Transaction;
@@ -127,11 +130,6 @@ where
     type Result = BaseTxResult<E::HaltReason, <R::Transaction as TransactionEnvelope>::TxType>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
-        // Set state clear flag if the block is after the Spurious Dragon hardfork.
-        let state_clear_flag =
-            self.spec.is_spurious_dragon_active_at_block(self.evm.block().number().saturating_to());
-        self.evm.db_mut().set_state_clear_flag(state_clear_flag);
-
         self.system_caller.apply_blockhashes_contract_call(self.ctx.parent_hash, &mut self.evm)?;
         self.system_caller
             .apply_beacon_root_contract_call(self.ctx.parent_beacon_block_root, &mut self.evm)?;
@@ -198,6 +196,13 @@ where
             BlockExecutionError::evm(err, hash)
         })?;
 
+        // Fetch the depositor account from the database for the deposit nonce.
+        // This *only* needs to be done post-Regolith for deposit transactions.
+        let depositor = (self.is_regolith && is_deposit)
+            .then(|| self.evm.db_mut().basic(*tx.signer()).map(|acc| acc.unwrap_or_default()))
+            .transpose()
+            .map_err(BlockExecutionError::other)?;
+
         Ok(BaseTxResult {
             inner: EthTxResult {
                 result,
@@ -206,33 +211,25 @@ where
             },
             is_deposit,
             sender: *tx.signer(),
+            depositor,
         })
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
+    fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
         let BaseTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
             is_deposit,
-            sender,
+            sender: _,
+            depositor,
         } = output;
-
-        // Fetch the depositor account from the database for the deposit nonce.
-        // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
-        // were not introduced in Bedrock. In addition, regular transactions don't have deposit
-        // nonces, so we don't need to touch the DB for those.
-        let depositor = (self.is_regolith && is_deposit)
-            .then(|| self.evm.db_mut().basic(sender).map(|acc| acc.unwrap_or_default()))
-            .transpose()
-            .map_err(BlockExecutionError::other)?;
 
         self.system_caller.on_state(StateChangeSource::Transaction(self.receipts.len()), &state);
 
-        let gas_used = result.gas_used();
+        let tx_gas_used = result.tx_gas_used();
+        let state_gas_used = result.gas().block_state_gas_used();
 
-        // append gas used
-        self.gas_used += gas_used;
+        self.gas_used += tx_gas_used;
 
-        // Update DA footprint if Jovian is active.
         if self.spec.is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
             && !is_deposit
         {
@@ -250,21 +247,14 @@ where
                 Ok(receipt) => receipt,
                 Err(ctx) => {
                     let receipt = alloy_consensus::Receipt {
-                        // Success flag was added in `EIP-658: Embedding transaction status code
-                        // in receipts`.
                         status: Eip658Value::Eip658(ctx.result.is_success()),
-                        cumulative_gas_used: self.gas_used,
+                        cumulative_gas_used: ctx.cumulative_gas_used,
                         logs: ctx.result.into_logs(),
                     };
 
                     self.receipt_builder.build_deposit_receipt(DepositReceipt {
                         inner: receipt,
                         deposit_nonce: depositor.map(|account| account.nonce),
-                        // The deposit receipt version was introduced in Canyon to indicate an
-                        // update to how receipt hashes should be computed
-                        // when set. The state transition process ensures
-                        // this is only set for post-Canyon deposit
-                        // transactions.
                         deposit_receipt_version: (is_deposit
                             && self.spec.is_canyon_active_at_timestamp(
                                 self.evm.block().timestamp().saturating_to(),
@@ -277,7 +267,7 @@ where
 
         self.evm.db_mut().commit(state);
 
-        Ok(gas_used)
+        GasOutput::with_state_gas(tx_gas_used, state_gas_used)
     }
 
     fn finish(
@@ -605,13 +595,13 @@ mod tests {
         let gas_used_tx = executor.execute_transaction(&tx).expect("failed to execute transaction");
 
         // The gas used when executing the transaction should be the legacy value...
-        assert!(gas_used_tx < expected_da_footprint);
+        assert!(gas_used_tx.tx_gas_used() < expected_da_footprint);
 
         // The gas used when finishing the executor should be the DA footprint since this is higher
         // than the legacy gas used and jovian is active...
         let (_, result) = executor.finish().expect("failed to finish executor");
         assert_eq!(result.blob_gas_used, expected_da_footprint);
-        assert_eq!(result.gas_used, gas_used_tx);
+        assert_eq!(result.gas_used, gas_used_tx.tx_gas_used());
         assert!(result.blob_gas_used > result.gas_used);
     }
 }

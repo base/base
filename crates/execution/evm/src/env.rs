@@ -57,6 +57,7 @@ impl BaseEvmEnvBuilder {
             gas_limit: header.gas_limit,
             basefee: header.base_fee_per_gas.unwrap_or_default(),
             blob_excess_gas_and_price,
+            slot_num: 0,
         };
 
         EvmEnv { cfg_env, block_env }
@@ -83,6 +84,7 @@ impl BaseEvmEnvBuilder {
             gas_limit: attributes.gas_limit,
             basefee: base_fee_per_gas,
             blob_excess_gas_and_price,
+            slot_num: 0,
         };
 
         EvmEnv { cfg_env, block_env }
@@ -114,6 +116,7 @@ impl BaseEvmEnvBuilder {
             gas_limit: payload.payload.as_v1().gas_limit,
             basefee: payload.payload.as_v1().base_fee_per_gas.to(),
             blob_excess_gas_and_price,
+            slot_num: 0,
         };
 
         EvmEnv { cfg_env, block_env }

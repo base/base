@@ -8,7 +8,7 @@ use base_precompile_storage::{
     BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
 };
 
-use crate::{B20PolicyType, B20TokenRole, IB20, TokenAccounting, TokenVariant};
+use crate::{B20PolicyType, B20TokenRole, B20Variant, IB20, TokenAccounting};
 
 /// Creation-time parameters for a B-20 token.
 ///
@@ -43,8 +43,8 @@ pub struct B20CoreStorage {
     pub roles: Mapping<B256, Mapping<Address, bool>>, // offset 6
     /// Admin role configured for each role.
     pub role_admins: Mapping<B256, B256>, // offset 7
-    /// Packed default-admin count and initialization flag.
-    pub admin_count_and_initialized: U256, // offset 8
+    /// Default-admin holder count.
+    pub admin_count: U256, // offset 8
     /// Packed transfer-side policy IDs.
     pub transfer_policy_ids: U256, // offset 9: sender, receiver, executor, reserved
     /// Packed mint-side policy IDs.
@@ -138,8 +138,7 @@ impl TokenAccounting for B20TokenStorage<'_> {
     }
 
     fn decimals(&self) -> Result<u8> {
-        Ok(TokenVariant::from_address(ContractStorage::address(self))
-            .map_or(0, TokenVariant::decimals))
+        Ok(B20Variant::from_address(ContractStorage::address(self)).map_or(0, B20Variant::decimals))
     }
 
     fn paused(&self) -> Result<U256> {
@@ -179,7 +178,7 @@ impl TokenAccounting for B20TokenStorage<'_> {
 
     fn role_member_count(&self, role: B256) -> Result<U256> {
         if role == B20TokenRole::DefaultAdmin.id() {
-            Ok(Self::read_admin_count(self.b20.admin_count_and_initialized.read()?))
+            self.b20.admin_count.read()
         } else {
             Ok(U256::ZERO)
         }
@@ -187,8 +186,7 @@ impl TokenAccounting for B20TokenStorage<'_> {
 
     fn set_role_member_count(&mut self, role: B256, count: U256) -> Result<()> {
         if role == B20TokenRole::DefaultAdmin.id() {
-            let packed = self.b20.admin_count_and_initialized.read()?;
-            self.b20.admin_count_and_initialized.write(Self::write_admin_count(packed, count)?)
+            self.b20.admin_count.write(count)
         } else {
             Ok(())
         }
@@ -207,8 +205,8 @@ impl TokenAccounting for B20TokenStorage<'_> {
         self.b20.role_admins.at_mut(&role).write(admin_role)
     }
 
-    fn policy_id(&self, policy_type: B256) -> Result<u64> {
-        let policy_type = Self::require_policy_type(policy_type)?;
+    fn policy_id(&self, policy_scope: B256) -> Result<u64> {
+        let policy_type = Self::require_policy_type(policy_scope)?;
         match policy_type {
             B20PolicyType::TransferSender => Ok(Self::read_policy_lane(
                 self.b20.transfer_policy_ids.read()?,
@@ -229,8 +227,8 @@ impl TokenAccounting for B20TokenStorage<'_> {
         }
     }
 
-    fn set_policy_id(&mut self, policy_type: B256, policy_id: u64) -> Result<()> {
-        let policy_type = Self::require_policy_type(policy_type)?;
+    fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
+        let policy_type = Self::require_policy_type(policy_scope)?;
         match policy_type {
             B20PolicyType::TransferSender => {
                 let packed = Self::write_policy_lane(
@@ -273,32 +271,15 @@ impl TokenAccounting for B20TokenStorage<'_> {
 }
 
 impl B20TokenStorage<'_> {
-    const ADMIN_COUNT_BITS: usize = 248;
     const TRANSFER_SENDER_POLICY_LANE: usize = 0;
     const TRANSFER_RECEIVER_POLICY_LANE: usize = 1;
     const TRANSFER_EXECUTOR_POLICY_LANE: usize = 2;
     const MINT_RECEIVER_POLICY_LANE: usize = 0;
     const POLICY_LANE_BITS: usize = 64;
 
-    fn admin_count_mask() -> U256 {
-        (U256::ONE << Self::ADMIN_COUNT_BITS) - U256::ONE
-    }
-
-    fn read_admin_count(packed: U256) -> U256 {
-        packed & Self::admin_count_mask()
-    }
-
-    fn write_admin_count(packed: U256, count: U256) -> Result<U256> {
-        let mask = Self::admin_count_mask();
-        if count > mask {
-            return Err(BasePrecompileError::under_overflow());
-        }
-        Ok((packed & !mask) | count)
-    }
-
-    fn require_policy_type(policy_type: B256) -> Result<B20PolicyType> {
-        B20PolicyType::from_id(policy_type).ok_or_else(|| {
-            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
+    fn require_policy_type(policy_scope: B256) -> Result<B20PolicyType> {
+        B20PolicyType::from_id(policy_scope).ok_or_else(|| {
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: policy_scope })
         })
     }
 
@@ -343,7 +324,7 @@ mod tests {
         assert_eq!(__packing_b20_core_storage::ALLOWANCES_LOC.offset_slots, 5);
         assert_eq!(__packing_b20_core_storage::ROLES_LOC.offset_slots, 6);
         assert_eq!(__packing_b20_core_storage::ROLE_ADMINS_LOC.offset_slots, 7);
-        assert_eq!(__packing_b20_core_storage::ADMIN_COUNT_AND_INITIALIZED_LOC.offset_slots, 8);
+        assert_eq!(__packing_b20_core_storage::ADMIN_COUNT_LOC.offset_slots, 8);
         assert_eq!(__packing_b20_core_storage::TRANSFER_POLICY_IDS_LOC.offset_slots, 9);
         assert_eq!(__packing_b20_core_storage::MINT_POLICY_IDS_LOC.offset_slots, 10);
         assert_eq!(__packing_b20_core_storage::PAUSED_LOC.offset_slots, 11);
@@ -371,10 +352,8 @@ mod tests {
                 B20_ROOT + U256::from(__packing_b20_core_storage::ALLOWANCES_LOC.offset_slots);
             let roles_slot =
                 B20_ROOT + U256::from(__packing_b20_core_storage::ROLES_LOC.offset_slots);
-            let admin_count_slot = B20_ROOT
-                + U256::from(
-                    __packing_b20_core_storage::ADMIN_COUNT_AND_INITIALIZED_LOC.offset_slots,
-                );
+            let admin_count_slot =
+                B20_ROOT + U256::from(__packing_b20_core_storage::ADMIN_COUNT_LOC.offset_slots);
 
             assert_eq!(
                 ctx.sload(TOKEN, holder.mapping_slot(balances_slot)).unwrap(),

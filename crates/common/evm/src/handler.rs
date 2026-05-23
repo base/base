@@ -1,5 +1,5 @@
 //! Handler related to Base chain
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 
 use base_common_chains::BaseUpgrade;
 use base_common_consensus::Predeploys;
@@ -11,8 +11,9 @@ use revm::{
     },
     context_interface::{
         Block, Cfg, ContextTr, JournalTr, Transaction,
+        cfg::gas::InitialAndFloorGas,
         context::ContextError,
-        result::{EVMError, ExecutionResult, FromStringError},
+        result::{EVMError, ExecutionResult, FromStringError, ResultGas},
     },
     handler::{
         EthFrame, EvmTr, FrameResult, Handler, MainnetHandler,
@@ -102,6 +103,7 @@ where
     fn validate_against_state_and_deduct_caller(
         &self,
         evm: &mut Self::Evm,
+        _initial_and_floor_gas: &mut InitialAndFloorGas,
     ) -> Result<(), Self::Error> {
         let (block, tx, cfg, journal, chain, _) = evm.ctx().all_mut();
         let spec = cfg.spec();
@@ -303,6 +305,7 @@ where
         &mut self,
         evm: &mut Self::Evm,
         frame_result: <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        result_gas: ResultGas,
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
         match core::mem::replace(evm.ctx().error(), Ok(())) {
             Err(ContextError::Db(e)) => return Err(e.into()),
@@ -310,8 +313,8 @@ where
             Ok(_) => (),
         }
 
-        let exec_result =
-            post_execution::output(evm.ctx(), frame_result).map_haltreason(BaseHaltReason::Base);
+        let exec_result = post_execution::output(evm.ctx(), frame_result, result_gas)
+            .map_haltreason(BaseHaltReason::Base);
 
         if exec_result.is_halt() {
             let is_deposit = evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE;
@@ -366,7 +369,11 @@ where
                 0
             };
             // clear the journal
-            output = Ok(ExecutionResult::Halt { reason: BaseHaltReason::FailedDeposit, gas_used })
+            output = Ok(ExecutionResult::Halt {
+                reason: BaseHaltReason::FailedDeposit,
+                gas: ResultGas::new_with_state_gas(gas_used, 0, 0, 0),
+                logs: Vec::new(),
+            })
         }
 
         // do the cleanup
@@ -438,7 +445,7 @@ mod tests {
 
         let gas = call_last_frame_return(ctx, InstructionResult::Revert, Gas::new(90));
         assert_eq!(gas.remaining(), 90);
-        assert_eq!(gas.spent(), 10);
+        assert_eq!(gas.total_gas_spent(), 10);
         assert_eq!(gas.refunded(), 0);
     }
 
@@ -450,7 +457,7 @@ mod tests {
 
         let gas = call_last_frame_return(ctx, InstructionResult::Stop, Gas::new(90));
         assert_eq!(gas.remaining(), 90);
-        assert_eq!(gas.spent(), 10);
+        assert_eq!(gas.total_gas_spent(), 10);
         assert_eq!(gas.refunded(), 0);
     }
 
@@ -470,12 +477,12 @@ mod tests {
 
         let gas = call_last_frame_return(ctx.clone(), InstructionResult::Stop, ret_gas);
         assert_eq!(gas.remaining(), 90);
-        assert_eq!(gas.spent(), 10);
+        assert_eq!(gas.total_gas_spent(), 10);
         assert_eq!(gas.refunded(), 2); // min(20, 10/5)
 
         let gas = call_last_frame_return(ctx, InstructionResult::Revert, ret_gas);
         assert_eq!(gas.remaining(), 90);
-        assert_eq!(gas.spent(), 10);
+        assert_eq!(gas.total_gas_spent(), 10);
         assert_eq!(gas.refunded(), 0);
     }
 
@@ -491,7 +498,7 @@ mod tests {
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock)));
         let gas = call_last_frame_return(ctx, InstructionResult::Stop, Gas::new(90));
         assert_eq!(gas.remaining(), 0);
-        assert_eq!(gas.spent(), 100);
+        assert_eq!(gas.total_gas_spent(), 100);
         assert_eq!(gas.refunded(), 0);
     }
 
@@ -508,7 +515,7 @@ mod tests {
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock)));
         let gas = call_last_frame_return(ctx, InstructionResult::Stop, Gas::new(90));
         assert_eq!(gas.remaining(), 100);
-        assert_eq!(gas.spent(), 0);
+        assert_eq!(gas.total_gas_spent(), 0);
         assert_eq!(gas.refunded(), 0);
     }
 
@@ -539,7 +546,10 @@ mod tests {
 
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        handler.validate_against_state_and_deduct_caller(&mut evm).unwrap();
+        let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
+        handler
+            .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
+            .unwrap();
 
         // Check the account balance is updated.
         let account = evm.ctx_mut().journal_mut().load_account(caller).unwrap();
@@ -580,7 +590,10 @@ mod tests {
 
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        handler.validate_against_state_and_deduct_caller(&mut evm).unwrap();
+        let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
+        handler
+            .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
+            .unwrap();
 
         // Check the account balance is updated.
         let account = evm.ctx_mut().journal_mut().load_account(caller).unwrap();
@@ -634,7 +647,10 @@ mod tests {
 
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
-        handler.validate_against_state_and_deduct_caller(&mut evm).unwrap();
+        let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
+        handler
+            .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
+            .unwrap();
 
         assert_eq!(
             *evm.ctx().chain(),

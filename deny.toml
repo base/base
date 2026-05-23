@@ -1,10 +1,6 @@
 [advisories]
 # Ignore unmaintained/vulnerable crates that come from upstream dependencies we cannot control
 ignore = [
-    # rustls-pemfile is unmaintained but comes from bollard -> testcontainers (dev dependency)
-    # No safe upgrade available, waiting for upstream to migrate to rustls-pki-types
-    "RUSTSEC-2025-0134",
-
     # bincode is unmaintained but comes from reth-nippy-jar (upstream reth dependency)
     # No safe upgrade available
     "RUSTSEC-2025-0141",
@@ -12,6 +8,34 @@ ignore = [
     # paste is unmaintained but widely used in ecosystem (alloy, reth, etc.)
     # No safe upgrade available
     "RUSTSEC-2024-0436",
+
+    # atomic-polyfill is unmaintained but comes from upstream reth/alloy dependencies
+    "RUSTSEC-2023-0089",
+
+    # tar PAX extension vulnerability — comes from reth-cli-commands, waiting for upstream fix
+    "RUSTSEC-2026-0066",
+
+    # AWS-LC X.509 vulnerabilities — transitive from aws-sdk deps, waiting for upstream fix
+    "RUSTSEC-2026-0044",
+    "RUSTSEC-2026-0048",
+
+    # backoff is unmaintained — transitive from upstream reth/alloy dependencies
+    "RUSTSEC-2025-0012",
+
+    # derivative is unmaintained — transitive from upstream reth dependencies
+    "RUSTSEC-2024-0388",
+
+    # instant is unmaintained — transitive from upstream reth dependencies
+    "RUSTSEC-2024-0384",
+
+    # aws-lc-sys SHAKE API — transitive from aws-sdk deps
+    "RUSTSEC-2026-0074",
+
+    # lz4 decompression info leak — transitive from reth-cli-commands
+    "RUSTSEC-2026-0041",
+
+    # rsa Marvin Attack — transitive from upstream dependencies
+    "RUSTSEC-2023-0071",
 ]
 
 [licenses]
@@ -31,6 +55,8 @@ allow = [
     "BSL-1.0",
     "OpenSSL",
     "CDLA-Permissive-2.0",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
 ]
 confidence-threshold = 0.8
 
@@ -85,31 +111,20 @@ skip = [
     "itertools",
     "lru",
 
-    # Crypto crates - version differences from different crypto stacks
-    "signature",
-    "base16ct",
-    "crypto-bigint",
-    "der",
-    "ecdsa",
-    "elliptic-curve",
-    "ff",
-    "group",
-    "p256",
-    "pkcs8",
-    "rfc6979",
-    "sec1",
-    "spki",
-
     # System/platform crates
     "socket2",
     "bitflags",
     "redox_users",
     "windows",
+    "windows-collections",
     "windows-core",
+    "windows-future",
     "windows-implement",
     "windows-link",
+    "windows-numerics",
     "windows-result",
     "windows-strings",
+    "windows-threading",
 
     # Network crates
     "tungstenite",
@@ -131,7 +146,6 @@ skip = [
     "derive_more-impl",
     "dirs",
     "dirs-sys",
-    "ethereum_ssz",
     "generic-array",
     "indexmap",
     "indicatif",
@@ -140,7 +154,6 @@ skip = [
     "num_enum",
     "num_enum_derive",
     "ordered-float",
-    "pasta_curves",
     "petgraph",
     "proc-macro-crate",
     "gloo-timers",
@@ -150,11 +163,15 @@ skip = [
     "prost-build",
     "prost-types",
     "rustc-hash",
-    "send_wrapper",
     "sync_wrapper",
     "sysinfo",
     "webpki-roots",
     "webpki-root-certs",
+
+    # wasm-streams version mismatch from transitive deps
+    "wasm-streams",
+
+    "discv5",
 
     # libp2p dependency chain version mismatch
     "unsigned-varint",
@@ -181,10 +198,6 @@ skip = [
     # rustls-platform-verifier version mismatch: jsonrpsee uses 0.5.x, reqwest uses 0.6.x
     "rustls-platform-verifier",
 
-    # AWS SDK version mismatches from tips aws-sdk-s3 dependency
-    "aws-smithy-http",
-    "aws-smithy-json",
-
     # TLS/HTTP stack version mismatches from aws-sdk deps
     "h2",
     "http",
@@ -208,20 +221,13 @@ skip = [
     "half",
     "memoffset",
 
-    # SP1 + SP1 cluster duplicate dependency epochs
-    "ark-ff",
-    "ark-ff-asm",
-    "ark-ff-macros",
-    "ark-serialize",
-    "ark-std",
+    # SP1 + risc0/boundless transitive dependency mismatches
     "opentelemetry",
     "opentelemetry-appender-tracing",
     "opentelemetry-otlp",
     "opentelemetry-proto",
     "opentelemetry_sdk",
     "tracing-opentelemetry",
-    "jsonwebtoken",
-    "pairing",
     "strum_macros",
     "wit-bindgen",
     "block-buffer",
@@ -232,17 +238,50 @@ skip = [
     "sha2",
 
     # risc0/boundless transitive dependency mismatches
+    # boundless-market v1.4.0 pulls alloy 1.x alongside our alloy 2.0
+    "alloy-consensus",
+    "alloy-consensus-any",
+    "alloy-contract",
+    "alloy-eips",
+    "alloy-genesis",
     "alloy-hardforks",
+    "alloy-json-rpc",
+    "alloy-network",
+    "alloy-network-primitives",
+    "alloy-provider",
+    "alloy-rpc-client",
+    "alloy-rpc-types",
+    "alloy-rpc-types-anvil",
+    "alloy-rpc-types-any",
+    "alloy-rpc-types-eth",
+    "alloy-serde",
+    "alloy-signer",
+    "alloy-signer-local",
+    "alloy-transport",
+    "alloy-transport-http",
+    "alloy-tx-macros",
     "cargo-platform",
     "cargo_metadata",
     "cpufeatures",
     "foreign-types",
     "foreign-types-shared",
     "num-bigint",
+
     "ringbuffer",
     "tracing-subscriber",
-    "wasm-streams",
+    "untrusted",
+
     "winnow",
+
+    "jni",
+    "jni-sys",
+    "keccak",
+    "md-5",
+    "proptest-derive",
+    "ruzstd",
+    "sha1",
+    "sha3",
+    "twox-hash",
 ]
 
 [sources]

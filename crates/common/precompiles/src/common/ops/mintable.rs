@@ -20,9 +20,9 @@ pub trait Mintable: Token {
         }
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Mint)?;
+            B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::MintReceiver, to)?;
         }
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::MINT)?;
-        B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::MintReceiver, to)?;
         let supply = self.accounting().total_supply()?;
         let cap = self.accounting().supply_cap()?;
         let new_supply =
@@ -109,16 +109,6 @@ mod tests {
     }
 
     #[test]
-    fn mint_zero_amount_reverts() {
-        let mut token = make_token();
-
-        assert_eq!(
-            token.mint(CALLER, ALICE, U256::ZERO, true).unwrap_err(),
-            BasePrecompileError::revert(IB20::InvalidAmount {})
-        );
-    }
-
-    #[test]
     fn mint_allows_supply_cap_boundary() {
         let mut token = make_token();
         token.accounting_mut().supply_cap = U256::from(100u64);
@@ -200,7 +190,7 @@ mod tests {
         assert_eq!(
             token.mint(CALLER, ALICE, U256::ONE, true).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
-                policyType: B20PolicyType::MintReceiver.id(),
+                policyScope: B20PolicyType::MintReceiver.id(),
                 policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
             })
         );

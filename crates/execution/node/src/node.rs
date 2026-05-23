@@ -10,21 +10,20 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut};
 use alloy_rlp::Encodable;
 use base_common_chains::Upgrades;
-use base_common_consensus::BasePrimitives;
+use base_common_consensus::{BasePrimitives, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
-    Attributes, BaseBuiltPayload, PayloadPrimitives,
+    Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadPrimitives,
     builder::BasePayloadTransactions,
     config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig},
 };
 use base_execution_rpc::{
-    MinerApiExtServer,
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::BaseEthApiBuilder,
-    miner::BaseMinerExtApi,
+    miner::{BaseMinerExtApi, MinerApiExtServer},
     witness::BaseDebugWitnessApi,
 };
 use base_execution_txpool::{
@@ -113,10 +112,6 @@ impl<N> BaseFullNodeTypes for N where
 }
 
 /// Local payload attributes builder for Base.
-///
-/// This mirrors the upstream `LocalPayloadAttributesBuilder` for
-/// `op_alloy_rpc_types_engine::BasePayloadAttributes`, but targets
-/// `base_common_rpc_types_engine::BasePayloadAttributes`.
 #[derive(Debug)]
 pub struct BaseLocalPayloadAttributesBuilder {
     chain_spec: Arc<BaseChainSpec>,
@@ -129,8 +124,13 @@ impl BaseLocalPayloadAttributesBuilder {
     }
 }
 
-impl PayloadAttributesBuilder<BasePayloadAttributes> for BaseLocalPayloadAttributesBuilder {
-    fn build(&self, parent: &SealedHeader<alloy_consensus::Header>) -> BasePayloadAttributes {
+impl PayloadAttributesBuilder<BasePayloadBuilderAttributes<BaseTxEnvelope>>
+    for BaseLocalPayloadAttributesBuilder
+{
+    fn build(
+        &self,
+        parent: &SealedHeader<alloy_consensus::Header>,
+    ) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
         /// Dummy system transaction for dev mode.
         const TX_SET_L1_BLOCK_BASE_MAINNET_BLOCK_1: [u8; 349] = alloy_primitives::hex!(
             "7ef90159a024fa2288af14732611c4b9a8f99b2c929eaf2af8fb45981a752a01417994df3b94deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b90104015d8eb900000000000000000000000000000000000000000000000000000000010ac02800000000000000000000000000000000000000000000000000000000648a5ce300000000000000000000000000000000000000000000000000000003ded24b5e5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc3077100000000000000000000000000000000000000000000000000000000000000010000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c900000000000000000000000000000000000000000000000000000000000000bc00000000000000000000000000000000000000000000000000000000000a6fe0"
@@ -158,7 +158,7 @@ impl PayloadAttributesBuilder<BasePayloadAttributes> for BaseLocalPayloadAttribu
         eip1559_bytes[4..8].copy_from_slice(&elasticity.to_be_bytes());
         let eip_1559_params = Some(B64::from(eip1559_bytes));
 
-        BasePayloadAttributes {
+        let attributes = BasePayloadAttributes {
             payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
                 timestamp,
                 prev_randao: B256::random(),
@@ -171,13 +171,17 @@ impl PayloadAttributesBuilder<BasePayloadAttributes> for BaseLocalPayloadAttribu
                     .chain_spec
                     .is_ecotone_active_at_timestamp(timestamp)
                     .then(B256::random),
+                slot_number: None,
             },
             transactions: Some(vec![TX_SET_L1_BLOCK_BASE_MAINNET_BLOCK_1.into()]),
             no_tx_pool: None,
             gas_limit,
             eip_1559_params,
             min_base_fee: Some(0),
-        }
+        };
+
+        BasePayloadBuilderAttributes::try_new(parent.hash(), attributes, 3)
+            .expect("static dev payload attributes must decode")
     }
 }
 
@@ -352,7 +356,7 @@ impl<N> DebugNode<N> for BaseNode
 where
     N: FullNodeComponents<Types = Self>,
 {
-    type RpcBlock = alloy_rpc_types_eth::Block<base_common_consensus::BaseTxEnvelope>;
+    type RpcBlock = alloy_rpc_types_eth::Block<BaseTxEnvelope>;
 
     fn rpc_to_primitive_block(rpc_block: Self::RpcBlock) -> reth_node_api::BlockTy<Self> {
         rpc_block.into_consensus()
@@ -559,8 +563,7 @@ impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> NodeAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes
-                       + NodeTypes<Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>>,
+            Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<Attrs, HeaderTy<N::Types>, BaseChainSpec>,
             >,
@@ -571,7 +574,10 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: Attributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
+    Attrs: Attributes<
+            Transaction = TxTy<N::Types>,
+            RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
+        >,
     <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type Handle = RpcHandle<N, EthB::EthApi>;
@@ -592,7 +598,7 @@ where
         // Install additional rollup-specific RPC methods.
         let debug_ext = BaseDebugWitnessApi::<_, _, _, Attrs>::new(
             ctx.node.provider().clone(),
-            Box::new(ctx.node.task_executor().clone()),
+            ctx.node.task_executor().clone(),
             builder,
         );
         let miner_ext = BaseMinerExtApi::new(da_config, gas_limit_config);
@@ -635,8 +641,7 @@ impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> RethRpcAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes
-                       + NodeTypes<Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>>,
+            Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<Attrs, HeaderTy<N::Types>, BaseChainSpec>,
             >,
@@ -647,7 +652,10 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: Attributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
+    Attrs: Attributes<
+            Transaction = TxTy<N::Types>,
+            RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
+        >,
     <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type EthApi = EthB::EthApi;
@@ -809,6 +817,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
                 EB::default(),
                 EVB::default(),
                 rpc_middleware,
+                Identity::new(),
             )
             .with_tokio_runtime(tokio_runtime),
             da_config.unwrap_or_default(),
@@ -1022,7 +1031,7 @@ where
                 Primitives: PayloadPrimitives,
                 Payload: PayloadTypes<
                     BuiltPayload = BaseBuiltPayload<PrimitivesTy<Node::Types>>,
-                    PayloadBuilderAttributes = Attrs,
+                    PayloadAttributes = Attrs,
                 >,
             >,
         >,
@@ -1037,7 +1046,7 @@ where
     Pool:
         TransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>> + Unpin + 'static,
     Txs: BasePayloadTransactions<Pool::Transaction>,
-    Attrs: Attributes<Transaction = TxTy<Node::Types>>,
+    Attrs: Attributes<Transaction = TxTy<Node::Types>> + Unpin,
 {
     type PayloadBuilder =
         base_execution_payload_builder::BasePayloadBuilder<Pool, Node::Provider, Evm, Txs, Attrs>;
@@ -1401,7 +1410,9 @@ mod tests {
 
         let network_config = discovery_config
             .apply_to_network_builder(
-                NetworkConfigBuilder::<EthNetworkPrimitives>::with_rng_secret_key(),
+                NetworkConfigBuilder::<EthNetworkPrimitives>::with_rng_secret_key(
+                    reth_tasks::Runtime::test(),
+                ),
                 &args,
                 Vec::<NodeRecord>::new(),
                 None,
@@ -1424,7 +1435,9 @@ mod tests {
 
         let network_config = discovery_config
             .apply_to_network_builder(
-                NetworkConfigBuilder::<EthNetworkPrimitives>::with_rng_secret_key(),
+                NetworkConfigBuilder::<EthNetworkPrimitives>::with_rng_secret_key(
+                    reth_tasks::Runtime::test(),
+                ),
                 &args,
                 Vec::<NodeRecord>::new(),
                 None,

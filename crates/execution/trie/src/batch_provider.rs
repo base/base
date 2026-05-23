@@ -26,8 +26,8 @@ use reth_trie::{
     witness::TrieWitness,
 };
 use reth_trie_common::{
-    AccountProof, HashedPostState, HashedPostStateSorted, HashedStorage, KeccakKeyHasher,
-    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
+    AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
+    KeccakKeyHasher, MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     updates::TrieUpdates,
 };
 
@@ -247,7 +247,12 @@ impl<S: BaseProofsBatchSession> StateProofProvider for BaseProofsBatchStateProvi
             .map_err(ProviderError::from)
     }
 
-    fn witness(&self, input: TrieInput, target: HashedPostState) -> ProviderResult<Vec<Bytes>> {
+    fn witness(
+        &self,
+        input: TrieInput,
+        target: HashedPostState,
+        _mode: ExecutionWitnessMode,
+    ) -> ProviderResult<Vec<Bytes>> {
         let nodes_sorted = input.nodes.into_sorted();
         let state_sorted = input.state.into_sorted();
         let (trie_factory, hashed_factory) = self.factories();
@@ -287,14 +292,6 @@ impl<S: BaseProofsBatchSession> AccountReader for BaseProofsBatchStateProviderRe
 impl<S: BaseProofsBatchSession> StateProvider for BaseProofsBatchStateProviderRef<'_, S> {
     fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {
         let hashed_key = keccak256(storage_key);
-        self.storage_by_hashed_key(address, hashed_key)
-    }
-
-    fn storage_by_hashed_key(
-        &self,
-        address: Address,
-        hashed_key: B256,
-    ) -> ProviderResult<Option<StorageValue>> {
         Ok(self
             .session
             .storage_hashed_cursor(keccak256(address.0), self.block_number)

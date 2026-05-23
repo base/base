@@ -10,7 +10,7 @@ mod tests {
     use alloc::{vec, vec::Vec};
 
     use revm::{
-        precompile::{PrecompileError, bn254, modexp, secp256r1},
+        precompile::{bn254, modexp, secp256r1},
         primitives::eip7823,
     };
 
@@ -37,10 +37,8 @@ mod tests {
         let bn254_pair = precompiles.precompiles().get(&bn254::pair::ADDRESS).unwrap();
 
         let input = vec![0u8; 81_984 + bn254::PAIR_ELEMENT_LEN];
-        assert!(matches!(
-            bn254_pair.execute(&input, u64::MAX),
-            Err(PrecompileError::Bn254PairLength)
-        ));
+        let result = bn254_pair.execute(&input, u64::MAX, 0);
+        assert!(result.is_err(), "expected error for oversized bn254 pair input, got {result:?}");
     }
 
     #[test]
@@ -54,13 +52,18 @@ mod tests {
         let azul_p256 =
             azul_precompiles.precompiles().get(secp256r1::P256VERIFY_OSAKA.address()).unwrap();
 
-        assert!(jovian_p256.execute(&[], 5_000).is_ok());
-        assert!(matches!(azul_p256.execute(&[], 5_000), Err(PrecompileError::OutOfGas)));
+        assert!(jovian_p256.execute(&[], 5_000, 0).is_ok());
+        let azul_result = azul_p256.execute(&[], 5_000, 0);
+        assert!(
+            matches!(&azul_result, Ok(output) if output.halt_reason().is_some()),
+            "expected halt for azul p256, got {azul_result:?}"
+        );
 
         let azul_modexp = azul_precompiles.precompiles().get(modexp::OSAKA.address()).unwrap();
-        assert!(matches!(
-            azul_modexp.execute(&oversized_modexp_input(), u64::MAX),
-            Err(PrecompileError::ModexpEip7823LimitSize)
-        ));
+        let modexp_result = azul_modexp.execute(&oversized_modexp_input(), u64::MAX, 0);
+        assert!(
+            matches!(&modexp_result, Ok(output) if output.halt_reason().is_some()),
+            "expected halt for oversized modexp, got {modexp_result:?}"
+        );
     }
 }

@@ -195,14 +195,13 @@ mod tests {
     use alloy_primitives::{B256, Bytes, U256};
     use base_common_evm::{BaseContext, BaseUpgrade, DefaultBase as _};
     use base_common_precompiles::{
-        ActivationRegistryStorage, PolicyRegistryStorage, TokenFactoryStorage, TokenVariant,
+        ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
     };
     use revm::{
         Context,
         database::EmptyDB,
         handler::PrecompileProvider,
         interpreter::{CallInput, CallScheme, CallValue, InstructionResult},
-        precompile::PrecompileError,
     };
     use revm_precompile::secp256r1;
 
@@ -223,7 +222,8 @@ mod tests {
             scheme: CallScheme::Call,
             is_static: false,
             return_memory_offset: 0..0,
-            known_bytecode: None,
+            known_bytecode: Default::default(),
+            reservoir: 0,
         }
     }
 
@@ -308,7 +308,8 @@ mod tests {
             scheme: CallScheme::Call,
             is_static: false,
             return_memory_offset: 0..0,
-            known_bytecode: None,
+            known_bytecode: Default::default(),
+            reservoir: 0,
         };
 
         let result = precompiles.run(&mut ctx, &call_inputs).unwrap();
@@ -422,10 +423,10 @@ mod tests {
     #[test]
     fn test_zkvm_precompiles_match_beryl_dynamic_installation() {
         let (token_address, _) =
-            TokenVariant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+            B20Variant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
 
         let installed_addresses = [
-            TokenFactoryStorage::ADDRESS,
+            B20FactoryStorage::ADDRESS,
             PolicyRegistryStorage::ADDRESS,
             ActivationRegistryStorage::ADDRESS,
             token_address,
@@ -493,13 +494,14 @@ mod tests {
 
         // Legacy P256VERIFY costs 3,450 gas. With 5,000 gas it should succeed.
         assert!(
-            jovian_p256.execute(&[], 5_000).is_ok(),
+            jovian_p256.execute(&[], 5_000, 0).is_ok(),
             "JOVIAN P256VERIFY must succeed with 5,000 gas (legacy pricing, 3,450 base fee)",
         );
 
         // Osaka P256VERIFY costs 6,900 gas. With 5,000 gas it must fail with OOG.
+        let azul_result = azul_p256.execute(&[], 5_000, 0);
         assert!(
-            matches!(azul_p256.execute(&[], 5_000), Err(PrecompileError::OutOfGas)),
+            matches!(&azul_result, Ok(output) if output.halt_reason().is_some()),
             "AZUL P256VERIFY must fail with 5,000 gas (Osaka pricing, 6,900 base fee)",
         );
     }

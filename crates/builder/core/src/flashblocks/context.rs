@@ -7,6 +7,8 @@ use std::{
 use alloy_consensus::{Eip658Value, Transaction};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
+#[cfg(any(test, feature = "test-utils"))]
+use alloy_primitives::B256;
 use alloy_primitives::{BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
@@ -29,9 +31,8 @@ use reth_evm::{
 };
 use reth_node_api::PayloadBuilderError;
 use reth_payload_builder::PayloadId;
-use reth_payload_primitives::PayloadBuilderAttributes;
-use reth_primitives::SealedHeader;
-use reth_primitives_traits::{InMemorySize, SignedTransaction};
+use reth_payload_primitives::PayloadAttributes;
+use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
@@ -127,9 +128,7 @@ pub struct FlashblockDiagnostics {
     pub txs_rejected_other: u64,
     /// Minimum effective priority fee (tip per gas) among included transactions.
     pub min_priority_fee: Option<u64>,
-    /// Transaction hashes permanently rejected due to per-tx intrinsic limits
-    /// (e.g. tx DA size exceeded, tx execution time exceeded). These will never
-    /// be includable and should be evicted from the pool.
+    /// Transaction hashes permanently rejected due to per-tx intrinsic limits.
     pub permanently_rejected_txs: Vec<TxHash>,
 }
 
@@ -350,7 +349,7 @@ impl BasePayloadBuilderCtx {
     }
 
     /// Returns the block number for the block.
-    pub const fn block_number(&self) -> u64 {
+    pub fn block_number(&self) -> u64 {
         as_u64_saturated!(self.evm_env.block_env.number)
     }
 
@@ -414,7 +413,7 @@ impl BasePayloadBuilderCtx {
 
     /// Returns the unique id for this payload job.
     pub fn payload_id(&self) -> PayloadId {
-        self.attributes().payload_id()
+        self.attributes().payload_id(&self.parent_hash())
     }
 
     /// Returns true if regolith is active for the payload.
@@ -608,7 +607,7 @@ impl BasePayloadBuilderCtx {
             };
 
             // add gas used by the transaction to cumulative gas used, before creating the receipt
-            let gas_used = result.gas_used();
+            let gas_used = result.tx_gas_used();
             info.cumulative_gas_used += gas_used;
 
             if !sequencer_tx.is_deposit() {
@@ -865,10 +864,10 @@ impl BasePayloadBuilderCtx {
 
                     let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                     record_rejected_tx_priority_fee(&err, priority_fee);
-
                     if err.is_permanent() {
                         diag.permanently_rejected_txs.push(tx_hash);
                     }
+
                     log_txn(Err(err));
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
@@ -965,7 +964,7 @@ impl BasePayloadBuilderCtx {
                 BuilderMetrics::execution_time_prediction_error_us().record(error);
             }
 
-            let gas_used = result.gas_used();
+            let gas_used = result.tx_gas_used();
             let is_success = result.is_success();
             if is_success {
                 log_txn(Ok(TxnOutcome::Success));
@@ -1135,7 +1134,7 @@ impl BasePayloadBuilderCtx {
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-use alloy_primitives::B256;
+use base_execution_payload_builder::payload::EthPayloadBuilderAttributes;
 
 #[cfg(any(test, feature = "test-utils"))]
 impl BasePayloadBuilderCtx {
@@ -1148,7 +1147,7 @@ impl BasePayloadBuilderCtx {
         let timestamp = parent.timestamp + 2;
 
         let attributes = BasePayloadBuilderAttributes {
-            payload_attributes: reth_payload_builder::EthPayloadBuilderAttributes {
+            payload_attributes: EthPayloadBuilderAttributes {
                 id: PayloadId::new([0; 8]),
                 parent: parent.hash(),
                 timestamp,
@@ -1172,7 +1171,8 @@ impl BasePayloadBuilderCtx {
             .next_evm_env(&parent, &block_env_attributes)
             .expect("failed to create test evm env");
 
-        let config = PayloadConfig::new(parent, attributes);
+        let payload_id = attributes.payload_id(&parent.hash());
+        let config = PayloadConfig::new(parent, attributes, payload_id);
 
         Self {
             evm_config,
@@ -1197,8 +1197,7 @@ mod tests {
     use base_common_consensus::BaseTypedTransaction;
     use base_execution_chainspec::BaseChainSpec;
     use reth_chainspec::ChainSpec;
-    use reth_primitives::SealedHeader;
-    use reth_primitives_traits::WithEncoded;
+    use reth_primitives_traits::{SealedHeader, WithEncoded};
     use reth_provider::noop::NoopProvider;
     use reth_revm::{State, database::StateProviderDatabase};
 

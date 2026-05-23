@@ -11,7 +11,6 @@ use std::{
 
 use alloy_primitives::Address;
 use alloy_provider::ProviderBuilder;
-use alloy_signer_local::PrivateKeySigner;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
@@ -27,6 +26,7 @@ use base_proof_tee_registrar::{
     RegistrarMetrics, RegistrationDriver, RegistryContractClient,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
+use boundless_market::alloy::signers::local::PrivateKeySigner;
 use clap::{Args, Parser, ValueEnum};
 use eyre::WrapErr;
 use tokio_util::sync::CancellationToken;

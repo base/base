@@ -9,6 +9,7 @@ pub use accounting::SecurityAccounting;
 mod dispatch;
 
 mod ids;
+pub use ids::REDEEM_SENDER_POLICY;
 
 mod precompile;
 pub use precompile::B20SecurityPrecompile;

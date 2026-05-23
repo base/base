@@ -5,12 +5,10 @@ use alloc::string::String;
 use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_macros::{Storable, contract};
 use base_precompile_storage::{BasePrecompileError, ContractStorage, Handler, Result, StorageCtx};
-#[cfg(feature = "std")]
-use iso_currency::Currency;
 
 use super::accounting::StablecoinAccounting;
 use crate::{
-    B20CoreStorage, B20PolicyType, B20TokenRole, IB20, ITokenFactory, TokenAccounting, TokenVariant,
+    B20CoreStorage, B20PolicyType, B20TokenRole, B20Variant, IB20, IB20Factory, TokenAccounting,
 };
 
 /// Stablecoin-specific B-20 storage rooted at the `base.b20.stablecoin` ERC-7201 namespace.
@@ -51,12 +49,11 @@ impl<'a> B20StablecoinStorage<'a> {
 
     /// Writes all creation-time fields atomically.
     ///
-    /// Validates that `currency` is a recognised ISO 4217 code before writing
+    /// Validates that `currency` contains only `A-Z` characters before writing
     /// anything; reverts `ITokenFactory::InvalidCurrency` otherwise.
     pub fn initialize(&mut self, init: B20StablecoinInit) -> Result<()> {
-        #[cfg(feature = "std")]
-        if Currency::from_code(&init.currency).is_none() {
-            return Err(BasePrecompileError::revert(ITokenFactory::InvalidCurrency {
+        if init.currency.is_empty() || !init.currency.bytes().all(|b| b.is_ascii_uppercase()) {
+            return Err(BasePrecompileError::revert(IB20Factory::InvalidCurrency {
                 code: init.currency,
             }));
         }
@@ -125,8 +122,7 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
     }
 
     fn decimals(&self) -> Result<u8> {
-        Ok(TokenVariant::from_address(ContractStorage::address(self))
-            .map_or(0, TokenVariant::decimals))
+        Ok(B20Variant::from_address(ContractStorage::address(self)).map_or(0, B20Variant::decimals))
     }
 
     fn paused(&self) -> Result<U256> {
@@ -166,7 +162,7 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
 
     fn role_member_count(&self, role: B256) -> Result<U256> {
         if role == B20TokenRole::DefaultAdmin.id() {
-            Ok(Self::read_admin_count(self.b20.admin_count_and_initialized.read()?))
+            self.b20.admin_count.read()
         } else {
             Ok(U256::ZERO)
         }
@@ -174,8 +170,7 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
 
     fn set_role_member_count(&mut self, role: B256, count: U256) -> Result<()> {
         if role == B20TokenRole::DefaultAdmin.id() {
-            let packed = self.b20.admin_count_and_initialized.read()?;
-            self.b20.admin_count_and_initialized.write(Self::write_admin_count(packed, count)?)
+            self.b20.admin_count.write(count)
         } else {
             Ok(())
         }
@@ -194,8 +189,8 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
         self.b20.role_admins.at_mut(&role).write(admin_role)
     }
 
-    fn policy_id(&self, policy_type: B256) -> Result<u64> {
-        let policy_type = Self::require_policy_type(policy_type)?;
+    fn policy_id(&self, policy_scope: B256) -> Result<u64> {
+        let policy_type = Self::require_policy_type(policy_scope)?;
         match policy_type {
             B20PolicyType::TransferSender => Ok(Self::read_policy_lane(
                 self.b20.transfer_policy_ids.read()?,
@@ -216,8 +211,8 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
         }
     }
 
-    fn set_policy_id(&mut self, policy_type: B256, policy_id: u64) -> Result<()> {
-        let policy_type = Self::require_policy_type(policy_type)?;
+    fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
+        let policy_type = Self::require_policy_type(policy_scope)?;
         match policy_type {
             B20PolicyType::TransferSender => {
                 let packed = Self::write_policy_lane(
@@ -260,32 +255,15 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
 }
 
 impl B20StablecoinStorage<'_> {
-    const ADMIN_COUNT_BITS: usize = 248;
     const TRANSFER_SENDER_POLICY_LANE: usize = 0;
     const TRANSFER_RECEIVER_POLICY_LANE: usize = 1;
     const TRANSFER_EXECUTOR_POLICY_LANE: usize = 2;
     const MINT_RECEIVER_POLICY_LANE: usize = 0;
     const POLICY_LANE_BITS: usize = 64;
 
-    fn admin_count_mask() -> U256 {
-        (U256::ONE << Self::ADMIN_COUNT_BITS) - U256::ONE
-    }
-
-    fn read_admin_count(packed: U256) -> U256 {
-        packed & Self::admin_count_mask()
-    }
-
-    fn write_admin_count(packed: U256, count: U256) -> Result<U256> {
-        let mask = Self::admin_count_mask();
-        if count > mask {
-            return Err(BasePrecompileError::under_overflow());
-        }
-        Ok((packed & !mask) | count)
-    }
-
-    fn require_policy_type(policy_type: B256) -> Result<B20PolicyType> {
-        B20PolicyType::from_id(policy_type).ok_or_else(|| {
-            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
+    fn require_policy_type(policy_scope: B256) -> Result<B20PolicyType> {
+        B20PolicyType::from_id(policy_scope).ok_or_else(|| {
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: policy_scope })
         })
     }
 

@@ -1,4 +1,5 @@
 use alloy_primitives::B256;
+use reth_codecs::DecompressError;
 use reth_db::{
     DatabaseError,
     table::{self, Decode, Encode},
@@ -48,8 +49,8 @@ impl table::Compress for ChangeSet {
 }
 
 impl table::Decompress for ChangeSet {
-    fn decompress(value: &[u8]) -> Result<Self, DatabaseError> {
-        Self::decode(value)
+    fn decompress(value: &[u8]) -> Result<Self, DecompressError> {
+        Self::decode(value).map_err(DecompressError::new)
     }
 }
 

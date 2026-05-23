@@ -10,7 +10,7 @@ use base_flashblocks::{FlashblocksAPI, FlashblocksState};
 use reth_errors::BlockExecutionError;
 use reth_evm::{
     Evm, RecoveredTx,
-    block::{BlockExecutor, ExecutableTx, InternalBlockExecutionError, TxResult},
+    block::{BlockExecutor, ExecutableTx, GasOutput, InternalBlockExecutionError, TxResult},
 };
 use reth_primitives_traits::Recovered;
 use reth_revm::State;
@@ -218,7 +218,7 @@ where
         self.executor.apply_pre_execution_changes()
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
+    fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
         self.executor.commit_transaction(output)
     }
 
@@ -303,11 +303,10 @@ mod tests {
         builder.build().expect("test pending blocks should build")
     }
 
-    const fn stub_execution_result() -> ExecutionResult<BaseHaltReason> {
+    fn stub_execution_result() -> ExecutionResult<BaseHaltReason> {
         ExecutionResult::Success {
             reason: revm::context::result::SuccessReason::Stop,
-            gas_used: 21_000,
-            gas_refunded: 0,
+            gas: revm::context::result::ResultGas::new_with_state_gas(21_000, 0, 0, 0),
             logs: Vec::new(),
             output: revm::context::result::Output::Call(Bytes::new()),
         }
@@ -363,6 +362,7 @@ mod tests {
                 inner: Recovered::new_unchecked(envelope, Address::ZERO),
                 block_hash: Some(B256::ZERO),
                 block_number: Some(block_number),
+                block_timestamp: None,
                 transaction_index: Some(0),
                 effective_gas_price: Some(1_000_000_000),
             },

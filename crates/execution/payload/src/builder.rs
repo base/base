@@ -17,14 +17,13 @@ use reth_basic_payload_builder::{
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::{
     ConfigureEvm, Database,
-    block::BlockExecutorFor,
     execute::{
         BlockBuilder, BlockBuilderOutcome, BlockExecutionError, BlockExecutor, BlockValidationError,
     },
 };
 use reth_execution_types::BlockExecutionOutput;
 use reth_payload_builder_primitives::PayloadBuilderError;
-use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadBuilderAttributes};
+use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
     HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy,
@@ -35,6 +34,7 @@ use reth_revm::{
 };
 use reth_storage_api::{StateProvider, StateProviderFactory, errors::ProviderError};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
+use reth_trie_common::ExecutionWitnessMode;
 use revm::context::{Block, BlockEnv};
 use tracing::{debug, trace, warn};
 
@@ -181,7 +181,7 @@ where
             Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
         >,
     {
-        let BuildArguments { mut cached_reads, config, cancel, best_payload } = args;
+        let BuildArguments { mut cached_reads, config, cancel, best_payload, .. } = args;
 
         let ctx = BasePayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
@@ -213,12 +213,13 @@ where
         attributes: Attrs::RpcPayloadAttributes,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
-        Attrs: PayloadBuilderAttributes,
+        Attrs: Attributes,
     {
         let attributes =
             Attrs::try_new(parent.hash(), attributes, 3).map_err(PayloadBuilderError::other)?;
 
-        let config = PayloadConfig { parent_header: Arc::new(parent), attributes };
+        let payload_id = attributes.payload_id(&parent.hash());
+        let config = PayloadConfig::new(Arc::new(parent), attributes, payload_id);
         let ctx = BasePayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
             builder_config: self.config.clone(),
@@ -278,6 +279,8 @@ where
         let args = BuildArguments {
             config,
             cached_reads: Default::default(),
+            execution_cache: None,
+            trie_handle: None,
             cancel: Default::default(),
             best_payload: None,
         };
@@ -372,10 +375,10 @@ impl<Txs> Builder<'_, Txs> {
         }
 
         let BlockBuilderOutcome { execution_result, hashed_state, trie_updates, block } =
-            builder.finish(state_provider)?;
+            builder.finish(state_provider, None)?;
 
         let sealed_block = Arc::new(block.sealed_block().clone());
-        debug!(target: "payload_builder", id=%ctx.attributes().payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
+        debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
 
         let execution_outcome =
             BlockExecutionOutput { state: db.take_bundle(), result: execution_result };
@@ -436,9 +439,10 @@ impl<Txs> Builder<'_, Txs> {
             _ = db.load_cache_account(Predeploys::L2_TO_L1_MESSAGE_PASSER)?;
         }
 
+        let mode = ExecutionWitnessMode::default();
         let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number: _ } =
-            ExecutionWitnessRecord::from_executed_state(&db);
-        let state = state_provider.witness(Default::default(), hashed_state)?;
+            ExecutionWitnessRecord::from_executed_state(&db, mode);
+        let state = state_provider.witness(Default::default(), hashed_state, mode)?;
         Ok(ExecutionWitness {
             state: state.into_iter().collect(),
             codes,
@@ -586,8 +590,8 @@ where
     }
 
     /// Returns the unique id for this payload job.
-    pub fn payload_id(&self) -> PayloadId {
-        self.attributes().payload_id()
+    pub const fn payload_id(&self) -> PayloadId {
+        self.config.payload_id()
     }
 
     /// Returns true if the fees are higher than the previous payload.
@@ -599,13 +603,7 @@ where
     pub fn block_builder<'a, DB: Database>(
         &'a self,
         db: &'a mut State<DB>,
-    ) -> Result<
-        impl BlockBuilder<
-            Primitives = Evm::Primitives,
-            Executor: BlockExecutorFor<'a, Evm::BlockExecutorFactory, DB>,
-        > + 'a,
-        PayloadBuilderError,
-    > {
+    ) -> Result<impl BlockBuilder<Primitives = Evm::Primitives> + 'a, PayloadBuilderError> {
         self.evm_config
             .builder_for_next_block(
                 db,
@@ -657,8 +655,8 @@ where
                 PayloadBuilderError::other(BasePayloadBuilderError::TransactionEcRecoverFailed)
             })?;
 
-            let gas_used = match builder.execute_transaction(sequencer_tx.clone()) {
-                Ok(gas_used) => gas_used,
+            let gas_output = match builder.execute_transaction(sequencer_tx.clone()) {
+                Ok(gas_output) => gas_output,
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
@@ -667,17 +665,11 @@ where
                     continue;
                 }
                 Err(err) => {
-                    // Either a fatal execution error, or an `InvalidTx` from an
-                    // attribute-derived (`no_tx_pool=true`) transaction list. The latter must
-                    // be fatal so the EL rejects the payload exactly like the proof executor
-                    // does, allowing Holocene's deposit-only fallback to apply consistently
-                    // across both consumers of the same L1 input.
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
 
-            // add gas used by the transaction to cumulative gas used, before creating the receipt
-            info.cumulative_gas_used += gas_used;
+            info.cumulative_gas_used += gas_output.tx_gas_used();
         }
 
         Ok(info)
@@ -749,39 +741,32 @@ where
                 return Ok(Some(()));
             }
 
-            let gas_used = match builder.execute_transaction(tx.clone()) {
-                Ok(gas_used) => gas_used,
+            let gas_output = match builder.execute_transaction(tx.clone()) {
+                Ok(gas_output) => gas_output,
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
                 })) => {
                     if error.is_nonce_too_low() {
-                        // if the nonce is too low, we can skip this transaction
                         trace!(target: "payload_builder", %error, ?tx, "skipping nonce too low transaction");
                     } else {
-                        // if the transaction is invalid, we can skip it and all of its
-                        // descendants
                         trace!(target: "payload_builder", %error, ?tx, "skipping invalid transaction and its descendants");
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
                     }
                     continue;
                 }
                 Err(err) => {
-                    // this is an error that we should treat as fatal for this attempt
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
 
-            // add gas used by the transaction to cumulative gas used, before creating the
-            // receipt
-            info.cumulative_gas_used += gas_used;
+            info.cumulative_gas_used += gas_output.tx_gas_used();
             info.cumulative_da_bytes_used += tx_da_size;
 
-            // update and add to total fees
             let miner_fee = tx
                 .effective_tip_per_gas(base_fee)
                 .expect("fee is always valid; execution succeeded");
-            info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
+            info.total_fees += U256::from(miner_fee) * U256::from(gas_output.tx_gas_used());
         }
 
         Ok(None)

@@ -9,7 +9,7 @@
 use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_sol_types::{SolEvent, SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolEvent, SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
@@ -31,46 +31,46 @@ use crate::{
 const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
 impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
-    /// Ensures `policy_type` names either an inherited B-20 policy slot or the
+    /// Ensures `policy_scope` names either an inherited B-20 policy slot or the
     /// security redeem slot.
-    fn ensure_supported_policy_type(policy_type: B256) -> base_precompile_storage::Result<()> {
-        if B20PolicyType::from_id(policy_type).is_some() || policy_type == REDEEM_SENDER_POLICY {
+    fn ensure_supported_policy_type(policy_scope: B256) -> base_precompile_storage::Result<()> {
+        if B20PolicyType::from_id(policy_scope).is_some() || policy_scope == REDEEM_SENDER_POLICY {
             Ok(())
         } else {
             Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
-                policyType: policy_type,
+                policyScope: policy_scope,
             }))
         }
     }
 
-    /// Returns the configured policy ID for `policy_type`.
-    fn policy_id_checked(&self, policy_type: B256) -> base_precompile_storage::Result<u64> {
-        Self::ensure_supported_policy_type(policy_type)?;
-        self.accounting.policy_id(policy_type)
+    /// Returns the configured policy ID for `policy_scope`.
+    fn policy_id_checked(&self, policy_scope: B256) -> base_precompile_storage::Result<u64> {
+        Self::ensure_supported_policy_type(policy_scope)?;
+        self.accounting.policy_id(policy_scope)
     }
 
-    /// Updates the configured policy ID for `policy_type`.
+    /// Updates the configured policy ID for `policy_scope`.
     fn update_policy(
         &mut self,
         caller: Address,
-        policy_type: B256,
+        policy_scope: B256,
         new_policy_id: u64,
         privileged: bool,
     ) -> base_precompile_storage::Result<()> {
-        Self::ensure_supported_policy_type(policy_type)?;
+        Self::ensure_supported_policy_type(policy_scope)?;
         if !privileged {
             self.ensure_role(caller, Self::default_admin_role())?;
         }
-        let old_policy_id = self.accounting.policy_id(policy_type)?;
+        let old_policy_id = self.accounting.policy_id(policy_scope)?;
         if !self.policy().policy_exists(new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
         }
-        self.accounting_mut().set_policy_id(policy_type, new_policy_id)?;
+        self.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
         self.accounting_mut().emit_event(
             IB20::PolicyUpdated {
-                policyType: policy_type,
+                policyScope: policy_scope,
                 oldPolicyId: old_policy_id,
                 newPolicyId: new_policy_id,
             }
@@ -88,11 +88,15 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             Ok(true) => {}
             Ok(false) => {
                 return BasePrecompileError::Revert(Bytes::new())
-                    .into_precompile_result(ctx.gas_used());
+                    .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
             }
-            Err(e) => return e.into_precompile_result(ctx.gas_used()),
+            Err(e) => return e.into_precompile_result(ctx.gas_used(), ctx.state_gas_used()),
         }
-        self.inner(ctx, calldata).into_precompile_result(ctx.gas_used(), |b| b)
+        self.inner(ctx, calldata).into_precompile_result(
+            ctx.gas_used(),
+            ctx.state_gas_used(),
+            |b| b,
+        )
     }
 
     /// Decodes calldata and executes the matching `IB20Security` or inherited `IB20` operation.
@@ -162,11 +166,24 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             C::isPaused(c) => self.is_paused(c.feature)?.abi_encode().into(),
 
             // --- Policy reads ---
-            C::policyId(c) => self.policy_id_checked(c.policyType)?.abi_encode().into(),
+            C::policyId(c) => self.policy_id_checked(c.policyScope)?.abi_encode().into(),
 
             // --- Domain reads ---
             C::DOMAIN_SEPARATOR(_) => self.domain_separator(ctx.chain_id())?.abi_encode().into(),
-            C::eip712Domain(_) => self.eip712_domain(ctx.chain_id())?.abi_encode().into(),
+            C::eip712Domain(_) => {
+                let (fields, name, version, chain_id, verifying_contract, salt, extensions) =
+                    self.eip712_domain(ctx.chain_id())?;
+                IB20::eip712DomainCall::abi_encode_returns(&IB20::eip712DomainReturn {
+                    fields,
+                    name,
+                    version,
+                    chainId: chain_id,
+                    verifyingContract: verifying_contract,
+                    salt,
+                    extensions,
+                })
+                .into()
+            }
 
             // --- ERC-20 mutating ---
             C::transfer(c) => {
@@ -292,7 +309,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             // --- Policy mutations ---
             C::updatePolicy(c) => {
                 let caller = ctx.caller();
-                self.update_policy(caller, c.policyType, c.newPolicyId, privileged)?;
+                self.update_policy(caller, c.policyScope, c.newPolicyId, privileged)?;
                 Bytes::new()
             }
 
@@ -464,9 +481,6 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     ) -> base_precompile_storage::Result<()> {
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::REDEEM)?;
         B20Guards::ensure_policy::<Self>(self, REDEEM_SENDER_POLICY, caller)?;
-        if amount.is_zero() {
-            return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
-        }
         let ratio = self.accounting.shares_to_tokens_ratio()?;
         let shares = amount.saturating_mul(ratio) / WAD;
         let minimum = self.accounting.minimum_redeemable()?;
@@ -532,20 +546,17 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         amounts: Vec<U256>,
     ) -> base_precompile_storage::Result<()> {
         B20Guards::ensure_role::<Self>(self, caller, BURN_FROM_ROLE)?;
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
-        if accounts.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
-        }
         if accounts.len() != amounts.len() {
             return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
                 leftLen: U256::from(accounts.len()),
                 rightLen: U256::from(amounts.len()),
             }));
         }
+        if accounts.is_empty() {
+            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
+        }
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         for (account, amount) in accounts.into_iter().zip(amounts) {
-            if amount.is_zero() {
-                return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
-            }
             let balance = self.accounting.balance_of(account)?;
             if balance < amount {
                 return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
@@ -641,12 +652,12 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 mod tests {
     use alloy_primitives::{Address, B256, U256};
     use alloy_sol_types::SolEvent;
-    use base_precompile_storage::BasePrecompileError;
+    use base_precompile_storage::{BasePrecompileError, StorageCtx, setup_storage};
 
     use super::{BURN_FROM_ROLE, REDEEM_SENDER_POLICY, SECURITY_OPERATOR_ROLE};
     use crate::{
-        B20PausableFeature, IB20, Token, TokenAccounting,
-        b20_security::{B20SecurityToken, IB20Security, SecurityAccounting},
+        B20PausableFeature, IB20, PolicyHandle, PolicyRegistryStorage, Token, TokenAccounting,
+        b20_security::{B20SecurityStorage, B20SecurityToken, IB20Security, SecurityAccounting},
         common::test_utils::{InMemoryPolicy, InMemoryTokenAccounting},
     };
 
@@ -662,6 +673,8 @@ mod tests {
         accounting.shares_to_tokens_ratio = WAD; // 1:1 ratio
         accounting.roles.insert((BURN_FROM_ROLE, ALICE), true);
         accounting.roles.insert((SECURITY_OPERATOR_ROLE, ALICE), true);
+        // Explicitly open redemption so non-policy tests are not blocked by the ALWAYS_BLOCK default.
+        accounting.policy_ids.insert(REDEEM_SENDER_POLICY, PolicyRegistryStorage::ALWAYS_ALLOW_ID);
         TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
     }
 
@@ -761,12 +774,12 @@ mod tests {
     #[test]
     fn security_redeem_rejects_zero_shares() {
         let mut token = make_token();
-        token.accounting_mut().shares_to_tokens_ratio = U256::ZERO;
+        token.accounting_mut().shares_to_tokens_ratio = WAD / U256::from(2u64);
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
         token.accounting_mut().total_supply = U256::from(100u64);
 
-        // 0 ratio → 0 shares → always rejected
-        assert!(token.security_redeem(ALICE, U256::from(50u64)).is_err());
+        // 1 token * 0.5 WAD / WAD truncates to 0 shares, which is always rejected.
+        assert!(token.security_redeem(ALICE, U256::ONE).is_err());
     }
 
     #[test]
@@ -799,7 +812,7 @@ mod tests {
         assert_eq!(
             token.security_redeem(ALICE, U256::from(1u64)).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
-                policyType: REDEEM_SENDER_POLICY,
+                policyScope: REDEEM_SENDER_POLICY,
                 policyId: policy_id,
             })
         );
@@ -846,44 +859,58 @@ mod tests {
         );
     }
 
-    #[test]
-    fn batch_mint_test_rejects_zero_amount() {
-        let mut token = make_token();
-
-        assert_eq!(
-            token.batch_mint_test(alloc::vec![ALICE], alloc::vec![U256::ZERO]).unwrap_err(),
-            BasePrecompileError::revert(IB20::InvalidAmount {})
-        );
-    }
-
     // --- batchBurn: EmptyBatch / LengthMismatch / multi-account Transfer events ---
 
     #[test]
     fn batch_burn_rejects_empty() {
         let mut token = make_token();
-        assert!(token.batch_burn(ALICE, alloc::vec![], alloc::vec![]).is_err());
+
+        assert_eq!(
+            token.batch_burn(ALICE, alloc::vec![], alloc::vec![]).unwrap_err(),
+            BasePrecompileError::revert(IB20Security::EmptyBatch {})
+        );
     }
 
     #[test]
     fn batch_burn_rejects_length_mismatch() {
         let mut token = make_token();
-        assert!(
-            token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err()
+
+        assert_eq!(
+            token
+                .batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
+                .unwrap_err(),
+            BasePrecompileError::revert(IB20Security::LengthMismatch {
+                leftLen: U256::ONE,
+                rightLen: U256::from(2u64),
+            })
+        );
+        assert_eq!(
+            token.batch_burn(ALICE, alloc::vec![], alloc::vec![U256::ONE]).unwrap_err(),
+            BasePrecompileError::revert(IB20Security::LengthMismatch {
+                leftLen: U256::ZERO,
+                rightLen: U256::ONE,
+            })
         );
     }
 
     #[test]
-    fn batch_burn_rejects_zero_amount() {
+    fn batch_burn_validates_batch_shape_before_pause() {
         let mut token = make_token();
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(100u64);
+        token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
 
         assert_eq!(
-            token.batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ZERO]).unwrap_err(),
-            BasePrecompileError::revert(IB20::InvalidAmount {})
+            token
+                .batch_burn(ALICE, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
+                .unwrap_err(),
+            BasePrecompileError::revert(IB20Security::LengthMismatch {
+                leftLen: U256::ONE,
+                rightLen: U256::from(2u64),
+            })
         );
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
-        assert_eq!(token.accounting().events.len(), 0);
+        assert_eq!(
+            token.batch_burn(ALICE, alloc::vec![], alloc::vec![]).unwrap_err(),
+            BasePrecompileError::revert(IB20Security::EmptyBatch {})
+        );
     }
 
     #[test]
@@ -916,18 +943,6 @@ mod tests {
         assert!(token.security_redeem(ALICE, U256::from(100u64)).is_err());
         // no state mutation on failure
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
-    }
-
-    #[test]
-    fn security_redeem_rejects_zero_amount() {
-        let mut token = make_token();
-        token.accounting_mut().balances.insert(ALICE, U256::from(10u64));
-        token.accounting_mut().total_supply = U256::from(10u64);
-
-        assert_eq!(
-            token.security_redeem(ALICE, U256::ZERO).unwrap_err(),
-            BasePrecompileError::revert(IB20::InvalidAmount {})
-        );
     }
 
     #[test]
@@ -1019,6 +1034,27 @@ mod tests {
         // sharesOf(account) = toShares(balanceOf(account))
         let balance = token.accounting().balance_of(ALICE).unwrap();
         assert_eq!(token.to_shares(balance).unwrap(), U256::from(75u64));
+    }
+
+    #[test]
+    fn storage_backed_redeem_uses_wad_when_share_ratio_slot_is_unset() {
+        let (mut storage, _) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20SecurityToken::with_storage_and_policy(
+                B20SecurityStorage::from_address(TOKEN, ctx),
+                PolicyHandle::new(ctx),
+            );
+            token.accounting_mut().set_balance(ALICE, U256::from(100u64)).unwrap();
+            token.accounting_mut().set_total_supply(U256::from(100u64)).unwrap();
+            token.accounting_mut().set_minimum_redeemable(U256::from(10u64)).unwrap();
+
+            assert_eq!(token.accounting().shares_to_tokens_ratio().unwrap(), WAD);
+            token.security_redeem(ALICE, U256::from(10u64)).unwrap();
+
+            assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(90u64));
+            assert_eq!(token.accounting().total_supply().unwrap(), U256::from(90u64));
+        });
     }
 
     // --- updateShareRatio: persistence ---

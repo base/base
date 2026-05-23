@@ -320,7 +320,7 @@ async fn b20_staticcall_abi_covers_all_read_methods() {
             StaticcallCase::word(
                 "eip712Domain",
                 IB20::eip712DomainCall {}.abi_encode(),
-                U256::from(32),
+                eip712_domain_fields_word(),
             ),
             StaticcallCase::word(
                 "contractURI",
@@ -490,8 +490,8 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
 
     for index in 0..2 {
         assert!(
-            !scenario.env.user_tx_succeeded(&block, index),
-            "zero-amount B-20 mutation {index} must revert"
+            scenario.env.user_tx_succeeded(&block, index),
+            "zero-amount B-20 mutation {index} must succeed (zero-amount ops are valid per ERC-20)"
         );
     }
     scenario.assert_total_supply(initial + 20 + 30 - 2 - 3);
@@ -579,7 +579,7 @@ impl B20TokenScenario {
         scenario.build_block_with_transactions(Vec::new()).await;
 
         let activate_factory =
-            scenario.env.activate_feature_tx(BerylTestEnv::token_factory_feature());
+            scenario.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_token_feature());
         let block =
             scenario.build_block_with_transactions(vec![activate_factory, activate_b20]).await;
@@ -812,6 +812,12 @@ fn domain_separator(chain_id: u64, token: Address, name: &str) -> B256 {
 
 fn domain_separator_word(chain_id: u64, token: Address, name: &str) -> U256 {
     U256::from_be_slice(domain_separator(chain_id, token, name).as_slice())
+}
+
+const fn eip712_domain_fields_word() -> U256 {
+    let mut word = [0u8; 32];
+    word[0] = 0x0c;
+    U256::from_be_bytes(word)
 }
 
 struct B20StaticcallProbes {

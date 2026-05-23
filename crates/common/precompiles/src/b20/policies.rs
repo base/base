@@ -77,33 +77,33 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         B20PolicyType::MintReceiver.id()
     }
 
-    /// Returns the configured policy ID for `policy_type`.
-    pub fn policy_id(&self, policy_type: B256) -> Result<u64> {
-        Self::ensure_supported_policy_type(policy_type)?;
-        self.accounting.policy_id(policy_type)
+    /// Returns the configured policy ID for `policy_scope`.
+    pub fn policy_id(&self, policy_scope: B256) -> Result<u64> {
+        Self::ensure_supported_policy_type(policy_scope)?;
+        self.accounting.policy_id(policy_scope)
     }
 
-    /// Updates the configured policy ID for `policy_type`.
+    /// Updates the configured policy ID for `policy_scope`.
     pub fn update_policy(
         &mut self,
         caller: Address,
-        policy_type: B256,
+        policy_scope: B256,
         new_policy_id: u64,
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
             B20Guards::ensure_token_role(self, caller, B20TokenRole::DefaultAdmin)?;
         }
-        let old_policy_id = self.policy_id(policy_type)?;
+        let old_policy_id = self.policy_id(policy_scope)?;
         if !self.policy.policy_exists(new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
         }
-        self.accounting_mut().set_policy_id(policy_type, new_policy_id)?;
+        self.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
         self.accounting_mut().emit_event(
             IB20::PolicyUpdated {
-                policyType: policy_type,
+                policyScope: policy_scope,
                 oldPolicyId: old_policy_id,
                 newPolicyId: new_policy_id,
             }
@@ -111,13 +111,13 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         )
     }
 
-    /// Ensures `policy_type` names a B-20 policy slot.
-    pub fn ensure_supported_policy_type(policy_type: B256) -> Result<()> {
-        if B20PolicyType::from_id(policy_type).is_some() {
+    /// Ensures `policy_scope` names a B-20 policy slot.
+    pub fn ensure_supported_policy_type(policy_scope: B256) -> Result<()> {
+        if B20PolicyType::from_id(policy_scope).is_some() {
             Ok(())
         } else {
             Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
-                policyType: policy_type,
+                policyScope: policy_scope,
             }))
         }
     }
@@ -143,11 +143,11 @@ mod tests {
     #[test]
     fn policy_id_reverts_for_unsupported_policy_type() {
         let token = token();
-        let policy_type = B256::repeat_byte(0x99);
+        let policy_scope = B256::repeat_byte(0x99);
 
         assert_eq!(
-            token.policy_id(policy_type).unwrap_err(),
-            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
+            token.policy_id(policy_scope).unwrap_err(),
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: policy_scope })
         );
     }
 

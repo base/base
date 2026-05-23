@@ -1,10 +1,10 @@
-//! Reth e2e testsuite integration tests for the execution node.
-
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B64, B256};
+use base_common_consensus::BaseTxEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_node_core::{BaseEngineTypes, BaseNode};
 use eyre::Result;
 use reth_e2e_test_utils::testsuite::{
@@ -33,23 +33,29 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
             vec![],
             Some(B256::ZERO),
             // TODO: refactor once we have actions to generate payload attributes.
-            BasePayloadAttributes {
-                payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                    prev_randao: B256::random(),
-                    suggested_fee_recipient: Address::random(),
-                    withdrawals: None,
-                    parent_beacon_block_root: None,
+            BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
+                B256::ZERO,
+                BasePayloadAttributes {
+                    payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs(),
+                        prev_randao: B256::random(),
+                        suggested_fee_recipient: Address::random(),
+                        withdrawals: None,
+                        parent_beacon_block_root: None,
+                        slot_number: None,
+                    },
+                    transactions: None,
+                    no_tx_pool: None,
+                    eip_1559_params: None,
+                    min_base_fee: None,
+                    gas_limit: Some(30_000_000),
                 },
-                transactions: None,
-                no_tx_pool: None,
-                eip_1559_params: None,
-                min_base_fee: None,
-                gas_limit: Some(30_000_000),
-            },
+                3,
+            )
+            .expect("valid test payload attributes"),
         ));
 
     test.run::<BaseNode>().await?;
@@ -78,23 +84,29 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
             vec![],
             Some(B256::ZERO),
             // TODO: refactor once we have actions to generate payload attributes.
-            BasePayloadAttributes {
-                payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                    prev_randao: B256::random(),
-                    suggested_fee_recipient: Address::random(),
-                    withdrawals: Some(vec![]),
-                    parent_beacon_block_root: Some(B256::ZERO),
+            BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
+                B256::ZERO,
+                BasePayloadAttributes {
+                    payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs(),
+                        prev_randao: B256::random(),
+                        suggested_fee_recipient: Address::random(),
+                        withdrawals: Some(vec![]),
+                        parent_beacon_block_root: Some(B256::ZERO),
+                        slot_number: None,
+                    },
+                    transactions: None,
+                    no_tx_pool: None,
+                    eip_1559_params: Some(B64::ZERO),
+                    min_base_fee: None,
+                    gas_limit: Some(30_000_000),
                 },
-                transactions: None,
-                no_tx_pool: None,
-                eip_1559_params: Some(B64::ZERO),
-                min_base_fee: None,
-                gas_limit: Some(30_000_000),
-            },
+                3,
+            )
+            .expect("valid test payload attributes"),
         ));
 
     test.run::<BaseNode>().await?;

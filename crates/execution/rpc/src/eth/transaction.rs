@@ -131,10 +131,12 @@ where
     {
         let this = self.clone();
         async move {
-            let Some((tx, meta, receipt)) = this.load_transaction_and_receipt(hash).await? else {
+            let Some((tx, meta, receipt, all_receipts)) =
+                this.load_transaction_and_receipt(hash).await?
+            else {
                 return Ok(None);
             };
-            self.build_transaction_receipt(tx, meta, receipt).await.map(Some)
+            this.build_transaction_receipt(tx, meta, receipt, all_receipts).await.map(Some)
         }
     }
 }
@@ -167,6 +169,7 @@ where
                 index: meta.index,
                 block_hash: meta.block_hash,
                 block_number: meta.block_number,
+                block_timestamp: meta.timestamp,
                 base_fee: meta.base_fee,
             }));
         }

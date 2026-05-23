@@ -153,6 +153,7 @@ impl ExecutorTestFixtureCreator {
                 prev_randao: executing_header.mix_hash,
                 withdrawals: Default::default(),
                 suggested_fee_recipient: executing_header.beneficiary,
+                slot_number: None,
             },
             gas_limit: Some(executing_header.gas_limit),
             transactions: Some(encoded_executing_transactions),

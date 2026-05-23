@@ -1,5 +1,5 @@
 use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::SolValue;
+use alloy_sol_types::{SolCall, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
@@ -22,11 +22,15 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
             Ok(true) => {}
             Ok(false) => {
                 return BasePrecompileError::Revert(Bytes::new())
-                    .into_precompile_result(ctx.gas_used());
+                    .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
             }
-            Err(e) => return e.into_precompile_result(ctx.gas_used()),
+            Err(e) => return e.into_precompile_result(ctx.gas_used(), ctx.state_gas_used()),
         }
-        self.inner(ctx, calldata).into_precompile_result(ctx.gas_used(), |b| b)
+        self.inner(ctx, calldata).into_precompile_result(
+            ctx.gas_used(),
+            ctx.state_gas_used(),
+            |b| b,
+        )
     }
 
     /// Decodes calldata and executes the matching `IB20` operation.
@@ -74,12 +78,25 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
             C::hasRole(c) => self.has_role(c.role, c.account)?.abi_encode().into(),
             C::getRoleAdmin(c) => self.role_admin(c.role)?.abi_encode().into(),
             C::pausedFeatures(_) => self.paused_features()?.abi_encode().into(),
-            C::policyId(c) => self.policy_id(c.policyType)?.abi_encode().into(),
+            C::policyId(c) => self.policy_id(c.policyScope)?.abi_encode().into(),
 
             // --- Domain reads (light logic) ---
             C::isPaused(c) => self.is_paused(c.feature)?.abi_encode().into(),
             C::DOMAIN_SEPARATOR(_) => self.domain_separator(ctx.chain_id())?.abi_encode().into(),
-            C::eip712Domain(_) => self.eip712_domain(ctx.chain_id())?.abi_encode().into(),
+            C::eip712Domain(_) => {
+                let (fields, name, version, chain_id, verifying_contract, salt, extensions) =
+                    self.eip712_domain(ctx.chain_id())?;
+                IB20::eip712DomainCall::abi_encode_returns(&IB20::eip712DomainReturn {
+                    fields,
+                    name,
+                    version,
+                    chainId: chain_id,
+                    verifyingContract: verifying_contract,
+                    salt,
+                    extensions,
+                })
+                .into()
+            }
 
             // --- ERC-20 mutating ---
             C::transfer(c) => {
@@ -201,7 +218,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
             }
             C::updatePolicy(c) => {
                 let caller = ctx.caller();
-                self.update_policy(caller, c.policyType, c.newPolicyId, privileged)?;
+                self.update_policy(caller, c.policyScope, c.newPolicyId, privileged)?;
                 Bytes::new()
             }
 

@@ -24,10 +24,18 @@ pub fn execute<T: Into<Bytes>>(address: Address, input: T, gas: u64) -> Result<V
     if let Some(precompile) =
         ACCELERATED_PRECOMPILES.iter().find(|precompile| *precompile.address() == address)
     {
-        let output = precompile.precompile()(&input.into(), gas)
+        let input = input.into();
+        let output = precompile
+            .execute(&input, gas, 0)
             .map_err(|e| HostError::PrecompileExecutionFailed(e.to_string()))?;
-
-        Ok(output.bytes.into())
+        if output.is_success() {
+            Ok(output.bytes.into())
+        } else {
+            Err(HostError::PrecompileExecutionFailed(format!(
+                "precompile returned non-success status: {:?}",
+                output.status
+            )))
+        }
     } else {
         Err(HostError::PrecompileNotAccelerated)
     }

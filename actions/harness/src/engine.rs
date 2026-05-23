@@ -48,13 +48,14 @@ use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_db_common::init::init_genesis;
 use reth_execution_types::ExecutionOutcome;
 use reth_node_api::NodeTypesWithDBAdapter;
-use reth_payload_primitives::{BuiltPayload, PayloadBuilderAttributes};
+use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory, StateProvider,
     StateProviderFactory, providers::BlockchainProvider,
     test_utils::create_test_provider_factory_with_node_types,
 };
+use reth_revm::{cached::CachedReads, cancelled::CancelOnDrop};
 use reth_transaction_pool::noop::NoopTransactionPool;
 
 use crate::{SharedBlockHashRegistry, SharedL1Chain};
@@ -335,15 +336,17 @@ impl ActionEngineClient {
                 )))
             })?;
 
+        let payload_id = builder_attrs.payload_id(&effective_parent_hash);
         let parent_sealed = SealedHeader::new(parent_header, effective_parent_hash);
-        let config =
-            PayloadConfig { parent_header: Arc::new(parent_sealed), attributes: builder_attrs };
-        let args = BuildArguments {
+        let config = PayloadConfig::new(Arc::new(parent_sealed), builder_attrs, payload_id);
+        let args = BuildArguments::new(
+            CachedReads::default(),
+            None,
+            None,
             config,
-            cached_reads: Default::default(),
-            cancel: Default::default(),
-            best_payload: None,
-        };
+            CancelOnDrop::default(),
+            None,
+        );
 
         let pool = TestPool::new();
         let payload_builder = BasePayloadBuilder::new(
@@ -494,6 +497,7 @@ impl ActionEngineClient {
                 suggested_fee_recipient: payload.fee_recipient,
                 withdrawals: Some(vec![]),
                 parent_beacon_block_root: None,
+                slot_number: None,
             },
             transactions: Some(payload.transactions.clone()),
             no_tx_pool: Some(true),

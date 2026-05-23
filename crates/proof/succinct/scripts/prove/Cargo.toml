@@ -38,7 +38,6 @@ base-proof-succinct-elfs.workspace = true
 alloy-contract.workspace = true
 alloy-eips.workspace = true
 alloy-network.workspace = true
-alloy-node-bindings.workspace = true
 alloy-primitives.workspace = true
 alloy-provider = { workspace = true, features = ["reqwest"] }
 alloy-signer-local.workspace = true

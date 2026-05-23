@@ -3,26 +3,27 @@
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_sol_types::SolValue;
 
-use crate::ITokenFactory;
+use crate::IB20Factory;
 
-/// B-20 token variant encoded in the token address prefix.
+/// B-20 token variant encoded in token address byte `[10]`.
+///
+/// Discriminant values match the `B20Variant` ABI enum ordinals directly
+/// (DEFAULT=0, STABLECOIN=1, SECURITY=2), so `uint8(variant)` in Solidity
+/// equals the byte written at address position `[10]` with no offset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum TokenVariant {
-    /// B-20 token.
-    B20 = 1,
+pub enum B20Variant {
+    /// Default B-20 token.
+    B20 = 0,
     /// Stablecoin B-20 token.
-    Stablecoin = 2,
+    Stablecoin = 1,
     /// Security B-20 token.
-    Security = 3,
+    Security = 2,
 }
 
-impl TokenVariant {
+impl B20Variant {
     /// First byte of every B-20 address.
     pub const PREFIX_BYTE: u8 = 0xb2;
-
-    /// Variant discriminant returned by `getTokenVariant` when address has no B-20 prefix.
-    pub const NONE_DISCRIMINANT: u8 = 0;
 
     /// Variant discriminant for default B-20 tokens.
     pub const B20_DISCRIMINANT: u8 = Self::B20 as u8;
@@ -44,12 +45,12 @@ impl TokenVariant {
     }
 
     /// Returns the supported token variant for an ABI enum value, or `None` for unknown variants.
-    pub const fn from_abi(variant: ITokenFactory::TokenVariant) -> Option<Self> {
+    pub const fn from_abi(variant: IB20Factory::B20Variant) -> Option<Self> {
         match variant {
-            ITokenFactory::TokenVariant::DEFAULT => Some(Self::B20),
-            ITokenFactory::TokenVariant::STABLECOIN => Some(Self::Stablecoin),
-            ITokenFactory::TokenVariant::SECURITY => Some(Self::Security),
-            ITokenFactory::TokenVariant::__Invalid => None,
+            IB20Factory::B20Variant::DEFAULT => Some(Self::B20),
+            IB20Factory::B20Variant::STABLECOIN => Some(Self::Stablecoin),
+            IB20Factory::B20Variant::SECURITY => Some(Self::Security),
+            IB20Factory::B20Variant::__Invalid => None,
         }
     }
 
@@ -82,11 +83,11 @@ impl TokenVariant {
     }
 
     /// Returns this variant as the generated ABI enum.
-    pub const fn abi(self) -> ITokenFactory::TokenVariant {
+    pub const fn abi(self) -> IB20Factory::B20Variant {
         match self {
-            Self::B20 => ITokenFactory::TokenVariant::DEFAULT,
-            Self::Stablecoin => ITokenFactory::TokenVariant::STABLECOIN,
-            Self::Security => ITokenFactory::TokenVariant::SECURITY,
+            Self::B20 => IB20Factory::B20Variant::DEFAULT,
+            Self::Stablecoin => IB20Factory::B20Variant::STABLECOIN,
+            Self::Security => IB20Factory::B20Variant::SECURITY,
         }
     }
 

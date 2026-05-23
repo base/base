@@ -1,36 +1,60 @@
-use revm::precompile::{Precompile, PrecompileError, PrecompileId, bn254};
+use alloc::string::ToString;
+
+use revm::precompile::{
+    Precompile, PrecompileError, PrecompileId, PrecompileResult, bn254, call_eth_precompile,
+};
 
 /// Max input size for the bn254 pair precompile after the Granite hardfork.
 pub(crate) const GRANITE_MAX_INPUT_SIZE: usize = 112687;
 /// Bn254 pair precompile with Granite input limits.
 pub(crate) const GRANITE: Precompile =
-    Precompile::new(PrecompileId::Bn254Pairing, bn254::pair::ADDRESS, |input, gas_limit| {
-        if input.len() > GRANITE_MAX_INPUT_SIZE {
-            return Err(PrecompileError::Bn254PairLength);
-        }
-        bn254::run_pair(
-            input,
-            bn254::pair::ISTANBUL_PAIR_PER_POINT,
-            bn254::pair::ISTANBUL_PAIR_BASE,
-            gas_limit,
-        )
-    });
+    Precompile::new(PrecompileId::Bn254Pairing, bn254::pair::ADDRESS, run_pair_granite);
+
+/// Run the bn254 pair precompile with Granite input limit.
+pub(crate) fn run_pair_granite(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
+    if input.len() > GRANITE_MAX_INPUT_SIZE {
+        return Err(PrecompileError::Fatal("Bn254PairLength".to_string()));
+    }
+    Ok(call_eth_precompile(
+        |i, g| {
+            bn254::run_pair(
+                i,
+                bn254::pair::ISTANBUL_PAIR_PER_POINT,
+                bn254::pair::ISTANBUL_PAIR_BASE,
+                g,
+            )
+        },
+        input,
+        gas_limit,
+        reservoir,
+    ))
+}
 
 /// Max input size for the bn254 pair precompile after the Jovian hardfork.
-pub(crate) const JOVIAN_MAX_INPUT_SIZE: usize = 81_984;
+pub const JOVIAN_MAX_INPUT_SIZE: usize = 81_984;
 /// Bn254 pair precompile with Jovian input limits.
-pub(crate) const JOVIAN: Precompile =
-    Precompile::new(PrecompileId::Bn254Pairing, bn254::pair::ADDRESS, |input, gas_limit| {
-        if input.len() > JOVIAN_MAX_INPUT_SIZE {
-            return Err(PrecompileError::Bn254PairLength);
-        }
-        bn254::run_pair(
-            input,
-            bn254::pair::ISTANBUL_PAIR_PER_POINT,
-            bn254::pair::ISTANBUL_PAIR_BASE,
-            gas_limit,
-        )
-    });
+pub const JOVIAN: Precompile =
+    Precompile::new(PrecompileId::Bn254Pairing, bn254::pair::ADDRESS, run_pair_jovian);
+
+/// Run the bn254 pair precompile with Jovian input limit.
+pub(crate) fn run_pair_jovian(input: &[u8], gas_limit: u64, reservoir: u64) -> PrecompileResult {
+    if input.len() > JOVIAN_MAX_INPUT_SIZE {
+        return Err(PrecompileError::Fatal("Bn254PairLength".to_string()));
+    }
+    Ok(call_eth_precompile(
+        |i, g| {
+            bn254::run_pair(
+                i,
+                bn254::pair::ISTANBUL_PAIR_PER_POINT,
+                bn254::pair::ISTANBUL_PAIR_BASE,
+                g,
+            )
+        },
+        input,
+        gas_limit,
+        reservoir,
+    ))
+}
 
 #[cfg(test)]
 mod tests {
@@ -62,7 +86,7 @@ mod tests {
         let expected =
             hex::decode("0000000000000000000000000000000000000000000000000000000000000001")
                 .unwrap();
-        let outcome = GRANITE.execute(&input, 260_000).unwrap();
+        let outcome = run_pair_granite(&input, 260_000, 0).unwrap();
         assert_eq!(outcome.bytes, expected);
 
         // Invalid input length
@@ -74,20 +98,20 @@ mod tests {
       ",
         )
         .unwrap();
-        assert!(matches!(
-            GRANITE.execute(&bad_input, 260_000),
-            Err(PrecompileError::Bn254PairLength)
-        ));
+        assert!(
+            matches!(run_pair_granite(&bad_input, 260_000, 0), Ok(o) if o.halt_reason().is_some())
+        );
 
-        // Valid input length shorter than 112687
+        // Valid input length shorter than 112687 - halts are wrapped in Ok
         let at_gas_limit = vec![1u8; 586 * bn254::PAIR_ELEMENT_LEN];
-        assert!(matches!(GRANITE.execute(&at_gas_limit, 260_000), Err(PrecompileError::OutOfGas)));
+        let result = run_pair_granite(&at_gas_limit, 260_000, 0);
+        assert!(result.is_ok(), "halts are wrapped in Ok by call_eth_precompile");
 
         // Input length longer than 112687
         let over_limit = vec![1u8; 587 * bn254::PAIR_ELEMENT_LEN];
         assert!(matches!(
-            GRANITE.execute(&over_limit, 260_000),
-            Err(PrecompileError::Bn254PairLength)
+            run_pair_granite(&over_limit, 260_000, 0),
+            Err(PrecompileError::Fatal(_))
         ));
     }
 
@@ -99,13 +123,13 @@ mod tests {
         const EXPECTED_OUTPUT: [u8; 32] =
             hex!("0000000000000000000000000000000000000000000000000000000000000001");
 
-        let res = JOVIAN.execute(TEST_INPUT.as_ref(), u64::MAX);
+        let res = run_pair_jovian(TEST_INPUT.as_ref(), u64::MAX, 0);
         assert!(matches!(res, Ok(outcome) if **outcome.bytes == EXPECTED_OUTPUT));
     }
 
     #[test]
     fn test_bn254_pair_jovian_bad_input_len() {
         let input = [0u8; JOVIAN_MAX_INPUT_SIZE + 1];
-        assert!(matches!(JOVIAN.execute(&input, u64::MAX), Err(PrecompileError::Bn254PairLength)));
+        assert!(matches!(run_pair_jovian(&input, u64::MAX, 0), Err(PrecompileError::Fatal(_))));
     }
 }

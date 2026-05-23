@@ -57,7 +57,6 @@ fn cache_state_from_bundle_state(bundle_state: &BundleState) -> CacheState {
             .iter()
             .map(|(&hash, code)| (hash, code.clone()))
             .collect(),
-        ..Default::default()
     }
 }
 
@@ -442,7 +441,8 @@ where
 
             let gas_used = builder
                 .execute_transaction(tx.clone())
-                .map_err(|e| eyre!("Transaction {tx_hash} execution failed: {e}"))?;
+                .map_err(|e| eyre!("Transaction {tx_hash} execution failed: {e}"))?
+                .tx_gas_used();
 
             let gas_fees = U256::from(gas_used) * U256::from(gas_price);
             total_gas_used = total_gas_used.saturating_add(gas_used);

@@ -10,6 +10,9 @@
 
 extern crate alloc;
 
+#[cfg(feature = "evm")]
+use revm as _;
+
 #[cfg(feature = "reth")]
 mod reth_compat;
 #[cfg(feature = "reth")]
