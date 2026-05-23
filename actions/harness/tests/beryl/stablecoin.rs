@@ -559,13 +559,13 @@ fn assert_probe_returndata(
     expected_returndata: &[u8],
 ) {
     assert_eq!(
-        env.probe_return_length(probe),
+        env.probe_return_size(probe),
         U256::from(expected_returndata.len()),
         "{label} staticcall must return the expected byte length"
     );
     assert_eq!(
         env.probe_return_hash(probe),
-        returndata_hash_word(expected_returndata),
+        keccak256(expected_returndata),
         "{label} staticcall must return the expected ABI payload"
     );
 }
@@ -579,10 +579,6 @@ fn first_word(returndata: &[u8]) -> U256 {
     let copied = returndata.len().min(word.len());
     word[..copied].copy_from_slice(&returndata[..copied]);
     U256::from_be_bytes(word)
-}
-
-fn returndata_hash_word(returndata: &[u8]) -> U256 {
-    U256::from_be_slice(keccak256(returndata).as_slice())
 }
 
 fn word_from_address(address: Address) -> U256 {
