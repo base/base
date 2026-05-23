@@ -12,7 +12,8 @@ use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_precompiles::{
     ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
-    IActivationRegistry, IB20, IB20Factory, IPolicyRegistry,
+    IActivationRegistry, IB20, IB20Factory, IPolicyRegistry, PolicyRegistryStorage,
+    REDEEM_SENDER_POLICY,
 };
 use base_precompile_storage::StorageKey;
 use base_test_utils::Account;
@@ -83,6 +84,21 @@ impl BerylTestEnv {
 
     /// ISO 4217 currency code for the stablecoin B-20 token variant.
     pub(crate) const B20_STABLECOIN_CURRENCY: &str = "USD";
+
+    /// Fixed decimals for the security B-20 token variant.
+    pub(crate) const B20_SECURITY_DECIMALS: u8 = 6;
+
+    /// Name for the security B-20 token variant.
+    pub(crate) const B20_SECURITY_NAME: &str = "Action Security";
+
+    /// Symbol for the security B-20 token variant.
+    pub(crate) const B20_SECURITY_SYMBOL: &str = "ASEC";
+
+    /// ISIN stored on the security B-20 token at creation.
+    pub(crate) const B20_SECURITY_ISIN: &str = "US0000000001";
+
+    /// Initial minimum redeemable share amount for the security B-20 token.
+    pub(crate) const B20_SECURITY_MINIMUM_REDEEMABLE: u64 = 10;
 
     /// Initial B-20 supply minted to Alice.
     pub(crate) const B20_INITIAL_SUPPLY: u64 = 1_000_000;
@@ -186,6 +202,11 @@ impl BerylTestEnv {
         ActivationFeature::B20Stablecoin.id()
     }
 
+    /// Activation registry feature ID for the B-20 security precompile.
+    pub(crate) const fn b20_security_feature() -> B256 {
+        ActivationFeature::B20Security.id()
+    }
+
     /// Activation registry feature ID for the policy registry precompile.
     pub(crate) const fn policy_registry_feature() -> B256 {
         ActivationFeature::PolicyRegistry.id()
@@ -213,6 +234,11 @@ impl BerylTestEnv {
         B256::repeat_byte(0x45)
     }
 
+    /// Returns the deterministic salt used to create the B-20 security token.
+    pub(crate) const fn b20_security_salt() -> B256 {
+        B256::repeat_byte(0x46)
+    }
+
     /// Returns the deterministic B-20 token address created by Alice.
     pub(crate) fn b20_token_address(&self) -> Address {
         B20Variant::B20.compute_address(Self::alice(), Self::b20_token_salt()).0
@@ -221,6 +247,11 @@ impl BerylTestEnv {
     /// Returns the deterministic B-20 stablecoin address created by Alice.
     pub(crate) fn b20_stablecoin_address(&self) -> Address {
         B20Variant::Stablecoin.compute_address(Self::alice(), Self::b20_stablecoin_salt()).0
+    }
+
+    /// Returns the deterministic B-20 security token address created by Alice.
+    pub(crate) fn b20_security_address(&self) -> Address {
+        B20Variant::Security.compute_address(Self::alice(), Self::b20_security_salt()).0
     }
 
     /// Creates a transaction that calls the B-20 token factory with the default salt.
@@ -247,6 +278,20 @@ impl BerylTestEnv {
         self.create_tx(
             TxKind::Call(B20FactoryStorage::ADDRESS),
             Bytes::from(self.create_b20_stablecoin_call_with_salt(salt).abi_encode()),
+            Self::B20_GAS_LIMIT,
+        )
+    }
+
+    /// Creates a transaction that calls the B-20 token factory for a security token.
+    pub(crate) fn create_b20_security_tx(&self) -> BaseTxEnvelope {
+        self.create_b20_security_with_salt_tx(Self::b20_security_salt())
+    }
+
+    /// Creates a security-token factory transaction with the given `salt`.
+    pub(crate) fn create_b20_security_with_salt_tx(&self, salt: B256) -> BaseTxEnvelope {
+        self.create_tx(
+            TxKind::Call(B20FactoryStorage::ADDRESS),
+            Bytes::from(self.create_b20_security_call_with_salt(salt).abi_encode()),
             Self::B20_GAS_LIMIT,
         )
     }
@@ -540,6 +585,25 @@ impl BerylTestEnv {
         }
     }
 
+    fn create_b20_security_call_with_salt(&self, salt: B256) -> IB20Factory::createB20Call {
+        IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::SECURITY,
+            salt,
+            params: self.b20_security_params().abi_encode().into(),
+            initCalls: vec![
+                IB20::mintCall { to: Self::alice(), amount: U256::from(Self::B20_INITIAL_SUPPLY) }
+                    .abi_encode()
+                    .into(),
+                IB20::updatePolicyCall {
+                    policyScope: REDEEM_SENDER_POLICY,
+                    newPolicyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID,
+                }
+                .abi_encode()
+                .into(),
+            ],
+        }
+    }
+
     fn create_account_tx(
         chain_id: u64,
         account: &mut TestAccount,
@@ -580,6 +644,17 @@ impl BerylTestEnv {
             symbol: Self::B20_STABLECOIN_SYMBOL.to_string(),
             initialAdmin: Self::alice(),
             currency: Self::B20_STABLECOIN_CURRENCY.to_string(),
+        }
+    }
+
+    fn b20_security_params(&self) -> IB20Factory::B20SecurityCreateParams {
+        IB20Factory::B20SecurityCreateParams {
+            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            name: Self::B20_SECURITY_NAME.to_string(),
+            symbol: Self::B20_SECURITY_SYMBOL.to_string(),
+            initialAdmin: Self::alice(),
+            isin: Self::B20_SECURITY_ISIN.to_string(),
+            minimumRedeemable: U256::from(Self::B20_SECURITY_MINIMUM_REDEEMABLE),
         }
     }
 
