@@ -1,4 +1,11 @@
-use std::{path::PathBuf, process::Command, time::Duration};
+use std::{
+    fs,
+    io::ErrorKind,
+    path::PathBuf,
+    process::Command,
+    thread,
+    time::{Duration, Instant},
+};
 
 use eyre::{Result, WrapErr, ensure};
 use testcontainers::{
@@ -13,6 +20,9 @@ use crate::{
 };
 
 const SETUP_IMAGE_TAG: &str = "devnet-setup:local";
+const SETUP_IMAGE_BUILD_LOCK_DIR: &str = "base-devnet-setup-image-build.lock";
+const SETUP_IMAGE_BUILD_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
+const SETUP_IMAGE_BUILD_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const DEPLOY_TIMEOUT_SECS: u64 = 300;
 
 /// Builder enode ID
@@ -276,30 +286,71 @@ impl SetupContainer {
     }
 
     fn ensure_setup_image_built(&self) -> Result<()> {
-        let image_exists = Command::new("docker")
-            .args(["image", "inspect", SETUP_IMAGE_TAG])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+        let setup_image_exists = || {
+            Command::new("docker")
+                .args(["image", "inspect", SETUP_IMAGE_TAG])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        };
 
-        if image_exists {
+        if setup_image_exists() {
             return Ok(());
         }
 
-        let repo_root = self.find_repo_root()?;
-        let dockerfile_path = repo_root.join("etc/docker/Dockerfile.devnet");
+        let lock_dir = std::env::temp_dir().join(SETUP_IMAGE_BUILD_LOCK_DIR);
+        let lock_started = Instant::now();
+        loop {
+            match fs::create_dir(&lock_dir) {
+                Ok(()) => break,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    if setup_image_exists() {
+                        return Ok(());
+                    }
+                    ensure!(
+                        lock_started.elapsed() < SETUP_IMAGE_BUILD_LOCK_TIMEOUT,
+                        "timed out waiting for devnet setup image build lock at {}",
+                        lock_dir.display(),
+                    );
+                    thread::sleep(SETUP_IMAGE_BUILD_LOCK_POLL_INTERVAL);
+                }
+                Err(error) => {
+                    return Err(error).wrap_err("Failed to acquire devnet setup image build lock");
+                }
+            }
+        }
 
-        ensure!(dockerfile_path.exists(), "etc/docker/Dockerfile.devnet not found");
+        let build_result = (|| {
+            if setup_image_exists() {
+                return Ok(());
+            }
 
-        let status = Command::new("docker")
-            .args(["build", "-t", SETUP_IMAGE_TAG, "-f", "etc/docker/Dockerfile.devnet", "."])
-            .current_dir(&repo_root)
-            .status()
-            .wrap_err("Failed to run docker build")?;
+            let repo_root = self.find_repo_root()?;
+            let dockerfile_path = repo_root.join("etc/docker/Dockerfile.devnet");
 
-        ensure!(status.success(), "docker build failed");
+            ensure!(dockerfile_path.exists(), "etc/docker/Dockerfile.devnet not found");
 
-        Ok(())
+            let status = Command::new("docker")
+                .args(["build", "-t", SETUP_IMAGE_TAG, "-f", "etc/docker/Dockerfile.devnet", "."])
+                .current_dir(&repo_root)
+                .status()
+                .wrap_err("Failed to run docker build")?;
+
+            ensure!(status.success(), "docker build failed");
+
+            Ok(())
+        })();
+
+        let cleanup_result =
+            fs::remove_dir(&lock_dir).wrap_err("Failed to release devnet setup image build lock");
+
+        match build_result {
+            Ok(()) => cleanup_result,
+            Err(error) => {
+                let _ = cleanup_result;
+                Err(error)
+            }
+        }
     }
 
     fn find_repo_root(&self) -> Result<PathBuf> {

@@ -21,8 +21,11 @@ const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(30);
 const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 
+static SMOKE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test]
 async fn smoke_test_devnet_block_production_and_transactions() -> Result<()> {
+    let _guard = SMOKE_TEST_LOCK.lock().await;
     let devnet = DevnetBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
@@ -150,6 +153,7 @@ async fn send_l2_transaction_via_client(
 
 #[tokio::test]
 async fn smoke_test_builder_and_client_block_sync() -> Result<()> {
+    let _guard = SMOKE_TEST_LOCK.lock().await;
     base_node_runner::test_utils::init_silenced_tracing();
     let devnet = DevnetBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
@@ -191,6 +195,7 @@ async fn smoke_test_builder_and_client_block_sync() -> Result<()> {
 
 #[tokio::test]
 async fn smoke_test_client_pending_state_via_flashblocks() -> Result<()> {
+    let _guard = SMOKE_TEST_LOCK.lock().await;
     let devnet = DevnetBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
