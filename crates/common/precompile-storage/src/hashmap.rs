@@ -89,7 +89,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<(), BasePrecompileError> {
         let code_len = code.len();
         // Mirror the production is_new_account check so state gas tracking is faithful.
-        let is_new_account = self.accounts.get(&address).map_or(true, AccountInfo::is_empty);
+        let is_new_account = self.accounts.get(&address).is_none_or(AccountInfo::is_empty);
         if is_new_account {
             self.deduct_state_gas(self.gas_params.create_state_gas())?;
             self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
