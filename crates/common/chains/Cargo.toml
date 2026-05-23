@@ -21,6 +21,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 alloy-primitives.workspace = true
 alloy-hardforks.workspace = true
 
+# revm
+revm.workspace = true
+
 # misc
 auto_impl.workspace = true
 serde = { workspace = true, optional = true }

@@ -186,6 +186,9 @@ base-alloy-evm = { path = "crates/common/evm", default-features = false }
 base-alloy-flz = { path = "crates/common/flz", default-features = false }
 base-alloy-consensus = { path = "crates/common/consensus", default-features = false }
 base-alloy-rpc-types-engine = { path = "crates/common/rpc-types-engine", default-features = false }
+base-precompile-macros = { path = "crates/common/precompile-macros" }
+base-precompile-storage = { path = "crates/common/precompile-storage", default-features = false }
+base-common-precompiles = { path = "crates/common/precompiles", default-features = false }
 
 # Builder
 base-builder-core = { path = "crates/builder/core" }

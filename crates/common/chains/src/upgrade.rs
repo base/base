@@ -1,4 +1,5 @@
 use alloy_hardforks::{ForkCondition, hardfork};
+use revm::primitives::hardfork::SpecId;
 
 use crate::BaseChainConfig;
 
@@ -31,10 +32,29 @@ hardfork!(
         Jovian,
         /// V1: First Base-specific network upgrade.
         V1,
+        /// Azul: Second Base-specific network upgrade.
+        Azul,
+        /// Beryl: Third Base-specific network upgrade.
+        Beryl,
     }
 );
 
 impl BaseUpgrade {
+    /// Latest Base upgrade used by default.
+    pub const LATEST: Self = Self::Azul;
+
+    /// Converts the Base upgrade into its matching Ethereum execution spec.
+    pub const fn into_eth_spec(self) -> SpecId {
+        match self {
+            Self::Bedrock | Self::Regolith => SpecId::MERGE,
+            Self::Canyon => SpecId::SHANGHAI,
+            Self::Ecotone | Self::Fjord | Self::Granite | Self::Holocene => SpecId::CANCUN,
+            Self::Isthmus | Self::Jovian => SpecId::PRAGUE,
+            // V1, Azul, Beryl, and newer Base upgrades inherit OSAKA.
+            _ => SpecId::OSAKA,
+        }
+    }
+
     /// Returns the list of upgrades with their activation conditions for the given chain config.
     pub const fn forks_for(cfg: &BaseChainConfig) -> [(Self, ForkCondition); 10] {
         let v1 = match cfg.base_v1_timestamp {

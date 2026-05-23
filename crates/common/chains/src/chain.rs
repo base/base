@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use core::ops::Index;
 
 use BaseUpgrade::{
-    Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith, V1,
+    Azul, Bedrock, Beryl, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith, V1,
 };
 // Production imports for upgrade implementations
 use EthereumHardfork::{
@@ -110,6 +110,8 @@ impl Index<BaseUpgrade> for BaseChainUpgrades {
             Isthmus => &self.forks[Isthmus.idx()].1,
             Jovian => &self.forks[Jovian.idx()].1,
             V1 => &self.forks[V1.idx()].1,
+            Azul => &ForkCondition::Never,
+            Beryl => &ForkCondition::Never,
         }
     }
 }
