@@ -3,11 +3,3 @@ error: cannot combine `slot`, `base_slot`, and `namespace` attributes on the sam
   |
 8 |     #[namespace("ns.field")]
   |     ^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `alloy_primitives::U256`
- --> tests/ui/05_namespace_with_slot.rs:2:5
-  |
-2 | use alloy_primitives::U256;
-  |     ^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

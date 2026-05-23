@@ -1,13 +1,5 @@
 error: field-level `slot`, `base_slot`, and `namespace` attributes cannot be used with contract-level `namespace`
  --> tests/ui/07_contract_namespace_with_field_slot.rs:9:5
   |
-9 |     value: U256,
+9 |     value: u64,
   |     ^^^^^
-
-warning: unused import: `alloy_primitives::U256`
- --> tests/ui/07_contract_namespace_with_field_slot.rs:2:5
-  |
-2 | use alloy_primitives::U256;
-  |     ^^^^^^^^^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
