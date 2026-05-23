@@ -46,7 +46,7 @@ sp1-zkvm = { version = "=6.1.0", features = ["verify"] }
 sp1-lib = { version = "=6.1.0", features = ["verify"] }
 
 # alloy (must match root Cargo.toml versions)
-alloy-consensus = { version = "1.8", default-features = false }
+alloy-consensus = { version = "2.0.4", default-features = false }
 alloy-sol-types = { version = "1.5.6", default-features = false }
 alloy-primitives = { version = "1.5.6", default-features = false }
 
