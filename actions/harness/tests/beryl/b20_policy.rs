@@ -1,6 +1,6 @@
 //! Action tests proving that B20 token transfers are gated by the policy registry.
 //!
-//! Each test activates TOKEN_FACTORY, B20_TOKEN, and POLICY_REGISTRY together,
+//! Each test activates `TOKEN_FACTORY`, `B20_TOKEN`, and `POLICY_REGISTRY` together,
 //! creates a token, wires a policy via `updatePolicy`, and asserts that transfers
 //! revert or succeed based on policy membership.
 
@@ -17,10 +17,10 @@ const SEED_AMOUNT: U256 = U256::from_limbs([100_000, 0, 0, 0]);
 /// Amount transferred in each policy-gated transfer assertion.
 const TRANSFER_AMOUNT: U256 = U256::from_limbs([1, 0, 0, 0]);
 
-/// ALLOWLIST policy wired to TransferSender blocks non-members from sending.
+/// ALLOWLIST policy wired to `TransferSender` blocks non-members from sending.
 ///
-/// 1. Alice seeds bob with tokens (default ALWAYS_ALLOW policy, succeeds).
-/// 2. Create ALLOWLIST policy; wire it to TransferSender.
+/// 1. Alice seeds bob with tokens (default `ALWAYS_ALLOW` policy, succeeds).
+/// 2. Create ALLOWLIST policy; wire it to `TransferSender`.
 /// 3. Bob tries to transfer; reverts (not in allowlist).
 /// 4. Admin adds bob to the allowlist.
 /// 5. Bob transfers again; succeeds.
@@ -81,10 +81,10 @@ async fn b20_allowlist_sender_policy_blocks_non_members() {
     scenario.derive().await;
 }
 
-/// BLOCKLIST policy wired to TransferSender blocks listed accounts from sending.
+/// BLOCKLIST policy wired to `TransferSender` blocks listed accounts from sending.
 ///
-/// 1. Alice seeds bob with tokens (default ALWAYS_ALLOW policy, succeeds).
-/// 2. Create BLOCKLIST policy; wire it to TransferSender.
+/// 1. Alice seeds bob with tokens (default `ALWAYS_ALLOW` policy, succeeds).
+/// 2. Create BLOCKLIST policy; wire it to `TransferSender`.
 /// 3. Bob transfers; succeeds (not in blocklist).
 /// 4. Admin adds bob to the blocklist.
 /// 5. Bob tries to transfer; reverts.
@@ -145,9 +145,9 @@ async fn b20_blocklist_sender_policy_blocks_listed_accounts() {
     scenario.derive().await;
 }
 
-/// Wiring the built-in ALWAYS_BLOCK policy to TransferSender blocks every sender immediately.
+/// Wiring the built-in `ALWAYS_BLOCK` policy to `TransferSender` blocks every sender immediately.
 ///
-/// No allowlist entries are needed: ALWAYS_BLOCK_ID denies all accounts unconditionally.
+/// No allowlist entries are needed: `ALWAYS_BLOCK_ID` denies all accounts unconditionally.
 #[tokio::test]
 async fn b20_always_block_sender_policy_blocks_all_transfers() {
     let mut scenario = B20PolicyScenario::new().await;
@@ -172,7 +172,7 @@ async fn b20_always_block_sender_policy_blocks_all_transfers() {
     scenario.derive().await;
 }
 
-/// ALLOWLIST policy wired to TransferReceiver blocks non-members from receiving.
+/// ALLOWLIST policy wired to `TransferReceiver` blocks non-members from receiving.
 #[tokio::test]
 async fn b20_allowlist_receiver_policy_blocks_non_members() {
     let mut scenario = B20PolicyScenario::new().await;
