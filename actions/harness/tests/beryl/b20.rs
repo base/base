@@ -484,8 +484,8 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
 
     for index in 0..2 {
         assert!(
-            !scenario.env.user_tx_succeeded(&block, index),
-            "zero-amount B-20 mutation {index} must revert"
+            scenario.env.user_tx_succeeded(&block, index),
+            "zero-amount B-20 mutation {index} must succeed (zero-amount ops are valid per ERC-20)"
         );
     }
     scenario.assert_total_supply(initial + 20 + 30 - 2 - 3);
