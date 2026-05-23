@@ -804,7 +804,7 @@ fn domain_separator_word(chain_id: u64, token: Address) -> U256 {
     U256::from_be_slice(domain_separator(chain_id, token).as_slice())
 }
 
-fn eip712_domain_fields_word() -> U256 {
+const fn eip712_domain_fields_word() -> U256 {
     let mut word = [0u8; 32];
     word[0] = 0x0c;
     U256::from_be_bytes(word)
