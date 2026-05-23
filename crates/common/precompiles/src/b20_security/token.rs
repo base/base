@@ -368,6 +368,7 @@ impl<S: SecurityAccounting, P: Policy> RoleManaged for B20SecurityToken<S, P> {}
 #[cfg(test)]
 mod tests {
     use alloc::string::String;
+
     use alloy_primitives::{Address, B256, U256};
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{BasePrecompileError, StorageCtx, setup_storage};
