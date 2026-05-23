@@ -1,0 +1,87 @@
+name: Base Std Fork Tests
+
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  BASE_ANVIL_REF: base-anvil-fork
+  BASE_STD_REF: main
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: "sccache"
+  SCCACHE_GHA_ENABLED: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  fork-tests:
+    name: Base Std Fork Tests
+    runs-on:
+      group: BasePerfRunnerGroup
+    timeout-minutes: 120
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout Base
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - uses: ./.github/actions/setup
+        with:
+          free-disk: "true"
+          foundry: "true"
+          mold: "true"
+          native-deps: "true"
+          rust-cache-shared-key: "base-std-fork-tests"
+
+      - name: Clone fork-test repositories
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          workdir="$RUNNER_TEMP/base-std-fork-tests"
+          rm -rf "$workdir"
+          mkdir -p "$workdir"
+
+          git clone --depth 1 --single-branch --recurse-submodules --shallow-submodules \
+            --branch "$BASE_STD_REF" \
+            https://github.com/base/base-std.git "$workdir/base-std"
+          git clone --depth 1 --single-branch --branch "$BASE_ANVIL_REF" \
+            https://github.com/base/base-anvil.git "$workdir/base-anvil"
+
+          echo "BASE_STD_DIR=$workdir/base-std" >> "$GITHUB_ENV"
+          echo "BASE_ANVIL_DIR=$workdir/base-anvil" >> "$GITHUB_ENV"
+
+      - name: Build patched base-anvil binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cargo \
+            --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\"" \
+            --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\"" \
+            build --manifest-path "$BASE_ANVIL_DIR/Cargo.toml" --release -p anvil -p forge
+
+          "$BASE_ANVIL_DIR/target/release/anvil" --version
+          "$BASE_ANVIL_DIR/target/release/forge" --version
+
+      - name: Run base-std fork tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$BASE_STD_DIR"
+          ANVIL_BIN="$BASE_ANVIL_DIR/target/release/anvil" \
+            FORGE_BIN="$BASE_ANVIL_DIR/target/release/forge" \
+            ANVIL_LOG="$RUNNER_TEMP/base-std-anvil.log" \
+            ./script/run-fork-tests.sh
