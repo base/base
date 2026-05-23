@@ -9,7 +9,10 @@ use base_common_precompiles::{
     REDEEM_SENDER_POLICY,
 };
 
-use crate::env::BerylTestEnv;
+use crate::{
+    env::BerylTestEnv,
+    test_helpers::{self, StaticcallCase, word_from_address},
+};
 
 const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 const UPDATED_RATIO: U256 = U256::from_limbs([2_000_000_000_000_000_000, 0, 0, 0]);
@@ -617,10 +620,8 @@ impl B20SecurityScenario {
         &mut self,
         transactions: Vec<BaseTxEnvelope>,
     ) -> BaseBlock {
-        let block = self.env.sequencer.build_next_block_with_transactions(transactions).await;
-        let block_number = self.blocks.len() as u64 + 1;
-        self.blocks.push((block.clone(), block_number));
-        block
+        test_helpers::build_block_with_transactions(&mut self.env, &mut self.blocks, transactions)
+            .await
     }
 
     async fn grant_roles(&mut self, roles: impl IntoIterator<Item = B256>) {
@@ -644,91 +645,22 @@ impl B20SecurityScenario {
     }
 
     async fn assert_staticcall_cases(&mut self, target: Address, cases: Vec<StaticcallCase>) {
-        let mut probes = Vec::with_capacity(cases.len());
-        let mut deployments = Vec::with_capacity(cases.len());
-        for _ in &cases {
-            let (probe, deploy) = self.env.deploy_staticcall_probe_tx(target);
-            probes.push(probe);
-            deployments.push(deploy);
-        }
-
-        let deploy_block = self.build_block_with_transactions(deployments).await;
-        for index in 0..cases.len() {
-            assert!(
-                self.env.user_tx_succeeded(&deploy_block, index),
-                "security staticcall probe deployment {index} must succeed"
-            );
-        }
-
-        let calls = probes
-            .iter()
-            .zip(cases.iter())
-            .map(|(probe, case)| {
-                self.env.call_staticcall_probe_tx(
-                    *probe,
-                    Bytes::from(case.input.clone()),
-                    BerylTestEnv::B20_PROBE_GAS_LIMIT,
-                )
-            })
-            .collect();
-        let call_block = self.build_block_with_transactions(calls).await;
-
-        for (index, (probe, case)) in probes.iter().zip(cases.iter()).enumerate() {
-            assert!(
-                self.env.user_tx_succeeded(&call_block, index),
-                "{} probe transaction must succeed",
-                case.label
-            );
-            assert!(
-                self.env.probe_call_succeeded(*probe),
-                "{} staticcall must succeed",
-                case.label
-            );
-            assert_eq!(
-                self.env.probe_return_word(*probe),
-                case.expected_word,
-                "{} staticcall must return the expected first word",
-                case.label
-            );
-            assert_eq!(
-                self.env.probe_return_length(*probe),
-                U256::from(case.expected_returndata.len()),
-                "{} staticcall must return the expected byte length",
-                case.label
-            );
-            assert_eq!(
-                self.env.probe_return_hash(*probe),
-                returndata_hash_word(&case.expected_returndata),
-                "{} staticcall must return the expected ABI payload",
-                case.label
-            );
-        }
+        test_helpers::assert_staticcall_cases(
+            &mut self.env,
+            &mut self.blocks,
+            target,
+            cases,
+            "security",
+        )
+        .await;
     }
 
     fn assert_total_supply(&self, total_supply: u64) {
-        assert_eq!(
-            self.env.b20_total_supply(self.token),
-            U256::from(total_supply),
-            "security B-20 total supply must match expected value"
-        );
+        test_helpers::assert_total_supply(&self.env, self.token, "security B-20", total_supply);
     }
 
     fn assert_balances(&self, alice: u64, bob: u64, carol: u64) {
-        assert_eq!(
-            self.env.b20_balance(self.token, BerylTestEnv::alice()),
-            U256::from(alice),
-            "Alice security B-20 balance must match expected value"
-        );
-        assert_eq!(
-            self.env.b20_balance(self.token, BerylTestEnv::bob()),
-            U256::from(bob),
-            "Bob security B-20 balance must match expected value"
-        );
-        assert_eq!(
-            self.env.b20_balance(self.token, BerylTestEnv::carol()),
-            U256::from(carol),
-            "Carol security B-20 balance must match expected value"
-        );
+        test_helpers::assert_balances(&self.env, self.token, "security B-20", alice, bob, carol);
     }
 
     fn assert_token_created_log(&self, block: &BaseBlock) {
@@ -770,53 +702,10 @@ impl B20SecurityScenario {
     }
 }
 
-struct StaticcallCase {
-    label: &'static str,
-    input: Vec<u8>,
-    expected_word: U256,
-    expected_returndata: Vec<u8>,
-}
-
-impl StaticcallCase {
-    fn returndata(label: &'static str, input: Vec<u8>, expected_returndata: Vec<u8>) -> Self {
-        let expected_word = first_word(&expected_returndata);
-        Self { label, input, expected_word, expected_returndata }
-    }
-
-    fn word(label: &'static str, input: Vec<u8>, expected_word: U256) -> Self {
-        Self::returndata(label, input, expected_word.abi_encode())
-    }
-
-    fn bytes32(label: &'static str, input: Vec<u8>, expected: B256) -> Self {
-        Self::returndata(label, input, expected.abi_encode())
-    }
-
-    fn string(label: &'static str, input: Vec<u8>, expected: &str) -> Self {
-        Self::returndata(label, input, expected.to_string().abi_encode())
-    }
-}
-
 fn security_operator_role() -> B256 {
     keccak256("SECURITY_OPERATOR_ROLE")
 }
 
 fn burn_from_role() -> B256 {
     keccak256("BURN_FROM_ROLE")
-}
-
-fn word_from_address(address: Address) -> U256 {
-    let mut word = [0u8; 32];
-    word[12..].copy_from_slice(address.as_slice());
-    U256::from_be_slice(&word)
-}
-
-fn first_word(bytes: &[u8]) -> U256 {
-    let mut word = [0u8; 32];
-    let copied = bytes.len().min(32);
-    word[..copied].copy_from_slice(&bytes[..copied]);
-    U256::from_be_bytes(word)
-}
-
-fn returndata_hash_word(bytes: &[u8]) -> U256 {
-    U256::from_be_slice(keccak256(bytes).as_slice())
 }

@@ -1,12 +1,15 @@
 //! Stablecoin B-20 precompile action tests across the Base Beryl boundary.
 
 use alloy_consensus::TxReceipt;
-use alloy_primitives::{Address, Bytes, TxKind, U256, keccak256};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_precompiles::{B20FactoryStorage, B20TokenRole, IB20, IB20Factory, IB20Stablecoin};
 
-use crate::env::BerylTestEnv;
+use crate::{
+    env::BerylTestEnv,
+    test_helpers::{self, StaticcallCase, word_from_address},
+};
 
 #[tokio::test]
 async fn stablecoin_creation_initializes_currency_and_factory_views() {
@@ -44,20 +47,20 @@ async fn stablecoin_creation_initializes_currency_and_factory_views() {
         .assert_staticcall_cases(
             scenario.token,
             vec![
-                StaticcallCase::returndata(
+                StaticcallCase::string(
                     "currency",
                     IB20Stablecoin::currencyCall {}.abi_encode(),
-                    string_ret(BerylTestEnv::B20_STABLECOIN_CURRENCY),
+                    BerylTestEnv::B20_STABLECOIN_CURRENCY,
                 ),
-                StaticcallCase::returndata(
+                StaticcallCase::string(
                     "name",
                     IB20::nameCall {}.abi_encode(),
-                    string_ret(BerylTestEnv::B20_STABLECOIN_NAME),
+                    BerylTestEnv::B20_STABLECOIN_NAME,
                 ),
-                StaticcallCase::returndata(
+                StaticcallCase::string(
                     "symbol",
                     IB20::symbolCall {}.abi_encode(),
-                    string_ret(BerylTestEnv::B20_STABLECOIN_SYMBOL),
+                    BerylTestEnv::B20_STABLECOIN_SYMBOL,
                 ),
                 StaticcallCase::word(
                     "decimals",
@@ -84,11 +87,7 @@ async fn stablecoin_creation_initializes_currency_and_factory_views() {
                     U256::ZERO,
                 ),
                 StaticcallCase::word("supplyCap", IB20::supplyCapCall {}.abi_encode(), U256::MAX),
-                StaticcallCase::returndata(
-                    "contractURI",
-                    IB20::contractURICall {}.abi_encode(),
-                    string_ret(""),
-                ),
+                StaticcallCase::string("contractURI", IB20::contractURICall {}.abi_encode(), ""),
                 StaticcallCase::word(
                     "nonces(alice)",
                     IB20::noncesCall { owner: BerylTestEnv::alice() }.abi_encode(),
@@ -244,11 +243,11 @@ async fn stablecoin_calls_revert_while_stablecoin_feature_is_deactivated() {
     let block = scenario.build_block_with_transactions(vec![probe_after_reactivate]).await;
     assert!(scenario.env.user_tx_succeeded(&block, 0), "probe transaction must succeed");
     assert!(scenario.env.probe_call_succeeded(probe), "currency() staticcall must succeed again");
-    assert_probe_returndata(
+    test_helpers::assert_probe_string(
         &scenario.env,
         probe,
         "currency after reactivation",
-        &string_ret(BerylTestEnv::B20_STABLECOIN_CURRENCY),
+        BerylTestEnv::B20_STABLECOIN_CURRENCY,
     );
 
     let transfer_after_reactivate =
@@ -345,10 +344,8 @@ impl StablecoinScenario {
         &mut self,
         transactions: Vec<BaseTxEnvelope>,
     ) -> BaseBlock {
-        let block = self.env.sequencer.build_next_block_with_transactions(transactions).await;
-        let block_number = self.blocks.len() as u64 + 1;
-        self.blocks.push((block.clone(), block_number));
-        block
+        test_helpers::build_block_with_transactions(&mut self.env, &mut self.blocks, transactions)
+            .await
     }
 
     fn call_tx(&self, call: impl SolCall) -> BaseTxEnvelope {
@@ -360,79 +357,22 @@ impl StablecoinScenario {
     }
 
     async fn assert_staticcall_cases(&mut self, target: Address, cases: Vec<StaticcallCase>) {
-        let mut probes = Vec::with_capacity(cases.len());
-        let mut deployments = Vec::with_capacity(cases.len());
-        for _ in &cases {
-            let (probe, deploy) = self.env.deploy_staticcall_probe_tx(target);
-            probes.push(probe);
-            deployments.push(deploy);
-        }
-
-        let deploy_block = self.build_block_with_transactions(deployments).await;
-        for index in 0..cases.len() {
-            assert!(
-                self.env.user_tx_succeeded(&deploy_block, index),
-                "stablecoin staticcall probe deployment {index} must succeed"
-            );
-        }
-
-        let calls = probes
-            .iter()
-            .zip(cases.iter())
-            .map(|(probe, case)| {
-                self.env.call_staticcall_probe_tx(
-                    *probe,
-                    Bytes::from(case.input.clone()),
-                    BerylTestEnv::B20_PROBE_GAS_LIMIT,
-                )
-            })
-            .collect();
-        let call_block = self.build_block_with_transactions(calls).await;
-        for (index, (probe, case)) in probes.iter().zip(cases.iter()).enumerate() {
-            assert!(
-                self.env.user_tx_succeeded(&call_block, index),
-                "{} probe transaction must succeed",
-                case.label
-            );
-            assert!(
-                self.env.probe_call_succeeded(*probe),
-                "{} staticcall must succeed",
-                case.label
-            );
-            assert_eq!(
-                self.env.probe_return_word(*probe),
-                case.expected_word,
-                "{} staticcall must return the expected first word",
-                case.label
-            );
-            assert_probe_returndata(&self.env, *probe, case.label, &case.expected_returndata);
-        }
+        test_helpers::assert_staticcall_cases(
+            &mut self.env,
+            &mut self.blocks,
+            target,
+            cases,
+            "stablecoin",
+        )
+        .await;
     }
 
     fn assert_total_supply(&self, total_supply: u64) {
-        assert_eq!(
-            self.env.b20_total_supply(self.token),
-            U256::from(total_supply),
-            "stablecoin total supply must match expected value"
-        );
+        test_helpers::assert_total_supply(&self.env, self.token, "stablecoin", total_supply);
     }
 
     fn assert_balances(&self, alice: u64, bob: u64, carol: u64) {
-        assert_eq!(
-            self.env.b20_balance(self.token, BerylTestEnv::alice()),
-            U256::from(alice),
-            "Alice stablecoin balance must match expected value"
-        );
-        assert_eq!(
-            self.env.b20_balance(self.token, BerylTestEnv::bob()),
-            U256::from(bob),
-            "Bob stablecoin balance must match expected value"
-        );
-        assert_eq!(
-            self.env.b20_balance(self.token, BerylTestEnv::carol()),
-            U256::from(carol),
-            "Carol stablecoin balance must match expected value"
-        );
+        test_helpers::assert_balances(&self.env, self.token, "stablecoin", alice, bob, carol);
     }
 
     fn assert_allowance(&self, owner: Address, spender: Address, amount: u64) {
@@ -510,24 +450,6 @@ impl StablecoinScenario {
     }
 }
 
-struct StaticcallCase {
-    label: &'static str,
-    input: Vec<u8>,
-    expected_word: U256,
-    expected_returndata: Vec<u8>,
-}
-
-impl StaticcallCase {
-    fn word(label: &'static str, input: Vec<u8>, expected_word: U256) -> Self {
-        Self::returndata(label, input, expected_word.abi_encode())
-    }
-
-    fn returndata(label: &'static str, input: Vec<u8>, expected_returndata: Vec<u8>) -> Self {
-        let expected_word = first_word(&expected_returndata);
-        Self { label, input, expected_word, expected_returndata }
-    }
-}
-
 fn create_stablecoin_with_currency_tx(env: &BerylTestEnv, currency: &str) -> BaseTxEnvelope {
     let params = IB20Factory::B20StablecoinCreateParams {
         version: B20FactoryStorage::CREATE_TOKEN_VERSION,
@@ -550,43 +472,4 @@ fn create_stablecoin_with_currency_tx(env: &BerylTestEnv, currency: &str) -> Bas
         ),
         BerylTestEnv::B20_GAS_LIMIT,
     )
-}
-
-fn assert_probe_returndata(
-    env: &BerylTestEnv,
-    probe: Address,
-    label: &str,
-    expected_returndata: &[u8],
-) {
-    assert_eq!(
-        env.probe_return_length(probe),
-        U256::from(expected_returndata.len()),
-        "{label} staticcall must return the expected byte length"
-    );
-    assert_eq!(
-        env.probe_return_hash(probe),
-        returndata_hash_word(expected_returndata),
-        "{label} staticcall must return the expected ABI payload"
-    );
-}
-
-fn string_ret(value: &str) -> Vec<u8> {
-    value.to_string().abi_encode()
-}
-
-fn first_word(returndata: &[u8]) -> U256 {
-    let mut word = [0u8; 32];
-    let copied = returndata.len().min(word.len());
-    word[..copied].copy_from_slice(&returndata[..copied]);
-    U256::from_be_bytes(word)
-}
-
-fn returndata_hash_word(returndata: &[u8]) -> U256 {
-    U256::from_be_slice(keccak256(returndata).as_slice())
-}
-
-fn word_from_address(address: Address) -> U256 {
-    let mut word = [0u8; 32];
-    word[12..].copy_from_slice(address.as_slice());
-    U256::from_be_slice(&word)
 }

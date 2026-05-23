@@ -9,3 +9,4 @@ mod policy_registry;
 mod policy_transfer;
 mod security;
 mod stablecoin;
+mod test_helpers;
