@@ -31,11 +31,11 @@ pub struct PermitArgs {
 
 impl PermitArgs {
     /// `keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)")`
-    const TYPEHASH: B256 =
+    pub const TYPEHASH: B256 =
         alloy_primitives::b256!("6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9");
 
     /// EIP-191 prefix for structured data, followed by the EIP-712 version byte.
-    const EIP712_SIGNING_PREFIX: [u8; 2] = [0x19, 0x01];
+    pub const EIP712_SIGNING_PREFIX: [u8; 2] = [0x19, 0x01];
 
     /// Legacy `v` value for even-Y ECDSA recovery (`ecrecover`).
     pub const RECOVERY_ID_EVEN_Y: u8 = 27;
@@ -88,6 +88,14 @@ impl PermitArgs {
 const DOMAIN_TYPEHASH: B256 =
     alloy_primitives::b256!("8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f");
 
+/// EIP-712 domain version string pinned to `"1"`.
+///
+/// # Breaking change note
+///
+/// Adding `name` and `version` to the domain separator is an intentional, acknowledged breaking
+/// change. Any permit signatures produced against the old domain (which only encoded `chainId` and
+/// `verifyingContract`) will be invalid after this change. New tokens start with the canonical
+/// four-field domain; existing token holders must re-sign outstanding permits.
 const VERSION: &[u8] = b"1";
 
 /// EIP-2612 permit and EIP-712 domain operations.
@@ -249,7 +257,7 @@ mod tests {
         let args = sample_permit_args(owner);
         let nonce = U256::ZERO;
         let name_hash = keccak256(TOKEN_NAME.as_bytes());
-        let version_hash = keccak256(super::VERSION);
+        let version_hash = keccak256(VERSION);
         let domain_sep = keccak256(
             (DOMAIN_TYPEHASH, name_hash, version_hash, U256::from(CHAIN_ID), TOKEN_ADDR)
                 .abi_encode(),
