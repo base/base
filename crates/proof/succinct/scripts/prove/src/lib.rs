@@ -1,5 +1,4 @@
-//! Proving utilities for executing multi-block range proofs.
-
+#![doc = include_str!("../README.md")]
 use std::time::{Duration, Instant};
 
 use anyhow::{Ok, Result};
