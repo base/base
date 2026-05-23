@@ -12,7 +12,7 @@ use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_precompiles::{
     ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
-    IActivationRegistry, IB20, IB20Factory,
+    IActivationRegistry, IB20, IB20Factory, IPolicyRegistry,
 };
 use base_precompile_storage::StorageKey;
 use base_test_utils::Account;
@@ -160,6 +160,15 @@ impl BerylTestEnv {
     /// Activation registry feature ID for the policy registry precompile.
     pub(crate) const fn policy_registry_feature() -> B256 {
         ActivationFeature::PolicyRegistry.id()
+    }
+
+    /// Computes the expected policy ID for a custom policy.
+    ///
+    /// IDs are encoded as `(type_discriminant << 56) | counter` where the counter is a
+    /// global monotonic sequence. Counters 0 and 1 are reserved for the built-in policies,
+    /// so the first custom policy always gets counter 2.
+    pub(crate) const fn policy_id(policy_type: IPolicyRegistry::PolicyType, counter: u64) -> u64 {
+        (policy_type as u64) << 56 | counter
     }
 
     /// Alternate salt for a second token creation used in deactivation/re-activation tests.

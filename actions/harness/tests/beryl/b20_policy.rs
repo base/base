@@ -14,10 +14,8 @@ use crate::env::BerylTestEnv;
 /// Transfer amount used in setup (seeding bob with tokens).
 const SEED_AMOUNT: U256 = U256::from_limbs([100_000, 0, 0, 0]);
 
-/// First custom policy has counter=2 (IDs 0 and 1 are reserved built-ins).
-const fn policy_id(policy_type: IPolicyRegistry::PolicyType, counter: u64) -> u64 {
-    (policy_type as u64) << 56 | counter
-}
+/// Amount transferred in each policy-gated transfer assertion.
+const TRANSFER_AMOUNT: U256 = U256::from_limbs([1, 0, 0, 0]);
 
 /// ALLOWLIST policy wired to TransferSender blocks non-members from sending.
 ///
@@ -34,8 +32,10 @@ async fn b20_allowlist_sender_policy_blocks_non_members() {
         scenario.token_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: SEED_AMOUNT });
     let block = scenario.build_block(vec![seed_bob]).await;
     assert!(scenario.env.user_tx_succeeded(&block, 0), "seeding bob must succeed");
+    scenario.assert_balance(BerylTestEnv::alice(), BerylTestEnv::B20_INITIAL_SUPPLY - 100_000);
+    scenario.assert_balance(BerylTestEnv::bob(), 100_000);
 
-    let allowlist_id = policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
+    let allowlist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
     let create_policy = scenario.policy_tx(IPolicyRegistry::createPolicyCall {
         admin: BerylTestEnv::alice(),
         policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
@@ -51,12 +51,14 @@ async fn b20_allowlist_sender_policy_blocks_non_members() {
     assert!(scenario.env.user_tx_succeeded(&block, 0), "updatePolicy must succeed");
 
     let blocked = scenario
-        .bob_token_tx(IB20::transferCall { to: BerylTestEnv::carol(), amount: U256::from(1u64) });
+        .bob_token_tx(IB20::transferCall { to: BerylTestEnv::carol(), amount: TRANSFER_AMOUNT });
     let block = scenario.build_block(vec![blocked]).await;
     assert!(
         !scenario.env.user_tx_succeeded(&block, 0),
         "transfer from non-member must revert when ALLOWLIST sender policy is set"
     );
+    scenario.assert_balance(BerylTestEnv::bob(), 100_000);
+    scenario.assert_balance(BerylTestEnv::carol(), 0);
 
     let add_bob = scenario.policy_tx(IPolicyRegistry::updateAllowlistCall {
         policyId: allowlist_id,
@@ -67,12 +69,14 @@ async fn b20_allowlist_sender_policy_blocks_non_members() {
     assert!(scenario.env.user_tx_succeeded(&block, 0), "updateAllowlist must succeed");
 
     let allowed = scenario
-        .bob_token_tx(IB20::transferCall { to: BerylTestEnv::carol(), amount: U256::from(1u64) });
+        .bob_token_tx(IB20::transferCall { to: BerylTestEnv::carol(), amount: TRANSFER_AMOUNT });
     let block = scenario.build_block(vec![allowed]).await;
     assert!(
         scenario.env.user_tx_succeeded(&block, 0),
         "transfer from allowlisted member must succeed"
     );
+    scenario.assert_balance(BerylTestEnv::bob(), 99_999);
+    scenario.assert_balance(BerylTestEnv::carol(), 1);
 
     scenario.derive().await;
 }
@@ -92,8 +96,10 @@ async fn b20_blocklist_sender_policy_blocks_listed_accounts() {
         scenario.token_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: SEED_AMOUNT });
     let block = scenario.build_block(vec![seed_bob]).await;
     assert!(scenario.env.user_tx_succeeded(&block, 0), "seeding bob must succeed");
+    scenario.assert_balance(BerylTestEnv::alice(), BerylTestEnv::B20_INITIAL_SUPPLY - 100_000);
+    scenario.assert_balance(BerylTestEnv::bob(), 100_000);
 
-    let blocklist_id = policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 2);
+    let blocklist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 2);
     let create_policy = scenario.policy_tx(IPolicyRegistry::createPolicyCall {
         admin: BerylTestEnv::alice(),
         policyType: IPolicyRegistry::PolicyType::BLOCKLIST,
@@ -109,12 +115,14 @@ async fn b20_blocklist_sender_policy_blocks_listed_accounts() {
     assert!(scenario.env.user_tx_succeeded(&block, 0), "updatePolicy must succeed");
 
     let first_transfer = scenario
-        .bob_token_tx(IB20::transferCall { to: BerylTestEnv::carol(), amount: U256::from(1u64) });
+        .bob_token_tx(IB20::transferCall { to: BerylTestEnv::carol(), amount: TRANSFER_AMOUNT });
     let block = scenario.build_block(vec![first_transfer]).await;
     assert!(
         scenario.env.user_tx_succeeded(&block, 0),
         "transfer from non-blocked account must succeed"
     );
+    scenario.assert_balance(BerylTestEnv::bob(), 99_999);
+    scenario.assert_balance(BerylTestEnv::carol(), 1);
 
     let block_bob = scenario.policy_tx(IPolicyRegistry::updateBlocklistCall {
         policyId: blocklist_id,
@@ -125,12 +133,14 @@ async fn b20_blocklist_sender_policy_blocks_listed_accounts() {
     assert!(scenario.env.user_tx_succeeded(&block, 0), "updateBlocklist must succeed");
 
     let blocked = scenario
-        .bob_token_tx(IB20::transferCall { to: BerylTestEnv::carol(), amount: U256::from(1u64) });
+        .bob_token_tx(IB20::transferCall { to: BerylTestEnv::carol(), amount: TRANSFER_AMOUNT });
     let block = scenario.build_block(vec![blocked]).await;
     assert!(
         !scenario.env.user_tx_succeeded(&block, 0),
         "transfer from blocked account must revert"
     );
+    scenario.assert_balance(BerylTestEnv::bob(), 99_999);
+    scenario.assert_balance(BerylTestEnv::carol(), 1);
 
     scenario.derive().await;
 }
@@ -150,12 +160,14 @@ async fn b20_always_block_sender_policy_blocks_all_transfers() {
     assert!(scenario.env.user_tx_succeeded(&block, 0), "updatePolicy must succeed");
 
     let blocked =
-        scenario.token_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: U256::from(1u64) });
+        scenario.token_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: TRANSFER_AMOUNT });
     let block = scenario.build_block(vec![blocked]).await;
     assert!(
         !scenario.env.user_tx_succeeded(&block, 0),
         "transfer must revert when ALWAYS_BLOCK sender policy is set"
     );
+    scenario.assert_balance(BerylTestEnv::alice(), BerylTestEnv::B20_INITIAL_SUPPLY);
+    scenario.assert_balance(BerylTestEnv::bob(), 0);
 
     scenario.derive().await;
 }
@@ -165,7 +177,7 @@ async fn b20_always_block_sender_policy_blocks_all_transfers() {
 async fn b20_allowlist_receiver_policy_blocks_non_members() {
     let mut scenario = B20PolicyScenario::new().await;
 
-    let allowlist_id = policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
+    let allowlist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
     let create_policy = scenario.policy_tx(IPolicyRegistry::createPolicyCall {
         admin: BerylTestEnv::alice(),
         policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
@@ -181,12 +193,14 @@ async fn b20_allowlist_receiver_policy_blocks_non_members() {
     assert!(scenario.env.user_tx_succeeded(&block, 0), "updatePolicy must succeed");
 
     let blocked =
-        scenario.token_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: U256::from(1u64) });
+        scenario.token_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: TRANSFER_AMOUNT });
     let block = scenario.build_block(vec![blocked]).await;
     assert!(
         !scenario.env.user_tx_succeeded(&block, 0),
         "transfer to non-member must revert when ALLOWLIST receiver policy is set"
     );
+    scenario.assert_balance(BerylTestEnv::alice(), BerylTestEnv::B20_INITIAL_SUPPLY);
+    scenario.assert_balance(BerylTestEnv::bob(), 0);
 
     let add_bob = scenario.policy_tx(IPolicyRegistry::updateAllowlistCall {
         policyId: allowlist_id,
@@ -197,12 +211,14 @@ async fn b20_allowlist_receiver_policy_blocks_non_members() {
     assert!(scenario.env.user_tx_succeeded(&block, 0), "updateAllowlist must succeed");
 
     let allowed =
-        scenario.token_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: U256::from(1u64) });
+        scenario.token_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: TRANSFER_AMOUNT });
     let block = scenario.build_block(vec![allowed]).await;
     assert!(
         scenario.env.user_tx_succeeded(&block, 0),
         "transfer to allowlisted receiver must succeed"
     );
+    scenario.assert_balance(BerylTestEnv::alice(), BerylTestEnv::B20_INITIAL_SUPPLY - 1);
+    scenario.assert_balance(BerylTestEnv::bob(), 1);
 
     scenario.derive().await;
 }
@@ -268,6 +284,14 @@ impl B20PolicyScenario {
             Bytes::from(call.abi_encode()),
             BerylTestEnv::B20_GAS_LIMIT,
         )
+    }
+
+    fn assert_balance(&self, account: Address, expected: u64) {
+        assert_eq!(
+            self.env.b20_balance(self.token, account),
+            U256::from(expected),
+            "B-20 balance for {account} must match expected value"
+        );
     }
 
     async fn derive(mut self) {

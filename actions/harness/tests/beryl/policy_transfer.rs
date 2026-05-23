@@ -18,20 +18,11 @@ const GAS_LIMIT: u64 = 10_000_000;
 /// Transfer amount used across all policy gating tests.
 const TRANSFER_AMOUNT: u64 = 1_000;
 
-/// Computes the expected policy ID for a custom policy.
-///
-/// IDs are encoded as `(type_discriminant << 56) | counter` where the counter is a
-/// global monotonic sequence. Counters 0 and 1 are reserved for the built-in policies
-/// written by `write_builtins`, so the first custom policy always gets counter 2.
-const fn policy_id(policy_type: IPolicyRegistry::PolicyType, counter: u64) -> u64 {
-    (policy_type as u64) << 56 | counter
-}
-
 // --- ALLOWLIST ---
 
 #[tokio::test]
 async fn allowlist_policy_gates_b20_transfers() {
-    let allowlist_id = policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
+    let allowlist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
     let mut scenario = PolicyTransferScenario::new_with_custom_policy(
         IPolicyRegistry::PolicyType::ALLOWLIST,
         allowlist_id,
@@ -104,7 +95,7 @@ async fn allowlist_policy_gates_b20_transfers() {
 
 #[tokio::test]
 async fn blocklist_policy_gates_b20_transfers() {
-    let blocklist_id = policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 2);
+    let blocklist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 2);
     let mut scenario = PolicyTransferScenario::new_with_custom_policy(
         IPolicyRegistry::PolicyType::BLOCKLIST,
         blocklist_id,
@@ -145,6 +136,7 @@ async fn blocklist_policy_gates_b20_transfers() {
     assert!(!scenario.env.user_tx_succeeded(&block, 0), "transfer from blocked sender must revert");
     scenario
         .assert_balance(BerylTestEnv::alice(), BerylTestEnv::B20_INITIAL_SUPPLY - TRANSFER_AMOUNT);
+    scenario.assert_balance(BerylTestEnv::carol(), 0);
 
     // Unblock Alice.
     let unblock_alice = scenario.policy_tx(IPolicyRegistry::updateBlocklistCall {

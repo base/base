@@ -131,8 +131,8 @@ async fn beryl_enables_policy_registry_singleton_precompile() {
 #[tokio::test]
 async fn policy_registry_action_tests_cover_policy_lifecycle_and_views() {
     let mut scenario = PolicyRegistryScenario::new().await;
-    let allowlist_id = policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
-    let blocklist_id = policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 3);
+    let allowlist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
+    let blocklist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 3);
 
     let create_allowlist = scenario.tx(IPolicyRegistry::createPolicyCall {
         admin: BerylTestEnv::alice(),
@@ -375,8 +375,8 @@ async fn policy_registry_action_tests_cover_policy_lifecycle_and_views() {
 #[tokio::test]
 async fn policy_registry_action_tests_cover_error_paths() {
     let mut scenario = PolicyRegistryScenario::new().await;
-    let allowlist_id = policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
-    let blocklist_id = policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 3);
+    let allowlist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
+    let blocklist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 3);
 
     // Setup: create an allowlist policy and a blocklist policy, both with alice as admin.
     let create_allowlist = scenario.tx(IPolicyRegistry::createPolicyCall {
@@ -487,8 +487,8 @@ async fn policy_registry_action_tests_cover_error_paths() {
 #[tokio::test]
 async fn policy_registry_renounced_policy_is_frozen() {
     let mut scenario = PolicyRegistryScenario::new().await;
-    let allowlist_id = policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
-    let blocklist_id = policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 3);
+    let allowlist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::ALLOWLIST, 2);
+    let blocklist_id = BerylTestEnv::policy_id(IPolicyRegistry::PolicyType::BLOCKLIST, 3);
 
     // Setup: alice creates an ALLOWLIST policy.
     let create_allowlist = scenario.tx(IPolicyRegistry::createPolicyCall {
@@ -724,10 +724,6 @@ impl PolicyRegistryScenario {
         let block_number = self.blocks.len() as u64 + 1;
         self.blocks.push((block, block_number));
     }
-}
-
-const fn policy_id(policy_type: IPolicyRegistry::PolicyType, counter: u64) -> u64 {
-    (policy_type as u64) << 56 | counter
 }
 
 fn word_from_address(address: alloy_primitives::Address) -> U256 {
