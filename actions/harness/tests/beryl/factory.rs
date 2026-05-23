@@ -211,7 +211,7 @@ async fn b20_factory_views_and_events_are_available_after_beryl_activation() {
     assert!(env.probe_call_succeeded(probe), "isB20Initialized(non-token) staticcall must succeed");
     assert_eq!(env.probe_return_word(probe), U256::ZERO, "non-token must not be initialized");
 
-    let invalid_variant_create = env.create_tx(
+    let malformed_stablecoin_create = env.create_tx(
         TxKind::Call(B20FactoryStorage::ADDRESS),
         Bytes::from(
             IB20Factory::createB20Call {
@@ -225,9 +225,9 @@ async fn b20_factory_views_and_events_are_available_after_beryl_activation() {
         BerylTestEnv::B20_GAS_LIMIT,
     );
     let block9 =
-        env.sequencer.build_next_block_with_transactions(vec![invalid_variant_create]).await;
+        env.sequencer.build_next_block_with_transactions(vec![malformed_stablecoin_create]).await;
 
-    assert!(!env.user_tx_succeeded(&block9, 0), "unimplemented variants must revert");
+    assert!(!env.user_tx_succeeded(&block9, 0), "malformed stablecoin params must revert");
 
     env.derive_blocks(
         [
