@@ -1,18 +1,10 @@
 //! End-to-end tests for policy-gated B20 token transfers over Base node RPC.
 //!
-//! The policy registry precompile is live on Beryl, but B20 tokens do not yet
-//! expose a `setPolicy` method to wire a named policy to transfer enforcement.
-//! Until that wiring lands, tokens always transfer freely regardless of policy
-//! membership (the `ALWAYS_ALLOW` built-in is effectively in effect for every
-//! transfer).
-//!
-//! Each test below:
-//!   - Exercises the policy registry over real RPC (create, membership, auth
-//!     queries).
-//!   - Creates a B20 token and demonstrates that transfers succeed regardless
-//!     of the associated policy state.
-//!   - Includes a TODO marking where the full gating assertion belongs once
-//!     `setPolicy` (or an equivalent init-call hook) lands on `IB20`.
+//! Each test:
+//!   - Creates a policy in the policy registry via RPC.
+//!   - Creates a B20 token and wires the policy to its `TRANSFER_SENDER_POLICY`
+//!     slot via `updatePolicy`.
+//!   - Exercises the full transfer-gate cycle: blocked → allowed (or vice versa).
 
 mod common;
 
@@ -22,7 +14,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use base_common_network::Base;
 use base_common_precompiles::{
-    ActivationFeature, IB20, IPolicyRegistry, PolicyRegistryStorage, TokenVariant,
+    ActivationFeature, B20PolicyType, B20Variant, IB20, IPolicyRegistry, PolicyRegistryStorage,
 };
 use devnet::{
     B20PrecompileClient,
@@ -38,7 +30,7 @@ const SALT_ALLOWLIST: B256 = B256::repeat_byte(0x50);
 const SALT_BLOCKLIST: B256 = B256::repeat_byte(0x51);
 const SALT_ALWAYS_BLOCK: B256 = B256::repeat_byte(0x52);
 
-/// Activates `TOKEN_FACTORY`, `B20_TOKEN`, and `POLICY_REGISTRY` features, then
+/// Activates `B20_FACTORY`, `B20_TOKEN`, and `POLICY_REGISTRY` features, then
 /// returns a [`B20PrecompileClient`] ready for precompile calls.
 async fn activated_client<'a>(
     provider: &'a RootProvider<Base>,
@@ -46,7 +38,7 @@ async fn activated_client<'a>(
 ) -> Result<B20PrecompileClient<'a>> {
     let client = B20PrecompileClient::new(provider, admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
-    client.activate_feature(ActivationFeature::TokenFactory.id()).await?;
+    client.activate_feature(ActivationFeature::B20Factory.id()).await?;
     client.activate_feature(ActivationFeature::B20Token.id()).await?;
     client.activate_feature(ActivationFeature::PolicyRegistry.id()).await?;
     Ok(client)
@@ -104,27 +96,39 @@ async fn create_token(
 ) -> Result<Address> {
     let params =
         B20PrecompileClient::token_params(name, symbol, admin, U256::from(INITIAL_SUPPLY), admin);
-    let token = client.create_token(TokenVariant::B20, params, salt).await?;
+    let token = client.create_token(B20Variant::B20, params, salt).await?;
     client
         .wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL)
         .await?;
     Ok(token)
 }
 
+/// Wires a policy ID to the token's `TRANSFER_SENDER_POLICY` slot.
+async fn set_transfer_sender_policy(
+    client: &B20PrecompileClient<'_>,
+    token: Address,
+    policy_id: u64,
+) -> Result<()> {
+    client
+        .send_call(
+            token,
+            IB20::updatePolicyCall {
+                policyScope: B20PolicyType::TransferSender.id(),
+                newPolicyId: policy_id,
+            },
+            "updatePolicy TRANSFER_SENDER_POLICY",
+        )
+        .await
+}
+
 /// `test_allowlist_gates_transfer`
 ///
-/// Verifies the ALLOWLIST policy mechanics over RPC:
-///   - A non-member is not authorized.
-///   - After `updateAllowlist`, the member is authorized.
-///
-/// Also demonstrates that B20 transfers currently succeed for any sender
-/// because `IB20` does not yet expose `setPolicy`.
-///
-/// TODO(BOP-125): Once `setPolicy` (or an init-call hook) lands on `IB20`,
-/// extend this test to:
-///   1. Wire the ALLOWLIST policy to the token via `setPolicy`.
-///   2. Assert that a transfer FROM the non-member reverts.
-///   3. Assert that the same transfer succeeds after `updateAllowlist`.
+/// Full cycle:
+///   1. Create an ALLOWLIST policy.
+///   2. Wire it to the token's `TRANSFER_SENDER_POLICY` slot.
+///   3. Assert a non-member transfer reverts.
+///   4. Add the non-member to the allowlist.
+///   5. Assert the transfer now succeeds.
 #[tokio::test]
 async fn test_allowlist_gates_transfer() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
@@ -154,26 +158,26 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
         "non-member must not be authorized on a fresh ALLOWLIST policy",
     );
 
-    // --- Create B20 token ---
+    // --- Create B20 token and wire the allowlist policy ---
     let token =
         create_token(&client, admin.address(), SALT_ALLOWLIST, "Allowlist Token", "ALT").await?;
+    set_transfer_sender_policy(&client, token, policy_id).await?;
 
     // Seed the non-member with tokens so they have a balance to transfer from.
     client.transfer(token, non_member.address(), U256::from(TRANSFER_AMOUNT)).await?;
-    assert_eq!(client.balance_of(token, non_member.address()).await?, U256::from(TRANSFER_AMOUNT),);
+    assert_eq!(client.balance_of(token, non_member.address()).await?, U256::from(TRANSFER_AMOUNT));
 
-    // Transfer from non-member succeeds today because IB20 has no setPolicy.
-    // TODO(BOP-125): This should revert once the allowlist is wired to the token.
+    // Non-member is not on the allowlist: transfer must revert.
     let non_member_client = B20PrecompileClient::new(&provider, &non_member, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
-    let transfer_succeeded = non_member_client
+    let blocked = non_member_client
         .try_send_call(
             token,
             IB20::transferCall { to: recipient, amount: U256::from(TRANSFER_AMOUNT / 2) },
-            "transfer from non-member",
+            "transfer from non-member (should revert)",
         )
         .await?;
-    assert!(transfer_succeeded, "transfer from non-member must succeed (no policy wiring yet)");
+    assert!(!blocked, "transfer from non-member must revert when ALLOWLIST policy is wired");
 
     // --- Add non-member to the allowlist ---
     client
@@ -194,28 +198,27 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
         "non-member must be authorized after being added to the allowlist",
     );
 
-    // TODO(BOP-125): Once setPolicy exists, assert the transfer from the
-    // newly-allowlisted sender succeeds.
+    // Transfer from the now-allowlisted sender must succeed.
+    let allowed = non_member_client
+        .try_send_call(
+            token,
+            IB20::transferCall { to: recipient, amount: U256::from(TRANSFER_AMOUNT / 2) },
+            "transfer from allowlisted sender",
+        )
+        .await?;
+    assert!(allowed, "transfer from allowlisted sender must succeed");
 
     Ok(())
 }
 
 /// `test_blocklist_gates_transfer`
 ///
-/// Verifies the BLOCKLIST policy mechanics over RPC:
-///   - A non-blocked account is authorized.
-///   - After `updateBlocklist`, the blocked account is not authorized.
-///
-/// Also demonstrates that B20 transfers currently succeed for any sender,
-/// including one on the blocklist, because `IB20` does not yet expose
-/// `setPolicy`.
-///
-/// TODO(BOP-125): Once `setPolicy` (or an init-call hook) lands on `IB20`,
-/// extend this test to:
-///   1. Wire the BLOCKLIST policy to the token via `setPolicy`.
-///   2. Assert that a transfer FROM the blocked sender reverts.
-///   3. Assert that the same transfer succeeds after `updateBlocklist` removes
-///      the sender from the blocklist.
+/// Full cycle:
+///   1. Create a BLOCKLIST policy.
+///   2. Wire it to the token's `TRANSFER_SENDER_POLICY` slot.
+///   3. Assert an unblocked sender can transfer.
+///   4. Block the sender.
+///   5. Assert their transfer now reverts.
 #[tokio::test]
 async fn test_blocklist_gates_transfer() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
@@ -245,9 +248,10 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
         "non-blocked account must be authorized on a fresh BLOCKLIST policy",
     );
 
-    // --- Create B20 token ---
+    // --- Create B20 token and wire the blocklist policy ---
     let token =
         create_token(&client, admin.address(), SALT_BLOCKLIST, "Blocklist Token", "BLT").await?;
+    set_transfer_sender_policy(&client, token, policy_id).await?;
 
     // Seed the sender with tokens.
     client.transfer(token, blocked_sender.address(), U256::from(TRANSFER_AMOUNT)).await?;
@@ -256,7 +260,7 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
         U256::from(TRANSFER_AMOUNT),
     );
 
-    // Transfer from the (not-yet-blocked) sender succeeds.
+    // Transfer from the (not-yet-blocked) sender must succeed.
     let sender_client = B20PrecompileClient::new(&provider, &blocked_sender, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
     let first_transfer = sender_client
@@ -287,36 +291,24 @@ async fn test_blocklist_gates_transfer() -> Result<()> {
         "blocked account must not be authorized after being added to the blocklist",
     );
 
-    // Transfer still succeeds today because IB20 has no setPolicy.
-    // TODO(BOP-125): This should revert once the blocklist is wired to the token.
+    // Transfer from the blocked sender must revert.
     let second_transfer = sender_client
         .try_send_call(
             token,
             IB20::transferCall { to: recipient, amount: U256::from(TRANSFER_AMOUNT / 4) },
-            "transfer from blocked sender",
+            "transfer from blocked sender (should revert)",
         )
         .await?;
-    assert!(
-        second_transfer,
-        "transfer from blocked sender must still succeed (no policy wiring yet)",
-    );
+    assert!(!second_transfer, "transfer from blocked sender must revert");
 
     Ok(())
 }
 
 /// `test_always_block_policy_blocks_transfer`
 ///
-/// Verifies that the built-in `ALWAYS_BLOCK` policy (id = 1) denies every
-/// account via `isAuthorized`.
-///
-/// Also demonstrates that B20 transfers currently succeed even when the token
-/// is conceptually under an `ALWAYS_BLOCK` policy, because `IB20` does not yet
-/// expose `setPolicy`.
-///
-/// TODO(BOP-125): Once `setPolicy` (or an init-call hook) lands on `IB20`,
-/// extend this test to:
-///   1. Wire `ALWAYS_BLOCK_ID` to the token via `setPolicy`.
-///   2. Assert that ALL transfers from ANY address revert.
+/// Verifies that the built-in `ALWAYS_BLOCK` policy denies every account via
+/// `isAuthorized`, and that wiring it to a token's `TRANSFER_SENDER_POLICY`
+/// slot makes ALL transfers revert unconditionally.
 #[tokio::test]
 async fn test_always_block_policy_blocks_transfer() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
@@ -328,7 +320,7 @@ async fn test_always_block_policy_blocks_transfer() -> Result<()> {
 
     let client = activated_client(&provider, &admin).await?;
 
-    // ALWAYS_BLOCK (id = 1) must deny every account unconditionally.
+    // ALWAYS_BLOCK must deny every account unconditionally.
     assert!(
         !is_authorized(&client, PolicyRegistryStorage::ALWAYS_BLOCK_ID, admin.address()).await?,
         "ALWAYS_BLOCK must deny the admin",
@@ -349,21 +341,20 @@ async fn test_always_block_policy_blocks_transfer() -> Result<()> {
         .wrap_err("Failed to decode policyExists")?;
     assert!(exists, "ALWAYS_BLOCK policy must exist");
 
-    // --- Create B20 token ---
+    // --- Create B20 token and wire ALWAYS_BLOCK to TRANSFER_SENDER_POLICY ---
     let token =
         create_token(&client, admin.address(), SALT_ALWAYS_BLOCK, "Blocked Token", "BLKD").await?;
+    set_transfer_sender_policy(&client, token, PolicyRegistryStorage::ALWAYS_BLOCK_ID).await?;
 
-    // Transfer from admin succeeds today because IB20 has no setPolicy.
-    // TODO(BOP-125): Once setPolicy exists, configure the token with
-    // ALWAYS_BLOCK_ID and assert ALL transfers revert.
-    let transfer_succeeded = client
+    // Transfer from admin must revert: ALWAYS_BLOCK denies every sender unconditionally.
+    let transfer_reverted = client
         .try_send_call(
             token,
             IB20::transferCall { to: anyone, amount: U256::from(TRANSFER_AMOUNT) },
-            "transfer under ALWAYS_BLOCK (no wiring yet)",
+            "transfer under ALWAYS_BLOCK (should revert)",
         )
         .await?;
-    assert!(transfer_succeeded, "transfer must succeed today (ALWAYS_BLOCK not yet wired to IB20)",);
+    assert!(!transfer_reverted, "transfer from admin must revert under ALWAYS_BLOCK policy");
 
     Ok(())
 }
