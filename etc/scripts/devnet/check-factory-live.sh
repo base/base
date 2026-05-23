@@ -78,7 +78,7 @@ done
 [[ -n "$BOB_ADDR" ]] || BOB_ADDR="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 
 # Factory precompile (singleton, fixed at chain genesis)
-FACTORY="0xb20f00000000000000000000000000000000000f"
+FACTORY="0xb20f000000000000000000000000000000000000"
 
 # Token creation parameters
 TOKEN_NAME="Base USD"

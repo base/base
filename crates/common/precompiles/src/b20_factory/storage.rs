@@ -26,7 +26,7 @@ pub struct B20FactoryStorage {}
 
 impl<'a> B20FactoryStorage<'a> {
     /// Singleton precompile address for the `B20Factory`.
-    pub const ADDRESS: Address = address!("b20f00000000000000000000000000000000000f");
+    pub const ADDRESS: Address = address!("B20F000000000000000000000000000000000000");
 
     /// Current token creation parameter version.
     pub const CREATE_TOKEN_VERSION: u8 = 1;
@@ -356,6 +356,14 @@ mod tests {
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
+
+    #[test]
+    fn factory_address_matches_canonical_precompile_address() {
+        assert_eq!(
+            B20FactoryStorage::ADDRESS,
+            address!("B20F000000000000000000000000000000000000")
+        );
+    }
 
     fn activate_precompiles(storage: &mut HashMapStorageProvider) {
         storage.set_caller(ACTIVATION_ADMIN);
