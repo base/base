@@ -372,7 +372,7 @@ impl PolicyTransferScenario {
         if let Some(policy_id) = transfer_sender_policy_id {
             init_calls.push(Bytes::from(
                 IB20::updatePolicyCall {
-                    policyType: B20PolicyType::TransferSender.id(),
+                    policyScope: B20PolicyType::TransferSender.id(),
                     newPolicyId: policy_id,
                 }
                 .abi_encode(),

@@ -44,7 +44,7 @@ async fn b20_allowlist_sender_policy_blocks_non_members() {
     assert!(scenario.env.user_tx_succeeded(&block, 0), "createPolicy(ALLOWLIST) must succeed");
 
     let wire = scenario.token_tx(IB20::updatePolicyCall {
-        policyType: B20PolicyType::TransferSender.id(),
+        policyScope: B20PolicyType::TransferSender.id(),
         newPolicyId: allowlist_id,
     });
     let block = scenario.build_block(vec![wire]).await;
@@ -102,7 +102,7 @@ async fn b20_blocklist_sender_policy_blocks_listed_accounts() {
     assert!(scenario.env.user_tx_succeeded(&block, 0), "createPolicy(BLOCKLIST) must succeed");
 
     let wire = scenario.token_tx(IB20::updatePolicyCall {
-        policyType: B20PolicyType::TransferSender.id(),
+        policyScope: B20PolicyType::TransferSender.id(),
         newPolicyId: blocklist_id,
     });
     let block = scenario.build_block(vec![wire]).await;
@@ -143,7 +143,7 @@ async fn b20_always_block_sender_policy_blocks_all_transfers() {
     let mut scenario = B20PolicyScenario::new().await;
 
     let wire = scenario.token_tx(IB20::updatePolicyCall {
-        policyType: B20PolicyType::TransferSender.id(),
+        policyScope: B20PolicyType::TransferSender.id(),
         newPolicyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
     });
     let block = scenario.build_block(vec![wire]).await;
@@ -174,7 +174,7 @@ async fn b20_allowlist_receiver_policy_blocks_non_members() {
     assert!(scenario.env.user_tx_succeeded(&block, 0), "createPolicy(ALLOWLIST) must succeed");
 
     let wire = scenario.token_tx(IB20::updatePolicyCall {
-        policyType: B20PolicyType::TransferReceiver.id(),
+        policyScope: B20PolicyType::TransferReceiver.id(),
         newPolicyId: allowlist_id,
     });
     let block = scenario.build_block(vec![wire]).await;
