@@ -16,8 +16,15 @@ exclude = [
     'foo.bar',
     'localhost',
 
-    # Links to files moved in this rename (not yet on main)
+    # Links to files not yet on main (pending private branch merge)
     'https://github\.com/base/base/blob/main/crates/execution/upgrades',
+    'https://github\.com/base/base/blob/main/crates/execution/revm/src/spec\.rs',
+    'https://github\.com/base/base/blob/main/crates/execution/revm/src/precompiles\.rs',
+    'https://github\.com/base/base/blob/main/crates/common/evm/src/spec_id\.rs',
+    'https://github\.com/base/base/blob/main/crates/consensus/genesis/src/rollup\.rs',
+    'https://github\.com/base/base/blob/main/crates/consensus/genesis/src/chain/hardfork\.rs',
+    'https://github\.com/base/base/blob/main/crates/consensus/registry/src/test_utils/mod\.rs',
+    'https://github\.com/base/base/blob/main/crates/consensus/registry/tests/hardfork_consistency\.rs',
 
     # Shields.io badges that query live GitHub stats (flaky, not real links)
     'https://img.shields.io/github/commit-activity/w/base/base',
