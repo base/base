@@ -67,10 +67,12 @@ jobs:
         run: |
           set -euo pipefail
 
+          cd "$BASE_ANVIL_DIR"
+          rustup show active-toolchain
           cargo \
             --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\"" \
             --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\"" \
-            build --manifest-path "$BASE_ANVIL_DIR/Cargo.toml" --release -p anvil -p forge
+            build --release -p anvil -p forge
 
           "$BASE_ANVIL_DIR/target/release/anvil" --version
           "$BASE_ANVIL_DIR/target/release/forge" --version
