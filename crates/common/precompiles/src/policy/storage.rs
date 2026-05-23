@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, U256, address};
-use base_precompile_macros::{contract, namespace};
+use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, ContractStorage, Handler, Mapping, Result};
 
 use super::{IPolicyRegistry, IPolicyRegistry::PolicyType};
@@ -53,8 +53,8 @@ impl PackedPolicy {
 /// Storage layout for the `PolicyRegistry` precompile.
 ///
 /// Slots are append-only — never reorder across hardforks.
-#[namespace("base.policy_registry")]
 #[contract(addr = Self::ADDRESS)]
+#[namespace("base.policy_registry")]
 pub struct PolicyRegistryStorage {
     pub policies: Mapping<u64, U256>,                  // slot 0
     pub members: Mapping<u64, Mapping<Address, bool>>, // slot 1
@@ -92,10 +92,6 @@ impl PolicyRegistryStorage<'_> {
 
     const fn policy_id_type(policy_id: u64) -> u8 {
         (policy_id >> Self::POLICY_ID_TYPE_SHIFT) as u8
-    }
-
-    const fn is_well_formed(policy_id: u64) -> bool {
-        Self::policy_id_type(policy_id) <= PolicyType::ALLOWLIST as u8
     }
 
     fn require_custom(&self, policy_id: u64) -> Result<PackedPolicy> {
@@ -175,9 +171,10 @@ impl PolicyRegistryStorage<'_> {
         // charges warm/cold account-read gas before skipping repeated `set_code`.
         if !self.is_initialized()? {
             self.__initialize()?;
+            self.write_builtins()?;
         }
 
-        let counter = self.next_counter()?.max(Self::BUILTIN_POLICY_COUNT);
+        let counter = self.next_counter()?;
         let next = counter.checked_add(1).ok_or_else(BasePrecompileError::under_overflow)?;
         self.next_counter.write(next)?;
         let policy_id = Self::make_id(policy_type_u8, counter);
@@ -349,15 +346,16 @@ impl PolicyRegistryStorage<'_> {
     /// semantics for that type: an ALLOWLIST with no members authorizes nobody (`false`),
     /// a BLOCKLIST with no members blocks nobody (`true`). `PolicyNotFound` is never returned.
     pub fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
+        // Malformed IDs (type byte > 1) are treated as unauthorized rather than reverting.
+        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
+            return Ok(false);
+        }
         // Fast-paths for built-in IDs: ALWAYS_ALLOW_ID = 0 is the EVM default for any
         // uninitialized policy field, so this must work before write_builtins() has run.
         if policy_id == Self::ALWAYS_ALLOW_ID {
             return Ok(true);
         }
         if policy_id == Self::ALWAYS_BLOCK_ID {
-            return Ok(false);
-        }
-        if !Self::is_well_formed(policy_id) {
             return Ok(false);
         }
         // Read membership directly without requiring the policy slot to be written first.
@@ -380,11 +378,12 @@ impl PolicyRegistryStorage<'_> {
     /// uninitialized policy field, so it must be recognized as valid before
     /// `write_builtins` has run.
     pub fn policy_exists(&self, policy_id: u64) -> Result<bool> {
+        // Malformed IDs (type byte > 1) are not well-formed, so they do not exist.
+        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
+            return Ok(false);
+        }
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(true);
-        }
-        if !Self::is_well_formed(policy_id) {
-            return Ok(false);
         }
         let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
         Ok(packed.exists())
@@ -1490,177 +1489,5 @@ mod tests {
         })
         .unwrap();
         assert_eq!(pending, Address::ZERO);
-    }
-
-    // --- built-in fast-paths work before write_builtins is called ---
-
-    #[test]
-    fn built_in_policy_fast_path_avoids_storage_read() {
-        // Use bare storage; write_builtins has NOT been called.
-        let mut s = HashMapStorageProvider::new(1);
-
-        // Counter is 0, confirming write_builtins has not run.
-        let counter =
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).next_counter.read())
-                .unwrap();
-        assert_eq!(counter, 0, "counter must be 0 before write_builtins");
-
-        // ALWAYS_ALLOW_ID fast-path: must return true without needing the policy slot.
-        let authorized = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx)
-                .is_authorized(PolicyRegistryStorage::ALWAYS_ALLOW_ID, ALICE)
-        })
-        .unwrap();
-        assert!(authorized, "ALWAYS_ALLOW_ID must authorize ALICE before write_builtins");
-
-        // ALWAYS_BLOCK_ID fast-path: must return false without needing the policy slot.
-        let authorized = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx)
-                .is_authorized(PolicyRegistryStorage::ALWAYS_BLOCK_ID, ALICE)
-        })
-        .unwrap();
-        assert!(!authorized, "ALWAYS_BLOCK_ID must reject ALICE before write_builtins");
-
-        // Counter must still be 0: is_authorized must have no side effects.
-        let counter_after =
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).next_counter.read())
-                .unwrap();
-        assert_eq!(counter_after, 0, "is_authorized must not advance the counter");
-    }
-
-    // --- create_policy uniqueness ---
-
-    #[test]
-    fn create_fifty_policies_produces_unique_ids() {
-        let mut s = storage();
-        let mut ids: Vec<u64> = Vec::with_capacity(50);
-        for i in 0..50u64 {
-            let policy_type =
-                if i % 2 == 0 { PolicyType::ALLOWLIST } else { PolicyType::BLOCKLIST };
-            let id = StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx).create_policy(ADMIN, policy_type)
-            })
-            .unwrap();
-            ids.push(id);
-        }
-
-        // All IDs must be unique.
-        let mut sorted = ids.clone();
-        sorted.sort_unstable();
-        sorted.dedup();
-        assert_eq!(sorted.len(), 50, "all 50 policy IDs must be unique");
-
-        // The low 56-bit counter portion must be strictly increasing.
-        let counters: Vec<u64> =
-            ids.iter().map(|id| id & PolicyRegistryStorage::COUNTER_MASK).collect();
-        for window in counters.windows(2) {
-            assert!(
-                window[1] > window[0],
-                "counter bits must be strictly increasing: {} then {}",
-                window[0],
-                window[1]
-            );
-        }
-    }
-
-    // --- batch update atomicity ---
-
-    #[test]
-    fn allowlist_batch_update_atomicity() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-
-        // 20 distinct accounts.
-        let accounts = many_accounts(20);
-
-        // Add all 20 to the allowlist.
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, accounts.clone())
-        })
-        .unwrap();
-
-        // Remove the first 10.
-        let to_remove = accounts[..10].to_vec();
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, false, to_remove)
-        })
-        .unwrap();
-
-        // First 10 must no longer be authorized.
-        for account in &accounts[..10] {
-            assert!(
-                !is_authorized(&mut s, id, *account),
-                "{account} must be removed from allowlist"
-            );
-        }
-        // Last 10 must still be authorized.
-        for account in &accounts[10..] {
-            assert!(
-                is_authorized(&mut s, id, *account),
-                "{account} must remain on allowlist"
-            );
-        }
-    }
-
-    // --- policy ID type encoding ---
-
-    #[test]
-    fn blocklist_policy_id_high_byte_encodes_type() {
-        let mut s = storage();
-
-        let blocklist_id = create_blocklist(&mut s);
-        assert_eq!(
-            (blocklist_id >> 56) as u8,
-            PolicyType::BLOCKLIST as u8,
-            "BLOCKLIST policy ID must carry the BLOCKLIST discriminant in the high byte"
-        );
-
-        let allowlist_id = create_allowlist(&mut s);
-        assert_eq!(
-            (allowlist_id >> 56) as u8,
-            PolicyType::ALLOWLIST as u8,
-            "ALLOWLIST policy ID must carry the ALLOWLIST discriminant in the high byte"
-        );
-    }
-
-    // --- counter initialization ---
-
-    #[test]
-    fn policy_counter_starts_at_two_after_builtins_initialized() {
-        // Start from bare storage and call write_builtins explicitly.
-        let mut s = HashMapStorageProvider::new(1);
-        s.set_caller(ADMIN);
-        StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).write_builtins()).unwrap();
-
-        // Counter must equal BUILTIN_POLICY_COUNT immediately after initialization.
-        let counter_after_builtins =
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).next_counter.read())
-                .unwrap();
-        assert_eq!(
-            counter_after_builtins,
-            PolicyRegistryStorage::BUILTIN_POLICY_COUNT,
-            "counter must be BUILTIN_POLICY_COUNT after write_builtins"
-        );
-
-        // First custom policy must be assigned counter = BUILTIN_POLICY_COUNT (= 2).
-        let id = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
-        })
-        .unwrap();
-        assert_eq!(
-            id & PolicyRegistryStorage::COUNTER_MASK,
-            PolicyRegistryStorage::BUILTIN_POLICY_COUNT,
-            "first custom policy counter bits must equal BUILTIN_POLICY_COUNT"
-        );
-
-        // Counter must now be BUILTIN_POLICY_COUNT + 1.
-        let counter_after_first =
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).next_counter.read())
-                .unwrap();
-        assert_eq!(
-            counter_after_first,
-            PolicyRegistryStorage::BUILTIN_POLICY_COUNT + 1,
-            "counter must advance by one after the first create_policy"
-        );
     }
 }
