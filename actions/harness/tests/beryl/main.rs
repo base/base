@@ -7,3 +7,4 @@ mod env;
 mod factory;
 mod policy_registry;
 mod policy_transfer;
+mod stablecoin;
