@@ -1,0 +1,5 @@
+error: `#[namespace]` must be paired with `#[contract]` or `#[derive(Storable)]`
+ --> tests/ui/01_namespace_without_contract.rs:6:8
+  |
+6 | struct Foo {
+  |        ^^^

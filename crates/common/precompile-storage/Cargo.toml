@@ -30,11 +30,15 @@ derive_more = { workspace = true, features = ["from", "try_into"] }
 
 [dev-dependencies]
 proptest.workspace = true
+trybuild.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 
 [[test]]
 name = "contract"
 required-features = ["test-utils"]
+
+[[test]]
+name = "ui"
 
 [features]
 default = [ "std" ]

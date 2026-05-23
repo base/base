@@ -495,6 +495,7 @@ serde_json = { version = "1.0.145", default-features = false }
 # testing
 arbtest = "0.3"
 test-case = "3"
+trybuild = "1"
 mockall = "0.14"
 tempfile = "3.20"
 rstest = "0.26.1"

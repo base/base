@@ -1,0 +1,13 @@
+error: namespace id must not contain whitespace
+ --> tests/ui/04_namespace_id_with_whitespace.rs:7:17
+  |
+7 |     #[namespace("foo bar")]
+  |                 ^^^^^^^^^
+
+warning: unused import: `alloy_primitives::U256`
+ --> tests/ui/04_namespace_id_with_whitespace.rs:2:5
+  |
+2 | use alloy_primitives::U256;
+  |     ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
