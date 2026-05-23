@@ -130,6 +130,8 @@ pub struct DevnetBuilder {
     output_dir: Option<PathBuf>,
     stable_config: Option<StableDevnetConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
+    base_azul_activation_block: Option<u64>,
+    base_beryl_activation_block: Option<u64>,
 }
 
 impl DevnetBuilder {
@@ -176,6 +178,18 @@ impl DevnetBuilder {
         self
     }
 
+    /// Sets the L2 block number at which Base Azul activates.
+    pub const fn with_base_azul_activation_block(mut self, block: u64) -> Self {
+        self.base_azul_activation_block = Some(block);
+        self
+    }
+
+    /// Sets the L2 block number at which Base Beryl activates.
+    pub const fn with_base_beryl_activation_block(mut self, block: u64) -> Self {
+        self.base_beryl_activation_block = Some(block);
+        self
+    }
+
     /// Builds and starts the devnet.
     pub async fn build(self) -> Result<Devnet> {
         let l1_chain_id = self.l1_chain_id.unwrap_or(DEFAULT_L1_CHAIN_ID);
@@ -192,6 +206,14 @@ impl DevnetBuilder {
 
         if let Some(ref config) = self.stable_config {
             setup = setup.with_network_name(&config.network_name);
+        }
+
+        if let Some(block) = self.base_azul_activation_block {
+            setup = setup.with_base_azul_activation_block(block);
+        }
+
+        if let Some(block) = self.base_beryl_activation_block {
+            setup = setup.with_base_beryl_activation_block(block);
         }
 
         let l1_genesis = tokio::task::spawn_blocking({
