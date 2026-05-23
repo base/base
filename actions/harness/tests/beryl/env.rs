@@ -38,6 +38,12 @@ const PROBE_CALL_SUCCESS_SLOT: U256 = U256::ZERO;
 /// Storage slot where staticcall probes store the first returned word.
 const PROBE_RETURN_WORD_SLOT: U256 = U256::from_limbs([1, 0, 0, 0]);
 
+/// Storage slot where staticcall probes store the returned byte length.
+const PROBE_RETURN_SIZE_SLOT: U256 = U256::from_limbs([2, 0, 0, 0]);
+
+/// Storage slot where staticcall probes store `keccak256(returndata)`.
+const PROBE_RETURN_HASH_SLOT: U256 = U256::from_limbs([3, 0, 0, 0]);
+
 /// Test environment preconfigured to cross Base Beryl at L2 block 2.
 pub(crate) struct BerylTestEnv {
     /// Sequencer used to build Beryl precompile blocks.
@@ -372,6 +378,16 @@ impl BerylTestEnv {
         self.sequencer.storage_at(probe, PROBE_RETURN_WORD_SLOT)
     }
 
+    /// Reads the returned byte length from a staticcall probe's most recent call.
+    pub(crate) fn probe_return_size(&self, probe: Address) -> U256 {
+        self.sequencer.storage_at(probe, PROBE_RETURN_SIZE_SLOT)
+    }
+
+    /// Reads `keccak256(returndata)` from a staticcall probe's most recent call.
+    pub(crate) fn probe_return_hash(&self, probe: Address) -> B256 {
+        B256::from(self.sequencer.storage_at(probe, PROBE_RETURN_HASH_SLOT).to_be_bytes::<32>())
+    }
+
     /// Returns whether a user transaction in `block` succeeded.
     pub(crate) fn user_tx_succeeded(&self, block: &BaseBlock, user_tx_index: usize) -> bool {
         self.user_tx_receipt(block, user_tx_index).status()
@@ -481,13 +497,21 @@ impl BerylTestEnv {
     }
 
     fn staticcall_probe_init_code(target: Address) -> Bytes {
-        let mut runtime = Vec::with_capacity(47);
-        runtime.extend_from_slice(&hex!("3660006000376020600036600073"));
+        let mut runtime = Vec::with_capacity(65);
+        runtime.extend_from_slice(&hex!("3660006000376000600036600073"));
         runtime.extend_from_slice(target.as_slice());
-        runtime.extend_from_slice(&hex!("5afa8060005560005160015500"));
+        runtime.extend_from_slice(&hex!(
+            "5afa" // staticcall(gas(), target, 0, calldatasize(), 0, 0)
+            "8060005550" // store success in slot 0
+            "3d80600255" // store returndatasize in slot 2
+            "80600060003e" // copy returndata to memory
+            "600051600155" // store first returned word in slot 1
+            "600020600355" // store keccak256(returndata) in slot 3
+            "00"
+        ));
 
         let mut init_code = Vec::with_capacity(12 + runtime.len());
-        init_code.extend_from_slice(&hex!("602f600c600039602f6000f3"));
+        init_code.extend_from_slice(&hex!("6041600c60003960416000f3"));
         init_code.extend_from_slice(&runtime);
         Bytes::from(init_code)
     }
