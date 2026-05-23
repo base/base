@@ -44,7 +44,7 @@ pub use b20::{
 mod b20_security;
 pub use b20_security::{
     B20RedeemStorage, B20SecurityExtensionStorage, B20SecurityInit, B20SecurityPrecompile,
-    B20SecurityStorage, B20SecurityToken, IB20Security, SecurityAccounting,
+    B20SecurityStorage, B20SecurityToken, IB20Security, REDEEM_SENDER_POLICY, SecurityAccounting,
 };
 
 mod b20_stablecoin;

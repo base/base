@@ -5,8 +5,6 @@ use alloc::string::String;
 use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_macros::{Storable, contract};
 use base_precompile_storage::{BasePrecompileError, ContractStorage, Handler, Result, StorageCtx};
-#[cfg(feature = "std")]
-use iso_currency::Currency;
 
 use super::accounting::StablecoinAccounting;
 use crate::{
@@ -51,11 +49,10 @@ impl<'a> B20StablecoinStorage<'a> {
 
     /// Writes all creation-time fields atomically.
     ///
-    /// Validates that `currency` is a recognised ISO 4217 code before writing
-    /// anything; reverts `IB20Factory::InvalidCurrency` otherwise.
+    /// Validates that `currency` contains only `A-Z` characters before writing
+    /// anything; reverts `ITokenFactory::InvalidCurrency` otherwise.
     pub fn initialize(&mut self, init: B20StablecoinInit) -> Result<()> {
-        #[cfg(feature = "std")]
-        if Currency::from_code(&init.currency).is_none() {
+        if init.currency.is_empty() || !init.currency.bytes().all(|b| b.is_ascii_uppercase()) {
             return Err(BasePrecompileError::revert(IB20Factory::InvalidCurrency {
                 code: init.currency,
             }));
@@ -192,8 +189,8 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
         self.b20.role_admins.at_mut(&role).write(admin_role)
     }
 
-    fn policy_id(&self, policy_type: B256) -> Result<u64> {
-        let policy_type = Self::require_policy_type(policy_type)?;
+    fn policy_id(&self, policy_scope: B256) -> Result<u64> {
+        let policy_type = Self::require_policy_type(policy_scope)?;
         match policy_type {
             B20PolicyType::TransferSender => Ok(Self::read_policy_lane(
                 self.b20.transfer_policy_ids.read()?,
@@ -214,8 +211,8 @@ impl TokenAccounting for B20StablecoinStorage<'_> {
         }
     }
 
-    fn set_policy_id(&mut self, policy_type: B256, policy_id: u64) -> Result<()> {
-        let policy_type = Self::require_policy_type(policy_type)?;
+    fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
+        let policy_type = Self::require_policy_type(policy_scope)?;
         match policy_type {
             B20PolicyType::TransferSender => {
                 let packed = Self::write_policy_lane(
@@ -264,9 +261,9 @@ impl B20StablecoinStorage<'_> {
     const MINT_RECEIVER_POLICY_LANE: usize = 0;
     const POLICY_LANE_BITS: usize = 64;
 
-    fn require_policy_type(policy_type: B256) -> Result<B20PolicyType> {
-        B20PolicyType::from_id(policy_type).ok_or_else(|| {
-            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
+    fn require_policy_type(policy_scope: B256) -> Result<B20PolicyType> {
+        B20PolicyType::from_id(policy_scope).ok_or_else(|| {
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: policy_scope })
         })
     }
 

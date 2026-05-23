@@ -38,6 +38,7 @@ pub struct EvmPrecompileStorageProvider<'a> {
     timestamp: U256,
     chain_id: u64,
     beneficiary: Address,
+    state_gas_used: u64,
 }
 
 impl<'a> EvmPrecompileStorageProvider<'a> {
@@ -63,6 +64,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
             timestamp,
             chain_id,
             beneficiary,
+            state_gas_used: 0,
         }
     }
 }
@@ -105,8 +107,15 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
             // Yellow Paper G_sha3 + G_sha3word: cost of computing the stored code hash.
             let num_words = code_len.div_ceil(32) as u64;
             self.deduct_gas(KECCAK256.saturating_add(KECCAK256WORD.saturating_mul(num_words)))?;
-            // TODO: also charge create_state_gas + code_deposit_state_gas (Amsterdam EIP-8037)
-            // once GasParams upgrades to context-interface v17.
+            // EIP-8037: both state gas charges are gated on is_new_account.
+            // create_state_gas covers the new account entry in the state trie.
+            // code_deposit_state_gas covers the new code object. Replacing code on an
+            // existing account is not a state-creating operation in the EIP-8037 model —
+            // the code slot already occupies a trie node — so it is intentionally excluded.
+            // In practice, precompile set_code is only called during factory token creation,
+            // where the target address is always a fresh account.
+            self.deduct_state_gas(self.gas_params.create_state_gas())?;
+            self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
         }
 
         self.internals
@@ -206,6 +215,13 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         Ok(())
     }
 
+    fn deduct_state_gas(&mut self, gas: u64) -> Result<()> {
+        // No separate reservoir in the precompile context; state gas is drawn from regular gas.
+        self.deduct_gas(gas)?;
+        self.state_gas_used = self.state_gas_used.saturating_add(gas);
+        Ok(())
+    }
+
     fn refund_gas(&mut self, gas: i64) {
         self.gas.record_refund(gas);
     }
@@ -219,7 +235,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn state_gas_used(&self) -> u64 {
-        0
+        self.state_gas_used
     }
 
     fn gas_refunded(&self) -> i64 {
@@ -266,5 +282,58 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
 impl From<alloy_evm::EvmInternalsError> for BasePrecompileError {
     fn from(e: alloy_evm::EvmInternalsError) -> Self {
         Self::Fatal(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::Address;
+    use revm::{context_interface::cfg::GasParams, primitives::hardfork::SpecId, state::Bytecode};
+
+    use crate::{hashmap::HashMapStorageProvider, provider::PrecompileStorageProvider};
+
+    fn amsterdam_provider() -> HashMapStorageProvider {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_gas_params(GasParams::new_spec(SpecId::AMSTERDAM));
+        provider
+    }
+
+    /// `set_code` on a brand-new account must charge both `create_state_gas` and
+    /// `code_deposit_state_gas` against the state-gas counter.
+    #[test]
+    fn set_code_new_account_charges_create_and_deposit_state_gas() {
+        let mut provider = amsterdam_provider();
+        let addr = Address::from([0x42u8; 20]);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        let code_len = code.len();
+        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
+
+        provider.set_code(addr, code).unwrap();
+
+        let expected = gas_params.create_state_gas() + gas_params.code_deposit_state_gas(code_len);
+        assert!(expected > 0, "AMSTERDAM state gas must be non-zero");
+        assert_eq!(provider.state_gas_used(), expected);
+    }
+
+    /// `set_code` on an already-initialised account must NOT charge any additional
+    /// state gas (the account and its metadata already exist in the trie).
+    #[test]
+    fn set_code_existing_account_skips_state_gas() {
+        let mut provider = amsterdam_provider();
+        let addr = Address::from([0x42u8; 20]);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+
+        // First call creates the account and charges state gas.
+        provider.set_code(addr, code.clone()).unwrap();
+        let after_first = provider.state_gas_used();
+        assert!(after_first > 0);
+
+        // Second call updates an existing account; state gas must not increase.
+        provider.set_code(addr, code).unwrap();
+        assert_eq!(
+            provider.state_gas_used(),
+            after_first,
+            "state_gas_used must not increase for an existing account"
+        );
     }
 }

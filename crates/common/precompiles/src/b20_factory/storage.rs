@@ -16,9 +16,8 @@ use crate::{
 /// Maximum total supply for all newly-created B-20 tokens.
 const DEFAULT_SUPPLY_CAP: U256 = U256::MAX;
 
-/// Initial share-to-token ratio at WAD precision (1:1).
-const INITIAL_SHARES_TO_TOKENS_RATIO: U256 =
-    U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
+/// Initial share-to-token ratio storage value. Reads treat zero as WAD precision (1:1).
+const INITIAL_SHARES_TO_TOKENS_RATIO: U256 = U256::ZERO;
 
 /// The B-20 token factory precompile.
 #[contract(addr = Self::ADDRESS)]
@@ -26,7 +25,7 @@ pub struct B20FactoryStorage {}
 
 impl<'a> B20FactoryStorage<'a> {
     /// Singleton precompile address for the `B20Factory`.
-    pub const ADDRESS: Address = address!("b20f00000000000000000000000000000000000f");
+    pub const ADDRESS: Address = address!("B20F000000000000000000000000000000000000");
 
     /// Current token creation parameter version.
     pub const CREATE_TOKEN_VERSION: u8 = 1;
@@ -356,6 +355,14 @@ mod tests {
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
+
+    #[test]
+    fn factory_address_matches_canonical_precompile_address() {
+        assert_eq!(
+            B20FactoryStorage::ADDRESS,
+            address!("B20F000000000000000000000000000000000000")
+        );
+    }
 
     fn activate_precompiles(storage: &mut HashMapStorageProvider) {
         storage.set_caller(ACTIVATION_ADMIN);
@@ -728,10 +735,7 @@ mod tests {
             assert_eq!(sec_storage.b20.name.read().unwrap(), "Security Token");
             assert_eq!(sec_storage.b20.symbol.read().unwrap(), "SEC");
             assert_eq!(sec_storage.decimals().unwrap(), 6);
-            assert_eq!(
-                sec_storage.security.shares_to_tokens_ratio.read().unwrap(),
-                U256::from(1_000_000_000_000_000_000u128)
-            );
+            assert_eq!(sec_storage.security.shares_to_tokens_ratio.read().unwrap(), U256::ZERO);
             assert_eq!(sec_storage.redeem.minimum_redeemable.read().unwrap(), U256::ONE);
             // ISIN is stored in the identifiers mapping under the raw "ISIN" key.
             assert_eq!(

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use alloy_primitives::{Address, LogData, U256};
 use revm::{
     context::journaled_state::JournalCheckpoint,
+    context_interface::cfg::GasParams,
     state::{AccountInfo, Bytecode},
 };
 
@@ -26,6 +27,8 @@ pub struct HashMapStorageProvider {
     counter_sload: u64,
     counter_sstore: u64,
     snapshots: Vec<Snapshot>,
+    gas_params: GasParams,
+    state_gas_used: u64,
     /// Emitted events keyed by contract address.
     pub events: HashMap<Address, Vec<LogData>>,
 }
@@ -60,6 +63,8 @@ impl HashMapStorageProvider {
             is_static: false,
             counter_sload: 0,
             counter_sstore: 0,
+            gas_params: GasParams::default(),
+            state_gas_used: 0,
         }
     }
 }
@@ -82,6 +87,13 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<(), BasePrecompileError> {
+        let code_len = code.len();
+        // Mirror the production is_new_account check so state gas tracking is faithful.
+        let is_new_account = self.accounts.get(&address).is_none_or(AccountInfo::is_empty);
+        if is_new_account {
+            self.deduct_state_gas(self.gas_params.create_state_gas())?;
+            self.deduct_state_gas(self.gas_params.code_deposit_state_gas(code_len))?;
+        }
         let account = self.accounts.entry(address).or_default();
         account.code_hash = code.hash_slow();
         account.code = Some(code);
@@ -149,6 +161,12 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(())
     }
 
+    fn deduct_state_gas(&mut self, gas: u64) -> Result<(), BasePrecompileError> {
+        // No gas limit in the test provider; just track the cumulative amount.
+        self.state_gas_used = self.state_gas_used.saturating_add(gas);
+        Ok(())
+    }
+
     fn refund_gas(&mut self, _gas: i64) {}
 
     fn gas_limit(&self) -> u64 {
@@ -160,7 +178,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn state_gas_used(&self) -> u64 {
-        0
+        self.state_gas_used
     }
 
     fn gas_refunded(&self) -> i64 {
@@ -291,6 +309,11 @@ impl HashMapStorageProvider {
     /// Reads a storage slot directly without journal overhead (test-utils only).
     pub fn sload_direct(&self, address: Address, key: U256) -> U256 {
         self.internals.get(&(address, key)).copied().unwrap_or(U256::ZERO)
+    }
+
+    /// Overrides the gas parameters used for state gas accounting (test-utils only).
+    pub fn set_gas_params(&mut self, gas_params: GasParams) {
+        self.gas_params = gas_params;
     }
 }
 

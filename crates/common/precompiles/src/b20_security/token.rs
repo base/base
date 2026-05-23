@@ -185,7 +185,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             Ok(())
         } else {
             Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
-                policyType: policy_type,
+                policyScope: policy_type,
             }))
         }
     }
@@ -217,7 +217,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         self.accounting_mut().set_policy_id(policy_type, new_policy_id)?;
         self.accounting_mut().emit_event(
             IB20::PolicyUpdated {
-                policyType: policy_type,
+                policyScope: policy_type,
                 oldPolicyId: old_policy_id,
                 newPolicyId: new_policy_id,
             }
@@ -392,6 +392,9 @@ mod tests {
         accounting.roles.insert((SECURITY_OPERATOR_ROLE, ALICE), true);
         accounting.roles.insert((B20TokenRole::Mint.id(), ALICE), true);
         accounting.roles.insert((BURN_FROM_ROLE, ALICE), true);
+        accounting
+            .policy_ids
+            .insert(REDEEM_SENDER_POLICY, crate::PolicyRegistryStorage::ALWAYS_ALLOW_ID);
         TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
     }
 
@@ -467,15 +470,11 @@ mod tests {
     }
 
     #[test]
-    fn batch_mint_rejects_zero_amount() {
+    fn batch_mint_zero_amount_succeeds() {
         let mut token = make_token();
 
-        assert_eq!(
-            token
-                .batch_mint(ALICE, alloc::vec![ALICE], alloc::vec![U256::ZERO], false)
-                .unwrap_err(),
-            BasePrecompileError::revert(IB20::InvalidAmount {})
-        );
+        token.batch_mint(ALICE, alloc::vec![ALICE], alloc::vec![U256::ZERO], false).unwrap();
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::ZERO);
     }
 
     #[test]
@@ -803,7 +802,7 @@ mod tests {
         assert_eq!(
             token.security_redeem(ALICE, U256::from(1u64)).unwrap_err(),
             BasePrecompileError::revert(IB20::PolicyForbids {
-                policyType: REDEEM_SENDER_POLICY,
+                policyScope: REDEEM_SENDER_POLICY,
                 policyId: policy_id,
             })
         );

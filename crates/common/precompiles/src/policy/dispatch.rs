@@ -18,7 +18,7 @@ impl PolicyRegistryStorage<'_> {
         ActivationRegistryStorage::new(ctx)
             .ensure_activated(ActivationFeature::PolicyRegistry.id())
             .and_then(|()| self.inner(calldata))
-            .into_precompile_result(ctx.gas_used(), |b| b)
+            .into_precompile_result(ctx.gas_used(), ctx.state_gas_used(), |b| b)
     }
 
     fn inner(&mut self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {

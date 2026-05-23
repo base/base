@@ -92,10 +92,10 @@ pub trait TokenAccounting {
 
     // --- Policies ---
 
-    /// Returns the policy ID assigned to `policy_type`.
-    fn policy_id(&self, policy_type: B256) -> Result<u64>;
-    /// Overwrites the policy ID assigned to `policy_type`.
-    fn set_policy_id(&mut self, policy_type: B256, policy_id: u64) -> Result<()>;
+    /// Returns the policy ID assigned to `policy_scope`.
+    fn policy_id(&self, policy_scope: B256) -> Result<u64>;
+    /// Overwrites the policy ID assigned to `policy_scope`.
+    fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()>;
 
     // --- Event emission ---
 

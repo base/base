@@ -66,7 +66,7 @@ impl From<ActivationFeature> for B256 {
 
 impl ActivationRegistryStorage<'_> {
     /// Activation registry precompile address.
-    pub const ADDRESS: Address = address!("0x84530000000000000000000000000000000000ff");
+    pub const ADDRESS: Address = address!("8453000000000000000000000000000000000001");
 
     /// Returns the activation admin.
     pub const fn admin(&self, activation_admin_address: Option<Address>) -> Address {
@@ -87,8 +87,11 @@ impl ActivationRegistryStorage<'_> {
     /// [`revm::precompile::PrecompileOutput::reverted`] to distinguish an activated feature from an
     /// ABI revert.
     pub fn assert_activated(&self, feature: B256) -> PrecompileResult {
-        self.ensure_activated(feature)
-            .into_precompile_result(self.storage.gas_used(), |()| Bytes::new())
+        self.ensure_activated(feature).into_precompile_result(
+            self.storage.gas_used(),
+            self.storage.state_gas_used(),
+            |()| Bytes::new(),
+        )
     }
 
     /// Returns `Ok(())` when the feature is activated.

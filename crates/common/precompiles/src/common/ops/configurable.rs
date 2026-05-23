@@ -66,7 +66,7 @@ pub trait Configurable: Token {
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::DefaultAdmin)?;
+            B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Metadata)?;
         }
         self.accounting_mut().set_contract_uri(uri)?;
         self.accounting_mut().emit_event(IB20::ContractURIUpdated {}.encode_log_data())
@@ -185,5 +185,48 @@ mod tests {
         assert_eq!(token.accounting().symbol().unwrap(), "MTK");
         assert_eq!(token.accounting().contract_uri().unwrap(), "ipfs://abc");
         assert_eq!(token.accounting().events.len(), 4);
+    }
+
+    fn token_with_metadata_role(account: Address) -> TestToken {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.roles.insert((B20TokenRole::Metadata.id(), account), true);
+        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+    }
+
+    #[test]
+    fn update_contract_uri_without_metadata_role_reverts() {
+        let mut token = make_token();
+
+        assert_eq!(
+            token.update_contract_uri(CALLER, "ipfs://abc".into(), false).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: CALLER,
+                neededRole: B20TokenRole::Metadata.id(),
+            })
+        );
+    }
+
+    #[test]
+    fn update_contract_uri_with_only_default_admin_reverts() {
+        // DEFAULT_ADMIN_ROLE alone is not sufficient; METADATA_ROLE is required.
+        let mut token = token_with_default_admin(CALLER);
+
+        assert_eq!(
+            token.update_contract_uri(CALLER, "ipfs://abc".into(), false).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: CALLER,
+                neededRole: B20TokenRole::Metadata.id(),
+            })
+        );
+    }
+
+    #[test]
+    fn update_contract_uri_with_metadata_role_succeeds() {
+        let mut token = token_with_metadata_role(CALLER);
+
+        token.update_contract_uri(CALLER, "ipfs://xyz".into(), false).unwrap();
+
+        assert_eq!(token.accounting().contract_uri().unwrap(), "ipfs://xyz");
+        assert_eq!(token.accounting().events.len(), 1);
     }
 }

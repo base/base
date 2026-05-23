@@ -192,7 +192,7 @@ impl<'a> StorageCtx<'a> {
     /// The `gas_refunded` field is populated so revm's frame handler can propagate it to the
     /// transaction-level refund counter, where the EIP-3529 cap (`gas_used / 5`) is applied.
     pub fn success_output(&self, output: Bytes) -> PrecompileOutput {
-        let mut out = PrecompileOutput::new(self.gas_used(), output, 0);
+        let mut out = PrecompileOutput::new(self.gas_used(), output, self.state_gas_used());
         out.gas_refunded = self.gas_refunded();
         out
     }
@@ -204,7 +204,7 @@ impl<'a> StorageCtx<'a> {
 
     /// Returns a revert [`PrecompileOutput`] with the current gas used.
     pub fn revert_output(&self, output: Bytes) -> PrecompileOutput {
-        PrecompileOutput::revert(self.gas_used(), output, 0)
+        PrecompileOutput::revert(self.gas_used(), output, self.state_gas_used())
     }
 
     /// Reverts with an ABI-encoded error.
@@ -214,7 +214,7 @@ impl<'a> StorageCtx<'a> {
 
     /// Returns a [`PrecompileResult`] constructed from the given error.
     pub fn error_result(&self, error: impl Into<BasePrecompileError>) -> PrecompileResult {
-        error.into().into_precompile_result(self.gas_used())
+        error.into().into_precompile_result(self.gas_used(), self.state_gas_used())
     }
 }
 

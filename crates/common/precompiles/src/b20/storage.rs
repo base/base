@@ -205,8 +205,8 @@ impl TokenAccounting for B20TokenStorage<'_> {
         self.b20.role_admins.at_mut(&role).write(admin_role)
     }
 
-    fn policy_id(&self, policy_type: B256) -> Result<u64> {
-        let policy_type = Self::require_policy_type(policy_type)?;
+    fn policy_id(&self, policy_scope: B256) -> Result<u64> {
+        let policy_type = Self::require_policy_type(policy_scope)?;
         match policy_type {
             B20PolicyType::TransferSender => Ok(Self::read_policy_lane(
                 self.b20.transfer_policy_ids.read()?,
@@ -227,8 +227,8 @@ impl TokenAccounting for B20TokenStorage<'_> {
         }
     }
 
-    fn set_policy_id(&mut self, policy_type: B256, policy_id: u64) -> Result<()> {
-        let policy_type = Self::require_policy_type(policy_type)?;
+    fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
+        let policy_type = Self::require_policy_type(policy_scope)?;
         match policy_type {
             B20PolicyType::TransferSender => {
                 let packed = Self::write_policy_lane(
@@ -277,9 +277,9 @@ impl B20TokenStorage<'_> {
     const MINT_RECEIVER_POLICY_LANE: usize = 0;
     const POLICY_LANE_BITS: usize = 64;
 
-    fn require_policy_type(policy_type: B256) -> Result<B20PolicyType> {
-        B20PolicyType::from_id(policy_type).ok_or_else(|| {
-            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyType: policy_type })
+    fn require_policy_type(policy_scope: B256) -> Result<B20PolicyType> {
+        B20PolicyType::from_id(policy_scope).ok_or_else(|| {
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: policy_scope })
         })
     }
 

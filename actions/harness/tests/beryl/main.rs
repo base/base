@@ -2,6 +2,8 @@
 
 mod activation;
 mod b20;
+mod b20_policy;
 mod env;
 mod factory;
 mod policy_registry;
+mod policy_transfer;
