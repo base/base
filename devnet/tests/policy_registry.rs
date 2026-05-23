@@ -4,11 +4,11 @@ mod common;
 
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
-use base_common_precompiles::{IPolicyRegistry, PolicyRegistryStorage};
+use base_common_precompiles::{ActivationFeature, IPolicyRegistry, PolicyRegistryStorage};
 use devnet::{B20PrecompileClient, config::ANVIL_ACCOUNT_5};
 use eyre::{Result, WrapErr};
 
-/// `policyExists(0)` returns `true` once the Beryl fork is active.
+/// `policyExists(ALWAYS_ALLOW_ID)` returns `true` once the policy registry is active.
 #[tokio::test]
 async fn test_policy_registry_policy_exists() -> Result<()> {
     let (_devnet, provider) = common::start_beryl_devnet().await?;
@@ -18,9 +18,13 @@ async fn test_policy_registry_policy_exists() -> Result<()> {
 
     let client = B20PrecompileClient::new(&provider, &caller, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+    client.activate_feature(ActivationFeature::PolicyRegistry.id()).await?;
 
     let output = client
-        .call(PolicyRegistryStorage::ADDRESS, IPolicyRegistry::policyExistsCall { policyId: 0 })
+        .call(
+            PolicyRegistryStorage::ADDRESS,
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID },
+        )
         .await?;
     let result = IPolicyRegistry::policyExistsCall::abi_decode_returns(output.as_ref())
         .wrap_err("Failed to decode policyExists")?;

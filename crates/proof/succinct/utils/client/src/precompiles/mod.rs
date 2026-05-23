@@ -3,6 +3,8 @@
 use alloc::{boxed::Box, string::String};
 
 use alloy_evm::precompiles::PrecompilesMap;
+#[cfg(target_os = "zkvm")]
+use alloy_evm::precompiles::{DynPrecompile, Precompile};
 use alloy_primitives::Address;
 use base_common_evm::{BasePrecompiles, BaseSpecId};
 #[cfg(any(test, target_os = "zkvm"))]
@@ -129,9 +131,7 @@ impl BaseZkvmPrecompiles {
 
     #[cfg(target_os = "zkvm")]
     fn install_cycle_trackers(precompiles: &mut PrecompilesMap) {
-        use alloy_evm::precompiles::{DynPrecompile, Precompile};
-
-        precompiles.map_pure_precompiles(|_, precompile| {
+        precompiles.map_cacheable_precompiles(|_, precompile| {
             let id = precompile.precompile_id().clone();
             if let Some(tracker_name) = get_precompile_tracker_name(&id) {
                 DynPrecompile::new(id, move |input| {

@@ -670,75 +670,19 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 }
 
 #[cfg(test)]
-impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
-    fn batch_mint_test(
-        &mut self,
-        recipients: alloc::vec::Vec<Address>,
-        amounts: alloc::vec::Vec<U256>,
-    ) -> base_precompile_storage::Result<()> {
-        if recipients.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
-        }
-        if recipients.len() != amounts.len() {
-            return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
-                leftLen: U256::from(recipients.len()),
-                rightLen: U256::from(amounts.len()),
-            }));
-        }
-        for (recipient, amount) in recipients.into_iter().zip(amounts) {
-            self.mint(Address::ZERO, recipient, amount, true)?;
-        }
-        Ok(())
-    }
-
-    fn batch_burn_test(
-        &mut self,
-        accounts: alloc::vec::Vec<Address>,
-        amounts: alloc::vec::Vec<U256>,
-    ) -> base_precompile_storage::Result<()> {
-        if accounts.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
-        }
-        if accounts.len() != amounts.len() {
-            return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
-                leftLen: U256::from(accounts.len()),
-                rightLen: U256::from(amounts.len()),
-            }));
-        }
-        for (account, amount) in accounts.into_iter().zip(amounts) {
-            if amount.is_zero() {
-                return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
-            }
-            let balance = self.accounting.balance_of(account)?;
-            if balance < amount {
-                return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
-                    sender: account,
-                    balance,
-                    needed: amount,
-                }));
-            }
-            self.accounting_mut().set_balance(account, balance - amount)?;
-            let supply = self.accounting.total_supply()?;
-            self.accounting_mut().set_total_supply(supply.saturating_sub(amount))?;
-            self.accounting_mut().emit_event(
-                IB20::Transfer { from: account, to: Address::ZERO, amount }.encode_log_data(),
-            )?;
-        }
-        Ok(())
-    }
-}
-
-#[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, U256};
-    use alloy_sol_types::SolEvent;
+    use alloc::vec::Vec;
+
+    use alloy_primitives::{Address, B256, Bytes, U256};
+    use alloy_sol_types::{SolCall, SolEvent};
     use base_precompile_storage::{
-        BasePrecompileError, HashMapStorageProvider, StorageCtx, setup_storage,
+        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, setup_storage,
     };
 
     use super::{BURN_FROM_ROLE, REDEEM_SENDER_POLICY};
     use crate::{
-        B20PausableFeature, IB20, PolicyHandle, PolicyRegistryStorage, Token, TokenAccounting,
+        ActivationFeature, ActivationRegistryStorage, B20PausableFeature, B20TokenRole, IB20,
+        PolicyHandle, PolicyRegistryStorage, Token, TokenAccounting,
         b20_security::{B20SecurityStorage, B20SecurityToken, IB20Security, SecurityAccounting},
         common::test_utils::{InMemoryPolicy, InMemoryTokenAccounting},
     };
@@ -748,6 +692,7 @@ mod tests {
     const ALICE: Address = Address::repeat_byte(0xaa);
     const BOB: Address = Address::repeat_byte(0xbb);
     const TOKEN: Address = Address::repeat_byte(0x01);
+    const ACTIVATION_ADMIN: Address = Address::repeat_byte(0xcb);
     const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
     fn make_token() -> TestSecurityToken {
@@ -758,10 +703,37 @@ mod tests {
         TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
     }
 
+    fn activate_b20_security(storage: &mut HashMapStorageProvider) {
+        storage.set_caller(ACTIVATION_ADMIN);
+        StorageCtx::enter(storage, |ctx| {
+            ActivationRegistryStorage::new(ctx)
+                .activate(ActivationFeature::B20Security.id(), Some(ACTIVATION_ADMIN))
+        })
+        .unwrap();
+    }
+
     fn storage_with_caller(caller: Address) -> HashMapStorageProvider {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_b20_security(&mut storage);
         storage.set_caller(caller);
         storage
+    }
+
+    fn call_security(
+        token: &mut TestSecurityToken,
+        caller: Address,
+        calldata: Vec<u8>,
+    ) -> Result<Bytes> {
+        let mut storage = storage_with_caller(caller);
+        StorageCtx::enter(&mut storage, |ctx| token.inner(ctx, calldata.as_ref()))
+    }
+
+    fn batch_mint_calldata(recipients: Vec<Address>, amounts: Vec<U256>) -> Vec<u8> {
+        IB20Security::batchMintCall { recipients, amounts }.abi_encode()
+    }
+
+    fn batch_burn_calldata(accounts: Vec<Address>, amounts: Vec<U256>) -> Vec<u8> {
+        IB20Security::batchBurnCall { accounts, amounts }.abi_encode()
     }
 
     #[test]
@@ -781,38 +753,97 @@ mod tests {
     #[test]
     fn batch_mint_increases_balances() {
         let mut token = make_token();
-        token
-            .batch_mint_test(
+        token.accounting_mut().roles.insert((B20TokenRole::Mint.id(), ALICE), true);
+
+        call_security(
+            &mut token,
+            ALICE,
+            batch_mint_calldata(
                 alloc::vec![ALICE, BOB],
                 alloc::vec![U256::from(100u64), U256::from(200u64)],
-            )
-            .unwrap();
+            ),
+        )
+        .unwrap();
 
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
         assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(200u64));
         assert_eq!(token.accounting().total_supply().unwrap(), U256::from(300u64));
-        assert_eq!(token.accounting().events.len(), 2);
+        assert_eq!(
+            token.accounting().events,
+            alloc::vec![
+                IB20::Transfer { from: Address::ZERO, to: ALICE, amount: U256::from(100u64) }
+                    .encode_log_data(),
+                IB20::Transfer { from: Address::ZERO, to: BOB, amount: U256::from(200u64) }
+                    .encode_log_data()
+            ]
+        );
+    }
+
+    #[test]
+    fn batch_mint_requires_mint_role() {
+        let mut token = make_token();
+
+        let err = call_security(
+            &mut token,
+            ALICE,
+            batch_mint_calldata(alloc::vec![BOB], alloc::vec![U256::from(100u64)]),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ALICE,
+                neededRole: B20TokenRole::Mint.id(),
+            })
+        );
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::ZERO);
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::ZERO);
     }
 
     #[test]
     fn batch_burn_decrements_balances() {
         let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
         token.accounting_mut().balances.insert(ALICE, U256::from(500u64));
         token.accounting_mut().total_supply = U256::from(500u64);
 
-        token.batch_burn_test(alloc::vec![ALICE], alloc::vec![U256::from(200u64)]).unwrap();
+        call_security(
+            &mut token,
+            ALICE,
+            batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::from(200u64)]),
+        )
+        .unwrap();
 
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(300u64));
         assert_eq!(token.accounting().total_supply().unwrap(), U256::from(300u64));
-        assert_eq!(token.accounting().events.len(), 1);
+        assert_eq!(
+            token.accounting().events,
+            alloc::vec![
+                IB20::Transfer { from: ALICE, to: Address::ZERO, amount: U256::from(200u64) }
+                    .encode_log_data()
+            ]
+        );
     }
 
     #[test]
     fn batch_burn_rejects_insufficient_balance() {
         let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
         token.accounting_mut().balances.insert(ALICE, U256::from(10u64));
-        assert!(
-            token.batch_burn_test(alloc::vec![ALICE], alloc::vec![U256::from(100u64)]).is_err()
+
+        assert_eq!(
+            call_security(
+                &mut token,
+                ALICE,
+                batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::from(100u64)]),
+            )
+            .unwrap_err(),
+            BasePrecompileError::revert(IB20::InsufficientBalance {
+                sender: ALICE,
+                balance: U256::from(10u64),
+                needed: U256::from(100u64),
+            })
         );
     }
 
@@ -821,11 +852,12 @@ mod tests {
         let mut token = make_token();
         token.accounting_mut().balances.insert(BOB, U256::from(50u64));
         token.accounting_mut().total_supply = U256::from(50u64);
-        let mut storage = storage_with_caller(ALICE);
 
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            token.batch_burn(ctx, alloc::vec![BOB], alloc::vec![U256::from(10u64)])
-        })
+        let err = call_security(
+            &mut token,
+            ALICE,
+            batch_burn_calldata(alloc::vec![BOB], alloc::vec![U256::from(10u64)]),
+        )
         .unwrap_err();
 
         assert_eq!(
@@ -845,11 +877,12 @@ mod tests {
         token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
         token.accounting_mut().balances.insert(BOB, U256::from(50u64));
         token.accounting_mut().total_supply = U256::from(50u64);
-        let mut storage = storage_with_caller(ALICE);
 
-        StorageCtx::enter(&mut storage, |ctx| {
-            token.batch_burn(ctx, alloc::vec![BOB], alloc::vec![U256::from(10u64)])
-        })
+        call_security(
+            &mut token,
+            ALICE,
+            batch_burn_calldata(alloc::vec![BOB], alloc::vec![U256::from(10u64)]),
+        )
         .unwrap();
 
         assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
@@ -864,11 +897,12 @@ mod tests {
         token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
         token.accounting_mut().balances.insert(BOB, U256::from(50u64));
         token.accounting_mut().total_supply = U256::from(50u64);
-        let mut storage = storage_with_caller(ALICE);
 
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            token.batch_burn(ctx, alloc::vec![BOB], alloc::vec![U256::from(10u64)])
-        })
+        let err = call_security(
+            &mut token,
+            ALICE,
+            batch_burn_calldata(alloc::vec![BOB], alloc::vec![U256::from(10u64)]),
+        )
         .unwrap_err();
 
         assert_eq!(
@@ -978,19 +1012,36 @@ mod tests {
         );
     }
 
-    // --- batchMint (via test helper): EmptyBatch / LengthMismatch ---
+    // --- batchMint: EmptyBatch / LengthMismatch ---
 
     #[test]
-    fn batch_mint_test_rejects_empty() {
+    fn batch_mint_rejects_empty() {
         let mut token = make_token();
-        assert!(token.batch_mint_test(alloc::vec![], alloc::vec![]).is_err());
+        token.accounting_mut().roles.insert((B20TokenRole::Mint.id(), ALICE), true);
+
+        assert_eq!(
+            call_security(&mut token, ALICE, batch_mint_calldata(alloc::vec![], alloc::vec![]))
+                .unwrap_err(),
+            BasePrecompileError::revert(IB20Security::EmptyBatch {})
+        );
     }
 
     #[test]
-    fn batch_mint_test_rejects_length_mismatch() {
+    fn batch_mint_rejects_length_mismatch() {
         let mut token = make_token();
-        assert!(
-            token.batch_mint_test(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]).is_err()
+        token.accounting_mut().roles.insert((B20TokenRole::Mint.id(), ALICE), true);
+
+        assert_eq!(
+            call_security(
+                &mut token,
+                ALICE,
+                batch_mint_calldata(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]),
+            )
+            .unwrap_err(),
+            BasePrecompileError::revert(IB20Security::LengthMismatch {
+                leftLen: U256::ONE,
+                rightLen: U256::from(2u64),
+            })
         );
     }
 
@@ -1000,12 +1051,10 @@ mod tests {
     fn batch_burn_rejects_empty() {
         let mut token = make_token();
         token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-        let mut storage = storage_with_caller(ALICE);
 
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            token.batch_burn(ctx, alloc::vec![], alloc::vec![])
-        })
-        .unwrap_err();
+        let err =
+            call_security(&mut token, ALICE, batch_burn_calldata(alloc::vec![], alloc::vec![]))
+                .unwrap_err();
 
         assert_eq!(err, BasePrecompileError::revert(IB20Security::EmptyBatch {}));
     }
@@ -1014,11 +1063,12 @@ mod tests {
     fn batch_burn_rejects_length_mismatch() {
         let mut token = make_token();
         token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-        let mut storage = storage_with_caller(ALICE);
 
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            token.batch_burn(ctx, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
-        })
+        let err = call_security(
+            &mut token,
+            ALICE,
+            batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]),
+        )
         .unwrap_err();
         assert_eq!(
             err,
@@ -1028,9 +1078,11 @@ mod tests {
             })
         );
 
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            token.batch_burn(ctx, alloc::vec![], alloc::vec![U256::ONE])
-        })
+        let err = call_security(
+            &mut token,
+            ALICE,
+            batch_burn_calldata(alloc::vec![], alloc::vec![U256::ONE]),
+        )
         .unwrap_err();
         assert_eq!(
             err,
@@ -1046,11 +1098,12 @@ mod tests {
         let mut token = make_token();
         token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
         token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
-        let mut storage = storage_with_caller(ALICE);
 
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            token.batch_burn(ctx, alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE])
-        })
+        let err = call_security(
+            &mut token,
+            ALICE,
+            batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]),
+        )
         .unwrap_err();
         assert_eq!(
             err,
@@ -1060,21 +1113,26 @@ mod tests {
             })
         );
 
-        let err = StorageCtx::enter(&mut storage, |ctx| {
-            token.batch_burn(ctx, alloc::vec![], alloc::vec![])
-        })
-        .unwrap_err();
+        let err =
+            call_security(&mut token, ALICE, batch_burn_calldata(alloc::vec![], alloc::vec![]))
+                .unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20Security::EmptyBatch {}));
     }
 
     #[test]
     fn batch_burn_rejects_zero_amount() {
         let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
         token.accounting_mut().total_supply = U256::from(100u64);
 
         assert_eq!(
-            token.batch_burn_test(alloc::vec![ALICE], alloc::vec![U256::ZERO]).unwrap_err(),
+            call_security(
+                &mut token,
+                ALICE,
+                batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::ZERO]),
+            )
+            .unwrap_err(),
             BasePrecompileError::revert(IB20::InvalidAmount {})
         );
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
@@ -1084,17 +1142,31 @@ mod tests {
     #[test]
     fn batch_burn_multiple_accounts_emits_one_transfer_each() {
         let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
         token.accounting_mut().balances.insert(BOB, U256::from(200u64));
         token.accounting_mut().total_supply = U256::from(300u64);
-        token
-            .batch_burn_test(
+
+        call_security(
+            &mut token,
+            ALICE,
+            batch_burn_calldata(
                 alloc::vec![ALICE, BOB],
                 alloc::vec![U256::from(100u64), U256::from(200u64)],
-            )
-            .unwrap();
+            ),
+        )
+        .unwrap();
+
         // IB20Security: "Emits Transfer(accounts[i], address(0), amounts[i]) per element"
-        assert_eq!(token.accounting().events.len(), 2);
+        assert_eq!(
+            token.accounting().events,
+            alloc::vec![
+                IB20::Transfer { from: ALICE, to: Address::ZERO, amount: U256::from(100u64) }
+                    .encode_log_data(),
+                IB20::Transfer { from: BOB, to: Address::ZERO, amount: U256::from(200u64) }
+                    .encode_log_data()
+            ]
+        );
         assert_eq!(token.accounting().total_supply().unwrap(), U256::ZERO);
     }
 

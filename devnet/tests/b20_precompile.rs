@@ -326,6 +326,13 @@ async fn test_b20_metadata_updates() -> Result<()> {
     let token = b20.create_token(B20Variant::B20, params, salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
+    b20.send_call(
+        token,
+        IB20::grantRoleCall { role: B20TokenRole::Metadata.id(), account: admin.address() },
+        "grant B-20 metadata role",
+    )
+    .await?;
+
     b20.update_name(token, "New Name").await?;
     b20.update_symbol(token, "NEW").await?;
     b20.update_contract_uri(token, "ipfs://QmTest").await?;

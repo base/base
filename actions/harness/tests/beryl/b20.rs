@@ -1,7 +1,7 @@
 //! B-20 precompile action tests across the Base Beryl boundary.
 
 use alloy_consensus::TxReceipt;
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, FixedBytes, TxKind, U256, keccak256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
@@ -269,8 +269,16 @@ async fn b20_staticcall_abi_covers_all_read_methods() {
 
     scenario
         .assert_staticcall_cases(vec![
-            StaticcallCase::word("name", IB20::nameCall {}.abi_encode(), U256::from(32)),
-            StaticcallCase::word("symbol", IB20::symbolCall {}.abi_encode(), U256::from(32)),
+            StaticcallCase::output(
+                "name",
+                IB20::nameCall {}.abi_encode(),
+                IB20::nameCall::abi_encode_returns(&BerylTestEnv::B20_NAME.to_string()),
+            ),
+            StaticcallCase::output(
+                "symbol",
+                IB20::symbolCall {}.abi_encode(),
+                IB20::symbolCall::abi_encode_returns(&BerylTestEnv::B20_SYMBOL.to_string()),
+            ),
             StaticcallCase::word(
                 "decimals",
                 IB20::decimalsCall {}.abi_encode(),
@@ -296,7 +304,10 @@ async fn b20_staticcall_abi_covers_all_read_methods() {
                 "pausedFeatures",
                 IB20::pausedFeaturesCall {}.abi_encode(),
                 U256::from(32),
-            ),
+            )
+            .with_output(IB20::pausedFeaturesCall::abi_encode_returns(
+                &Vec::<IB20::PausableFeature>::new(),
+            )),
             StaticcallCase::word(
                 "isPaused",
                 IB20::isPausedCall { feature: IB20::PausableFeature::TRANSFER }.abi_encode(),
@@ -321,11 +332,18 @@ async fn b20_staticcall_abi_covers_all_read_methods() {
                 "eip712Domain",
                 IB20::eip712DomainCall {}.abi_encode(),
                 eip712_domain_fields_word(),
-            ),
-            StaticcallCase::word(
+            )
+            .with_output(IB20::eip712DomainCall::abi_encode_returns(
+                &eip712_domain_return(
+                    scenario.env.chain_id(),
+                    scenario.token,
+                    BerylTestEnv::B20_NAME,
+                ),
+            )),
+            StaticcallCase::output(
                 "contractURI",
                 IB20::contractURICall {}.abi_encode(),
-                U256::from(32),
+                IB20::contractURICall::abi_encode_returns(&String::new()),
             ),
         ])
         .await;
@@ -502,11 +520,29 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
                 "pausedFeatures after unpause",
                 IB20::pausedFeaturesCall {}.abi_encode(),
                 U256::from(32),
-            ),
+            )
+            .with_output(IB20::pausedFeaturesCall::abi_encode_returns(
+                &Vec::<IB20::PausableFeature>::new(),
+            )),
             StaticcallCase::word(
                 "supplyCap after update",
                 IB20::supplyCapCall {}.abi_encode(),
                 new_cap,
+            ),
+            StaticcallCase::output(
+                "name after update",
+                IB20::nameCall {}.abi_encode(),
+                IB20::nameCall::abi_encode_returns(&"Action B20 Updated".to_string()),
+            ),
+            StaticcallCase::output(
+                "symbol after update",
+                IB20::symbolCall {}.abi_encode(),
+                IB20::symbolCall::abi_encode_returns(&"AB20U".to_string()),
+            ),
+            StaticcallCase::output(
+                "contractURI after update",
+                IB20::contractURICall {}.abi_encode(),
+                IB20::contractURICall::abi_encode_returns(&"ipfs://action".to_string()),
             ),
         ])
         .await;
@@ -675,6 +711,18 @@ impl B20TokenScenario {
                     case.label
                 );
             }
+            assert_eq!(
+                self.env.probe_return_size(*probe),
+                U256::from(case.expected_output.len()),
+                "{} staticcall must return the expected byte length",
+                case.label
+            );
+            assert_eq!(
+                self.env.probe_return_hash(*probe),
+                keccak256(&case.expected_output),
+                "{} staticcall must return the expected ABI payload hash",
+                case.label
+            );
         }
     }
 
@@ -765,11 +813,28 @@ struct StaticcallCase {
     label: &'static str,
     input: Vec<u8>,
     expected_word: Option<U256>,
+    expected_output: Vec<u8>,
 }
 
 impl StaticcallCase {
-    const fn word(label: &'static str, input: Vec<u8>, expected_word: U256) -> Self {
-        Self { label, input, expected_word: Some(expected_word) }
+    fn word(label: &'static str, input: Vec<u8>, expected_word: U256) -> Self {
+        Self {
+            label,
+            input,
+            expected_word: Some(expected_word),
+            expected_output: expected_word.abi_encode(),
+        }
+    }
+
+    fn output(label: &'static str, input: Vec<u8>, expected_output: Vec<u8>) -> Self {
+        let expected_word = expected_output.get(..32).map(U256::from_be_slice);
+        Self { label, input, expected_word, expected_output }
+    }
+
+    fn with_output(mut self, expected_output: Vec<u8>) -> Self {
+        self.expected_word = expected_output.get(..32).map(U256::from_be_slice);
+        self.expected_output = expected_output;
+        self
     }
 }
 
@@ -815,6 +880,18 @@ const fn eip712_domain_fields_word() -> U256 {
     let mut word = [0u8; 32];
     word[0] = 0x0f; // bits 0+1+2+3: name + version + chainId + verifyingContract
     U256::from_be_bytes(word)
+}
+
+fn eip712_domain_return(chain_id: u64, token: Address, name: &str) -> IB20::eip712DomainReturn {
+    IB20::eip712DomainReturn {
+        fields: FixedBytes::<1>::from([0x0f]),
+        name: name.to_string(),
+        version: "1".to_string(),
+        chainId: U256::from(chain_id),
+        verifyingContract: token,
+        salt: B256::ZERO,
+        extensions: Vec::new(),
+    }
 }
 
 struct B20StaticcallProbes {
@@ -884,11 +961,22 @@ impl B20StaticcallProbes {
     }
 
     fn assert_probe_return(scenario: &B20TokenScenario, probe: Address, expected: u64) {
+        let expected_output = U256::from(expected).abi_encode();
         assert!(scenario.env.probe_call_succeeded(probe), "B-20 staticcall probe must succeed");
         assert_eq!(
             scenario.env.probe_return_word(probe),
             U256::from(expected),
             "B-20 staticcall probe must return the expected word"
+        );
+        assert_eq!(
+            scenario.env.probe_return_size(probe),
+            U256::from(expected_output.len()),
+            "B-20 staticcall probe must return one ABI word"
+        );
+        assert_eq!(
+            scenario.env.probe_return_hash(probe),
+            keccak256(&expected_output),
+            "B-20 staticcall probe must return the expected ABI payload hash"
         );
     }
 }

@@ -40,7 +40,7 @@ const PROBE_CALL_SUCCESS_SLOT: U256 = U256::ZERO;
 const PROBE_RETURN_WORD_SLOT: U256 = U256::from_limbs([1, 0, 0, 0]);
 
 /// Storage slot where staticcall probes store the returned byte length.
-const PROBE_RETURN_LENGTH_SLOT: U256 = U256::from_limbs([2, 0, 0, 0]);
+const PROBE_RETURN_SIZE_SLOT: U256 = U256::from_limbs([2, 0, 0, 0]);
 
 /// Storage slot where staticcall probes store `keccak256(returndata)`.
 const PROBE_RETURN_HASH_SLOT: U256 = U256::from_limbs([3, 0, 0, 0]);
@@ -465,13 +465,13 @@ impl BerylTestEnv {
     }
 
     /// Reads the returned byte length from a staticcall probe's most recent call.
-    pub(crate) fn probe_return_length(&self, probe: Address) -> U256 {
-        self.sequencer.storage_at(probe, PROBE_RETURN_LENGTH_SLOT)
+    pub(crate) fn probe_return_size(&self, probe: Address) -> U256 {
+        self.sequencer.storage_at(probe, PROBE_RETURN_SIZE_SLOT)
     }
 
     /// Reads `keccak256(returndata)` from a staticcall probe's most recent call.
-    pub(crate) fn probe_return_hash(&self, probe: Address) -> U256 {
-        self.sequencer.storage_at(probe, PROBE_RETURN_HASH_SLOT)
+    pub(crate) fn probe_return_hash(&self, probe: Address) -> B256 {
+        B256::from(self.sequencer.storage_at(probe, PROBE_RETURN_HASH_SLOT).to_be_bytes::<32>())
     }
 
     /// Returns whether a user transaction in `block` succeeded.
@@ -619,7 +619,13 @@ impl BerylTestEnv {
         runtime.extend_from_slice(&hex!("3660006000376000600036600073"));
         runtime.extend_from_slice(target.as_slice());
         runtime.extend_from_slice(&hex!(
-            "5afa806000553d80600255600060003e6000516001553d60002060035500"
+            "5afa" // staticcall(gas(), target, 0, calldatasize(), 0, 0)
+            "8060005550" // store success in slot 0
+            "3d80600255" // store returndatasize in slot 2
+            "80600060003e" // copy returndata to memory
+            "600051600155" // store first returned word in slot 1
+            "600020600355" // store keccak256(returndata) in slot 3
+            "00"
         ));
 
         let mut init_code = Vec::with_capacity(12 + runtime.len());
