@@ -57,6 +57,9 @@ impl BerylTestEnv {
     /// Gas limit used for B-20 staticcall probe transactions.
     pub(crate) const B20_PROBE_GAS_LIMIT: u64 = 1_000_000;
 
+    /// Name of the default B-20 token.
+    pub(crate) const B20_NAME: &'static str = "Action B20";
+
     /// Fixed decimals for the default B-20 token variant.
     pub(crate) const B20_DECIMALS: u8 = 18;
 
@@ -480,7 +483,7 @@ impl BerylTestEnv {
     fn b20_token_params(&self) -> ITokenFactory::B20CreateParams {
         ITokenFactory::B20CreateParams {
             version: TokenFactoryStorage::CREATE_TOKEN_VERSION,
-            name: "Action B20".to_string(),
+            name: Self::B20_NAME.to_string(),
             symbol: "AB20".to_string(),
             initialAdmin: Self::alice(),
         }
