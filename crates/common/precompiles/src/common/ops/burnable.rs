@@ -11,6 +11,10 @@ use crate::{B20TokenRole, IB20, Token, TokenAccounting};
 /// Implement this trait with an empty body to opt in.
 pub trait Burnable: Token {
     /// Destroys `amount` tokens from `from`. Emits `Transfer(from, 0x0, amount)`.
+    ///
+    /// When `privileged` is true the [`B20TokenRole::Burn`] role check is skipped.
+    /// Unlike [`Transferable::transfer`], the pause check still applies under
+    /// `privileged`; see issue #2914 for context.
     fn burn(
         &mut self,
         caller: Address,

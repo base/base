@@ -35,6 +35,10 @@ pub trait Pausable: Token {
     }
 
     /// ORs `features` into the current paused bitmask.
+    ///
+    /// When `privileged` is true the [`B20TokenRole::Pause`] role check is skipped.
+    /// Unlike [`Transferable::transfer`], no other guards are bypassed; see
+    /// issue #2914 for context.
     fn pause(
         &mut self,
         caller: Address,
@@ -58,6 +62,10 @@ pub trait Pausable: Token {
     }
 
     /// Clears `features` from the current paused bitmask.
+    ///
+    /// When `privileged` is true the [`B20TokenRole::Unpause`] role check is skipped.
+    /// Unlike [`Transferable::transfer`], no other guards are bypassed; see
+    /// issue #2914 for context.
     fn unpause(
         &mut self,
         caller: Address,

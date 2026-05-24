@@ -13,6 +13,10 @@ use crate::{B20TokenRole, IB20, Token, TokenAccounting};
 /// Implement with an empty body to opt in.
 pub trait Configurable: Token {
     /// Updates the supply cap. Requires `DEFAULT_ADMIN_ROLE`. Emits `SupplyCapUpdated`.
+    ///
+    /// When `privileged` is true the role check is skipped. Unlike
+    /// [`Transferable::transfer`], no other guards are bypassed; see issue
+    /// #2914 for context.
     fn update_supply_cap(
         &mut self,
         caller: Address,
@@ -38,6 +42,10 @@ pub trait Configurable: Token {
     }
 
     /// Updates the token name. Emits `NameUpdated` and `EIP712DomainChanged` (ERC-5267).
+    ///
+    /// When `privileged` is true the [`B20TokenRole::Metadata`] role check is
+    /// skipped. Unlike [`Transferable::transfer`], no other guards are
+    /// bypassed; see issue #2914 for context.
     fn update_name(&mut self, caller: Address, name: String, privileged: bool) -> Result<()> {
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Metadata)?;
@@ -49,6 +57,10 @@ pub trait Configurable: Token {
     }
 
     /// Updates the token symbol. Emits `SymbolUpdated`.
+    ///
+    /// When `privileged` is true the [`B20TokenRole::Metadata`] role check is
+    /// skipped. Unlike [`Transferable::transfer`], no other guards are
+    /// bypassed; see issue #2914 for context.
     fn update_symbol(&mut self, caller: Address, symbol: String, privileged: bool) -> Result<()> {
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Metadata)?;
@@ -60,6 +72,10 @@ pub trait Configurable: Token {
     }
 
     /// Updates the contract URI. Emits `ContractURIUpdated`.
+    ///
+    /// When `privileged` is true the [`B20TokenRole::Metadata`] role check is
+    /// skipped. Unlike [`Transferable::transfer`], no other guards are
+    /// bypassed; see issue #2914 for context.
     fn update_contract_uri(
         &mut self,
         caller: Address,

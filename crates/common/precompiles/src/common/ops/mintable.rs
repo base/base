@@ -11,6 +11,10 @@ use crate::{B20PolicyType, B20TokenRole, IB20, Token, TokenAccounting};
 /// Implement this trait with an empty body to opt in.
 pub trait Mintable: Token {
     /// Creates `amount` tokens at `to`. Enforces supply cap. Emits `Transfer(0x0, to, amount)`.
+    ///
+    /// When `privileged` is true the [`B20TokenRole::Mint`] role check is skipped.
+    /// Unlike [`Transferable::transfer`], the pause and `MintReceiver` policy
+    /// checks still apply under `privileged`; see issue #2914 for context.
     fn mint(&mut self, caller: Address, to: Address, amount: U256, privileged: bool) -> Result<()> {
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
