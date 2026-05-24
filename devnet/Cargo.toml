@@ -89,9 +89,16 @@ serde = { workspace = true, features = ["derive", "std"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 
 [dev-dependencies]
+# cli
+clap = { workspace = true, features = ["derive"] }
+
 # proof
 base-zk-client.workspace = true
 base-proof-rpc.workspace = true
 
 # misc
 indicatif.workspace = true
+
+[[bench]]
+name = "b20_zk_proving"
+harness = false

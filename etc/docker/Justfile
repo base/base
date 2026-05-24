@@ -112,6 +112,15 @@ tests: _install-nextest _build-contracts
 tests-ci: _install-nextest _build-contracts
     cargo nextest run -P ci --locked -p devnet --cargo-profile ci
 
+# Runs devnet benchmarks
+bench name:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{ name }}" in
+      b20-zk-proving) cargo bench -p devnet --bench b20_zk_proving ;;
+      *) echo "unknown devnet bench: {{ name }}" >&2; exit 1 ;;
+    esac
+
 [private]
 _install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest

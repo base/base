@@ -169,7 +169,8 @@ impl<'a> B20PrecompileClient<'a> {
             IActivationRegistry::activateCall { feature },
             "activate feature",
         )
-        .await
+        .await?;
+        Ok(())
     }
 
     /// Deactivates an activation-registry feature.
@@ -179,7 +180,8 @@ impl<'a> B20PrecompileClient<'a> {
             IActivationRegistry::deactivateCall { feature },
             "deactivate feature",
         )
-        .await
+        .await?;
+        Ok(())
     }
 
     /// Computes the token address a factory creation call will use.
@@ -226,12 +228,14 @@ impl<'a> B20PrecompileClient<'a> {
 
     /// Mints B-20 tokens to an account.
     pub async fn mint(&self, token: Address, to: Address, amount: U256) -> Result<()> {
-        self.send_call(token, IB20::mintCall { to, amount }, "mint B-20 token").await
+        self.send_call(token, IB20::mintCall { to, amount }, "mint B-20 token").await?;
+        Ok(())
     }
 
     /// Transfers B-20 tokens.
     pub async fn transfer(&self, token: Address, to: Address, amount: U256) -> Result<()> {
-        self.send_call(token, IB20::transferCall { to, amount }, "transfer B-20 token").await
+        self.send_call(token, IB20::transferCall { to, amount }, "transfer B-20 token").await?;
+        Ok(())
     }
 
     /// Reads the token name.
@@ -267,7 +271,9 @@ impl<'a> B20PrecompileClient<'a> {
 
     /// Approves `spender` to transfer up to `amount` on behalf of the signer.
     pub async fn approve(&self, token: Address, spender: Address, amount: U256) -> Result<()> {
-        self.send_call(token, IB20::approveCall { spender, amount }, "approve B-20 spender").await
+        self.send_call(token, IB20::approveCall { spender, amount }, "approve B-20 spender")
+            .await?;
+        Ok(())
     }
 
     /// Transfers tokens from `from` to `to` using the signer's allowance.
@@ -283,12 +289,14 @@ impl<'a> B20PrecompileClient<'a> {
             IB20::transferFromCall { from, to, amount },
             "transferFrom B-20 token",
         )
-        .await
+        .await?;
+        Ok(())
     }
 
     /// Burns tokens from the signer's balance.
     pub async fn burn(&self, token: Address, amount: U256) -> Result<()> {
-        self.send_call(token, IB20::burnCall { amount }, "burn B-20 token").await
+        self.send_call(token, IB20::burnCall { amount }, "burn B-20 token").await?;
+        Ok(())
     }
 
     /// Transfers tokens with a memo tag.
@@ -304,7 +312,8 @@ impl<'a> B20PrecompileClient<'a> {
             IB20::transferWithMemoCall { to, amount, memo },
             "transferWithMemo B-20 token",
         )
-        .await
+        .await?;
+        Ok(())
     }
 
     /// Reads the supply cap.
@@ -321,7 +330,8 @@ impl<'a> B20PrecompileClient<'a> {
             IB20::updateSupplyCapCall { newSupplyCap: new_cap },
             "updateSupplyCap B-20 token",
         )
-        .await
+        .await?;
+        Ok(())
     }
 
     /// Updates the token name.
@@ -331,7 +341,8 @@ impl<'a> B20PrecompileClient<'a> {
             IB20::updateNameCall { newName: new_name.to_string() },
             "updateName B-20 token",
         )
-        .await
+        .await?;
+        Ok(())
     }
 
     /// Updates the token symbol.
@@ -341,7 +352,8 @@ impl<'a> B20PrecompileClient<'a> {
             IB20::updateSymbolCall { newSymbol: new_symbol.to_string() },
             "updateSymbol B-20 token",
         )
-        .await
+        .await?;
+        Ok(())
     }
 
     /// Reads the contract URI.
@@ -358,7 +370,8 @@ impl<'a> B20PrecompileClient<'a> {
             IB20::updateContractURICall { newURI: new_uri.to_string() },
             "updateContractURI B-20 token",
         )
-        .await
+        .await?;
+        Ok(())
     }
 
     /// Reads the pause vector flags.
@@ -374,13 +387,15 @@ impl<'a> B20PrecompileClient<'a> {
     /// Pauses the token for the given vector flags.
     pub async fn pause(&self, token: Address, vectors: U256) -> Result<()> {
         let features = pausable_features_from_mask(vectors);
-        self.send_call(token, IB20::pauseCall { features }, "pause B-20 token").await
+        self.send_call(token, IB20::pauseCall { features }, "pause B-20 token").await?;
+        Ok(())
     }
 
     /// Unpauses all pause vectors on the token.
     pub async fn unpause(&self, token: Address) -> Result<()> {
         let features = pausable_features_from_mask(U256::from(0x0f));
-        self.send_call(token, IB20::unpauseCall { features }, "unpause B-20 token").await
+        self.send_call(token, IB20::unpauseCall { features }, "unpause B-20 token").await?;
+        Ok(())
     }
 
     /// Returns true if `token` is a deployed B-20 via the factory.
@@ -434,10 +449,24 @@ impl<'a> B20PrecompileClient<'a> {
     where
         C: SolCall,
     {
+        self.send_call_receipt(to, call, label).await?;
+        Ok(())
+    }
+
+    /// Signs, sends, and waits for a successful transaction receipt against `to`.
+    pub async fn send_call_receipt<C>(
+        &self,
+        to: Address,
+        call: C,
+        label: &'static str,
+    ) -> Result<BaseTransactionReceipt>
+    where
+        C: SolCall,
+    {
         let receipt = self.send_and_wait(to, Bytes::from(call.abi_encode()), label).await?;
         ensure!(receipt.status(), "{label} transaction reverted");
         ensure!(receipt.inner.to == Some(to), "{label} receipt target mismatch");
-        Ok(())
+        Ok(receipt)
     }
 
     /// Signs, sends, and polls until a receipt is available.
