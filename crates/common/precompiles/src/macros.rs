@@ -59,6 +59,30 @@ macro_rules! deduct_calldata_cost {
 
 pub(crate) use deduct_calldata_cost;
 
+macro_rules! track_precompile_cycles {
+    ($tracker:ty, $calldata:expr, $body:block $(,)?) => {{
+        #[cfg(target_os = "zkvm")]
+        let cycle_tracker_key =
+            <$tracker as $crate::CalldataCycleTracker>::key_for_calldata($calldata);
+        #[cfg(target_os = "zkvm")]
+        if let Some(key) = cycle_tracker_key {
+            ::std::println!("cycle-tracker-report-start: {key}");
+        }
+
+        // NOTE: The closure keeps `?` from skipping the end marker.
+        let cycle_tracker_result = (|| $body)();
+
+        #[cfg(target_os = "zkvm")]
+        if let Some(key) = cycle_tracker_key {
+            ::std::println!("cycle-tracker-report-end: {key}");
+        }
+
+        cycle_tracker_result
+    }};
+}
+
+pub(crate) use track_precompile_cycles;
+
 macro_rules! decode_precompile_call {
     ($calldata:expr, $call_ty:ty $(,)?) => {{
         let calldata = $calldata;

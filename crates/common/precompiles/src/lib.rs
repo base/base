@@ -4,6 +4,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
+#[cfg(target_os = "zkvm")]
+extern crate std;
 
 mod macros;
 
@@ -37,6 +39,9 @@ pub use common::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
+
+mod cycle_tracker;
+pub use cycle_tracker::{CalldataCycleTracker, PrecompileCycleTracker};
 
 mod b20;
 pub use b20::{
