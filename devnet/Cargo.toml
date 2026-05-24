@@ -87,3 +87,11 @@ tracing = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
+
+[dev-dependencies]
+# proof
+base-zk-client.workspace = true
+base-proof-rpc.workspace = true
+
+# misc
+indicatif.workspace = true
