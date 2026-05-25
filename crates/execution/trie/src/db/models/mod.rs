@@ -11,20 +11,24 @@ mod version;
 pub use version::*;
 mod storage;
 pub use storage::*;
+mod key;
+pub use key::*;
+mod value;
+pub use value::*;
 mod change_set;
 mod kv;
 use std::fmt;
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, BlockNumber};
 pub use change_set::*;
 pub use kv::*;
 use reth_db::{
-    TableSet, TableType, TableViewer,
+    BlockNumberList, TableSet, TableType, TableViewer,
     table::{DupSort, TableInfo},
     tables,
 };
-use reth_primitives_traits::Account;
-use reth_trie_common::{BranchNodeCompact, StoredNibbles};
+use reth_primitives_traits::{Account, StorageEntry};
+use reth_trie_common::{BranchNodeCompact, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey};
 
 tables! {
     /// Stores historical branch nodes for the account state trie.
@@ -81,5 +85,89 @@ tables! {
     table BlockChangeSet {
         type Key = u64; // Block number
         type Value = ChangeSet;
+    }
+
+    /// Tracks the active proof window for the V2 schema.
+    table V2ProofWindow {
+      type Key = ProofWindowKey;
+      type Value = BlockNumberHash;
+    }
+
+    /// V2 hashed account history bitmap shards.
+    table V2HashedAccountsHistory {
+        type Key = HashedAccountShardedKey;
+        type Value = BlockNumberList;
+    }
+
+    /// V2 hashed account old-value changesets.
+    table V2HashedAccountChangeSets {
+        type Key = BlockNumber;
+        type Value = HashedAccountBeforeTx;
+        type SubKey = B256;
+    }
+
+    /// V2 hashed account current state.
+    table V2HashedAccounts {
+        type Key = B256;
+        type Value = Account;
+    }
+
+    /// V2 hashed storage history bitmap shards.
+    table V2HashedStoragesHistory {
+        type Key = HashedStorageShardedKey;
+        type Value = BlockNumberList;
+    }
+
+    /// V2 hashed storage old-value changesets.
+    table V2HashedStorageChangeSets {
+        type Key = BlockNumberHashedAddress;
+        type Value = StorageEntry;
+        type SubKey = B256;
+    }
+
+    /// V2 hashed storage current state.
+    table V2HashedStorages {
+        type Key = B256;
+        type Value = StorageEntry;
+        type SubKey = B256;
+    }
+
+    /// V2 account trie history bitmap shards.
+    table V2AccountsTrieHistory {
+        type Key = AccountTrieShardedKey;
+        type Value = BlockNumberList;
+    }
+
+    /// V2 account trie old-value changesets.
+    table V2AccountTrieChangeSets {
+        type Key = BlockNumber;
+        type Value = TrieChangeSetsEntry;
+        type SubKey = StoredNibblesSubKey;
+    }
+
+    /// V2 account trie current state.
+    table V2AccountsTrie {
+        type Key = StoredNibbles;
+        type Value = BranchNodeCompact;
+    }
+
+    /// V2 storage trie history bitmap shards.
+    table V2StoragesTrieHistory {
+        type Key = StorageTrieShardedKey;
+        type Value = BlockNumberList;
+    }
+
+    /// V2 storage trie old-value changesets.
+    table V2StorageTrieChangeSets {
+        type Key = BlockNumberHashedAddress;
+        type Value = TrieChangeSetsEntry;
+        type SubKey = StoredNibblesSubKey;
+    }
+
+    /// V2 storage trie current state.
+    table V2StoragesTrie {
+        type Key = B256;
+        type Value = StorageTrieEntry;
+        type SubKey = StoredNibblesSubKey;
     }
 }

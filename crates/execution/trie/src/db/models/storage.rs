@@ -135,6 +135,8 @@ pub enum ProofWindowKey {
     LatestBlock = 1,
     /// Anchor block from where the  initial state initialization started
     InitialStateAnchor = 2,
+    /// Proof storage schema version marker.
+    SchemaVersion = 3,
 }
 
 impl Encode for ProofWindowKey {
@@ -151,6 +153,7 @@ impl Decode for ProofWindowKey {
             Some(&0) => Ok(Self::EarliestBlock),
             Some(&1) => Ok(Self::LatestBlock),
             Some(&2) => Ok(Self::InitialStateAnchor),
+            Some(&3) => Ok(Self::SchemaVersion),
             _ => Err(DatabaseError::Decode),
         }
     }
