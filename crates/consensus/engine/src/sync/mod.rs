@@ -76,7 +76,7 @@ pub async fn find_starting_forkchoice<EngineClient_: EngineClient>(
 
     // Search for the highest `safe` block that's L1 origin is at least older than the sequencing
     // window, relative to the L1 origin of the `unsafe` block.
-    let mut safe_cursor = current_fc.un_safe;
+    let mut safe_cursor = current_fc.safe;
     loop {
         info!(
             target: "sync_start",
