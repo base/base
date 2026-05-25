@@ -2,6 +2,7 @@ target/
 .idea/
 .DS_Store
 .devnet/
+.zk-prover/
 .sisyphus/
 eif*.bin
 docs/specs/node_modules/
