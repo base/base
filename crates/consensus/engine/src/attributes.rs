@@ -194,6 +194,12 @@ impl AttributesMatch {
             }
             Some((0, e)) if e != 0 => {
                 error!(
+                    "Holocene EIP1559 params cannot have a 0 elasticity multiplier unless denominator is also 0. This is a bug"
+                );
+                return AttributesMismatch::InvalidEIP1559ParamsCombination.into();
+            }
+            Some((ae, 0)) if ae != 0 => {
+                error!(
                     "Holocene EIP1559 params cannot have a 0 denominator unless elasticity is also 0. This is a bug"
                 );
                 return AttributesMismatch::InvalidEIP1559ParamsCombination.into();
@@ -386,7 +392,8 @@ pub enum AttributesMismatch {
     InvalidExtraDataVersion,
     /// An unknown extra data decoding error occurred.
     UnknownExtraDataDecodingError(EIP1559ParamError),
-    /// Holocene EIP1559 params cannot have a 0 denominator unless elasticity is also 0
+    /// Holocene EIP1559 params have an invalid (elasticity, denominator) combination:
+    /// either elasticity is 0 with non-zero denominator, or denominator is 0 with non-zero elasticity.
     InvalidEIP1559ParamsCombination,
     /// The EIP1559 base fee parameters of the attributes and the block don't match
     EIP1559Parameters(BaseFeeParams, BaseFeeParams),
@@ -905,7 +912,8 @@ mod tests {
         assert!(check.is_mismatch());
     }
 
-    /// Edge case: if the elasticity multiplier is 0, the max change denominator cannot be 0 as well
+    /// Edge case: elasticity multiplier is 0 with a non-zero denominator, which is an invalid
+    /// combination (only (0, 0) is allowed as a sentinel for protocol defaults).
     #[test]
     fn test_eip1559_parameters_combination_mismatch() {
         let (cfg, mut attributes, mut block) = eip1559_test_setup();
@@ -915,6 +923,34 @@ mod tests {
             BaseFeeParams { max_change_denominator: 5, elasticity_multiplier: 0 },
         )
         .unwrap();
+        let eip1559_params: FixedBytes<8> =
+            eip1559_extra_params.clone().split_off(1).as_ref().try_into().unwrap();
+
+        attributes.attributes.eip_1559_params = Some(eip1559_params);
+        block.header.extra_data = eip1559_extra_params;
+
+        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        assert_eq!(
+            check,
+            AttributesMatch::Mismatch(AttributesMismatch::InvalidEIP1559ParamsCombination)
+        );
+        assert!(check.is_mismatch());
+    }
+
+    /// Edge case: denominator is 0 with a non-zero elasticity multiplier — also an invalid
+    /// combination that would cause division-by-zero in base fee calculations.
+    #[test]
+    fn test_eip1559_parameters_zero_denominator_combination_mismatch() {
+        use alloy_primitives::B64;
+        use core::str::FromStr;
+
+        let (cfg, mut attributes, mut block) = eip1559_test_setup();
+
+        // Encode (elasticity=6, denominator=0): B64 layout is [denominator_be][elasticity_be]
+        // denominator=0 → 0x00000000, elasticity=6 → 0x00000006 → B64: 0x0000000000000006
+        let raw: B64 = B64::from_str("0x0000000000000006").unwrap();
+        let eip1559_extra_params =
+            HoloceneExtraData::encode(raw, BaseFeeParams::new(250, 6)).unwrap();
         let eip1559_params: FixedBytes<8> =
             eip1559_extra_params.clone().split_off(1).as_ref().try_into().unwrap();
 
