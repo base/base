@@ -4,12 +4,17 @@ use std::fmt::Display;
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_provider::Network;
+use alloy_rpc_types_eth::Block as RpcBlock;
 use alloy_transport::TransportResult;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_protocol::L2BlockInfo;
+use base_common_rpc_types::Transaction;
+use base_protocol::{BlockInfo, FromBlockError, L2BlockInfo};
 
-use crate::{EngineClient, SyncStartError};
+use crate::{
+    EngineClient, ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
+    NoopForkchoiceCheckpointReader, SyncStartError,
+};
 
 /// An unsafe, safe, and finalized [`L2BlockInfo`] returned by the [`crate::find_starting_forkchoice`]
 /// function.
@@ -49,6 +54,20 @@ impl L2ForkchoiceState {
         cfg: &RollupConfig,
         engine_client: &EngineClient_,
     ) -> Result<Self, SyncStartError> {
+        Self::current_with_checkpoint_reader(cfg, engine_client, &NoopForkchoiceCheckpointReader)
+            .await
+    }
+
+    /// Like [`Self::current`], but falls back to `checkpoint_reader` for safe / finalized labels
+    /// when reth has pruned the L1 info deposit transaction body.
+    pub async fn current_with_checkpoint_reader<
+        EngineClient_: EngineClient,
+        CheckpointReader: ForkchoiceCheckpointReader + ?Sized,
+    >(
+        cfg: &RollupConfig,
+        engine_client: &EngineClient_,
+        checkpoint_reader: &CheckpointReader,
+    ) -> Result<Self, SyncStartError> {
         let finalized = {
             let rpc_block =
                 match get_block_compat(engine_client, BlockNumberOrTag::Finalized.into()).await {
@@ -59,19 +78,25 @@ impl L2ForkchoiceState {
                         .await?
                         .ok_or(SyncStartError::BlockNotFound(cfg.genesis.l2.number.into()))?,
                     Err(e) => return Err(e.into()),
-                }
-                .into_consensus();
-
-            L2BlockInfo::from_block_and_genesis(
-                &rpc_block.map_transactions(|tx| tx.inner.inner.into_inner()),
-                &cfg.genesis,
-            )?
+                };
+            block_info_from_reth_or_checkpoint(
+                cfg,
+                ForkchoiceCheckpointLabel::Finalized,
+                rpc_block,
+                checkpoint_reader,
+            )
+            .await?
         };
         let safe = match get_block_compat(engine_client, BlockNumberOrTag::Safe.into()).await {
-            Ok(Some(block)) => L2BlockInfo::from_block_and_genesis(
-                &block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
-                &cfg.genesis,
-            )?,
+            Ok(Some(block)) => {
+                block_info_from_reth_or_checkpoint(
+                    cfg,
+                    ForkchoiceCheckpointLabel::Safe,
+                    block,
+                    checkpoint_reader,
+                )
+                .await?
+            }
             Ok(None) => finalized,
             Err(e) => return Err(e.into()),
         };
@@ -86,6 +111,51 @@ impl L2ForkchoiceState {
         };
 
         Ok(Self { un_safe, safe, finalized })
+    }
+}
+
+async fn block_info_from_reth_or_checkpoint<
+    CheckpointReader: ForkchoiceCheckpointReader + ?Sized,
+>(
+    cfg: &RollupConfig,
+    label: ForkchoiceCheckpointLabel,
+    rpc_block: RpcBlock<Transaction>,
+    checkpoint_reader: &CheckpointReader,
+) -> Result<L2BlockInfo, SyncStartError> {
+    let block = rpc_block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner());
+    match L2BlockInfo::from_block_and_genesis(&block, &cfg.genesis) {
+        Ok(block_info) => Ok(block_info),
+        Err(err @ FromBlockError::MissingL1InfoDeposit(_)) => {
+            let header = BlockInfo::from(&block);
+            let Some(checkpoint) = checkpoint_reader.checkpoint(label).await? else {
+                return Err(err.into());
+            };
+            if checkpoint.block_info != header {
+                warn!(
+                    target: "sync_start",
+                    label = label.as_str(),
+                    reth_number = header.number,
+                    reth_hash = %header.hash,
+                    reth_parent_hash = %header.parent_hash,
+                    reth_timestamp = header.timestamp,
+                    checkpoint_number = checkpoint.block_info.number,
+                    checkpoint_hash = %checkpoint.block_info.hash,
+                    checkpoint_parent_hash = %checkpoint.block_info.parent_hash,
+                    checkpoint_timestamp = checkpoint.block_info.timestamp,
+                    "forkchoice checkpoint does not match reth labeled block header"
+                );
+                return Err(err.into());
+            }
+            warn!(
+                target: "sync_start",
+                label = label.as_str(),
+                number = checkpoint.block_info.number,
+                hash = %checkpoint.block_info.hash,
+                "using forkchoice checkpoint because reth block body is pruned"
+            );
+            Ok(checkpoint)
+        }
+        Err(err) => Err(err.into()),
     }
 }
 
