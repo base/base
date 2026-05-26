@@ -41,6 +41,8 @@ use crate::{BaseBlockAssembler, BaseEvmEnvBuilder, BaseRethReceiptBuilder};
 pub struct BaseNextBlockEnvAttributes {
     /// The timestamp of the next block.
     pub timestamp: u64,
+    /// The millisecond component of the next block timestamp.
+    pub timestamp_millis_part: Option<u16>,
     /// The suggested fee recipient for the next block.
     pub suggested_fee_recipient: Address,
     /// The randomness value for the next block.
@@ -60,6 +62,7 @@ impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::
     fn build_pending_env(parent: &SealedHeader<H>) -> Self {
         Self {
             timestamp: parent.timestamp().saturating_add(12),
+            timestamp_millis_part: None,
             suggested_fee_recipient: parent.beneficiary(),
             prev_randao: B256::random(),
             gas_limit: parent.gas_limit(),
