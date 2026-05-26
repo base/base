@@ -334,9 +334,9 @@ where
                     if create.code.is_empty() || create.initial_owners.is_empty() {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
-                    Self::validate_owner_iter(
-                        create.initial_owners.iter().map(|o| (&o.verifier, &o.owner_id)),
-                    )?;
+                    Self::validate_owner_iter(&create.initial_owners, |o| {
+                        (&o.verifier, &o.owner_id)
+                    })?;
                 }
                 AccountChange::ConfigChange(cfg) => {
                     config_count += 1;
@@ -349,9 +349,11 @@ where
                     if cfg.auth.len() < 20 {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
-                    Self::validate_owner_iter(
-                        cfg.owner_changes.iter().map(|o| (&o.verifier, &o.owner_id)),
-                    )?;
+                    let cfg_verifier = Address::from_slice(&cfg.auth[..20]);
+                    if cfg_verifier == Eip8130Constants::REVOKED_VERIFIER {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
+                    Self::validate_owner_iter(&cfg.owner_changes, |o| (&o.verifier, &o.owner_id))?;
                 }
                 AccountChange::Delegation(_) => {
                     delegation_count += 1;
@@ -365,15 +367,22 @@ where
     }
 
     /// Shared validation for any owner-bearing slice (`initial_owners` on
-    /// `Create`, `owner_changes` on `ConfigChange`). Enforces that every
-    /// verifier address is at or above the `ECRECOVER_VERIFIER` floor, never
-    /// equals the `REVOKED_VERIFIER` sentinel, and that no two entries share
-    /// the same `owner_id`.
-    fn validate_owner_iter<'a>(
-        owners: impl Iterator<Item = (&'a Address, &'a B256)>,
+    /// `Create`, `owner_changes` on `ConfigChange`). Enforces that the slice
+    /// length is bounded by [`Eip8130Constants::MAX_OWNERS_PER_ENTRY`] (anti-DoS
+    /// cap on memory + work spent on duplicate detection), that every verifier
+    /// address is at or above the `ECRECOVER_VERIFIER` floor, never equals the
+    /// `REVOKED_VERIFIER` sentinel, and that no two entries share the same
+    /// `owner_id`.
+    fn validate_owner_iter<T>(
+        owners: &[T],
+        project: impl Fn(&T) -> (&Address, &B256),
     ) -> Result<(), InvalidPoolTransactionError> {
+        if owners.len() > Eip8130Constants::MAX_OWNERS_PER_ENTRY {
+            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+        }
         let mut seen = BTreeSet::new();
-        for (verifier, owner_id) in owners {
+        for entry in owners {
+            let (verifier, owner_id) = project(entry);
             if *verifier < Eip8130Constants::ECRECOVER_VERIFIER
                 || *verifier == Eip8130Constants::REVOKED_VERIFIER
             {
@@ -928,6 +937,39 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn rejects_eip8130_create_with_too_many_initial_owners() {
+        let mut entry = make_valid_create_entry();
+        entry.initial_owners.clear();
+        for i in 0..(Eip8130Constants::MAX_OWNERS_PER_ENTRY + 1) {
+            entry.initial_owners.push(make_initial_owner(i as u8));
+        }
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::Create(entry)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn accepts_eip8130_create_with_exactly_max_initial_owners() {
+        let mut entry = make_valid_create_entry();
+        entry.initial_owners.clear();
+        for i in 0..Eip8130Constants::MAX_OWNERS_PER_ENTRY {
+            entry.initial_owners.push(make_initial_owner(i as u8));
+        }
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::Create(entry)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert!(
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+        );
+    }
+
     fn make_valid_config_change() -> ConfigChange {
         ConfigChange {
             chain_id: 0,
@@ -958,6 +1000,25 @@ mod tests {
     fn rejects_eip8130_config_change_with_short_auth() {
         let cfg =
             ConfigChange { auth: Bytes::from_static(&[0u8; 5]), ..make_valid_config_change() };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    // Mirrors the `sender_auth`/`payer_auth` rejection of a `REVOKED_VERIFIER`
+    // prefix: the per-`ConfigChange` `auth` blob must use a live verifier so the
+    // mempool never propagates a config-change scoped to a revoked authority.
+    #[test]
+    fn rejects_eip8130_config_change_with_revoked_verifier_in_auth() {
+        let cfg = ConfigChange {
+            auth: Bytes::from(Eip8130Constants::REVOKED_VERIFIER.to_vec()),
+            ..make_valid_config_change()
+        };
         let tx = TxEip8130 {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()
@@ -1002,6 +1063,27 @@ mod tests {
             owner_changes: vec![mk(dup_id), mk(dup_id)],
             ..make_valid_config_change()
         };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn rejects_eip8130_config_change_with_too_many_owner_changes() {
+        let owner_changes = (0..(Eip8130Constants::MAX_OWNERS_PER_ENTRY + 1))
+            .map(|i| OwnerChange {
+                change_type: OwnerChangeType::Authorize,
+                verifier: ok_verifier(),
+                owner_id: B256::repeat_byte(i as u8),
+                scope: Scope::UNRESTRICTED,
+            })
+            .collect();
+        let cfg = ConfigChange { owner_changes, ..make_valid_config_change() };
         let tx = TxEip8130 {
             account_changes: vec![AccountChange::ConfigChange(cfg)],
             ..minimal_valid_eoa_tx()

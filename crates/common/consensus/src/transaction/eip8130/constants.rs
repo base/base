@@ -112,6 +112,15 @@ impl Eip8130Constants {
     /// `NONCE_KEY_MAX` transactions whose `expiry` exceeds a short window"),
     /// a tight window bounds the replay surface in the absence of nonce state.
     pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 10;
+
+    /// Maximum number of owner entries the mempool accepts in a single
+    /// `Create.initial_owners` or `ConfigChange.owner_changes` slice. Bounds
+    /// per-transaction memory and CPU spent on duplicate-owner_id detection
+    /// at admission time. Combined with [`Self::MAX_CONFIG_CHANGES_PER_TX`]
+    /// this caps total owner work per tx at
+    /// `MAX_CONFIG_CHANGES_PER_TX * MAX_OWNERS_PER_ENTRY + MAX_OWNERS_PER_ENTRY`
+    /// (config-change `owner_changes` + one `Create.initial_owners`).
+    pub const MAX_OWNERS_PER_ENTRY: usize = 32;
 }
 
 #[cfg(test)]
