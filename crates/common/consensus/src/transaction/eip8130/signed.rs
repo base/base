@@ -143,6 +143,32 @@ impl Eip8130Signed {
         self.tx.sender
     }
 
+    /// Recovers the sender for the EOA-path EIP-8130 transaction.
+    ///
+    /// Returns `Ok(None)` when [`Self::explicit_sender`] is `Some(_)` — the
+    /// configured-owner path does not require ecrecover because the sender
+    /// address is already in the transaction body.
+    ///
+    /// Returns `Ok(Some(addr))` when [`TxEip8130::sender`] is `None`: parses
+    /// the 65-byte `r || s || v` ECDSA payload in [`Self::sender_auth`] and
+    /// recovers the signer against [`TxEip8130::sender_signature_hash`].
+    ///
+    /// Returns `Err(_)` when the EOA payload is malformed (wrong length or
+    /// invalid signature). Callers should treat a missing sender + malformed
+    /// `sender_auth` as a hard rejection.
+    #[cfg(feature = "k256")]
+    pub fn recover_eoa_sender(
+        &self,
+    ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
+        if self.tx.sender.is_some() {
+            return Ok(None);
+        }
+        let signature = alloy_primitives::Signature::try_from(self.sender_auth.as_ref())
+            .map_err(|_| alloy_consensus::crypto::RecoveryError::new())?;
+        let hash = self.tx.sender_signature_hash();
+        alloy_consensus::crypto::secp256k1::recover_signer(&signature, hash).map(Some)
+    }
+
     fn rlp_payload_length(&self) -> usize {
         self.tx.rlp_encoded_fields_length() + self.sender_auth.length() + self.payer_auth.length()
     }
@@ -444,6 +470,42 @@ mod tests {
             signed.explicit_sender(),
             Some(address!("0x00000000000000000000000000000000000000aa"))
         );
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn recover_eoa_sender_returns_none_for_configured_owner() {
+        let signed = sample_signed(false);
+        assert!(signed.explicit_sender().is_some());
+        assert_eq!(signed.recover_eoa_sender().unwrap(), None);
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn recover_eoa_sender_recovers_eoa_signer() {
+        use alloy_signer::SignerSync;
+        use alloy_signer_local::PrivateKeySigner;
+
+        let signer = PrivateKeySigner::random();
+        let expected = signer.address();
+
+        let mut tx = sample_signed(false).into_tx();
+        tx.sender = None;
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let sender_auth = Bytes::from(signature.as_bytes().to_vec());
+        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+
+        assert_eq!(signed.recover_eoa_sender().unwrap(), Some(expected));
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn recover_eoa_sender_rejects_malformed_payload() {
+        let mut tx = sample_signed(false).into_tx();
+        tx.sender = None;
+        // 64 bytes is one short of a valid ECDSA r||s||v payload.
+        let signed = Eip8130Signed::new(tx, Bytes::from(vec![0u8; 64]), Bytes::new());
+        assert!(signed.recover_eoa_sender().is_err());
     }
 
     #[cfg(feature = "serde")]

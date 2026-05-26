@@ -3678,6 +3678,7 @@ dependencies = [
  "alloy-rpc-types-eth 2.0.5",
  "alloy-serde 2.0.5",
  "alloy-signer 2.0.5",
+ "alloy-signer-local 2.0.5",
  "arbitrary",
  "bincode 2.0.1",
  "bytes",
