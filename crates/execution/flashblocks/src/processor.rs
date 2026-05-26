@@ -401,6 +401,7 @@ where
 
             let block_env_attributes = BaseNextBlockEnvAttributes {
                 timestamp: assembled.base.timestamp,
+                timestamp_millis_part: None,
                 suggested_fee_recipient: assembled.base.fee_recipient,
                 prev_randao: assembled.base.prev_randao,
                 gas_limit: assembled.base.gas_limit,

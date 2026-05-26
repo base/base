@@ -1160,6 +1160,7 @@ impl BasePayloadBuilderCtx {
 
         let block_env_attributes = BaseNextBlockEnvAttributes {
             timestamp,
+            timestamp_millis_part: None,
             suggested_fee_recipient: Default::default(),
             prev_randao: Default::default(),
             gas_limit: parent.gas_limit,

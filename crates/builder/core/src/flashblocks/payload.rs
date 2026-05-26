@@ -170,6 +170,7 @@ where
 
         let block_env_attributes = BaseNextBlockEnvAttributes {
             timestamp,
+            timestamp_millis_part: config.attributes.timestamp_millis_part,
             suggested_fee_recipient: config.attributes.payload_attributes.suggested_fee_recipient,
             prev_randao: config.attributes.payload_attributes.prev_randao,
             gas_limit: config.attributes.gas_limit.unwrap_or(config.parent_header.gas_limit),
