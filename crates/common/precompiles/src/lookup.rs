@@ -40,8 +40,12 @@ impl BerylLookup {
             B20Variant::B20 => {
                 Some(B20TokenPrecompile::create_precompile_with_observer(*address, observer))
             }
-            B20Variant::Stablecoin => Some(B20StablecoinPrecompile::create_precompile(*address)),
-            B20Variant::Security => Some(B20SecurityPrecompile::create_precompile(*address)),
+            B20Variant::Stablecoin => {
+                Some(B20StablecoinPrecompile::create_precompile_with_observer(*address, observer))
+            }
+            B20Variant::Security => {
+                Some(B20SecurityPrecompile::create_precompile_with_observer(*address, observer))
+            }
         }
     }
 }

@@ -174,6 +174,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     /// Builds a [`PrecompilesMap`] with all Base precompiles for this spec installed and observed.
     ///
     /// For Beryl and later, this also installs the dynamic token and registry precompiles.
+    #[must_use = "install_with_observer returns the PrecompilesMap containing all installed Base precompiles"]
     pub fn install_with_observer<O>(self, observer: O) -> PrecompilesMap
     where
         O: PrecompileCallObserver,

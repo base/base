@@ -18,17 +18,36 @@ pub trait PrecompileCallObserver: Clone + Send + Sync + 'static {
         Self: Sized,
     {
         self.start(label);
-        let result = f();
-        self.end(label);
-        result
+        let _guard = EndGuard { observer: self, label };
+        f()
     }
 }
 
 impl PrecompileCallObserver for NoopPrecompileCallObserver {}
 
+struct EndGuard<'a, O>
+where
+    O: PrecompileCallObserver,
+{
+    observer: &'a O,
+    label: &'static str,
+}
+
+impl<O> Drop for EndGuard<'_, O>
+where
+    O: PrecompileCallObserver,
+{
+    fn drop(&mut self) {
+        self.observer.end(self.label);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        panic::{AssertUnwindSafe, catch_unwind},
+        sync::{Arc, Mutex},
+    };
 
     use super::PrecompileCallObserver;
 
@@ -63,6 +82,20 @@ mod tests {
         let result = observer.observe("precompile-b20-transfer", || 42);
 
         assert_eq!(result, 42);
+        assert_eq!(
+            observer.events(),
+            [("start", "precompile-b20-transfer"), ("end", "precompile-b20-transfer"),]
+        );
+    }
+
+    #[test]
+    fn observe_ends_when_observed_work_panics() {
+        let observer = RecordingObserver::new();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            observer.observe("precompile-b20-transfer", || panic!("observed panic"));
+        }));
+
+        assert!(result.is_err());
         assert_eq!(
             observer.events(),
             [("start", "precompile-b20-transfer"), ("end", "precompile-b20-transfer"),]
