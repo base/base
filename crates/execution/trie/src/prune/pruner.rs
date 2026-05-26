@@ -400,7 +400,7 @@ mod tests {
             .withf(move |block_num| *block_num == 4)
             .returning(move |_| Ok(Some(b256(4))));
 
-        let pruner = BaseProofStoragePruner::new(store.clone(), block_hash_reader, 1, 1000);
+        let pruner = BaseProofStoragePruner::new(Arc::clone(&store), block_hash_reader, 1, 1000);
         let out = pruner.run_inner().expect("pruner ok");
         assert_eq!(out.start_block, 0);
         assert_eq!(out.end_block, 4, "pruned up to 4 (inclusive); new earliest is 4");
