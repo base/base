@@ -254,7 +254,7 @@ where
     {
         let provider = provider_factory.db_ref();
         let tx = provider.tx()?;
-        let initialization_job = InitializationJob::new(storage.clone(), tx);
+        let initialization_job = InitializationJob::new(Arc::clone(&storage), tx);
         initialization_job.run(last_block_number, last_block_hash)?;
     }
 
@@ -299,7 +299,8 @@ where
 #[test]
 fn test_execute_and_store_block_updates() {
     let dir = TempDir::new().unwrap();
-    let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
+    let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
+        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
 
     // Create a keypair for signing transactions
     let secp = Secp256k1::new();
@@ -332,7 +333,7 @@ fn test_execute_and_store_block_updates() {
 fn test_execute_and_store_block_updates_missing_parent_block() {
     let dir = TempDir::new().unwrap();
     let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
+        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -351,7 +352,7 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
         provider_factory.clone(),
         Arc::clone(&chain_spec),
         key_pair,
-        storage.clone(),
+        Arc::clone(&storage),
     )
     .unwrap();
 
@@ -386,7 +387,7 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
 fn test_execute_and_store_block_updates_state_root_mismatch() {
     let dir = TempDir::new().unwrap();
     let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
+        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -408,7 +409,7 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
         provider_factory.clone(),
         Arc::clone(&chain_spec),
         key_pair,
-        storage.clone(),
+        Arc::clone(&storage),
     )
     .unwrap();
 
@@ -450,7 +451,8 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
 #[test]
 fn test_multiple_blocks_before_and_after_initialization() {
     let dir = TempDir::new().unwrap();
-    let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
+    let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
+        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -487,7 +489,8 @@ fn test_multiple_blocks_before_and_after_initialization() {
 #[test]
 fn test_blocks_with_multiple_transactions() {
     let dir = TempDir::new().unwrap();
-    let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
+    let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
+        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
