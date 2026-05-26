@@ -12,11 +12,11 @@ default:
 
 # Stops devnet, deletes data, and starts fresh (3-node HA conductor cluster)
 up zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "ha" "{{ zk }}"
+    just --justfile {{ source_file() }} _up-devnet "ha" {{ quote(zk) }}
 
 # Stops devnet, deletes data, and starts fresh with a single sequencer (no conductor)
 up-single zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "base" "{{ zk }}"
+    just --justfile {{ source_file() }} _up-devnet "base" {{ quote(zk) }}
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
 profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
