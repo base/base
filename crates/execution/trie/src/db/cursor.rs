@@ -587,10 +587,13 @@ impl TrieCursor for MdbxV2AccountTrieCursor {
         path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
         let key = StoredNibbles(path);
-        Ok(self
-            .inner
-            .seek(key.clone())
-            .and_then(|(row_key, node)| (row_key == key).then_some((row_key.0, node))))
+        if let Some((row_key, node)) = self.inner.seek(key.clone()) {
+            if row_key == key {
+                return Ok(Some((row_key.0, node)));
+            }
+        }
+        self.inner.reset();
+        Ok(None)
     }
 
     fn seek(
@@ -630,17 +633,21 @@ impl MdbxV2StorageCursor {
     ) -> BaseProofsStorageResult<Self> {
         let mut rows: BTreeMap<(B256, B256), Option<U256>> = BTreeMap::new();
         let mut current = tx.cursor_dup_read::<V2HashedStorages>()?;
-        let mut current_row = current.seek(B256::ZERO)?;
-        while let Some((address, entry)) = current_row {
+        if let Some((address, entry)) = current.seek_exact(hashed_address)? {
             rows.insert((address, entry.key), (!entry.value.is_zero()).then_some(entry.value));
-            current_row = current.next()?;
+            while let Some((address, entry)) = current.next_dup()? {
+                rows.insert((address, entry.key), (!entry.value.is_zero()).then_some(entry.value));
+            }
         }
 
         let mut future_changes: BTreeMap<(B256, B256), Option<u64>> = BTreeMap::new();
         let mut history = tx.cursor_read::<V2HashedStoragesHistory>()?;
         let mut history_row =
-            history.seek(HashedStorageShardedKey::new(B256::ZERO, B256::ZERO, 0))?;
+            history.seek(HashedStorageShardedKey::new(hashed_address, B256::ZERO, 0))?;
         while let Some((key, list)) = history_row {
+            if key.hashed_address != hashed_address {
+                break;
+            }
             let storage_key = (key.hashed_address, key.sharded_key.key);
             min_change_after(
                 future_changes.entry(storage_key).or_default(),
@@ -739,17 +746,24 @@ impl MdbxV2StorageTrieCursor {
     ) -> BaseProofsStorageResult<Self> {
         let mut rows: BTreeMap<(B256, StoredNibbles), Option<BranchNodeCompact>> = BTreeMap::new();
         let mut current = tx.cursor_dup_read::<V2StoragesTrie>()?;
-        let mut current_row = current.seek(B256::ZERO)?;
-        while let Some((address, entry)) = current_row {
+        if let Some((address, entry)) = current.seek_exact(hashed_address)? {
             rows.insert((address, StoredNibbles(entry.nibbles.0)), Some(entry.node));
-            current_row = current.next()?;
+            while let Some((address, entry)) = current.next_dup()? {
+                rows.insert((address, StoredNibbles(entry.nibbles.0)), Some(entry.node));
+            }
         }
 
         let mut future_changes: BTreeMap<(B256, StoredNibbles), Option<u64>> = BTreeMap::new();
         let mut history = tx.cursor_read::<V2StoragesTrieHistory>()?;
-        let mut history_row =
-            history.seek(StorageTrieShardedKey::new(B256::ZERO, StoredNibbles::default(), 0))?;
+        let mut history_row = history.seek(StorageTrieShardedKey::new(
+            hashed_address,
+            StoredNibbles::default(),
+            0,
+        ))?;
         while let Some((key, list)) = history_row {
+            if key.hashed_address != hashed_address {
+                break;
+            }
             let storage_key = (key.hashed_address, key.key.clone());
             min_change_after(
                 future_changes.entry(storage_key.clone()).or_default(),
@@ -1470,6 +1484,26 @@ mod tests {
     }
 
     #[test]
+    fn account_seek_exact_miss_does_not_skip_next_row() {
+        let db = setup_db();
+        let missing = Nibbles::from_nibbles([0x01]);
+        let present = Nibbles::from_nibbles([0x02]);
+
+        {
+            let wtx = db.tx_mut().expect("rw tx");
+            append_account_trie(&wtx, StoredNibbles(present), 10, Some(node()));
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro tx");
+        let mut cur = account_trie_cursor(&tx, 100);
+
+        assert!(TrieCursor::seek_exact(&mut cur, missing).expect("ok").is_none());
+        let out = TrieCursor::next(&mut cur).expect("ok").expect("next row");
+        assert_eq!(out.0, present);
+    }
+
+    #[test]
     fn account_seek_and_next_and_current_roundtrip() {
         let db = setup_db();
         let k1 = Nibbles::from_nibbles([0x01]);
@@ -1601,6 +1635,27 @@ mod tests {
             let out = TrieCursor::seek_exact(&mut cur_a, p3).expect("ok");
             assert!(out.is_none(), "no exact p3 under A");
         }
+    }
+
+    #[test]
+    fn storage_seek_exact_miss_does_not_skip_next_row() {
+        let db = setup_db();
+        let addr = B256::from([0x23; 32]);
+        let missing = Nibbles::from_nibbles([0x01]);
+        let present = Nibbles::from_nibbles([0x02]);
+
+        {
+            let wtx = db.tx_mut().expect("rw tx");
+            append_storage_trie(&wtx, addr, present, 10, Some(node()));
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro tx");
+        let mut cur = storage_trie_cursor(&tx, 100, addr);
+
+        assert!(TrieCursor::seek_exact(&mut cur, missing).expect("ok").is_none());
+        let out = TrieCursor::next(&mut cur).expect("ok").expect("next row");
+        assert_eq!(out.0, present);
     }
 
     #[test]
