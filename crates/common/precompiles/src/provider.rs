@@ -167,6 +167,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     /// Builds a [`PrecompilesMap`] with all Base precompiles for this spec installed.
     ///
     /// For Beryl and later, this also installs the dynamic token and registry precompiles.
+    #[must_use = "install returns the PrecompilesMap containing all installed Base precompiles"]
     pub fn install(self) -> PrecompilesMap {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
