@@ -143,7 +143,9 @@ impl Eip8130Signed {
         self.tx.sender
     }
 
-    /// Recovers the sender for the EOA-path EIP-8130 transaction.
+    /// Recovers the sender for the EOA-path EIP-8130 transaction using the
+    /// **checked** secp256k1 recovery (rejects upper-half `s` values per
+    /// EIP-2).
     ///
     /// Returns `Ok(None)` when [`Self::explicit_sender`] is `Some(_)` — the
     /// configured-owner path does not require ecrecover because the sender
@@ -160,13 +162,38 @@ impl Eip8130Signed {
     pub fn recover_eoa_sender(
         &self,
     ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
+        self.recover_eoa_sender_with(alloy_consensus::crypto::secp256k1::recover_signer)
+    }
+
+    /// Same as [`Self::recover_eoa_sender`] but uses the **unchecked** recovery
+    /// path, accepting signatures with non-canonical (upper-half) `s` values.
+    ///
+    /// Intended for use from `SignerRecoverable::recover_signer_unchecked`
+    /// dispatchers where the contract guarantees no upper-half-`s` filtering;
+    /// using the checked variant from those paths would silently tighten the
+    /// validation contract.
+    #[cfg(feature = "k256")]
+    pub fn recover_eoa_sender_unchecked(
+        &self,
+    ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
+        self.recover_eoa_sender_with(alloy_consensus::crypto::secp256k1::recover_signer_unchecked)
+    }
+
+    #[cfg(feature = "k256")]
+    fn recover_eoa_sender_with(
+        &self,
+        recover: impl FnOnce(
+            &alloy_primitives::Signature,
+            B256,
+        ) -> Result<Address, alloy_consensus::crypto::RecoveryError>,
+    ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
         if self.tx.sender.is_some() {
             return Ok(None);
         }
         let signature = alloy_primitives::Signature::try_from(self.sender_auth.as_ref())
             .map_err(|_| alloy_consensus::crypto::RecoveryError::new())?;
         let hash = self.tx.sender_signature_hash();
-        alloy_consensus::crypto::secp256k1::recover_signer(&signature, hash).map(Some)
+        recover(&signature, hash).map(Some)
     }
 
     fn rlp_payload_length(&self) -> usize {
@@ -506,6 +533,52 @@ mod tests {
         // 64 bytes is one short of a valid ECDSA r||s||v payload.
         let signed = Eip8130Signed::new(tx, Bytes::from(vec![0u8; 64]), Bytes::new());
         assert!(signed.recover_eoa_sender().is_err());
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn recover_eoa_sender_unchecked_accepts_high_s_signature() {
+        use alloy_primitives::U256;
+        use alloy_signer::SignerSync;
+        use alloy_signer_local::PrivateKeySigner;
+
+        // secp256k1 curve order N.
+        const SECP256K1_N: U256 = U256::from_be_slice(&[
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c,
+            0xd0, 0x36, 0x41, 0x41,
+        ]);
+
+        let signer = PrivateKeySigner::random();
+        let expected = signer.address();
+
+        let mut tx = sample_signed(false).into_tx();
+        tx.sender = None;
+        let hash = tx.sender_signature_hash();
+
+        // Sign normally (low-s, EIP-2 canonical), then flip s into the upper half
+        // by replacing it with N - s and inverting parity.
+        let canonical = signer.sign_hash_sync(&hash).unwrap();
+        let high_s_sig = alloy_primitives::Signature::new(
+            canonical.r(),
+            SECP256K1_N - canonical.s(),
+            !canonical.v(),
+        );
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(high_s_sig.as_bytes().to_vec()), Bytes::new());
+
+        // The checked recovery rejects the high-s form (EIP-2);
+        // the unchecked recovery accepts it and recovers the same address.
+        assert!(signed.recover_eoa_sender().is_err());
+        assert_eq!(signed.recover_eoa_sender_unchecked().unwrap(), Some(expected));
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn recover_eoa_sender_unchecked_returns_none_for_configured_owner() {
+        let signed = sample_signed(false);
+        assert!(signed.explicit_sender().is_some());
+        assert_eq!(signed.recover_eoa_sender_unchecked().unwrap(), None);
     }
 
     #[cfg(feature = "serde")]
