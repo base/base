@@ -11,7 +11,7 @@ use base_common_genesis::RollupConfig;
 use base_consensus_derive::StatefulAttributesBuilder;
 use base_consensus_node::{
     Conductor, L1OriginSelector, NodeActor, PayloadBuilder, RecoveryModeGuard, SequencerActor,
-    SequencerActorError, SequencerAdminQuery,
+    SequencerActorError, SequencerAdminQuery, SequencerCadenceConfig,
 };
 use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{BlockInfo, L2BlockInfo};
@@ -269,6 +269,7 @@ impl L2Sequencer {
 
         let (admin_api_tx, admin_api_rx) = mpsc::channel(8);
         let cancellation_token = CancellationToken::new();
+        let actor_rollup_config = self.actor_rollup_config();
         let actor = SequencerActor {
             admin_api_rx,
             builder,
@@ -277,7 +278,8 @@ impl L2Sequencer {
             engine_client,
             is_active: false,
             recovery_mode: RecoveryModeGuard::new(false),
-            rollup_config: self.actor_rollup_config(),
+            rollup_config: Arc::clone(&actor_rollup_config),
+            cadence: SequencerCadenceConfig::from_legacy_block_time(actor_rollup_config.block_time),
             unsafe_payload_gossip_client: ActionUnsafePayloadGossipClient,
             sealer: None,
             pending_stop: None,

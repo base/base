@@ -2,7 +2,7 @@
 
 use std::{num::ParseIntError, time::Duration};
 
-use base_consensus_node::SequencerConfig;
+use base_consensus_node::{SequencerCadenceConfig, SequencerConfig};
 use clap::Parser;
 use url::Url;
 
@@ -81,6 +81,7 @@ impl SequencerArgs {
             conductor_rpc_url: self.conductor_rpc.clone(),
             conductor_binary_commit: self.conductor_binary_commit,
             conductor_rpc_timeout: self.conductor_rpc_timeout,
+            cadence: SequencerCadenceConfig::default(),
             l1_conf_delay: self.l1_confs,
         }
     }
