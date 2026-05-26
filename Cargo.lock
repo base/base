@@ -2311,6 +2311,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
+ "backon",
  "base-bundles",
  "base-metrics",
  "bytes",

@@ -29,6 +29,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 moka = { workspace = true, features = ["sync"] }
 jsonrpsee-types.workspace = true
+backon.workspace = true
 
 [dev-dependencies]
 base-bundles = { workspace = true, features = ["test-utils"] }

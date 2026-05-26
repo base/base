@@ -105,13 +105,11 @@ impl FilterType {
             payload.to_owned()
         };
 
-        let value = String::from_utf8(uncompressed_data);
-        if value.is_err() {
+        let Ok(value) = String::from_utf8(uncompressed_data) else {
             return false;
-        }
+        };
 
-        let json_result: Result<Value, _> = serde_json::from_str(value.unwrap().as_str());
-        match json_result {
+        match serde_json::from_str::<Value>(&value) {
             Ok(json) => {
                 let result = self.json_matches(&json);
                 trace!(result = result, filter_type = ?self, "Filter result");

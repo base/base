@@ -12,6 +12,7 @@ use aws_sdk_s3::{
     },
     primitives::ByteStream,
 };
+use backon::Retryable;
 use base_bundles::{AcceptedBundle, BundleExtensions, RejectedTransaction};
 use futures::future;
 use serde::{Deserialize, Serialize};
@@ -246,32 +247,42 @@ impl S3EventReaderWriter {
         let history_event = to_history_event(event);
         let content = serde_json::to_string(&history_event)?;
 
-        let put_request = self
-            .s3_client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(&s3_key)
-            .body(ByteStream::from(content.into_bytes()))
-            .if_none_match("*");
-
         let put_start = Instant::now();
-        match put_request.send().await {
+        let retry_strategy = backon::ExponentialBuilder::default()
+            .with_max_times(3)
+            .with_min_delay(std::time::Duration::from_millis(100));
+
+        let bucket_clone = self.bucket.clone();
+        let s3_key_clone = s3_key.clone();
+        let content_clone = content.clone();
+        let client_clone = self.s3_client.clone();
+
+        let retry_result = (|| async {
+            client_clone
+                .put_object()
+                .bucket(&bucket_clone)
+                .key(&s3_key_clone)
+                .body(ByteStream::from(content_clone.clone().into_bytes()))
+                .if_none_match("*")
+                .send()
+                .await
+        })
+        .retry(retry_strategy)
+        .await;
+
+        Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
+
+        match retry_result {
             Ok(_) => {
-                Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
                 debug!(s3_key = %s3_key, "wrote event to S3");
                 Ok(())
             }
             Err(ref e) if Self::is_conditional_write_conflict(e) => {
-                Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
                 Metrics::s3_conditional_conflicts().increment(1);
                 debug!(s3_key = %s3_key, "event already exists in S3, skipping");
                 Ok(())
             }
-            Err(e) => {
-                // TODO: retry with exponential backoff
-                Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
-                Err(anyhow::anyhow!("failed to write event to S3: {e}"))
-            }
+            Err(e) => Err(anyhow::anyhow!("failed to write event to S3: {e}")),
         }
     }
 
@@ -432,8 +443,13 @@ impl EventWriter for S3EventReaderWriter {
     async fn archive_event(&self, event: Event) -> Result<()> {
         let bundle_key = match &event.event {
             BundleEvent::Received { bundle, .. } => format!("{}", bundle.bundle_hash()),
-            // TODO: support other event types using bundle hash
-            _ => anyhow::bail!("archive_event only supports Received events"),
+            _ => {
+                if let Some(hash) = event.event.bundle_hash() {
+                    format!("{hash}")
+                } else {
+                    format!("{}", event.event.bundle_id())
+                }
+            }
         };
         let transaction_ids = event.event.transaction_ids();
 
