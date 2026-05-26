@@ -109,6 +109,12 @@ pub enum BaseProofsStorageError {
     /// Batch session used after its underlying transaction has been committed or aborted.
     #[error("Batch session used after its underlying transaction was closed")]
     BatchSessionClosed,
+    /// Existing proofs storage does not contain the expected V2 schema marker.
+    #[error("Unsupported proofs storage schema version: expected 2, found {actual:?}")]
+    UnsupportedSchemaVersion {
+        /// Schema version found in storage, or `None` when the marker is missing.
+        actual: Option<u64>,
+    },
 }
 
 impl From<BlockExecutionError> for BaseProofsStorageError {
