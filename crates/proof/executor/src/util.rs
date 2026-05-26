@@ -120,6 +120,7 @@ mod test {
                 parent_beacon_block_root: Default::default(),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: None,
             no_tx_pool: None,
             gas_limit: None,

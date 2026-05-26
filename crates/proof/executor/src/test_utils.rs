@@ -155,6 +155,7 @@ impl ExecutorTestFixtureCreator {
                 suggested_fee_recipient: executing_header.beneficiary,
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             gas_limit: Some(executing_header.gas_limit),
             transactions: Some(encoded_executing_transactions),
             no_tx_pool: None,

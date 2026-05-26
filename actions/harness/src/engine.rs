@@ -499,6 +499,7 @@ impl ActionEngineClient {
                 parent_beacon_block_root: None,
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: Some(payload.transactions.clone()),
             no_tx_pool: Some(true),
             gas_limit: Some(payload.gas_limit),
