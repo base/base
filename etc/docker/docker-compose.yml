@@ -767,7 +767,7 @@ services:
       - POSTGRES_SSLMODE=disable
       - OTEL_SERVICE_NAME=base-prover-zk
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
+      test: ["CMD", "curl", "-sf", "--max-time", "1", "telnet://localhost:9000"]
       interval: 250ms
       timeout: 1s
       retries: 240
