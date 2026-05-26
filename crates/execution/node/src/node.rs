@@ -173,6 +173,7 @@ impl PayloadAttributesBuilder<BasePayloadBuilderAttributes<BaseTxEnvelope>>
                     .then(B256::random),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: Some(vec![TX_SET_L1_BLOCK_BASE_MAINNET_BLOCK_1.into()]),
             no_tx_pool: None,
             gas_limit,
