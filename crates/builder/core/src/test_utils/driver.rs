@@ -181,6 +181,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
                     slot_number: None,
                     ..Default::default()
                 },
+                timestamp_millis_part: None,
                 transactions: Some(vec![block_info_tx].into_iter().chain(txs).collect()),
                 gas_limit: Some(self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)),
                 no_tx_pool,

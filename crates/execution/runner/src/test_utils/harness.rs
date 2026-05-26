@@ -191,6 +191,7 @@ impl TestHarness {
                     slot_number: None,
                     ..Default::default()
                 },
+                timestamp_millis_part: None,
                 transactions: Some(transactions),
                 gas_limit: Some(GAS_LIMIT),
                 no_tx_pool: Some(true),
