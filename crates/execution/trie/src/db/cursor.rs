@@ -447,7 +447,7 @@ impl<K: Ord + Clone, V: Clone> MaterializedCursor<K, V> {
         self.position.and_then(|position| self.rows.get(position).map(|(key, _)| key.clone()))
     }
 
-    fn reset(&mut self) {
+    const fn reset(&mut self) {
         self.position = None;
     }
 }
@@ -564,7 +564,7 @@ impl MdbxV2AccountTrieCursor {
         let mut changeset = tx.cursor_dup_read::<V2AccountTrieChangeSets>()?;
         for (key, changed_at) in future_changes {
             if let Some(block_number) = changed_at {
-                let subkey = StoredNibblesSubKey::from(key.0.clone());
+                let subkey = StoredNibblesSubKey::from(key.0);
                 let old = changeset
                     .seek_by_key_subkey(block_number, subkey.clone())?
                     .filter(|entry| entry.nibbles == subkey)
@@ -763,7 +763,7 @@ impl MdbxV2StorageTrieCursor {
         let mut changeset = tx.cursor_dup_read::<V2StorageTrieChangeSets>()?;
         for ((address, path), changed_at) in future_changes {
             if let Some(block_number) = changed_at {
-                let subkey = StoredNibblesSubKey::from(path.0.clone());
+                let subkey = StoredNibblesSubKey::from(path.0);
                 let old = changeset
                     .seek_by_key_subkey(
                         BlockNumberHashedAddress((block_number, address)),
@@ -799,7 +799,7 @@ impl TrieCursor for MdbxV2StorageTrieCursor {
         let rows = self.rows();
         let index = rows.partition_point(|(row_key, _)| row_key < &key);
         if index < rows.len() && rows[index].0 == key {
-            let row = (rows[index].0.0.clone(), rows[index].1.clone());
+            let row = (rows[index].0.0, rows[index].1.clone());
             self.position = Some(index);
             return Ok(Some(row));
         }
@@ -814,7 +814,7 @@ impl TrieCursor for MdbxV2StorageTrieCursor {
         let rows = self.rows();
         let index = rows.partition_point(|(row_key, _)| row_key.0 < path);
         if index < rows.len() {
-            let row = (rows[index].0.0.clone(), rows[index].1.clone());
+            let row = (rows[index].0.0, rows[index].1.clone());
             self.position = Some(index);
             return Ok(Some(row));
         }
@@ -826,7 +826,7 @@ impl TrieCursor for MdbxV2StorageTrieCursor {
         let rows = self.rows();
         let index = self.position.map_or(0, |position| position + 1);
         if index < rows.len() {
-            let row = (rows[index].0.0.clone(), rows[index].1.clone());
+            let row = (rows[index].0.0, rows[index].1.clone());
             self.position = Some(index);
             return Ok(Some(row));
         }
@@ -835,9 +835,7 @@ impl TrieCursor for MdbxV2StorageTrieCursor {
     }
 
     fn current(&mut self) -> Result<Option<Nibbles>, DatabaseError> {
-        Ok(self
-            .position
-            .and_then(|position| self.rows().get(position).map(|(key, _)| key.0.clone())))
+        Ok(self.position.and_then(|position| self.rows().get(position).map(|(key, _)| key.0)))
     }
 
     fn reset(&mut self) {
