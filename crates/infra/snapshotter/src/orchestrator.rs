@@ -129,7 +129,7 @@ impl<C: ContainerManager> Snapshotter<C> {
             .context("snapshot upload failed")?;
 
         info!(output_dir = %run_output_dir.display(), "cleaning up local artifacts");
-        if let Err(e) = std::fs::remove_dir_all(&run_output_dir) {
+        if let Err(e) = tokio::fs::remove_dir_all(&run_output_dir).await {
             error!(error = %e, "failed to clean up output directory");
         }
 

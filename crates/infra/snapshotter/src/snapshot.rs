@@ -132,6 +132,7 @@ impl SnapshotGenerator {
         for &(key, segment_name) in CHUNKED_COMPONENTS {
             let mut planned = Vec::new();
             let mut found_any = false;
+            let mut chunk_skipped = vec![false; num_chunks as usize];
 
             for i in 0..num_chunks {
                 let start = i * blocks_per_file;
@@ -147,6 +148,7 @@ impl SnapshotGenerator {
                 found_any = true;
 
                 if skip_ranges.contains(&(start, end)) {
+                    chunk_skipped[i as usize] = true;
                     continue;
                 }
 
@@ -197,6 +199,7 @@ impl SnapshotGenerator {
                         "chunk_sizes": chunk_sizes,
                         "chunk_decompressed_sizes": chunk_decompressed,
                         "chunk_output_files": chunk_output_files,
+                        "chunk_skipped": chunk_skipped,
                     }),
                 );
             }
@@ -739,5 +742,53 @@ mod tests {
             filenames.contains(&"headers-1500000-1999999.tar.zst".to_string()),
             "tip range should be compressed"
         );
+    }
+
+    #[test]
+    fn manifest_includes_chunk_skipped_field() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+
+        let db_dir = source.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::write(db_dir.join("mdbx.dat"), b"state").unwrap();
+
+        // 4 header chunks → skip chunk 0
+        let sf = source.path().join("static_files");
+        std::fs::create_dir_all(&sf).unwrap();
+        for i in 0..4u64 {
+            let start = i * 500_000;
+            let end = (i + 1) * 500_000 - 1;
+            std::fs::write(sf.join(format!("static_file_headers_{start}_{end}")), b"data").unwrap();
+        }
+
+        let mut remote = HashMap::new();
+        for &(key, _) in CHUNKED_COMPONENTS {
+            remote.insert(chunk_filename(key, 0, 499_999), 0u64);
+        }
+
+        SnapshotGenerator::generate_manifest(
+            source.path(),
+            output.path(),
+            8453,
+            Some(2_000_000),
+            Some(500_000),
+            &remote,
+        )
+        .unwrap();
+
+        let manifest_content =
+            std::fs::read_to_string(output.path().join("manifest.json")).unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(&manifest_content).unwrap();
+
+        let headers = &manifest["components"]["headers"];
+        let skipped =
+            headers["chunk_skipped"].as_array().expect("chunk_skipped should be an array");
+
+        assert_eq!(skipped.len(), 4, "should have 4 chunk entries");
+        assert_eq!(skipped[0], true, "chunk 0 should be marked as skipped");
+        assert_eq!(skipped[1], false, "chunk 1 (buffer) should not be skipped");
+        assert_eq!(skipped[2], false, "chunk 2 (buffer) should not be skipped");
+        assert_eq!(skipped[3], false, "chunk 3 (tip) should not be skipped");
     }
 }
