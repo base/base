@@ -367,7 +367,6 @@ mod tests {
 
     /// Helper: build a [`TransportError`] with message and raw JSON data.
     fn error_resp_with_data(msg: &str, data_json: &str) -> TransportError {
-        use serde_json::value::RawValue;
         let raw: Box<RawValue> = serde_json::from_str(data_json).unwrap();
         RpcError::ErrorResp(ErrorPayload {
             code: 3,
