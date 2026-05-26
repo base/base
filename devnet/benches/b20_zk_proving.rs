@@ -12,10 +12,8 @@ use std::time::Duration;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::SolCall;
-use base_common_precompiles::{
-    ActivationFeature, B20TokenPrecompile, B20TokenRole, B20Variant, IB20,
-};
+use alloy_sol_types::{SolCall, SolInterface};
+use base_common_precompiles::{ActivationFeature, B20TokenRole, B20Variant, IB20};
 use clap::Parser;
 use devnet::{
     B20PrecompileClient,
@@ -320,9 +318,9 @@ impl B20CallSender<'_> {
         C: SolCall,
     {
         let input = call.abi_encode();
-        let tracker_key =
-            <B20TokenPrecompile as base_common_precompiles::CalldataCycleTracker>::key_for_calldata(&input)
-            .ok_or_else(|| eyre::eyre!("missing B-20 cycle tracker key for {operation}"))?;
+        let tracker_key = IB20::IB20Calls::abi_decode(&input)
+            .map_err(|_| eyre::eyre!("failed to decode B-20 cycle tracker key for {operation}"))?
+            .as_label();
         self.display.tx_started(operation);
         let receipt = client.send_call_receipt(self.token, call, operation).await?;
         let report = OperationReport::from_receipt(operation, tracker_key, receipt)?;
