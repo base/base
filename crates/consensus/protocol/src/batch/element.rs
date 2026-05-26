@@ -3,7 +3,9 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::Bytes;
-use base_common_consensus::{BaseHeader, TIMESTAMP_MILLIS_PER_SECOND, TimestampMillisPartError};
+use base_common_consensus::{
+    BASE_BLOCK_TIME_MILLIS, BaseHeader, TIMESTAMP_MILLIS_PER_SECOND, TimestampMillisPartError,
+};
 
 use crate::SingleBatch;
 
@@ -41,6 +43,29 @@ impl SpanBatchElement {
             })
             .map(Some)
             .ok_or(TimestampMillisPartError::TimestampOverflow)
+    }
+
+    /// Validates and returns this element's full timestamp after a canonical parent timestamp.
+    pub fn validate_timestamp_millis_after(
+        &self,
+        parent_timestamp_millis: u64,
+    ) -> Result<u64, TimestampMillisPartError> {
+        let timestamp_millis =
+            self.timestamp_millis()?.ok_or(TimestampMillisPartError::MissingPart)?;
+
+        if timestamp_millis <= parent_timestamp_millis {
+            return Err(TimestampMillisPartError::NonIncreasingTimestamp {
+                child: timestamp_millis,
+                parent: parent_timestamp_millis,
+            });
+        }
+
+        let delta = timestamp_millis - parent_timestamp_millis;
+        if !delta.is_multiple_of(u64::from(BASE_BLOCK_TIME_MILLIS)) {
+            return Err(TimestampMillisPartError::NonSlotAlignedDelta(delta));
+        }
+
+        Ok(timestamp_millis)
     }
 }
 
@@ -121,6 +146,55 @@ mod tests {
         assert_eq!(
             span_batch_element.timestamp_millis(),
             Err(TimestampMillisPartError::InvalidPart(100))
+        );
+    }
+
+    #[test]
+    fn test_span_batch_element_timestamp_millis_after_parent_accepts_slot_delta() {
+        let span_batch_element = SpanBatchElement {
+            timestamp: 42,
+            timestamp_millis_part: Some(400),
+            ..Default::default()
+        };
+
+        assert_eq!(span_batch_element.validate_timestamp_millis_after(42_200), Ok(42_400));
+    }
+
+    #[test]
+    fn test_span_batch_element_timestamp_millis_after_parent_rejects_missing_part() {
+        let span_batch_element = SpanBatchElement { timestamp: 42, ..Default::default() };
+
+        assert_eq!(
+            span_batch_element.validate_timestamp_millis_after(42_000),
+            Err(TimestampMillisPartError::MissingPart)
+        );
+    }
+
+    #[test]
+    fn test_span_batch_element_timestamp_millis_after_parent_rejects_non_increasing() {
+        let span_batch_element = SpanBatchElement {
+            timestamp: 42,
+            timestamp_millis_part: Some(200),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            span_batch_element.validate_timestamp_millis_after(42_200),
+            Err(TimestampMillisPartError::NonIncreasingTimestamp { child: 42_200, parent: 42_200 })
+        );
+    }
+
+    #[test]
+    fn test_span_batch_element_timestamp_millis_after_parent_rejects_unaligned_delta() {
+        let span_batch_element = SpanBatchElement {
+            timestamp: 42,
+            timestamp_millis_part: Some(400),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            span_batch_element.validate_timestamp_millis_after(42_100),
+            Err(TimestampMillisPartError::NonSlotAlignedDelta(300))
         );
     }
 }
