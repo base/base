@@ -9,6 +9,19 @@ import sys
 UNSUPPORTED_VALUE_PREFIXES = ("{", "[", "|", ">")
 
 
+def strip_inline_comment(value):
+    """Strip YAML inline comments from simple scalar values."""
+    quote = value[0] if value.startswith(("'", '"')) else None
+    for index, char in enumerate(value):
+        if quote:
+            if index > 0 and char == quote:
+                quote = None
+            continue
+        if char == "#" and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
+    return value
+
+
 def parse_scalar_yaml(path):
     """Parse the simple nested scalar subset used by local Base config YAML files."""
     values = {}
@@ -32,9 +45,7 @@ def parse_scalar_yaml(path):
 
         key, raw_value = stripped.split(":", 1)
         key = key.strip()
-        value = raw_value.strip()
-        if value.startswith("#"):
-            value = ""
+        value = strip_inline_comment(raw_value.strip())
         if not key:
             raise SystemExit(f"empty YAML key in {path}:{line_number}")
 
