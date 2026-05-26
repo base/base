@@ -7,7 +7,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_action_harness::TEST_ACCOUNT_KEY;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
-use base_common_precompiles::{B20TokenRole, IB20};
+use base_common_precompiles::{B20PolicyType, B20TokenRole, IB20, PolicyRegistryStorage};
 
 use crate::env::BerylTestEnv;
 
@@ -596,6 +596,484 @@ async fn b20_permit_updates_allowance_and_nonce() {
             U256::ONE,
         )])
         .await;
+
+    scenario.derive().await;
+}
+
+const BURN_BLOCKED_AMOUNT: u64 = 1_000;
+
+#[tokio::test]
+async fn b20_burn_blocked_authorizes_and_executes() {
+    let mut scenario = B20TokenScenario::new().await;
+    let initial = BerylTestEnv::B20_INITIAL_SUPPLY;
+
+    // Grant BURN_BLOCKED_ROLE to bob. Alice (DEFAULT_ADMIN) does not hold BURN_BLOCKED_ROLE.
+    let grant_burn_blocked = scenario.call_tx(IB20::grantRoleCall {
+        role: B20TokenRole::BurnBlocked.id(),
+        account: BerylTestEnv::bob(),
+    });
+    let block = scenario.build_block_with_transactions(vec![grant_burn_blocked]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "grantRole(BURN_BLOCKED, bob) must succeed");
+
+    // Revert: alice lacks BURN_BLOCKED_ROLE; bob's target (carol) is not blocked.
+    let alice_burn_blocked_no_role = scenario
+        .call_tx(IB20::burnBlockedCall { from: BerylTestEnv::carol(), amount: U256::from(1u64) });
+    let bob_burn_blocked_not_blocked = scenario.bob_call_tx(IB20::burnBlockedCall {
+        from: BerylTestEnv::carol(),
+        amount: U256::from(1u64),
+    });
+    let block = scenario
+        .build_block_with_transactions(vec![
+            alice_burn_blocked_no_role,
+            bob_burn_blocked_not_blocked,
+        ])
+        .await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "burnBlocked must revert for a caller without BURN_BLOCKED_ROLE"
+    );
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 1),
+        "burnBlocked must revert when the target account is not blocked"
+    );
+
+    // Set the TransferSender policy to ALWAYS_BLOCK so all accounts become blocked.
+    let block_all = scenario.call_tx(IB20::updatePolicyCall {
+        policyScope: B20PolicyType::TransferSender.id(),
+        newPolicyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+    });
+    let block = scenario.build_block_with_transactions(vec![block_all]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "updatePolicy to ALWAYS_BLOCK_ID must succeed"
+    );
+
+    // Happy path: bob (with BURN_BLOCKED_ROLE) burns from alice, who is now blocked.
+    let bob_burn_blocked_happy = scenario.bob_call_tx(IB20::burnBlockedCall {
+        from: BerylTestEnv::alice(),
+        amount: U256::from(BURN_BLOCKED_AMOUNT),
+    });
+    let block = scenario.build_block_with_transactions(vec![bob_burn_blocked_happy]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "burnBlocked must succeed when caller has BURN_BLOCKED_ROLE and target is blocked"
+    );
+    scenario.assert_log(
+        &block,
+        0,
+        IB20::Transfer {
+            from: BerylTestEnv::alice(),
+            to: Address::ZERO,
+            amount: U256::from(BURN_BLOCKED_AMOUNT),
+        }
+        .encode_log_data(),
+    );
+    scenario.assert_log(
+        &block,
+        0,
+        IB20::BurnedBlocked {
+            caller: BerylTestEnv::bob(),
+            from: BerylTestEnv::alice(),
+            amount: U256::from(BURN_BLOCKED_AMOUNT),
+        }
+        .encode_log_data(),
+    );
+    scenario.assert_total_supply(initial - BURN_BLOCKED_AMOUNT);
+    scenario.assert_balances(initial - BURN_BLOCKED_AMOUNT, 0, 0);
+
+    scenario.derive().await;
+}
+
+#[tokio::test]
+async fn b20_admin_lifecycle_role_management() {
+    let mut scenario = B20TokenScenario::new().await;
+    let initial = BerylTestEnv::B20_INITIAL_SUPPLY;
+
+    // Phase 1: revokeRole — grant MINT_ROLE to bob, confirm it works, revoke it, confirm it fails.
+    let grant_mint_to_bob = scenario.call_tx(IB20::grantRoleCall {
+        role: B20TokenRole::Mint.id(),
+        account: BerylTestEnv::bob(),
+    });
+    let block = scenario.build_block_with_transactions(vec![grant_mint_to_bob]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "grantRole(MINT, bob) must succeed");
+
+    let bob_mint = scenario
+        .bob_call_tx(IB20::mintCall { to: BerylTestEnv::carol(), amount: U256::from(50u64) });
+    let block = scenario.build_block_with_transactions(vec![bob_mint]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "bob mint must succeed while holding MINT_ROLE"
+    );
+    scenario.assert_total_supply(initial + 50);
+
+    let revoke_mint = scenario.call_tx(IB20::revokeRoleCall {
+        role: B20TokenRole::Mint.id(),
+        account: BerylTestEnv::bob(),
+    });
+    let block = scenario.build_block_with_transactions(vec![revoke_mint]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "revokeRole(MINT, bob) must succeed");
+    scenario.assert_log(
+        &block,
+        0,
+        IB20::RoleRevoked {
+            role: B20TokenRole::Mint.id(),
+            account: BerylTestEnv::bob(),
+            sender: BerylTestEnv::alice(),
+        }
+        .encode_log_data(),
+    );
+
+    let bob_mint_after_revoke = scenario
+        .bob_call_tx(IB20::mintCall { to: BerylTestEnv::carol(), amount: U256::from(1u64) });
+    let block = scenario.build_block_with_transactions(vec![bob_mint_after_revoke]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "bob mint must revert after MINT_ROLE is revoked"
+    );
+    scenario.assert_total_supply(initial + 50);
+
+    // Phase 2: renounceRole — bob renounces BURN_ROLE; alice's mismatched call reverts.
+    let grant_burn_to_bob = scenario.call_tx(IB20::grantRoleCall {
+        role: B20TokenRole::Burn.id(),
+        account: BerylTestEnv::bob(),
+    });
+    let block = scenario.build_block_with_transactions(vec![grant_burn_to_bob]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "grantRole(BURN, bob) must succeed");
+
+    let alice_bad_renounce = scenario.call_tx(IB20::renounceRoleCall {
+        role: B20TokenRole::Burn.id(),
+        callerConfirmation: BerylTestEnv::bob(),
+    });
+    let bob_renounce_burn = scenario.bob_call_tx(IB20::renounceRoleCall {
+        role: B20TokenRole::Burn.id(),
+        callerConfirmation: BerylTestEnv::bob(),
+    });
+    let block =
+        scenario.build_block_with_transactions(vec![alice_bad_renounce, bob_renounce_burn]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "renounceRole must revert when callerConfirmation does not match the caller"
+    );
+    assert!(scenario.env.user_tx_succeeded(&block, 1), "bob renounceRole(BURN, bob) must succeed");
+    scenario.assert_log(
+        &block,
+        1,
+        IB20::RoleRevoked {
+            role: B20TokenRole::Burn.id(),
+            account: BerylTestEnv::bob(),
+            sender: BerylTestEnv::bob(),
+        }
+        .encode_log_data(),
+    );
+
+    // Phase 3: setRoleAdmin — change MINT_ROLE's admin from DEFAULT_ADMIN to PAUSE_ROLE.
+    let set_mint_admin = scenario.call_tx(IB20::setRoleAdminCall {
+        role: B20TokenRole::Mint.id(),
+        newAdminRole: B20TokenRole::Pause.id(),
+    });
+    let block = scenario.build_block_with_transactions(vec![set_mint_admin]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "setRoleAdmin must succeed");
+    scenario.assert_log(
+        &block,
+        0,
+        IB20::RoleAdminChanged {
+            role: B20TokenRole::Mint.id(),
+            previousAdminRole: B20TokenRole::DefaultAdmin.id(),
+            newAdminRole: B20TokenRole::Pause.id(),
+        }
+        .encode_log_data(),
+    );
+
+    // Old admin (DEFAULT_ADMIN) can no longer grant MINT_ROLE because PAUSE_ROLE is now its admin.
+    let grant_mint_old_admin = scenario.call_tx(IB20::grantRoleCall {
+        role: B20TokenRole::Mint.id(),
+        account: BerylTestEnv::carol(),
+    });
+    let block = scenario.build_block_with_transactions(vec![grant_mint_old_admin]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "grantRole(MINT) must revert when the caller holds DEFAULT_ADMIN but not the new admin role"
+    );
+
+    // New admin (PAUSE_ROLE) can grant MINT_ROLE; first give alice PAUSE_ROLE via DEFAULT_ADMIN.
+    let grant_pause_to_alice = scenario.call_tx(IB20::grantRoleCall {
+        role: B20TokenRole::Pause.id(),
+        account: BerylTestEnv::alice(),
+    });
+    let block = scenario.build_block_with_transactions(vec![grant_pause_to_alice]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "grantRole(PAUSE, alice) must succeed");
+
+    let grant_mint_new_admin = scenario.call_tx(IB20::grantRoleCall {
+        role: B20TokenRole::Mint.id(),
+        account: BerylTestEnv::carol(),
+    });
+    let block = scenario.build_block_with_transactions(vec![grant_mint_new_admin]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "grantRole(MINT, carol) must succeed when the caller holds PAUSE_ROLE, the new MINT admin"
+    );
+
+    // Phase 4: renounceLastAdmin — verify the NotSoleAdmin guard and the terminal renounce path.
+    let grant_admin_to_bob = scenario.call_tx(IB20::grantRoleCall {
+        role: B20TokenRole::DefaultAdmin.id(),
+        account: BerylTestEnv::bob(),
+    });
+    let block = scenario.build_block_with_transactions(vec![grant_admin_to_bob]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "grantRole(DEFAULT_ADMIN, bob) must succeed"
+    );
+
+    let alice_renounce_last_admin = scenario.call_tx(IB20::renounceLastAdminCall {});
+    let block = scenario.build_block_with_transactions(vec![alice_renounce_last_admin]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "renounceLastAdmin must revert when more than one admin exists"
+    );
+
+    // Alice drops DEFAULT_ADMIN via renounceRole (valid: count is 2, not the last admin).
+    let alice_leave_admin = scenario.call_tx(IB20::renounceRoleCall {
+        role: B20TokenRole::DefaultAdmin.id(),
+        callerConfirmation: BerylTestEnv::alice(),
+    });
+    let block = scenario.build_block_with_transactions(vec![alice_leave_admin]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "alice renounceRole(DEFAULT_ADMIN) must succeed when a second admin exists"
+    );
+
+    // Bob is now the sole admin; renounceLastAdmin must succeed and emit the terminal event.
+    let bob_renounce_last_admin = scenario.bob_call_tx(IB20::renounceLastAdminCall {});
+    let block = scenario.build_block_with_transactions(vec![bob_renounce_last_admin]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "renounceLastAdmin must succeed for the sole remaining admin"
+    );
+    scenario.assert_log(
+        &block,
+        0,
+        IB20::LastAdminRenounced { previousAdmin: BerylTestEnv::bob() }.encode_log_data(),
+    );
+
+    // With no admin remaining, all role grants must revert.
+    let grant_after_no_admin = scenario.call_tx(IB20::grantRoleCall {
+        role: B20TokenRole::Burn.id(),
+        account: BerylTestEnv::carol(),
+    });
+    let block = scenario.build_block_with_transactions(vec![grant_after_no_admin]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "grantRole must revert when no DEFAULT_ADMIN exists"
+    );
+
+    scenario.derive().await;
+}
+
+#[tokio::test]
+async fn b20_permit_failure_modes() {
+    let mut scenario = B20TokenScenario::new().await;
+    let value = U256::from(100u64);
+    let valid_deadline = U256::MAX;
+    let expired_deadline = U256::ZERO;
+    let domain_sep =
+        domain_separator(scenario.env.chain_id(), scenario.token, BerylTestEnv::B20_NAME);
+
+    // Expired deadline: a permit signed for deadline=0 must revert.
+    let (v_exp, r_exp, s_exp) = sign_permit(
+        domain_sep,
+        BerylTestEnv::alice(),
+        BerylTestEnv::bob(),
+        value,
+        U256::ZERO,
+        expired_deadline,
+    );
+    let expired_permit = scenario.call_tx(IB20::permitCall {
+        owner: BerylTestEnv::alice(),
+        spender: BerylTestEnv::bob(),
+        value,
+        deadline: expired_deadline,
+        v: v_exp,
+        r: r_exp,
+        s: s_exp,
+    });
+
+    // Bad signature: valid parameters but with a corrupted r value.
+    let (v_good, r_good, s_good) = sign_permit(
+        domain_sep,
+        BerylTestEnv::alice(),
+        BerylTestEnv::bob(),
+        value,
+        U256::ZERO,
+        valid_deadline,
+    );
+    let mut r_corrupted = r_good;
+    r_corrupted.0[0] ^= 0xff;
+    let bad_sig_permit = scenario.call_tx(IB20::permitCall {
+        owner: BerylTestEnv::alice(),
+        spender: BerylTestEnv::bob(),
+        value,
+        deadline: valid_deadline,
+        v: v_good,
+        r: r_corrupted,
+        s: s_good,
+    });
+
+    let block = scenario.build_block_with_transactions(vec![expired_permit, bad_sig_permit]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "permit with an expired deadline must revert"
+    );
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 1),
+        "permit with a corrupted signature must revert"
+    );
+
+    // Valid permit: must succeed and advance the nonce from 0 to 1.
+    let valid_permit = scenario.call_tx(IB20::permitCall {
+        owner: BerylTestEnv::alice(),
+        spender: BerylTestEnv::bob(),
+        value,
+        deadline: valid_deadline,
+        v: v_good,
+        r: r_good,
+        s: s_good,
+    });
+    let block = scenario.build_block_with_transactions(vec![valid_permit]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "valid permit must succeed");
+    scenario.assert_allowance(BerylTestEnv::alice(), BerylTestEnv::bob(), 100);
+
+    // Replay: resubmitting the same permit must revert because the nonce has advanced to 1.
+    let replay_permit = scenario.call_tx(IB20::permitCall {
+        owner: BerylTestEnv::alice(),
+        spender: BerylTestEnv::bob(),
+        value,
+        deadline: valid_deadline,
+        v: v_good,
+        r: r_good,
+        s: s_good,
+    });
+    let block = scenario.build_block_with_transactions(vec![replay_permit]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "replayed permit must revert after the nonce has advanced"
+    );
+
+    scenario.derive().await;
+}
+
+#[tokio::test]
+async fn b20_paused_features_are_independent() {
+    let mut scenario = B20TokenScenario::new().await;
+    let initial = BerylTestEnv::B20_INITIAL_SUPPLY;
+
+    // Grant alice the roles needed for mint, pause, and unpause.
+    let grants = [B20TokenRole::Mint, B20TokenRole::Pause, B20TokenRole::Unpause]
+        .into_iter()
+        .map(|role| {
+            scenario
+                .call_tx(IB20::grantRoleCall { role: role.id(), account: BerylTestEnv::alice() })
+        })
+        .collect::<Vec<_>>();
+    let block = scenario.build_block_with_transactions(grants).await;
+    for index in 0..3 {
+        assert!(scenario.env.user_tx_succeeded(&block, index), "role grant {index} must succeed");
+    }
+
+    // Phase 1: pause TRANSFER only; transfer must revert, mint must still succeed.
+    let pause_transfer =
+        scenario.call_tx(IB20::pauseCall { features: vec![IB20::PausableFeature::TRANSFER] });
+    let block = scenario.build_block_with_transactions(vec![pause_transfer]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "pause(TRANSFER) must succeed");
+
+    let transfer_reverts =
+        scenario.call_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: U256::from(1u64) });
+    let mint_succeeds =
+        scenario.call_tx(IB20::mintCall { to: BerylTestEnv::carol(), amount: U256::from(10u64) });
+    let block = scenario.build_block_with_transactions(vec![transfer_reverts, mint_succeeds]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "transfer must revert while TRANSFER is paused"
+    );
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 1),
+        "mint must succeed while only TRANSFER is paused"
+    );
+    scenario.assert_balances(initial, 0, 10);
+    scenario.assert_total_supply(initial + 10);
+
+    // Phase 2: unpause TRANSFER and pause MINT in one block; mint must revert, transfer succeeds.
+    let unpause_transfer =
+        scenario.call_tx(IB20::unpauseCall { features: vec![IB20::PausableFeature::TRANSFER] });
+    let pause_mint =
+        scenario.call_tx(IB20::pauseCall { features: vec![IB20::PausableFeature::MINT] });
+    let block = scenario.build_block_with_transactions(vec![unpause_transfer, pause_mint]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "unpause(TRANSFER) must succeed");
+    assert!(scenario.env.user_tx_succeeded(&block, 1), "pause(MINT) must succeed");
+
+    let mint_reverts =
+        scenario.call_tx(IB20::mintCall { to: BerylTestEnv::carol(), amount: U256::from(10u64) });
+    let transfer_succeeds =
+        scenario.call_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: U256::from(1u64) });
+    let block = scenario.build_block_with_transactions(vec![mint_reverts, transfer_succeeds]).await;
+    assert!(!scenario.env.user_tx_succeeded(&block, 0), "mint must revert while MINT is paused");
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 1),
+        "transfer must succeed while only MINT is paused"
+    );
+    scenario.assert_balances(initial - 1, 1, 10);
+    scenario.assert_total_supply(initial + 10);
+
+    // Phase 3: add TRANSFER to the paused set (MINT already paused); both operations must revert.
+    let pause_transfer_again =
+        scenario.call_tx(IB20::pauseCall { features: vec![IB20::PausableFeature::TRANSFER] });
+    let block = scenario.build_block_with_transactions(vec![pause_transfer_again]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "pause(TRANSFER) while MINT paused must succeed"
+    );
+
+    let transfer_both_paused =
+        scenario.call_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: U256::from(1u64) });
+    let mint_both_paused =
+        scenario.call_tx(IB20::mintCall { to: BerylTestEnv::carol(), amount: U256::from(10u64) });
+    let block =
+        scenario.build_block_with_transactions(vec![transfer_both_paused, mint_both_paused]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "transfer must revert when both TRANSFER and MINT are paused"
+    );
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 1),
+        "mint must revert when both TRANSFER and MINT are paused"
+    );
+    scenario.assert_balances(initial - 1, 1, 10);
+    scenario.assert_total_supply(initial + 10);
+
+    // Phase 4: unpause TRANSFER while MINT stays paused; transfer recovers, mint still fails.
+    let unpause_transfer_final =
+        scenario.call_tx(IB20::unpauseCall { features: vec![IB20::PausableFeature::TRANSFER] });
+    let block = scenario.build_block_with_transactions(vec![unpause_transfer_final]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "unpause(TRANSFER) must succeed while MINT remains paused"
+    );
+
+    let transfer_recovered =
+        scenario.call_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: U256::from(1u64) });
+    let mint_still_paused =
+        scenario.call_tx(IB20::mintCall { to: BerylTestEnv::carol(), amount: U256::from(10u64) });
+    let block =
+        scenario.build_block_with_transactions(vec![transfer_recovered, mint_still_paused]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "transfer must succeed after TRANSFER is unpaused"
+    );
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 1),
+        "mint must still revert while MINT remains paused"
+    );
+    scenario.assert_balances(initial - 2, 2, 10);
+    scenario.assert_total_supply(initial + 10);
 
     scenario.derive().await;
 }
