@@ -15,8 +15,9 @@ use super::EngineTaskExt;
 use crate::{
     BuildTaskError, EngineBuildError, EngineClient, EngineForkchoiceVersion,
     EngineGetPayloadVersion, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskError,
-    EngineTaskErrorSeverity, Metrics, SealTaskError, SyncStartError, SynchronizeTask,
-    SynchronizeTaskError, find_starting_forkchoice, task_queue::EngineTaskErrors,
+    EngineTaskErrorSeverity, ForkchoiceCheckpointReader, Metrics, NoopForkchoiceCheckpointReader,
+    SealTaskError, SyncStartError, SynchronizeTask, SynchronizeTaskError,
+    find_starting_forkchoice_with_checkpoint_reader, task_queue::EngineTaskErrors,
 };
 
 /// The [`Engine`] task queue.
@@ -397,17 +398,36 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     }
 
     /// Resets the engine by finding a plausible sync starting point via
-    /// [`find_starting_forkchoice`]. The state will be updated to the starting point, and a
+    /// [`crate::find_starting_forkchoice`]. The state will be updated to the starting point, and a
     /// forkchoice update will be enqueued in order to reorg the execution layer.
     pub async fn reset(
         &mut self,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
     ) -> Result<L2BlockInfo, EngineResetError> {
+        self.reset_with_checkpoint_reader(client, config, &NoopForkchoiceCheckpointReader).await
+    }
+
+    /// Like [`Self::reset`], but consults `checkpoint_reader` when reth-labeled blocks cannot be
+    /// hydrated because their bodies have been pruned.
+    pub async fn reset_with_checkpoint_reader<CheckpointReader>(
+        &mut self,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        checkpoint_reader: &CheckpointReader,
+    ) -> Result<L2BlockInfo, EngineResetError>
+    where
+        CheckpointReader: ForkchoiceCheckpointReader + ?Sized,
+    {
         // Clear any outstanding tasks to prepare for the reset.
         self.clear();
 
-        let mut start = find_starting_forkchoice(&config, client.as_ref()).await?;
+        let mut start = find_starting_forkchoice_with_checkpoint_reader(
+            &config,
+            client.as_ref(),
+            checkpoint_reader,
+        )
+        .await?;
 
         // Retry to synchronize the engine until we succeeds or a critical error occurs.
         while let Err(err) = SynchronizeTask::new(
@@ -428,7 +448,12 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
                 | EngineTaskErrorSeverity::Flush
                 | EngineTaskErrorSeverity::Reset => {
                     warn!(target: "engine", ?err, "Forkchoice update failed during reset. Trying again...");
-                    start = find_starting_forkchoice(&config, client.as_ref()).await?;
+                    start = find_starting_forkchoice_with_checkpoint_reader(
+                        &config,
+                        client.as_ref(),
+                        checkpoint_reader,
+                    )
+                    .await?;
                 }
                 EngineTaskErrorSeverity::Critical => {
                     return Err(EngineResetError::Forkchoice(err));
