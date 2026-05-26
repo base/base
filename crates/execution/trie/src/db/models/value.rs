@@ -8,8 +8,10 @@ use reth_db::{
     table::{Compress, Decompress},
 };
 use reth_primitives_traits::{Account, ValueWithSubKey};
-use reth_trie_common::{BranchNodeCompact, Nibbles, StoredNibblesSubKey};
+use reth_trie_common::{BranchNodeCompact, StoredNibblesSubKey};
 use serde::{Deserialize, Serialize};
+
+const TRIE_CHANGESET_NIBBLE_SUBKEY_LEN: usize = 65;
 
 /// Previous account value stored in V2 hashed account changesets.
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -88,10 +90,11 @@ impl Compress for TrieChangeSetsEntry {
 impl Decompress for TrieChangeSetsEntry {
     fn decompress(value: &[u8]) -> Result<Self, DecompressError> {
         if value.is_empty() {
-            return Ok(Self { nibbles: StoredNibblesSubKey::from(Nibbles::default()), node: None });
+            return Err(DecompressError::new(DatabaseError::Decode));
         }
 
-        let (nibbles, rest) = StoredNibblesSubKey::from_compact(value, 65);
+        let (nibbles, rest) =
+            StoredNibblesSubKey::from_compact(value, TRIE_CHANGESET_NIBBLE_SUBKEY_LEN);
         let node = if rest.is_empty() {
             None
         } else {

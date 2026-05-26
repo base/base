@@ -14,7 +14,7 @@ const ACCOUNT_TRIE_SHARDED_KEY_LEN: usize = NIBBLE_SUBKEY_LEN + 8;
 const STORAGE_TRIE_SHARDED_KEY_LEN: usize = 32 + NIBBLE_SUBKEY_LEN + 8;
 
 fn encode_nibble_subkey(nibbles: &StoredNibbles) -> [u8; NIBBLE_SUBKEY_LEN] {
-    debug_assert!(nibbles.0.len() <= 64, "nibble path exceeds 64 nibbles");
+    assert!(nibbles.0.len() <= 64, "nibble path exceeds 64 nibbles");
     let mut buf = [0u8; NIBBLE_SUBKEY_LEN];
     for (index, nibble) in nibbles.0.iter().enumerate() {
         buf[index] = nibble;
@@ -23,9 +23,12 @@ fn encode_nibble_subkey(nibbles: &StoredNibbles) -> [u8; NIBBLE_SUBKEY_LEN] {
     buf
 }
 
-fn decode_nibble_subkey(buf: &[u8; NIBBLE_SUBKEY_LEN]) -> StoredNibbles {
+fn decode_nibble_subkey(buf: &[u8; NIBBLE_SUBKEY_LEN]) -> Result<StoredNibbles, DatabaseError> {
     let len = buf[64] as usize;
-    StoredNibbles::from(Nibbles::from_nibbles_unchecked(&buf[..len]))
+    if len > 64 {
+        return Err(DatabaseError::Decode);
+    }
+    Ok(StoredNibbles::from(Nibbles::from_nibbles_unchecked(&buf[..len])))
 }
 
 /// Sharded key for V2 hashed account history.
@@ -136,7 +139,7 @@ impl Decode for AccountTrieShardedKey {
             value.try_into().map_err(|_| DatabaseError::Decode)?;
         let nibble_buf: &[u8; NIBBLE_SUBKEY_LEN] =
             bytes[..NIBBLE_SUBKEY_LEN].try_into().map_err(|_| DatabaseError::Decode)?;
-        let key = decode_nibble_subkey(nibble_buf);
+        let key = decode_nibble_subkey(nibble_buf)?;
         let highest_block_number = u64::from_be_bytes(
             bytes[NIBBLE_SUBKEY_LEN..].try_into().map_err(|_| DatabaseError::Decode)?,
         );
@@ -181,7 +184,7 @@ impl Decode for StorageTrieShardedKey {
         let hashed_address = B256::from_slice(&bytes[..32]);
         let nibble_buf: &[u8; NIBBLE_SUBKEY_LEN] =
             bytes[32..32 + NIBBLE_SUBKEY_LEN].try_into().map_err(|_| DatabaseError::Decode)?;
-        let key = decode_nibble_subkey(nibble_buf);
+        let key = decode_nibble_subkey(nibble_buf)?;
         let highest_block_number = u64::from_be_bytes(
             bytes[32 + NIBBLE_SUBKEY_LEN..].try_into().map_err(|_| DatabaseError::Decode)?,
         );
