@@ -6,24 +6,30 @@ import pathlib
 import sys
 
 
-UNSUPPORTED_VALUE_PREFIXES = ("{", "[", "|", ">")
+UNSUPPORTED_VALUE_PREFIXES = ("{", "[", "|", ">", "&", "*", "!")
 
 
-def strip_inline_comment(value):
-    """Strip YAML inline comments from simple scalar values."""
-    quote = value[0] if value.startswith(("'", '"')) else None
-    for index, char in enumerate(value):
-        if quote:
-            if index > 0 and char == quote:
-                quote = None
-            continue
-        if char == "#" and (index == 0 or value[index - 1].isspace()):
-            return value[:index].rstrip()
-    return value
+def scalar_value(raw_value, path, line_number):
+    """Parse a plain or quoted scalar from the limited local YAML subset."""
+    value = raw_value.strip()
+    if not value or value.startswith("#"):
+        return None
+    if value.startswith(UNSUPPORTED_VALUE_PREFIXES):
+        raise SystemExit(f"unsupported YAML value form in {path}:{line_number}")
+    if value.startswith(("'", '"')):
+        quote = value[0]
+        end = value.find(quote, 1)
+        if end == -1:
+            raise SystemExit(f"unterminated quoted YAML value in {path}:{line_number}")
+        trailing = value[end + 1 :].strip()
+        if trailing and not trailing.startswith("#"):
+            raise SystemExit(f"unsupported quoted YAML value in {path}:{line_number}")
+        return value[1:end]
+    return value.split(" #", 1)[0].rstrip()
 
 
 def parse_scalar_yaml(path):
-    """Parse the simple nested scalar subset used by local Base config YAML files."""
+    """Parse nested scalar values from the limited local YAML subset."""
     values = {}
     stack = []
 
@@ -45,25 +51,20 @@ def parse_scalar_yaml(path):
 
         key, raw_value = stripped.split(":", 1)
         key = key.strip()
-        value = strip_inline_comment(raw_value.strip())
         if not key:
             raise SystemExit(f"empty YAML key in {path}:{line_number}")
 
+        value = scalar_value(raw_value, path, line_number)
         while stack and stack[-1][0] >= indent:
             stack.pop()
+        if indent > 0 and not stack:
+            raise SystemExit(f"YAML value has no parent section in {path}:{line_number}")
 
         path_parts = [part for _, part in stack] + [key]
-        if value:
-            if value.startswith(UNSUPPORTED_VALUE_PREFIXES):
-                raise SystemExit(
-                    f"unsupported YAML value form for {'.'.join(path_parts)} in {path}:{line_number}"
-                )
-            clean = value
-            if len(clean) >= 2 and clean[0] == clean[-1] and clean[0] in "\"'":
-                clean = clean[1:-1]
-            values[".".join(path_parts)] = clean
-        else:
+        if value is None:
             stack.append((indent, key))
+            continue
+        values[".".join(path_parts)] = value
 
     return values
 
