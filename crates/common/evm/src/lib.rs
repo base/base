@@ -10,6 +10,9 @@ pub use base_common_chains::BaseUpgrade;
 mod spec;
 pub use spec::BaseSpecId;
 
+mod base_time;
+pub use base_time::{BaseTime, IBaseTime};
+
 mod result;
 pub use result::BaseHaltReason;
 
