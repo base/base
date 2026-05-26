@@ -632,22 +632,15 @@ impl MdbxV2StorageCursor {
         hashed_address: B256,
     ) -> BaseProofsStorageResult<Self> {
         let mut rows: BTreeMap<(B256, B256), Option<U256>> = BTreeMap::new();
-        let mut current = tx.cursor_dup_read::<V2HashedStorages>()?;
-        if let Some((address, entry)) = current.seek_exact(hashed_address)? {
-            rows.insert((address, entry.key), (!entry.value.is_zero()).then_some(entry.value));
-            while let Some((address, entry)) = current.next_dup()? {
-                rows.insert((address, entry.key), (!entry.value.is_zero()).then_some(entry.value));
-            }
+        let mut current = tx.cursor_read::<V2HashedStorages>()?;
+        while let Some((key, entry)) = current.next()? {
+            rows.insert((key, entry.key), (!entry.value.is_zero()).then_some(entry.value));
         }
 
         let mut future_changes: BTreeMap<(B256, B256), Option<u64>> = BTreeMap::new();
         let mut history = tx.cursor_read::<V2HashedStoragesHistory>()?;
-        let mut history_row =
-            history.seek(HashedStorageShardedKey::new(hashed_address, B256::ZERO, 0))?;
+        let mut history_row = history.next()?;
         while let Some((key, list)) = history_row {
-            if key.hashed_address != hashed_address {
-                break;
-            }
             let storage_key = (key.hashed_address, key.sharded_key.key);
             min_change_after(
                 future_changes.entry(storage_key).or_default(),
@@ -745,25 +738,15 @@ impl MdbxV2StorageTrieCursor {
         hashed_address: B256,
     ) -> BaseProofsStorageResult<Self> {
         let mut rows: BTreeMap<(B256, StoredNibbles), Option<BranchNodeCompact>> = BTreeMap::new();
-        let mut current = tx.cursor_dup_read::<V2StoragesTrie>()?;
-        if let Some((address, entry)) = current.seek_exact(hashed_address)? {
+        let mut current = tx.cursor_read::<V2StoragesTrie>()?;
+        while let Some((address, entry)) = current.next()? {
             rows.insert((address, StoredNibbles(entry.nibbles.0)), Some(entry.node));
-            while let Some((address, entry)) = current.next_dup()? {
-                rows.insert((address, StoredNibbles(entry.nibbles.0)), Some(entry.node));
-            }
         }
 
         let mut future_changes: BTreeMap<(B256, StoredNibbles), Option<u64>> = BTreeMap::new();
         let mut history = tx.cursor_read::<V2StoragesTrieHistory>()?;
-        let mut history_row = history.seek(StorageTrieShardedKey::new(
-            hashed_address,
-            StoredNibbles::default(),
-            0,
-        ))?;
+        let mut history_row = history.next()?;
         while let Some((key, list)) = history_row {
-            if key.hashed_address != hashed_address {
-                break;
-            }
             let storage_key = (key.hashed_address, key.key.clone());
             min_change_after(
                 future_changes.entry(storage_key.clone()).or_default(),
