@@ -386,7 +386,12 @@ where
     ///    that are not already in-flight (`reconcile_proof_tasks`).
     /// 4. **Orphan dereg** — when the snapshot's `ok_to_dereg` is set,
     ///    run a single deregistration pass over signers no longer backed
-    ///    by an active instance (`run_orphan_dereg`).
+    ///    by an active instance (`run_orphan_dereg`). The protected set
+    ///    is the union of `resolution.active_signers` and the keys of
+    ///    `pending` (see [`Self::protected_signers`]) so a signer
+    ///    registered mid-cycle by a preserved task — whose source
+    ///    instance failed `resolve_instance` transiently — cannot be
+    ///    deregistered in the same pass.
     /// 5. **Sleep** — wait `poll_interval` or until cancelled.
     ///
     /// # Cancellation
@@ -454,7 +459,17 @@ where
                     }
 
                     if resolution.ok_to_dereg && !self.config.cancel.is_cancelled() {
-                        if let Err(e) = self.run_orphan_dereg(&resolution.active_signers).await {
+                        // Protect every in-flight signer in addition to
+                        // `active_signers`. An instance whose
+                        // `resolve_instance` failed this cycle is in
+                        // `unresolved_instance_ids` (so reconcile
+                        // preserves its task), but its signer is absent
+                        // from `active_signers`. Without this union the
+                        // preserved task could complete and `register`
+                        // the signer mid-pass, and the very same orphan
+                        // sweep would then deregister it (TOCTOU).
+                        let protected = Self::protected_signers(&resolution, &pending);
+                        if let Err(e) = self.run_orphan_dereg(&protected).await {
                             warn!(error = %e, "orphan deregistration pass failed");
                             RegistrarMetrics::processing_errors_total().increment(1);
                         }
@@ -1321,7 +1336,7 @@ where
     /// Both error paths (registry load and per-orphan deregistration)
     /// propagate uniformly so the caller can log + increment
     /// `processing_errors_total` once at a single site.
-    async fn run_orphan_dereg(&self, active_signers: &HashSet<Address>) -> Result<()> {
+    async fn run_orphan_dereg(&self, protected_signers: &HashSet<Address>) -> Result<()> {
         // Cancel-aware: `get_registered_signers` is a side-effect-free
         // read, so dropping it on cancel is safe. Without this select,
         // a shutdown during the registry RPC would extend drain latency
@@ -1335,7 +1350,28 @@ where
             }
             res = self.registry.get_registered_signers() => res?,
         };
-        self.deregister_orphans(active_signers, &registered_signers).await
+        self.deregister_orphans(protected_signers, &registered_signers).await
+    }
+
+    /// Builds the protected-signer set for the orphan-dereg pass: the
+    /// union of `resolution.active_signers` and the keys of `pending`.
+    ///
+    /// Including `pending.keys()` closes the TOCTOU window described on
+    /// [`Self::run`]: when an instance fails [`Self::resolve_instance`]
+    /// transiently this cycle, its signer is absent from
+    /// `active_signers`, but [`Self::reconcile_proof_tasks`] preserves
+    /// the in-flight proof task (its instance id is in
+    /// [`DiscoveryResolution::unresolved_instance_ids`]). If that task
+    /// successfully registers the signer just as the orphan pass runs,
+    /// the union ensures the freshly registered signer is treated as
+    /// protected rather than as an orphan to be deregistered.
+    fn protected_signers(
+        resolution: &DiscoveryResolution,
+        pending: &HashMap<Address, PendingRegistration>,
+    ) -> HashSet<Address> {
+        let mut protected = resolution.active_signers.clone();
+        protected.extend(pending.keys().copied());
+        protected
     }
 
     /// Reconciles the in-flight `pending` set against this cycle's
@@ -1841,10 +1877,14 @@ where
         }
     }
 
-    /// Deregisters any on-chain signer that is not in the `active_signers` set.
+    /// Deregisters any on-chain signer that is not in the `protected_signers` set.
     ///
     /// These orphans arise when a prover instance is terminated (e.g. ASG
-    /// scale-down) without first deregistering its signer on-chain.
+    /// scale-down) without first deregistering its signer on-chain. The
+    /// `protected_signers` set is built by [`Self::protected_signers`] as
+    /// the union of resolved-this-cycle signers and signers with an
+    /// in-flight proof task, so transiently-unresolved instances and
+    /// mid-flight registrations are both shielded from the sweep.
     ///
     /// # Defense in depth
     ///
@@ -1859,19 +1899,19 @@ where
     /// # Assumptions
     ///
     /// - **Single registrar**: This method queries *all* on-chain signers and
-    ///   treats any signer not in `active_signers` as an orphan. If multiple
+    ///   treats any signer not in `protected_signers` as an orphan. If multiple
     ///   registrar instances manage disjoint prover fleets, one registrar would
     ///   incorrectly deregister another's signers. The current deployment model
     ///   assumes a single registrar per registry contract.
     async fn deregister_orphans(
         &self,
-        active_signers: &HashSet<Address>,
+        protected_signers: &HashSet<Address>,
         registered_signers: &[Address],
     ) -> Result<()> {
         let orphans: Vec<_> = registered_signers
             .iter()
             .copied()
-            .filter(|addr| !active_signers.contains(addr))
+            .filter(|addr| !protected_signers.contains(addr))
             .collect();
 
         if orphans.is_empty() {
@@ -5011,6 +5051,126 @@ mod tests {
         );
 
         drain_test_tasks(&mut tasks, &mut pending).await;
+    }
+
+    /// Orphan-dereg companion to
+    /// [`reconcile_proof_tasks_preserves_task_when_instance_fails_to_resolve`].
+    ///
+    /// When `resolve_instance` fails transiently for an instance whose
+    /// proof task is still in-flight, the signer is **absent from**
+    /// `resolution.active_signers` (no fresh evidence this cycle) but
+    /// is **present in** `pending` (reconcile preserves the task via
+    /// `unresolved_instance_ids`). If the preserved task succeeds and
+    /// registers the signer on-chain right as the orphan-dereg pass
+    /// runs, the protected set assembled by
+    /// [`RunDriver::protected_signers`] MUST union the two, otherwise
+    /// the very next call to `deregister_orphans` would deregister the
+    /// freshly-registered signer (TOCTOU race).
+    #[tokio::test]
+    async fn protected_signers_union_blocks_dereg_of_freshly_registered_signer() {
+        let signer =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+
+        // Registry reports the signer as already registered on-chain —
+        // the state that exists immediately after the preserved task's
+        // `registerSigner` tx confirms.
+        let harness = GatedRunHarness::new(
+            vec![instance(EP1, InstanceHealthStatus::Healthy)],
+            &[(EP1, &HARDHAT_KEY_0)],
+            MockRegistry::with_signers(vec![signer]),
+        );
+
+        // Seed `pending` with an entry for the signer tied to an
+        // instance that is "unresolved" this cycle. Address-keying
+        // alone is what `protected_signers` consumes; the placeholder
+        // task is just there so cleanup runs through the same path the
+        // production loop does.
+        let mut tasks: JoinSet<Result<Address>> = JoinSet::new();
+        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let task_cancel = CancellationToken::new();
+        let task_cancel_inner = task_cancel.clone();
+        let handle = tasks.spawn(async move {
+            task_cancel_inner.cancelled().await;
+            Ok(signer)
+        });
+        pending.insert(
+            signer,
+            PendingRegistration {
+                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
+                task_id: handle.id(),
+                cancel: task_cancel,
+                cancelled_by_reconcile: false,
+            },
+        );
+
+        // `active_signers` is empty (the signer's source instance
+        // failed to resolve this cycle) but `ok_to_dereg` is true so
+        // the orphan pass would otherwise run unimpeded.
+        let mut unresolved = HashSet::new();
+        unresolved.insert(TEST_PENDING_INSTANCE_ID.to_string());
+        let resolution = DiscoveryResolution {
+            registerable: Vec::new(),
+            active_signers: HashSet::new(),
+            reachable_count: 1,
+            total_count: 1,
+            ok_to_dereg: true,
+            unresolved_instance_ids: unresolved,
+        };
+
+        let protected = RunDriver::protected_signers(&resolution, &pending);
+        assert!(
+            protected.contains(&signer),
+            "protected set must include in-flight signer even when absent from active_signers",
+        );
+
+        harness.driver.run_orphan_dereg(&protected).await.unwrap();
+
+        let sent = harness.tx.sent_calldata();
+        assert_eq!(
+            count_deregister_calls(&sent),
+            0,
+            "orphan pass must NOT deregister a signer with an in-flight proof task",
+        );
+
+        drain_test_tasks(&mut tasks, &mut pending).await;
+    }
+
+    /// Sanity contrast for
+    /// [`protected_signers_union_blocks_dereg_of_freshly_registered_signer`]:
+    /// with `pending` empty and the same on-chain state, the orphan
+    /// pass MUST deregister the signer. Proves the previous test's
+    /// success was due to the union, not unrelated logic.
+    #[tokio::test]
+    async fn protected_signers_union_does_not_shield_when_pending_empty() {
+        let signer =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let harness = GatedRunHarness::new(
+            vec![instance(EP1, InstanceHealthStatus::Healthy)],
+            &[(EP1, &HARDHAT_KEY_0)],
+            MockRegistry::with_signers(vec![signer]),
+        );
+
+        let pending: HashMap<Address, PendingRegistration> = HashMap::new();
+        let resolution = DiscoveryResolution {
+            registerable: Vec::new(),
+            active_signers: HashSet::new(),
+            reachable_count: 1,
+            total_count: 1,
+            ok_to_dereg: true,
+            unresolved_instance_ids: HashSet::new(),
+        };
+
+        let protected = RunDriver::protected_signers(&resolution, &pending);
+        assert!(protected.is_empty(), "no pending → protected set is empty");
+
+        harness.driver.run_orphan_dereg(&protected).await.unwrap();
+
+        let sent = harness.tx.sent_calldata();
+        assert_eq!(
+            count_deregister_calls(&sent),
+            1,
+            "with no in-flight task and no active signer, orphan pass MUST deregister",
+        );
     }
 
     // ── drain_proof_tasks metric-gating test ────────────────────────────
