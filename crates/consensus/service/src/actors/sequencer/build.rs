@@ -16,6 +16,7 @@ use crate::{
     actors::{
         SequencerEngineClient,
         sequencer::{
+            SequencerTimestamp, SequencerTimestampPlanner,
             error::SequencerActorError,
             origin_selector::{L1OriginSelectorError, OriginSelector},
             recovery::RecoveryModeGuard,
@@ -163,9 +164,19 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         unsafe_head: L2BlockInfo,
         l1_origin: BlockInfo,
     ) -> Result<Option<AttributesWithParent>, SequencerActorError> {
+        let planned_timestamp: SequencerTimestamp = SequencerTimestampPlanner::legacy_timestamp(
+            unsafe_head.block_info.timestamp,
+            self.rollup_config.block_time,
+        )?;
+
         let mut attributes = match self
             .attributes_builder
-            .prepare_payload_attributes(unsafe_head, l1_origin.id())
+            .prepare_payload_attributes_at(
+                unsafe_head,
+                l1_origin.id(),
+                planned_timestamp.timestamp,
+                planned_timestamp.timestamp_millis_part,
+            )
             .await
         {
             Ok(attrs) => attrs,
