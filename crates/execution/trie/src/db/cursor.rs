@@ -464,7 +464,7 @@ fn min_change_after(current: &mut Option<u64>, list: impl Iterator<Item = u64>, 
     }
 }
 
-fn trie_changeset_subkey(path: StoredNibbles) -> StoredNibblesSubKey {
+fn trie_changeset_subkey(path: &StoredNibbles) -> StoredNibblesSubKey {
     StoredNibblesSubKey::from(path.0)
 }
 
@@ -570,7 +570,7 @@ impl MdbxV2AccountTrieCursor {
         let mut changeset = tx.cursor_dup_read::<V2AccountTrieChangeSets>()?;
         for (key, changed_at) in future_changes {
             if let Some(block_number) = changed_at {
-                let subkey = trie_changeset_subkey(key);
+                let subkey = trie_changeset_subkey(&key);
                 let old = changeset
                     .seek_by_key_subkey(block_number, subkey.clone())?
                     .filter(|entry| entry.nibbles == subkey)
@@ -772,7 +772,7 @@ impl MdbxV2StorageTrieCursor {
         let mut changeset = tx.cursor_dup_read::<V2StorageTrieChangeSets>()?;
         for ((address, path), changed_at) in future_changes {
             if let Some(block_number) = changed_at {
-                let subkey = trie_changeset_subkey(path.clone());
+                let subkey = trie_changeset_subkey(&path);
                 let old = changeset
                     .seek_by_key_subkey(
                         BlockNumberHashedAddress((block_number, address)),
