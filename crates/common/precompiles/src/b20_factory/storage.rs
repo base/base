@@ -362,7 +362,9 @@ impl TokenCreateParams {
     /// Validates security-token initialization fields.
     pub fn validate_security(init: &B20SecurityInit) -> Result<()> {
         if init.isin.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Factory::MissingRequiredField {}));
+            return Err(BasePrecompileError::revert(IB20Factory::MissingRequiredField {
+                field: "isin".to_string(),
+            }));
         }
         Ok(())
     }
@@ -1208,7 +1210,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             assert_output(
                 dispatch_factory_revert(ctx, call),
-                IB20Factory::MissingRequiredField {}.abi_encode(),
+                IB20Factory::MissingRequiredField { field: "isin".to_string() }.abi_encode(),
             );
         });
 
