@@ -18,10 +18,10 @@ use crate::{
     BaseProofsStorageResult,
     db::{
         AccountTrieHistory, AccountTrieShardedKey, BlockNumberHashedAddress, HashedAccountHistory,
-        HashedAccountShardedKey, HashedStorageHistory, HashedStorageKey, MaybeDeleted,
-        StorageTrieHistory, StorageTrieKey, V2AccountTrieChangeSets, V2AccountsTrie,
-        V2AccountsTrieHistory, V2HashedAccountChangeSets, V2HashedAccounts,
-        V2HashedAccountsHistory, V2HashedStorageChangeSets, V2HashedStorages,
+        HashedAccountShardedKey, HashedStorageHistory, HashedStorageKey, HashedStorageShardedKey,
+        MaybeDeleted, StorageTrieHistory, StorageTrieKey, StorageTrieShardedKey,
+        V2AccountTrieChangeSets, V2AccountsTrie, V2AccountsTrieHistory, V2HashedAccountChangeSets,
+        V2HashedAccounts, V2HashedAccountsHistory, V2HashedStorageChangeSets, V2HashedStorages,
         V2HashedStoragesHistory, V2StorageTrieChangeSets, V2StoragesTrie, V2StoragesTrieHistory,
         VersionedValue,
     },
@@ -453,13 +453,19 @@ impl<K: Ord + Clone, V: Clone> MaterializedCursor<K, V> {
 }
 
 fn first_change_after(list: impl Iterator<Item = u64>, block_number: u64) -> Option<u64> {
-    list.filter(|changed_at| *changed_at > block_number).min()
+    list.into_iter().find(|changed_at| *changed_at > block_number)
 }
 
 fn min_change_after(current: &mut Option<u64>, list: impl Iterator<Item = u64>, block_number: u64) {
+    // History shards are read in order. `None` means no future change was found for this key, so
+    // the materialized current-state value is already valid at `block_number`.
     if let Some(changed_at) = first_change_after(list, block_number) {
         *current = current.map_or(Some(changed_at), |existing| Some(existing.min(changed_at)));
     }
+}
+
+fn trie_changeset_subkey(path: StoredNibbles) -> StoredNibblesSubKey {
+    StoredNibblesSubKey::from(path.0)
 }
 
 /// V2 MDBX implementation of [`HashedCursor`] for account state.
@@ -564,7 +570,7 @@ impl MdbxV2AccountTrieCursor {
         let mut changeset = tx.cursor_dup_read::<V2AccountTrieChangeSets>()?;
         for (key, changed_at) in future_changes {
             if let Some(block_number) = changed_at {
-                let subkey = StoredNibblesSubKey::from(key.0);
+                let subkey = trie_changeset_subkey(key);
                 let old = changeset
                     .seek_by_key_subkey(block_number, subkey.clone())?
                     .filter(|entry| entry.nibbles == subkey)
@@ -633,13 +639,16 @@ impl MdbxV2StorageCursor {
     ) -> BaseProofsStorageResult<Self> {
         let mut rows: BTreeMap<(B256, B256), Option<U256>> = BTreeMap::new();
         let mut current = tx.cursor_read::<V2HashedStorages>()?;
-        while let Some((key, entry)) = current.next()? {
+        let mut current_row = current.seek(B256::ZERO)?;
+        while let Some((key, entry)) = current_row {
             rows.insert((key, entry.key), (!entry.value.is_zero()).then_some(entry.value));
+            current_row = current.next()?;
         }
 
         let mut future_changes: BTreeMap<(B256, B256), Option<u64>> = BTreeMap::new();
         let mut history = tx.cursor_read::<V2HashedStoragesHistory>()?;
-        let mut history_row = history.next()?;
+        let mut history_row =
+            history.seek(HashedStorageShardedKey::new(B256::ZERO, B256::ZERO, 0))?;
         while let Some((key, list)) = history_row {
             let storage_key = (key.hashed_address, key.sharded_key.key);
             min_change_after(
@@ -739,13 +748,16 @@ impl MdbxV2StorageTrieCursor {
     ) -> BaseProofsStorageResult<Self> {
         let mut rows: BTreeMap<(B256, StoredNibbles), Option<BranchNodeCompact>> = BTreeMap::new();
         let mut current = tx.cursor_read::<V2StoragesTrie>()?;
-        while let Some((address, entry)) = current.next()? {
+        let mut current_row = current.seek(B256::ZERO)?;
+        while let Some((address, entry)) = current_row {
             rows.insert((address, StoredNibbles(entry.nibbles.0)), Some(entry.node));
+            current_row = current.next()?;
         }
 
         let mut future_changes: BTreeMap<(B256, StoredNibbles), Option<u64>> = BTreeMap::new();
         let mut history = tx.cursor_read::<V2StoragesTrieHistory>()?;
-        let mut history_row = history.next()?;
+        let mut history_row =
+            history.seek(StorageTrieShardedKey::new(B256::ZERO, StoredNibbles::default(), 0))?;
         while let Some((key, list)) = history_row {
             let storage_key = (key.hashed_address, key.key.clone());
             min_change_after(
@@ -760,7 +772,7 @@ impl MdbxV2StorageTrieCursor {
         let mut changeset = tx.cursor_dup_read::<V2StorageTrieChangeSets>()?;
         for ((address, path), changed_at) in future_changes {
             if let Some(block_number) = changed_at {
-                let subkey = StoredNibblesSubKey::from(path.0);
+                let subkey = trie_changeset_subkey(path.clone());
                 let old = changeset
                     .seek_by_key_subkey(
                         BlockNumberHashedAddress((block_number, address)),
