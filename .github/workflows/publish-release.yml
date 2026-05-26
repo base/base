@@ -11,6 +11,8 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: publish-release-${{ inputs.version }}
