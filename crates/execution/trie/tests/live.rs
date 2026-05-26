@@ -28,6 +28,30 @@ use reth_revm::database::StateProviderDatabase;
 use secp256k1::{Keypair, Secp256k1};
 use tempfile::TempDir;
 
+#[cfg(feature = "metrics")]
+fn new_test_storage(dir: &TempDir) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+    Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into()
+}
+
+#[cfg(not(feature = "metrics"))]
+fn new_test_storage(dir: &TempDir) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+    Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"))
+}
+
+#[cfg(feature = "metrics")]
+fn clone_test_storage(
+    storage: &BaseProofsStorage<Arc<MdbxProofsStorage>>,
+) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+    storage.clone()
+}
+
+#[cfg(not(feature = "metrics"))]
+fn clone_test_storage(
+    storage: &BaseProofsStorage<Arc<MdbxProofsStorage>>,
+) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+    Arc::clone(storage)
+}
+
 /// Converts a secp256k1 public key to an Ethereum address.
 fn public_key_to_address(pubkey: secp256k1::PublicKey) -> Address {
     let hash = keccak256(&pubkey.serialize_uncompressed()[1..]);
@@ -254,7 +278,7 @@ where
     {
         let provider = provider_factory.db_ref();
         let tx = provider.tx()?;
-        let initialization_job = InitializationJob::new(Arc::clone(&storage), tx);
+        let initialization_job = InitializationJob::new(clone_test_storage(&storage), tx);
         initialization_job.run(last_block_number, last_block_hash)?;
     }
 
@@ -299,8 +323,7 @@ where
 #[test]
 fn test_execute_and_store_block_updates() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+    let storage = new_test_storage(&dir);
 
     // Create a keypair for signing transactions
     let secp = Secp256k1::new();
@@ -332,8 +355,7 @@ fn test_execute_and_store_block_updates() {
 #[test]
 fn test_execute_and_store_block_updates_missing_parent_block() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+    let storage = new_test_storage(&dir);
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -352,7 +374,7 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
         provider_factory.clone(),
         Arc::clone(&chain_spec),
         key_pair,
-        Arc::clone(&storage),
+        clone_test_storage(&storage),
     )
     .unwrap();
 
@@ -386,8 +408,7 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
 #[test]
 fn test_execute_and_store_block_updates_state_root_mismatch() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+    let storage = new_test_storage(&dir);
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -409,7 +430,7 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
         provider_factory.clone(),
         Arc::clone(&chain_spec),
         key_pair,
-        Arc::clone(&storage),
+        clone_test_storage(&storage),
     )
     .unwrap();
 
@@ -451,8 +472,7 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
 #[test]
 fn test_multiple_blocks_before_and_after_initialization() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+    let storage = new_test_storage(&dir);
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -489,8 +509,7 @@ fn test_multiple_blocks_before_and_after_initialization() {
 #[test]
 fn test_blocks_with_multiple_transactions() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
+    let storage = new_test_storage(&dir);
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
