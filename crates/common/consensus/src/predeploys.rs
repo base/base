@@ -12,7 +12,7 @@ pub struct Predeploys;
 
 impl Predeploys {
     /// List of all predeploys.
-    pub const ALL: [Address; 24] = [
+    pub const ALL: [Address; 25] = [
         Self::LEGACY_MESSAGE_PASSER,
         Self::DEPLOYER_WHITELIST,
         Self::LEGACY_ERC20_ETH,
@@ -35,6 +35,7 @@ impl Predeploys {
         Self::EAS,
         Self::BEACON_BLOCK_ROOT,
         Self::OPERATOR_FEE_VAULT,
+        Self::BASE_TIME,
         Self::CROSS_L2_INBOX,
         Self::L2_TO_L2_XDM,
     ];
@@ -133,6 +134,9 @@ impl Predeploys {
     /// The Operator Fee Vault proxy address.
     pub const OPERATOR_FEE_VAULT: Address = address!("0x420000000000000000000000000000000000001B");
 
+    /// The `BaseTime` predeploy address.
+    pub const BASE_TIME: Address = address!("0x420000000000000000000000000000000000001c");
+
     /// The `CrossL2Inbox` proxy address.
     pub const CROSS_L2_INBOX: Address = address!("0x4200000000000000000000000000000000000022");
 
@@ -185,4 +189,24 @@ impl Deployers {
     /// Jovian Gas Price Oracle deployer address.
     pub const JOVIAN_GAS_PRICE_ORACLE: Address =
         address!("4210000000000000000000000000000000000007");
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::address;
+
+    use super::Predeploys;
+
+    #[test]
+    fn base_time_uses_reserved_address() {
+        assert_eq!(Predeploys::BASE_TIME, address!("0x420000000000000000000000000000000000001c"));
+    }
+
+    #[test]
+    fn all_predeploys_contains_base_time_once() {
+        let count =
+            Predeploys::ALL.iter().filter(|address| **address == Predeploys::BASE_TIME).count();
+
+        assert_eq!(count, 1);
+    }
 }
