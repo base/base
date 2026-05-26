@@ -5,17 +5,20 @@
 #
 #     just succinct build-elfs
 #
-# That target writes the freshly built ELFs into this directory and rewrites
-# the `sha256` fields below. Commit the resulting manifest change together with
-# the code change that caused the ELF to change.
+# Then update this manifest with:
+#
+#     just succinct write-manifest
+#
+# Commit the resulting manifest change together with the code change that caused
+# the ELF to change.
 #
 # The `base-proof-succinct-elfs` crate's build.rs verifies the local cache against
 # these hashes; builds fail fast if they drift.
 
 [[elfs]]
 name = "range-elf-embedded"
-sha256 = "b787a342d906b270a682cbc085e9e5d4e2e0b8831097e0bac9b75f8ae5d9c1b8"
+sha256 = "fc20d749763f788b9c54cac58399d09eae1396d3e187cc0c22240b941f4ad0ed"
 
 [[elfs]]
 name = "aggregation-elf"
-sha256 = "bef8337ba75c1d72ee659455b8bdf1c15f5cb18e6cdfeda9eb8401b8627fca20"
+sha256 = "baf0a889a5c493d780235b14f21e4f6c94feb8d4d8e138224f0d7d8572c944b9"
