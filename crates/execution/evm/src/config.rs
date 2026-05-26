@@ -290,7 +290,7 @@ mod tests {
         state::AccountInfo,
     };
 
-    use super::BaseEvmConfig;
+    use super::{BaseEvmConfig, BaseEvmEnvBuilder, BaseNextBlockEnvAttributes};
 
     fn test_evm_config() -> BaseEvmConfig {
         BaseEvmConfig::base(Arc::new(BaseChainSpec::mainnet()))
@@ -337,6 +337,26 @@ mod tests {
         // Assert that the chain ID in the `cfg_env` is correctly set to the chain ID of the
         // ChainSpec
         assert_eq!(cfg_env.chain_id, chain_spec.chain().id());
+    }
+
+    #[test]
+    fn test_next_evm_env_keeps_timestamp_seconds_with_millis_part() {
+        let chain_spec = BaseChainSpec::mainnet();
+        let parent = Header { number: 41, timestamp: 1_762_425_600, ..Default::default() };
+        let attributes = BaseNextBlockEnvAttributes {
+            timestamp: 1_762_425_601,
+            timestamp_millis_part: Some(200),
+            suggested_fee_recipient: Address::ZERO,
+            prev_randao: B256::ZERO,
+            gas_limit: 30_000_000,
+            parent_beacon_block_root: None,
+            extra_data: Default::default(),
+        };
+
+        let evm_env = BaseEvmEnvBuilder::next_evm_env(&parent, &attributes, 7, &chain_spec);
+
+        assert_eq!(evm_env.block_env.timestamp, U256::from(attributes.timestamp));
+        assert_ne!(evm_env.block_env.timestamp, U256::from(1_762_425_601_200_u64));
     }
 
     #[test]
