@@ -45,7 +45,10 @@ def parse_scalar_yaml(path):
                 raise SystemExit(
                     f"unsupported YAML value form for {'.'.join(path_parts)} in {path}:{line_number}"
                 )
-            values[".".join(path_parts)] = value.strip("\"'")
+            clean = value
+            if len(clean) >= 2 and clean[0] == clean[-1] and clean[0] in "\"'":
+                clean = clean[1:-1]
+            values[".".join(path_parts)] = clean
         else:
             stack.append((indent, key))
 

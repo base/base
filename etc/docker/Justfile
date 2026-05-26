@@ -12,11 +12,11 @@ default:
 
 # Stops devnet, deletes data, and starts fresh (3-node HA conductor cluster)
 up zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "{{ _ha }}" "{{ zk }}"
+    just --justfile {{ source_file() }} _up-devnet "ha" "{{ zk }}"
 
 # Stops devnet, deletes data, and starts fresh with a single sequencer (no conductor)
 up-single zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "{{ _base }}" "{{ zk }}"
+    just --justfile {{ source_file() }} _up-devnet "base" "{{ zk }}"
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
 profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
@@ -151,18 +151,28 @@ _build-rust-images group profile='dev':
     PROFILE="{{ profile }}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
-_up-devnet compose_files zk:
+_up-devnet compose_profile zk:
     #!/usr/bin/env bash
     set -euo pipefail
-    zk_mode="{{ zk }}"
+    compose_profile={{ quote(compose_profile) }}
+    zk_mode={{ quote(zk) }}
     zk_mode="${zk_mode#zk=}"
+
+    case "$compose_profile" in
+      ha) compose_files=({{ _ha }}) ;;
+      base) compose_files=({{ _base }}) ;;
+      *)
+        echo "ERROR: compose profile must be 'ha' or 'base' (got '${compose_profile}')" >&2
+        exit 1
+        ;;
+    esac
 
     case "$zk_mode" in
       dry-run)
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        SP1_PROVER=dry-run docker compose {{ _env }} {{ compose_files }} up -d --no-build
+        SP1_PROVER=dry-run docker compose {{ _env }} "${compose_files[@]}" up -d --no-build
         ;;
       cluster)
         if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
@@ -212,7 +222,7 @@ _up-devnet compose_files zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        docker compose {{ _env }} --env-file "$cluster_env" {{ compose_files }} up -d --no-build
+        docker compose {{ _env }} --env-file "$cluster_env" "${compose_files[@]}" up -d --no-build
         ;;
       *)
         echo "ERROR: zk must be 'dry-run' or 'cluster' (got '${zk_mode}')" >&2
