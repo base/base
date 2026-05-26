@@ -23,6 +23,19 @@ pub struct BasePayloadAttributes {
     /// The payload attributes
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub payload_attributes: PayloadAttributes,
+    /// The millisecond component of the payload timestamp.
+    ///
+    /// This is absent before Beryl and required by validation after Beryl. The Engine API
+    /// `timestamp` field remains Unix seconds; this field carries only the sub-second component.
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::quantity::opt"
+        )
+    )]
+    pub timestamp_millis_part: Option<u16>,
     /// Transactions is a field for rollups: the transactions list is forced into the block
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub transactions: Option<Vec<Bytes>>,
@@ -63,6 +76,9 @@ impl BasePayloadAttributes {
         let mut hasher = sha2::Sha256::new();
         hasher.update(parent.as_slice());
         hasher.update(&self.payload_attributes.timestamp.to_be_bytes()[..]);
+        if let Some(timestamp_millis_part) = self.timestamp_millis_part {
+            hasher.update(timestamp_millis_part.to_be_bytes());
+        }
         hasher.update(self.payload_attributes.prev_randao.as_slice());
         hasher.update(self.payload_attributes.suggested_fee_recipient.as_slice());
         if let Some(withdrawals) = &self.payload_attributes.withdrawals {
@@ -237,6 +253,7 @@ mod test {
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
             gas_limit: Some(30000000),
@@ -271,6 +288,7 @@ mod test {
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
             gas_limit: Some(30000000),
@@ -300,6 +318,7 @@ mod test {
                 parent_beacon_block_root: Some(B256::ZERO),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: Some(vec![b"hello".to_vec().into()]),
             no_tx_pool: Some(true),
             gas_limit: Some(42),
@@ -324,6 +343,7 @@ mod test {
                 parent_beacon_block_root: Some(B256::ZERO),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: Some(vec![b"hello".to_vec().into()]),
             no_tx_pool: Some(true),
             gas_limit: Some(42),
@@ -366,6 +386,7 @@ mod test {
                 parent_beacon_block_root: Some(B256::ZERO),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: Some(vec![b"hello".to_vec().into()]),
             no_tx_pool: Some(true),
             gas_limit: Some(42),
@@ -390,6 +411,7 @@ mod test {
                 parent_beacon_block_root: Some(B256::ZERO),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: Some(vec![b"hello".to_vec().into()]),
             no_tx_pool: Some(true),
             gas_limit: Some(42),
@@ -401,6 +423,28 @@ mod test {
         let de: BasePayloadAttributes = serde_json::from_str(&ser).unwrap();
 
         assert_eq!(attributes, de);
+    }
+
+    #[test]
+    fn test_serde_roundtrip_timestamp_millis_part() {
+        let attributes =
+            BasePayloadAttributes { timestamp_millis_part: Some(200), ..Default::default() };
+
+        let val = serde_json::to_value(&attributes).unwrap();
+        assert_eq!(val.get("timestampMillisPart").unwrap(), "0xc8");
+
+        let de: BasePayloadAttributes = serde_json::from_value(val).unwrap();
+        assert_eq!(attributes, de);
+    }
+
+    #[test]
+    fn test_payload_id_commits_timestamp_millis_part() {
+        let parent = B256::ZERO;
+        let without_millis = BasePayloadAttributes::default();
+        let with_millis =
+            BasePayloadAttributes { timestamp_millis_part: Some(200), ..Default::default() };
+
+        assert_ne!(without_millis.payload_id(&parent, 3), with_millis.payload_id(&parent, 3));
     }
 
     #[test]
