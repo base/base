@@ -17,7 +17,8 @@ pub use batch::{
     RawSpanBatch, SingleBatch, SpanBatch, SpanBatchBits, SpanBatchEip1559TransactionData,
     SpanBatchEip2930TransactionData, SpanBatchEip7702TransactionData, SpanBatchElement,
     SpanBatchError, SpanBatchLegacyTransactionData, SpanBatchPayload, SpanBatchPrefix,
-    SpanBatchTransactionData, SpanBatchTransactions, SpanDecodingError,
+    SpanBatchTimestampDelta, SpanBatchTimestampDeltaError, SpanBatchTransactionData,
+    SpanBatchTransactions, SpanDecodingError,
 };
 
 mod brotli;

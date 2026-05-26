@@ -50,6 +50,9 @@ pub use payload::SpanBatchPayload;
 mod prefix;
 pub use prefix::SpanBatchPrefix;
 
+mod timestamp_delta;
+pub use timestamp_delta::{SpanBatchTimestampDelta, SpanBatchTimestampDeltaError};
+
 mod inclusion;
 pub use inclusion::BatchWithInclusionBlock;
 
