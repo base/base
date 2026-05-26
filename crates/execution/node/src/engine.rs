@@ -4,7 +4,7 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseBlock, Predeploys};
+use base_common_consensus::{BaseBlock, BaseHeader, Predeploys};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     ExecutionData,
@@ -316,8 +316,40 @@ where
             ));
         }
 
+        validate_timestamp_millis_part_presence(
+            self.chain_spec(),
+            attributes.payload_attributes.timestamp,
+            attributes.timestamp_millis_part,
+        )?;
+
         Ok(())
     }
+}
+
+fn validate_timestamp_millis_part_presence(
+    chain_spec: impl Upgrades,
+    timestamp: u64,
+    timestamp_millis_part: Option<u16>,
+) -> Result<(), EngineObjectValidationError> {
+    if chain_spec.is_beryl_active_at_timestamp(timestamp) {
+        let part = timestamp_millis_part.ok_or_else(|| {
+            EngineObjectValidationError::InvalidParams(
+                "MissingTimestampMillisPartInPayloadAttributes".to_string().into(),
+            )
+        })?;
+
+        BaseHeader::validate_timestamp_millis_part(part).map_err(|_| {
+            EngineObjectValidationError::InvalidParams(
+                "InvalidTimestampMillisPartInPayloadAttributes".to_string().into(),
+            )
+        })?;
+    } else if timestamp_millis_part.is_some() {
+        return Err(EngineObjectValidationError::InvalidParams(
+            "TimestampMillisPartNotAllowedBeforeBeryl".to_string().into(),
+        ));
+    }
+
+    Ok(())
 }
 
 /// Validates the presence of the `withdrawals` field according to the payload timestamp.
@@ -370,10 +402,11 @@ pub fn validate_withdrawals_presence(
 mod tests {
     use alloy_primitives::{Address, B64, B256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
-    use base_common_chains::ChainConfig;
+    use base_common_chains::{BaseUpgrade, ChainConfig};
     use base_common_consensus::BaseTxEnvelope;
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::BaseChainSpec;
+    use reth_chainspec::ForkCondition;
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;
 
@@ -383,6 +416,17 @@ mod tests {
     fn validator() -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
         BaseEngineValidator::<NoopProvider, BaseTxEnvelope, BaseChainSpec>::new::<KeccakKeyHasher>(
             Arc::new(BaseChainSpec::sepolia()),
+            NoopProvider::default(),
+        )
+    }
+
+    fn validator_with_beryl_timestamp(
+        beryl_timestamp: u64,
+    ) -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
+        let mut chain_spec = BaseChainSpec::sepolia();
+        chain_spec.set_fork(BaseUpgrade::Beryl, ForkCondition::Timestamp(beryl_timestamp));
+        BaseEngineValidator::<NoopProvider, BaseTxEnvelope, BaseChainSpec>::new::<KeccakKeyHasher>(
+            Arc::new(chain_spec),
             NoopProvider::default(),
         )
     }
@@ -404,6 +448,15 @@ mod tests {
         min_base_fee: Option<u64>,
         timestamp: u64,
     ) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
+        get_attributes_with_timestamp_millis_part(eip_1559_params, min_base_fee, timestamp, None)
+    }
+
+    fn get_attributes_with_timestamp_millis_part(
+        eip_1559_params: Option<B64>,
+        min_base_fee: Option<u64>,
+        timestamp: u64,
+        timestamp_millis_part: Option<u16>,
+    ) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
         BasePayloadBuilderAttributes::try_new(
             B256::ZERO,
             BasePayloadAttributes {
@@ -420,7 +473,7 @@ mod tests {
                     parent_beacon_block_root: Some(B256::ZERO),
                     slot_number: None,
                 },
-                timestamp_millis_part: None,
+                timestamp_millis_part,
             },
             3,
         )
@@ -566,5 +619,76 @@ mod tests {
             &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "MissingMinBaseFeeInPayloadAttributes");
+    }
+
+    #[test]
+    fn test_malformed_attributes_pre_beryl_with_timestamp_millis_part() {
+        let beryl_timestamp = ChainConfig::sepolia().jovian_timestamp + 20;
+        let validator = validator_with_beryl_timestamp(beryl_timestamp);
+        let attributes = get_attributes_with_timestamp_millis_part(
+            Some(b64!("0000000000000000")),
+            Some(1),
+            beryl_timestamp - 1,
+            Some(0),
+        );
+
+        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+            BaseEngineTypes,
+        >>::ensure_well_formed_attributes(
+            &validator, EngineApiMessageVersion::V3, &attributes
+        );
+        assert_invalid_params_error!(result, "TimestampMillisPartNotAllowedBeforeBeryl");
+    }
+
+    #[test]
+    fn test_malformed_attributes_post_beryl_missing_timestamp_millis_part() {
+        let beryl_timestamp = ChainConfig::sepolia().jovian_timestamp + 20;
+        let validator = validator_with_beryl_timestamp(beryl_timestamp);
+        let attributes = get_attributes(Some(b64!("0000000000000000")), Some(1), beryl_timestamp);
+
+        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+            BaseEngineTypes,
+        >>::ensure_well_formed_attributes(
+            &validator, EngineApiMessageVersion::V3, &attributes
+        );
+        assert_invalid_params_error!(result, "MissingTimestampMillisPartInPayloadAttributes");
+    }
+
+    #[test]
+    fn test_malformed_attributes_post_beryl_invalid_timestamp_millis_part() {
+        let beryl_timestamp = ChainConfig::sepolia().jovian_timestamp + 20;
+        let validator = validator_with_beryl_timestamp(beryl_timestamp);
+        let attributes = get_attributes_with_timestamp_millis_part(
+            Some(b64!("0000000000000000")),
+            Some(1),
+            beryl_timestamp,
+            Some(100),
+        );
+
+        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+            BaseEngineTypes,
+        >>::ensure_well_formed_attributes(
+            &validator, EngineApiMessageVersion::V3, &attributes
+        );
+        assert_invalid_params_error!(result, "InvalidTimestampMillisPartInPayloadAttributes");
+    }
+
+    #[test]
+    fn test_well_formed_attributes_post_beryl_valid_timestamp_millis_part() {
+        let beryl_timestamp = ChainConfig::sepolia().jovian_timestamp + 20;
+        let validator = validator_with_beryl_timestamp(beryl_timestamp);
+        let attributes = get_attributes_with_timestamp_millis_part(
+            Some(b64!("0000000000000000")),
+            Some(1),
+            beryl_timestamp,
+            Some(200),
+        );
+
+        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+            BaseEngineTypes,
+        >>::ensure_well_formed_attributes(
+            &validator, EngineApiMessageVersion::V3, &attributes
+        );
+        assert!(result.is_ok());
     }
 }
