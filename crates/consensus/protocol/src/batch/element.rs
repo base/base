@@ -3,6 +3,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::Bytes;
+use base_common_consensus::{BaseHeader, TIMESTAMP_MILLIS_PER_SECOND, TimestampMillisPartError};
 
 use crate::SingleBatch;
 
@@ -25,6 +26,22 @@ impl SpanBatchElement {
     /// `MAX_SPAN_BATCH_ELEMENTS` is the maximum number of blocks, transactions in total,
     /// or transaction per block allowed in a span batch.
     pub const MAX_SPAN_BATCH_ELEMENTS: u64 = 10_000_000;
+
+    /// Returns the full millisecond timestamp when this element carries a millisecond component.
+    pub fn timestamp_millis(&self) -> Result<Option<u64>, TimestampMillisPartError> {
+        let Some(timestamp_millis_part) = self.timestamp_millis_part else {
+            return Ok(None);
+        };
+
+        BaseHeader::validate_timestamp_millis_part(timestamp_millis_part)?;
+        self.timestamp
+            .checked_mul(u64::from(TIMESTAMP_MILLIS_PER_SECOND))
+            .and_then(|timestamp_millis| {
+                timestamp_millis.checked_add(u64::from(timestamp_millis_part))
+            })
+            .map(Some)
+            .ok_or(TimestampMillisPartError::TimestampOverflow)
+    }
 }
 
 impl From<SingleBatch> for SpanBatchElement {
@@ -73,5 +90,37 @@ mod tests {
 
         assert_eq!(span_batch_element.timestamp, 42);
         assert_eq!(span_batch_element.timestamp_millis_part, Some(200));
+    }
+
+    #[test]
+    fn test_span_batch_element_full_timestamp_millis() {
+        let span_batch_element = SpanBatchElement {
+            timestamp: 42,
+            timestamp_millis_part: Some(200),
+            ..Default::default()
+        };
+
+        assert_eq!(span_batch_element.timestamp_millis(), Ok(Some(42_200)));
+    }
+
+    #[test]
+    fn test_span_batch_element_full_timestamp_millis_absent_pre_beryl() {
+        let span_batch_element = SpanBatchElement { timestamp: 42, ..Default::default() };
+
+        assert_eq!(span_batch_element.timestamp_millis(), Ok(None));
+    }
+
+    #[test]
+    fn test_span_batch_element_full_timestamp_millis_rejects_invalid_part() {
+        let span_batch_element = SpanBatchElement {
+            timestamp: 42,
+            timestamp_millis_part: Some(100),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            span_batch_element.timestamp_millis(),
+            Err(TimestampMillisPartError::InvalidPart(100))
+        );
     }
 }
