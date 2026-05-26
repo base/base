@@ -462,6 +462,7 @@ where
         self.rollup.log_upgrade_activation(
             envelope.execution_payload.block_number(),
             envelope.execution_payload.timestamp(),
+            self.engine.state().sync_state.unsafe_head().block_info.timestamp,
         );
     }
 
