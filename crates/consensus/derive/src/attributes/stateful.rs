@@ -172,6 +172,7 @@ where
             sequence_number,
             &l1_header,
             next_l2_time,
+            l2_parent.block_info.timestamp,
         )
         .map_err(|e| {
             PipelineError::AttributesBuilder(BuilderError::Custom(e.to_string())).crit()
