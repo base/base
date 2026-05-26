@@ -215,7 +215,7 @@ _up-devnet compose_files zk:
         docker compose {{ _env }} --env-file "$cluster_env" {{ compose_files }} up -d --no-build
         ;;
       *)
-        echo "ERROR: zk must be 'dry-run' or 'cluster' (got '{{ zk }}')" >&2
+        echo "ERROR: zk must be 'dry-run' or 'cluster' (got '${zk_mode}')" >&2
         exit 1
         ;;
     esac
