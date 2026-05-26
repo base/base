@@ -70,6 +70,17 @@ where
         l2_parent: L2BlockInfo,
         epoch: BlockNumHash,
     ) -> PipelineResult<BasePayloadAttributes> {
+        let next_l2_time = l2_parent.block_info.timestamp + self.rollup_cfg.block_time;
+        self.prepare_payload_attributes_at(l2_parent, epoch, next_l2_time, None).await
+    }
+
+    async fn prepare_payload_attributes_at(
+        &mut self,
+        l2_parent: L2BlockInfo,
+        epoch: BlockNumHash,
+        next_l2_time: u64,
+        timestamp_millis_part: Option<u16>,
+    ) -> PipelineResult<BasePayloadAttributes> {
         let l1_header;
         let deposit_transactions: Vec<Bytes>;
 
@@ -129,7 +140,6 @@ where
 
         // Sanity check the L1 origin was correctly selected to maintain the time invariant
         // between L1 and L2.
-        let next_l2_time = l2_parent.block_info.timestamp + self.rollup_cfg.block_time;
         if next_l2_time < l1_header.timestamp {
             return Err(PipelineErrorKind::Reset(
                 BuilderError::BrokenTimeInvariant(
@@ -206,7 +216,7 @@ where
                 withdrawals,
                 slot_number: None,
             },
-            timestamp_millis_part: None,
+            timestamp_millis_part,
             transactions: Some(txs),
             no_tx_pool: Some(true),
             gas_limit: Some(u64::from_be_bytes(
@@ -503,6 +513,39 @@ mod tests {
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_payload_at_uses_explicit_timestamp_and_millis_part() {
+        let block_time = 10;
+        let timestamp = 100;
+        let cfg = Arc::new(RollupConfig { block_time, ..Default::default() });
+        let l1_cfg = Arc::new(Sepolia::l1_config());
+        let l2_number = 1;
+        let mut fetcher = TestSystemConfigL2Fetcher::default();
+        fetcher.insert(l2_number, SystemConfig::default());
+        let mut provider = TestChainProvider::default();
+        let header = Header { timestamp, ..Default::default() };
+        let hash = header.hash_slow();
+        provider.insert_header(hash, header);
+        let mut builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let epoch = BlockNumHash { hash, number: l2_number };
+        let l2_parent = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::ZERO,
+                number: l2_number,
+                timestamp,
+                parent_hash: hash,
+            },
+            l1_origin: BlockNumHash { hash, number: l2_number },
+            seq_num: 0,
+        };
+
+        let payload =
+            builder.prepare_payload_attributes_at(l2_parent, epoch, 101, Some(200)).await.unwrap();
+
+        assert_eq!(payload.payload_attributes.timestamp, 101);
+        assert_eq!(payload.timestamp_millis_part, Some(200));
     }
 
     #[tokio::test]

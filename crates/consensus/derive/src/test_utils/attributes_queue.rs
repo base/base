@@ -29,6 +29,16 @@ impl AttributesBuilder for TestAttributesBuilder {
         _l2_parent: L2BlockInfo,
         _epoch: BlockNumHash,
     ) -> PipelineResult<BasePayloadAttributes> {
+        self.prepare_payload_attributes_at(_l2_parent, _epoch, 0, None).await
+    }
+
+    async fn prepare_payload_attributes_at(
+        &mut self,
+        _l2_parent: L2BlockInfo,
+        _epoch: BlockNumHash,
+        _l2_timestamp: u64,
+        _timestamp_millis_part: Option<u16>,
+    ) -> PipelineResult<BasePayloadAttributes> {
         match self.attributes.pop() {
             Some(Ok(attrs)) => Ok(attrs),
             Some(Err(err)) => Err(err),
