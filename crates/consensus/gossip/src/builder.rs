@@ -45,6 +45,8 @@ pub struct GossipDriverBuilder {
     max_identify_peerstore_peers: NonZeroUsize,
     /// Topic scoring. Disabled by default.
     topic_scoring: bool,
+    /// Peer scoring slot interval override.
+    peer_score_block_interval: Option<Duration>,
 }
 
 impl GossipDriverBuilder {
@@ -70,6 +72,7 @@ impl GossipDriverBuilder {
             max_identify_peerstore_peers: DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
             rollup_config,
             topic_scoring: false,
+            peer_score_block_interval: None,
         }
     }
 
@@ -108,6 +111,12 @@ impl GossipDriverBuilder {
     /// Sets the [`PeerScoreLevel`] for the [`Behaviour`].
     pub const fn with_peer_scoring(mut self, level: PeerScoreLevel) -> Self {
         self.scoring = Some(level);
+        self
+    }
+
+    /// Sets the slot interval used for peer scoring.
+    pub const fn with_peer_score_block_interval(mut self, interval: Duration) -> Self {
+        self.peer_score_block_interval = Some(interval);
         self
     }
 
@@ -162,6 +171,8 @@ impl GossipDriverBuilder {
         let rollup_config = self.rollup_config;
         let l2_chain_id = rollup_config.l2_chain_id;
         let block_time = rollup_config.block_time;
+        let peer_score_block_interval =
+            self.peer_score_block_interval.unwrap_or_else(|| Duration::from_secs(block_time));
 
         let (signer_tx, signer_rx) = watch::channel(signer_recv);
 
@@ -218,7 +229,11 @@ impl GossipDriverBuilder {
             }
             Some(level) => {
                 let params = level
-                    .to_params(handler.topics(), self.topic_scoring, block_time)
+                    .to_params_for_slot(
+                        handler.topics(),
+                        self.topic_scoring,
+                        peer_score_block_interval,
+                    )
                     .unwrap_or_default();
                 match behaviour.gossipsub.with_peer_score(params, PeerScoreLevel::thresholds()) {
                     Ok(_) => debug!(target: "scoring", "Peer scoring enabled successfully"),
@@ -316,6 +331,17 @@ mod tests {
     #[tokio::test]
     async fn build_leaves_peer_monitoring_unset_by_default() {
         let (driver, _signer_tx) = test_builder().build().unwrap();
+        assert!(driver.peer_monitoring.is_none());
+    }
+
+    #[tokio::test]
+    async fn build_accepts_subsecond_peer_score_block_interval() {
+        let (driver, _signer_tx) = test_builder()
+            .with_topic_scoring(true)
+            .with_peer_score_block_interval(Duration::from_millis(200))
+            .build()
+            .unwrap();
+
         assert!(driver.peer_monitoring.is_none());
     }
 }
