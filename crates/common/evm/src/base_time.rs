@@ -2,8 +2,30 @@
 
 use alloy_primitives::Address;
 use alloy_sol_types::sol;
-use base_common_consensus::Predeploys;
+use base_common_consensus::{
+    BaseHeader, Predeploys, TIMESTAMP_MILLIS_PER_SECOND, TimestampMillisPartError,
+};
 use revm::primitives::{U256, uint};
+
+/// A deterministic `BaseTime` storage write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BaseTimeStorageWrite {
+    /// Storage slot to write.
+    pub slot: U256,
+    /// Storage value to write.
+    pub value: U256,
+}
+
+/// Error returned while preparing `BaseTime` storage writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum BaseTimeStorageWriteError {
+    /// The supplied millisecond component is outside the canonical 200ms cadence.
+    #[error("invalid BaseTime timestamp millisecond part")]
+    InvalidTimestampMillisPart(#[from] TimestampMillisPartError),
+    /// The full Unix millisecond timestamp overflowed `u64`.
+    #[error("BaseTime timestamp milliseconds overflowed u64")]
+    TimestampOverflow,
+}
 
 /// `BaseTime` system contract metadata.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -43,6 +65,48 @@ impl BaseTime {
     pub fn block_number_history_slot(block_number: u64) -> U256 {
         Self::HISTORY_BLOCK_NUMBER_BASE_SLOT + U256::from(Self::history_index(block_number))
     }
+
+    /// Computes the full Unix millisecond timestamp from seconds and the canonical millisecond part.
+    pub fn timestamp_millis(
+        timestamp: u64,
+        timestamp_millis_part: u16,
+    ) -> Result<u64, BaseTimeStorageWriteError> {
+        BaseHeader::validate_timestamp_millis_part(timestamp_millis_part)?;
+
+        timestamp
+            .checked_mul(u64::from(TIMESTAMP_MILLIS_PER_SECOND))
+            .and_then(|timestamp_millis| {
+                timestamp_millis.checked_add(u64::from(timestamp_millis_part))
+            })
+            .ok_or(BaseTimeStorageWriteError::TimestampOverflow)
+    }
+
+    /// Returns the deterministic block-start storage writes for `timestampMs` and history lookups.
+    pub fn storage_writes(
+        timestamp: u64,
+        timestamp_millis_part: u16,
+        block_number: u64,
+    ) -> Result<[BaseTimeStorageWrite; 4], BaseTimeStorageWriteError> {
+        let timestamp_millis =
+            U256::from(Self::timestamp_millis(timestamp, timestamp_millis_part)?);
+        let block_number = U256::from(block_number);
+
+        Ok([
+            BaseTimeStorageWrite {
+                slot: Self::LATEST_TIMESTAMP_MILLIS_SLOT,
+                value: timestamp_millis,
+            },
+            BaseTimeStorageWrite { slot: Self::LATEST_BLOCK_NUMBER_SLOT, value: block_number },
+            BaseTimeStorageWrite {
+                slot: Self::timestamp_history_slot(block_number.to()),
+                value: timestamp_millis,
+            },
+            BaseTimeStorageWrite {
+                slot: Self::block_number_history_slot(block_number.to()),
+                value: block_number,
+            },
+        ])
+    }
 }
 
 sol! {
@@ -64,7 +128,7 @@ mod tests {
     use alloy_primitives::{U256, address};
     use alloy_sol_types::SolCall;
 
-    use super::{BaseTime, IBaseTime};
+    use super::{BaseTime, BaseTimeStorageWrite, BaseTimeStorageWriteError, IBaseTime};
 
     #[test]
     fn base_time_address_matches_predeploy_reservation() {
@@ -110,5 +174,42 @@ mod tests {
 
         assert_eq!(BaseTime::timestamp_history_slot(1), U256::from(3));
         assert_eq!(BaseTime::block_number_history_slot(1), U256::from(8194));
+    }
+
+    #[test]
+    fn base_time_timestamp_millis_combines_seconds_and_part() {
+        assert_eq!(BaseTime::timestamp_millis(1_762_425_600, 200).unwrap(), 1_762_425_600_200);
+    }
+
+    #[test]
+    fn base_time_timestamp_millis_rejects_invalid_part() {
+        assert!(matches!(
+            BaseTime::timestamp_millis(1_762_425_600, 100),
+            Err(BaseTimeStorageWriteError::InvalidTimestampMillisPart(_))
+        ));
+    }
+
+    #[test]
+    fn base_time_storage_writes_cover_current_and_history_slots() {
+        let writes = BaseTime::storage_writes(1_762_425_600, 400, 8192).unwrap();
+
+        assert_eq!(
+            writes,
+            [
+                BaseTimeStorageWrite {
+                    slot: BaseTime::LATEST_TIMESTAMP_MILLIS_SLOT,
+                    value: U256::from(1_762_425_600_400u64)
+                },
+                BaseTimeStorageWrite {
+                    slot: BaseTime::LATEST_BLOCK_NUMBER_SLOT,
+                    value: U256::from(8192)
+                },
+                BaseTimeStorageWrite {
+                    slot: U256::from(3),
+                    value: U256::from(1_762_425_600_400u64)
+                },
+                BaseTimeStorageWrite { slot: U256::from(8194), value: U256::from(8192) },
+            ]
+        );
     }
 }

@@ -11,7 +11,7 @@ mod spec;
 pub use spec::BaseSpecId;
 
 mod base_time;
-pub use base_time::{BaseTime, IBaseTime};
+pub use base_time::{BaseTime, BaseTimeStorageWrite, BaseTimeStorageWriteError, IBaseTime};
 
 mod result;
 pub use result::BaseHaltReason;
