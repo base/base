@@ -2,7 +2,7 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use alloy_primitives::Address;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
-use boundless_market::alloy::signers::local::PrivateKeySigner;
+use boundless_market::{alloy::signers::local::PrivateKeySigner, price_oracle::Amount};
 use url::Url;
 
 /// AWS ALB target group discovery configuration.
@@ -55,6 +55,12 @@ pub struct BoundlessConfig {
     /// is considered stale and skipped. Should be set slightly below the
     /// on-chain `MAX_AGE` to account for clock skew.
     pub max_attestation_age: Duration,
+    /// Optional minimum Boundless offer price for each submitted proof request.
+    pub offer_min_price: Option<Amount>,
+    /// Optional maximum Boundless offer price for each submitted proof request.
+    pub offer_max_price: Option<Amount>,
+    /// Optional duration in seconds for Boundless price to ramp from min to max.
+    pub offer_ramp_up_period_secs: Option<u32>,
 }
 
 impl std::fmt::Debug for BoundlessConfig {
@@ -68,6 +74,9 @@ impl std::fmt::Debug for BoundlessConfig {
             .field("timeout", &self.timeout)
             .field("max_recovery_attempts", &self.max_recovery_attempts)
             .field("max_attestation_age", &self.max_attestation_age)
+            .field("offer_min_price", &self.offer_min_price)
+            .field("offer_max_price", &self.offer_max_price)
+            .field("offer_ramp_up_period_secs", &self.offer_ramp_up_period_secs)
             .finish()
     }
 }

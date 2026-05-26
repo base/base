@@ -26,7 +26,10 @@ use base_proof_tee_registrar::{
     RegistrarMetrics, RegistrationDriver, RegistryContractClient,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
-use boundless_market::alloy::signers::local::PrivateKeySigner;
+use boundless_market::{
+    alloy::signers::local::PrivateKeySigner,
+    price_oracle::{Amount, Asset},
+};
 use clap::{Args, Parser, ValueEnum};
 use eyre::WrapErr;
 use tokio_util::sync::CancellationToken;
@@ -193,6 +196,26 @@ struct BoundlessArgs {
     #[arg(long, env = cli_env!("BOUNDLESS_TIMEOUT_SECS"), default_value_t = 600)]
     boundless_timeout_secs: u64,
 
+    /// Minimum Boundless offer price in ETH for each submitted proof request.
+    ///
+    /// Accepts either a plain ETH amount (for example, `0.01`) or an explicit
+    /// ETH amount (for example, `0.01 ETH`). Must be set together with
+    /// `--boundless-max-price-eth`.
+    #[arg(long, env = cli_env!("BOUNDLESS_MIN_PRICE_ETH"))]
+    boundless_min_price_eth: Option<String>,
+
+    /// Maximum Boundless offer price in ETH for each submitted proof request.
+    ///
+    /// Accepts either a plain ETH amount (for example, `0.03`) or an explicit
+    /// ETH amount (for example, `0.03 ETH`). Must be greater than or equal to
+    /// `--boundless-min-price-eth`.
+    #[arg(long, env = cli_env!("BOUNDLESS_MAX_PRICE_ETH"))]
+    boundless_max_price_eth: Option<String>,
+
+    /// Optional duration for the Boundless offer price to ramp from min to max.
+    #[arg(long, env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS"))]
+    boundless_offer_ramp_up_period_secs: Option<u32>,
+
     /// Maximum number of deterministic request-ID slots to probe when
     /// recovering in-flight proofs after an instance rotation.
     #[arg(
@@ -271,6 +294,16 @@ fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], RegistrarError> {
     Ok(id)
 }
 
+/// Parse an ETH-denominated Boundless offer price.
+fn parse_boundless_eth_amount(field: &str, s: &str) -> std::result::Result<Amount, RegistrarError> {
+    let amount = Amount::parse(s, Some(Asset::ETH))
+        .map_err(|e| RegistrarError::Config(format!("{field}: {e}")))?;
+    if amount.asset != Asset::ETH {
+        return Err(RegistrarError::Config(format!("{field}: expected ETH amount")));
+    }
+    Ok(amount)
+}
+
 impl Cli {
     /// Validate the CLI arguments for logical conflicts and parse into a [`RegistrarConfig`].
     pub(crate) fn into_config(self) -> std::result::Result<RegistrarConfig, RegistrarError> {
@@ -303,6 +336,40 @@ impl Cli {
                     .image_id
                     .as_deref()
                     .ok_or_else(|| RegistrarError::Config("--image-id is required".into()))?;
+                let offer_min_price = self
+                    .boundless
+                    .boundless_min_price_eth
+                    .as_deref()
+                    .map(|s| parse_boundless_eth_amount("--boundless-min-price-eth", s))
+                    .transpose()?;
+                let offer_max_price = self
+                    .boundless
+                    .boundless_max_price_eth
+                    .as_deref()
+                    .map(|s| parse_boundless_eth_amount("--boundless-max-price-eth", s))
+                    .transpose()?;
+
+                match (&offer_min_price, &offer_max_price) {
+                    (Some(_), None) => {
+                        return Err(RegistrarError::Config(
+                            "--boundless-max-price-eth is required when --boundless-min-price-eth is set"
+                                .into(),
+                        ));
+                    }
+                    (None, Some(_)) => {
+                        return Err(RegistrarError::Config(
+                            "--boundless-min-price-eth is required when --boundless-max-price-eth is set"
+                                .into(),
+                        ));
+                    }
+                    (Some(min_price), Some(max_price)) if max_price.value < min_price.value => {
+                        return Err(RegistrarError::Config(
+                            "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
+                                .into(),
+                        ));
+                    }
+                    _ => {}
+                }
 
                 ProvingConfig::Boundless(Box::new(BoundlessConfig {
                     rpc_url: self.boundless.boundless_rpc_url.ok_or_else(|| {
@@ -324,6 +391,9 @@ impl Cli {
                     max_attestation_age: Duration::from_secs(
                         self.boundless.max_attestation_age_secs,
                     ),
+                    offer_min_price,
+                    offer_max_price,
+                    offer_ramp_up_period_secs: self.boundless.boundless_offer_ramp_up_period_secs,
                 }))
             }
             ProvingMode::Direct => {
@@ -521,6 +591,9 @@ impl Cli {
                 trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX,
                 max_recovery_attempts: boundless.max_recovery_attempts,
                 max_attestation_age: boundless.max_attestation_age,
+                offer_min_price: boundless.offer_min_price.clone(),
+                offer_max_price: boundless.offer_max_price.clone(),
+                offer_ramp_up_period_secs: boundless.offer_ramp_up_period_secs,
                 submit_lock: Arc::new(tokio::sync::Mutex::new(())),
                 recovery_blocked: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             }),
@@ -624,6 +697,9 @@ mod tests {
     const TEST_VERIFIER_URL: &str = "https://gateway.pinata.cloud/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
     const TEST_IMAGE_ID: &str =
         "0x0100000002000000030000000400000005000000060000000700000008000000";
+    const TEST_BOUNDLESS_MIN_PRICE_ETH: &str = "0.01";
+    const TEST_BOUNDLESS_MAX_PRICE_ETH: &str = "0.03";
+    const TEST_BOUNDLESS_RAMP_UP_PERIOD_SECS: u32 = 30;
     const TEST_ELF_PATH: &str = "/tmp/guest.elf";
     const TEST_SIGNER_ENDPOINT: &str = "http://localhost:8546";
     const TEST_SIGNER_ADDR: &str = "0x0000000000000000000000000000000000000002";
@@ -823,6 +899,83 @@ mod tests {
             panic!("expected Boundless proving config");
         };
         assert_eq!(b.image_id, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[rstest]
+    fn boundless_offer_pricing_defaults_to_sdk() {
+        let config = Cli::parse_from(boundless_args()).into_config().unwrap();
+        let ProvingConfig::Boundless(b) = &config.proving else {
+            panic!("expected Boundless proving config");
+        };
+
+        assert!(b.offer_min_price.is_none());
+        assert!(b.offer_max_price.is_none());
+        assert!(b.offer_ramp_up_period_secs.is_none());
+    }
+
+    #[rstest]
+    fn boundless_offer_pricing_parses_eth_amounts() {
+        let mut args = boundless_args();
+        args.extend([
+            "--boundless-min-price-eth",
+            TEST_BOUNDLESS_MIN_PRICE_ETH,
+            "--boundless-max-price-eth",
+            TEST_BOUNDLESS_MAX_PRICE_ETH,
+            "--boundless-offer-ramp-up-period-secs",
+            "30",
+        ]);
+
+        let config = Cli::parse_from(args).into_config().unwrap();
+        let ProvingConfig::Boundless(b) = &config.proving else {
+            panic!("expected Boundless proving config");
+        };
+
+        assert_eq!(
+            b.offer_min_price,
+            Some(
+                parse_boundless_eth_amount(
+                    "--boundless-min-price-eth",
+                    TEST_BOUNDLESS_MIN_PRICE_ETH,
+                )
+                .unwrap(),
+            ),
+        );
+        assert_eq!(
+            b.offer_max_price,
+            Some(
+                parse_boundless_eth_amount(
+                    "--boundless-max-price-eth",
+                    TEST_BOUNDLESS_MAX_PRICE_ETH,
+                )
+                .unwrap(),
+            ),
+        );
+        assert_eq!(b.offer_ramp_up_period_secs, Some(TEST_BOUNDLESS_RAMP_UP_PERIOD_SECS));
+    }
+
+    #[rstest]
+    fn boundless_offer_min_price_requires_max_price() {
+        let mut args = boundless_args();
+        args.extend(["--boundless-min-price-eth", TEST_BOUNDLESS_MIN_PRICE_ETH]);
+
+        let result = Cli::parse_from(args).into_config();
+
+        assert!(result.is_err());
+    }
+
+    #[rstest]
+    fn boundless_offer_max_price_must_cover_min_price() {
+        let mut args = boundless_args();
+        args.extend([
+            "--boundless-min-price-eth",
+            TEST_BOUNDLESS_MAX_PRICE_ETH,
+            "--boundless-max-price-eth",
+            TEST_BOUNDLESS_MIN_PRICE_ETH,
+        ]);
+
+        let result = Cli::parse_from(args).into_config();
+
+        assert!(result.is_err());
     }
 
     #[rstest]
