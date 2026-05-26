@@ -9,7 +9,7 @@ use reth_db::{
 use reth_trie_common::{Nibbles, StoredNibbles};
 use serde::{Deserialize, Serialize};
 
-const NIBBLE_SUBKEY_LEN: usize = 65;
+pub(super) const NIBBLE_SUBKEY_LEN: usize = 65;
 const ACCOUNT_TRIE_SHARDED_KEY_LEN: usize = NIBBLE_SUBKEY_LEN + 8;
 const STORAGE_TRIE_SHARDED_KEY_LEN: usize = 32 + NIBBLE_SUBKEY_LEN + 8;
 

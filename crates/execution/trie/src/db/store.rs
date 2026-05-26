@@ -1203,9 +1203,6 @@ impl BaseProofsStore for MdbxProofsStorage {
     /// starting from provided block. Also updates the `ProofWindow::LatestBlock` to parent of
     /// `unwind_upto_block`.
     fn unwind_history(&self, to: BlockWithParent) -> BaseProofsStorageResult<()> {
-        let history_to_delete =
-            self.env.view(|tx| self.collect_history_ranged(tx, to.block.number..))??;
-
         self.env.update(|tx| {
             let proof_window = match self.inner_get_proof_window(tx)? {
                 Some(pw) => pw,
@@ -1223,6 +1220,7 @@ impl BaseProofsStore for MdbxProofsStorage {
                 });
             }
 
+            let history_to_delete = self.collect_history_ranged(tx, to.block.number..)?;
             Self::restore_v2_current_before_range(tx, &history_to_delete)?;
             self.delete_history_ranged(tx, to.block.number.., history_to_delete)?;
 
@@ -1248,11 +1246,9 @@ impl BaseProofsStore for MdbxProofsStorage {
         // Sort the vec list by block number
         blocks_to_add.sort_unstable_by_key(|(bwp, _)| bwp.block.number);
 
-        let history_to_delete = self
-            .env
-            .view(|tx| self.collect_history_ranged(tx, latest_common_block.number + 1..))??;
-
         self.env.update(|tx| {
+            let history_to_delete =
+                self.collect_history_ranged(tx, latest_common_block.number + 1..)?;
             Self::restore_v2_current_before_range(tx, &history_to_delete)?;
             self.delete_history_ranged(tx, latest_common_block.number + 1.., history_to_delete)?;
 
