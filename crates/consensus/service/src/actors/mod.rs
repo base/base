@@ -60,6 +60,7 @@ pub use sequencer::{
     PendingStopSender, PoolActivation, QueuedSequencerEngineClient, RecoveryModeGuard,
     ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
     SequencerActorError, SequencerAdminQuery, SequencerConfig, SequencerEngineClient,
+    SequencerTimestamp, SequencerTimestampPlanner, SequencerTimestampPlannerError,
     UnsealedPayloadHandle,
 };
 #[cfg(test)]

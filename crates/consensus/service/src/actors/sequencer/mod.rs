@@ -23,6 +23,11 @@ pub use seal::{PayloadSealer, SealState, SealStepError, SealStepOutcome};
 mod ticker;
 pub use ticker::ScheduledTicker;
 
+mod timestamp;
+pub use timestamp::{
+    SequencerTimestamp, SequencerTimestampPlanner, SequencerTimestampPlannerError,
+};
+
 mod pool;
 pub use pool::PoolActivation;
 

@@ -41,7 +41,8 @@ pub use actors::{
     QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, RecoveryModeGuard, ResetRequest,
     RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
     SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
-    SequencerEngineClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
+    SequencerEngineClient, SequencerTimestamp, SequencerTimestampPlanner,
+    SequencerTimestampPlannerError, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
     UnsealedPayloadHandle,
 };
 
