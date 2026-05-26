@@ -69,8 +69,8 @@ def split_assignment(value, flag):
 def render_env_line(key, value):
     # Keep env files compatible with Docker Compose's simple KEY=VALUE parser.
     # The local config schema is expected to use scalar URLs, paths, names, and numbers.
-    if any(char in value for char in "\r\n#") or value != value.strip():
-        raise SystemExit(f"unsupported env value for {key}: values must not contain whitespace or #")
+    if any(char in value for char in "\r\n#$") or value != value.strip():
+        raise SystemExit(f"unsupported env value for {key}: values must not contain whitespace, #, or $")
     return f"{key}={value}\n"
 
 
