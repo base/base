@@ -277,12 +277,13 @@ impl RollupConfig {
             self.channel_timeout
         }
     }
-    /// Computes a block number from a timestamp, relative to the L2 genesis time and the block
-    /// time.
+    /// Computes the lower-bound block number for a timestamp, relative to the L2 genesis time and
+    /// the seconds-denominated block time.
     ///
-    /// This function assumes that the timestamp is aligned with the block time, and uses floor
-    /// division in its computation.
-    pub const fn block_number_from_timestamp(&self, timestamp: u64) -> u64 {
+    /// This is exact only for pre-Beryl chains where each L2 block has a unique seconds timestamp.
+    /// Post-Beryl, multiple 200ms blocks can share the same seconds timestamp, so callers must not
+    /// use this helper as a unique timestamp-to-block-number mapping.
+    pub const fn lower_bound_block_number_from_timestamp(&self, timestamp: u64) -> u64 {
         timestamp.saturating_sub(self.genesis.l2_time).saturating_div(self.block_time)
     }
 
@@ -790,14 +791,15 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_block_number_from_time() {
+    fn test_compute_lower_bound_block_number_from_time() {
         let cfg = RollupConfig {
             genesis: ChainGenesis { l2_time: 10, ..Default::default() },
             block_time: 2,
             ..Default::default()
         };
 
-        assert_eq!(cfg.block_number_from_timestamp(20), 5);
-        assert_eq!(cfg.block_number_from_timestamp(30), 10);
+        assert_eq!(cfg.lower_bound_block_number_from_timestamp(20), 5);
+        assert_eq!(cfg.lower_bound_block_number_from_timestamp(21), 5);
+        assert_eq!(cfg.lower_bound_block_number_from_timestamp(30), 10);
     }
 }
