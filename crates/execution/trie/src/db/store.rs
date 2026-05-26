@@ -383,6 +383,9 @@ impl MdbxProofsStorage {
         tx: &(impl DbTxMut + DbTx),
         history: &HistoryDeleteBatch,
     ) -> BaseProofsStorageResult<()> {
+        // `HistoryDeleteBatch` entries are sorted by `(key, block_number)`. During unwind we only
+        // need the earliest deleted block for each key because that changeset contains the value
+        // immediately before the removed range.
         let mut previous_account_trie_key = None;
         for (key, block_number) in &history.account_trie {
             if previous_account_trie_key.as_ref() == Some(key) {
@@ -739,6 +742,9 @@ impl MdbxProofsStorage {
         }
 
         let blocks = block_numbers.into_iter().collect::<Vec<_>>();
+        if blocks.is_empty() {
+            return Ok(());
+        }
         let chunk_count = blocks.len().div_ceil(NUM_OF_INDICES_IN_SHARD);
         for (index, chunk) in blocks.chunks(NUM_OF_INDICES_IN_SHARD).enumerate() {
             let highest_block_number = if index + 1 == chunk_count {
