@@ -33,6 +33,8 @@ def parse_scalar_yaml(path):
         key, raw_value = stripped.split(":", 1)
         key = key.strip()
         value = raw_value.strip()
+        if value.startswith("#"):
+            value = ""
         if not key:
             raise SystemExit(f"empty YAML key in {path}:{line_number}")
 
