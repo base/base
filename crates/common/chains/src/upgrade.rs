@@ -272,6 +272,26 @@ mod tests {
     }
 
     #[test]
+    fn test_reverse_lookup_beryl_boundary() {
+        let mut cfg = ChainConfig::mainnet().clone();
+        cfg.azul_timestamp = Some(cfg.jovian_timestamp + 10);
+        cfg.beryl_timestamp = Some(cfg.jovian_timestamp + 20);
+
+        assert_eq!(
+            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp + 19),
+            BaseUpgrade::Azul
+        );
+        assert_eq!(
+            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp + 20),
+            BaseUpgrade::Beryl
+        );
+        assert_eq!(
+            upgrade_from_config_and_timestamp(&cfg, cfg.jovian_timestamp + 21),
+            BaseUpgrade::Beryl
+        );
+    }
+
+    #[test]
     fn test_reverse_lookup_defaults_to_beryl_after_base_thresholds() {
         let mut cfg = ChainConfig::mainnet().clone();
         cfg.azul_timestamp = Some(cfg.jovian_timestamp + 10);

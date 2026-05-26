@@ -252,4 +252,27 @@ mod tests {
     fn default_base_spec_id() {
         assert_eq!(BaseSpecId::default().upgrade(), BaseUpgrade::LATEST);
     }
+
+    #[test]
+    fn test_base_spec_id_from_timestamp_activates_beryl_at_boundary() {
+        use base_common_chains::{ChainConfig, ChainUpgrades};
+
+        let mut cfg = ChainConfig::mainnet().clone();
+        cfg.azul_timestamp = Some(cfg.jovian_timestamp + 10);
+        cfg.beryl_timestamp = Some(cfg.jovian_timestamp + 20);
+        let upgrades = ChainUpgrades::new(BaseUpgrade::forks_for(&cfg));
+
+        assert_eq!(
+            BaseSpecId::from_timestamp(&upgrades, cfg.jovian_timestamp + 19).upgrade(),
+            BaseUpgrade::Azul
+        );
+        assert_eq!(
+            BaseSpecId::from_timestamp(&upgrades, cfg.jovian_timestamp + 20).upgrade(),
+            BaseUpgrade::Beryl
+        );
+        assert_eq!(
+            BaseSpecId::from_timestamp(&upgrades, cfg.jovian_timestamp + 21).upgrade(),
+            BaseUpgrade::Beryl
+        );
+    }
 }
