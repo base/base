@@ -43,6 +43,7 @@ pub(super) fn test_actor() -> SequencerActor<
         is_active: true,
         recovery_mode,
         rollup_config,
+        cadence: Default::default(),
         unsafe_payload_gossip_client: MockUnsafePayloadGossipClient::new(),
         sealer: None,
         pending_stop: None,

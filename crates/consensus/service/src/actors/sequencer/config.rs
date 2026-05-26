@@ -85,6 +85,8 @@ pub struct SequencerConfig {
     pub conductor_binary_commit: bool,
     /// Request timeout for conductor RPC calls (both JSON-RPC and binary commit).
     pub conductor_rpc_timeout: Duration,
+    /// Sequencer wall-clock cadence settings.
+    pub cadence: SequencerCadenceConfig,
     /// The confirmation delay for the sequencer.
     pub l1_conf_delay: u64,
 }
@@ -97,6 +99,7 @@ impl Default for SequencerConfig {
             conductor_rpc_url: None,
             conductor_binary_commit: false,
             conductor_rpc_timeout: DEFAULT_CONDUCTOR_RPC_TIMEOUT,
+            cadence: SequencerCadenceConfig::default(),
             l1_conf_delay: 0,
         }
     }
@@ -124,6 +127,11 @@ mod tests {
             SequencerCadenceConfig::default(),
             SequencerCadenceConfig::from_legacy_block_time(DEFAULT_LEGACY_BLOCK_TIME)
         );
+    }
+
+    #[test]
+    fn sequencer_config_defaults_to_legacy_cadence() {
+        assert_eq!(super::SequencerConfig::default().cadence, SequencerCadenceConfig::default());
     }
 
     #[test]

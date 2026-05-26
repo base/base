@@ -561,6 +561,7 @@ impl RollupNode {
                     is_active: self.sequencer_config.sequencer_stopped.not(),
                     recovery_mode,
                     rollup_config: Arc::clone(&self.config),
+                    cadence: self.sequencer_config.cadence,
                     unsafe_payload_gossip_client: queued_gossip_client,
                     sealer: None,
                     pending_stop: None,

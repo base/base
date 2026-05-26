@@ -22,7 +22,7 @@ use crate::{
         SequencerEngineClient,
         engine::EngineClientError,
         sequencer::{
-            ScheduledTicker,
+            ScheduledTicker, SequencerCadenceConfig,
             build::{PayloadBuilder, UnsealedPayloadHandle},
             conductor::Conductor,
             error::SequencerActorError,
@@ -69,6 +69,8 @@ pub struct SequencerActor<
     pub recovery_mode: RecoveryModeGuard,
     /// The rollup configuration.
     pub rollup_config: Arc<RollupConfig>,
+    /// Sequencer wall-clock cadence settings.
+    pub cadence: SequencerCadenceConfig,
     /// A client to asynchronously sign and gossip built payloads to the network actor.
     pub unsafe_payload_gossip_client: UnsafePayloadGossipClient_,
     /// In-flight seal pipeline. [`Some`] while a sealed payload is being committed,
