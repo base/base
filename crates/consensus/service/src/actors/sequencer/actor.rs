@@ -219,9 +219,9 @@ where
                     }
                 },
             }
-            // Wait one block time before retrying the reset, but service admin queries
+            // Wait the configured reset backoff before retrying the reset, but service admin queries
             // and honour cancellation throughout the backoff window.
-            let sleep = tokio::time::sleep(Duration::from_secs(self.rollup_config.block_time));
+            let sleep = tokio::time::sleep(self.cadence.initial_reset_backoff);
             tokio::pin!(sleep);
             loop {
                 select! {
@@ -263,8 +263,7 @@ where
     type StartData = ();
 
     async fn start(mut self, _: Self::StartData) -> Result<(), Self::Error> {
-        let mut build_ticker =
-            ScheduledTicker::new(Duration::from_secs(self.rollup_config.block_time));
+        let mut build_ticker = ScheduledTicker::new(self.cadence.block_interval);
 
         self.update_metrics();
 
