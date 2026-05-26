@@ -10,6 +10,9 @@
 
 extern crate alloc;
 
+mod block;
+pub use block::{BaseBlockResponse, BaseHeaderResponse};
+
 mod genesis;
 pub use genesis::{ChainInfo, FeeInfo, GenesisInfo, UpgradeInfo};
 
