@@ -441,13 +441,10 @@ where
 
             match self.discover_and_resolve().await {
                 Ok(resolution) => {
-                    // Reap again: discovery may have taken longer than
-                    // a quick proof failure. Without this, a task that
-                    // finished during discovery would still appear
-                    // in-flight to reconcile and either (a) get
-                    // re-cancelled if its signer vanished — bumping
-                    // `proof_tasks_cancelled` for an already-done task —
-                    // or (b) suppress a needed respawn for one cycle.
+                    // Reap again: a task that finished during the
+                    // (potentially slow) discovery RPCs would otherwise
+                    // look in-flight to reconcile and get spuriously
+                    // re-cancelled or have its respawn deferred a cycle.
                     Self::reap_finished_tasks(&mut tasks, &mut pending);
 
                     // Spawning new proof tasks during a shutdown would
@@ -487,12 +484,8 @@ where
                 }
             }
 
-            // Publish the in-flight gauge once per cycle, after every
-            // path that could mutate `pending` has run. `pending.len()`
-            // is stable across the sleep below — finished tasks
-            // accumulate in the `JoinSet` but only enter `pending` via
-            // reconcile / leave it via reap — so a single update here
-            // is observationally equivalent to one per state change.
+            // Publish gauge once per cycle, after every path that could
+            // mutate `pending` (reconcile, reap) has run.
             RegistrarMetrics::proof_tasks_pending().set(pending.len() as f64);
 
             tokio::select! {
@@ -513,23 +506,6 @@ where
         info!("registration driver stopped");
         Ok(())
     }
-
-    // NOTE: the previous synchronous single-cycle `step()` helper
-    // (test-only, `#[cfg(test)]`) was removed in favor of having tests
-    // target the production primitives directly. `step()` duplicated
-    // production loop logic (discovery → process → orphan-dereg) but
-    // bypassed the spawn pipeline that actually runs in production, so
-    // tests that went through it exercised a synthetic path that no
-    // longer matched [`Self::run`]. Tests now use:
-    //
-    //   * [`Self::discover_and_resolve`] for resolution-shape assertions
-    //     (registerable set, active_signers, ok_to_dereg flag, etc.).
-    //   * [`Self::process_instance`] for per-instance registration tx
-    //     accounting.
-    //   * [`Self::run_orphan_dereg`] for orphan-deregistration behavior.
-    //
-    // End-to-end cycle behavior is covered by the pipeline tests under
-    // `Pipeline test infrastructure` further down in this module.
 
     /// Returns `true` if the instance is [`InstanceHealthStatus::Unhealthy`]
     /// and was launched within the configured
