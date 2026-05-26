@@ -348,6 +348,8 @@ impl RpcErrorClassifier {
 mod tests {
     use std::borrow::Cow;
 
+    use serde_json::value::RawValue;
+
     use alloy_json_rpc::{ErrorPayload, RpcError};
     use alloy_transport::TransportErrorKind;
     use rstest::rstest;
