@@ -1100,6 +1100,7 @@ mod tests {
         let first = SpanBatchElement {
             epoch_num: 10,
             timestamp: 10,
+            timestamp_millis_part: None,
             transactions: vec![Bytes(vec![EIP1559_TX_TYPE_ID].into())],
         };
         let second = SpanBatchElement { epoch_num: 11, timestamp: 60, ..Default::default() };
@@ -1178,6 +1179,7 @@ mod tests {
         let first = SpanBatchElement {
             epoch_num: 10,
             timestamp: 10,
+            timestamp_millis_part: None,
             transactions: vec![Bytes(vec![EIP1559_TX_TYPE_ID].into())],
         };
         let second = SpanBatchElement { epoch_num: 11, timestamp: 60, ..Default::default() };
@@ -1705,9 +1707,9 @@ mod tests {
         };
         let mut fetcher: TestBatchValidator =
             TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
-        let first = SpanBatchElement { epoch_num: 10, timestamp: 20, transactions: vec![] };
-        let second = SpanBatchElement { epoch_num: 10, timestamp: 30, transactions: vec![] };
-        let third = SpanBatchElement { epoch_num: 11, timestamp: 40, transactions: vec![] };
+        let first = SpanBatchElement { epoch_num: 10, timestamp: 20, ..Default::default() };
+        let second = SpanBatchElement { epoch_num: 10, timestamp: 30, ..Default::default() };
+        let third = SpanBatchElement { epoch_num: 11, timestamp: 40, ..Default::default() };
         let batch = SpanBatch {
             batches: vec![first, second, third],
             parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
@@ -1759,16 +1761,19 @@ mod tests {
         let first = SpanBatchElement {
             epoch_num: 10,
             timestamp: 20,
+            timestamp_millis_part: None,
             transactions: vec![Default::default()],
         };
         let second = SpanBatchElement {
             epoch_num: 10,
             timestamp: 20,
+            timestamp_millis_part: None,
             transactions: vec![Default::default()],
         };
         let third = SpanBatchElement {
             epoch_num: 11,
             timestamp: 20,
+            timestamp_millis_part: None,
             transactions: vec![Default::default()],
         };
         let batch = SpanBatch {
@@ -1828,14 +1833,16 @@ mod tests {
         let first = SpanBatchElement {
             epoch_num: 10,
             timestamp: 20,
+            timestamp_millis_part: None,
             transactions: vec![Default::default()],
         };
         let second = SpanBatchElement {
             epoch_num: 10,
             timestamp: 20,
+            timestamp_millis_part: None,
             transactions: vec![Default::default()],
         };
-        let third = SpanBatchElement { epoch_num: 11, timestamp: 20, transactions: vec![] };
+        let third = SpanBatchElement { epoch_num: 11, timestamp: 20, ..Default::default() };
         let batch = SpanBatch {
             batches: vec![first, second, third],
             parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
@@ -1886,15 +1893,21 @@ mod tests {
         let first = SpanBatchElement {
             epoch_num: 10,
             timestamp: 20,
+            timestamp_millis_part: None,
             transactions: vec![filler_bytes.clone()],
         };
         let second = SpanBatchElement {
             epoch_num: 10,
             timestamp: 20,
+            timestamp_millis_part: None,
             transactions: vec![Bytes::copy_from_slice(&[OpTxType::Deposit as u8])],
         };
-        let third =
-            SpanBatchElement { epoch_num: 11, timestamp: 20, transactions: vec![filler_bytes] };
+        let third = SpanBatchElement {
+            epoch_num: 11,
+            timestamp: 20,
+            timestamp_millis_part: None,
+            transactions: vec![filler_bytes],
+        };
         let batch = SpanBatch {
             batches: vec![first, second, third],
             parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
@@ -1945,15 +1958,21 @@ mod tests {
         let first = SpanBatchElement {
             epoch_num: 10,
             timestamp: 20,
+            timestamp_millis_part: None,
             transactions: vec![filler_bytes.clone()],
         };
         let second = SpanBatchElement {
             epoch_num: 10,
             timestamp: 20,
+            timestamp_millis_part: None,
             transactions: vec![Bytes::copy_from_slice(&[alloy_consensus::TxType::Eip7702 as u8])],
         };
-        let third =
-            SpanBatchElement { epoch_num: 11, timestamp: 20, transactions: vec![filler_bytes] };
+        let third = SpanBatchElement {
+            epoch_num: 11,
+            timestamp: 20,
+            timestamp_millis_part: None,
+            transactions: vec![filler_bytes],
+        };
         let batch = SpanBatch {
             batches: vec![first, second, third],
             parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),

@@ -80,6 +80,7 @@ impl RawSpanBatch {
             acc.push(SpanBatchElement {
                 epoch_num: block_origin_nums[i as usize],
                 timestamp: genesis_time + self.prefix.rel_timestamp + block_time * i,
+                timestamp_millis_part: None,
                 transactions: transactions.into_iter().map(|v| v.into()).collect(),
             });
             acc
@@ -111,8 +112,18 @@ mod tests {
     fn test_try_from_span_batch_succeeds() {
         let parent_check = FixedBytes::from([2u8; 20]);
         let l1_origin_check = FixedBytes::from([3u8; 20]);
-        let first = SpanBatchElement { epoch_num: 100, timestamp: 400, transactions: Vec::new() };
-        let last = SpanBatchElement { epoch_num: 200, timestamp: 500, transactions: Vec::new() };
+        let first = SpanBatchElement {
+            epoch_num: 100,
+            timestamp: 400,
+            timestamp_millis_part: None,
+            transactions: Vec::new(),
+        };
+        let last = SpanBatchElement {
+            epoch_num: 200,
+            timestamp: 500,
+            timestamp_millis_part: None,
+            transactions: Vec::new(),
+        };
         let span_batch = SpanBatch {
             batches: vec![first, last],
             genesis_timestamp: 300,

@@ -15,6 +15,8 @@ pub struct SpanBatchElement {
     pub epoch_num: u64,
     /// The timestamp of the L2 block
     pub timestamp: u64,
+    /// The optional post-Beryl millisecond component of the L2 block timestamp.
+    pub timestamp_millis_part: Option<u16>,
     /// The transactions in the L2 block
     pub transactions: Vec<Bytes>,
 }
@@ -30,6 +32,7 @@ impl From<SingleBatch> for SpanBatchElement {
         Self {
             epoch_num: batch.epoch_num,
             timestamp: batch.timestamp,
+            timestamp_millis_part: None,
             transactions: batch.transactions,
         }
     }
@@ -55,7 +58,20 @@ mod tests {
 
             assert_eq!(span_batch_element.epoch_num, epoch_num);
             assert_eq!(span_batch_element.timestamp, timestamp);
+            assert_eq!(span_batch_element.timestamp_millis_part, None);
             assert_eq!(span_batch_element.transactions, transactions);
         }
+    }
+
+    #[test]
+    fn test_span_batch_element_can_carry_timestamp_millis_part() {
+        let span_batch_element = SpanBatchElement {
+            timestamp: 42,
+            timestamp_millis_part: Some(200),
+            ..Default::default()
+        };
+
+        assert_eq!(span_batch_element.timestamp, 42);
+        assert_eq!(span_batch_element.timestamp_millis_part, Some(200));
     }
 }
