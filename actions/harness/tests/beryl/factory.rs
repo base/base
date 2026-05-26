@@ -4,9 +4,14 @@ use alloy_consensus::TxReceipt;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use base_common_consensus::BaseBlock;
-use base_common_precompiles::{B20FactoryStorage, IB20Factory};
+use base_common_precompiles::{B20FactoryStorage, IB20, IB20Factory, IB20Security, IB20Stablecoin};
 
-use crate::env::BerylTestEnv;
+use crate::{
+    env::BerylTestEnv,
+    test_helpers::{self, StaticcallCase},
+};
+
+const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
 #[tokio::test]
 async fn beryl_enables_b20_factory_precompile() {
@@ -287,4 +292,179 @@ fn word_from_address(address: Address) -> U256 {
     let mut word = [0u8; 32];
     word[12..].copy_from_slice(address.as_slice());
     U256::from_be_slice(&word)
+}
+
+#[tokio::test]
+async fn b20_factory_creates_security_variant_and_initializes_state() {
+    let mut env = BerylTestEnv::new();
+    let token = env.b20_security_address();
+    let mut blocks: Vec<(BaseBlock, u64)> = Vec::new();
+
+    test_helpers::build_block_with_transactions(&mut env, &mut blocks, Vec::new()).await;
+
+    let activate_factory = env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
+    let activate_security = env.activate_feature_tx(BerylTestEnv::b20_security_feature());
+    let activate_policy = env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
+    let block2 = test_helpers::build_block_with_transactions(
+        &mut env,
+        &mut blocks,
+        vec![activate_factory, activate_security, activate_policy],
+    )
+    .await;
+
+    assert!(env.user_tx_succeeded(&block2, 0), "TOKEN_FACTORY activation must succeed");
+    assert!(env.user_tx_succeeded(&block2, 1), "B20_SECURITY activation must succeed");
+    assert!(env.user_tx_succeeded(&block2, 2), "POLICY_REGISTRY activation must succeed");
+
+    let create = env.create_b20_security_tx();
+    let block3 =
+        test_helpers::build_block_with_transactions(&mut env, &mut blocks, vec![create]).await;
+
+    assert!(env.user_tx_succeeded(&block3, 0), "security B-20 creation must succeed");
+    assert!(env.sequencer.has_code(token), "security B-20 code must be deployed");
+    assert_eq!(
+        env.b20_total_supply(token),
+        U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
+        "security B-20 total supply must be initialized",
+    );
+
+    test_helpers::assert_staticcall_cases(
+        &mut env,
+        &mut blocks,
+        B20FactoryStorage::ADDRESS,
+        vec![
+            StaticcallCase::word(
+                "isB20(security)",
+                IB20Factory::isB20Call { token }.abi_encode(),
+                U256::ONE,
+            ),
+            StaticcallCase::word(
+                "isB20Initialized(security)",
+                IB20Factory::isB20InitializedCall { token }.abi_encode(),
+                U256::ONE,
+            ),
+        ],
+        "security factory",
+    )
+    .await;
+
+    test_helpers::assert_staticcall_cases(
+        &mut env,
+        &mut blocks,
+        token,
+        vec![
+            StaticcallCase::word(
+                "sharesToTokensRatio",
+                IB20Security::sharesToTokensRatioCall {}.abi_encode(),
+                WAD,
+            ),
+            StaticcallCase::word(
+                "minimumRedeemable",
+                IB20Security::minimumRedeemableCall {}.abi_encode(),
+                U256::from(BerylTestEnv::B20_SECURITY_MINIMUM_REDEEMABLE),
+            ),
+            StaticcallCase::string(
+                "securityIdentifier(ISIN)",
+                IB20Security::securityIdentifierCall { identifierType: "ISIN".to_string() }
+                    .abi_encode(),
+                BerylTestEnv::B20_SECURITY_ISIN,
+            ),
+            StaticcallCase::word(
+                "decimals",
+                IB20::decimalsCall {}.abi_encode(),
+                U256::from(BerylTestEnv::B20_SECURITY_DECIMALS),
+            ),
+        ],
+        "security token",
+    )
+    .await;
+
+    let expected_safe_head = blocks.len() as u64;
+    env.derive_blocks(blocks, expected_safe_head).await;
+}
+
+#[tokio::test]
+async fn b20_factory_creates_stablecoin_variant_and_initializes_state() {
+    let mut env = BerylTestEnv::new();
+    let token = env.b20_stablecoin_address();
+    let mut blocks: Vec<(BaseBlock, u64)> = Vec::new();
+
+    test_helpers::build_block_with_transactions(&mut env, &mut blocks, Vec::new()).await;
+
+    let activate_factory = env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
+    let activate_stablecoin = env.activate_feature_tx(BerylTestEnv::b20_stablecoin_feature());
+    let block2 = test_helpers::build_block_with_transactions(
+        &mut env,
+        &mut blocks,
+        vec![activate_factory, activate_stablecoin],
+    )
+    .await;
+
+    assert!(env.user_tx_succeeded(&block2, 0), "TOKEN_FACTORY activation must succeed");
+    assert!(env.user_tx_succeeded(&block2, 1), "B20_STABLECOIN activation must succeed");
+
+    let create = env.create_b20_stablecoin_tx();
+    let block3 =
+        test_helpers::build_block_with_transactions(&mut env, &mut blocks, vec![create]).await;
+
+    assert!(env.user_tx_succeeded(&block3, 0), "stablecoin creation must succeed");
+    assert!(env.sequencer.has_code(token), "stablecoin code must be deployed");
+    assert_eq!(
+        env.b20_total_supply(token),
+        U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
+        "stablecoin total supply must be initialized",
+    );
+
+    test_helpers::assert_staticcall_cases(
+        &mut env,
+        &mut blocks,
+        B20FactoryStorage::ADDRESS,
+        vec![
+            StaticcallCase::word(
+                "isB20(stablecoin)",
+                IB20Factory::isB20Call { token }.abi_encode(),
+                U256::ONE,
+            ),
+            StaticcallCase::word(
+                "isB20Initialized(stablecoin)",
+                IB20Factory::isB20InitializedCall { token }.abi_encode(),
+                U256::ONE,
+            ),
+        ],
+        "stablecoin factory",
+    )
+    .await;
+
+    test_helpers::assert_staticcall_cases(
+        &mut env,
+        &mut blocks,
+        token,
+        vec![
+            StaticcallCase::string(
+                "currency",
+                IB20Stablecoin::currencyCall {}.abi_encode(),
+                BerylTestEnv::B20_STABLECOIN_CURRENCY,
+            ),
+            StaticcallCase::word(
+                "decimals",
+                IB20::decimalsCall {}.abi_encode(),
+                U256::from(BerylTestEnv::B20_STABLECOIN_DECIMALS),
+            ),
+            StaticcallCase::string(
+                "name",
+                IB20::nameCall {}.abi_encode(),
+                BerylTestEnv::B20_STABLECOIN_NAME,
+            ),
+            StaticcallCase::string(
+                "symbol",
+                IB20::symbolCall {}.abi_encode(),
+                BerylTestEnv::B20_STABLECOIN_SYMBOL,
+            ),
+        ],
+        "stablecoin token",
+    )
+    .await;
+
+    let expected_safe_head = blocks.len() as u64;
+    env.derive_blocks(blocks, expected_safe_head).await;
 }

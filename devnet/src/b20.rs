@@ -14,7 +14,7 @@ use alloy_sol_types::{SolCall, SolValue};
 use base_common_network::Base;
 use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20PausableFeature, B20Variant,
-    IActivationRegistry, IB20, IB20Factory,
+    IActivationRegistry, IB20, IB20Factory, IB20Security, IB20Stablecoin,
 };
 use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
 use eyre::{ContextCompat, Result, WrapErr, ensure};
@@ -33,6 +33,32 @@ pub struct B20CreateConfig {
     pub supply_cap: U256,
     /// Initial ERC-7572 contract URI.
     pub contract_uri: String,
+}
+
+/// Creation settings used by the devnet security-variant factory client.
+#[derive(Debug, Clone)]
+pub struct B20SecurityCreateConfig {
+    /// ABI-level creation params sent to `IB20Factory.createB20` for the security variant.
+    pub create: IB20Factory::B20SecurityCreateParams,
+    /// Initial supply to mint during the factory init-call window.
+    pub initial_supply: U256,
+    /// Account receiving the initial supply.
+    pub initial_supply_recipient: Address,
+    /// Initial supply cap to configure during the factory init-call window.
+    pub supply_cap: U256,
+}
+
+/// Creation settings used by the devnet stablecoin-variant factory client.
+#[derive(Debug, Clone)]
+pub struct B20StablecoinCreateConfig {
+    /// ABI-level creation params sent to `IB20Factory.createB20` for the stablecoin variant.
+    pub create: IB20Factory::B20StablecoinCreateParams,
+    /// Initial supply to mint during the factory init-call window.
+    pub initial_supply: U256,
+    /// Account receiving the initial supply.
+    pub initial_supply_recipient: Address,
+    /// Initial supply cap to configure during the factory init-call window.
+    pub supply_cap: U256,
 }
 
 /// RPC client for the B-20 token factory and created token precompiles.
@@ -421,6 +447,236 @@ impl<'a> B20PrecompileClient<'a> {
             .await?;
         IB20Factory::getB20AddressCall::abi_decode_returns(output.as_ref())
             .wrap_err("Failed to decode getB20Address")
+    }
+
+    /// Builds the required security B-20 token params for factory creation.
+    pub fn security_token_params(
+        name: &str,
+        symbol: &str,
+        initial_admin: Address,
+        isin: &str,
+        minimum_redeemable: U256,
+        initial_supply: U256,
+        initial_supply_recipient: Address,
+    ) -> B20SecurityCreateConfig {
+        B20SecurityCreateConfig {
+            create: IB20Factory::B20SecurityCreateParams {
+                version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+                name: name.to_string(),
+                symbol: symbol.to_string(),
+                initialAdmin: initial_admin,
+                isin: isin.to_string(),
+                minimumRedeemable: minimum_redeemable,
+            },
+            initial_supply,
+            initial_supply_recipient,
+            supply_cap: U256::MAX,
+        }
+    }
+
+    /// Builds the required stablecoin B-20 token params for factory creation.
+    pub fn stablecoin_token_params(
+        name: &str,
+        symbol: &str,
+        initial_admin: Address,
+        currency: &str,
+        initial_supply: U256,
+        initial_supply_recipient: Address,
+    ) -> B20StablecoinCreateConfig {
+        B20StablecoinCreateConfig {
+            create: IB20Factory::B20StablecoinCreateParams {
+                version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+                name: name.to_string(),
+                symbol: symbol.to_string(),
+                initialAdmin: initial_admin,
+                currency: currency.to_string(),
+            },
+            initial_supply,
+            initial_supply_recipient,
+            supply_cap: U256::MAX,
+        }
+    }
+
+    /// Creates a security B-20 token through the factory and returns the deterministic address.
+    pub async fn create_security_token(
+        &self,
+        params: B20SecurityCreateConfig,
+        salt: B256,
+    ) -> Result<Address> {
+        let token = self.predict_token_address(B20Variant::Security, salt);
+        let mut init_calls = Vec::new();
+        if params.initial_supply > U256::ZERO {
+            init_calls.push(
+                IB20::mintCall {
+                    to: params.initial_supply_recipient,
+                    amount: params.initial_supply,
+                }
+                .abi_encode()
+                .into(),
+            );
+        }
+        if params.supply_cap != U256::MAX {
+            init_calls.push(
+                IB20::updateSupplyCapCall { newSupplyCap: params.supply_cap }.abi_encode().into(),
+            );
+        }
+        let call = IB20Factory::createB20Call {
+            variant: B20Variant::Security.abi(),
+            salt,
+            params: params.create.abi_encode().into(),
+            initCalls: init_calls,
+        };
+        self.send_call(B20FactoryStorage::ADDRESS, call, "create security B-20 token").await?;
+        Ok(token)
+    }
+
+    /// Creates a stablecoin B-20 token through the factory and returns the deterministic address.
+    pub async fn create_stablecoin_token(
+        &self,
+        params: B20StablecoinCreateConfig,
+        salt: B256,
+    ) -> Result<Address> {
+        let token = self.predict_token_address(B20Variant::Stablecoin, salt);
+        let mut init_calls = Vec::new();
+        if params.initial_supply > U256::ZERO {
+            init_calls.push(
+                IB20::mintCall {
+                    to: params.initial_supply_recipient,
+                    amount: params.initial_supply,
+                }
+                .abi_encode()
+                .into(),
+            );
+        }
+        if params.supply_cap != U256::MAX {
+            init_calls.push(
+                IB20::updateSupplyCapCall { newSupplyCap: params.supply_cap }.abi_encode().into(),
+            );
+        }
+        let call = IB20Factory::createB20Call {
+            variant: B20Variant::Stablecoin.abi(),
+            salt,
+            params: params.create.abi_encode().into(),
+            initCalls: init_calls,
+        };
+        self.send_call(B20FactoryStorage::ADDRESS, call, "create stablecoin B-20 token").await?;
+        Ok(token)
+    }
+
+    /// Returns true if `token` has been initialized by the factory.
+    pub async fn is_b20_initialized(&self, token: Address) -> Result<bool> {
+        let output = self
+            .call(B20FactoryStorage::ADDRESS, IB20Factory::isB20InitializedCall { token })
+            .await?;
+        IB20Factory::isB20InitializedCall::abi_decode_returns(output.as_ref())
+            .wrap_err("Failed to decode isB20Initialized")
+    }
+
+    /// Reads the current shares-to-tokens ratio for a security token.
+    pub async fn shares_to_tokens_ratio(&self, token: Address) -> Result<U256> {
+        let output = self.call(token, IB20Security::sharesToTokensRatioCall {}).await?;
+        IB20Security::sharesToTokensRatioCall::abi_decode_returns(output.as_ref())
+            .wrap_err("Failed to decode sharesToTokensRatio")
+    }
+
+    /// Reads the minimum redeemable threshold (in shares) for a security token.
+    pub async fn minimum_redeemable(&self, token: Address) -> Result<U256> {
+        let output = self.call(token, IB20Security::minimumRedeemableCall {}).await?;
+        IB20Security::minimumRedeemableCall::abi_decode_returns(output.as_ref())
+            .wrap_err("Failed to decode minimumRedeemable")
+    }
+
+    /// Reads a named security identifier (e.g. "ISIN", "CUSIP") from a security token.
+    pub async fn security_identifier(
+        &self,
+        token: Address,
+        identifier_type: &str,
+    ) -> Result<String> {
+        let output = self
+            .call(
+                token,
+                IB20Security::securityIdentifierCall {
+                    identifierType: identifier_type.to_string(),
+                },
+            )
+            .await?;
+        IB20Security::securityIdentifierCall::abi_decode_returns(output.as_ref())
+            .wrap_err("Failed to decode securityIdentifier")
+    }
+
+    /// Converts a token balance to shares using the current ratio.
+    pub async fn to_shares(&self, token: Address, balance: U256) -> Result<U256> {
+        let output = self.call(token, IB20Security::toSharesCall { balance }).await?;
+        IB20Security::toSharesCall::abi_decode_returns(output.as_ref())
+            .wrap_err("Failed to decode toShares")
+    }
+
+    /// Batch-mints to multiple recipients. Requires `MINT_ROLE`.
+    pub async fn batch_mint(
+        &self,
+        token: Address,
+        recipients: Vec<Address>,
+        amounts: Vec<U256>,
+    ) -> Result<()> {
+        self.send_call(
+            token,
+            IB20Security::batchMintCall { recipients, amounts },
+            "batchMint security B-20 token",
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Batch-burns from multiple accounts. Requires `BURN_FROM_ROLE`.
+    pub async fn batch_burn(
+        &self,
+        token: Address,
+        accounts: Vec<Address>,
+        amounts: Vec<U256>,
+    ) -> Result<()> {
+        self.send_call(
+            token,
+            IB20Security::batchBurnCall { accounts, amounts },
+            "batchBurn security B-20 token",
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Redeems (burns) `amount` from the signer with a share-based floor check.
+    pub async fn redeem(&self, token: Address, amount: U256) -> Result<()> {
+        self.send_call(token, IB20Security::redeemCall { amount }, "redeem security B-20 token")
+            .await?;
+        Ok(())
+    }
+
+    /// Updates the minimum redeemable threshold (in shares). Requires `DEFAULT_ADMIN_ROLE`.
+    pub async fn update_minimum_redeemable(&self, token: Address, new_minimum: U256) -> Result<()> {
+        self.send_call(
+            token,
+            IB20Security::updateMinimumRedeemableCall { newMinimumRedeemable: new_minimum },
+            "updateMinimumRedeemable security B-20 token",
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Updates the shares-to-tokens ratio. Requires `SECURITY_OPERATOR_ROLE`.
+    pub async fn update_share_ratio(&self, token: Address, new_ratio: U256) -> Result<()> {
+        self.send_call(
+            token,
+            IB20Security::updateShareRatioCall { newSharesToTokensRatio: new_ratio },
+            "updateShareRatio security B-20 token",
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Reads the ISO 4217 currency code from a stablecoin B-20 token.
+    pub async fn currency(&self, token: Address) -> Result<String> {
+        let output = self.call(token, IB20Stablecoin::currencyCall {}).await?;
+        IB20Stablecoin::currencyCall::abi_decode_returns(output.as_ref())
+            .wrap_err("Failed to decode currency")
     }
 
     /// Sends a transaction and returns `true` if it succeeded, `false` if it reverted.
