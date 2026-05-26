@@ -334,7 +334,7 @@ impl MdbxProofsStorage {
         history: &HistoryDeleteBatch,
     ) -> BaseProofsStorageResult<()> {
         for (key, block_number) in &history.account_trie {
-            let subkey = StoredNibblesSubKey::from(key.0.clone());
+            let subkey = StoredNibblesSubKey::from(key.0);
             Self::delete_dup_current::<V2AccountTrieChangeSets>(tx, *block_number, subkey)?;
             Self::remove_v2_history::<V2AccountsTrieHistory>(
                 tx,
@@ -344,7 +344,7 @@ impl MdbxProofsStorage {
         }
 
         for (key, block_number) in &history.storage_trie {
-            let subkey = StoredNibblesSubKey::from(key.path.0.clone());
+            let subkey = StoredNibblesSubKey::from(key.path.0);
             Self::delete_dup_current::<V2StorageTrieChangeSets>(
                 tx,
                 BlockNumberHashedAddress((*block_number, key.hashed_address)),
@@ -392,7 +392,7 @@ impl MdbxProofsStorage {
                 continue;
             }
             previous_account_trie_key = Some(key.clone());
-            let subkey = StoredNibblesSubKey::from(key.0.clone());
+            let subkey = StoredNibblesSubKey::from(key.0);
             let old = tx
                 .cursor_dup_read::<V2AccountTrieChangeSets>()?
                 .seek_by_key_subkey(*block_number, subkey.clone())?
@@ -411,7 +411,7 @@ impl MdbxProofsStorage {
                 continue;
             }
             previous_storage_trie_key = Some(key.clone());
-            let subkey = StoredNibblesSubKey::from(key.path.0.clone());
+            let subkey = StoredNibblesSubKey::from(key.path.0);
             let old = tx
                 .cursor_dup_read::<V2StorageTrieChangeSets>()?
                 .seek_by_key_subkey(
@@ -520,7 +520,7 @@ impl MdbxProofsStorage {
         let mut change_set = ChangeSet::default();
 
         for (path, node) in sorted_trie_updates.account_nodes_ref() {
-            let current_key = StoredNibbles(path.clone());
+            let current_key = StoredNibbles(*path);
             change_set.account_trie_keys.push(current_key.clone());
             let old = tx
                 .cursor_read::<V2AccountsTrie>()?
@@ -529,10 +529,7 @@ impl MdbxProofsStorage {
 
             tx.cursor_dup_write::<V2AccountTrieChangeSets>()?.upsert(
                 block_number,
-                &TrieChangeSetsEntry {
-                    nibbles: StoredNibblesSubKey::from(path.clone()),
-                    node: old,
-                },
+                &TrieChangeSetsEntry { nibbles: StoredNibblesSubKey::from(*path), node: old },
             )?;
             Self::append_v2_history::<V2AccountsTrieHistory>(
                 tx,
@@ -581,10 +578,7 @@ impl MdbxProofsStorage {
                 }
 
                 for entry in old_entries {
-                    let key = StorageTrieKey::new(
-                        *hashed_address,
-                        StoredNibbles(entry.nibbles.0.clone()),
-                    );
+                    let key = StorageTrieKey::new(*hashed_address, StoredNibbles(entry.nibbles.0));
                     change_set.storage_trie_keys.push(key);
                     wiped_keys.insert(entry.nibbles.clone());
                     tx.cursor_dup_write::<V2StorageTrieChangeSets>()?.upsert(
@@ -598,7 +592,7 @@ impl MdbxProofsStorage {
                         tx,
                         StorageTrieShardedKey::new(
                             *hashed_address,
-                            StoredNibbles(entry.nibbles.0.clone()),
+                            StoredNibbles(entry.nibbles.0),
                             u64::MAX,
                         ),
                         block_number,
@@ -608,8 +602,8 @@ impl MdbxProofsStorage {
             }
 
             for (path, node) in nodes.storage_nodes_ref() {
-                let nibbles = StoredNibblesSubKey::from(path.clone());
-                let storage_key = StorageTrieKey::new(*hashed_address, StoredNibbles(path.clone()));
+                let nibbles = StoredNibblesSubKey::from(*path);
+                let storage_key = StorageTrieKey::new(*hashed_address, StoredNibbles(*path));
                 if !wiped_keys.contains(&nibbles) {
                     change_set.storage_trie_keys.push(storage_key);
                     let old = tx
@@ -624,11 +618,7 @@ impl MdbxProofsStorage {
                     )?;
                     Self::append_v2_history::<V2StoragesTrieHistory>(
                         tx,
-                        StorageTrieShardedKey::new(
-                            *hashed_address,
-                            StoredNibbles(path.clone()),
-                            u64::MAX,
-                        ),
+                        StorageTrieShardedKey::new(*hashed_address, StoredNibbles(*path), u64::MAX),
                         block_number,
                     )?;
                 }
@@ -1060,7 +1050,7 @@ impl BaseProofsStore for MdbxProofsStorage {
                         block_number,
                     ));
                 }
-                if let Some((_, value)) = account_trie_cursor.seek_exact(key.0.clone())? {
+                if let Some((_, value)) = account_trie_cursor.seek_exact(key.0)? {
                     trie_updates.account_nodes.insert(key.0, value);
                 } else {
                     trie_updates.removed_nodes.insert(key.0);
@@ -1096,7 +1086,7 @@ impl BaseProofsStore for MdbxProofsStorage {
                         key.hashed_address,
                     )?),
                 };
-                if let Some((_, value)) = cursor.seek_exact(key.path.0.clone())? {
+                if let Some((_, value)) = cursor.seek_exact(key.path.0)? {
                     stu.storage_nodes.insert(key.path.0, value);
                 } else {
                     stu.removed_nodes.insert(key.path.0);
@@ -1992,7 +1982,7 @@ mod tests {
         let block_2 = block(2, block_1.block.hash);
         let mut trie_updates = TrieUpdates::default();
         let mut storage_updates = StorageTrieUpdates::default();
-        storage_updates.storage_nodes.insert(old_path.clone(), old_node.clone());
+        storage_updates.storage_nodes.insert(old_path, old_node.clone());
         trie_updates.storage_tries.insert(address, storage_updates);
         store
             .store_trie_updates(
@@ -2007,7 +1997,7 @@ mod tests {
         let mut wipe = TrieUpdates::default();
         let mut replacement = StorageTrieUpdates::default();
         replacement.set_deleted(true);
-        replacement.storage_nodes.insert(new_path.clone(), new_node.clone());
+        replacement.storage_nodes.insert(new_path, new_node.clone());
         wipe.storage_tries.insert(address, replacement);
         store
             .store_trie_updates(
@@ -2025,7 +2015,7 @@ mod tests {
             .unwrap()
             .seek_by_key_subkey(
                 BlockNumberHashedAddress((2, address)),
-                StoredNibblesSubKey::from(old_path.clone()),
+                StoredNibblesSubKey::from(old_path),
             )
             .unwrap()
             .expect("old node changeset");
@@ -2118,9 +2108,9 @@ mod tests {
         let account_path = Nibbles::from_nibbles_unchecked([0x01, 0x02]);
         let storage_path = Nibbles::from_nibbles_unchecked([0x03, 0x04]);
         let mut trie_updates = TrieUpdates::default();
-        trie_updates.account_nodes.insert(account_path.clone(), BranchNodeCompact::default());
+        trie_updates.account_nodes.insert(account_path, BranchNodeCompact::default());
         let mut storage_updates = StorageTrieUpdates::default();
-        storage_updates.storage_nodes.insert(storage_path.clone(), BranchNodeCompact::default());
+        storage_updates.storage_nodes.insert(storage_path, BranchNodeCompact::default());
         trie_updates.storage_tries.insert(address, storage_updates);
         let mut storage = HashedStorage::default();
         storage.storage.insert(slot, U256::from(7));
@@ -2250,7 +2240,7 @@ mod tests {
         let b2 = block(2, b1.block.hash);
         let mut trie_updates = TrieUpdates::default();
         let mut storage_updates = StorageTrieUpdates::default();
-        storage_updates.storage_nodes.insert(path.clone(), node.clone());
+        storage_updates.storage_nodes.insert(path, node.clone());
         trie_updates.storage_tries.insert(address, storage_updates);
 
         store.set_earliest_block_number_hash(b0.number, b0.hash).expect("earliest");
