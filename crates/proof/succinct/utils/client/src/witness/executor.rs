@@ -141,6 +141,7 @@ pub trait WitnessExecutor {
         revm::precompile::install_crypto(CustomCrypto::default());
 
         let boot_clone = boot.clone();
+        let activation_admin_address = boot.activation_admin_address;
         let intermediate_block_interval = boot.intermediate_block_interval.max(1);
 
         let rollup_config = Arc::new(boot.rollup_config);
@@ -149,7 +150,7 @@ pub trait WitnessExecutor {
             rollup_config.as_ref(),
             l2_provider.clone(),
             l2_provider,
-            ZkvmBaseEvmFactory::new(),
+            ZkvmBaseEvmFactory::new_with_activation_admin_address(activation_admin_address),
             None,
         );
         let mut driver = Driver::new(cursor, executor, pipeline);
