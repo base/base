@@ -206,6 +206,7 @@ where
                 withdrawals,
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: Some(txs),
             no_tx_pool: Some(true),
             gas_limit: Some(u64::from_be_bytes(
@@ -491,6 +492,7 @@ mod tests {
                 withdrawals: None,
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
             gas_limit: Some(u64::from_be_bytes(
@@ -544,6 +546,7 @@ mod tests {
                 withdrawals: Some(Vec::default()),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
             gas_limit: Some(u64::from_be_bytes(
@@ -598,6 +601,7 @@ mod tests {
                 withdrawals: Some(vec![]),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
             gas_limit: Some(u64::from_be_bytes(
@@ -651,6 +655,7 @@ mod tests {
                 withdrawals: Some(vec![]),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
             gas_limit: Some(u64::from_be_bytes(

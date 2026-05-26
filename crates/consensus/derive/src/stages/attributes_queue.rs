@@ -235,6 +235,7 @@ mod tests {
                 parent_beacon_block_root: None,
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             no_tx_pool: Some(false),
             transactions: None,
             gas_limit: None,
