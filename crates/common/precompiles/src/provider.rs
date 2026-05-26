@@ -13,8 +13,8 @@ use revm::{
 };
 
 use crate::{
-    ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup, PolicyRegistryPrecompile,
-    bls12_381, bn254_pair,
+    ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup, NoopPrecompileCallObserver,
+    PolicyRegistryPrecompile, PrecompileCallObserver, bls12_381, bn254_pair,
 };
 
 /// Base precompile provider.
@@ -168,10 +168,20 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     ///
     /// For Beryl and later, this also installs the dynamic token and registry precompiles.
     pub fn install(self) -> PrecompilesMap {
+        self.install_with_observer(NoopPrecompileCallObserver)
+    }
+
+    /// Builds a [`PrecompilesMap`] with all Base precompiles for this spec installed and observed.
+    ///
+    /// For Beryl and later, this also installs the dynamic token and registry precompiles.
+    pub fn install_with_observer<O>(self, observer: O) -> PrecompilesMap
+    where
+        O: PrecompileCallObserver,
+    {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
             B20Factory::install(&mut precompiles);
-            BerylLookup::install(&mut precompiles);
+            BerylLookup::install_with_observer(&mut precompiles, observer);
             PolicyRegistryPrecompile::install(&mut precompiles);
             ActivationRegistry::install(&mut precompiles, self.activation_admin_address);
         }

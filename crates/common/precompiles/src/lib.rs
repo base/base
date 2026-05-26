@@ -4,8 +4,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
-#[cfg(target_os = "zkvm")]
-extern crate std;
 
 mod macros;
 
@@ -13,7 +11,7 @@ mod provider;
 pub use provider::BasePrecompiles;
 
 mod lookup;
-pub use lookup::BerylLookup;
+pub use lookup::{BerylLookup, BerylLookupWithObserver};
 
 mod spec;
 pub use spec::BasePrecompileSpec;
@@ -40,8 +38,8 @@ pub use common::{
 #[cfg(any(test, feature = "test-utils"))]
 pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
 
-mod cycle_tracker;
-pub use cycle_tracker::{CalldataCycleTracker, PrecompileCycleTracker};
+mod observer;
+pub use observer::{NoopPrecompileCallObserver, PrecompileCallObserver};
 
 mod b20;
 pub use b20::{

@@ -4,19 +4,32 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use super::{
-    B20Token, B20TokenPrecompile,
+    B20Token,
     abi::{IB20, IB20::IB20Calls as C},
 };
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20TokenRole, Burnable, CalldataCycleTracker,
-    Configurable, Mintable, Pausable, PermitArgs, Permittable, Policy, RoleManaged,
-    TokenAccounting, Transferable,
-    macros::{decode_precompile_call, deduct_calldata_cost, track_precompile_cycles},
+    ActivationFeature, ActivationRegistryStorage, B20TokenRole, Burnable, Configurable, Mintable,
+    NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy, PrecompileCallObserver,
+    RoleManaged, TokenAccounting, Transferable,
+    macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
 impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
     /// ABI-dispatches `calldata` to the appropriate `IB20` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        self.dispatch_with_observer(ctx, calldata, NoopPrecompileCallObserver)
+    }
+
+    /// ABI-dispatches `calldata` and observes the decoded B-20 operation.
+    pub fn dispatch_with_observer<O>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        observer: O,
+    ) -> PrecompileResult
+    where
+        O: PrecompileCallObserver,
+    {
         deduct_calldata_cost!(ctx, calldata);
         // Ensure the token has been deployed (has bytecode at its address).
         match self.accounting.is_initialized() {
@@ -27,7 +40,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
             }
             Err(e) => return e.into_precompile_result(ctx.gas_used(), ctx.state_gas_used()),
         }
-        self.inner(ctx, calldata).into_precompile_result(
+        self.inner_with_observer(ctx, calldata, observer).into_precompile_result(
             ctx.gas_used(),
             ctx.state_gas_used(),
             |b| b,
@@ -40,7 +53,20 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
-        self.inner_with_privilege(ctx, calldata, false)
+        self.inner_with_observer(ctx, calldata, NoopPrecompileCallObserver)
+    }
+
+    /// Decodes calldata, observes the decoded operation, and executes the matching `IB20` handler.
+    pub fn inner_with_observer<O>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        observer: O,
+    ) -> base_precompile_storage::Result<Bytes>
+    where
+        O: PrecompileCallObserver,
+    {
+        self.inner_with_privilege_and_observer(ctx, calldata, false, observer)
     }
 
     /// Decodes calldata and executes it with optional factory-init privilege.
@@ -50,11 +76,32 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         calldata: &[u8],
         privileged: bool,
     ) -> base_precompile_storage::Result<Bytes> {
+        self.inner_with_privilege_and_observer(
+            ctx,
+            calldata,
+            privileged,
+            NoopPrecompileCallObserver,
+        )
+    }
+
+    /// Decodes calldata, observes the decoded operation, and executes it with optional
+    /// factory-init privilege.
+    pub fn inner_with_privilege_and_observer<O>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        privileged: bool,
+        observer: O,
+    ) -> base_precompile_storage::Result<Bytes>
+    where
+        O: PrecompileCallObserver,
+    {
         ActivationRegistryStorage::new(ctx).ensure_activated(ActivationFeature::B20Token.id())?;
 
         let call = decode_precompile_call!(calldata, IB20::IB20Calls);
+        let label = call.as_label();
 
-        track_precompile_cycles!(B20TokenPrecompile, calldata, {
+        observer.observe(label, || {
             let encoded: Bytes = match call {
                 // --- Pure reads: direct to accounting ---
                 C::name(_) => self.accounting.name()?.abi_encode().into(),
@@ -254,90 +301,5 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
             };
             Ok(encoded)
         })
-    }
-}
-
-impl CalldataCycleTracker for B20TokenPrecompile {
-    fn key_for_calldata(calldata: &[u8]) -> Option<&'static str> {
-        let selector = calldata.get(..4)?.try_into().ok()?;
-
-        match selector {
-            IB20::nameCall::SELECTOR => Some("precompile-b20-name"),
-            IB20::symbolCall::SELECTOR => Some("precompile-b20-symbol"),
-            IB20::decimalsCall::SELECTOR => Some("precompile-b20-decimals"),
-            IB20::totalSupplyCall::SELECTOR => Some("precompile-b20-totalSupply"),
-            IB20::balanceOfCall::SELECTOR => Some("precompile-b20-balanceOf"),
-            IB20::allowanceCall::SELECTOR => Some("precompile-b20-allowance"),
-            IB20::supplyCapCall::SELECTOR => Some("precompile-b20-supplyCap"),
-            IB20::noncesCall::SELECTOR => Some("precompile-b20-nonces"),
-            IB20::contractURICall::SELECTOR => Some("precompile-b20-contractURI"),
-            IB20::DEFAULT_ADMIN_ROLECall::SELECTOR => Some("precompile-b20-DEFAULT_ADMIN_ROLE"),
-            IB20::MINT_ROLECall::SELECTOR => Some("precompile-b20-MINT_ROLE"),
-            IB20::BURN_ROLECall::SELECTOR => Some("precompile-b20-BURN_ROLE"),
-            IB20::BURN_BLOCKED_ROLECall::SELECTOR => Some("precompile-b20-BURN_BLOCKED_ROLE"),
-            IB20::PAUSE_ROLECall::SELECTOR => Some("precompile-b20-PAUSE_ROLE"),
-            IB20::UNPAUSE_ROLECall::SELECTOR => Some("precompile-b20-UNPAUSE_ROLE"),
-            IB20::METADATA_ROLECall::SELECTOR => Some("precompile-b20-METADATA_ROLE"),
-            IB20::TRANSFER_SENDER_POLICYCall::SELECTOR => {
-                Some("precompile-b20-TRANSFER_SENDER_POLICY")
-            }
-            IB20::TRANSFER_RECEIVER_POLICYCall::SELECTOR => {
-                Some("precompile-b20-TRANSFER_RECEIVER_POLICY")
-            }
-            IB20::TRANSFER_EXECUTOR_POLICYCall::SELECTOR => {
-                Some("precompile-b20-TRANSFER_EXECUTOR_POLICY")
-            }
-            IB20::MINT_RECEIVER_POLICYCall::SELECTOR => Some("precompile-b20-MINT_RECEIVER_POLICY"),
-            IB20::hasRoleCall::SELECTOR => Some("precompile-b20-hasRole"),
-            IB20::getRoleAdminCall::SELECTOR => Some("precompile-b20-getRoleAdmin"),
-            IB20::pausedFeaturesCall::SELECTOR => Some("precompile-b20-pausedFeatures"),
-            IB20::policyIdCall::SELECTOR => Some("precompile-b20-policyId"),
-            IB20::isPausedCall::SELECTOR => Some("precompile-b20-isPaused"),
-            IB20::DOMAIN_SEPARATORCall::SELECTOR => Some("precompile-b20-DOMAIN_SEPARATOR"),
-            IB20::eip712DomainCall::SELECTOR => Some("precompile-b20-eip712Domain"),
-            IB20::transferCall::SELECTOR => Some("precompile-b20-transfer"),
-            IB20::transferFromCall::SELECTOR => Some("precompile-b20-transferFrom"),
-            IB20::approveCall::SELECTOR => Some("precompile-b20-approve"),
-            IB20::transferWithMemoCall::SELECTOR => Some("precompile-b20-transferWithMemo"),
-            IB20::transferFromWithMemoCall::SELECTOR => Some("precompile-b20-transferFromWithMemo"),
-            IB20::mintCall::SELECTOR => Some("precompile-b20-mint"),
-            IB20::mintWithMemoCall::SELECTOR => Some("precompile-b20-mintWithMemo"),
-            IB20::burnCall::SELECTOR => Some("precompile-b20-burn"),
-            IB20::burnWithMemoCall::SELECTOR => Some("precompile-b20-burnWithMemo"),
-            IB20::burnBlockedCall::SELECTOR => Some("precompile-b20-burnBlocked"),
-            IB20::pauseCall::SELECTOR => Some("precompile-b20-pause"),
-            IB20::unpauseCall::SELECTOR => Some("precompile-b20-unpause"),
-            IB20::updateSupplyCapCall::SELECTOR => Some("precompile-b20-updateSupplyCap"),
-            IB20::updateNameCall::SELECTOR => Some("precompile-b20-updateName"),
-            IB20::updateSymbolCall::SELECTOR => Some("precompile-b20-updateSymbol"),
-            IB20::updateContractURICall::SELECTOR => Some("precompile-b20-updateContractURI"),
-            IB20::grantRoleCall::SELECTOR => Some("precompile-b20-grantRole"),
-            IB20::revokeRoleCall::SELECTOR => Some("precompile-b20-revokeRole"),
-            IB20::renounceRoleCall::SELECTOR => Some("precompile-b20-renounceRole"),
-            IB20::renounceLastAdminCall::SELECTOR => Some("precompile-b20-renounceLastAdmin"),
-            IB20::setRoleAdminCall::SELECTOR => Some("precompile-b20-setRoleAdmin"),
-            IB20::updatePolicyCall::SELECTOR => Some("precompile-b20-updatePolicy"),
-            IB20::permitCall::SELECTOR => Some("precompile-b20-permit"),
-            _ => None,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use alloy_sol_types::SolCall;
-
-    use super::*;
-
-    #[test]
-    fn resolves_b20_cycle_tracker_key() {
-        assert_eq!(
-            B20TokenPrecompile::key_for_calldata(&IB20::transferCall::SELECTOR),
-            Some("precompile-b20-transfer")
-        );
-        assert_eq!(
-            B20TokenPrecompile::key_for_calldata(&IB20::updateSupplyCapCall::SELECTOR),
-            Some("precompile-b20-updateSupplyCap")
-        );
     }
 }

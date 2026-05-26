@@ -19,6 +19,7 @@ alloy-sol-types.workspace = true
 # Execution
 alloy-evm.workspace = true
 base-common-evm.workspace = true
+base-common-precompiles.workspace = true
 revm.workspace = true
 revm-precompile.workspace = true
 
@@ -49,7 +50,6 @@ cfg-if.workspace = true
 
 [dev-dependencies]
 base-common-chains.workspace = true
-base-common-precompiles.workspace = true
 
 [lints]
 workspace = true
