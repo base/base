@@ -18,4 +18,4 @@ pub use cursor::{
 };
 
 mod batch;
-pub use batch::{DupRw, MdbxBatchSession};
+pub use batch::MdbxBatchSession;

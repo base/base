@@ -5,23 +5,16 @@
 
 use alloy_eips::eip1898::BlockWithParent;
 use alloy_primitives::B256;
-use reth_db::{
-    Database, DatabaseEnv,
-    table::{DupSort, Table},
-    transaction::DbTx,
-};
+use reth_db::{Database, DatabaseEnv, transaction::DbTx};
 
 use crate::{
     BaseProofsStorageError, BaseProofsStorageResult, BlockStateDiff,
     api::{BaseProofsBatchSession, WriteCounts},
     db::{
-        AccountTrieHistory, HashedAccountHistory, HashedStorageHistory, MdbxAccountCursor,
-        MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor, StorageTrieHistory,
+        MdbxProofsStorage, MdbxV2AccountCursor, MdbxV2AccountTrieCursor, MdbxV2StorageCursor,
+        MdbxV2StorageTrieCursor,
     },
 };
-
-/// Alias for the dup-sorted cursor type produced by an MDBX RW transaction.
-pub type DupRw<'tx, T> = <<DatabaseEnv as Database>::TXMut as DbTx>::DupCursor<T>;
 
 /// Active write batch holding one MDBX RW transaction across multiple block writes.
 #[derive(Debug)]
@@ -48,27 +41,23 @@ impl<'tx> MdbxBatchSession<'tx> {
     fn tx_ref(&self) -> BaseProofsStorageResult<&<DatabaseEnv as Database>::TXMut> {
         self.tx.as_ref().ok_or(BaseProofsStorageError::BatchSessionClosed)
     }
-
-    fn dup_cursor<T: Table + DupSort>(&self) -> BaseProofsStorageResult<DupRw<'_, T>> {
-        Ok(self.tx_ref()?.cursor_dup_read::<T>()?)
-    }
 }
 
 impl BaseProofsBatchSession for MdbxBatchSession<'_> {
     type StorageTrieCursor<'a>
-        = MdbxTrieCursor<StorageTrieHistory, DupRw<'a, StorageTrieHistory>>
+        = MdbxV2StorageTrieCursor
     where
         Self: 'a;
     type AccountTrieCursor<'a>
-        = MdbxTrieCursor<AccountTrieHistory, DupRw<'a, AccountTrieHistory>>
+        = MdbxV2AccountTrieCursor
     where
         Self: 'a;
     type StorageCursor<'a>
-        = MdbxStorageCursor<DupRw<'a, HashedStorageHistory>>
+        = MdbxV2StorageCursor
     where
         Self: 'a;
     type AccountHashedCursor<'a>
-        = MdbxAccountCursor<DupRw<'a, HashedAccountHistory>>
+        = MdbxV2AccountCursor
     where
         Self: 'a;
 
@@ -85,18 +74,14 @@ impl BaseProofsBatchSession for MdbxBatchSession<'_> {
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'_>> {
-        Ok(MdbxTrieCursor::new(
-            self.dup_cursor::<StorageTrieHistory>()?,
-            max_block_number,
-            Some(hashed_address),
-        ))
+        MdbxV2StorageTrieCursor::new(self.tx_ref()?, max_block_number, hashed_address)
     }
 
     fn account_trie_cursor(
         &self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'_>> {
-        Ok(MdbxTrieCursor::new(self.dup_cursor::<AccountTrieHistory>()?, max_block_number, None))
+        MdbxV2AccountTrieCursor::new(self.tx_ref()?, max_block_number)
     }
 
     fn storage_hashed_cursor(
@@ -104,18 +89,14 @@ impl BaseProofsBatchSession for MdbxBatchSession<'_> {
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'_>> {
-        Ok(MdbxStorageCursor::new(
-            self.dup_cursor::<HashedStorageHistory>()?,
-            max_block_number,
-            hashed_address,
-        ))
+        MdbxV2StorageCursor::new(self.tx_ref()?, max_block_number, hashed_address)
     }
 
     fn account_hashed_cursor(
         &self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'_>> {
-        Ok(MdbxAccountCursor::new(self.dup_cursor::<HashedAccountHistory>()?, max_block_number))
+        MdbxV2AccountCursor::new(self.tx_ref()?, max_block_number)
     }
 
     fn store_trie_updates(
