@@ -27,6 +27,32 @@ impl ActionSequencerAttributesBuilder {
     ) -> Self {
         Self { inner, user_txs }
     }
+
+    fn take_encoded_user_transactions(&self) -> Option<Vec<Bytes>> {
+        self.user_txs.lock().expect("sequencer user tx queue lock poisoned").take().map(
+            |user_txs| {
+                user_txs
+                    .into_iter()
+                    .map(|tx| {
+                        let mut buf = Vec::new();
+                        tx.encode_2718(&mut buf);
+                        Bytes::from(buf)
+                    })
+                    .collect()
+            },
+        )
+    }
+
+    fn inject_user_transactions(
+        &self,
+        attrs: &mut BasePayloadAttributes,
+        encoded_user_txs: Vec<Bytes>,
+    ) {
+        if !encoded_user_txs.is_empty() {
+            attrs.transactions.get_or_insert_with(Vec::new).extend(encoded_user_txs);
+        }
+        attrs.no_tx_pool = Some(true);
+    }
 }
 
 #[async_trait]
@@ -37,24 +63,28 @@ impl AttributesBuilder for ActionSequencerAttributesBuilder {
         epoch: alloy_eips::BlockNumHash,
     ) -> PipelineResult<BasePayloadAttributes> {
         let mut attrs = self.inner.prepare_payload_attributes(l2_parent, epoch).await?;
-        let user_txs = self
-            .user_txs
-            .lock()
-            .expect("sequencer user tx queue lock poisoned")
-            .take()
+        let encoded_user_txs = self
+            .take_encoded_user_transactions()
             .ok_or_else(|| PipelineError::NotEnoughData.temp())?;
-        let encoded_user_txs: Vec<Bytes> = user_txs
-            .into_iter()
-            .map(|tx| {
-                let mut buf = Vec::new();
-                tx.encode_2718(&mut buf);
-                Bytes::from(buf)
-            })
-            .collect();
-        if !encoded_user_txs.is_empty() {
-            attrs.transactions.get_or_insert_with(Vec::new).extend(encoded_user_txs);
-        }
-        attrs.no_tx_pool = Some(true);
+        self.inject_user_transactions(&mut attrs, encoded_user_txs);
+        Ok(attrs)
+    }
+
+    async fn prepare_payload_attributes_at(
+        &mut self,
+        l2_parent: L2BlockInfo,
+        epoch: alloy_eips::BlockNumHash,
+        l2_timestamp: u64,
+        timestamp_millis_part: Option<u16>,
+    ) -> PipelineResult<BasePayloadAttributes> {
+        let mut attrs = self
+            .inner
+            .prepare_payload_attributes_at(l2_parent, epoch, l2_timestamp, timestamp_millis_part)
+            .await?;
+        let encoded_user_txs = self
+            .take_encoded_user_transactions()
+            .ok_or_else(|| PipelineError::NotEnoughData.temp())?;
+        self.inject_user_transactions(&mut attrs, encoded_user_txs);
         Ok(attrs)
     }
 }
