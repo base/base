@@ -188,7 +188,10 @@ where
     /// This behaves the same as [`EthTransactionValidator::validate_one_with_state`], but in
     /// addition applies Base-specific validity checks:
     /// - ensures tx is not eip4844
-    /// - ensures tx is not eip8130 (account abstraction; no validation/execution path exists yet)
+    /// - for eip8130 (account abstraction): rejects local-origin submissions and enforces the
+    ///   structural admission gate from [`Self::validate_eip8130_structural`] before the inner
+    ///   Eth checks; verifier dispatch, account state lookups, and fork gating are not yet
+    ///   performed
     /// - ensures that the account has enough balance to cover the L1 gas cost
     pub async fn validate_one_with_state(
         &self,
@@ -466,10 +469,15 @@ where
 mod tests {
     use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, TxKind, U256, bytes, hex::decode};
+    use alloy_primitives::{Address, B256, Bytes, TxKind, U256, bytes, hex::decode};
     use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
-    use base_common_consensus::{BasePrimitives, BaseTransactionSigned, BaseTxEnvelope, TxDeposit};
+    use base_common_consensus::{
+        AccountChange, BasePrimitives, BaseTransactionSigned, BaseTxEnvelope, ConfigChange,
+        CreateEntry, Delegation, Eip8130Constants, Eip8130Signed, InitialOwner, Scope, TxDeposit,
+        TxEip8130,
+    };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::Account;
@@ -481,6 +489,492 @@ mod tests {
 
     use super::*;
     use crate::BasePooledTransaction;
+
+    type TestValidator = BaseTransactionValidator<
+        MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        BasePooledTransaction,
+        BaseEvmConfig,
+    >;
+
+    /// Builds a [`BaseTransactionValidator`] configured against the mainnet chain spec with
+    /// no accounts seeded. Suitable for tests that exercise the EIP-8130 structural-acceptance
+    /// gate, which rejects without touching account state.
+    fn build_test_validator() -> TestValidator {
+        let chain_spec = Arc::new(BaseChainSpec::mainnet());
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .build(InMemoryBlobStore::default());
+        BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+    }
+
+    /// Returns the chain id the [`build_test_validator`] is configured against.
+    fn test_chain_id() -> u64 {
+        ChainConfig::mainnet().chain_id
+    }
+
+    /// Signs `tx` as an EOA-path EIP-8130 transaction and returns the resulting
+    /// [`Eip8130Signed`] with a valid 65-byte secp256k1 `sender_auth`.
+    fn sign_eoa_eip8130(tx: TxEip8130) -> Eip8130Signed {
+        let signer = PrivateKeySigner::random();
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let sig_bytes: Bytes = signature.as_bytes().to_vec().into();
+        Eip8130Signed::new(tx, sig_bytes, Bytes::new())
+    }
+
+    /// Returns a minimal, structurally valid EOA-path [`TxEip8130`] bound to the
+    /// test chain. `sender` is left as `None` so the EOA recovery path is exercised.
+    fn minimal_valid_eoa_tx() -> TxEip8130 {
+        TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: None,
+            nonce_key: U256::ZERO,
+            nonce_sequence: 1,
+            expiry: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000,
+            gas_limit: 50_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            payer: None,
+        }
+    }
+
+    /// Helper: assert structural validation returns `Invalid` with `TxTypeNotSupported`.
+    #[track_caller]
+    fn assert_unsupported(result: Result<(), InvalidPoolTransactionError>) {
+        match result {
+            Err(InvalidPoolTransactionError::Consensus(
+                InvalidTransactionError::TxTypeNotSupported,
+            )) => {}
+            other => panic!("expected TxTypeNotSupported, got {other:?}"),
+        }
+    }
+
+    /// Helper: assert structural validation returns `Invalid` with `ChainIdMismatch`.
+    #[track_caller]
+    fn assert_chain_id_mismatch(result: Result<(), InvalidPoolTransactionError>) {
+        match result {
+            Err(InvalidPoolTransactionError::Consensus(
+                InvalidTransactionError::ChainIdMismatch,
+            )) => {}
+            other => panic!("expected ChainIdMismatch, got {other:?}"),
+        }
+    }
+
+    /// Helper: assert structural validation returns `Invalid` with `TipAboveFeeCap`.
+    #[track_caller]
+    fn assert_tip_above_fee_cap(result: Result<(), InvalidPoolTransactionError>) {
+        match result {
+            Err(InvalidPoolTransactionError::Consensus(
+                InvalidTransactionError::TipAboveFeeCap,
+            )) => {}
+            other => panic!("expected TipAboveFeeCap, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn accepts_eip8130_with_minimum_valid_eoa_shape() {
+        let validator = build_test_validator();
+        let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
+        assert!(
+            validator.validate_eip8130_structural(TransactionOrigin::External, &signed).is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_eip8130_from_local_origin() {
+        let validator = build_test_validator();
+        let signed = sign_eoa_eip8130(minimal_valid_eoa_tx());
+        assert_unsupported(
+            validator.validate_eip8130_structural(TransactionOrigin::Local, &signed),
+        );
+        assert_unsupported(
+            validator.validate_eip8130_structural(TransactionOrigin::Private, &signed),
+        );
+    }
+
+    #[test]
+    fn rejects_eip8130_with_wrong_chain_id() {
+        let validator = build_test_validator();
+        let tx = TxEip8130 { chain_id: test_chain_id() + 1, ..minimal_valid_eoa_tx() };
+        let signed = sign_eoa_eip8130(tx);
+        assert_chain_id_mismatch(
+            validator.validate_eip8130_structural(TransactionOrigin::External, &signed),
+        );
+    }
+
+    #[test]
+    fn rejects_eip8130_with_tip_above_fee_cap() {
+        let validator = build_test_validator();
+        let tx = TxEip8130 {
+            max_fee_per_gas: 100,
+            max_priority_fee_per_gas: 200,
+            ..minimal_valid_eoa_tx()
+        };
+        let signed = sign_eoa_eip8130(tx);
+        assert_tip_above_fee_cap(
+            validator.validate_eip8130_structural(TransactionOrigin::External, &signed),
+        );
+    }
+
+    #[test]
+    fn rejects_eip8130_with_zero_gas_limit() {
+        let validator = build_test_validator();
+        let tx = TxEip8130 { gas_limit: 0, ..minimal_valid_eoa_tx() };
+        let signed = sign_eoa_eip8130(tx);
+        assert_unsupported(
+            validator.validate_eip8130_structural(TransactionOrigin::External, &signed),
+        );
+    }
+
+    #[test]
+    fn rejects_eip8130_with_zero_fee_cap() {
+        let validator = build_test_validator();
+        let tx = TxEip8130 { max_fee_per_gas: 0, ..minimal_valid_eoa_tx() };
+        let signed = sign_eoa_eip8130(tx);
+        assert_unsupported(
+            validator.validate_eip8130_structural(TransactionOrigin::External, &signed),
+        );
+    }
+
+    #[test]
+    fn rejects_eip8130_nonce_free_without_expiry() {
+        let validator = build_test_validator();
+        let tx = TxEip8130 {
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            nonce_sequence: 0,
+            expiry: 0,
+            ..minimal_valid_eoa_tx()
+        };
+        let signed = sign_eoa_eip8130(tx);
+        assert_unsupported(
+            validator.validate_eip8130_structural(TransactionOrigin::External, &signed),
+        );
+    }
+
+    #[test]
+    fn rejects_eip8130_nonce_free_with_nonzero_sequence() {
+        let validator = build_test_validator();
+        let tx = TxEip8130 {
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            nonce_sequence: 1,
+            expiry: 5,
+            ..minimal_valid_eoa_tx()
+        };
+        let signed = sign_eoa_eip8130(tx);
+        assert_unsupported(
+            validator.validate_eip8130_structural(TransactionOrigin::External, &signed),
+        );
+    }
+
+    #[test]
+    fn rejects_eip8130_nonce_free_expiry_too_far_in_future() {
+        let validator = build_test_validator();
+        // block_timestamp returns 0 by default; cap is NONCE_FREE_MAX_EXPIRY_WINDOW (10).
+        let tx = TxEip8130 {
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            nonce_sequence: 0,
+            expiry: Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW + 1,
+            ..minimal_valid_eoa_tx()
+        };
+        let signed = sign_eoa_eip8130(tx);
+        assert_unsupported(
+            validator.validate_eip8130_structural(TransactionOrigin::External, &signed),
+        );
+    }
+
+    #[test]
+    fn accepts_eip8130_nonce_free_at_expiry_window_edge() {
+        let validator = build_test_validator();
+        let tx = TxEip8130 {
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            nonce_sequence: 0,
+            expiry: Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+            ..minimal_valid_eoa_tx()
+        };
+        let signed = sign_eoa_eip8130(tx);
+        assert!(
+            validator.validate_eip8130_structural(TransactionOrigin::External, &signed).is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_eip8130_with_invalid_sender_auth_length_eoa_path() {
+        // EOA path requires exactly 65 bytes; anything else is rejected.
+        let tx = minimal_valid_eoa_tx();
+        let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 32]), Bytes::new());
+        assert_unsupported(TestValidator::validate_sender_auth(&signed));
+    }
+
+    #[test]
+    fn rejects_eip8130_with_empty_sender_auth() {
+        let tx = minimal_valid_eoa_tx();
+        let signed = Eip8130Signed::new(tx, Bytes::new(), Bytes::new());
+        assert_unsupported(TestValidator::validate_sender_auth(&signed));
+    }
+
+    #[test]
+    fn rejects_eip8130_configured_owner_with_revoked_verifier() {
+        let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
+        // 20-byte verifier prefix == REVOKED_VERIFIER, followed by an empty payload.
+        let auth = Bytes::from(Eip8130Constants::REVOKED_VERIFIER.to_vec());
+        let signed = Eip8130Signed::new(tx, auth, Bytes::new());
+        assert_unsupported(TestValidator::validate_sender_auth(&signed));
+    }
+
+    #[test]
+    fn rejects_eip8130_configured_owner_with_short_auth() {
+        let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
+        let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 5]), Bytes::new());
+        assert_unsupported(TestValidator::validate_sender_auth(&signed));
+    }
+
+    #[test]
+    fn rejects_eip8130_payer_present_without_auth() {
+        let tx = TxEip8130 { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
+        let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::new());
+        assert_unsupported(TestValidator::validate_payer_auth(&signed));
+    }
+
+    #[test]
+    fn rejects_eip8130_payer_absent_with_auth() {
+        let tx = minimal_valid_eoa_tx();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::from_static(&[0u8; 20]));
+        assert_unsupported(TestValidator::validate_payer_auth(&signed));
+    }
+
+    #[test]
+    fn rejects_eip8130_payer_verifier_revoked() {
+        let tx = TxEip8130 { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
+        let signed = Eip8130Signed::new(
+            tx,
+            Bytes::from_static(&[0u8; 65]),
+            Bytes::from(Eip8130Constants::REVOKED_VERIFIER.to_vec()),
+        );
+        assert_unsupported(TestValidator::validate_payer_auth(&signed));
+    }
+
+    /// Returns a verifier address comfortably above the `ECRECOVER_VERIFIER` floor
+    /// and distinct from the `REVOKED_VERIFIER` sentinel.
+    fn ok_verifier() -> Address {
+        Address::repeat_byte(0x42)
+    }
+
+    fn make_initial_owner(owner_id_byte: u8) -> InitialOwner {
+        InitialOwner {
+            verifier: ok_verifier(),
+            owner_id: B256::repeat_byte(owner_id_byte),
+            scope: Scope::UNRESTRICTED,
+        }
+    }
+
+    fn make_valid_create_entry() -> CreateEntry {
+        CreateEntry {
+            user_salt: B256::ZERO,
+            code: Bytes::from_static(&[0x60, 0x00]),
+            initial_owners: vec![make_initial_owner(0x01)],
+        }
+    }
+
+    #[test]
+    fn rejects_eip8130_create_not_at_index_zero() {
+        let tx = TxEip8130 {
+            account_changes: vec![
+                AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x33) }),
+                AccountChange::Create(make_valid_create_entry()),
+            ],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn rejects_eip8130_multiple_create_entries() {
+        let tx = TxEip8130 {
+            account_changes: vec![
+                AccountChange::Create(make_valid_create_entry()),
+                AccountChange::Create(make_valid_create_entry()),
+            ],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn rejects_eip8130_create_with_empty_code() {
+        let mut entry = make_valid_create_entry();
+        entry.code = Bytes::new();
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::Create(entry)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn rejects_eip8130_create_with_no_initial_owners() {
+        let mut entry = make_valid_create_entry();
+        entry.initial_owners.clear();
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::Create(entry)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn rejects_eip8130_create_with_duplicate_owner_ids() {
+        let mut entry = make_valid_create_entry();
+        entry.initial_owners.push(make_initial_owner(0x01));
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::Create(entry)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn rejects_eip8130_create_with_owner_verifier_below_floor() {
+        let mut entry = make_valid_create_entry();
+        entry.initial_owners[0].verifier = Address::ZERO;
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::Create(entry)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn rejects_eip8130_create_with_revoked_owner_verifier() {
+        let mut entry = make_valid_create_entry();
+        entry.initial_owners[0].verifier = Eip8130Constants::REVOKED_VERIFIER;
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::Create(entry)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    fn make_valid_config_change() -> ConfigChange {
+        ConfigChange {
+            chain_id: 0,
+            sequence: 0,
+            owner_changes: Vec::new(),
+            auth: Bytes::from_static(&[0u8; 20]),
+        }
+    }
+
+    #[test]
+    fn rejects_eip8130_config_change_with_foreign_chain_id() {
+        let cfg = ConfigChange { chain_id: test_chain_id() + 1, ..make_valid_config_change() };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        let result =
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id());
+        match result {
+            Err(InvalidPoolTransactionError::Consensus(
+                InvalidTransactionError::ChainIdMismatch,
+            )) => {}
+            other => panic!("expected ChainIdMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_eip8130_config_change_with_short_auth() {
+        let cfg =
+            ConfigChange { auth: Bytes::from_static(&[0u8; 5]), ..make_valid_config_change() };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn rejects_eip8130_too_many_config_changes() {
+        let count = Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX + 1;
+        let account_changes =
+            (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
+        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn accepts_eip8130_with_exactly_max_config_changes() {
+        let count = Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX;
+        let account_changes =
+            (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
+        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
+        assert!(
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id(),)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_eip8130_multiple_delegations() {
+        let tx = TxEip8130 {
+            account_changes: vec![
+                AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x11) }),
+                AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x22) }),
+            ],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn accepts_eip8130_with_create_followed_by_delegation_and_configs() {
+        let mut account_changes = vec![AccountChange::Create(make_valid_create_entry())];
+        for _ in 0..3 {
+            account_changes.push(AccountChange::ConfigChange(make_valid_config_change()));
+        }
+        account_changes
+            .push(AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }));
+        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
+        assert!(
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id(),)
+                .is_ok()
+        );
+    }
 
     /// L1 attribute deposit calldata that activates Isthmus and seeds a non-zero
     /// `operator_fee_scalar`/`operator_fee_constant`. Mirrors the fixture used by
