@@ -57,6 +57,59 @@ async fn test_activation_registry_admin() -> Result<()> {
     Ok(())
 }
 
+/// Activating, deactivating, and re-activating a feature all apply the expected state transitions.
+#[tokio::test]
+async fn test_activation_registry_activate_and_deactivate_round_trip() -> Result<()> {
+    let (_devnet, provider) = common::start_beryl_devnet().await?;
+    let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
+        .wrap_err("Failed to parse devnet private key")?;
+    common::wait_for_balance(&provider, admin.address()).await?;
+
+    let client = B20PrecompileClient::new(&provider, &admin, common::L2_CHAIN_ID)
+        .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
+
+    // Activate the feature.
+    client.activate_feature(ActivationFeature::B20Security.id()).await?;
+
+    let output = client
+        .call(
+            ActivationRegistryStorage::ADDRESS,
+            IActivationRegistry::isActivatedCall { feature: ActivationFeature::B20Security.id() },
+        )
+        .await?;
+    let is_activated = IActivationRegistry::isActivatedCall::abi_decode_returns(output.as_ref())
+        .wrap_err("Failed to decode isActivated")?;
+    assert!(is_activated, "feature should be active after activate()");
+
+    // Deactivate the feature.
+    client.deactivate_feature(ActivationFeature::B20Security.id()).await?;
+
+    let output = client
+        .call(
+            ActivationRegistryStorage::ADDRESS,
+            IActivationRegistry::isActivatedCall { feature: ActivationFeature::B20Security.id() },
+        )
+        .await?;
+    let is_activated = IActivationRegistry::isActivatedCall::abi_decode_returns(output.as_ref())
+        .wrap_err("Failed to decode isActivated")?;
+    assert!(!is_activated, "feature should be inactive after deactivate()");
+
+    // Activate again: deactivate followed by activate must work (reactivation).
+    client.activate_feature(ActivationFeature::B20Security.id()).await?;
+
+    let output = client
+        .call(
+            ActivationRegistryStorage::ADDRESS,
+            IActivationRegistry::isActivatedCall { feature: ActivationFeature::B20Security.id() },
+        )
+        .await?;
+    let is_activated = IActivationRegistry::isActivatedCall::abi_decode_returns(output.as_ref())
+        .wrap_err("Failed to decode isActivated")?;
+    assert!(is_activated, "feature should be active again after second activate()");
+
+    Ok(())
+}
+
 /// Calling `activate` from a non-admin account reverts with `Unauthorized`.
 #[tokio::test]
 async fn test_activation_registry_unauthorized_activate_reverts() -> Result<()> {
