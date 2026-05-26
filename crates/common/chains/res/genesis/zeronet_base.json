@@ -27,6 +27,10 @@
     "holoceneTime": 0,
     "isthmusTime": 0,
     "jovianTime": 0,
+    "base": {
+      "azul": 1775152800,
+      "beryl": 1780333200
+    },
     "terminalTotalDifficulty": 0,
     "depositContractAddress": "0x0000000000000000000000000000000000000000",
     "optimism": {
@@ -15354,4 +15358,3 @@
   "excessBlobGas": "0x0",
   "blobGasUsed": "0x0"
 }
-
