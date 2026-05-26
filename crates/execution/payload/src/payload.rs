@@ -51,6 +51,8 @@ pub struct EthPayloadBuilderAttributes {
     pub parent_beacon_block_root: Option<B256>,
     /// Slot number for the payload.
     pub slot_number: Option<u64>,
+    /// Millisecond component of the payload timestamp.
+    pub timestamp_millis_part: Option<u16>,
 }
 
 /// Base Payload Builder Attributes
@@ -69,6 +71,8 @@ pub struct BasePayloadBuilderAttributes<T> {
     pub eip_1559_params: Option<B64>,
     /// Min base fee for the generated payload (only available post-Jovian)
     pub min_base_fee: Option<u64>,
+    /// Millisecond component of the generated payload timestamp.
+    pub timestamp_millis_part: Option<u16>,
 }
 
 impl<T> Default for BasePayloadBuilderAttributes<T> {
@@ -80,6 +84,7 @@ impl<T> Default for BasePayloadBuilderAttributes<T> {
             eip_1559_params: Default::default(),
             transactions: Default::default(),
             min_base_fee: Default::default(),
+            timestamp_millis_part: Default::default(),
         }
     }
 }
@@ -105,6 +110,7 @@ impl<T> BasePayloadBuilderAttributes<T> {
             gas_limit: self.gas_limit,
             eip_1559_params: self.eip_1559_params,
             min_base_fee: self.min_base_fee,
+            timestamp_millis_part: self.timestamp_millis_part,
         }
     }
 
@@ -167,6 +173,7 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> BasePayloadBuilde
             withdrawals: attributes.payload_attributes.withdrawals.unwrap_or_default().into(),
             parent_beacon_block_root: attributes.payload_attributes.parent_beacon_block_root,
             slot_number: attributes.payload_attributes.slot_number,
+            timestamp_millis_part: attributes.timestamp_millis_part,
         };
 
         Ok(Self {
@@ -176,6 +183,7 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> BasePayloadBuilde
             gas_limit: attributes.gas_limit,
             eip_1559_params: attributes.eip_1559_params,
             min_base_fee: attributes.min_base_fee,
+            timestamp_millis_part: attributes.timestamp_millis_part,
         })
     }
 }
@@ -203,6 +211,7 @@ impl<BaseTransactionSigned> From<EthPayloadAttributes>
                 withdrawals: value.withdrawals.unwrap_or_default().into(),
                 parent_beacon_block_root: value.parent_beacon_block_root,
                 slot_number: value.slot_number,
+                timestamp_millis_part: None,
             },
             ..Default::default()
         }
@@ -478,6 +487,9 @@ pub fn payload_id(
     let mut hasher = sha2::Sha256::new();
     hasher.update(parent.as_slice());
     hasher.update(&attributes.payload_attributes.timestamp.to_be_bytes()[..]);
+    if let Some(timestamp_millis_part) = attributes.timestamp_millis_part {
+        hasher.update(timestamp_millis_part.to_be_bytes());
+    }
     hasher.update(attributes.payload_attributes.prev_randao.as_slice());
     hasher.update(attributes.payload_attributes.suggested_fee_recipient.as_slice());
     if let Some(withdrawals) = &attributes.payload_attributes.withdrawals {
@@ -560,6 +572,7 @@ where
 
         Ok(Self {
             timestamp: attributes.payload_attributes.timestamp,
+            timestamp_millis_part: attributes.timestamp_millis_part,
             suggested_fee_recipient: attributes.payload_attributes.suggested_fee_recipient,
             prev_randao: attributes.payload_attributes.prev_randao,
             gas_limit: attributes.gas_limit.unwrap_or_else(|| parent.gas_limit()),
@@ -594,6 +607,7 @@ mod tests {
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
             gas_limit: Some(30000000),
@@ -626,6 +640,7 @@ mod tests {
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
             gas_limit: Some(30000000),
@@ -653,6 +668,23 @@ mod tests {
             };
         let extra_data = attributes.get_holocene_extra_data(BaseFeeParams::new(80, 60));
         assert_eq!(extra_data.unwrap(), Bytes::copy_from_slice(&[0, 0, 0, 0, 8, 0, 0, 0, 8]));
+    }
+
+    #[test]
+    fn test_payload_builder_preserves_timestamp_millis_part() {
+        let attributes =
+            BasePayloadAttributes { timestamp_millis_part: Some(400), ..Default::default() };
+
+        let builder = BasePayloadBuilderAttributes::<BaseTransactionSigned>::try_new(
+            B256::ZERO,
+            attributes,
+            EngineApiMessageVersion::V3 as u8,
+        )
+        .unwrap();
+
+        assert_eq!(builder.timestamp_millis_part, Some(400));
+        assert_eq!(builder.payload_attributes.timestamp_millis_part, Some(400));
+        assert_eq!(builder.as_rpc_payload_attributes().timestamp_millis_part, Some(400));
     }
 
     #[test]
