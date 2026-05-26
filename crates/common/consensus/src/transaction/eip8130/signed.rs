@@ -179,6 +179,32 @@ impl Eip8130Signed {
         self.recover_eoa_sender_with(alloy_consensus::crypto::secp256k1::recover_signer_unchecked)
     }
 
+    /// Recovers the sender of this signed transaction by short-circuiting to
+    /// [`Self::explicit_sender`] for the configured-owner path and otherwise
+    /// running checked EOA ecrecover. Flattens the [`Self::recover_eoa_sender`]
+    /// `Option` so call sites in the pooled and envelope `SignerRecoverable`
+    /// implementations stay one-liners and cannot drift.
+    #[cfg(feature = "k256")]
+    pub fn recover_sender(&self) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
+        if let Some(addr) = self.explicit_sender() {
+            return Ok(addr);
+        }
+        self.recover_eoa_sender()?.ok_or_else(alloy_consensus::crypto::RecoveryError::new)
+    }
+
+    /// Same as [`Self::recover_sender`] but uses the unchecked recovery path,
+    /// preserving the upper-half-`s`-accepting contract required by the
+    /// `recover_signer_unchecked` and `recover_unchecked_with_buf` dispatchers.
+    #[cfg(feature = "k256")]
+    pub fn recover_sender_unchecked(
+        &self,
+    ) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
+        if let Some(addr) = self.explicit_sender() {
+            return Ok(addr);
+        }
+        self.recover_eoa_sender_unchecked()?.ok_or_else(alloy_consensus::crypto::RecoveryError::new)
+    }
+
     #[cfg(feature = "k256")]
     fn recover_eoa_sender_with(
         &self,

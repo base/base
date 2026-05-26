@@ -585,7 +585,7 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             Self::Eip2930(tx) => tx.signature_hash(),
             Self::Eip1559(tx) => tx.signature_hash(),
             Self::Eip7702(tx) => tx.signature_hash(),
-            Self::Eip8130(tx) => return recover_eip8130_envelope_sender(tx),
+            Self::Eip8130(tx) => return tx.recover_sender(),
             // The Deposit transaction does not have a signature. Directly return the
             // `from` address.
             Self::Deposit(tx) => return Ok(tx.from),
@@ -610,7 +610,7 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             Self::Eip2930(tx) => tx.signature_hash(),
             Self::Eip1559(tx) => tx.signature_hash(),
             Self::Eip7702(tx) => tx.signature_hash(),
-            Self::Eip8130(tx) => return recover_eip8130_envelope_sender_unchecked(tx),
+            Self::Eip8130(tx) => return tx.recover_sender_unchecked(),
             // The Deposit transaction does not have a signature. Directly return the
             // `from` address.
             Self::Deposit(tx) => return Ok(tx.from),
@@ -644,39 +644,10 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             Self::Eip7702(tx) => {
                 alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
             }
-            Self::Eip8130(tx) => recover_eip8130_envelope_sender_unchecked(tx),
+            Self::Eip8130(tx) => tx.recover_sender_unchecked(),
             Self::Deposit(tx) => Ok(tx.from),
         }
     }
-}
-
-/// Recovers the sender of an EIP-8130 envelope variant using the **checked**
-/// recovery path: short-circuits to the explicit sender when the
-/// configured-owner path is in use, otherwise runs EOA ecrecover with EIP-2
-/// low-`s` enforcement.
-#[cfg(feature = "k256")]
-fn recover_eip8130_envelope_sender(
-    tx: &crate::transaction::eip8130::Eip8130Signed,
-) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
-    if let Some(addr) = tx.explicit_sender() {
-        return Ok(addr);
-    }
-    tx.recover_eoa_sender()?.ok_or_else(alloy_consensus::crypto::RecoveryError::new)
-}
-
-/// Same as [`recover_eip8130_envelope_sender`] but uses the unchecked
-/// recovery path. Required by the [`alloy_consensus::transaction::SignerRecoverable::recover_signer_unchecked`]
-/// and [`alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf`]
-/// contracts which must accept upper-half `s` values; the pool path and the
-/// envelope-level block-import path share this requirement.
-#[cfg(feature = "k256")]
-fn recover_eip8130_envelope_sender_unchecked(
-    tx: &crate::transaction::eip8130::Eip8130Signed,
-) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
-    if let Some(addr) = tx.explicit_sender() {
-        return Ok(addr);
-    }
-    tx.recover_eoa_sender_unchecked()?.ok_or_else(alloy_consensus::crypto::RecoveryError::new)
 }
 
 /// Bincode-compatible serde implementation for [`BaseTxEnvelope`].

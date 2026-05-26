@@ -239,20 +239,20 @@ where
         if tx.gas_limit == 0 || tx.max_fee_per_gas == 0 {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
+        // Single read of the head-block timestamp so both branches see the
+        // same value even when `on_new_head_block` updates the atomic
+        // concurrently.
+        let now = self.block_timestamp();
         if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
             if tx.nonce_sequence != 0 || tx.expiry == 0 {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
-            let now = self.block_timestamp();
-            // Reject already-expired nonce-free transactions as well as those whose
-            // expiry exceeds the policy window. The non-nonce-free branch below also
-            // rejects past expiries when one is set.
             if tx.expiry <= now
                 || tx.expiry > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW)
             {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
-        } else if tx.expiry != 0 && tx.expiry <= self.block_timestamp() {
+        } else if tx.expiry != 0 && tx.expiry <= now {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         Self::validate_sender_auth(signed)?;
@@ -281,7 +281,7 @@ where
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
             let verifier = Address::from_slice(&auth[..20]);
-            if verifier == Eip8130Constants::REVOKED_VERIFIER {
+            if Self::verifier_out_of_range(&verifier) {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
         }
@@ -289,7 +289,8 @@ where
     }
 
     /// Ensures `payer_auth` is present iff a `payer` is set, and that its
-    /// verifier prefix is not the revoked sentinel.
+    /// verifier prefix sits in the live policy range (above the reserved
+    /// floor, below the revoked sentinel).
     fn validate_payer_auth(signed: &Eip8130Signed) -> Result<(), InvalidPoolTransactionError> {
         let payer_present = signed.tx().payer.is_some();
         let auth = signed.payer_auth();
@@ -302,11 +303,21 @@ where
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
             let verifier = Address::from_slice(&auth[..20]);
-            if verifier == Eip8130Constants::REVOKED_VERIFIER {
+            if Self::verifier_out_of_range(&verifier) {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
         }
         Ok(())
+    }
+
+    /// Returns `true` when `verifier` falls outside the live mempool policy
+    /// range. Mirrors the check in [`Self::validate_owner_iter`] so all three
+    /// auth surfaces (`sender_auth`, `payer_auth`, `cfg.auth`, and per-owner
+    /// verifiers) reject the reserved `< ECRECOVER_VERIFIER` window and the
+    /// `REVOKED_VERIFIER` sentinel identically.
+    fn verifier_out_of_range(verifier: &Address) -> bool {
+        *verifier < Eip8130Constants::ECRECOVER_VERIFIER
+            || *verifier == Eip8130Constants::REVOKED_VERIFIER
     }
 
     /// Walks `account_changes` and enforces structural invariants:
@@ -350,7 +361,7 @@ where
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
                     let cfg_verifier = Address::from_slice(&cfg.auth[..20]);
-                    if cfg_verifier == Eip8130Constants::REVOKED_VERIFIER {
+                    if Self::verifier_out_of_range(&cfg_verifier) {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
                     Self::validate_owner_iter(&cfg.owner_changes, |o| (&o.verifier, &o.owner_id))?;
@@ -383,9 +394,7 @@ where
         let mut seen = BTreeSet::new();
         for entry in owners {
             let (verifier, owner_id) = project(entry);
-            if *verifier < Eip8130Constants::ECRECOVER_VERIFIER
-                || *verifier == Eip8130Constants::REVOKED_VERIFIER
-            {
+            if Self::verifier_out_of_range(verifier) {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
             if !seen.insert(*owner_id) {
@@ -782,6 +791,17 @@ mod tests {
         assert_unsupported(TestValidator::validate_sender_auth(&signed));
     }
 
+    // Regression: configured-owner path must reject the reserved verifier
+    // range below `ECRECOVER_VERIFIER`, matching `validate_owner_iter`.
+    // `address(0)` is the canonical reserved value.
+    #[test]
+    fn rejects_eip8130_configured_owner_with_reserved_verifier() {
+        let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
+        let auth = Bytes::from(Address::ZERO.to_vec());
+        let signed = Eip8130Signed::new(tx, auth, Bytes::new());
+        assert_unsupported(TestValidator::validate_sender_auth(&signed));
+    }
+
     #[test]
     fn rejects_eip8130_configured_owner_with_short_auth() {
         let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
@@ -801,6 +821,17 @@ mod tests {
         let tx = minimal_valid_eoa_tx();
         let signed =
             Eip8130Signed::new(tx, Bytes::from_static(&[0u8; 65]), Bytes::from_static(&[0u8; 20]));
+        assert_unsupported(TestValidator::validate_payer_auth(&signed));
+    }
+
+    #[test]
+    fn rejects_eip8130_payer_verifier_reserved() {
+        let tx = TxEip8130 { payer: Some(Address::repeat_byte(0x11)), ..minimal_valid_eoa_tx() };
+        let signed = Eip8130Signed::new(
+            tx,
+            Bytes::from_static(&[0u8; 65]),
+            Bytes::from(Address::ZERO.to_vec()),
+        );
         assert_unsupported(TestValidator::validate_payer_auth(&signed));
     }
 
@@ -975,7 +1006,7 @@ mod tests {
             chain_id: 0,
             sequence: 0,
             owner_changes: Vec::new(),
-            auth: Bytes::from_static(&[0u8; 20]),
+            auth: Bytes::from(ok_verifier().to_vec()),
         }
     }
 
