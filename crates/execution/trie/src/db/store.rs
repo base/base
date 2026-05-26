@@ -1057,7 +1057,7 @@ impl BaseProofsStore for MdbxProofsStorage {
                 }
             }
 
-            let mut storage_trie_cursor: Option<MdbxV2StorageTrieCursor> = None;
+            let mut storage_trie_cursor: Option<(B256, MdbxV2StorageTrieCursor)> = None;
             for key in change_set.storage_trie_keys {
                 if !Self::v2_history_contains::<V2StoragesTrieHistory>(
                     tx,
@@ -1075,17 +1075,17 @@ impl BaseProofsStore for MdbxProofsStorage {
                     .entry(key.hashed_address)
                     .or_insert_with(StorageTrieUpdates::default);
 
-                let cursor = match storage_trie_cursor.as_mut() {
-                    Some(cursor) => {
-                        cursor.set_hashed_address(key.hashed_address);
-                        cursor
-                    }
-                    None => storage_trie_cursor.insert(MdbxV2StorageTrieCursor::new(
-                        tx,
-                        block_number,
+                if !matches!(&storage_trie_cursor, Some((address, _)) if *address == key.hashed_address)
+                {
+                    storage_trie_cursor = Some((
                         key.hashed_address,
-                    )?),
-                };
+                        MdbxV2StorageTrieCursor::new(tx, block_number, key.hashed_address)?,
+                    ));
+                }
+                let cursor = &mut storage_trie_cursor
+                    .as_mut()
+                    .expect("storage trie cursor initialized")
+                    .1;
                 if let Some((_, value)) = cursor.seek_exact(key.path.0)? {
                     stu.storage_nodes.insert(key.path.0, value);
                 } else {
@@ -1113,7 +1113,7 @@ impl BaseProofsStore for MdbxProofsStorage {
                 post_state.accounts.insert(key, entry);
             }
 
-            let mut hashed_storage_cursor: Option<MdbxV2StorageCursor> = None;
+            let mut hashed_storage_cursor: Option<(B256, MdbxV2StorageCursor)> = None;
             for key in change_set.hashed_storage_keys {
                 if !Self::v2_history_contains::<V2HashedStoragesHistory>(
                     tx,
@@ -1131,17 +1131,17 @@ impl BaseProofsStore for MdbxProofsStorage {
                     });
                 }
                 let hs = post_state.storages.entry(key.hashed_address).or_default();
-                let cursor = match hashed_storage_cursor.as_mut() {
-                    Some(cursor) => {
-                        cursor.set_hashed_address(key.hashed_address);
-                        cursor
-                    }
-                    None => hashed_storage_cursor.insert(MdbxV2StorageCursor::new(
-                        tx,
-                        block_number,
+                if !matches!(&hashed_storage_cursor, Some((address, _)) if *address == key.hashed_address)
+                {
+                    hashed_storage_cursor = Some((
                         key.hashed_address,
-                    )?),
-                };
+                        MdbxV2StorageCursor::new(tx, block_number, key.hashed_address)?,
+                    ));
+                }
+                let cursor = &mut hashed_storage_cursor
+                    .as_mut()
+                    .expect("hashed storage cursor initialized")
+                    .1;
                 let value = cursor
                     .seek(key.hashed_storage_key)?
                     .and_then(|(found_key, value)| {
