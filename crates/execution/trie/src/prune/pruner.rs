@@ -202,12 +202,35 @@ mod tests {
         BlockWithParent::new(parent, NumHash::new(n, b256(n)))
     }
 
+    #[cfg(feature = "metrics")]
+    fn new_test_storage(dir: &TempDir) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into()
+    }
+
+    #[cfg(not(feature = "metrics"))]
+    fn new_test_storage(dir: &TempDir) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+        Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"))
+    }
+
+    #[cfg(feature = "metrics")]
+    fn clone_test_storage(
+        storage: &BaseProofsStorage<Arc<MdbxProofsStorage>>,
+    ) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+        storage.clone()
+    }
+
+    #[cfg(not(feature = "metrics"))]
+    fn clone_test_storage(
+        storage: &BaseProofsStorage<Arc<MdbxProofsStorage>>,
+    ) -> BaseProofsStorage<Arc<MdbxProofsStorage>> {
+        Arc::clone(storage)
+    }
+
     #[tokio::test]
     async fn run_inner_and_and_verify_updated_state() {
         // --- env/store ---
         let dir = TempDir::new().unwrap();
-        let store: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-            BaseProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
+        let store = new_test_storage(&dir);
 
         store.set_earliest_block_number(0, B256::ZERO).expect("set earliest");
 
@@ -400,7 +423,8 @@ mod tests {
             .withf(move |block_num| *block_num == 4)
             .returning(move |_| Ok(Some(b256(4))));
 
-        let pruner = BaseProofStoragePruner::new(Arc::clone(&store), block_hash_reader, 1, 1000);
+        let pruner =
+            BaseProofStoragePruner::new(clone_test_storage(&store), block_hash_reader, 1, 1000);
         let out = pruner.run_inner().expect("pruner ok");
         assert_eq!(out.start_block, 0);
         assert_eq!(out.end_block, 4, "pruned up to 4 (inclusive); new earliest is 4");
@@ -489,8 +513,7 @@ mod tests {
     #[tokio::test]
     async fn run_inner_where_latest_block_is_none() {
         let dir = TempDir::new().unwrap();
-        let store: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-            BaseProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
+        let store = new_test_storage(&dir);
 
         let earliest = store.get_earliest_block_number().unwrap();
         let latest = store.get_latest_block_number().unwrap();
@@ -507,8 +530,7 @@ mod tests {
     #[tokio::test]
     async fn run_inner_earliest_none_real_db() {
         let dir = TempDir::new().unwrap();
-        let store: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-            BaseProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
+        let store = new_test_storage(&dir);
 
         // Write a single block to set *latest* only.
         store
@@ -530,8 +552,7 @@ mod tests {
     #[tokio::test]
     async fn run_inner_interval_too_small_real_db() {
         let dir = TempDir::new().unwrap();
-        let store: BaseProofsStorage<Arc<MdbxProofsStorage>> =
-            BaseProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
+        let store = new_test_storage(&dir);
 
         // Set earliest=4 explicitly
         let earliest_num = 4u64;
