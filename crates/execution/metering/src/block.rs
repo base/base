@@ -62,6 +62,7 @@ where
     // Set up block attributes from the actual block header
     let attributes = BaseNextBlockEnvAttributes {
         timestamp: block.header().timestamp(),
+        timestamp_millis_part: None,
         suggested_fee_recipient: block.header().beneficiary(),
         prev_randao: block.header().mix_hash().unwrap_or_else(B256::random),
         gas_limit: block.header().gas_limit(),

@@ -394,6 +394,7 @@ where
     // provided by the caller (e.g., flashblock base payload) to keep EIP-4788 happy.
     let attributes = BaseNextBlockEnvAttributes {
         timestamp,
+        timestamp_millis_part: None,
         suggested_fee_recipient: header.beneficiary(),
         prev_randao: header.mix_hash().unwrap_or_else(B256::random),
         gas_limit: header.gas_limit(),
