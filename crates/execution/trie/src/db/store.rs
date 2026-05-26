@@ -14,10 +14,7 @@ use reth_db::{
     transaction::{DbTx, DbTxMut},
 };
 use reth_primitives_traits::{Account, StorageEntry, ValueWithSubKey};
-use reth_trie::{
-    hashed_cursor::{HashedCursor, HashedStorageCursor},
-    trie_cursor::{TrieCursor, TrieStorageCursor},
-};
+use reth_trie::{hashed_cursor::HashedCursor, trie_cursor::TrieCursor};
 use reth_trie_common::{
     BranchNodeCompact, HashedPostState, Nibbles, StorageTrieEntry, StoredNibbles,
     StoredNibblesSubKey,

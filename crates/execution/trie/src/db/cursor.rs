@@ -587,10 +587,10 @@ impl TrieCursor for MdbxV2AccountTrieCursor {
         path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
         let key = StoredNibbles(path);
-        if let Some((row_key, node)) = self.inner.seek(key.clone()) {
-            if row_key == key {
-                return Ok(Some((row_key.0, node)));
-            }
+        if let Some((row_key, node)) = self.inner.seek(key.clone())
+            && row_key == key
+        {
+            return Ok(Some((row_key.0, node)));
         }
         self.inner.reset();
         Ok(None)
