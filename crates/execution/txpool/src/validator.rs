@@ -7,13 +7,13 @@ use std::{
 };
 
 use alloy_consensus::{BlockHeader, Transaction};
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use base_common_chains::Upgrades;
-use base_common_consensus::EIP8130_TX_TYPE_ID;
+use base_common_consensus::{AccountChange, Eip8130Constants, Eip8130Signed};
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use parking_lot::RwLock;
-use reth_chainspec::ChainSpecProvider;
+use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::{
     Block, BlockBody, BlockTy, GotExpected, SealedBlock,
@@ -203,16 +203,158 @@ where
             );
         }
 
-        if transaction.ty() == EIP8130_TX_TYPE_ID {
-            return TransactionValidationOutcome::Invalid(
-                transaction,
-                InvalidTransactionError::TxTypeNotSupported.into(),
-            );
+        if let Some(signed) = transaction.as_eip8130()
+            && let Err(err) = self.validate_eip8130_structural(origin, signed)
+        {
+            return TransactionValidationOutcome::Invalid(transaction, err);
         }
-
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
-
         self.apply_base_checks(outcome)
+    }
+
+    /// Runs the mempool admission checks that apply to EIP-8130 (account
+    /// abstraction) transactions without requiring verifier dispatch, account
+    /// state lookups, or fork activation. Mirrors the structural invariants
+    /// listed in EIP-8130 § Validation and § Nonce-Free Mode.
+    fn validate_eip8130_structural(
+        &self,
+        origin: TransactionOrigin,
+        signed: &Eip8130Signed,
+    ) -> Result<(), InvalidPoolTransactionError> {
+        if !origin.is_external() {
+            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+        }
+        let tx = signed.tx();
+        let local_chain_id = self.inner.chain_spec().chain().id();
+        if tx.chain_id != local_chain_id {
+            return Err(InvalidTransactionError::ChainIdMismatch.into());
+        }
+        if tx.max_fee_per_gas < tx.max_priority_fee_per_gas {
+            return Err(InvalidTransactionError::TipAboveFeeCap.into());
+        }
+        if tx.gas_limit == 0 || tx.max_fee_per_gas == 0 {
+            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+        }
+        if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            if tx.nonce_sequence != 0 || tx.expiry == 0 {
+                return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            }
+            let now = self.block_timestamp();
+            if tx.expiry > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW) {
+                return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            }
+        } else if tx.expiry != 0 && tx.expiry <= self.block_timestamp() {
+            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+        }
+        Self::validate_sender_auth(signed)?;
+        Self::validate_payer_auth(signed)?;
+        Self::validate_account_changes(signed, local_chain_id)?;
+        Ok(())
+    }
+
+    /// Checks the `sender_auth` field carries enough bytes for either the EOA
+    /// recovery path (65-byte signature) or the configured-owner auth path
+    /// (`verifier_address || verifier_payload`) and that the verifier address
+    /// is not the sentinel revoked marker.
+    fn validate_sender_auth(signed: &Eip8130Signed) -> Result<(), InvalidPoolTransactionError> {
+        let auth = signed.sender_auth();
+        if auth.is_empty() {
+            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+        }
+        if signed.explicit_sender().is_none() {
+            // EOA path: must carry exactly the secp256k1 signature.
+            if auth.len() != 65 {
+                return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            }
+        } else {
+            // Configured-owner path: leading 20 bytes are the verifier address.
+            if auth.len() < 20 {
+                return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            }
+            let verifier = Address::from_slice(&auth[..20]);
+            if verifier == Eip8130Constants::REVOKED_VERIFIER {
+                return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Ensures `payer_auth` is present iff a `payer` is set, and that its
+    /// verifier prefix is not the revoked sentinel.
+    fn validate_payer_auth(signed: &Eip8130Signed) -> Result<(), InvalidPoolTransactionError> {
+        let payer_present = signed.tx().payer.is_some();
+        let auth = signed.payer_auth();
+        // XOR: presence must match.
+        if payer_present == auth.is_empty() {
+            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+        }
+        if payer_present {
+            if auth.len() < 20 {
+                return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            }
+            let verifier = Address::from_slice(&auth[..20]);
+            if verifier == Eip8130Constants::REVOKED_VERIFIER {
+                return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Walks `account_changes` and enforces structural invariants:
+    /// at most one `Create` (and only as the first entry), at most one
+    /// `Delegation`, `ConfigChange` count capped at
+    /// [`Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX`], chain-binding on
+    /// config changes, and per-entry well-formedness.
+    fn validate_account_changes(
+        signed: &Eip8130Signed,
+        local_chain_id: u64,
+    ) -> Result<(), InvalidPoolTransactionError> {
+        let mut create_count = 0usize;
+        let mut delegation_count = 0usize;
+        let mut config_count = 0usize;
+        for (idx, change) in signed.tx().account_changes.iter().enumerate() {
+            match change {
+                AccountChange::Create(create) => {
+                    create_count += 1;
+                    if create_count > 1 || idx != 0 {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
+                    if create.code.is_empty() || create.initial_owners.is_empty() {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
+                    let mut seen_owner_ids = std::collections::BTreeSet::new();
+                    for owner in &create.initial_owners {
+                        if owner.verifier < Eip8130Constants::ECRECOVER_VERIFIER
+                            || owner.verifier == Eip8130Constants::REVOKED_VERIFIER
+                        {
+                            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                        }
+                        if !seen_owner_ids.insert(owner.owner_id) {
+                            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                        }
+                    }
+                }
+                AccountChange::ConfigChange(cfg) => {
+                    config_count += 1;
+                    if config_count > Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
+                    if cfg.chain_id != 0 && cfg.chain_id != local_chain_id {
+                        return Err(InvalidTransactionError::ChainIdMismatch.into());
+                    }
+                    if cfg.auth.len() < 20 {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
+                }
+                AccountChange::Delegation(_) => {
+                    delegation_count += 1;
+                    if delegation_count > 1 {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Performs the necessary Base-specific checks based on top of the regular eth outcome.
