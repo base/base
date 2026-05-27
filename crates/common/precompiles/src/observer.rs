@@ -96,7 +96,6 @@ mod tests {
         let result = catch_unwind(AssertUnwindSafe(|| {
             observer.observe("precompile-b20-transfer", || panic!("observed panic"));
         }));
-
         assert!(result.is_err());
         assert_eq!(
             observer.events(),

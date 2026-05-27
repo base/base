@@ -939,6 +939,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-evm",
  "base-common-genesis",
+ "base-common-precompiles",
  "base-consensus-derive",
  "base-proof",
  "base-proof-driver",

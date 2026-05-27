@@ -13,7 +13,10 @@ use std::time::Duration;
 use alloy_primitives::{Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolInterface};
-use base_common_precompiles::{ActivationFeature, B20TokenRole, B20Variant, IB20};
+use base_common_precompiles::{
+    ActivationFeature, ActivationRegistryStorage, B20TokenRole, B20Variant, IActivationRegistry,
+    IB20,
+};
 use clap::Parser;
 use devnet::{
     B20PrecompileClient,
@@ -53,6 +56,9 @@ fn main() -> Result<()> {
 /// CLI configuration for the local B-20 ZK proving benchmark.
 #[derive(Clone, Debug, Parser)]
 pub struct B20ZkProvingConfig {
+    /// Cargo passes this flag to custom benchmark binaries.
+    #[arg(long = "bench", hide = true)]
+    pub cargo_bench: bool,
     /// L2 execution RPC URL.
     #[arg(long, default_value = "http://localhost:8645")]
     pub l2_rpc_url: Url,
@@ -137,8 +143,8 @@ impl B20ZkProvingBench {
         let b20_spender = B20PrecompileClient::new(&l2_provider, &spender, config.l2_chain_id)
             .with_receipt_timeout(config.tx_receipt_timeout);
         display.setup_message("setup ensuring B-20 features are active");
-        b20.activate_feature(ActivationFeature::B20Factory.id()).await?;
-        b20.activate_feature(ActivationFeature::B20Token.id()).await?;
+        Self::ensure_feature_active(&b20, ActivationFeature::B20Factory.id()).await?;
+        Self::ensure_feature_active(&b20, ActivationFeature::B20Token.id()).await?;
 
         display.setup_message("setup creating benchmark B-20 token");
         let token = Self::create_b20_token(&b20, admin.address()).await?;
@@ -199,6 +205,25 @@ impl B20ZkProvingBench {
         );
 
         client.create_token(B20Variant::B20, params, salt).await
+    }
+
+    /// Activates `feature` if it is not already active.
+    pub async fn ensure_feature_active(
+        client: &B20PrecompileClient<'_>,
+        feature: B256,
+    ) -> Result<()> {
+        let output = client
+            .call(
+                ActivationRegistryStorage::ADDRESS,
+                IActivationRegistry::isActivatedCall { feature },
+            )
+            .await?;
+        let is_active = IActivationRegistry::isActivatedCall::abi_decode_returns(output.as_ref())
+            .wrap_err("failed to decode activation registry state")?;
+        if !is_active {
+            client.activate_feature(feature).await?;
+        }
+        Ok(())
     }
 }
 
@@ -274,16 +299,16 @@ impl B20CallSender<'_> {
         reports.push(
             self.send_call(
                 self.admin_client,
-                "updateContractURI",
-                IB20::updateContractURICall { newURI: HEAVY_CONTRACT_URI.to_string() },
+                "grantRole(metadata)",
+                IB20::grantRoleCall { role: B20TokenRole::Metadata.id(), account: self.admin },
             )
             .await?,
         );
         reports.push(
             self.send_call(
                 self.admin_client,
-                "grantRole(metadata)",
-                IB20::grantRoleCall { role: B20TokenRole::Metadata.id(), account: self.admin },
+                "updateContractURI",
+                IB20::updateContractURICall { newURI: HEAVY_CONTRACT_URI.to_string() },
             )
             .await?,
         );
