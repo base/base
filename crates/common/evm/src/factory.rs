@@ -35,6 +35,7 @@ impl BaseEvmFactory {
     }
 
     /// Returns this factory with the activation registry admin address set.
+    #[must_use]
     pub const fn with_activation_admin_address(
         mut self,
         activation_admin_address: Option<Address>,
