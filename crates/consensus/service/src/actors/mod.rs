@@ -5,6 +5,12 @@
 mod traits;
 pub use traits::{CancellableContext, NodeActor};
 
+mod checkpoint;
+pub use checkpoint::{
+    CheckpointActor, CheckpointClient, CheckpointDB, CheckpointError, CheckpointRequest,
+    CheckpointWriter, NoopCheckpointWriter,
+};
+
 mod engine;
 #[cfg(test)]
 pub use engine::MockEngineDerivationClient;

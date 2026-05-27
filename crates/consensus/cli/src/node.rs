@@ -135,6 +135,10 @@ pub struct ConsensusNodeConfigArgs {
     /// Path to the `SafeDB` directory. If not set, safe head tracking is disabled.
     #[arg(long = "safedb.path", env = "BASE_NODE_SAFEDB_PATH")]
     pub safedb_path: Option<PathBuf>,
+
+    /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
+    #[arg(long = "checkpoint.path", env = "BASE_NODE_CHECKPOINT_PATH")]
+    pub checkpoint_path: Option<PathBuf>,
 }
 
 impl ConsensusNodeArgs {
@@ -241,6 +245,9 @@ impl ConsensusNodeArgs {
         )
         .with_sequencer_config(self.config.sequencer_flags.config());
 
+        if let Some(path) = self.config.checkpoint_path.clone() {
+            builder = builder.with_checkpoint_path(path);
+        }
         if let Some(path) = self.config.safedb_path.clone() {
             builder = builder.with_safedb_path(path);
         }
@@ -304,6 +311,7 @@ mod tests {
             p2p_flags: P2PArgs::default(),
             rpc_flags: RpcArgs::default(),
             sequencer_flags: SequencerArgs::default(),
+            checkpoint_path: None,
             safedb_path: None,
         }
     }
