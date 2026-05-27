@@ -73,8 +73,8 @@ impl PolicyRegistryStorage<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, address};
-    use alloy_sol_types::SolCall;
+    use alloy_primitives::{Address, Bytes, U256, address};
+    use alloy_sol_types::{Panic, PanicKind, SolCall, SolError, SolValue};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{
@@ -152,6 +152,42 @@ mod tests {
         assert!(!output.is_revert());
         let id = IPolicyRegistry::createPolicyCall::abi_decode_returns(&output.bytes).unwrap();
         assert_eq!((id >> 56) as u8, IPolicyRegistry::PolicyType::ALLOWLIST as u8);
+    }
+
+    #[test]
+    fn dispatch_create_policy_rejects_invalid_policy_type_calldata() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_policy_registry(&mut storage);
+        storage.set_caller(ADMIN);
+        let mut calldata = Vec::from(IPolicyRegistry::createPolicyCall::SELECTOR);
+        calldata.extend_from_slice(&ADMIN.abi_encode());
+        calldata.extend_from_slice(&[0u8; 31]);
+        calldata.push(0xff);
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("dispatch should not fatally error");
+
+        let expected: Bytes =
+            Panic { code: U256::from(PanicKind::EnumConversionError as u32) }.abi_encode().into();
+        assert!(output.is_revert());
+        assert_eq!(output.bytes, expected);
+
+        let valid_calldata = IPolicyRegistry::createPolicyCall {
+            admin: ADMIN,
+            policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
+        }
+        .abi_encode();
+        let valid_output = StorageCtx::enter(&mut storage, |ctx| {
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, &valid_calldata)
+        })
+        .expect("dispatch should not fatally error");
+
+        assert!(!valid_output.is_revert());
+        let id =
+            IPolicyRegistry::createPolicyCall::abi_decode_returns(&valid_output.bytes).unwrap();
+        assert_eq!(id, 0x0100000000000002);
     }
 
     #[test]

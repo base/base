@@ -166,6 +166,9 @@ impl PolicyRegistryStorage<'_> {
 
     /// Creates a new ALLOWLIST or BLOCKLIST policy, returning its encoded ID.
     pub fn create_policy(&mut self, admin: Address, policy_type: PolicyType) -> Result<u64> {
+        if !policy_type.is_valid() {
+            return Err(BasePrecompileError::enum_conversion_error());
+        }
         let policy_type_u8 = policy_type.as_discriminant();
         if admin == Address::ZERO {
             return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
