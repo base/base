@@ -176,6 +176,14 @@ impl RealTokenAcquisition {
             | Self::AerodromeClExactInput { amount_in, .. } => *amount_in,
         }
     }
+
+    /// Returns the minimum output amount expected by this setup route.
+    pub const fn min_amount_out(&self) -> U256 {
+        match self {
+            Self::UniswapV3ExactInput { min_amount_out, .. }
+            | Self::AerodromeClExactInput { min_amount_out, .. } => *min_amount_out,
+        }
+    }
 }
 
 /// Default maximum gas price cap (1000 gwei).
