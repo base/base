@@ -10,6 +10,7 @@ use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types::Transaction;
 use base_protocol::{BlockInfo, FromBlockError, L2BlockInfo};
+use tracing::warn;
 
 use crate::{
     EngineClient, ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
@@ -79,23 +80,52 @@ impl L2ForkchoiceState {
                         .ok_or(SyncStartError::BlockNotFound(cfg.genesis.l2.number.into()))?,
                     Err(e) => return Err(e.into()),
                 };
-            block_info_from_reth_or_checkpoint(
+
+            let rpc_block_number = rpc_block.header.number;
+            match block_info_from_reth_or_checkpoint(
                 cfg,
                 ForkchoiceCheckpointLabel::Finalized,
                 rpc_block,
                 checkpoint_reader,
             )
-            .await?
+            .await
+            {
+                Ok(info) => info,
+                Err(SyncStartError::FromBlock(FromBlockError::MissingL1InfoDeposit(hash))) => {
+                    warn!(
+                        target: "sync_start",
+                        block_hash = %hash,
+                        block_number = rpc_block_number,
+                        "finalized block body is pruned and no valid checkpoint exists, \
+                         recovering to earliest unpruned block"
+                    );
+                    find_earliest_unpruned_block(cfg, engine_client, rpc_block_number).await?
+                }
+                Err(e) => return Err(e),
+            }
         };
         let safe = match get_block_compat(engine_client, BlockNumberOrTag::Safe.into()).await {
             Ok(Some(block)) => {
-                block_info_from_reth_or_checkpoint(
+                match block_info_from_reth_or_checkpoint(
                     cfg,
                     ForkchoiceCheckpointLabel::Safe,
                     block,
                     checkpoint_reader,
                 )
-                .await?
+                .await
+                {
+                    Ok(info) => info,
+                    Err(SyncStartError::FromBlock(FromBlockError::MissingL1InfoDeposit(hash))) => {
+                        warn!(
+                            target: "sync_start",
+                            block_hash = %hash,
+                            "safe block body is pruned and no valid checkpoint exists, \
+                             falling back to finalized"
+                        );
+                        finalized
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             Ok(None) => finalized,
             Err(e) => return Err(e.into()),
@@ -157,6 +187,64 @@ async fn block_info_from_reth_or_checkpoint<
         }
         Err(err) => Err(err.into()),
     }
+}
+
+/// When the labeled safe or finalized block's body is pruned and no checkpoint is available,
+/// finds the earliest L2 block whose body has not been pruned by performing a binary search
+/// between the pruned block and the latest block. Used as a recovery fallback instead of
+/// crashing or falling back to genesis (which would trigger a months-long re-derivation).
+async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
+    cfg: &RollupConfig,
+    engine_client: &EngineClient_,
+    pruned_block_number: u64,
+) -> Result<L2BlockInfo, SyncStartError> {
+    let latest = get_block_compat(engine_client, BlockNumberOrTag::Latest.into())
+        .await?
+        .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
+    let latest_number = latest.header.number;
+
+    // Binary search for the prune boundary between the known-pruned block and the latest block.
+    // Invariant: blocks at `lo` have pruned bodies, blocks at `hi` have available bodies.
+    let mut lo = pruned_block_number;
+    let mut hi = latest_number;
+
+    warn!(
+        target: "sync_start",
+        lo,
+        hi,
+        "binary searching for earliest unpruned block"
+    );
+
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let block = engine_client
+            .get_l2_block(mid.into())
+            .full()
+            .await?
+            .ok_or(SyncStartError::BlockNotFound(mid.into()))?;
+        let consensus_block =
+            block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner());
+
+        match L2BlockInfo::from_block_and_genesis(&consensus_block, &cfg.genesis) {
+            Ok(_) => hi = mid,
+            Err(FromBlockError::MissingL1InfoDeposit(_)) => lo = mid + 1,
+            Err(err) => return Err(err.into()),
+        }
+    }
+
+    warn!(
+        target: "sync_start",
+        block_number = lo,
+        "found earliest unpruned block"
+    );
+
+    let block = engine_client
+        .get_l2_block(lo.into())
+        .full()
+        .await?
+        .ok_or(SyncStartError::BlockNotFound(lo.into()))?;
+    let consensus_block = block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner());
+    L2BlockInfo::from_block_and_genesis(&consensus_block, &cfg.genesis).map_err(Into::into)
 }
 
 /// Wrapper function around [`EngineClient::get_l2_block`] to handle compatibility issues with geth
