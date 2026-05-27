@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::BTreeSet,
     time::{Duration, Instant},
 };
 
@@ -83,7 +83,7 @@ impl LoadRunner {
         &self,
         setup: &RealTokenSetup,
     ) -> Vec<(Address, Address)> {
-        let mut approvals = HashSet::new();
+        let mut approvals = BTreeSet::new();
         for router in self.collect_swap_routers() {
             approvals.insert((setup.weth, router));
             approvals.insert((setup.pair_token.token, router));
@@ -219,6 +219,12 @@ impl LoadRunner {
                         amount = %deposit_deficit,
                         "WETH deposit sent"
                     );
+                    let receipt = pending.get_receipt().await.rpc("confirm WETH deposit")?;
+                    if !receipt.status() {
+                        return Err(BaselineError::Transaction(format!(
+                            "WETH deposit reverted for sender {sender}"
+                        )));
+                    }
                     nonce += 1;
                     sent += 1;
                 }
@@ -240,6 +246,12 @@ impl LoadRunner {
                         tx_hash = %pending.tx_hash(),
                         "router approval sent"
                     );
+                    let receipt = pending.get_receipt().await.rpc("confirm ERC20 approval")?;
+                    if !receipt.status() {
+                        return Err(BaselineError::Transaction(format!(
+                            "ERC20 approval reverted for sender {sender}"
+                        )));
+                    }
                     nonce += 1;
                     sent += 1;
                 }
@@ -267,6 +279,12 @@ impl LoadRunner {
                         tx_hash = %pending.tx_hash(),
                         "pair-token acquisition swap sent"
                     );
+                    let receipt = pending.get_receipt().await.rpc("confirm setup swap")?;
+                    if !receipt.status() {
+                        return Err(BaselineError::Transaction(format!(
+                            "pair-token acquisition swap reverted for sender {sender}"
+                        )));
+                    }
                     sent += 1;
                 }
 

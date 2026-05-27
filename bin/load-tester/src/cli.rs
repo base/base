@@ -165,6 +165,7 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
             return Ok(());
         }
         LoadMode::RecoverRealTokens => {
+            let real_token_setup = test_config.parse_real_token_setup(load_config.chain_id)?;
             let Some(real_token_setup) = real_token_setup.as_ref() else {
                 bail!(
                     "--recover-real-tokens requires real_token_setup in {}",
@@ -196,6 +197,8 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
         }
         LoadMode::Run => {}
     }
+
+    let real_token_setup = test_config.parse_real_token_setup(load_config.chain_id)?;
 
     println!("=== Base Load Test Runner ===");
 
