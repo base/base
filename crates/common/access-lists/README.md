@@ -2,7 +2,7 @@
 
 A library to build and process Flashblock-level Access Lists (FBALs).
 
-See the [spec](../../../docs/specs/pages/protocol/access-lists.md) for more details.
+<!-- TODO: spec link pending — access-lists.md has not yet been published -->
 
 ## Overview
 
