@@ -3,6 +3,7 @@
 mod contract;
 pub(crate) use contract::{FieldInfo, FieldKind};
 
+mod accounting;
 mod layout;
 mod namespace;
 mod packing;
@@ -43,9 +44,30 @@ pub fn precompile(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Derives the `Storable` trait for structs with named fields and `#[repr(u8)]` unit enums.
-#[proc_macro_derive(Storable, attributes(storable_arrays, namespace, storage_namespace))]
+#[proc_macro_derive(
+    Storable,
+    attributes(accessor, mutator, storable_arrays, namespace, storage_namespace)
+)]
 pub fn derive_storage_block(input: TokenStream) -> TokenStream {
     storable::derive(parse_macro_input!(input as DeriveInput))
+}
+
+/// Derives the B-20 `TokenAccounting` storage port for contract storage structs.
+#[proc_macro_derive(TokenAccounting)]
+pub fn derive_token_accounting(input: TokenStream) -> TokenStream {
+    accounting::derive_token(parse_macro_input!(input as DeriveInput))
+}
+
+/// Derives the stablecoin storage port for contract storage structs.
+#[proc_macro_derive(StablecoinAccounting)]
+pub fn derive_stablecoin_accounting(input: TokenStream) -> TokenStream {
+    accounting::derive_stablecoin(parse_macro_input!(input as DeriveInput))
+}
+
+/// Derives the security-token storage port for contract storage structs.
+#[proc_macro_derive(SecurityAccounting)]
+pub fn derive_security_accounting(input: TokenStream) -> TokenStream {
+    accounting::derive_security(parse_macro_input!(input as DeriveInput))
 }
 
 /// Generate `StorableType` and `Storable` implementations for all standard integer types.

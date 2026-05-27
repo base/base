@@ -14,17 +14,14 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20Guards, B20PolicyType, B20SecurityToken,
-    B20TokenRole, Burnable, Configurable,
+    ActivationFeature, ActivationRegistryStorage, B20Guards, B20PolicyType, B20SecurityStorage,
+    B20SecurityToken, B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Security::{self, IB20SecurityCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
     PrecompileCallObserver, RoleManaged, SecurityAccounting, Token, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
-
-/// WAD precision for share ratio arithmetic: 1e18.
-const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
 impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// Ensures `policy_scope` names either an inherited B-20 policy slot or the
@@ -421,7 +418,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             // --- Role / precision constants ---
             SC::SECURITY_OPERATOR_ROLE(_) => Self::SECURITY_OPERATOR_ROLE.abi_encode().into(),
             SC::BURN_FROM_ROLE(_) => Self::BURN_FROM_ROLE.abi_encode().into(),
-            SC::WAD_PRECISION(_) => WAD.abi_encode().into(),
+            SC::WAD_PRECISION(_) => B20SecurityStorage::WAD.abi_encode().into(),
             SC::REDEEM_SENDER_POLICY(_) => Self::REDEEM_SENDER_POLICY.abi_encode().into(),
 
             // --- Share ratio reads ---
@@ -531,7 +528,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// Converts a token balance to shares: `balance * sharesToTokensRatio / WAD`.
     fn to_shares(&self, balance: U256) -> base_precompile_storage::Result<U256> {
         let ratio = self.accounting().shares_to_tokens_ratio()?;
-        Ok(balance.saturating_mul(ratio) / WAD)
+        Ok(balance.saturating_mul(ratio) / B20SecurityStorage::WAD)
     }
 
     /// Performs a security-specific redeem: share-based floor check, burn, security `Redeemed` event.
@@ -568,7 +565,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
         }
         let ratio = self.accounting().shares_to_tokens_ratio()?;
-        let shares = amount.saturating_mul(ratio) / WAD;
+        let shares = amount.saturating_mul(ratio) / B20SecurityStorage::WAD;
         let minimum = self.accounting().minimum_redeemable()?;
         if shares == U256::ZERO || shares < minimum {
             return Err(BasePrecompileError::revert(IB20Security::BelowMinimumRedeemable {
@@ -750,11 +747,9 @@ mod tests {
     const BOB: Address = Address::repeat_byte(0xbb);
     const TOKEN: Address = Address::repeat_byte(0x01);
     const ACTIVATION_ADMIN: Address = Address::repeat_byte(0xcb);
-    const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
-
     fn make_token() -> TestSecurityToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = WAD; // 1:1 ratio
+        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD; // 1:1 ratio
         // Explicitly open redemption so non-policy tests are not blocked by the ALWAYS_BLOCK default.
         accounting.policy_ids.insert(REDEEM_SENDER_POLICY, PolicyRegistryStorage::ALWAYS_ALLOW_ID);
         TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
@@ -802,7 +797,7 @@ mod tests {
     #[test]
     fn to_shares_two_to_one_ratio() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = WAD * U256::from(2u64);
+        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD * U256::from(2u64);
         let token = TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
         assert_eq!(token.to_shares(U256::from(50u64)).unwrap(), U256::from(100u64));
     }
@@ -1027,7 +1022,7 @@ mod tests {
     fn security_redeem_rejects_when_sender_policy_denies() {
         let policy_id = 7;
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = WAD;
+        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD;
         accounting.balances.insert(ALICE, U256::from(100u64));
         accounting.total_supply = U256::from(100u64);
         accounting.policy_ids.insert(REDEEM_SENDER_POLICY, policy_id);
@@ -1257,7 +1252,7 @@ mod tests {
     fn security_redeem_with_non_unit_ratio_applies_correct_share_math() {
         let mut token = make_token();
         // 2:1 ratio: 1 token = 2 shares
-        token.accounting_mut().shares_to_tokens_ratio = WAD * U256::from(2u64);
+        token.accounting_mut().shares_to_tokens_ratio = B20SecurityStorage::WAD * U256::from(2u64);
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
         token.accounting_mut().total_supply = U256::from(100u64);
         // minimum = 10 shares → need at least 5 tokens
@@ -1301,8 +1296,12 @@ mod tests {
         );
         assert_eq!(
             token.accounting().events[2],
-            IB20Security::Redeemed { from: ALICE, amt: amount, sharesToTokensRatio: WAD }
-                .encode_log_data()
+            IB20Security::Redeemed {
+                from: ALICE,
+                amt: amount,
+                sharesToTokensRatio: B20SecurityStorage::WAD,
+            }
+            .encode_log_data()
         );
     }
 
@@ -1318,7 +1317,7 @@ mod tests {
     fn to_shares_sub_wad_ratio_truncates_to_zero() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         // 0.5 WAD: 1 token → 0.5 shares → truncates to 0 via integer division
-        accounting.shares_to_tokens_ratio = WAD / U256::from(2u64);
+        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD / U256::from(2u64);
         let token = TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
         assert_eq!(token.to_shares(U256::from(1u64)).unwrap(), U256::ZERO);
     }
@@ -1345,7 +1344,10 @@ mod tests {
             token.accounting_mut().set_total_supply(U256::from(100u64)).unwrap();
             token.accounting_mut().set_minimum_redeemable(U256::from(10u64)).unwrap();
 
-            assert_eq!(token.accounting().shares_to_tokens_ratio().unwrap(), WAD);
+            assert_eq!(
+                token.accounting().shares_to_tokens_ratio().unwrap(),
+                B20SecurityStorage::WAD
+            );
             token.security_redeem(ALICE, U256::from(10u64)).unwrap();
 
             assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(90u64));
@@ -1358,7 +1360,7 @@ mod tests {
     #[test]
     fn shares_to_tokens_ratio_update_persists() {
         let mut token = make_token();
-        let new_ratio = WAD * U256::from(3u64);
+        let new_ratio = B20SecurityStorage::WAD * U256::from(3u64);
         token.accounting_mut().set_shares_to_tokens_ratio(new_ratio).unwrap();
         assert_eq!(token.accounting().shares_to_tokens_ratio().unwrap(), new_ratio);
     }

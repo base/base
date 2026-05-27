@@ -3,7 +3,9 @@
 use alloy_primitives::U256;
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Expr, Fields, Ident, Token, Type, Visibility, parse::ParseStream};
+use syn::{
+    Attribute, Data, DeriveInput, Expr, Fields, Ident, Token, Type, Visibility, parse::ParseStream,
+};
 
 use crate::{
     layout, packing,
@@ -59,9 +61,15 @@ pub(crate) fn generate(input: DeriveInput, address: Option<&Expr>) -> proc_macro
 fn gen_output(input: DeriveInput, address: Option<&Expr>) -> syn::Result<TokenStream> {
     let (ident, vis) = (input.ident.clone(), input.vis.clone());
     let namespace = extract_namespace(&input.attrs)?;
+    let derives = input
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("derive"))
+        .cloned()
+        .collect::<Vec<_>>();
     let fields = parse_fields(input, namespace.is_some())?;
 
-    let storage_output = gen_storage(&ident, &vis, &fields, address, namespace.as_ref())?;
+    let storage_output = gen_storage(&ident, &vis, &derives, &fields, address, namespace.as_ref())?;
     Ok(quote! { #storage_output })
 }
 
@@ -117,6 +125,7 @@ pub(crate) fn parse_fields(
 fn gen_storage(
     ident: &Ident,
     vis: &Visibility,
+    attrs: &[Attribute],
     fields: &[FieldInfo],
     address: Option<&Expr>,
     namespace: Option<&NamespaceInfo>,
@@ -126,7 +135,7 @@ fn gen_storage(
         namespace.map_or(U256::ZERO, |namespace| namespace.root),
         namespace.is_none(),
     )?;
-    let transformed_struct = layout::gen_struct(ident, vis, &allocated_fields);
+    let transformed_struct = layout::gen_struct(ident, vis, attrs, &allocated_fields);
     let storage_trait = layout::gen_contract_storage_impl(ident);
     let constructor = layout::gen_constructor(ident, &allocated_fields, address);
     let slots_module = layout::gen_slots_module(&allocated_fields, namespace);
