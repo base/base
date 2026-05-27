@@ -284,7 +284,10 @@ base-runtime = { path = "crates/utilities/runtime", default-features = false }
 revm = { version = "34.0.0", default-features = false }
 revm-bytecode = { version = "8.0.0", default-features = false }
 revm-database = { version = "10.0.0", default-features = false }
-revm-inspectors = { version = "0.34.3", default-features = false }
+# NOTE: 0.34.4 includes fix for erc7562Tracer accessedSlots.reads (paradigmxyz/revm-inspectors#451).
+# The fix was only backported to 0.34.x. If upgrading to 0.35.x-0.39.x, request a cherry-pick
+# from the reth team: https://github.com/paradigmxyz/revm-inspectors/commits/v0.34.4/
+revm-inspectors = { version = "0.34.4", default-features = false }
 revm-precompile = { version = "32.0.0", default-features = false }
 revm-primitives = { version = "22.0.0", default-features = false }
 revm-context-interface = { version = "14.0.0", default-features = false }
@@ -602,3 +605,4 @@ toml = { version = "1.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 unsigned-varint = { version = "0.8", default-features = false }
 ark-bls12-381 = { version = "0.5.0", default-features = false }
+
