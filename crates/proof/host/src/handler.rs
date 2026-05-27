@@ -10,7 +10,7 @@ use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718, eip4844::FIELD_ELEMEN
 use alloy_network::Network;
 use alloy_primitives::{Address, B64, B256, Bytes, keccak256};
 use alloy_provider::Provider;
-use alloy_rlp::{Decodable, Encodable};
+use alloy_rlp::Decodable;
 use alloy_rpc_types::{Block, debug::ExecutionWitness};
 use ark_ff::{BigInteger, PrimeField};
 use base_common_consensus::{HoloceneExtraData, JovianExtraData, Predeploys};
@@ -36,7 +36,9 @@ const PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_BLOCKS: usize = 128;
 const PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_LOOKAHEADS: usize = 128;
 const PAYLOAD_WITNESS_PREFETCH_PREIMAGE_WRITE_BATCH_SIZE: usize = 1024;
 const L1_HEADER_PREFETCH_LOOKBEHIND_BLOCKS: u64 = 512;
-const L1_HEADER_PREFETCH_MAX_READY: usize = 131_072;
+// Keep several lookbehind windows ready without retaining every header seen by a long proof. Raw
+// L1 headers are hundreds of bytes each, so this bounds cached header bytes to a few MiB.
+const L1_HEADER_PREFETCH_MAX_READY: usize = 4096;
 const L1_HEADER_PREFETCH_MAX_IN_FLIGHT: usize = 32;
 const L1_HEADER_PREFETCH_MAX_SCHEDULED_BLOCKS: usize = 131_072;
 
@@ -535,6 +537,8 @@ impl L1HeaderCache {
     }
 
     fn lock_state(&self) -> std::sync::MutexGuard<'_, L1HeaderPrefetchState> {
+        // The L1 header cache is best-effort. Entries are validated by hash-keyed preimage reads in
+        // the guest, so recovering from poisoning can at worst leave stale prefetch metadata.
         self.inner.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
@@ -652,9 +656,45 @@ impl L1HeaderPrefetcher {
             }
         };
 
-        let header = block.header.into_consensus();
-        let hash = header.hash_slow();
-        let raw_header = encode_header_rlp(&header);
+        let hash = block.header.hash;
+        let raw_header: Bytes =
+            match self.inner.providers.l1.client().request("debug_getRawHeader", [hash]).await {
+                Ok(raw_header) => raw_header,
+                Err(err) => {
+                    debug!(
+                        target: HOST_SERVER_TARGET,
+                        block_number,
+                        hash = %hash,
+                        error = %err,
+                        "l1 header prefetch skipped: failed to fetch raw header"
+                    );
+                    return false;
+                }
+            };
+        let decoded_header = match Header::decode(&mut raw_header.as_ref()) {
+            Ok(header) => header,
+            Err(err) => {
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    block_number,
+                    hash = %hash,
+                    error = %err,
+                    "l1 header prefetch skipped: failed to decode raw header"
+                );
+                return false;
+            }
+        };
+        let decoded_hash = decoded_header.hash_slow();
+        if decoded_hash != hash {
+            warn!(
+                target: HOST_SERVER_TARGET,
+                block_number,
+                hash = %hash,
+                decoded_hash = %decoded_hash,
+                "l1 header prefetch skipped: raw header hash mismatch"
+            );
+            return false;
+        }
 
         if let Err(err) = insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header.clone()).await
         {
@@ -806,12 +846,6 @@ fn encode_payload_eip_1559_params(elasticity: u32, denominator: u32) -> B64 {
     B64::from(encoded)
 }
 
-fn encode_header_rlp(header: &Header) -> Bytes {
-    let mut encoded = Vec::new();
-    header.encode(&mut encoded);
-    encoded.into()
-}
-
 async fn insert_l1_header_preimage(
     kv: SharedKeyValueStore,
     hash: B256,
@@ -912,7 +946,8 @@ async fn handle_hint_inner(
             }
 
             let hash: B256 = hint.data.as_ref().try_into()?;
-            let raw_header = if let Some(prefetcher) = l1_header_prefetcher.as_ref()
+            let (raw_header, should_mark_ready) = if let Some(prefetcher) =
+                l1_header_prefetcher.as_ref()
                 && let Some(raw_header) = prefetcher.get_ready(hash)
             {
                 debug!(
@@ -920,18 +955,18 @@ async fn handle_hint_inner(
                     hash = %hash,
                     "l1 header served from prefetch cache"
                 );
-                raw_header
+                (raw_header, false)
             } else {
                 let raw_header: Bytes =
                     providers.l1.client().request("debug_getRawHeader", [hash]).await?;
-                if let Some(prefetcher) = l1_header_prefetcher.as_ref() {
-                    prefetcher.mark_ready(hash, raw_header.clone());
-                }
-                raw_header
+                (raw_header, true)
             };
             let header = Header::decode(&mut raw_header.as_ref())?;
 
-            insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header).await?;
+            insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header.clone()).await?;
+            if should_mark_ready && let Some(prefetcher) = l1_header_prefetcher.as_ref() {
+                prefetcher.mark_ready(hash, raw_header);
+            }
 
             if let Some(prefetcher) = l1_header_prefetcher {
                 prefetcher.schedule_lookbehind(Arc::clone(&kv), &header).await;
@@ -1281,6 +1316,7 @@ mod tests {
 
     use alloy_genesis::ChainConfig;
     use alloy_provider::{RootProvider, builder as provider_builder, mock::Asserter};
+    use alloy_rlp::Encodable;
     use base_common_genesis::RollupConfig;
     use base_common_network::Base;
     use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
@@ -1528,7 +1564,9 @@ mod tests {
     async fn test_insert_l1_header_preimage_uses_header_hash() {
         let header = Header { number: 7, parent_hash: TEST_HASH, ..Default::default() };
         let hash = header.hash_slow();
-        let raw_header = encode_header_rlp(&header);
+        let mut encoded_header = Vec::new();
+        header.encode(&mut encoded_header);
+        let raw_header = Bytes::from(encoded_header);
         let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
 
         insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header.clone()).await.unwrap();
