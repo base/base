@@ -858,6 +858,16 @@ impl BatchPipeline for BatchEncoder {
             ch.encoded_block_range.start = ch.encoded_block_range.start.saturating_sub(prune_count);
             ch.encoded_block_range.end = ch.encoded_block_range.end.saturating_sub(prune_count);
         }
+
+        // Adjust the open channel's block_start so that close_current_channel()
+        // computes `encoded_block_range = block_start..block_cursor` correctly.
+        // Without this, after pruning N blocks the start index stays N too large,
+        // producing a wrong (potentially empty) encoded_block_range. If that channel
+        // is later invalidated, `replay_from` is set too high and those blocks are
+        // silently skipped on the re-encoding pass.
+        if let Some(ref mut open) = self.current_channel {
+            open.block_start = open.block_start.saturating_sub(prune_count);
+        }
     }
 
     fn da_backlog_bytes(&self) -> u64 {
@@ -1966,6 +1976,131 @@ mod tests {
         let sub = encoder.next_submission().unwrap();
         encoder.confirm(sub.id, 101);
         assert!(encoder.blocks.is_empty(), "confirm after prune_safe must finish pruning");
+    }
+
+    /// `prune_safe` must also adjust the open channel's `block_start` so that
+    /// `close_current_channel` computes the correct `encoded_block_range`.
+    ///
+    /// Regression test: before the fix, `block_start` was not decremented after
+    /// pruning, causing the encoded range to be stale-offset by `prune_count`.
+    /// When the channel was later invalidated, `replay_from` would be set too
+    /// high and those blocks would be silently skipped on the replay pass.
+    #[test]
+    fn test_prune_safe_adjusts_open_channel_block_start() {
+        // Use an encoder with a very large channel duration so it never times out
+        // spontaneously during the test.
+        let rollup_config = Arc::new(RollupConfig::default());
+        let config = EncoderConfig {
+            max_frame_size: 32,
+            target_frame_size: 32,
+            target_num_frames: 1,
+            max_channel_duration: 100_000,
+            sub_safety_margin: 0,
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(rollup_config, config);
+
+        // Build a chain of four blocks.
+        let b1 = make_numbered_block(B256::ZERO, 1);
+        let b1_hash = b1.header.hash_slow();
+        let b2 = make_numbered_block(b1_hash, 2);
+        let b2_hash = b2.header.hash_slow();
+        let b3 = make_numbered_block(b2_hash, 3);
+        let b3_hash = b3.header.hash_slow();
+        let b4 = make_numbered_block(b3_hash, 4);
+
+        for b in [b1, b2, b3, b4] {
+            encoder.add_block(b).unwrap();
+        }
+
+        // Encode B1 and B2 into the first channel, then close it.
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded); // B1
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded); // B2
+        encoder.force_close_channel();
+        assert!(!encoder.ready_channels.is_empty(), "first channel must be ready");
+
+        // Confirm the first channel so B1/B2 get pruned via confirm().
+        let sub1 = encoder.next_submission().unwrap();
+        let sub1_id = sub1.id;
+        encoder.confirm(sub1_id, 50);
+        // After confirm: blocks = [B3, B4], block_cursor = 0, ready_channels empty.
+        assert_eq!(encoder.blocks.len(), 2);
+        assert_eq!(encoder.block_cursor, 0);
+
+        // Now encode B3 and B4 into a second channel (block_start = 0 post-confirm).
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded); // B3
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded); // B4
+        assert_eq!(encoder.block_cursor, 2);
+
+        // Add one more block and encode it — this keeps current_channel open at
+        // block_start = 0, block_cursor = 2 (the channel holds B3 and B4).
+        // Simulate a scenario where prune_safe is called while the channel is open
+        // by adding a safe head that covers the already-encoded blocks.
+        //
+        // Re-add B3 and B4 to a fresh encoder starting from scratch so that
+        // block_start > 0 after a partial confirm+prune cycle.
+
+        // ── Fresh scenario that exercises the block_start adjustment ──
+        let rollup_config2 = Arc::new(RollupConfig::default());
+        let config2 = EncoderConfig {
+            max_frame_size: 32,
+            target_frame_size: 32,
+            target_num_frames: 1,
+            max_channel_duration: 100_000,
+            sub_safety_margin: 0,
+            ..EncoderConfig::default()
+        };
+        let mut enc = BatchEncoder::new(rollup_config2, config2);
+
+        // Add six blocks numbered 1-6.
+        let mut parent = B256::ZERO;
+        let mut blocks: Vec<BaseBlock> = (1..=6)
+            .map(|n| {
+                let b = make_numbered_block(parent, n);
+                parent = b.header.hash_slow();
+                b
+            })
+            .collect();
+
+        for b in blocks.drain(..) {
+            enc.add_block(b).unwrap();
+        }
+
+        // Encode B1–B3 into channel-1, force-close it.
+        for _ in 0..3 {
+            assert_eq!(enc.step().unwrap(), StepResult::BlockEncoded);
+        }
+        enc.force_close_channel();
+        assert_eq!(enc.ready_channels.len(), 1);
+
+        // Encode B4–B6 into channel-2 (block_start = 3).
+        for _ in 0..3 {
+            assert_eq!(enc.step().unwrap(), StepResult::BlockEncoded);
+        }
+        assert!(enc.current_channel.is_some());
+        assert_eq!(enc.current_channel.as_ref().unwrap().block_start, 3);
+
+        // prune_safe(2): B1 and B2 (numbers 1 and 2) are encoded and safe.
+        // prune_count = 2; block_start must be decremented to 3 - 2 = 1.
+        enc.prune_safe(2);
+
+        assert_eq!(enc.blocks.len(), 4, "B3–B6 remain");
+        assert_eq!(enc.block_cursor, 4, "cursor adjusted: was 6, now 6-2=4");
+        assert_eq!(
+            enc.current_channel.as_ref().unwrap().block_start,
+            1,
+            "block_start must be adjusted from 3 to 1 after pruning 2 blocks"
+        );
+
+        // Close channel-2 and verify encoded_block_range is correct.
+        enc.force_close_channel();
+        let ch2 = enc.ready_channels.back().unwrap();
+        // encoded_block_range should cover B4–B6 at indices 1..4 after pruning.
+        assert_eq!(
+            ch2.encoded_block_range.start, 1,
+            "encoded_block_range.start must be 1 (was 3 without the fix)"
+        );
+        assert_eq!(ch2.encoded_block_range.end, 4, "encoded_block_range.end must be 4");
     }
 
     /// `encode_and_drain` steps until idle, force-closes, and returns all frames.
