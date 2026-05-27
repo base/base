@@ -157,4 +157,76 @@ mod tests {
             EngineGetPayloadVersion::V5
         );
     }
+
+    // ── EngineForkchoiceVersion ──────────────────────────────────────────────
+
+    #[test]
+    fn forkchoice_version_uses_v2_before_ecotone() {
+        assert_eq!(
+            EngineForkchoiceVersion::from_cfg(&test_rollup_config(), 10),
+            EngineForkchoiceVersion::V2
+        );
+    }
+
+    #[test]
+    fn forkchoice_version_uses_v3_at_ecotone() {
+        assert_eq!(
+            EngineForkchoiceVersion::from_cfg(&test_rollup_config(), 20),
+            EngineForkchoiceVersion::V3
+        );
+    }
+
+    #[test]
+    fn forkchoice_version_uses_v3_for_jovian() {
+        // All forks from Ecotone onwards (Jovian, Base Azul, …) keep using FCU V3.
+        assert_eq!(
+            EngineForkchoiceVersion::from_cfg(&test_rollup_config(), 35),
+            EngineForkchoiceVersion::V3
+        );
+    }
+
+    #[test]
+    fn forkchoice_version_uses_v3_for_base_azul() {
+        assert_eq!(
+            EngineForkchoiceVersion::from_cfg(&test_rollup_config(), 45),
+            EngineForkchoiceVersion::V3
+        );
+    }
+
+    // ── EngineNewPayloadVersion ──────────────────────────────────────────────
+
+    #[test]
+    fn new_payload_version_uses_v2_before_ecotone() {
+        assert_eq!(
+            EngineNewPayloadVersion::from_cfg(&test_rollup_config(), 10),
+            EngineNewPayloadVersion::V2
+        );
+    }
+
+    #[test]
+    fn new_payload_version_uses_v3_at_ecotone() {
+        assert_eq!(
+            EngineNewPayloadVersion::from_cfg(&test_rollup_config(), 20),
+            EngineNewPayloadVersion::V3
+        );
+    }
+
+    #[test]
+    fn new_payload_version_uses_v4_at_jovian() {
+        // Jovian activates via `implies is_isthmus_active`, so V4 kicks in even when
+        // `isthmus_time` is not explicitly set in the config.
+        assert_eq!(
+            EngineNewPayloadVersion::from_cfg(&test_rollup_config(), 35),
+            EngineNewPayloadVersion::V4
+        );
+    }
+
+    #[test]
+    fn new_payload_version_uses_v4_for_base_azul() {
+        // engine_newPayloadV4 is reused for Base Azul; only engine_getPayload upgrades to V5.
+        assert_eq!(
+            EngineNewPayloadVersion::from_cfg(&test_rollup_config(), 45),
+            EngineNewPayloadVersion::V4
+        );
+    }
 }
