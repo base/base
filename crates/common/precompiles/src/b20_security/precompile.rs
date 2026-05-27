@@ -3,9 +3,9 @@
 use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::Address;
 
-use super::{B20SecurityToken, storage::B20SecurityStorage};
 use crate::{
-    NoopPrecompileCallObserver, PolicyHandle, PrecompileCallObserver, macros::base_precompile,
+    B20SecurityStorage, B20SecurityToken, NoopPrecompileCallObserver, PolicyHandle,
+    PrecompileCallObserver, macros::base_precompile,
 };
 
 /// Entry point for the security B-20 token precompile.

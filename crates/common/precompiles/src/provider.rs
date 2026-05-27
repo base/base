@@ -239,14 +239,17 @@ mod tests {
     use std::vec;
 
     use alloy_primitives::{Address, B256};
+    use base_common_chains::BaseUpgrade;
     use revm::{
         precompile::{Precompiles, bls12_381_const, bn254, modexp, secp256r1},
         primitives::eip7823,
     };
     use rstest::rstest;
 
-    use super::*;
-    use crate::{ActivationRegistryStorage, B20FactoryStorage, B20Variant, bls12_381, bn254_pair};
+    use crate::{
+        ActivationRegistryStorage, B20FactoryStorage, B20Variant, BasePrecompiles, bls12_381,
+        bn254_pair,
+    };
 
     type TestPrecompiles = BasePrecompiles<BaseUpgrade>;
 

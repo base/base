@@ -196,7 +196,7 @@ impl IB20::IB20Calls {
 mod tests {
     use alloy_primitives::{Address, U256};
 
-    use super::IB20;
+    use crate::IB20;
 
     #[test]
     fn b20_call_labels_are_stable() {

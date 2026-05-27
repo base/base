@@ -1,7 +1,5 @@
 //! ABI definition for the `IB20Factory` interface.
 
-#![allow(clippy::too_many_arguments)]
-
 use alloy_sol_types::sol;
 
 sol! {

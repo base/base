@@ -3,14 +3,11 @@ use alloy_sol_types::{SolCall, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{
-    B20Token,
-    abi::{IB20, IB20::IB20Calls as C},
-};
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20TokenRole, Burnable, Configurable, Mintable,
-    NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy, PrecompileCallObserver,
-    RoleManaged, TokenAccounting, Transferable,
+    ActivationFeature, ActivationRegistryStorage, B20Token, B20TokenRole, Burnable, Configurable,
+    IB20::{self, IB20Calls as C},
+    Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
+    PrecompileCallObserver, RoleManaged, Token, TokenAccounting, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
@@ -32,7 +29,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
     {
         deduct_calldata_cost!(ctx, calldata);
         // Ensure the token has been deployed (has bytecode at its address).
-        match self.accounting.is_initialized() {
+        match self.accounting().is_initialized() {
             Ok(true) => {}
             Ok(false) => {
                 return BasePrecompileError::Revert(Bytes::new())
@@ -104,17 +101,17 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
         observer.observe(label, || {
             let encoded: Bytes = match call {
                 // --- Pure reads: direct to accounting ---
-                C::name(_) => self.accounting.name()?.abi_encode().into(),
-                C::symbol(_) => self.accounting.symbol()?.abi_encode().into(),
-                C::decimals(_) => U256::from(self.accounting.decimals()?).abi_encode().into(),
-                C::totalSupply(_) => self.accounting.total_supply()?.abi_encode().into(),
-                C::balanceOf(c) => self.accounting.balance_of(c.account)?.abi_encode().into(),
+                C::name(_) => self.accounting().name()?.abi_encode().into(),
+                C::symbol(_) => self.accounting().symbol()?.abi_encode().into(),
+                C::decimals(_) => U256::from(self.accounting().decimals()?).abi_encode().into(),
+                C::totalSupply(_) => self.accounting().total_supply()?.abi_encode().into(),
+                C::balanceOf(c) => self.accounting().balance_of(c.account)?.abi_encode().into(),
                 C::allowance(c) => {
-                    self.accounting.allowance(c.owner, c.spender)?.abi_encode().into()
+                    self.accounting().allowance(c.owner, c.spender)?.abi_encode().into()
                 }
-                C::supplyCap(_) => self.accounting.supply_cap()?.abi_encode().into(),
-                C::nonces(c) => self.accounting.nonce(c.owner)?.abi_encode().into(),
-                C::contractURI(_) => self.accounting.contract_uri()?.abi_encode().into(),
+                C::supplyCap(_) => self.accounting().supply_cap()?.abi_encode().into(),
+                C::nonces(c) => self.accounting().nonce(c.owner)?.abi_encode().into(),
+                C::contractURI(_) => self.accounting().contract_uri()?.abi_encode().into(),
                 C::DEFAULT_ADMIN_ROLE(_) => B20TokenRole::DefaultAdmin.id().abi_encode().into(),
                 C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
                 C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),

@@ -161,7 +161,7 @@ mod tests {
     use alloy_primitives::{U256, b256, keccak256};
     use alloy_sol_types::{SolCall, SolEvent};
 
-    use super::IB20Security;
+    use crate::IB20Security;
 
     #[test]
     fn redeem_sender_policy_selector_matches_solidity_interface() {

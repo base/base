@@ -3,9 +3,9 @@
 use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::Address;
 
-use super::{B20StablecoinToken, storage::B20StablecoinStorage};
 use crate::{
-    NoopPrecompileCallObserver, PolicyHandle, PrecompileCallObserver, macros::base_precompile,
+    B20StablecoinStorage, B20StablecoinToken, NoopPrecompileCallObserver, PolicyHandle,
+    PrecompileCallObserver, macros::base_precompile,
 };
 
 /// Entry point for the stablecoin B-20 token precompile.

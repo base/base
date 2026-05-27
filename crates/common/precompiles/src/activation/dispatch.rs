@@ -5,11 +5,11 @@ use alloy_sol_types::SolCall;
 use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{
+use crate::{
     ActivationRegistryStorage,
     IActivationRegistry::{self, IActivationRegistryCalls as C},
+    macros::{decode_precompile_call, deduct_calldata_cost},
 };
-use crate::macros::{decode_precompile_call, deduct_calldata_cost};
 
 impl ActivationRegistryStorage<'_> {
     /// ABI-dispatches activation registry calldata.

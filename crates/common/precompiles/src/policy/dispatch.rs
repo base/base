@@ -3,17 +3,16 @@ use alloy_sol_types::SolCall;
 use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{
-    abi::{IPolicyRegistry, IPolicyRegistry::IPolicyRegistryCalls as C},
-    storage::PolicyRegistryStorage,
-};
 use crate::{
     ActivationFeature, ActivationRegistryStorage,
+    IPolicyRegistry::{self, IPolicyRegistryCalls as C},
+    PolicyRegistryStorage,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
 impl PolicyRegistryStorage<'_> {
-    pub(super) fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+    /// ABI-dispatches policy registry calldata.
+    pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         deduct_calldata_cost!(ctx, calldata);
         ActivationRegistryStorage::new(ctx)
             .ensure_activated(ActivationFeature::PolicyRegistry.id())

@@ -13,18 +13,13 @@ use alloy_sol_types::{SolCall, SolEvent, SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{
-    B20SecurityToken,
-    abi::{IB20Security, IB20Security::IB20SecurityCalls as SC},
-    accounting::SecurityAccounting,
-    ids::{BURN_FROM_ROLE, REDEEM_SENDER_POLICY, SECURITY_OPERATOR_ROLE},
-};
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20Guards, B20PolicyType, B20TokenRole, Burnable,
-    Configurable,
+    ActivationFeature, ActivationRegistryStorage, B20Guards, B20PolicyType, B20SecurityToken,
+    B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
+    IB20Security::{self, IB20SecurityCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
-    PrecompileCallObserver, RoleManaged, Token, Transferable,
+    PrecompileCallObserver, RoleManaged, SecurityAccounting, Token, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
@@ -35,7 +30,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// Ensures `policy_scope` names either an inherited B-20 policy slot or the
     /// security redeem slot.
     fn is_supported_policy_scope(policy_scope: B256) -> bool {
-        policy_scope == REDEEM_SENDER_POLICY || B20PolicyType::from_id(policy_scope).is_some()
+        policy_scope == Self::REDEEM_SENDER_POLICY || B20PolicyType::from_id(policy_scope).is_some()
     }
 
     fn ensure_supported_policy_type(policy_scope: B256) -> base_precompile_storage::Result<()> {
@@ -53,7 +48,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         caller: Address,
         privileged: bool,
     ) -> base_precompile_storage::Result<()> {
-        if privileged { Ok(()) } else { self.ensure_role(caller, SECURITY_OPERATOR_ROLE) }
+        if privileged { Ok(()) } else { self.ensure_role(caller, Self::SECURITY_OPERATOR_ROLE) }
     }
 
     fn ensure_default_admin(
@@ -65,13 +60,13 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     }
 
     fn ensure_burn_from_role(&self, caller: Address) -> base_precompile_storage::Result<()> {
-        self.ensure_role(caller, BURN_FROM_ROLE)
+        self.ensure_role(caller, Self::BURN_FROM_ROLE)
     }
 
     /// Returns the configured policy ID for `policy_scope`.
     fn policy_id_checked(&self, policy_scope: B256) -> base_precompile_storage::Result<u64> {
         Self::ensure_supported_policy_type(policy_scope)?;
-        self.accounting.policy_id(policy_scope)
+        self.accounting().policy_id(policy_scope)
     }
 
     /// Updates the configured policy ID for `policy_scope`.
@@ -86,7 +81,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         if !privileged {
             self.ensure_role(caller, Self::default_admin_role())?;
         }
-        let old_policy_id = self.accounting.policy_id(policy_scope)?;
+        let old_policy_id = self.accounting().policy_id(policy_scope)?;
         if !self.policy().policy_exists(new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
@@ -122,7 +117,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     {
         deduct_calldata_cost!(ctx, calldata);
 
-        match self.accounting.is_initialized() {
+        match self.accounting().is_initialized() {
             Ok(true) => {}
             Ok(false) => {
                 return BasePrecompileError::Revert(Bytes::new())
@@ -210,15 +205,15 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     ) -> base_precompile_storage::Result<Bytes> {
         let encoded: Bytes = match call {
             // --- Pure reads ---
-            C::name(_) => self.accounting.name()?.abi_encode().into(),
-            C::symbol(_) => self.accounting.symbol()?.abi_encode().into(),
-            C::decimals(_) => U256::from(self.accounting.decimals()?).abi_encode().into(),
-            C::totalSupply(_) => self.accounting.total_supply()?.abi_encode().into(),
-            C::balanceOf(c) => self.accounting.balance_of(c.account)?.abi_encode().into(),
-            C::allowance(c) => self.accounting.allowance(c.owner, c.spender)?.abi_encode().into(),
-            C::supplyCap(_) => self.accounting.supply_cap()?.abi_encode().into(),
-            C::nonces(c) => self.accounting.nonce(c.owner)?.abi_encode().into(),
-            C::contractURI(_) => self.accounting.contract_uri()?.abi_encode().into(),
+            C::name(_) => self.accounting().name()?.abi_encode().into(),
+            C::symbol(_) => self.accounting().symbol()?.abi_encode().into(),
+            C::decimals(_) => U256::from(self.accounting().decimals()?).abi_encode().into(),
+            C::totalSupply(_) => self.accounting().total_supply()?.abi_encode().into(),
+            C::balanceOf(c) => self.accounting().balance_of(c.account)?.abi_encode().into(),
+            C::allowance(c) => self.accounting().allowance(c.owner, c.spender)?.abi_encode().into(),
+            C::supplyCap(_) => self.accounting().supply_cap()?.abi_encode().into(),
+            C::nonces(c) => self.accounting().nonce(c.owner)?.abi_encode().into(),
+            C::contractURI(_) => self.accounting().contract_uri()?.abi_encode().into(),
 
             // --- Role identifiers ---
             C::DEFAULT_ADMIN_ROLE(_) => Self::default_admin_role().abi_encode().into(),
@@ -240,8 +235,8 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             C::MINT_RECEIVER_POLICY(_) => B20PolicyType::MintReceiver.id().abi_encode().into(),
 
             // --- Role reads ---
-            C::hasRole(c) => self.accounting.has_role(c.role, c.account)?.abi_encode().into(),
-            C::getRoleAdmin(c) => self.accounting.role_admin(c.role)?.abi_encode().into(),
+            C::hasRole(c) => self.accounting().has_role(c.role, c.account)?.abi_encode().into(),
+            C::getRoleAdmin(c) => self.accounting().role_admin(c.role)?.abi_encode().into(),
 
             // --- Pause reads ---
             C::pausedFeatures(_) => self.paused_features()?.abi_encode().into(),
@@ -424,30 +419,32 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     ) -> base_precompile_storage::Result<Bytes> {
         let encoded: Bytes = match call {
             // --- Role / precision constants ---
-            SC::SECURITY_OPERATOR_ROLE(_) => SECURITY_OPERATOR_ROLE.abi_encode().into(),
-            SC::BURN_FROM_ROLE(_) => BURN_FROM_ROLE.abi_encode().into(),
+            SC::SECURITY_OPERATOR_ROLE(_) => Self::SECURITY_OPERATOR_ROLE.abi_encode().into(),
+            SC::BURN_FROM_ROLE(_) => Self::BURN_FROM_ROLE.abi_encode().into(),
             SC::WAD_PRECISION(_) => WAD.abi_encode().into(),
-            SC::REDEEM_SENDER_POLICY(_) => REDEEM_SENDER_POLICY.abi_encode().into(),
+            SC::REDEEM_SENDER_POLICY(_) => Self::REDEEM_SENDER_POLICY.abi_encode().into(),
 
             // --- Share ratio reads ---
             SC::sharesToTokensRatio(_) => {
-                self.accounting.shares_to_tokens_ratio()?.abi_encode().into()
+                self.accounting().shares_to_tokens_ratio()?.abi_encode().into()
             }
             SC::toShares(c) => self.to_shares(c.balance)?.abi_encode().into(),
             SC::sharesOf(c) => {
-                let balance = self.accounting.balance_of(c.account)?;
+                let balance = self.accounting().balance_of(c.account)?;
                 self.to_shares(balance)?.abi_encode().into()
             }
 
             // --- Announcement reads ---
             SC::isAnnouncementIdUsed(c) => {
-                self.accounting.is_announcement_id_used(c.id.as_str())?.abi_encode().into()
+                self.accounting().is_announcement_id_used(c.id.as_str())?.abi_encode().into()
             }
 
             // --- Security identifier reads ---
-            SC::securityIdentifier(c) => {
-                self.accounting.security_identifier(c.identifierType.as_str())?.abi_encode().into()
-            }
+            SC::securityIdentifier(c) => self
+                .accounting()
+                .security_identifier(c.identifierType.as_str())?
+                .abi_encode()
+                .into(),
 
             // --- Share ratio mutations ---
             SC::updateShareRatio(c) => {
@@ -492,7 +489,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }
 
             // --- Minimum redeemable (security version, in shares) ---
-            SC::minimumRedeemable(_) => self.accounting.minimum_redeemable()?.abi_encode().into(),
+            SC::minimumRedeemable(_) => self.accounting().minimum_redeemable()?.abi_encode().into(),
             SC::updateMinimumRedeemable(c) => {
                 let caller = ctx.caller();
                 self.ensure_default_admin(caller, privileged)?;
@@ -533,7 +530,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
     /// Converts a token balance to shares: `balance * sharesToTokensRatio / WAD`.
     fn to_shares(&self, balance: U256) -> base_precompile_storage::Result<U256> {
-        let ratio = self.accounting.shares_to_tokens_ratio()?;
+        let ratio = self.accounting().shares_to_tokens_ratio()?;
         Ok(balance.saturating_mul(ratio) / WAD)
     }
 
@@ -566,20 +563,20 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         amount: U256,
     ) -> base_precompile_storage::Result<U256> {
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::REDEEM)?;
-        B20Guards::ensure_policy::<Self>(self, REDEEM_SENDER_POLICY, caller)?;
+        B20Guards::ensure_policy::<Self>(self, Self::REDEEM_SENDER_POLICY, caller)?;
         if amount.is_zero() {
             return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
         }
-        let ratio = self.accounting.shares_to_tokens_ratio()?;
+        let ratio = self.accounting().shares_to_tokens_ratio()?;
         let shares = amount.saturating_mul(ratio) / WAD;
-        let minimum = self.accounting.minimum_redeemable()?;
+        let minimum = self.accounting().minimum_redeemable()?;
         if shares == U256::ZERO || shares < minimum {
             return Err(BasePrecompileError::revert(IB20Security::BelowMinimumRedeemable {
                 shares,
                 minimum,
             }));
         }
-        let balance = self.accounting.balance_of(caller)?;
+        let balance = self.accounting().balance_of(caller)?;
         if balance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
                 sender: caller,
@@ -588,7 +585,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }));
         }
         self.accounting_mut().set_balance(caller, balance - amount)?;
-        let supply = self.accounting.total_supply()?;
+        let supply = self.accounting().total_supply()?;
         self.accounting_mut().set_total_supply(supply.saturating_sub(amount))?;
         self.accounting_mut().emit_event(
             IB20::Transfer { from: caller, to: Address::ZERO, amount }.encode_log_data(),
@@ -658,7 +655,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             if amount.is_zero() {
                 return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
             }
-            let balance = self.accounting.balance_of(account)?;
+            let balance = self.accounting().balance_of(account)?;
             if balance < amount {
                 return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
                     sender: account,
@@ -667,7 +664,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
                 }));
             }
             self.accounting_mut().set_balance(account, balance - amount)?;
-            let supply = self.accounting.total_supply()?;
+            let supply = self.accounting().total_supply()?;
             self.accounting_mut().set_total_supply(supply.saturating_sub(amount))?;
             self.accounting_mut().emit_event(
                 IB20::Transfer { from: account, to: Address::ZERO, amount }.encode_log_data(),
@@ -690,11 +687,11 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     ) -> base_precompile_storage::Result<()> {
         let caller = ctx.caller();
         self.ensure_security_operator(caller, privileged)?;
-        if self.in_announcement {
+        if self.is_announcement_active() {
             return Err(BasePrecompileError::revert(IB20Security::AnnouncementInProgress {}));
         }
 
-        if self.accounting.is_announcement_id_used(id.as_str())? {
+        if self.accounting().is_announcement_id_used(id.as_str())? {
             return Err(BasePrecompileError::revert(IB20Security::AnnouncementIdAlreadyUsed {
                 id,
             }));
@@ -706,7 +703,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
                 .encode_log_data(),
         )?;
 
-        self.in_announcement = true;
+        self.begin_announcement();
 
         for call in &internal_calls {
             let call_bytes: &[u8] = call.as_ref();
@@ -737,15 +734,17 @@ mod tests {
         BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, setup_storage,
     };
 
-    use super::{BURN_FROM_ROLE, REDEEM_SENDER_POLICY};
     use crate::{
-        ActivationFeature, ActivationRegistryStorage, B20PausableFeature, B20TokenRole, IB20,
-        PolicyHandle, PolicyRegistryStorage, Token, TokenAccounting,
-        b20_security::{B20SecurityStorage, B20SecurityToken, IB20Security, SecurityAccounting},
-        common::test_utils::{InMemoryPolicy, InMemoryTokenAccounting},
+        ActivationFeature, ActivationRegistryStorage, B20PausableFeature, B20SecurityStorage,
+        B20SecurityToken, B20TokenRole, IB20, IB20Security, InMemoryPolicy,
+        InMemoryTokenAccounting, PolicyHandle, PolicyRegistryStorage, SecurityAccounting, Token,
+        TokenAccounting,
     };
 
     type TestSecurityToken = B20SecurityToken<InMemoryTokenAccounting, InMemoryPolicy>;
+
+    const BURN_FROM_ROLE: B256 = TestSecurityToken::BURN_FROM_ROLE;
+    const REDEEM_SENDER_POLICY: B256 = TestSecurityToken::REDEEM_SENDER_POLICY;
 
     const ALICE: Address = Address::repeat_byte(0xaa);
     const BOB: Address = Address::repeat_byte(0xbb);

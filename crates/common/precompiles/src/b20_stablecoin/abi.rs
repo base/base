@@ -23,7 +23,7 @@ impl IB20Stablecoin::IB20StablecoinCalls {
 
 #[cfg(test)]
 mod tests {
-    use super::IB20Stablecoin;
+    use crate::IB20Stablecoin;
 
     #[test]
     fn stablecoin_call_labels_are_stable() {

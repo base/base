@@ -6,11 +6,10 @@ use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Result};
 use revm::state::Bytecode;
 
-use super::variant::B20Variant;
 use crate::{
     B20SecurityInit, B20SecurityStorage, B20SecurityToken, B20StablecoinInit, B20StablecoinStorage,
-    B20StablecoinToken, B20Token, B20TokenInit, B20TokenRole, B20TokenStorage, IB20Factory,
-    PolicyHandle, RoleManaged, Token,
+    B20StablecoinToken, B20Token, B20TokenInit, B20TokenRole, B20TokenStorage, B20Variant,
+    IB20Factory, PolicyHandle, RoleManaged, Token,
 };
 
 /// Maximum total supply for all newly-created B-20 tokens.
@@ -244,8 +243,10 @@ impl<'a> B20FactoryStorage<'a> {
 
 /// Control-flow fields shared by every token variant (not written to storage).
 #[derive(Debug)]
-struct CommonParams {
+pub struct CommonParams {
+    /// Token creation parameter version.
     version: u8,
+    /// Initial default admin granted after token initialization.
     initial_admin: Address,
 }
 
@@ -254,14 +255,33 @@ struct CommonParams {
 /// Each arm carries a typed `init` struct that maps 1-to-1 to its storage
 /// `initialize()` call, plus the shared control-flow fields in `common`.
 #[derive(Debug)]
-enum TokenCreateParams {
-    B20 { common: CommonParams, init: B20TokenInit },
-    Stablecoin { common: CommonParams, init: B20StablecoinInit },
-    Security { common: CommonParams, init: B20SecurityInit },
+pub enum TokenCreateParams {
+    /// Default B-20 token creation parameters.
+    B20 {
+        /// Shared control-flow fields.
+        common: CommonParams,
+        /// Default B-20 initialization fields.
+        init: B20TokenInit,
+    },
+    /// Stablecoin B-20 token creation parameters.
+    Stablecoin {
+        /// Shared control-flow fields.
+        common: CommonParams,
+        /// Stablecoin initialization fields.
+        init: B20StablecoinInit,
+    },
+    /// Security B-20 token creation parameters.
+    Security {
+        /// Shared control-flow fields.
+        common: CommonParams,
+        /// Security-token initialization fields.
+        init: B20SecurityInit,
+    },
 }
 
 impl TokenCreateParams {
-    fn decode(variant: B20Variant, params: &Bytes) -> Result<Self> {
+    /// Decodes ABI-encoded creation parameters for `variant`.
+    pub fn decode(variant: B20Variant, params: &Bytes) -> Result<Self> {
         match variant {
             B20Variant::B20 => {
                 let p = IB20Factory::B20CreateParams::abi_decode(params)
@@ -306,7 +326,8 @@ impl TokenCreateParams {
         }
     }
 
-    const fn version(&self) -> u8 {
+    /// Returns the shared token creation parameter version.
+    pub const fn version(&self) -> u8 {
         match self {
             Self::B20 { common, .. }
             | Self::Stablecoin { common, .. }
@@ -318,7 +339,7 @@ impl TokenCreateParams {
     ///
     /// Each arm owns its own rules. Version is checked first by the caller (`check_version`)
     /// so that version errors always take precedence over field-level errors.
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         match self {
             Self::B20 { init, .. } => Self::validate_b20(init),
             Self::Stablecoin { init, .. } => Self::validate_stablecoin(init),
@@ -326,24 +347,28 @@ impl TokenCreateParams {
         }
     }
 
-    const fn validate_b20(_init: &B20TokenInit) -> Result<()> {
+    /// Validates default B-20 initialization fields.
+    pub const fn validate_b20(_init: &B20TokenInit) -> Result<()> {
         Ok(())
     }
 
-    const fn validate_stablecoin(_init: &B20StablecoinInit) -> Result<()> {
+    /// Validates stablecoin initialization fields.
+    pub const fn validate_stablecoin(_init: &B20StablecoinInit) -> Result<()> {
         // Currency validation is delegated to `B20StablecoinStorage::initialize`, which rejects
         // all invalid values (including empty) with `InvalidCurrency`.
         Ok(())
     }
 
-    fn validate_security(init: &B20SecurityInit) -> Result<()> {
+    /// Validates security-token initialization fields.
+    pub fn validate_security(init: &B20SecurityInit) -> Result<()> {
         if init.isin.is_empty() {
             return Err(BasePrecompileError::revert(IB20Factory::MissingRequiredField {}));
         }
         Ok(())
     }
 
-    fn invalid_params(error: impl core::fmt::Display) -> BasePrecompileError {
+    /// Maps an ABI parameter decoding error into the factory error surface.
+    pub fn invalid_params(error: impl core::fmt::Display) -> BasePrecompileError {
         BasePrecompileError::AbiDecodeFailed {
             selector: IB20Factory::createB20Call::SELECTOR,
             error: error.to_string(),
@@ -353,14 +378,17 @@ impl TokenCreateParams {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, address};
+    use alloc::string::ToString;
+
+    use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::{SolCall, SolError, SolValue};
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
 
-    use super::*;
     use crate::{
-        ActivationFeature, ActivationRegistryStorage, B20SecurityStorage, B20Token,
-        B20TokenStorage, IB20, Mintable, Permittable, Token, TokenAccounting, Transferable,
+        ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20SecurityStorage,
+        B20SecurityToken, B20StablecoinStorage, B20Token, B20TokenRole, B20TokenStorage,
+        B20Variant, IB20, IB20Factory, Mintable, Permittable, PolicyHandle, RoleManaged, Token,
+        TokenAccounting, Transferable,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");

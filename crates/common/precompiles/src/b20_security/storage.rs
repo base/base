@@ -2,16 +2,15 @@
 
 use alloc::string::String;
 
-use alloy_primitives::{Address, B256, LogData, U256};
+use alloy_primitives::{Address, B256, LogData, U256, b256};
 use base_precompile_macros::{Storable, contract};
 use base_precompile_storage::{
     BasePrecompileError, ContractStorage, Handler, Mapping, Result, StorageCtx,
 };
 
-use super::{accounting::SecurityAccounting, ids::REDEEM_SENDER_POLICY};
 use crate::{
     B20CoreStorage, B20PolicyType, B20TokenRole, B20Variant, IB20, PolicyRegistryStorage,
-    TokenAccounting,
+    SecurityAccounting, TokenAccounting,
 };
 
 /// WAD precision for share ratio arithmetic: 1e18.
@@ -67,6 +66,11 @@ pub struct B20SecurityInit {
 }
 
 impl<'a> B20SecurityStorage<'a> {
+    /// Policy scope identifier for the sender of a redeem operation:
+    /// `keccak256("REDEEM_SENDER_POLICY")`.
+    pub const REDEEM_SENDER_POLICY: B256 =
+        b256!("0ff53b08b65363a609bb561211128f4044adc0e351f0b92b6aa23f8d85462f59");
+
     /// Creates a `B20SecurityStorage` instance targeting `addr`.
     pub fn from_address(addr: Address, storage: StorageCtx<'a>) -> Self {
         Self::__new(addr, storage)
@@ -219,7 +223,7 @@ impl TokenAccounting for B20SecurityStorage<'_> {
     }
 
     fn policy_id(&self, policy_scope: B256) -> Result<u64> {
-        if policy_scope == REDEEM_SENDER_POLICY {
+        if policy_scope == Self::REDEEM_SENDER_POLICY {
             return Ok(Self::read_policy_lane(
                 self.redeem.redeem_policy_ids.read()?,
                 Self::REDEEM_SENDER_POLICY_LANE,
@@ -247,7 +251,7 @@ impl TokenAccounting for B20SecurityStorage<'_> {
     }
 
     fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
-        if policy_scope == REDEEM_SENDER_POLICY {
+        if policy_scope == Self::REDEEM_SENDER_POLICY {
             let packed = Self::write_policy_lane(
                 self.redeem.redeem_policy_ids.read()?,
                 Self::REDEEM_SENDER_POLICY_LANE,
@@ -382,12 +386,13 @@ mod tests {
     use alloy_primitives::{Address, U256, address, uint};
     use base_precompile_storage::{Handler, StorableType, StorageCtx, StorageKey, setup_storage};
 
-    use super::{
-        __packing_b20_redeem_storage, __packing_b20_security_extension_storage, B20RedeemStorage,
-        B20SecurityExtensionStorage, B20SecurityInit, B20SecurityStorage, REDEEM_SENDER_POLICY,
-        WAD, slots,
+    use crate::{
+        B20CoreStorage, B20RedeemStorage, B20SecurityExtensionStorage, B20SecurityInit,
+        B20SecurityStorage, PolicyRegistryStorage, SecurityAccounting, TokenAccounting,
+        b20_security::storage::{
+            __packing_b20_redeem_storage, __packing_b20_security_extension_storage, WAD, slots,
+        },
     };
-    use crate::{B20CoreStorage, PolicyRegistryStorage, SecurityAccounting, TokenAccounting};
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b021");
     const B20_ROOT: U256 =
@@ -518,8 +523,11 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             {
                 let mut token = B20SecurityStorage::from_address(TOKEN, ctx);
-                token.set_policy_id(REDEEM_SENDER_POLICY, policy_id).unwrap();
-                assert_eq!(token.policy_id(REDEEM_SENDER_POLICY).unwrap(), policy_id);
+                token.set_policy_id(B20SecurityStorage::REDEEM_SENDER_POLICY, policy_id).unwrap();
+                assert_eq!(
+                    token.policy_id(B20SecurityStorage::REDEEM_SENDER_POLICY).unwrap(),
+                    policy_id
+                );
             }
 
             let redeem_policy_slot = REDEEM_ROOT
@@ -546,7 +554,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(
-                token.policy_id(REDEEM_SENDER_POLICY).unwrap(),
+                token.policy_id(B20SecurityStorage::REDEEM_SENDER_POLICY).unwrap(),
                 PolicyRegistryStorage::ALWAYS_BLOCK_ID,
                 "REDEEM_SENDER_POLICY must default to ALWAYS_BLOCK_ID at creation"
             );

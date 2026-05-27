@@ -16,8 +16,8 @@ use crate::{
 /// policy adapters from the same EVM context.
 #[derive(Debug, Clone)]
 pub struct B20Token<S: TokenAccounting, P: Policy> {
-    pub(super) accounting: S,
-    pub(super) policy: P,
+    accounting: S,
+    policy: P,
 }
 
 impl<S: TokenAccounting, P: Policy> B20Token<S, P> {

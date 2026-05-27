@@ -170,12 +170,17 @@ impl ActivationRegistryStorage<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, U256, address, keccak256, uint};
-    use base_precompile_storage::{HashMapStorageProvider, Result, StorageCtx, StorageKey};
+    use alloy_primitives::{Address, B256, U256, address, keccak256, uint};
+    use base_precompile_storage::{
+        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, StorageKey,
+    };
     use revm::precompile::PrecompileOutput;
     use rstest::rstest;
 
-    use super::*;
+    use crate::{
+        ActivationFeature, ActivationRegistryStorage, IActivationRegistry,
+        activation::storage::slots,
+    };
 
     const FEATURE: B256 = ActivationFeature::B20Security.id();
     const ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");

@@ -25,7 +25,9 @@ pub trait PrecompileCallObserver: Clone + Send + Sync + 'static {
 
 impl PrecompileCallObserver for NoopPrecompileCallObserver {}
 
-struct EndGuard<'a, O>
+/// Guard that calls [`PrecompileCallObserver::end`] when observed work finishes.
+#[derive(Debug)]
+pub struct EndGuard<'a, O>
 where
     O: PrecompileCallObserver,
 {
@@ -49,7 +51,7 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
-    use super::PrecompileCallObserver;
+    use crate::PrecompileCallObserver;
 
     #[derive(Debug, Clone)]
     struct RecordingObserver {

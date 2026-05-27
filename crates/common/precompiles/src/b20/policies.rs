@@ -4,8 +4,7 @@ use alloy_primitives::{Address, B256, b256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use super::token::B20Token;
-use crate::{B20Guards, B20TokenRole, IB20, Policy, Token, TokenAccounting};
+use crate::{B20Guards, B20Token, B20TokenRole, IB20, Policy, Token, TokenAccounting};
 
 const TRANSFER_SENDER_POLICY: B256 =
     b256!("b81736c875ab819dd97f59f2a6542cfb731ad52b4ae15a6f24df2fb02b0327f5");
@@ -80,7 +79,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
     /// Returns the configured policy ID for `policy_scope`.
     pub fn policy_id(&self, policy_scope: B256) -> Result<u64> {
         Self::ensure_supported_policy_type(policy_scope)?;
-        self.accounting.policy_id(policy_scope)
+        self.accounting().policy_id(policy_scope)
     }
 
     /// Updates the configured policy ID for `policy_scope`.
@@ -95,7 +94,7 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
             B20Guards::ensure_token_role(self, caller, B20TokenRole::DefaultAdmin)?;
         }
         let old_policy_id = self.policy_id(policy_scope)?;
-        if !self.policy.policy_exists(new_policy_id)? {
+        if !self.policy().policy_exists(new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
@@ -126,9 +125,12 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256};
+    use base_precompile_storage::BasePrecompileError;
 
-    use super::*;
-    use crate::{B20TokenRole, InMemoryPolicy, InMemoryTokenAccounting, Token, TokenAccounting};
+    use crate::{
+        B20PolicyType, B20Token, B20TokenRole, IB20, InMemoryPolicy, InMemoryTokenAccounting,
+        Token, TokenAccounting,
+    };
 
     const ADMIN: Address = Address::repeat_byte(0xaa);
     const TOKEN_ADDR: Address = Address::repeat_byte(0x20);
@@ -166,7 +168,7 @@ mod tests {
     #[test]
     fn update_policy_accepts_existing_policy_id() {
         let mut token = token();
-        token.policy.create_existing_policy(CUSTOM_POLICY_ID);
+        token.policy_mut().create_existing_policy(CUSTOM_POLICY_ID);
 
         token
             .update_policy(ADMIN, B20PolicyType::TransferSender.id(), CUSTOM_POLICY_ID, false)

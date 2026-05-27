@@ -4,7 +4,7 @@ use alloy_primitives::{Address, U256, address};
 use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, ContractStorage, Handler, Mapping, Result};
 
-use super::{IPolicyRegistry, IPolicyRegistry::PolicyType};
+use crate::{IPolicyRegistry, IPolicyRegistry::PolicyType};
 
 /// A packed policy storage word.
 ///
@@ -14,7 +14,7 @@ use super::{IPolicyRegistry, IPolicyRegistry::PolicyType};
 /// and derived from there. Bit 255 is always set for any written slot, making the zero word
 /// a reliable "never written" sentinel even when admin is `Address::ZERO`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PackedPolicy(U256);
+pub struct PackedPolicy(U256);
 
 impl PackedPolicy {
     /// Bit 255: the highest bit of limb 3.
@@ -22,30 +22,36 @@ impl PackedPolicy {
     /// Mask covering the low 160 bits where the admin address lives.
     const ADMIN_MASK: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0xFFFF_FFFF, 0]);
 
-    fn new(admin: Address) -> Self {
+    /// Creates a packed policy word for `admin`.
+    pub fn new(admin: Address) -> Self {
         let mut word = [0u8; 32];
         word[12..32].copy_from_slice(admin.as_slice());
         Self(U256::from_be_slice(&word) | Self::EXISTS_BIT)
     }
 
-    fn with_admin(self, new_admin: Address) -> Self {
+    /// Returns this policy word with its admin replaced.
+    pub fn with_admin(self, new_admin: Address) -> Self {
         Self::new(new_admin)
     }
 
-    fn admin(self) -> Address {
+    /// Returns the admin address encoded in this policy word.
+    pub fn admin(self) -> Address {
         let bytes = (self.0 & Self::ADMIN_MASK).to_be_bytes::<32>();
         Address::from_slice(&bytes[12..])
     }
 
-    fn exists(self) -> bool {
+    /// Returns whether this policy word has the exists bit set.
+    pub fn exists(self) -> bool {
         !(self.0 & Self::EXISTS_BIT).is_zero()
     }
 
-    const fn into_u256(self) -> U256 {
+    /// Returns the raw packed policy word.
+    pub const fn into_u256(self) -> U256 {
         self.0
     }
 
-    const fn from_raw(v: U256) -> Self {
+    /// Creates a packed policy wrapper from a raw storage word.
+    pub const fn from_raw(v: U256) -> Self {
         Self(v)
     }
 }
@@ -487,10 +493,15 @@ impl crate::PolicyRegistry for PolicyRegistryStorage<'_> {
 mod tests {
     use alloy_primitives::{Address, U256, address, uint};
     use alloy_sol_types::SolEvent;
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx, StorageKey};
+    use base_precompile_storage::{
+        BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx, StorageKey,
+    };
 
-    use super::*;
-    use crate::IPolicyRegistry;
+    use crate::{
+        IPolicyRegistry,
+        IPolicyRegistry::PolicyType,
+        policy::storage::{PackedPolicy, PolicyRegistryStorage, slots},
+    };
 
     // --- PackedPolicy unit tests ---
 

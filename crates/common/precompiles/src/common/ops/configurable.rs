@@ -4,8 +4,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use super::guards::B20Guards;
-use crate::{B20TokenRole, IB20, Token, TokenAccounting};
+use crate::{B20Guards, B20TokenRole, IB20, Token, TokenAccounting};
 
 /// Mutable configuration operations: supply cap, metadata, and contract URI updates.
 ///
@@ -79,13 +78,9 @@ mod tests {
     use alloy_primitives::{Address, U256};
     use base_precompile_storage::BasePrecompileError;
 
-    use super::Configurable;
     use crate::{
-        B20TokenRole, IB20,
-        common::{
-            Token, TokenAccounting,
-            test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
-        },
+        B20TokenRole, Configurable, IB20, InMemoryPolicy, InMemoryTokenAccounting, TestToken,
+        Token, TokenAccounting,
     };
 
     const CALLER: Address = Address::repeat_byte(0xaa);

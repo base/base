@@ -4,8 +4,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use super::guards::B20Guards;
-use crate::{B20PausableFeature, B20TokenRole, IB20, Token, TokenAccounting};
+use crate::{B20Guards, B20PausableFeature, B20TokenRole, IB20, Token, TokenAccounting};
 
 /// Pause and unpause operations.
 ///
@@ -87,13 +86,9 @@ mod tests {
     use alloy_primitives::Address;
     use base_precompile_storage::BasePrecompileError;
 
-    use super::Pausable;
     use crate::{
-        B20PausableFeature, B20TokenRole, IB20,
-        common::{
-            Token,
-            test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
-        },
+        B20PausableFeature, B20TokenRole, IB20, InMemoryPolicy, InMemoryTokenAccounting, Pausable,
+        TestToken, Token,
     };
 
     const CALLER: Address = Address::repeat_byte(0xaa);

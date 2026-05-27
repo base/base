@@ -2,8 +2,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use super::guards::B20Guards;
-use crate::{B20TokenRole, IB20, Token, TokenAccounting};
+use crate::{B20Guards, B20TokenRole, IB20, Token, TokenAccounting};
 
 /// Token burn operations.
 ///
@@ -77,13 +76,9 @@ mod tests {
     use alloy_primitives::{Address, U256};
     use base_precompile_storage::BasePrecompileError;
 
-    use super::Burnable;
     use crate::{
-        B20PausableFeature, B20PolicyType, B20TokenRole, IB20, PolicyRegistryStorage,
-        common::{
-            Token, TokenAccounting,
-            test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
-        },
+        B20PausableFeature, B20PolicyType, B20TokenRole, Burnable, IB20, InMemoryPolicy,
+        InMemoryTokenAccounting, PolicyRegistryStorage, TestToken, Token, TokenAccounting,
     };
 
     const CALLER: Address = Address::repeat_byte(0xcc);

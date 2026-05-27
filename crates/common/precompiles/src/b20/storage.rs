@@ -299,8 +299,10 @@ mod tests {
     use alloy_primitives::{Address, U256, address, uint};
     use base_precompile_storage::{Handler, StorableType, StorageCtx, StorageKey, setup_storage};
 
-    use super::{__packing_b20_core_storage, B20CoreStorage, B20TokenStorage, slots};
-    use crate::{B20TokenRole, TokenAccounting};
+    use crate::{
+        B20CoreStorage, B20TokenRole, B20TokenStorage, TokenAccounting,
+        b20::storage::{__packing_b20_core_storage, slots},
+    };
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b020");
     const B20_ROOT: U256 =

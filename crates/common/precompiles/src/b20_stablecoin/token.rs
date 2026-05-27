@@ -4,10 +4,9 @@ use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use super::accounting::StablecoinAccounting;
 use crate::{
     B20Guards, B20PolicyType, B20TokenRole, Burnable, Configurable, IB20, Mintable, Pausable,
-    Permittable, Policy, RoleManaged, Token, Transferable,
+    Permittable, Policy, RoleManaged, StablecoinAccounting, Token, Transferable,
 };
 
 /// EVM precompile for the stablecoin B-20 variant.
@@ -17,8 +16,8 @@ use crate::{
 /// `IB20` capability traits are wired in identically.
 #[derive(Debug, Clone)]
 pub struct B20StablecoinToken<S: StablecoinAccounting, P: Policy> {
-    pub(super) accounting: S,
-    pub(super) policy: P,
+    accounting: S,
+    policy: P,
 }
 
 impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {

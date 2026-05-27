@@ -6,9 +6,9 @@ use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_macros::{Storable, contract};
 use base_precompile_storage::{BasePrecompileError, ContractStorage, Handler, Result, StorageCtx};
 
-use super::accounting::StablecoinAccounting;
 use crate::{
-    B20CoreStorage, B20PolicyType, B20TokenRole, B20Variant, IB20, IB20Factory, TokenAccounting,
+    B20CoreStorage, B20PolicyType, B20TokenRole, B20Variant, IB20, IB20Factory,
+    StablecoinAccounting, TokenAccounting,
 };
 
 /// Stablecoin-specific B-20 storage rooted at the `base.b20.stablecoin` ERC-7201 namespace.
@@ -295,11 +295,10 @@ mod tests {
     use alloy_primitives::{Address, U256, address, uint};
     use base_precompile_storage::{Handler, StorableType, StorageCtx, setup_storage};
 
-    use super::{
-        __packing_b20_stablecoin_extension_storage, B20StablecoinExtensionStorage,
-        B20StablecoinStorage, slots,
+    use crate::{
+        B20CoreStorage, B20StablecoinExtensionStorage, B20StablecoinStorage,
+        b20_stablecoin::storage::{__packing_b20_stablecoin_extension_storage, slots},
     };
-    use crate::B20CoreStorage;
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b022");
     const B20_ROOT: U256 =

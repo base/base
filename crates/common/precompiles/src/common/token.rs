@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
 
-use super::{Policy, TokenAccounting};
+use crate::{Policy, TokenAccounting};
 
 /// Token identity layer, bridging the storage port to capability traits.
 ///

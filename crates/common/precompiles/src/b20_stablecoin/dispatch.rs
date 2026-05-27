@@ -10,16 +10,13 @@ use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{
-    B20StablecoinToken,
-    abi::{IB20Stablecoin, IB20Stablecoin::IB20StablecoinCalls as SC},
-    accounting::StablecoinAccounting,
-};
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20TokenRole, Burnable, Configurable,
+    ActivationFeature, ActivationRegistryStorage, B20StablecoinToken, B20TokenRole, Burnable,
+    Configurable,
     IB20::{self, IB20Calls as C},
+    IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
-    PrecompileCallObserver, RoleManaged, Transferable,
+    PrecompileCallObserver, RoleManaged, StablecoinAccounting, Token, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
@@ -41,7 +38,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     {
         deduct_calldata_cost!(ctx, calldata);
         // Ensure the token has been deployed (has bytecode at its address).
-        match self.accounting.is_initialized() {
+        match self.accounting().is_initialized() {
             Ok(true) => {}
             Ok(false) => {
                 return BasePrecompileError::Revert(Bytes::new())
@@ -119,17 +116,17 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         observer.observe(label, || {
             let encoded: Bytes = match call {
                 // --- Pure reads: direct to accounting ---
-                C::name(_) => self.accounting.name()?.abi_encode().into(),
-                C::symbol(_) => self.accounting.symbol()?.abi_encode().into(),
-                C::decimals(_) => U256::from(self.accounting.decimals()?).abi_encode().into(),
-                C::totalSupply(_) => self.accounting.total_supply()?.abi_encode().into(),
-                C::balanceOf(c) => self.accounting.balance_of(c.account)?.abi_encode().into(),
+                C::name(_) => self.accounting().name()?.abi_encode().into(),
+                C::symbol(_) => self.accounting().symbol()?.abi_encode().into(),
+                C::decimals(_) => U256::from(self.accounting().decimals()?).abi_encode().into(),
+                C::totalSupply(_) => self.accounting().total_supply()?.abi_encode().into(),
+                C::balanceOf(c) => self.accounting().balance_of(c.account)?.abi_encode().into(),
                 C::allowance(c) => {
-                    self.accounting.allowance(c.owner, c.spender)?.abi_encode().into()
+                    self.accounting().allowance(c.owner, c.spender)?.abi_encode().into()
                 }
-                C::supplyCap(_) => self.accounting.supply_cap()?.abi_encode().into(),
-                C::nonces(c) => self.accounting.nonce(c.owner)?.abi_encode().into(),
-                C::contractURI(_) => self.accounting.contract_uri()?.abi_encode().into(),
+                C::supplyCap(_) => self.accounting().supply_cap()?.abi_encode().into(),
+                C::nonces(c) => self.accounting().nonce(c.owner)?.abi_encode().into(),
+                C::contractURI(_) => self.accounting().contract_uri()?.abi_encode().into(),
                 C::DEFAULT_ADMIN_ROLE(_) => B20TokenRole::DefaultAdmin.id().abi_encode().into(),
                 C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
                 C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),
@@ -320,7 +317,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
 
     fn handle_stablecoin_call(&self, call: SC) -> base_precompile_storage::Result<Bytes> {
         let encoded: Bytes = match call {
-            SC::currency(_) => self.accounting.currency()?.abi_encode().into(),
+            SC::currency(_) => self.accounting().currency()?.abi_encode().into(),
         };
         Ok(encoded)
     }

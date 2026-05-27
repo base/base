@@ -4,11 +4,10 @@ use alloy_primitives::{Address, B256, FixedBytes, U256, keccak256};
 use alloy_sol_types::SolValue;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use super::Transferable;
-use crate::{IB20, TokenAccounting};
+use crate::{IB20, TokenAccounting, Transferable};
 
 /// ERC-5267 `eip712Domain()` return tuple: (fields, name, version, chainId, verifyingContract, salt, extensions).
-pub(super) type Eip712Domain = (FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>);
+pub type Eip712Domain = (FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>);
 
 /// Arguments for [`Permittable::permit`], grouping the EIP-2612 ABI fields.
 #[derive(Clone, Debug)]
@@ -164,13 +163,10 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
     use k256::ecdsa::SigningKey;
 
-    use super::{DOMAIN_TYPEHASH, PermitArgs, Permittable, VERSION};
     use crate::{
-        IB20,
-        common::{
-            Token, TokenAccounting,
-            test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
-        },
+        IB20, InMemoryPolicy, InMemoryTokenAccounting, PermitArgs, Permittable, TestToken, Token,
+        TokenAccounting,
+        common::ops::permittable::{DOMAIN_TYPEHASH, VERSION},
     };
 
     const CHAIN_ID: u64 = 1;

@@ -1,8 +1,9 @@
 //! `B20Token` native precompile — the core B-20 token implementation.
 
 mod abi;
-mod dispatch;
 pub use abi::IB20;
+
+mod dispatch;
 
 mod pausable;
 pub use pausable::B20PausableFeature;

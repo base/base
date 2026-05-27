@@ -90,9 +90,12 @@ impl B20Guards {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
+    use base_precompile_storage::BasePrecompileError;
 
-    use super::*;
-    use crate::{InMemoryPolicy, InMemoryTokenAccounting, PolicyRegistryStorage, TestToken};
+    use crate::{
+        B20Guards, B20PolicyType, IB20, InMemoryPolicy, InMemoryTokenAccounting,
+        PolicyRegistryStorage, TestToken,
+    };
 
     const EXTERNAL_POLICY_ID: u64 = 7;
 

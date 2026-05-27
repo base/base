@@ -4,8 +4,7 @@ use alloy_primitives::{Address, B256, U256, b256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use super::guards::B20Guards;
-use crate::{IB20, Token, TokenAccounting};
+use crate::{B20Guards, IB20, Token, TokenAccounting};
 
 const MINT_ROLE: B256 = b256!("154c00819833dac601ee5ddded6fda79d9d8b506b911b3dbd54cdb95fe6c3686");
 const BURN_ROLE: B256 = b256!("e97b137254058bd94f28d2f3eb79e2d34074ffb488d042e3bc958e0a57d2fa22");
@@ -241,10 +240,9 @@ mod tests {
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::BasePrecompileError;
 
-    use super::{B20TokenRole, RoleManaged};
     use crate::{
-        IB20, Token, TokenAccounting,
-        common::test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
+        B20TokenRole, IB20, InMemoryPolicy, InMemoryTokenAccounting, RoleManaged, TestToken, Token,
+        TokenAccounting,
     };
 
     const ADMIN: Address = Address::repeat_byte(0xaa);
