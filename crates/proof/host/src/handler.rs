@@ -42,7 +42,10 @@ const L1_HEADER_PREFETCH_LOOKBEHIND_BLOCKS: u64 = 512;
 // L1 headers are hundreds of bytes each, so this bounds cached header bytes to a few MiB.
 const L1_HEADER_PREFETCH_MAX_READY: usize = 4096;
 const L1_HEADER_PREFETCH_MAX_IN_FLIGHT: usize = 32;
-const L1_HEADER_PREFETCH_MAX_SCHEDULED_BLOCKS: usize = 131_072;
+// Scheduled entries are just block numbers, but failed prefetches remove them while holding the
+// cache mutex. Keep the bound close to the active lookbehind window so failed RPC bursts do not scan
+// a long history of already-prefetched blocks.
+const L1_HEADER_PREFETCH_MAX_SCHEDULED_BLOCKS: usize = 4096;
 
 #[derive(Debug, Default)]
 struct PayloadWitnessPrefetchState {
@@ -580,7 +583,7 @@ impl L1HeaderPrefetcher {
         self.inner.cache.mark_ready(hash, raw_header);
     }
 
-    pub(crate) async fn schedule_lookbehind(&self, kv: SharedKeyValueStore, header: &Header) {
+    pub(crate) fn schedule_lookbehind(&self, kv: SharedKeyValueStore, header: &Header) {
         let Some(first_prefetch_block) = header.number.checked_sub(1) else {
             return;
         };
@@ -954,7 +957,7 @@ async fn handle_hint_inner(
             }
 
             if let Some(prefetcher) = l1_header_prefetcher {
-                prefetcher.schedule_lookbehind(Arc::clone(&kv), &header).await;
+                prefetcher.schedule_lookbehind(Arc::clone(&kv), &header);
             }
         }
         HintType::L1Transactions => {
