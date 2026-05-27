@@ -264,6 +264,7 @@ mod tests {
 
     const ADMIN: Address = Address::repeat_byte(0xaa);
     const ALICE: Address = Address::repeat_byte(0xbb);
+    const BOB: Address = Address::repeat_byte(0xcc);
     const TOKEN_ADDR: Address = Address::repeat_byte(0x11);
     const CUSTOM_ROLE: B256 = B256::repeat_byte(0x42);
 
@@ -369,6 +370,45 @@ mod tests {
             })
         );
         assert!(!token.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+    }
+
+    #[test]
+    fn renounce_last_admin_disables_custom_admin_revoke() {
+        let mut token = token_with_default_admin();
+
+        token.set_role_admin(ADMIN, B20TokenRole::Mint.id(), CUSTOM_ROLE, false).unwrap();
+        token.grant_role(ADMIN, CUSTOM_ROLE, ALICE, false).unwrap();
+        token.grant_role(ALICE, B20TokenRole::Mint.id(), BOB, false).unwrap();
+        token.renounce_last_admin(ADMIN).unwrap();
+
+        assert_eq!(
+            token.revoke_role(ALICE, B20TokenRole::Mint.id(), BOB, false).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ALICE,
+                neededRole: B20TokenRole::DefaultAdmin.id(),
+            })
+        );
+        assert!(token.has_role(B20TokenRole::Mint.id(), BOB).unwrap());
+    }
+
+    #[test]
+    fn renounce_last_admin_disables_custom_admin_reassignment() {
+        let mut token = token_with_default_admin();
+
+        token.set_role_admin(ADMIN, B20TokenRole::Mint.id(), CUSTOM_ROLE, false).unwrap();
+        token.grant_role(ADMIN, CUSTOM_ROLE, ALICE, false).unwrap();
+        token.renounce_last_admin(ADMIN).unwrap();
+
+        assert_eq!(
+            token
+                .set_role_admin(ALICE, B20TokenRole::Mint.id(), B20TokenRole::Burn.id(), false)
+                .unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: ALICE,
+                neededRole: B20TokenRole::DefaultAdmin.id(),
+            })
+        );
+        assert_eq!(token.role_admin(B20TokenRole::Mint.id()).unwrap(), CUSTOM_ROLE);
     }
 
     #[test]
