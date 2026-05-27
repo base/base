@@ -410,7 +410,7 @@ pub fn setup_storage() -> (HashMapStorageProvider, Address) {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::{Address, Bytes, U256};
 
     use super::*;
     use crate::provider::PrecompileStorageProvider;
