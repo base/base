@@ -91,6 +91,10 @@ pub struct Args {
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
 
+    /// Maximum number of payload build tasks that may execute concurrently
+    #[arg(long = "builder.max-payload-tasks", default_value = "3", value_parser = parse_positive_usize)]
+    pub max_payload_tasks: usize,
+
     /// Whether to enable TIPS Resource Metering
     #[arg(long = "builder.enable-resource-metering", default_value = "false")]
     pub enable_resource_metering: bool,
@@ -153,6 +157,14 @@ impl Args {
     }
 }
 
+fn parse_positive_usize(value: &str) -> Result<usize, String> {
+    let value = value.parse::<usize>().map_err(|err| err.to_string())?;
+    if value == 0 {
+        return Err("value must be greater than 0".to_string());
+    }
+    Ok(value)
+}
+
 impl Default for Args {
     fn default() -> Self {
         Self {
@@ -166,6 +178,7 @@ impl Default for Args {
             state_root_gas_anchor_us: 5000,
             execution_metering_mode: ExecutionMeteringMode::Off,
             extra_block_deadline_secs: 20,
+            max_payload_tasks: 3,
             enable_resource_metering: false,
             max_uncompressed_block_size: None,
             metering_wait_duration_ms: None,
@@ -198,6 +211,7 @@ impl Args {
         Ok(BuilderConfig {
             block_time: Duration::from_millis(self.chain_block_time),
             block_time_leeway: Duration::from_secs(self.extra_block_deadline_secs),
+            max_payload_tasks: self.max_payload_tasks,
             da_config: Default::default(),
             gas_limit_config: Default::default(),
             sampling_ratio: self.sampling_ratio,
@@ -278,6 +292,21 @@ mod tests {
         let args = Args { extra_block_deadline_secs: input_secs, ..Default::default() };
         let config = convert(args);
         assert_eq!(config.block_time_leeway, Duration::from_secs(expected_secs));
+    }
+
+    #[rstest]
+    #[case::default(3, 3)]
+    #[case::single(1, 1)]
+    #[case::larger_pool(8, 8)]
+    fn max_payload_tasks_maps_correctly(#[case] input: usize, #[case] expected: usize) {
+        let args = Args { max_payload_tasks: input, ..Default::default() };
+        let config = convert(args);
+        assert_eq!(config.max_payload_tasks, expected);
+    }
+
+    #[test]
+    fn max_payload_tasks_rejects_zero() {
+        assert!(super::parse_positive_usize("0").is_err());
     }
 
     #[rstest]

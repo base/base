@@ -36,8 +36,10 @@ reth-chainspec.workspace = true
 reth-rpc-layer.workspace = true
 reth-storage-api.workspace = true
 reth-chain-state.workspace = true
+reth-engine-tree.workspace = true
 reth-payload-util.workspace = true
 reth-node-builder.workspace = true
+reth-trie-parallel.workspace = true
 reth-tracing-otlp.workspace = true
 reth-cli-commands.workspace = true
 reth-network-peers.workspace = true
@@ -135,6 +137,7 @@ dirs-next.workspace = true
 secp256k1.workspace = true
 serde_with.workspace = true
 parking_lot.workspace = true
+crossbeam-channel.workspace = true
 derive_more.workspace = true
 tar = { workspace = true, optional = true }
 ctor = { workspace = true, optional = true }

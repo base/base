@@ -8,6 +8,7 @@ use alloy_primitives::B256;
 use futures::{Future, FutureExt};
 use parking_lot::Mutex;
 use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState};
+use reth_engine_tree::tree::SavedCache;
 use reth_node_api::{NodePrimitives, PayloadKind};
 use reth_payload_builder::{
     BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadId, PayloadJob,
@@ -18,8 +19,10 @@ use reth_primitives_traits::HeaderTy;
 use reth_provider::{BlockReaderIdExt, CanonStateNotification, StateProviderFactory};
 use reth_revm::cached::CachedReads;
 use reth_tasks::Runtime;
+use reth_trie_parallel::state_root_task::StateRootHandle;
+use std::ops::Deref;
 use tokio::{
-    sync::oneshot,
+    sync::{Semaphore, oneshot},
     time::{Duration, Sleep},
 };
 use tokio_util::sync::CancellationToken;
@@ -44,6 +47,8 @@ pub struct BlockPayloadJobGenerator<Client, Builder> {
     last_payload: Arc<Mutex<CancellationToken>>,
     /// The extra block deadline in seconds
     extra_block_deadline: std::time::Duration,
+    /// Restricts how many payload build tasks may execute at once.
+    payload_task_guard: PayloadTaskGuard,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
 }
@@ -59,6 +64,7 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
         builder: Builder,
         ensure_only_one_payload: bool,
         extra_block_deadline: std::time::Duration,
+        max_payload_tasks: usize,
     ) -> Self {
         Self {
             client,
@@ -67,6 +73,7 @@ impl<Client, Builder> BlockPayloadJobGenerator<Client, Builder> {
             ensure_only_one_payload,
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
             extra_block_deadline,
+            payload_task_guard: PayloadTaskGuard::new(max_payload_tasks),
             pre_cached: None,
         }
     }
@@ -167,6 +174,9 @@ where
             deadline,
             build_complete: None,
             cached_reads: self.maybe_pre_cached(parent_hash),
+            execution_cache: input.cache,
+            trie_handle: input.trie_handle,
+            payload_task_guard: self.payload_task_guard.clone(),
         };
 
         job.spawn_build_job();
@@ -191,6 +201,26 @@ where
         }
 
         self.pre_cached = Some(PrecachedState { block: committed.tip().hash(), cached });
+    }
+}
+
+/// Restricts how many payload build tasks can be executed at once.
+#[derive(Debug, Clone)]
+pub(crate) struct PayloadTaskGuard(Arc<Semaphore>);
+
+impl Deref for PayloadTaskGuard {
+    type Target = Semaphore;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl PayloadTaskGuard {
+    /// Constructs a guard for at most `max_payload_tasks` concurrent build tasks.
+    pub(crate) fn new(max_payload_tasks: usize) -> Self {
+        assert!(max_payload_tasks > 0, "max_payload_tasks must be greater than 0");
+        Self(Arc::new(Semaphore::new(max_payload_tasks)))
     }
 }
 
@@ -227,6 +257,12 @@ where
     /// This is used to avoid reading the same state over and over again when new attempts are
     /// triggered, because during the building process we'll repeatedly execute the transactions.
     pub(crate) cached_reads: Option<CachedReads>,
+    /// Optional execution cache shared with the engine.
+    pub(crate) execution_cache: Option<SavedCache>,
+    /// Optional state root task handle shared with the engine.
+    pub(crate) trie_handle: Option<StateRootHandle>,
+    /// Restricts how many payload build tasks may execute at once.
+    pub(crate) payload_task_guard: PayloadTaskGuard,
 }
 
 impl<Builder> std::fmt::Debug for BlockPayloadJob<Builder>
@@ -279,6 +315,10 @@ where
 pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     /// Previously cached disk reads
     pub cached_reads: CachedReads,
+    /// Optional execution cache shared with the engine.
+    pub execution_cache: Option<SavedCache>,
+    /// Optional state root task handle shared with the engine.
+    pub trie_handle: Option<StateRootHandle>,
     /// How to configure the payload.
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
     /// A marker that can be used to cancel the job.
@@ -304,13 +344,19 @@ where
         let cancel = self.cancel.clone();
         let publish_guard = Arc::clone(&self.publish_guard);
         let finalized_cell = self.finalized_cell.clone();
+        let guard = self.payload_task_guard.clone();
 
         let (tx, rx) = oneshot::channel();
         self.build_complete = Some(rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
+        let execution_cache = self.execution_cache.clone();
+        let trie_handle = self.trie_handle.take();
         self.executor.spawn_blocking_task(Box::pin(async move {
+            let _permit = guard.acquire().await;
             let args = BuildArguments {
                 cached_reads,
+                execution_cache,
+                trie_handle,
                 config: payload_config,
                 cancel,
                 publish_guard,
@@ -734,6 +780,7 @@ mod tests {
             builder.clone(),
             false,
             std::time::Duration::from_secs(1),
+            3,
         );
 
         // this is not nice but necessary
