@@ -6,7 +6,9 @@ use std::{
 };
 
 use alloy_consensus::Header;
-use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB};
+use alloy_eips::{
+    BlockId, BlockNumberOrTag, eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB,
+};
 use alloy_network::Network;
 use alloy_primitives::{Address, B64, B256, Bytes, keccak256};
 use alloy_provider::Provider;
@@ -35,6 +37,15 @@ const PAYLOAD_WITNESS_PREFETCH_MAX_READY: usize = 16;
 const PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_BLOCKS: usize = 128;
 const PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_LOOKAHEADS: usize = 128;
 const PAYLOAD_WITNESS_PREFETCH_PREIMAGE_WRITE_BATCH_SIZE: usize = 1024;
+const L1_HEADER_PREFETCH_LOOKBEHIND_BLOCKS: u64 = 512;
+// Keep several lookbehind windows ready without retaining every header seen by a long proof. Raw
+// L1 headers are hundreds of bytes each, so this bounds cached header bytes to a few MiB.
+const L1_HEADER_PREFETCH_MAX_READY: usize = 4096;
+const L1_HEADER_PREFETCH_MAX_IN_FLIGHT: usize = 32;
+// Scheduled entries are just block numbers, but failed prefetches remove them while holding the
+// cache mutex. Keep the bound close to the active lookbehind window so failed RPC bursts do not scan
+// a long history of already-prefetched blocks.
+const L1_HEADER_PREFETCH_MAX_SCHEDULED_BLOCKS: usize = 4096;
 
 #[derive(Debug, Default)]
 struct PayloadWitnessPrefetchState {
@@ -446,6 +457,271 @@ impl Drop for ScheduledBlockGuard {
     }
 }
 
+#[derive(Debug, Default)]
+struct L1HeaderPrefetchState {
+    ready: HashMap<B256, Bytes>,
+    ready_order: VecDeque<B256>,
+    scheduled_blocks: HashSet<u64>,
+    scheduled_block_order: VecDeque<u64>,
+}
+
+#[derive(Debug)]
+struct L1HeaderCacheInner {
+    state: Mutex<L1HeaderPrefetchState>,
+    semaphore: Semaphore,
+}
+
+/// Shared host-only cache for L1 header prefetch results.
+#[derive(Debug, Clone)]
+pub(crate) struct L1HeaderCache {
+    inner: Arc<L1HeaderCacheInner>,
+}
+
+impl L1HeaderCache {
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: Arc::new(L1HeaderCacheInner {
+                state: Mutex::new(L1HeaderPrefetchState::default()),
+                semaphore: Semaphore::new(L1_HEADER_PREFETCH_MAX_IN_FLIGHT),
+            }),
+        }
+    }
+
+    fn get_ready(&self, hash: B256) -> Option<Bytes> {
+        self.lock_state().ready.get(&hash).cloned()
+    }
+
+    fn mark_ready(&self, hash: B256, raw_header: Bytes) {
+        let mut state = self.lock_state();
+        if state.ready.remove(&hash).is_some() {
+            state.ready_order.retain(|ready_hash| ready_hash != &hash);
+        }
+
+        while state.ready.len() >= L1_HEADER_PREFETCH_MAX_READY {
+            let Some(oldest) = state.ready_order.pop_front() else {
+                break;
+            };
+            state.ready.remove(&oldest);
+        }
+
+        state.ready.insert(hash, raw_header);
+        state.ready_order.push_back(hash);
+    }
+
+    fn mark_blocks_scheduled<I>(&self, block_numbers: I) -> Vec<u64>
+    where
+        I: IntoIterator<Item = u64>,
+    {
+        let mut newly_scheduled = Vec::new();
+        let mut state = self.lock_state();
+
+        // Schedule a bounded lookbehind batch while holding the mutex once. This can briefly block
+        // ready-cache access, but the batch is capped at `L1_HEADER_PREFETCH_LOOKBEHIND_BLOCKS` and
+        // each step is an amortized O(1) collection operation.
+        for block_number in block_numbers {
+            if state.scheduled_blocks.contains(&block_number) {
+                continue;
+            }
+
+            while state.scheduled_blocks.len() >= L1_HEADER_PREFETCH_MAX_SCHEDULED_BLOCKS {
+                let Some(oldest) = state.scheduled_block_order.pop_front() else {
+                    break;
+                };
+                state.scheduled_blocks.remove(&oldest);
+            }
+
+            state.scheduled_blocks.insert(block_number);
+            state.scheduled_block_order.push_back(block_number);
+            newly_scheduled.push(block_number);
+        }
+
+        newly_scheduled
+    }
+
+    fn unmark_block_scheduled(&self, block_number: u64) {
+        let mut state = self.lock_state();
+        state.scheduled_blocks.remove(&block_number);
+        state.scheduled_block_order.retain(|scheduled| scheduled != &block_number);
+    }
+
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, L1HeaderPrefetchState> {
+        // The L1 header cache is best-effort. Entries are validated by hash-keyed preimage reads in
+        // the guest, so recovering from poisoning can at worst leave stale prefetch metadata.
+        self.inner.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl Default for L1HeaderCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug)]
+struct L1HeaderPrefetchInner {
+    providers: Arc<HostProviders>,
+    cache: L1HeaderCache,
+}
+
+/// Best-effort host-only L1 header prefetcher.
+///
+/// The guest still requests headers by hash and validates the parent chain. Prefetch fetches
+/// nearby older blocks by number, then stores each header under its actual header hash so a reorged
+/// or otherwise non-ancestor block cannot satisfy a different guest request.
+#[derive(Debug, Clone)]
+pub(crate) struct L1HeaderPrefetcher {
+    inner: Arc<L1HeaderPrefetchInner>,
+}
+
+impl L1HeaderPrefetcher {
+    pub(crate) fn new(providers: Arc<HostProviders>, cache: L1HeaderCache) -> Self {
+        Self { inner: Arc::new(L1HeaderPrefetchInner { providers, cache }) }
+    }
+
+    fn get_ready(&self, hash: B256) -> Option<Bytes> {
+        self.inner.cache.get_ready(hash)
+    }
+
+    fn mark_ready(&self, hash: B256, raw_header: Bytes) {
+        self.inner.cache.mark_ready(hash, raw_header);
+    }
+
+    pub(crate) fn schedule_lookbehind(&self, kv: SharedKeyValueStore, header: &Header) {
+        let Some(first_prefetch_block) = header.number.checked_sub(1) else {
+            return;
+        };
+        let last_prefetch_block =
+            header.number.saturating_sub(L1_HEADER_PREFETCH_LOOKBEHIND_BLOCKS);
+
+        let block_numbers = self
+            .inner
+            .cache
+            .mark_blocks_scheduled((last_prefetch_block..=first_prefetch_block).rev());
+
+        for block_number in block_numbers {
+            self.spawn_scheduled_prefetch_block(Arc::clone(&kv), block_number);
+        }
+    }
+
+    fn spawn_scheduled_prefetch_block(&self, kv: SharedKeyValueStore, block_number: u64) {
+        let prefetcher = self.clone();
+        std::mem::drop(tokio::spawn(async move {
+            let result =
+                AssertUnwindSafe(prefetcher.prefetch_block(kv, block_number)).catch_unwind().await;
+
+            if let Err(panic) = result {
+                warn!(
+                    target: HOST_SERVER_TARGET,
+                    block_number,
+                    panic = %panic_payload_message(panic.as_ref()),
+                    "l1 header prefetch task panicked"
+                );
+            }
+        }));
+    }
+
+    fn unmark_block_scheduled(&self, block_number: u64) {
+        self.inner.cache.unmark_block_scheduled(block_number);
+    }
+
+    async fn prefetch_block(&self, kv: SharedKeyValueStore, block_number: u64) {
+        let mut scheduled_guard = ScheduledL1HeaderBlockGuard::new(self.clone(), block_number);
+        if self.prefetch_block_inner(kv, block_number).await {
+            scheduled_guard.keep_scheduled();
+        }
+    }
+
+    async fn prefetch_block_inner(&self, kv: SharedKeyValueStore, block_number: u64) -> bool {
+        let _permit = match self.inner.cache.inner.semaphore.acquire().await {
+            Ok(permit) => permit,
+            Err(_) => return false,
+        };
+
+        let raw_header: Bytes = match self
+            .inner
+            .providers
+            .l1
+            .client()
+            .request("debug_getRawHeader", (BlockId::number(block_number),))
+            .await
+        {
+            Ok(raw_header) => raw_header,
+            Err(err) => {
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    block_number,
+                    error = %err,
+                    "l1 header prefetch skipped: failed to fetch raw header"
+                );
+                return false;
+            }
+        };
+        let decoded_header = match Header::decode(&mut raw_header.as_ref()) {
+            Ok(header) => header,
+            Err(err) => {
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    block_number,
+                    error = %err,
+                    "l1 header prefetch skipped: failed to decode raw header"
+                );
+                return false;
+            }
+        };
+        if decoded_header.number != block_number {
+            warn!(
+                target: HOST_SERVER_TARGET,
+                block_number,
+                decoded_block_number = decoded_header.number,
+                "l1 header prefetch skipped: raw header number mismatch"
+            );
+            return false;
+        }
+
+        let hash = decoded_header.hash_slow();
+
+        if let Err(err) = insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header.clone()).await
+        {
+            warn!(
+                target: HOST_SERVER_TARGET,
+                block_number,
+                hash = %hash,
+                error = %err,
+                "l1 header prefetch failed: preimage insertion failed"
+            );
+            return false;
+        }
+
+        self.mark_ready(hash, raw_header);
+        true
+    }
+}
+
+#[derive(Debug)]
+struct ScheduledL1HeaderBlockGuard {
+    prefetcher: L1HeaderPrefetcher,
+    block_number: u64,
+    keep_scheduled: bool,
+}
+
+impl ScheduledL1HeaderBlockGuard {
+    const fn new(prefetcher: L1HeaderPrefetcher, block_number: u64) -> Self {
+        Self { prefetcher, block_number, keep_scheduled: false }
+    }
+
+    const fn keep_scheduled(&mut self) {
+        self.keep_scheduled = true;
+    }
+}
+
+impl Drop for ScheduledL1HeaderBlockGuard {
+    fn drop(&mut self) {
+        if !self.keep_scheduled {
+            self.prefetcher.unmark_block_scheduled(self.block_number);
+        }
+    }
+}
+
 fn execution_witness_preimages(
     execute_payload_response: ExecutionWitness,
 ) -> impl Iterator<Item = (PreimageKey, Vec<u8>)> {
@@ -554,6 +830,16 @@ fn encode_payload_eip_1559_params(elasticity: u32, denominator: u32) -> B64 {
     B64::from(encoded)
 }
 
+async fn insert_l1_header_preimage(
+    kv: SharedKeyValueStore,
+    hash: B256,
+    raw_header: Bytes,
+) -> Result<()> {
+    let mut kv_lock = kv.write().await;
+    kv_lock.set(PreimageKey::new_keccak256(*hash).into(), raw_header.into())?;
+    Ok(())
+}
+
 /// Parses a blob hint, supporting both legacy (48-byte) and new (40-byte) formats.
 ///
 /// Returns the blob hash and timestamp.
@@ -596,23 +882,31 @@ pub async fn handle_hint(
     providers: &HostProviders,
     kv: SharedKeyValueStore,
 ) -> Result<()> {
-    handle_hint_with_prefetcher(hint, cfg, providers, kv, None).await
+    handle_hint_with_prefetchers(hint, cfg, providers, kv, None, None).await
 }
 
-pub(crate) async fn handle_hint_with_prefetcher(
+pub(crate) async fn handle_hint_with_prefetchers(
     hint: Hint<HintType>,
     cfg: &HostConfig,
     providers: &HostProviders,
     kv: SharedKeyValueStore,
     payload_witness_prefetcher: Option<PayloadWitnessPrefetcher>,
+    l1_header_prefetcher: Option<L1HeaderPrefetcher>,
 ) -> Result<()> {
     let hint_type_label: &str = hint.ty.into();
 
     Metrics::hint_requests_total(hint_type_label).increment(1);
     let _timer = base_metrics::timed!(Metrics::hint_duration_seconds(hint_type_label));
 
-    let result =
-        Box::pin(handle_hint_inner(hint, cfg, providers, kv, payload_witness_prefetcher)).await;
+    let result = Box::pin(handle_hint_inner(
+        hint,
+        cfg,
+        providers,
+        kv,
+        payload_witness_prefetcher,
+        l1_header_prefetcher,
+    ))
+    .await;
 
     if result.is_err() {
         Metrics::hint_errors_total(hint_type_label).increment(1);
@@ -627,6 +921,7 @@ async fn handle_hint_inner(
     providers: &HostProviders,
     kv: SharedKeyValueStore,
     payload_witness_prefetcher: Option<PayloadWitnessPrefetcher>,
+    l1_header_prefetcher: Option<L1HeaderPrefetcher>,
 ) -> Result<()> {
     match hint.ty {
         HintType::L1BlockHeader => {
@@ -635,11 +930,38 @@ async fn handle_hint_inner(
             }
 
             let hash: B256 = hint.data.as_ref().try_into()?;
-            let raw_header: Bytes =
-                providers.l1.client().request("debug_getRawHeader", [hash]).await?;
+            let (raw_header, should_mark_ready) = if let Some(prefetcher) =
+                l1_header_prefetcher.as_ref()
+                && let Some(raw_header) = prefetcher.get_ready(hash)
+            {
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    hash = %hash,
+                    "l1 header served from prefetch cache"
+                );
+                (raw_header, false)
+            } else {
+                let raw_header: Bytes =
+                    providers.l1.client().request("debug_getRawHeader", [hash]).await?;
+                (raw_header, true)
+            };
+            let header = Header::decode(&mut raw_header.as_ref())?;
+            let decoded_hash = header.hash_slow();
+            if decoded_hash != hash {
+                return Err(HostError::HeaderPreimageHashMismatch {
+                    expected: hash,
+                    actual: decoded_hash,
+                });
+            }
 
-            let mut kv_lock = kv.write().await;
-            kv_lock.set(PreimageKey::new_keccak256(*hash).into(), raw_header.into())?;
+            insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header.clone()).await?;
+            if should_mark_ready && let Some(prefetcher) = l1_header_prefetcher.as_ref() {
+                prefetcher.mark_ready(hash, raw_header);
+            }
+
+            if let Some(prefetcher) = l1_header_prefetcher {
+                prefetcher.schedule_lookbehind(Arc::clone(&kv), &header);
+            }
         }
         HintType::L1Transactions => {
             if hint.data.len() != 32 {
@@ -985,6 +1307,7 @@ mod tests {
 
     use alloy_genesis::ChainConfig;
     use alloy_provider::{RootProvider, builder as provider_builder, mock::Asserter};
+    use alloy_rlp::Encodable;
     use base_common_genesis::RollupConfig;
     use base_common_network::Base;
     use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
@@ -1026,17 +1349,31 @@ mod tests {
         }
     }
 
-    fn test_providers(l2: RootProvider<Base>) -> HostProviders {
-        let l1 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+    fn test_providers_with_l1(l1: RootProvider, l2: RootProvider<Base>) -> HostProviders {
         let beacon = OnlineBeaconClient::new_http("http://127.0.0.1:1".to_string());
         let blobs =
             OnlineBlobProvider { beacon_client: beacon, genesis_time: 0, slot_interval: 12 };
         HostProviders { l1, blobs, l2 }
     }
 
+    fn test_providers(l2: RootProvider<Base>) -> HostProviders {
+        let l1 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        test_providers_with_l1(l1, l2)
+    }
+
     fn test_prefetcher() -> PayloadWitnessPrefetcher {
         let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
         PayloadWitnessPrefetcher::new(Arc::new(test_cfg()), Arc::new(test_providers(l2)))
+    }
+
+    fn test_l1_header_prefetcher() -> L1HeaderPrefetcher {
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        L1HeaderPrefetcher::new(Arc::new(test_providers(l2)), L1HeaderCache::new())
+    }
+
+    fn test_l1_header_prefetcher_with_cache(cache: L1HeaderCache) -> L1HeaderPrefetcher {
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        L1HeaderPrefetcher::new(Arc::new(test_providers(l2)), cache)
     }
 
     #[test]
@@ -1074,6 +1411,23 @@ mod tests {
 
         assert!(!prefetcher.take_ready(B256::new([0; 32]), digest));
         assert!(prefetcher.take_ready(B256::new([1; 32]), digest));
+    }
+
+    #[test]
+    fn test_l1_header_ready_cache_evicts_oldest_entry() {
+        let cache = L1HeaderCache::new();
+
+        for i in 0..=L1_HEADER_PREFETCH_MAX_READY as u64 {
+            let mut hash = [0; 32];
+            hash[24..].copy_from_slice(&i.to_be_bytes());
+            cache.mark_ready(B256::new(hash), Bytes::from(vec![i as u8]));
+        }
+
+        assert!(cache.get_ready(B256::ZERO).is_none());
+
+        let mut second_hash = [0; 32];
+        second_hash[24..].copy_from_slice(&1u64.to_be_bytes());
+        assert_eq!(cache.get_ready(B256::new(second_hash)), Some(Bytes::from(vec![1])));
     }
 
     #[test]
@@ -1169,6 +1523,74 @@ mod tests {
         assert!(!prefetcher.mark_block_scheduled(7));
     }
 
+    #[test]
+    fn test_l1_header_scheduled_cache_dedupes_block_number() {
+        let prefetcher = test_l1_header_prefetcher();
+
+        assert_eq!(prefetcher.inner.cache.mark_blocks_scheduled([7]), vec![7]);
+        assert!(prefetcher.inner.cache.mark_blocks_scheduled([7]).is_empty());
+
+        prefetcher.unmark_block_scheduled(7);
+
+        assert_eq!(prefetcher.inner.cache.mark_blocks_scheduled([7]), vec![7]);
+    }
+
+    #[test]
+    fn test_l1_header_cache_is_shared_between_prefetchers() {
+        let cache = L1HeaderCache::new();
+        let prefetcher_a = test_l1_header_prefetcher_with_cache(cache.clone());
+        let prefetcher_b = test_l1_header_prefetcher_with_cache(cache);
+        let raw_header = Bytes::from(vec![1, 2, 3]);
+
+        prefetcher_a.mark_ready(TEST_HASH, raw_header.clone());
+
+        assert_eq!(prefetcher_b.get_ready(TEST_HASH), Some(raw_header));
+    }
+
+    #[test]
+    fn test_scheduled_l1_header_block_guard_unmarks_on_drop() {
+        let prefetcher = test_l1_header_prefetcher();
+        assert_eq!(prefetcher.inner.cache.mark_blocks_scheduled([7]), vec![7]);
+
+        {
+            let _guard = ScheduledL1HeaderBlockGuard::new(prefetcher.clone(), 7);
+        }
+
+        assert_eq!(prefetcher.inner.cache.mark_blocks_scheduled([7]), vec![7]);
+    }
+
+    #[test]
+    fn test_scheduled_l1_header_block_guard_keeps_successful_prefetch_scheduled() {
+        let prefetcher = test_l1_header_prefetcher();
+        assert_eq!(prefetcher.inner.cache.mark_blocks_scheduled([7]), vec![7]);
+
+        {
+            let mut guard = ScheduledL1HeaderBlockGuard::new(prefetcher.clone(), 7);
+            guard.keep_scheduled();
+        }
+
+        assert!(prefetcher.inner.cache.mark_blocks_scheduled([7]).is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_insert_l1_header_preimage_uses_header_hash() {
+        let header = Header { number: 7, parent_hash: TEST_HASH, ..Default::default() };
+        let hash = header.hash_slow();
+        let mut encoded_header = Vec::new();
+        header.encode(&mut encoded_header);
+        let raw_header = Bytes::from(encoded_header);
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+
+        insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header.clone()).await.unwrap();
+
+        let stored = kv
+            .read()
+            .await
+            .get(PreimageKey::new_keccak256(*hash).into())
+            .expect("header preimage should be stored under its hash");
+        assert_eq!(stored, raw_header);
+    }
+
     #[tokio::test]
     async fn test_l2_state_node_rejects_hash_mismatch() {
         const MALFORMED_PREIMAGE: [u8; 3] = [0xC2, 0x80, 0x80];
@@ -1193,5 +1615,34 @@ mod tests {
             other => panic!("unexpected error: {other}"),
         }
         assert!(kv.read().await.get(PreimageKey::new_keccak256(*requested_hash).into()).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_l1_block_header_rejects_hash_mismatch() {
+        let requested_hash = TEST_HASH;
+        let header = Header { number: 7, parent_hash: B256::new([0x24; 32]), ..Default::default() };
+        let actual_hash = header.hash_slow();
+        let mut encoded_header = Vec::new();
+        header.encode(&mut encoded_header);
+        let raw_header = Bytes::from(encoded_header);
+        let asserter = Asserter::new();
+        asserter.push_success(&raw_header);
+        let l1 = provider_builder().connect_mocked_client(asserter);
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let providers = test_providers_with_l1(l1, l2);
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        let hint = HintType::L1BlockHeader.with_data(&[requested_hash.as_slice()]);
+
+        let err = handle_hint(hint, &test_cfg(), &providers, Arc::clone(&kv)).await.unwrap_err();
+
+        match err {
+            HostError::HeaderPreimageHashMismatch { expected, actual } => {
+                assert_eq!(expected, requested_hash);
+                assert_eq!(actual, actual_hash);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        assert!(kv.read().await.get(PreimageKey::new_keccak256(*requested_hash).into()).is_none());
+        assert!(kv.read().await.get(PreimageKey::new_keccak256(*actual_hash).into()).is_none());
     }
 }
