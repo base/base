@@ -3,8 +3,8 @@ use core::fmt::Debug;
 
 use alloy_consensus::Sealed;
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::BlockEnv};
-use alloy_primitives::B256;
-use base_common_evm::{BaseSpecId, BaseTxEnv};
+use alloy_primitives::{Address, B256};
+use base_common_evm::{BaseEvmFactory, BaseSpecId, BaseTxEnv};
 use base_consensus_derive::EthereumDataSource;
 use base_proof::{
     BootInfo, CachingOracle, HintType, OracleBlobProvider, OracleL1ChainProvider,
@@ -14,6 +14,18 @@ use base_proof_executor::TrieDBProvider;
 use base_proof_preimage::{CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient};
 
 use crate::{FaultProofDriver, FaultProofProgramError};
+
+/// Configures a proof EVM factory with boot-derived activation registry parameters.
+pub trait ActivationAdminEvmFactory {
+    /// Returns this factory configured with `activation_admin_address`.
+    fn with_activation_admin_address(self, activation_admin_address: Option<Address>) -> Self;
+}
+
+impl ActivationAdminEvmFactory for BaseEvmFactory {
+    fn with_activation_admin_address(self, activation_admin_address: Option<Address>) -> Self {
+        Self::new(activation_admin_address)
+    }
+}
 
 /// The prologue phase — loads boot information and initializes the derivation pipeline.
 #[derive(Debug)]
@@ -28,6 +40,7 @@ where
     P: PreimageOracleClient + Send + Sync + Clone + Debug + 'static,
     H: HintWriterClient + Send + Sync + Clone + Debug + 'static,
     F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + Debug + 'static,
+    F: ActivationAdminEvmFactory,
     F::Tx: FromTxWithEncoded<base_common_consensus::BaseTxEnvelope>
         + FromRecoveredTx<base_common_consensus::BaseTxEnvelope>
         + BaseTxEnv,
@@ -51,6 +64,8 @@ where
             self.hint_writer.clone(),
         ));
         let boot = BootInfo::load(oracle.as_ref()).await?;
+        let evm_factory =
+            self.evm_factory.with_activation_admin_address(boot.activation_admin_address);
         let l1_config = boot.l1_config;
         let rollup_config = Arc::new(boot.rollup_config);
 
@@ -136,7 +151,7 @@ where
             cursor,
             pipeline,
             l2_provider,
-            self.evm_factory,
+            evm_factory,
         ))
     }
 }
@@ -157,4 +172,20 @@ where
         .get_exact(PreimageKey::new_keccak256(*agreed_l2_output_root), output_preimage.as_mut())
         .await?;
     Ok(B256::from_slice(&output_preimage[96..128]))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::address;
+
+    use super::{ActivationAdminEvmFactory, BaseEvmFactory};
+
+    #[test]
+    fn base_evm_factory_records_activation_admin_address() {
+        let admin = address!("331C9d37BbcebBC9dfAf98FBE3C5B8A39Dd6E771");
+
+        let factory = BaseEvmFactory::default().with_activation_admin_address(Some(admin));
+
+        assert_eq!(factory.activation_admin_address(), Some(admin));
+    }
 }
