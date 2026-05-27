@@ -284,7 +284,7 @@ mod tests {
         let mock = TestChannelReaderProvider::new(vec![Ok(Some(raw))]);
         let mut reader = ChannelReader::new(mock, Arc::new(RollupConfig::default()));
         let res = reader.next_batch().await.unwrap();
-        matches!(res, Batch::Span(_));
+        assert!(matches!(res, Batch::Span(_)));
         assert!(reader.next_batch.is_some());
     }
 
@@ -298,7 +298,7 @@ mod tests {
         let mock = TestChannelReaderProvider::new(vec![Ok(Some(raw))]);
         let mut reader = ChannelReader::new(mock, config);
         let res = reader.next_batch().await.unwrap();
-        matches!(res, Batch::Span(_));
+        assert!(matches!(res, Batch::Span(_)));
         assert!(reader.next_batch.is_some());
         reader.flush();
         assert!(reader.next_batch.is_none());
