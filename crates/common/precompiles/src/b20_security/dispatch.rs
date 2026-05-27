@@ -531,7 +531,9 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// Converts a token balance to shares: `balance * sharesToTokensRatio / WAD`.
     fn to_shares(&self, balance: U256) -> base_precompile_storage::Result<U256> {
         let ratio = self.accounting().shares_to_tokens_ratio()?;
-        Ok(balance.saturating_mul(ratio) / WAD)
+        let shares =
+            balance.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)? / WAD;
+        Ok(shares)
     }
 
     /// Performs a security-specific redeem: share-based floor check, burn, security `Redeemed` event.
@@ -568,7 +570,8 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
         }
         let ratio = self.accounting().shares_to_tokens_ratio()?;
-        let shares = amount.saturating_mul(ratio) / WAD;
+        let shares =
+            amount.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)? / WAD;
         let minimum = self.accounting().minimum_redeemable()?;
         if shares == U256::ZERO || shares < minimum {
             return Err(BasePrecompileError::revert(IB20Security::BelowMinimumRedeemable {
@@ -808,6 +811,15 @@ mod tests {
     }
 
     #[test]
+    fn to_shares_reverts_when_multiplication_overflows() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.shares_to_tokens_ratio = U256::MAX;
+        let token = TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(token.to_shares(U256::from(2u64)), Err(BasePrecompileError::under_overflow()));
+    }
+
+    #[test]
     fn batch_mint_increases_balances() {
         let mut token = make_token();
         token.accounting_mut().roles.insert((B20TokenRole::Mint.id(), ALICE), true);
@@ -984,6 +996,23 @@ mod tests {
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(50u64));
         assert_eq!(token.accounting().total_supply().unwrap(), U256::from(50u64));
         assert_eq!(token.accounting().events.len(), 2); // Transfer + Redeemed
+    }
+
+    #[test]
+    fn security_redeem_reverts_when_share_multiplication_overflows() {
+        let mut token = make_token();
+        token.accounting_mut().shares_to_tokens_ratio = U256::MAX;
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(100u64);
+        token.accounting_mut().minimum_redeemable = U256::ONE;
+
+        assert_eq!(
+            token.security_redeem(ALICE, U256::from(2u64)),
+            Err(BasePrecompileError::under_overflow())
+        );
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(100u64));
+        assert!(token.accounting().events.is_empty());
     }
 
     #[test]
