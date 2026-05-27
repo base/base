@@ -586,7 +586,9 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         }
         self.accounting_mut().set_balance(caller, balance - amount)?;
         let supply = self.accounting().total_supply()?;
-        self.accounting_mut().set_total_supply(supply.saturating_sub(amount))?;
+        let new_supply =
+            supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.accounting_mut().set_total_supply(new_supply)?;
         self.accounting_mut().emit_event(
             IB20::Transfer { from: caller, to: Address::ZERO, amount }.encode_log_data(),
         )?;
@@ -665,7 +667,9 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }
             self.accounting_mut().set_balance(account, balance - amount)?;
             let supply = self.accounting().total_supply()?;
-            self.accounting_mut().set_total_supply(supply.saturating_sub(amount))?;
+            let new_supply =
+                supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+            self.accounting_mut().set_total_supply(new_supply)?;
             self.accounting_mut().emit_event(
                 IB20::Transfer { from: account, to: Address::ZERO, amount }.encode_log_data(),
             )?;
