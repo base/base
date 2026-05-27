@@ -13,7 +13,7 @@ mod epilogue;
 pub use epilogue::Epilogue;
 
 mod prologue;
-pub use prologue::{ActivationAdminEvmFactory, Prologue};
+pub use prologue::Prologue;
 
 mod driver;
 pub use driver::FaultProofDriver;
