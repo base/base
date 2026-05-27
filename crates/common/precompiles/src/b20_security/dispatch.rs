@@ -1410,8 +1410,6 @@ mod tests {
         assert!(!token.accounting().is_announcement_id_used(id).unwrap());
     }
 
-    // --- checked_mul overflow regression (BOP-161) ---
-
     /// `to_shares` must return an arithmetic overflow panic rather than silently
     /// saturating when `balance * sharesToTokensRatio` exceeds U256::MAX.
     #[test]
