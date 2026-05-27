@@ -3,7 +3,6 @@
 use std::{fmt, sync::Arc};
 
 use base_execution_chainspec::BaseChainSpec;
-use base_snapshotter::BaseDownloadCommand;
 use clap::Subcommand;
 use reth_cli_commands::{
     config_cmd, db,
@@ -16,6 +15,7 @@ use reth_cli_commands::{
 use crate::chainspec::BaseChainSpecParser;
 
 pub mod base_proofs;
+pub mod download;
 pub mod init_state;
 pub mod p2p;
 
@@ -66,7 +66,7 @@ pub enum Commands<Ext: clap::Args + fmt::Debug = NoArgs> {
     SnapshotManifest(SnapshotManifestCommand),
     /// Download Base node snapshots from R2 storage.
     #[command(name = "download")]
-    Download(BaseDownloadCommand),
+    Download(download::BaseDownloadCommand<BaseChainSpecParser>),
 }
 
 impl<Ext: clap::Args + fmt::Debug> Commands<Ext> {
@@ -87,7 +87,7 @@ impl<Ext: clap::Args + fmt::Debug> Commands<Ext> {
             Self::ReExecute(cmd) => cmd.chain_spec(),
             Self::BaseProofs(cmd) => cmd.chain_spec(),
             Self::SnapshotManifest(_) => None,
-            Self::Download(_) => None,
+            Self::Download(cmd) => cmd.chain_spec(),
         }
     }
 

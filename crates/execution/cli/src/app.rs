@@ -126,9 +126,9 @@ where
                 command.execute()?;
                 Ok(())
             }
-            Commands::Download(command) => runner.run_blocking_until_ctrl_c(async {
-                command.execute().await.map_err(|e| eyre!("{e:#}"))
-            }),
+            Commands::Download(command) => {
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>())
+            }
         }
     }
 

@@ -21,10 +21,3 @@ pub use upload::{SnapshotUploader, UploadStrategy};
 
 mod orchestrator;
 pub use orchestrator::Snapshotter;
-
-mod download;
-pub use download::{
-    ArchiveExtractor, ArchiveFetcher, BaseDownloadCommand, ChunkedComponentManifest,
-    DownloadComponent, DownloadPlanner, DownloadProgressTracker, OutputVerifier, PlannedArchive,
-    PlannedDownloads, SelectionPreset, SingleComponentManifest, format_size,
-};
