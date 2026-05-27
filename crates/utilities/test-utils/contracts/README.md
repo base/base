@@ -53,7 +53,13 @@ $ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --pri
 
 ### Real-Token Swap Devnet Harness
 
-Deploy a local WETH/USDC swap harness for validating `base-load-test` real-token setup on the Docker devnet:
+The load-test Justfile can deploy a local WETH/USDC swap harness, render the load-test config with the deployed addresses, and run the Docker devnet swap load test:
+
+```shell
+just load-test real-token
+```
+
+To deploy only the harness for manual validation:
 
 ```shell
 export FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d

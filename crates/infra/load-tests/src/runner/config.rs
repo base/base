@@ -113,6 +113,15 @@ pub struct RealTokenSetup {
     pub approval_amount: U256,
 }
 
+/// Summary of real-token balances recovered before native ETH drain.
+#[derive(Debug, Clone, Default)]
+pub struct RealTokenRecoverySummary {
+    /// Pair-token raw units swapped back into WETH.
+    pub pair_token_swapped: U256,
+    /// WETH unwrapped back into native ETH.
+    pub weth_unwrapped: U256,
+}
+
 /// Non-WETH side of the real-token pair.
 #[derive(Debug, Clone)]
 pub struct RealTokenPairTokenSetup {

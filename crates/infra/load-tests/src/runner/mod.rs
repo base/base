@@ -3,7 +3,7 @@
 mod config;
 pub use config::{
     DEFAULT_MAX_GAS_PRICE, LoadConfig, RealTokenAcquisition, RealTokenPairTokenSetup,
-    RealTokenSetup, TxConfig, TxType,
+    RealTokenRecoverySummary, RealTokenSetup, TxConfig, TxType,
 };
 
 mod rate_limiter;

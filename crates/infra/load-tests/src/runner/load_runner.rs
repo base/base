@@ -40,8 +40,9 @@ type I24 = Signed<24, 1>;
 
 use super::{
     BlockWatcher, DisplaySnapshot, FlashblockWatcher, LoadConfig, LoadTestDisplay, PreparedBatch,
-    PreparedTransaction, QueuedSubmitFailures, RateLimiter, ResultsTracker, SubmissionPipeline,
-    SubmitEvent, TxType,
+    PreparedTransaction, QueuedSubmitFailures, RateLimiter, RealTokenAcquisition,
+    RealTokenRecoverySummary, RealTokenSetup, ResultsTracker, SubmissionPipeline, SubmitEvent,
+    TxType,
 };
 use crate::{
     BaselineError, Result,
@@ -63,6 +64,10 @@ const SUBMIT_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(60);
 const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(65);
 const TXPOOL_CLEAR_CONCURRENCY: usize = 64;
+const WETH_DEPOSIT_GAS_LIMIT: u64 = 100_000;
+const WETH_WITHDRAW_GAS_LIMIT: u64 = 45_000;
+const ERC20_APPROVE_GAS_LIMIT: u64 = 65_000;
+const SETUP_SWAP_GAS_LIMIT: u64 = 250_000;
 
 /// Executes load tests by generating and submitting transactions at a target rate.
 pub struct LoadRunner {
@@ -626,6 +631,8 @@ impl LoadRunner {
         let addr_to_idx: HashMap<Address, usize> =
             self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
 
+        let refresh_provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
+
         for result in refresh_results {
             let (addr, balance, account_nonce) = result?;
             let idx = addr_to_idx[&addr];
@@ -633,9 +640,9 @@ impl LoadRunner {
             account.balance = balance;
             account.nonce = account_nonce;
 
-            let provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
             let nonce_manager =
-                NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT).with_pending_tag();
+                NonceManager::new(refresh_provider.clone(), addr, NONCE_RPC_TIMEOUT)
+                    .with_pending_tag();
             Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
 
             debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
@@ -1718,6 +1725,13 @@ impl LoadRunner {
         Bytes::from(depositCall {}.abi_encode())
     }
 
+    fn encode_weth_withdraw(amount: U256) -> Bytes {
+        sol! {
+            function withdraw(uint256 wad) external;
+        }
+        Bytes::from(withdrawCall { wad: amount }.abi_encode())
+    }
+
     fn encode_erc20_approve(spender: Address, amount: U256) -> Bytes {
         sol! {
             function approve(address spender, uint256 amount) external returns (bool);
@@ -1811,6 +1825,84 @@ impl LoadRunner {
                         deadline: U256::from(u64::MAX),
                         amountIn: *amount_in,
                         amountOutMinimum: *min_amount_out,
+                        sqrtPriceLimitX96: U160::ZERO,
+                    },
+                };
+                Ok((*router, Bytes::from(call.abi_encode())))
+            }
+        }
+    }
+
+    fn encode_pair_token_recovery(
+        setup: &RealTokenSetup,
+        recipient: Address,
+        amount_in: U256,
+    ) -> Result<(Address, Bytes)> {
+        match &setup.pair_token.acquisition {
+            RealTokenAcquisition::UniswapV3ExactInput { router, fee, .. } => {
+                sol! {
+                    interface IRecoverUniswapV3Router {
+                        struct ExactInputSingleParams {
+                            address tokenIn;
+                            address tokenOut;
+                            uint24 fee;
+                            address recipient;
+                            uint256 amountIn;
+                            uint256 amountOutMinimum;
+                            uint160 sqrtPriceLimitX96;
+                        }
+
+                        function exactInputSingle(
+                            ExactInputSingleParams calldata params
+                        ) external payable returns (uint256 amountOut);
+                    }
+                }
+                let call = IRecoverUniswapV3Router::exactInputSingleCall {
+                    params: IRecoverUniswapV3Router::ExactInputSingleParams {
+                        tokenIn: setup.pair_token.token,
+                        tokenOut: setup.weth,
+                        fee: U24::from(*fee),
+                        recipient,
+                        amountIn: amount_in,
+                        amountOutMinimum: U256::ZERO,
+                        sqrtPriceLimitX96: U160::ZERO,
+                    },
+                };
+                Ok((*router, Bytes::from(call.abi_encode())))
+            }
+            RealTokenAcquisition::AerodromeClExactInput { router, tick_spacing, .. } => {
+                sol! {
+                    interface IRecoverAerodromeClRouter {
+                        struct ExactInputSingleParams {
+                            address tokenIn;
+                            address tokenOut;
+                            int24 tickSpacing;
+                            address recipient;
+                            uint256 deadline;
+                            uint256 amountIn;
+                            uint256 amountOutMinimum;
+                            uint160 sqrtPriceLimitX96;
+                        }
+
+                        function exactInputSingle(
+                            ExactInputSingleParams calldata params
+                        ) external payable returns (uint256 amountOut);
+                    }
+                }
+                let tick_spacing = I24::try_from(*tick_spacing).map_err(|e| {
+                    BaselineError::Config(format!(
+                        "real-token recovery tick spacing does not fit i24: {e}"
+                    ))
+                })?;
+                let call = IRecoverAerodromeClRouter::exactInputSingleCall {
+                    params: IRecoverAerodromeClRouter::ExactInputSingleParams {
+                        tokenIn: setup.pair_token.token,
+                        tokenOut: setup.weth,
+                        tickSpacing: tick_spacing,
+                        recipient,
+                        deadline: U256::from(u64::MAX),
+                        amountIn: amount_in,
+                        amountOutMinimum: U256::ZERO,
                         sqrtPriceLimitX96: U160::ZERO,
                     },
                 };
@@ -2337,6 +2429,182 @@ impl LoadRunner {
         }
     }
 
+    /// Recovers real-token balances by swapping the configured pair token back
+    /// into WETH, unwrapping WETH to native ETH, and leaving native drain to
+    /// [`Self::drain_accounts`].
+    pub async fn recover_real_tokens(
+        &self,
+        setup: &RealTokenSetup,
+    ) -> Result<RealTokenRecoverySummary> {
+        let client = self.client.clone();
+        let primary_submission_rpc = self.config.primary_submission_rpc().clone();
+        let chain_id = self.config.chain_id;
+
+        let gas_price = client.get_gas_price().await.rpc("get gas price")?;
+        let max_priority_fee = (gas_price / 10).max(1);
+        let max_fee =
+            gas_price.saturating_mul(2).max(max_priority_fee).min(self.config.max_gas_price);
+
+        let account_data: Vec<_> =
+            self.accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect();
+        let total_accounts = account_data.len();
+        let pb_recover = self.progress_bar(total_accounts as u64, "Recovering real tokens");
+
+        let recover_futs: Vec<_> = account_data
+            .into_iter()
+            .map(|(sender, signer)| {
+                let client = client.clone();
+                let primary_submission_rpc = primary_submission_rpc.clone();
+                let setup = setup.clone();
+                async move {
+                    let mut summary = RealTokenRecoverySummary::default();
+                    let wallet = EthereumWallet::from(signer);
+                    let provider = create_wallet_provider(primary_submission_rpc, wallet);
+                    let mut nonce = provider
+                        .get_transaction_count(sender)
+                        .pending()
+                        .await
+                        .rpc("get pending transaction count")?;
+
+                    let pair_balance =
+                        Self::read_erc20_balance(&client, setup.pair_token.token, sender).await?;
+                    if pair_balance > U256::ZERO {
+                        let recovery_router = setup.pair_token.acquisition.router();
+                        let allowance = Self::read_erc20_allowance(
+                            &client,
+                            setup.pair_token.token,
+                            sender,
+                            recovery_router,
+                        )
+                        .await?;
+
+                        if allowance < pair_balance {
+                            let approval_amount = if setup.approval_amount > pair_balance {
+                                setup.approval_amount
+                            } else {
+                                pair_balance
+                            };
+                            let tx = TransactionRequest::default()
+                                .with_to(setup.pair_token.token)
+                                .with_input(Self::encode_erc20_approve(
+                                    recovery_router,
+                                    approval_amount,
+                                ))
+                                .with_nonce(nonce)
+                                .with_chain_id(chain_id)
+                                .with_gas_limit(ERC20_APPROVE_GAS_LIMIT)
+                                .with_max_fee_per_gas(max_fee)
+                                .with_max_priority_fee_per_gas(max_priority_fee);
+                            let pending =
+                                provider.send_transaction(tx).await.rpc("send pair approval")?;
+                            debug!(
+                                sender = %sender,
+                                token = %setup.pair_token.token,
+                                router = %recovery_router,
+                                tx_hash = %pending.tx_hash(),
+                                "recovery pair-token approval sent"
+                            );
+                            let receipt =
+                                pending.get_receipt().await.rpc("confirm pair approval")?;
+                            if !receipt.status() {
+                                return Err(BaselineError::Transaction(format!(
+                                    "pair-token approval reverted for sender {sender}"
+                                )));
+                            }
+                            nonce += 1;
+                        }
+
+                        let (router, data) =
+                            Self::encode_pair_token_recovery(&setup, sender, pair_balance)?;
+                        let tx = TransactionRequest::default()
+                            .with_to(router)
+                            .with_input(data)
+                            .with_nonce(nonce)
+                            .with_chain_id(chain_id)
+                            .with_gas_limit(SETUP_SWAP_GAS_LIMIT)
+                            .with_max_fee_per_gas(max_fee)
+                            .with_max_priority_fee_per_gas(max_priority_fee);
+                        let pending = provider
+                            .send_transaction(tx)
+                            .await
+                            .rpc("send pair-token recovery swap")?;
+                        debug!(
+                            sender = %sender,
+                            router = %router,
+                            amount = %pair_balance,
+                            tx_hash = %pending.tx_hash(),
+                            "pair-token recovery swap sent"
+                        );
+                        let receipt =
+                            pending.get_receipt().await.rpc("confirm pair-token recovery swap")?;
+                        if !receipt.status() {
+                            return Err(BaselineError::Transaction(format!(
+                                "pair-token recovery swap reverted for sender {sender}"
+                            )));
+                        }
+                        nonce += 1;
+                        summary.pair_token_swapped =
+                            summary.pair_token_swapped.saturating_add(pair_balance);
+                    }
+
+                    let weth_balance =
+                        Self::read_erc20_balance(&client, setup.weth, sender).await?;
+                    if weth_balance > U256::ZERO {
+                        let tx = TransactionRequest::default()
+                            .with_to(setup.weth)
+                            .with_input(Self::encode_weth_withdraw(weth_balance))
+                            .with_nonce(nonce)
+                            .with_chain_id(chain_id)
+                            .with_gas_limit(WETH_WITHDRAW_GAS_LIMIT)
+                            .with_max_fee_per_gas(max_fee)
+                            .with_max_priority_fee_per_gas(max_priority_fee);
+                        let pending =
+                            provider.send_transaction(tx).await.rpc("send WETH withdraw")?;
+                        debug!(
+                            sender = %sender,
+                            amount = %weth_balance,
+                            tx_hash = %pending.tx_hash(),
+                            "recovery WETH withdraw sent"
+                        );
+                        let receipt = pending.get_receipt().await.rpc("confirm WETH withdraw")?;
+                        if !receipt.status() {
+                            return Err(BaselineError::Transaction(format!(
+                                "WETH withdraw reverted for sender {sender}"
+                            )));
+                        }
+                        summary.weth_unwrapped =
+                            summary.weth_unwrapped.saturating_add(weth_balance);
+                    }
+
+                    Ok::<_, BaselineError>(summary)
+                }
+            })
+            .collect();
+
+        let recover_results: Vec<_> = stream::iter(recover_futs)
+            .buffer_unordered(FUNDING_CONCURRENCY)
+            .inspect(|_| pb_recover.inc(1))
+            .collect()
+            .await;
+        pb_recover.finish_and_clear();
+
+        let mut summary = RealTokenRecoverySummary::default();
+        for result in recover_results {
+            let account_summary = result?;
+            summary.pair_token_swapped =
+                summary.pair_token_swapped.saturating_add(account_summary.pair_token_swapped);
+            summary.weth_unwrapped =
+                summary.weth_unwrapped.saturating_add(account_summary.weth_unwrapped);
+        }
+
+        info!(
+            pair_token_swapped = %summary.pair_token_swapped,
+            weth_unwrapped = %summary.weth_unwrapped,
+            "real-token recovery complete"
+        );
+        Ok(summary)
+    }
+
     /// Drains all test account balances back to the funder address.
     ///
     /// Each account sends its entire balance minus gas costs back to the funder.
@@ -2654,6 +2922,8 @@ impl LoadRunner {
         let addr_to_idx: HashMap<Address, usize> =
             self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
 
+        let refresh_provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
+
         for result in refresh_results {
             let (addr, balance, account_nonce) = result?;
             let idx = addr_to_idx[&addr];
@@ -2661,9 +2931,9 @@ impl LoadRunner {
             account.balance = balance;
             account.nonce = account_nonce;
 
-            let provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
             let nonce_manager =
-                NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT).with_pending_tag();
+                NonceManager::new(refresh_provider.clone(), addr, NONCE_RPC_TIMEOUT)
+                    .with_pending_tag();
             Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
 
             debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
