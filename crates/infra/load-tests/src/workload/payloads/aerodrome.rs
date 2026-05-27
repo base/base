@@ -120,3 +120,52 @@ impl Payload for AerodromeClPayload {
             .with_gas_limit(250_000)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_calldata_uses_direction_specific_amounts() {
+        let router = Address::repeat_byte(0x10);
+        let token_in = Address::repeat_byte(0x11);
+        let token_out = Address::repeat_byte(0x22);
+        let sender = Address::repeat_byte(0x33);
+        let forward_amount = U256::from(10_000_000_000_000u64);
+        let reverse_amount = U256::from(100_000u64);
+        let payload = AerodromeClPayload::new(
+            router,
+            token_in,
+            token_out,
+            100,
+            forward_amount,
+            forward_amount,
+            Some((reverse_amount, reverse_amount)),
+        );
+        let mut rng = SeededRng::new(42);
+        let mut saw_forward = false;
+        let mut saw_reverse = false;
+
+        for _ in 0..32 {
+            let tx = payload.generate(&mut rng, sender, Address::ZERO);
+            let input = tx.input.input().expect("swap calldata should be set");
+            let decoded = IAerodromeClRouter::exactInputSingleCall::abi_decode(input)
+                .expect("swap calldata should decode");
+
+            if decoded.params.tokenIn == token_in {
+                saw_forward = true;
+                assert_eq!(decoded.params.tokenOut, token_out);
+                assert_eq!(decoded.params.amountIn, forward_amount);
+            } else if decoded.params.tokenIn == token_out {
+                saw_reverse = true;
+                assert_eq!(decoded.params.tokenOut, token_in);
+                assert_eq!(decoded.params.amountIn, reverse_amount);
+            } else {
+                panic!("unexpected tokenIn {}", decoded.params.tokenIn);
+            }
+        }
+
+        assert!(saw_forward, "expected at least one forward swap");
+        assert!(saw_reverse, "expected at least one reverse swap");
+    }
+}
