@@ -6,7 +6,7 @@ use alloy_transport::{RpcError, TransportErrorKind};
 use base_protocol::FromBlockError;
 use thiserror::Error;
 
-use super::checkpoint::ForkchoiceCheckpointError;
+use super::{ForkchoiceCheckpointLabel, checkpoint::ForkchoiceCheckpointError};
 
 /// An error that can occur during the sync start process.
 #[derive(Error, Debug)]
@@ -43,4 +43,25 @@ pub enum SyncStartError {
     /// Inconsistent sequence number.
     #[error("Inconsistent sequence number; Must monotonically increase.")]
     InconsistentSequenceNumber,
+    /// The on-disk forkchoice checkpoint did not match the reth-labeled head block.
+    ///
+    /// Surfaced instead of [`SyncStartError::FromBlock`] when the underlying
+    /// [`FromBlockError::MissingL1InfoDeposit`] was caused by a stale or otherwise
+    /// inconsistent checkpoint, so operators see "checkpoint mismatch" in logs rather
+    /// than the misleading "missing L1 info deposit".
+    #[error(
+        "forkchoice checkpoint mismatch for {label}: reth labeled block {reth_number} ({reth_hash}), checkpoint {checkpoint_number} ({checkpoint_hash})"
+    )]
+    CheckpointMismatch {
+        /// Which labeled head (safe / finalized) the mismatch was observed on.
+        label: ForkchoiceCheckpointLabel,
+        /// Block number reth returned for the label.
+        reth_number: u64,
+        /// Block hash reth returned for the label.
+        reth_hash: B256,
+        /// Block number recorded in the on-disk checkpoint.
+        checkpoint_number: u64,
+        /// Block hash recorded in the on-disk checkpoint.
+        checkpoint_hash: B256,
+    },
 }

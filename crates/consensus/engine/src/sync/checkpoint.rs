@@ -1,5 +1,7 @@
 //! Forkchoice checkpoint interfaces for sync start recovery.
 
+use std::fmt;
+
 use async_trait::async_trait;
 use base_protocol::L2BlockInfo;
 use thiserror::Error;
@@ -20,6 +22,12 @@ impl ForkchoiceCheckpointLabel {
             Self::Safe => "safe",
             Self::Finalized => "finalized",
         }
+    }
+}
+
+impl fmt::Display for ForkchoiceCheckpointLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

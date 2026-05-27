@@ -174,7 +174,13 @@ async fn block_info_from_reth_or_checkpoint<
                     checkpoint_timestamp = checkpoint.block_info.timestamp,
                     "forkchoice checkpoint does not match reth labeled block header"
                 );
-                return Err(err.into());
+                return Err(SyncStartError::CheckpointMismatch {
+                    label,
+                    reth_number: header.number,
+                    reth_hash: header.hash,
+                    checkpoint_number: checkpoint.block_info.number,
+                    checkpoint_hash: checkpoint.block_info.hash,
+                });
             }
             warn!(
                 target: "sync_start",
