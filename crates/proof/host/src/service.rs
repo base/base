@@ -3,7 +3,10 @@ use std::fmt;
 use base_proof_primitives::{ProofRequest, ProofResult, ProverBackend};
 use tracing::{Instrument, info, info_span};
 
-use crate::{Host, HostConfig, HostError, Metrics, ProverConfig, metrics::proof_guard};
+use crate::{
+    Host, HostConfig, HostError, Metrics, ProverConfig, handler::L1HeaderCache,
+    metrics::proof_guard,
+};
 
 /// Orchestrates witness generation ([`Host`]) and proving ([`ProverBackend`]).
 ///
@@ -12,6 +15,7 @@ use crate::{Host, HostConfig, HostError, Metrics, ProverConfig, metrics::proof_g
 pub struct ProverService<B> {
     config: ProverConfig,
     backend: B,
+    l1_header_cache: L1HeaderCache,
 }
 
 impl<B: ProverBackend> fmt::Debug for ProverService<B> {
@@ -22,8 +26,8 @@ impl<B: ProverBackend> fmt::Debug for ProverService<B> {
 
 impl<B: ProverBackend> ProverService<B> {
     /// Creates a new prover service.
-    pub const fn new(config: ProverConfig, backend: B) -> Self {
-        Self { config, backend }
+    pub fn new(config: ProverConfig, backend: B) -> Self {
+        Self { config, backend, l1_header_cache: L1HeaderCache::new() }
     }
 
     /// Returns a reference to the prover configuration.
@@ -64,7 +68,10 @@ impl<B: ProverBackend> ProverService<B> {
     ) -> Result<ProofResult, ProverError<B>> {
         info!(l2_block = request.claimed_l2_block_number, "starting proof generation");
 
-        let host = Host::new(HostConfig { request, prover: self.config.clone(), data_dir: None });
+        let host = Host::new_with_l1_header_cache(
+            HostConfig { request, prover: self.config.clone(), data_dir: None },
+            self.l1_header_cache.clone(),
+        );
         let oracle = self.backend.create_oracle();
 
         let oracle = base_metrics::time!(Metrics::witness_build_duration_seconds(), {

@@ -21,7 +21,7 @@ use crate::DiskKeyValueStore;
 use crate::{
     BootKeyValueStore, HostConfig, HostError, HostProviders, MemoryKeyValueStore, Metrics,
     OfflineHostBackend, OnlineHostBackend, PreimageServer, RecordingOracle, Result,
-    SharedKeyValueStore, SplitKeyValueStore,
+    SharedKeyValueStore, SplitKeyValueStore, handler::L1HeaderCache,
 };
 
 /// The proof host orchestrator.
@@ -29,12 +29,21 @@ use crate::{
 pub struct Host {
     /// The host configuration.
     pub config: HostConfig,
+    l1_header_cache: L1HeaderCache,
 }
 
 impl Host {
     /// Creates a new [`Host`] from the given [`HostConfig`].
-    pub const fn new(config: HostConfig) -> Self {
-        Self { config }
+    pub fn new(config: HostConfig) -> Self {
+        Self::new_with_l1_header_cache(config, L1HeaderCache::new())
+    }
+
+    /// Creates a new [`Host`] with a shared L1 header cache.
+    pub(crate) const fn new_with_l1_header_cache(
+        config: HostConfig,
+        l1_header_cache: L1HeaderCache,
+    ) -> Self {
+        Self { config, l1_header_cache }
     }
 
     /// Starts the preimage server, communicating with the client over the provided channels.
@@ -56,9 +65,13 @@ impl Host {
             })
         } else {
             let providers = self.create_providers().await?;
-            let backend =
-                OnlineHostBackend::new(self.config.clone(), Arc::clone(&kv_store), providers)
-                    .with_proactive_hint(HintType::L2PayloadWitness);
+            let backend = OnlineHostBackend::new_with_l1_header_cache(
+                self.config.clone(),
+                Arc::clone(&kv_store),
+                providers,
+                self.l1_header_cache.clone(),
+            )
+            .with_proactive_hint(HintType::L2PayloadWitness);
 
             task::spawn(async {
                 PreimageServer::new(
@@ -88,8 +101,13 @@ impl Host {
         let kv_store = self.create_key_value_store()?;
         let providers = self.create_providers().await?;
         let backend = Arc::new(
-            OnlineHostBackend::new(self.config.clone(), Arc::clone(&kv_store), providers)
-                .with_proactive_hint(HintType::L2PayloadWitness),
+            OnlineHostBackend::new_with_l1_header_cache(
+                self.config.clone(),
+                Arc::clone(&kv_store),
+                providers,
+                self.l1_header_cache.clone(),
+            )
+            .with_proactive_hint(HintType::L2PayloadWitness),
         );
 
         let preimage_chan = BidirectionalChannel::new().map_err(HostError::Io)?;
