@@ -18,9 +18,12 @@ blake3 = { workspace = true }
 rayon = { workspace = true }
 bollard = { workspace = true }
 futures = { workspace = true }
+reqwest = { workspace = true, features = ["json", "stream"] }
 tracing = { workspace = true }
+indicatif = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
+backon = { workspace = true, features = ["std", "tokio", "tokio-sleep"] }
 tokio = { workspace = true, features = ["rt", "fs"] }
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["std", "derive"] }
