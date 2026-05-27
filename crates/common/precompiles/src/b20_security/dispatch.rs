@@ -23,7 +23,8 @@ use crate::{
     ActivationFeature, ActivationRegistryStorage, B20Guards, B20PolicyType, B20TokenRole, Burnable,
     Configurable,
     IB20::{self, IB20Calls as C},
-    Mintable, Pausable, PermitArgs, Permittable, Policy, RoleManaged, Token, Transferable,
+    Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
+    PrecompileCallObserver, RoleManaged, Token, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
@@ -106,6 +107,19 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Security` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        self.dispatch_with_observer(ctx, calldata, NoopPrecompileCallObserver)
+    }
+
+    /// ABI-dispatches `calldata` and observes the decoded security B-20 operation.
+    pub fn dispatch_with_observer<O>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        observer: O,
+    ) -> PrecompileResult
+    where
+        O: PrecompileCallObserver,
+    {
         deduct_calldata_cost!(ctx, calldata);
 
         match self.accounting.is_initialized() {
@@ -116,7 +130,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             }
             Err(e) => return e.into_precompile_result(ctx.gas_used(), ctx.state_gas_used()),
         }
-        self.inner(ctx, calldata).into_precompile_result(
+        self.inner_with_observer(ctx, calldata, observer).into_precompile_result(
             ctx.gas_used(),
             ctx.state_gas_used(),
             |b| b,
@@ -129,7 +143,20 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
-        self.inner_with_privilege(ctx, calldata, false)
+        self.inner_with_observer(ctx, calldata, NoopPrecompileCallObserver)
+    }
+
+    /// Decodes calldata, observes the decoded operation, and executes the matching handler.
+    pub fn inner_with_observer<O>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        observer: O,
+    ) -> base_precompile_storage::Result<Bytes>
+    where
+        O: PrecompileCallObserver,
+    {
+        self.inner_with_privilege_and_observer(ctx, calldata, false, observer)
     }
 
     /// Decodes calldata and executes it with optional factory-init privilege.
@@ -139,17 +166,48 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         calldata: &[u8],
         privileged: bool,
     ) -> base_precompile_storage::Result<Bytes> {
+        self.inner_with_privilege_and_observer(
+            ctx,
+            calldata,
+            privileged,
+            NoopPrecompileCallObserver,
+        )
+    }
+
+    /// Decodes calldata, observes the decoded operation, and executes it with optional
+    /// factory-init privilege.
+    pub fn inner_with_privilege_and_observer<O>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        privileged: bool,
+        observer: O,
+    ) -> base_precompile_storage::Result<Bytes>
+    where
+        O: PrecompileCallObserver,
+    {
         ActivationRegistryStorage::new(ctx)
             .ensure_activated(ActivationFeature::B20Security.id())?;
 
         // Security-specific and overridden selectors are caught here first.
         if let Ok(call) = IB20Security::IB20SecurityCalls::abi_decode(calldata) {
-            return self.handle_security_call(ctx, call, privileged);
+            let label = call.as_label();
+            return observer.observe(label, || self.handle_security_call(ctx, call, privileged));
         }
 
         // Fall through to inherited IB20 selectors.
         let call = decode_precompile_call!(calldata, IB20::IB20Calls);
+        let label = call.as_label();
 
+        observer.observe(label, || self.handle_b20_call(ctx, call, privileged))
+    }
+
+    fn handle_b20_call(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        call: C,
+        privileged: bool,
+    ) -> base_precompile_storage::Result<Bytes> {
         let encoded: Bytes = match call {
             // --- Pure reads ---
             C::name(_) => self.accounting.name()?.abi_encode().into(),
