@@ -26,7 +26,7 @@ where
     /// Fetches blobs.
     pub blob_fetcher: B,
     /// The address of the batcher contract.
-    pub batcher_address: Address,
+    pub batch_inbox_address: Address,
     /// Data.
     pub data: Vec<BlobData>,
     /// Whether the source is open.
@@ -39,8 +39,8 @@ where
     B: BlobProvider + Send,
 {
     /// Creates a new blob source.
-    pub const fn new(chain_provider: F, blob_fetcher: B, batcher_address: Address) -> Self {
-        Self { chain_provider, blob_fetcher, batcher_address, data: Vec::new(), open: false }
+    pub const fn new(chain_provider: F, blob_fetcher: B, batch_inbox_address: Address) -> Self {
+        Self { chain_provider, blob_fetcher, batch_inbox_address, data: Vec::new(), open: false }
     }
 
     fn extract_blob_data(
@@ -68,7 +68,7 @@ where
             };
             let Some(to) = tx_kind else { continue };
 
-            if to != self.batcher_address {
+            if to != self.batch_inbox_address {
                 continue;
             }
             if tx.recover_signer().unwrap_or_default() != batcher_address {
@@ -318,7 +318,7 @@ pub(super) mod tests {
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
         let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
-        source.batcher_address = batch_inbox_address;
+        source.batch_inbox_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.blob_fetcher.should_error = true;
         source.chain_provider.insert_block_with_transactions(1, block_info, txs);
@@ -334,7 +334,7 @@ pub(super) mod tests {
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
         let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
-        source.batcher_address = batch_inbox_address;
+        source.batch_inbox_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.chain_provider.insert_block_with_transactions(1, block_info, txs);
         let hashes = [
@@ -404,7 +404,7 @@ pub(super) mod tests {
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
         let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
-        source.batcher_address = batch_inbox_address;
+        source.batch_inbox_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.blob_fetcher.should_return_extra_blob = true;
         source.chain_provider.insert_block_with_transactions(1, block_info, txs);
@@ -491,7 +491,7 @@ pub(super) mod tests {
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
         let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
-        source.batcher_address = batch_inbox_address;
+        source.batch_inbox_address = batch_inbox_address;
         source.chain_provider.insert_block_with_transactions(1, block_info, valid_blob_txs());
         source.blob_fetcher.should_return_not_found = true;
         let err = source.load_blobs(&BlockInfo::default(), batcher_address).await.unwrap_err();
@@ -510,7 +510,7 @@ pub(super) mod tests {
         let block_info = BlockInfo::default();
         let batcher_address = valid_blob_batcher_address();
         let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
-        source.batcher_address = batch_inbox_address;
+        source.batch_inbox_address = batch_inbox_address;
         source.chain_provider.insert_block_with_transactions(1, block_info, valid_blob_txs());
         source.blob_fetcher.should_return_not_found = true;
         let err = source.next(&BlockInfo::default(), batcher_address).await.unwrap_err();
@@ -540,7 +540,7 @@ pub(super) mod tests {
 
     /// Verifies that EIP-4844 blobs from non-batcher transactions are excluded from the pipeline.
     ///
-    /// When the configured batch inbox address (`source.batcher_address`) does not match the
+    /// When the configured batch inbox address (`source.batch_inbox_address`) does not match the
     /// transaction's `to` field, the entire transaction is skipped — no blob hashes are collected
     /// and `data` remains empty. This tests the exclusion path that previously incremented an
     /// index counter regardless of the sender.
@@ -550,7 +550,7 @@ pub(super) mod tests {
     /// 2. Correct batch inbox address → all 5 blobs from the batcher transaction are captured.
     #[test]
     fn test_extract_blob_data_non_batcher_blobs_excluded() {
-        // Case 1: source.batcher_address = Address::ZERO does not match the tx's batch inbox
+        // Case 1: source.batch_inbox_address = Address::ZERO does not match the tx's batch inbox
         // address from `ChainConfig::MAINNET`, so the transaction is skipped and no
         // blobs are captured.
         let source = default_test_blob_source(); // batch_inbox_address = Address::ZERO
@@ -562,7 +562,7 @@ pub(super) mod tests {
         // Case 2: correct batch inbox address → all 5 blobs from the batcher transaction captured.
         let mut source2 = default_test_blob_source();
         let batch_inbox_address = ChainConfig::MAINNET.batch_inbox_address;
-        source2.batcher_address = batch_inbox_address;
+        source2.batch_inbox_address = batch_inbox_address;
         let batcher_address = valid_blob_batcher_address();
         let (data, hashes) = source2.extract_blob_data(valid_blob_txs(), batcher_address);
         assert_eq!(data.len(), 5, "all 5 batcher blobs must be captured");

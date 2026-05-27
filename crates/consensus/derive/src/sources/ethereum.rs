@@ -99,8 +99,8 @@ mod tests {
     fn default_test_blob_source() -> BlobSource<TestChainProvider, TestBlobProvider> {
         let chain_provider = TestChainProvider::default();
         let blob_fetcher = TestBlobProvider::default();
-        let batcher_address = Address::default();
-        BlobSource::new(chain_provider, blob_fetcher, batcher_address)
+        let batch_inbox_address = Address::default();
+        BlobSource::new(chain_provider, blob_fetcher, batch_inbox_address)
     }
 
     #[tokio::test]
