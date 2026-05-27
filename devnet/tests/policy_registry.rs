@@ -59,19 +59,19 @@ async fn test_policy_registry_admin_handoff_and_frozen_policy() -> Result<()> {
     // Activate the PolicyRegistry feature.
     admin_client.activate_feature(ActivationFeature::PolicyRegistry.id()).await?;
 
-    // Create a new ALLOWLIST policy. In a fresh devnet write_builtins() claims counters 0
-    // (ALWAYS_ALLOW_ID) and 1 (ALWAYS_BLOCK_ID), so the first user-created policy always gets
-    // counter 2. The type discriminant for ALLOWLIST is 1.
-    let policy_id: u64 = (IPolicyRegistry::PolicyType::ALLOWLIST as u64) << 56 | 2;
+    // Simulate createPolicy to get the ID the registry will assign, then dispatch the real
+    // transaction. Using call() avoids relying on internal counter state or enum discriminant
+    // ordering.
+    let create_call = IPolicyRegistry::createPolicyCall {
+        admin: admin.address(),
+        policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
+    };
+    let output =
+        admin_client.call(PolicyRegistryStorage::ADDRESS, create_call.clone()).await?;
+    let policy_id = IPolicyRegistry::createPolicyCall::abi_decode_returns(output.as_ref())
+        .wrap_err("Failed to decode createPolicy return")?;
     admin_client
-        .send_call(
-            PolicyRegistryStorage::ADDRESS,
-            IPolicyRegistry::createPolicyCall {
-                admin: admin.address(),
-                policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
-            },
-            "createPolicy",
-        )
+        .send_call(PolicyRegistryStorage::ADDRESS, create_call, "createPolicy")
         .await?;
 
     // Stage the admin transfer to new_admin.
