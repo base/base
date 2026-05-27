@@ -198,7 +198,7 @@ where
             )
             .await?;
 
-        self.checkpoint_forkchoice_state_if_updated().await?;
+        self.checkpoint_forkchoice_state_if_updated().await;
 
         // Signal the derivation actor to reset.
         let signal = ResetSignal { l2_safe_head };
@@ -215,26 +215,44 @@ where
         Ok(())
     }
 
-    async fn checkpoint_forkchoice_state_if_updated(&mut self) -> Result<(), EngineError> {
+    async fn checkpoint_forkchoice_state_if_updated(&mut self) {
         let safe_head = self.engine.state().sync_state.safe_head();
         if safe_head != L2BlockInfo::default() && safe_head != self.last_safe_head_checkpointed {
-            self.checkpoint_writer
+            match self
+                .checkpoint_writer
                 .update_checkpoint(ForkchoiceCheckpointLabel::Safe, safe_head)
-                .await?;
-            self.last_safe_head_checkpointed = safe_head;
+                .await
+            {
+                Ok(()) => self.last_safe_head_checkpointed = safe_head,
+                Err(err) => warn!(
+                    target: "engine",
+                    error = %err,
+                    block_number = safe_head.block_info.number,
+                    block_hash = %safe_head.block_info.hash,
+                    "failed to persist safe head checkpoint; continuing without it"
+                ),
+            }
         }
 
         let finalized_head = self.engine.state().sync_state.finalized_head();
         if finalized_head != L2BlockInfo::default()
             && finalized_head != self.last_finalized_head_checkpointed
         {
-            self.checkpoint_writer
+            match self
+                .checkpoint_writer
                 .update_checkpoint(ForkchoiceCheckpointLabel::Finalized, finalized_head)
-                .await?;
-            self.last_finalized_head_checkpointed = finalized_head;
+                .await
+            {
+                Ok(()) => self.last_finalized_head_checkpointed = finalized_head,
+                Err(err) => warn!(
+                    target: "engine",
+                    error = %err,
+                    block_number = finalized_head.block_info.number,
+                    block_hash = %finalized_head.block_info.hash,
+                    "failed to persist finalized head checkpoint; continuing without it"
+                ),
+            }
         }
-
-        Ok(())
     }
 
     /// Handles an [`EngineTaskErrors`] according to its severity.
@@ -297,7 +315,7 @@ where
             }
         }
 
-        self.checkpoint_forkchoice_state_if_updated().await?;
+        self.checkpoint_forkchoice_state_if_updated().await;
         self.send_derivation_actor_safe_head_if_updated().await?;
 
         if !self.el_sync_complete && self.engine.state().el_sync_finished {
