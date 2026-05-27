@@ -33,6 +33,7 @@ async fn prove_block_without_session_id_returns_uuid() {
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
+            request: None,
         })
         .await
         .expect("ProveBlock should succeed without session_id");
@@ -57,6 +58,7 @@ async fn prove_block_with_session_id_uses_provided_id() {
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
+            request: None,
         })
         .await
         .expect("ProveBlock should succeed with session_id");
@@ -80,6 +82,7 @@ async fn prove_block_duplicate_session_id_is_idempotent() {
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
+            request: None,
         })
         .await
         .expect("first call should succeed");
@@ -94,6 +97,7 @@ async fn prove_block_duplicate_session_id_is_idempotent() {
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
+            request: None,
         })
         .await
         .expect("duplicate call should succeed (idempotent)");
@@ -120,6 +124,7 @@ async fn prove_block_invalid_session_id_returns_error() {
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
+            request: None,
         })
         .await
         .expect_err("should fail with invalid session_id");
@@ -147,6 +152,7 @@ async fn prove_block_invalid_proof_type_returns_error() {
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
+            request: None,
         })
         .await
         .expect_err("should fail with invalid proof_type");

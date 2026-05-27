@@ -140,6 +140,7 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
         prover_address: Some(format!("{:#x}", addr(0))),
         l1_head: Some(format!("{DEFAULT_L1_HEAD:#x}")),
         intermediate_root_interval: None,
+        request: None,
     };
 
     PendingProof::ready(
@@ -1609,6 +1610,7 @@ fn minimal_prove_request(session_id: &str) -> base_zk_client::ProveBlockRequest 
         prover_address: None,
         l1_head: None,
         intermediate_root_interval: None,
+        request: None,
     }
 }
 

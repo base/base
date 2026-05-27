@@ -217,6 +217,7 @@ impl SnarkE2e {
                 prover_address: Some("0x0000000000000000000000000000000000000000".to_string()),
                 l1_head: None,
                 intermediate_root_interval: None,
+                request: None,
             })
             .await?;
 

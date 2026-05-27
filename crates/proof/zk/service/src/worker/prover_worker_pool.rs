@@ -42,6 +42,7 @@ impl ProveBlockRequestParams {
             prover_address: self.prover_address,
             l1_head: self.l1_head,
             intermediate_root_interval: self.intermediate_root_interval,
+            request: None,
         };
 
         Ok((request, proof_type))

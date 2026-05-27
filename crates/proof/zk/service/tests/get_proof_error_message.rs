@@ -42,6 +42,7 @@ async fn get_proof_failed_returns_error_message() {
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
+            request: None,
         })
         .await
         .expect("ProveBlock should accept the request");

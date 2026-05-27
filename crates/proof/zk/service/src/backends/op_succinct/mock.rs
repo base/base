@@ -169,6 +169,7 @@ impl ProvingBackend for MockBackend {
                             intermediate_root_interval: proof_request
                                 .intermediate_root_interval
                                 .map(|v| v as u64),
+                            request: None,
                         };
                         self.create_mock_stark_proof(&request)
                     }
@@ -318,6 +319,7 @@ mod tests {
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
+            request: None,
         };
 
         let pv = MockBackend::build_mock_public_values(&request);

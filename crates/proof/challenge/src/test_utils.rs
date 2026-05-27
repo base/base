@@ -722,6 +722,7 @@ impl ZkProofProvider for MockZkProofProvider {
             receipt: state.receipt,
             error_message: state.error_message,
             execution_stats: None,
+            proof: None,
         })
     }
 }

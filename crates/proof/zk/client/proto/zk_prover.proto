@@ -6,6 +6,12 @@ service ProverService {
   rpc ProveBlock(ProveBlockRequest) returns (ProveBlockResponse);
   rpc GetProof(GetProofRequest) returns (GetProofResponse);
   rpc ListProofs(ListProofsRequest) returns (ListProofsResponse);
+  rpc SubmitProof(SubmitProofRequest) returns (SubmitProofResponse);
+  rpc GetProofJob(GetProofJobRequest) returns (GetProofJobResponse);
+  rpc ClaimProofJob(ClaimProofJobRequest) returns (ClaimProofJobResponse);
+  rpc HeartbeatProofJob(HeartbeatProofJobRequest) returns (HeartbeatProofJobResponse);
+  rpc CompleteProofJob(CompleteProofJobRequest) returns (CompleteProofJobResponse);
+  rpc FailProofJob(FailProofJobRequest) returns (FailProofJobResponse);
 }
 
 enum ProofType {
@@ -13,6 +19,7 @@ enum ProofType {
   reserved 1, 2;
   PROOF_TYPE_COMPRESSED = 3;
   PROOF_TYPE_SNARK_GROTH16 = 4;
+  PROOF_TYPE_TEE = 5;
 }
 
 message ProveBlockRequest {
@@ -32,10 +39,104 @@ message ProveBlockRequest {
   // When provided, bypasses SafeDB and sequence_window L1 head calculation.
   optional string l1_head = 7;
   optional uint64 intermediate_root_interval = 8;
+  // Structured request payload for new clients. ZK clients may continue using
+  // the legacy scalar fields above.
+  oneof request {
+    ZkProofRequest zk_request = 9;
+    TeeProofRequest tee_request = 10;
+  }
 }
 
 message ProveBlockResponse {
   string session_id = 1;
+}
+
+message SubmitProofRequest {
+  ProofRequest proof = 1;
+}
+
+message SubmitProofResponse {
+  string session_id = 1;
+}
+
+message ProofRequest {
+  // Optional: client-provided UUID for idempotent requests.
+  // If provided, a duplicate ID returns the existing job.
+  // If omitted, the server generates a UUID.
+  optional string session_id = 1;
+  ProofType proof_type = 2;
+  oneof request {
+    ZkProofRequest zk = 3;
+    TeeProofRequest tee = 4;
+  }
+}
+
+message ZkProofRequest {
+  // The start block number to prove from.
+  uint64 start_block_number = 1;
+  uint64 number_of_blocks_to_prove = 2;
+  optional uint64 sequence_window = 3;
+  // Ethereum address of the on-chain prover (required for SNARK_GROTH16 proofs).
+  optional string prover_address = 4;
+  // Optional: explicit L1 head hash (hex-encoded B256) to use for witness generation.
+  // When provided, bypasses SafeDB and sequence_window L1 head calculation.
+  optional string l1_head = 5;
+  optional uint64 intermediate_root_interval = 6;
+}
+
+message TeeProofRequest {
+  // 32-byte L1 head block hash.
+  bytes l1_head = 1;
+  // 32-byte agreed safe L2 block hash.
+  bytes agreed_l2_head_hash = 2;
+  // 32-byte agreed safe L2 output root.
+  bytes agreed_l2_output_root = 3;
+  // 32-byte claimed L2 output root to validate.
+  bytes claimed_l2_output_root = 4;
+  // L2 block number that the claimed output root commits to.
+  uint64 claimed_l2_block_number = 5;
+  // 20-byte address of the proposer that will submit the proof transaction on-chain.
+  bytes proposer = 6;
+  // Number of L2 blocks between intermediate output root checkpoints.
+  uint64 intermediate_block_interval = 7;
+  // Block number of the L1 head.
+  uint64 l1_head_number = 8;
+  // 32-byte keccak256 hash of the expected enclave PCR0 measurement.
+  bytes image_hash = 9;
+}
+
+message ProofResult {
+  ProofType proof_type = 1;
+  oneof result {
+    ZkProofResult zk = 2;
+    TeeProofResult tee = 3;
+  }
+}
+
+message ZkProofResult {
+  ReceiptType receipt_type = 1;
+  bytes receipt = 2;
+  optional ExecutionStats execution_stats = 3;
+}
+
+message TeeProofResult {
+  TeeProposal aggregate_proposal = 1;
+  repeated TeeProposal proposals = 2;
+}
+
+message TeeProposal {
+  // 32-byte output root hash.
+  bytes output_root = 1;
+  // 65-byte ECDSA signature (r || s || v).
+  bytes signature = 2;
+  // 32-byte L1 origin block hash.
+  bytes l1_origin_hash = 3;
+  uint64 l1_origin_number = 4;
+  uint64 l2_block_number = 5;
+  // 32-byte previous output root hash.
+  bytes prev_output_root = 6;
+  // 32-byte rollup config hash.
+  bytes config_hash = 7;
 }
 
 enum ReceiptType {
@@ -66,6 +167,7 @@ message GetProofResponse {
   bytes receipt = 2; // the actual zk proof, only populated if status is SUCCEEDED
   optional string error_message = 3; // populated when status is STATUS_FAILED
   optional ExecutionStats execution_stats = 4; // populated by dry-run backends
+  ProofResult proof = 5; // structured proof result, only populated if status is SUCCEEDED
 }
 
 message ExecutionStats {
@@ -102,4 +204,80 @@ message ListProofsResponse {
   repeated ProofSummary proofs = 1;
   // Total number of proofs matching the filter (for pagination).
   uint64 total_count = 2;
+}
+
+message ProofJob {
+  string session_id = 1;
+  ProofType proof_type = 2;
+  GetProofResponse.Status status = 3;
+  ProofRequest request = 4;
+  uint32 attempt = 5;
+  optional string lease_id = 6;
+  optional string worker_id = 7;
+  optional string lease_expires_at = 8;
+  string created_at = 9;
+  string updated_at = 10;
+  optional string completed_at = 11;
+  optional string error_message = 12;
+}
+
+message GetProofJobRequest {
+  string session_id = 1;
+}
+
+message GetProofJobResponse {
+  ProofJob job = 1;
+}
+
+message ClaimProofJobRequest {
+  // PROOF_TYPE_UNSPECIFIED allows any claimable proof type; TEE workers should
+  // set PROOF_TYPE_TEE.
+  ProofType proof_type = 1;
+  string worker_id = 2;
+  // The server atomically claims pending jobs or jobs with expired leases and
+  // extends the lease by this many seconds.
+  uint64 lease_duration_seconds = 3;
+}
+
+message ClaimProofJobResponse {
+  bool claimed = 1;
+  ProofJob job = 2;
+}
+
+message HeartbeatProofJobRequest {
+  string session_id = 1;
+  string lease_id = 2;
+  string worker_id = 3;
+  // Extends the lease by this many seconds. A zero value uses the server default.
+  uint64 lease_duration_seconds = 4;
+}
+
+message HeartbeatProofJobResponse {
+  bool accepted = 1;
+  ProofJob job = 2;
+}
+
+message CompleteProofJobRequest {
+  string session_id = 1;
+  string lease_id = 2;
+  string worker_id = 3;
+  ProofResult result = 4;
+}
+
+message CompleteProofJobResponse {
+  ProofJob job = 1;
+}
+
+message FailProofJobRequest {
+  string session_id = 1;
+  string lease_id = 2;
+  string worker_id = 3;
+  string error_message = 4;
+  // If true, the server may requeue the job when retry budget remains.
+  bool retryable = 5;
+}
+
+message FailProofJobResponse {
+  ProofJob job = 1;
+  bool will_retry = 2;
 }

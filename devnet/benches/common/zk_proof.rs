@@ -124,6 +124,7 @@ impl ZkProofBench {
                 prover_address: None,
                 l1_head: Some(l1_head.to_string()),
                 intermediate_root_interval: None,
+                request: None,
             })
             .await?;
 
