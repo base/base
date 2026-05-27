@@ -70,7 +70,7 @@ enum PairSwapDirection {
 }
 
 impl PairSwapDirection {
-    fn tokens(&self, setup: &RealTokenSetup) -> (Address, Address) {
+    const fn tokens(&self, setup: &RealTokenSetup) -> (Address, Address) {
         match self {
             Self::AcquirePairToken => (setup.weth, setup.pair_token.token),
             Self::RecoverWeth => (setup.pair_token.token, setup.weth),
