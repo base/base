@@ -107,8 +107,8 @@ where
     last_safe_head_checkpointed: L2BlockInfo,
     /// The last finalized head checkpoint written.
     last_finalized_head_checkpointed: L2BlockInfo,
-    /// The [`RollupConfig`] .
     /// A channel to use to relay the current unsafe head.
+    ///
     /// ## Note
     /// This is `Some` when the node is in sequencer mode, and `None` when the node is in validator
     /// mode.
