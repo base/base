@@ -515,6 +515,9 @@ impl L1HeaderCache {
         let mut newly_scheduled = Vec::new();
         let mut state = self.lock_state();
 
+        // Schedule a bounded lookbehind batch while holding the mutex once. This can briefly block
+        // ready-cache access, but the batch is capped at `L1_HEADER_PREFETCH_LOOKBEHIND_BLOCKS` and
+        // each step is an amortized O(1) collection operation.
         for block_number in block_numbers {
             if state.scheduled_blocks.contains(&block_number) {
                 continue;

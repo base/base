@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, sync::OnceLock};
 
 use base_proof_primitives::{ProofRequest, ProofResult, ProverBackend};
 use tracing::{Instrument, info, info_span};
@@ -15,7 +15,7 @@ use crate::{
 pub struct ProverService<B> {
     config: ProverConfig,
     backend: B,
-    l1_header_cache: L1HeaderCache,
+    l1_header_cache: OnceLock<L1HeaderCache>,
 }
 
 impl<B: ProverBackend> fmt::Debug for ProverService<B> {
@@ -26,8 +26,8 @@ impl<B: ProverBackend> fmt::Debug for ProverService<B> {
 
 impl<B: ProverBackend> ProverService<B> {
     /// Creates a new prover service.
-    pub fn new(config: ProverConfig, backend: B) -> Self {
-        Self { config, backend, l1_header_cache: L1HeaderCache::new() }
+    pub const fn new(config: ProverConfig, backend: B) -> Self {
+        Self { config, backend, l1_header_cache: OnceLock::new() }
     }
 
     /// Returns a reference to the prover configuration.
@@ -40,7 +40,7 @@ impl<B: ProverBackend> ProverService<B> {
     /// 1. Assembles [`HostConfig`] from static config + per-proof request
     /// 2. Creates a fresh [`Host`] (connects RPCs internally)
     /// 3. Creates a backend-specific oracle via [`ProverBackend::create_oracle`]
-    /// 4. Runs witness generation via [`Host::build_witness`]
+    /// 4. Runs witness generation with a shared L1 header cache
     /// 5. Hands the populated oracle to [`ProverBackend::prove`]
     pub async fn prove_block(&self, request: ProofRequest) -> Result<ProofResult, ProverError<B>> {
         Metrics::requests_total(Metrics::MODE_ONLINE).increment(1);
@@ -68,14 +68,14 @@ impl<B: ProverBackend> ProverService<B> {
     ) -> Result<ProofResult, ProverError<B>> {
         info!(l2_block = request.claimed_l2_block_number, "starting proof generation");
 
-        let host = Host::new_with_l1_header_cache(
-            HostConfig { request, prover: self.config.clone(), data_dir: None },
-            self.l1_header_cache.clone(),
-        );
+        let host = Host::new(HostConfig { request, prover: self.config.clone(), data_dir: None });
+        let l1_header_cache = self.l1_header_cache.get_or_init(L1HeaderCache::new).clone();
         let oracle = self.backend.create_oracle();
 
         let oracle = base_metrics::time!(Metrics::witness_build_duration_seconds(), {
-            host.build_witness(oracle).await.map_err(ProverError::Host)?
+            host.build_witness_with_l1_header_cache(oracle, l1_header_cache)
+                .await
+                .map_err(ProverError::Host)?
         });
 
         let result = base_metrics::time!(Metrics::prover_duration_seconds(), {

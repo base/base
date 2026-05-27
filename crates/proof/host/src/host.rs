@@ -29,21 +29,12 @@ use crate::{
 pub struct Host {
     /// The host configuration.
     pub config: HostConfig,
-    l1_header_cache: L1HeaderCache,
 }
 
 impl Host {
     /// Creates a new [`Host`] from the given [`HostConfig`].
-    pub fn new(config: HostConfig) -> Self {
-        Self::new_with_l1_header_cache(config, L1HeaderCache::new())
-    }
-
-    /// Creates a new [`Host`] with a shared L1 header cache.
-    pub(crate) const fn new_with_l1_header_cache(
-        config: HostConfig,
-        l1_header_cache: L1HeaderCache,
-    ) -> Self {
-        Self { config, l1_header_cache }
+    pub const fn new(config: HostConfig) -> Self {
+        Self { config }
     }
 
     /// Starts the preimage server, communicating with the client over the provided channels.
@@ -65,13 +56,9 @@ impl Host {
             })
         } else {
             let providers = self.create_providers().await?;
-            let backend = OnlineHostBackend::new_with_l1_header_cache(
-                self.config.clone(),
-                Arc::clone(&kv_store),
-                providers,
-                self.l1_header_cache.clone(),
-            )
-            .with_proactive_hint(HintType::L2PayloadWitness);
+            let backend =
+                OnlineHostBackend::new(self.config.clone(), Arc::clone(&kv_store), providers)
+                    .with_proactive_hint(HintType::L2PayloadWitness);
 
             task::spawn(async {
                 PreimageServer::new(
@@ -96,6 +83,17 @@ impl Host {
     where
         W: WitnessOracle + std::fmt::Debug + 'static,
     {
+        self.build_witness_with_l1_header_cache(witness, L1HeaderCache::new()).await
+    }
+
+    pub(crate) async fn build_witness_with_l1_header_cache<W>(
+        &self,
+        witness: W,
+        l1_header_cache: L1HeaderCache,
+    ) -> Result<W>
+    where
+        W: WitnessOracle + std::fmt::Debug + 'static,
+    {
         let witness = Arc::new(witness);
 
         let kv_store = self.create_key_value_store()?;
@@ -105,7 +103,7 @@ impl Host {
                 self.config.clone(),
                 Arc::clone(&kv_store),
                 providers,
-                self.l1_header_cache.clone(),
+                l1_header_cache,
             )
             .with_proactive_hint(HintType::L2PayloadWitness),
         );
