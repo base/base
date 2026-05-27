@@ -528,7 +528,8 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// Converts a token balance to shares: `balance * sharesToTokensRatio / WAD`.
     fn to_shares(&self, balance: U256) -> base_precompile_storage::Result<U256> {
         let ratio = self.accounting().shares_to_tokens_ratio()?;
-        Ok(balance.saturating_mul(ratio) / B20SecurityStorage::WAD)
+        let product = balance.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)?;
+        Ok(product / B20SecurityStorage::WAD)
     }
 
     /// Performs a security-specific redeem: share-based floor check, burn, security `Redeemed` event.
@@ -565,7 +566,9 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
         }
         let ratio = self.accounting().shares_to_tokens_ratio()?;
-        let shares = amount.saturating_mul(ratio) / B20SecurityStorage::WAD;
+        let shares =
+            amount.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)?
+                / B20SecurityStorage::WAD;
         let minimum = self.accounting().minimum_redeemable()?;
         if shares == U256::ZERO || shares < minimum {
             return Err(BasePrecompileError::revert(IB20Security::BelowMinimumRedeemable {
@@ -1405,5 +1408,42 @@ mod tests {
         let id = "2026-Q1-split";
         // "Returns true if id has previously been consumed by announce" → false for new id
         assert!(!token.accounting().is_announcement_id_used(id).unwrap());
+    }
+
+    // --- checked_mul overflow regression (BOP-161) ---
+
+    /// `to_shares` must return an arithmetic overflow panic rather than silently
+    /// saturating when `balance * sharesToTokensRatio` exceeds U256::MAX.
+    #[test]
+    fn to_shares_overflows_when_product_exceeds_u256_max() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        // Any balance > 1 overflows when multiplied by this ratio.
+        accounting.shares_to_tokens_ratio = U256::MAX / U256::from(2u64) + U256::ONE;
+        let token = TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(
+            token.to_shares(U256::from(2u64)).unwrap_err(),
+            BasePrecompileError::under_overflow()
+        );
+    }
+
+    /// `security_redeem` must return an arithmetic overflow panic rather than
+    /// silently saturating when `amount * sharesToTokensRatio` exceeds U256::MAX.
+    #[test]
+    fn security_redeem_overflows_when_product_exceeds_u256_max() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        // Any amount > 1 overflows when multiplied by this ratio.
+        accounting.shares_to_tokens_ratio = U256::MAX / U256::from(2u64) + U256::ONE;
+        accounting.balances.insert(ALICE, U256::from(2u64));
+        accounting.total_supply = U256::from(2u64);
+        // Open redemption so the policy gate does not block the call before the overflow.
+        accounting.policy_ids.insert(REDEEM_SENDER_POLICY, PolicyRegistryStorage::ALWAYS_ALLOW_ID);
+        let mut token =
+            TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(
+            token.security_redeem(ALICE, U256::from(2u64)).unwrap_err(),
+            BasePrecompileError::under_overflow()
+        );
     }
 }
