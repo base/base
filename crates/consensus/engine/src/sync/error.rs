@@ -6,6 +6,8 @@ use alloy_transport::{RpcError, TransportErrorKind};
 use base_protocol::FromBlockError;
 use thiserror::Error;
 
+use super::checkpoint::ForkchoiceCheckpointError;
+
 /// An error that can occur during the sync start process.
 #[derive(Error, Debug)]
 pub enum SyncStartError {
@@ -20,6 +22,9 @@ pub enum SyncStartError {
     /// A block could not be found.
     #[error("Block not found: {0}")]
     BlockNotFound(BlockId),
+    /// An error occurred while reading a forkchoice checkpoint.
+    #[error(transparent)]
+    ForkchoiceCheckpoint(#[from] ForkchoiceCheckpointError),
     /// Invalid L1 genesis hash.
     #[error("Invalid L1 genesis hash. Expected {0}, Got {1}")]
     InvalidL1GenesisHash(B256, B256),

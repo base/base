@@ -10,6 +10,12 @@ mod error;
 pub use error::SyncStartError;
 use tracing::info;
 
+mod checkpoint;
+pub use checkpoint::{
+    ForkchoiceCheckpointError, ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
+    NoopForkchoiceCheckpointReader,
+};
+
 use crate::EngineClient;
 
 /// Searches for the latest [`L2ForkchoiceState`] that we can use to start the sync process with.
@@ -28,7 +34,27 @@ pub async fn find_starting_forkchoice<EngineClient_: EngineClient>(
     cfg: &RollupConfig,
     engine_client: &EngineClient_,
 ) -> Result<L2ForkchoiceState, SyncStartError> {
-    let mut current_fc = L2ForkchoiceState::current(cfg, engine_client).await?;
+    find_starting_forkchoice_with_checkpoint_reader(
+        cfg,
+        engine_client,
+        &NoopForkchoiceCheckpointReader,
+    )
+    .await
+}
+
+/// Like [`find_starting_forkchoice`], but consults `checkpoint_reader` when reth-labeled blocks
+/// cannot be hydrated because their bodies have been pruned (see [`ForkchoiceCheckpointReader`]).
+pub async fn find_starting_forkchoice_with_checkpoint_reader<
+    EngineClient_: EngineClient,
+    CheckpointReader: ForkchoiceCheckpointReader + ?Sized,
+>(
+    cfg: &RollupConfig,
+    engine_client: &EngineClient_,
+    checkpoint_reader: &CheckpointReader,
+) -> Result<L2ForkchoiceState, SyncStartError> {
+    let mut current_fc =
+        L2ForkchoiceState::current_with_checkpoint_reader(cfg, engine_client, checkpoint_reader)
+            .await?;
     info!(
         target: "sync_start",
         unsafe = %current_fc.un_safe.block_info.number,
@@ -88,19 +114,29 @@ pub async fn find_starting_forkchoice<EngineClient_: EngineClient>(
         let is_behind_sequence_window =
             current_fc.un_safe.l1_origin.number.saturating_sub(cfg.seq_window_size)
                 > safe_cursor.l1_origin.number;
+        let is_labeled_safe = safe_cursor.block_info.hash == current_fc.safe.block_info.hash;
         let is_finalized = safe_cursor.block_info.hash == current_fc.finalized.block_info.hash;
         let is_genesis = safe_cursor.block_info.hash == cfg.genesis.l2.hash;
-        if is_behind_sequence_window || is_finalized || is_genesis {
+        if is_behind_sequence_window || is_labeled_safe || is_finalized || is_genesis {
             info!(
                 target: "sync_start",
                 l2_safe = %safe_cursor.block_info.number,
                 is_behind_sequence_window,
+                is_labeled_safe,
                 is_finalized,
                 is_genesis,
                 "Found suitable L2 safe block"
             );
             current_fc.safe = safe_cursor;
             break;
+        }
+        if safe_cursor.block_info.parent_hash == current_fc.safe.block_info.hash {
+            safe_cursor = current_fc.safe;
+            continue;
+        }
+        if safe_cursor.block_info.parent_hash == current_fc.finalized.block_info.hash {
+            safe_cursor = current_fc.finalized;
+            continue;
         }
         let block = engine_client
             .get_l2_block(safe_cursor.block_info.parent_hash.into())
