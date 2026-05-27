@@ -40,6 +40,10 @@ pub enum UploadStrategy {
     /// Always upload to the per-run date directory (mdbx, rocksdb, manifest).
     AlwaysUpload,
     /// Upload to `static_files/`, skipping if the remote object has the same size.
+    ///
+    /// Skip is size-based only — the BLAKE3 hashes computed in `snapshot.rs`
+    /// and recorded in `manifest.json` are not consulted here. See #2960 for
+    /// context on the asymmetry.
     DiffBySize,
 }
 
