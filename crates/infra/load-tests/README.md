@@ -21,6 +21,15 @@ Load testing and benchmarking framework for Base infrastructure.
 # Run load test against local devnet (uses Anvil Account #1)
 just load-test run
 
+# Deploy the devnet WETH/USDC harness and run real-token swaps
+just load-test real-token
+
+# Run real-token swaps against a network with predeployed contracts
+FUNDER_KEY=0x... just load-test real-token sepolia
+
+# Swap real-token balances back to WETH, unwrap, and drain ETH
+FUNDER_KEY=0x... just load-test real-token-recover sepolia
+
 # Run load test against sepolia (requires funded key)
 FUNDER_KEY=0x... just load-test run sepolia
 ```
@@ -70,8 +79,10 @@ fetching `eth_getBlockReceipts` for each observed block, so `query_rpc` must sup
 | Config | Target | Notes |
 |--------|--------|-------|
 | `devnet.yaml` | Local devnet | Uses Anvil Account #1 |
+| `real-token-devnet.yaml.template` | Local devnet | Rendered by `just load-test real-token` after deploying the devnet WETH/USDC harness |
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
-| `mainnet-state-weth-usdc-swaps.yaml` | Local/shadow Base mainnet state | Wraps funded ETH into WETH, acquires USDC, then runs random-direction Uniswap V3 and Aerodrome CL swaps |
+| `real-token-sepolia.yaml` | Base Sepolia | Uses predeployed WETH/USDC and the Uniswap V3 swap router; run with `just load-test real-token sepolia`; recover with `just load-test real-token-recover sepolia` |
+| `real-token-mainnet-snapshot.yaml` | Local/shadow Base mainnet snapshot | Wraps funded ETH into WETH, acquires USDC, then runs random-direction Uniswap V3 and Aerodrome CL swaps; run with `just load-test real-token mainnet-snapshot` |
 
 ### Contract Addresses
 
@@ -82,7 +93,6 @@ Contract addresses for swap testing and related tokens.
 | Contract | Address |
 |----------|---------|
 | Uniswap V3 Router | `0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4` |
-| Aerodrome CL `SwapRouter` | `0xD75e6a0C801F24ebb3125E360a5A064f6b9FEFaC` |
 | Load Test Token A (LTTA) | `0x15948C3043A980A8d980d4D615A5E4c9514B0D64` |
 | Load Test Token B (LTTB) | `0x4dc9ccF2C5A346c4032B648006B4774Ad2a021c4` |
 
@@ -96,9 +106,11 @@ Contract addresses for swap testing and related tokens.
 
 These tokens are deployed via `DeployTestTokenPair.s.sol` and use `FreeTransferERC20` which allows permissionless minting for load testing.
 
-#### Base Mainnet State (Chain ID: 8453)
+#### Base Mainnet Snapshot (Chain ID: 8453)
 
-The `mainnet-state-weth-usdc-swaps.yaml` example is for local or shadow-builder environments restored from Base mainnet state. Do not point it at public Base mainnet RPCs with a real key.
+The `real-token-mainnet-snapshot.yaml` example is for local or shadow-builder environments restored from a Base mainnet snapshot. Do not point it at public Base mainnet RPCs with a real key.
+
+The Sepolia real-token example is Uniswap-only. Aerodrome Slipstream's Sepolia router from `examples/sepolia.yaml` is deployed at `0xD75e6a0C801F24ebb3125E360a5A064f6b9FEFaC`, but its factory does not have a WETH/USDC pool, so adding an Aerodrome WETH/USDC leg will revert until that pool is deployed.
 
 | Contract | Address |
 |----------|---------|

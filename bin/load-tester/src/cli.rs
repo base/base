@@ -81,6 +81,10 @@ struct LoadArgs {
     #[arg(long)]
     drain_only: bool,
 
+    /// Recover real-token WETH/pair-token balances, then drain native ETH.
+    #[arg(long)]
+    recover_real_tokens: bool,
+
     /// Load test YAML configuration.
     #[arg(value_name = "CONFIG")]
     config: PathBuf,
@@ -122,6 +126,10 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
 
     let funding_key = TestConfig::funder_key()?;
 
+    if args.drain_only && args.recover_real_tokens {
+        bail!("--drain-only and --recover-real-tokens cannot be used together");
+    }
+
     // Drain-only mode: recover funds from a previous interrupted run.
     if args.drain_only {
         println!("=== Drain-Only Mode ===");
@@ -130,6 +138,34 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
             load_config.account_count
         );
         let runner = LoadRunner::new(load_config)?;
+        match runner.drain_accounts(funding_key).await {
+            Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
+            Err(e) => bail!("drain failed: {e}"),
+        }
+        return Ok(());
+    }
+
+    if args.recover_real_tokens {
+        let Some(real_token_setup) = real_token_setup.as_ref() else {
+            bail!("--recover-real-tokens requires real_token_setup in {}", config_path.display());
+        };
+
+        println!("=== Real-Token Recovery Mode ===");
+        println!(
+            "Re-deriving {} accounts from config and recovering real-token balances to funder...",
+            load_config.account_count
+        );
+        let runner = LoadRunner::new(load_config)?;
+        match runner.recover_real_tokens(real_token_setup).await {
+            Ok(summary) => {
+                println!(
+                    "Recovered {} pair-token raw units and unwrapped {} WETH.",
+                    summary.pair_token_swapped,
+                    format_ether(summary.weth_unwrapped)
+                );
+            }
+            Err(e) => bail!("real-token recovery failed: {e}"),
+        }
         match runner.drain_accounts(funding_key).await {
             Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
             Err(e) => bail!("drain failed: {e}"),

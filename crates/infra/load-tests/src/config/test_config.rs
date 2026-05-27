@@ -207,7 +207,7 @@ pub struct TestConfig {
     #[serde(default = "default_swap_token_amount")]
     pub swap_token_amount: String,
 
-    /// Optional real-token setup for mainnet-state bidirectional swap workloads.
+    /// Optional real-token setup for mainnet-snapshot bidirectional swap workloads.
     #[serde(default)]
     pub real_token_setup: Option<RealTokenSetupConfig>,
 }
