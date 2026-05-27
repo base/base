@@ -6,7 +6,9 @@ use std::{
 };
 
 use alloy_consensus::Header;
-use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB};
+use alloy_eips::{
+    BlockId, BlockNumberOrTag, eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB,
+};
 use alloy_network::Network;
 use alloy_primitives::{Address, B64, B256, Bytes, keccak256};
 use alloy_provider::Provider;
@@ -629,72 +631,49 @@ impl L1HeaderPrefetcher {
             Err(_) => return false,
         };
 
-        let block = match self
+        let raw_header: Bytes = match self
             .inner
             .providers
             .l1
-            .get_block_by_number(BlockNumberOrTag::Number(block_number))
+            .client()
+            .request("debug_getRawHeader", (BlockId::number(block_number),))
             .await
         {
-            Ok(Some(block)) => block,
-            Ok(None) => {
-                debug!(
-                    target: HOST_SERVER_TARGET,
-                    block_number,
-                    "l1 header prefetch skipped: block not found"
-                );
-                return false;
-            }
+            Ok(raw_header) => raw_header,
             Err(err) => {
                 debug!(
                     target: HOST_SERVER_TARGET,
                     block_number,
                     error = %err,
-                    "l1 header prefetch skipped: failed to fetch block"
+                    "l1 header prefetch skipped: failed to fetch raw header"
                 );
                 return false;
             }
         };
-
-        let hash = block.header.hash;
-        let raw_header: Bytes =
-            match self.inner.providers.l1.client().request("debug_getRawHeader", [hash]).await {
-                Ok(raw_header) => raw_header,
-                Err(err) => {
-                    debug!(
-                        target: HOST_SERVER_TARGET,
-                        block_number,
-                        hash = %hash,
-                        error = %err,
-                        "l1 header prefetch skipped: failed to fetch raw header"
-                    );
-                    return false;
-                }
-            };
         let decoded_header = match Header::decode(&mut raw_header.as_ref()) {
             Ok(header) => header,
             Err(err) => {
                 debug!(
                     target: HOST_SERVER_TARGET,
                     block_number,
-                    hash = %hash,
                     error = %err,
                     "l1 header prefetch skipped: failed to decode raw header"
                 );
                 return false;
             }
         };
-        let decoded_hash = decoded_header.hash_slow();
-        if decoded_hash != hash {
+        if decoded_header.number != block_number {
             warn!(
                 target: HOST_SERVER_TARGET,
                 block_number,
-                hash = %hash,
-                decoded_hash = %decoded_hash,
-                "l1 header prefetch skipped: raw header hash mismatch"
+                decoded_block_number = decoded_header.number,
+                "l1 header prefetch skipped: raw header number mismatch"
             );
             return false;
         }
+
+        let decoded_hash = decoded_header.hash_slow();
+        let hash = decoded_hash;
 
         if let Err(err) = insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header.clone()).await
         {
@@ -962,6 +941,13 @@ async fn handle_hint_inner(
                 (raw_header, true)
             };
             let header = Header::decode(&mut raw_header.as_ref())?;
+            let decoded_hash = header.hash_slow();
+            if decoded_hash != hash {
+                return Err(HostError::HeaderPreimageHashMismatch {
+                    expected: hash,
+                    actual: decoded_hash,
+                });
+            }
 
             insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header.clone()).await?;
             if should_mark_ready && let Some(prefetcher) = l1_header_prefetcher.as_ref() {
@@ -1358,12 +1344,16 @@ mod tests {
         }
     }
 
-    fn test_providers(l2: RootProvider<Base>) -> HostProviders {
-        let l1 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+    fn test_providers_with_l1(l1: RootProvider, l2: RootProvider<Base>) -> HostProviders {
         let beacon = OnlineBeaconClient::new_http("http://127.0.0.1:1".to_string());
         let blobs =
             OnlineBlobProvider { beacon_client: beacon, genesis_time: 0, slot_interval: 12 };
         HostProviders { l1, blobs, l2 }
+    }
+
+    fn test_providers(l2: RootProvider<Base>) -> HostProviders {
+        let l1 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        test_providers_with_l1(l1, l2)
     }
 
     fn test_prefetcher() -> PayloadWitnessPrefetcher {
@@ -1603,5 +1593,34 @@ mod tests {
             other => panic!("unexpected error: {other}"),
         }
         assert!(kv.read().await.get(PreimageKey::new_keccak256(*requested_hash).into()).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_l1_block_header_rejects_hash_mismatch() {
+        let requested_hash = TEST_HASH;
+        let header = Header { number: 7, parent_hash: B256::new([0x24; 32]), ..Default::default() };
+        let actual_hash = header.hash_slow();
+        let mut encoded_header = Vec::new();
+        header.encode(&mut encoded_header);
+        let raw_header = Bytes::from(encoded_header);
+        let asserter = Asserter::new();
+        asserter.push_success(&raw_header);
+        let l1 = provider_builder().connect_mocked_client(asserter);
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let providers = test_providers_with_l1(l1, l2);
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        let hint = HintType::L1BlockHeader.with_data(&[requested_hash.as_slice()]);
+
+        let err = handle_hint(hint, &test_cfg(), &providers, Arc::clone(&kv)).await.unwrap_err();
+
+        match err {
+            HostError::HeaderPreimageHashMismatch { expected, actual } => {
+                assert_eq!(expected, requested_hash);
+                assert_eq!(actual, actual_hash);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        assert!(kv.read().await.get(PreimageKey::new_keccak256(*requested_hash).into()).is_none());
+        assert!(kv.read().await.get(PreimageKey::new_keccak256(*actual_hash).into()).is_none());
     }
 }

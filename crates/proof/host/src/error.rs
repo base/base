@@ -76,6 +76,14 @@ pub enum HostError {
         /// Actual hash.
         actual: B256,
     },
+    /// Header preimage hash mismatch.
+    #[error("Header preimage hash mismatch: expected {expected}, actual {actual}")]
+    HeaderPreimageHashMismatch {
+        /// Expected hash.
+        expected: B256,
+        /// Actual hash.
+        actual: B256,
+    },
     /// Failed to serve a preimage request.
     #[error("Failed to serve preimage request: {0}")]
     PreimageRequestFailed(PreimageOracleError),
