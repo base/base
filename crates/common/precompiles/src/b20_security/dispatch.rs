@@ -1231,6 +1231,29 @@ mod tests {
         assert_eq!(token.accounting().total_supply().unwrap(), U256::ZERO);
     }
 
+    #[test]
+    fn batch_burn_supply_underflow_is_under_overflow_panic() {
+        // Regression: before BOP-160, saturating_sub silently clamped supply to zero.
+        // If an accounting bug left total_supply < balance, the correct behavior is to
+        // revert with an arithmetic under/overflow panic rather than zeroing the supply.
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
+        // Supply invariant violated: balance exceeds total supply.
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(50u64);
+
+        // amount=75 passes the balance check (100 >= 75) but underflows total_supply (50 - 75).
+        assert_eq!(
+            call_security(
+                &mut token,
+                ALICE,
+                batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::from(75u64)]),
+            )
+            .unwrap_err(),
+            BasePrecompileError::under_overflow()
+        );
+    }
+
     // --- redeem: InsufficientBalance / boundary / ratio math / event pair ---
 
     #[test]
@@ -1243,6 +1266,23 @@ mod tests {
         assert!(token.security_redeem(ALICE, U256::from(100u64)).is_err());
         // no state mutation on failure
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
+    }
+
+    #[test]
+    fn security_redeem_supply_underflow_is_under_overflow_panic() {
+        // Regression: before BOP-160, saturating_sub silently clamped supply to zero.
+        // If an accounting bug left total_supply < balance, the correct behavior is to
+        // revert with an arithmetic under/overflow panic rather than zeroing the supply.
+        let mut token = make_token();
+        // Supply invariant violated: balance exceeds total supply.
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(50u64);
+
+        // amount=75 passes the balance check (100 >= 75) but underflows total_supply (50 - 75).
+        assert_eq!(
+            token.security_redeem(ALICE, U256::from(75u64)).unwrap_err(),
+            BasePrecompileError::under_overflow()
+        );
     }
 
     #[test]
