@@ -672,8 +672,7 @@ impl L1HeaderPrefetcher {
             return false;
         }
 
-        let decoded_hash = decoded_header.hash_slow();
-        let hash = decoded_hash;
+        let hash = decoded_header.hash_slow();
 
         if let Err(err) = insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header.clone()).await
         {
@@ -1406,6 +1405,23 @@ mod tests {
 
         assert!(!prefetcher.take_ready(B256::new([0; 32]), digest));
         assert!(prefetcher.take_ready(B256::new([1; 32]), digest));
+    }
+
+    #[test]
+    fn test_l1_header_ready_cache_evicts_oldest_entry() {
+        let cache = L1HeaderCache::new();
+
+        for i in 0..=L1_HEADER_PREFETCH_MAX_READY as u64 {
+            let mut hash = [0; 32];
+            hash[24..].copy_from_slice(&i.to_be_bytes());
+            cache.mark_ready(B256::new(hash), Bytes::from(vec![i as u8]));
+        }
+
+        assert!(cache.get_ready(B256::ZERO).is_none());
+
+        let mut second_hash = [0; 32];
+        second_hash[24..].copy_from_slice(&1u64.to_be_bytes());
+        assert_eq!(cache.get_ready(B256::new(second_hash)), Some(Bytes::from(vec![1])));
     }
 
     #[test]
