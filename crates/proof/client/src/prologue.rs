@@ -22,8 +22,9 @@ pub trait ActivationAdminEvmFactory {
 }
 
 impl ActivationAdminEvmFactory for BaseEvmFactory {
-    fn with_activation_admin_address(self, activation_admin_address: Option<Address>) -> Self {
-        Self::new(activation_admin_address)
+    fn with_activation_admin_address(mut self, activation_admin_address: Option<Address>) -> Self {
+        self.set_activation_admin_address(activation_admin_address);
+        self
     }
 }
 
