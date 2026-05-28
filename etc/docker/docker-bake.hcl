@@ -14,13 +14,6 @@ variable "BASE_SUCCINCT_ELF_REQUIRE" {
   default = "1"
 }
 
-variable "REGISTRY_IMAGE" {
-  default = "ghcr.io/base/node-reth-dev"
-}
-
-variable "PLATFORM_PAIR" {
-  default = "linux-amd64"
-}
 
 group "default" {
   targets = ["client"]
@@ -64,7 +57,6 @@ target "_rust-service-common" {
     PROFILE = "${PROFILE}"
     RUST_VERSION = "${RUST_VERSION}"
   }
-  cache-from = ["type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}"]
 }
 
 target "client" {
@@ -83,20 +75,12 @@ target "builder" {
   inherits = ["_rust-service-common"]
   target = "builder"
   tags = ["base-builder:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-builder-${PLATFORM_PAIR}",
-  ]
 }
 
 target "consensus" {
   inherits = ["_rust-service-common"]
   target = "consensus"
   tags = ["base-consensus:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-consensus-${PLATFORM_PAIR}",
-  ]
 }
 
 target "proposer" {
@@ -127,10 +111,6 @@ target "batcher" {
   inherits = ["_rust-service-common"]
   target = "batcher"
   tags = ["base-batcher:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-batcher-${PLATFORM_PAIR}",
-  ]
 }
 
 target "zk-prover" {
@@ -141,8 +121,4 @@ target "zk-prover" {
     BASE_SUCCINCT_ELF_REQUIRE = "${BASE_SUCCINCT_ELF_REQUIRE}"
   }
   tags = ["base-prover-zk:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-zk-prover-${PLATFORM_PAIR}",
-  ]
 }
