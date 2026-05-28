@@ -49,9 +49,9 @@ governor.workspace = true
 nonzero_ext.workspace = true
 
 # Serialization
-chrono = { workspace = true, features = ["serde"] }
 serde_json.workspace = true
 serde = { workspace = true, features = ["derive"] }
+chrono = { workspace = true, features = ["serde"] }
 bincode = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "serde"] }
 
