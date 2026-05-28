@@ -181,7 +181,7 @@ impl PayloadAttributesBuilder<BasePayloadBuilderAttributes<BaseTxEnvelope>>
         };
 
         BasePayloadBuilderAttributes::try_new(parent.hash(), attributes, 3)
-            .expect("static dev payload attributes must  decode")
+            .expect("static dev payload attributes must decode")
     }
 }
 
