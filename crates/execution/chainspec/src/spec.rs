@@ -1,5 +1,4 @@
 use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
-use core::fmt;
 
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, Header, proofs::storage_root_unhashed};
@@ -21,42 +20,17 @@ use reth_primitives_traits::SealedHeader;
 use crate::{ChainUpgradesExt, compute_jovian_base_fee, decode_holocene_base_fee};
 
 /// Error constructing a [`BaseChainSpec`].
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum BaseChainSpecError {
     /// Genesis JSON failed to deserialize.
-    GenesisJson(serde_json::Error),
+    #[error("invalid genesis JSON: {0}")]
+    GenesisJson(#[from] serde_json::Error),
     /// Beryl is scheduled but no activation registry admin address is configured.
+    #[error("missing activation admin address for Beryl-enabled chain ID: {chain_id}")]
     MissingActivationAdminAddress {
         /// Chain ID whose Beryl-enabled configuration lacks an activation admin address.
         chain_id: u64,
     },
-}
-
-impl fmt::Display for BaseChainSpecError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::GenesisJson(error) => write!(f, "invalid genesis JSON: {error}"),
-            Self::MissingActivationAdminAddress { chain_id } => {
-                write!(f, "missing activation admin address for Beryl-enabled chain ID: {chain_id}")
-            }
-        }
-    }
-}
-
-impl From<serde_json::Error> for BaseChainSpecError {
-    fn from(error: serde_json::Error) -> Self {
-        Self::GenesisJson(error)
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for BaseChainSpecError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::GenesisJson(error) => Some(error),
-            Self::MissingActivationAdminAddress { .. } => None,
-        }
-    }
 }
 
 /// Genesis info extracted from a Base genesis config.

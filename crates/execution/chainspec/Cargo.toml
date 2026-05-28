@@ -36,6 +36,7 @@ serde_json.workspace = true
 serde = { workspace = true, optional = true }
 
 # misc
+thiserror.workspace = true
 derive_more.workspace = true
 base-common-consensus.workspace = true
 
@@ -60,6 +61,7 @@ std = [
 	"reth-primitives-traits/std",
 	"serde?/std",
 	"serde_json/std",
+	"thiserror/std",
 ]
 serde = [
 	"alloy-chains/serde",
