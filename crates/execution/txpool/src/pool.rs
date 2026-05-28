@@ -219,23 +219,25 @@ where
         let mut sidecar = self.listeners.write().subscribe_all();
         let (tx, rx) = mpsc::channel(SIDE_CAR_EVENT_CHANNEL_SIZE);
         spawn(async move {
-            loop {
+            let mut protocol_open = true;
+            let mut sidecar_open = true;
+            while protocol_open || sidecar_open {
                 tokio::select! {
-                    event = protocol.next() => match event {
+                    event = protocol.next(), if protocol_open => match event {
                         Some(event) => {
                             if tx.send(event).await.is_err() {
                                 break;
                             }
                         }
-                        None => break,
+                        None => protocol_open = false,
                     },
-                    event = sidecar.next() => match event {
+                    event = sidecar.next(), if sidecar_open => match event {
                         Some(event) => {
                             if tx.send(event).await.is_err() {
                                 break;
                             }
                         }
-                        None => break,
+                        None => sidecar_open = false,
                     }
                 }
             }
@@ -284,8 +286,12 @@ where
             return self.protocol_pool.add_transaction_and_subscribe(origin, transaction).await;
         }
 
-        let events = self.listeners.write().subscribe_hash(*transaction.hash());
-        self.add_sidecar_transaction(origin, transaction).await?;
+        let hash = *transaction.hash();
+        let (events, listener) = self.listeners.write().subscribe_hash(hash);
+        if let Err(error) = self.add_sidecar_transaction(origin, transaction).await {
+            self.listeners.write().unsubscribe_hash_listener(&hash, &listener);
+            return Err(error);
+        }
         Ok(events)
     }
 
@@ -329,7 +335,7 @@ where
             self.nonce_pool
                 .read()
                 .contains(&tx_hash)
-                .then(|| self.listeners.write().subscribe_hash(tx_hash))
+                .then(|| self.listeners.write().subscribe_hash(tx_hash).0)
         })
     }
 
@@ -587,7 +593,12 @@ where
     }
 
     fn on_propagated(&self, txs: PropagatedTransactions) {
-        self.protocol_pool.on_propagated(txs)
+        let nonce_pool = self.nonce_pool.read();
+        let protocol_txs = PropagatedTransactions(
+            txs.0.into_iter().filter(|(hash, _)| !nonce_pool.contains(hash)).collect(),
+        );
+        drop(nonce_pool);
+        self.protocol_pool.on_propagated(protocol_txs)
     }
 
     fn get_transactions_by_sender(
@@ -820,10 +831,27 @@ impl<T: BasePooledTx> Default for SidecarListeners<T> {
 }
 
 impl<T: BasePooledTx> SidecarListeners<T> {
-    fn subscribe_hash(&mut self, tx_hash: TxHash) -> TransactionEvents {
+    fn subscribe_hash(
+        &mut self,
+        tx_hash: TxHash,
+    ) -> (TransactionEvents, mpsc::UnboundedSender<TransactionEvent>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        self.by_hash.entry(tx_hash).or_default().push(tx);
-        TransactionEvents::new(tx_hash, rx)
+        self.by_hash.entry(tx_hash).or_default().push(tx.clone());
+        (TransactionEvents::new(tx_hash, rx), tx)
+    }
+
+    fn unsubscribe_hash_listener(
+        &mut self,
+        tx_hash: &TxHash,
+        listener: &mpsc::UnboundedSender<TransactionEvent>,
+    ) {
+        let Some(listeners) = self.by_hash.get_mut(tx_hash) else {
+            return;
+        };
+        listeners.retain(|candidate| !candidate.same_channel(listener));
+        if listeners.is_empty() {
+            self.by_hash.remove(tx_hash);
+        }
     }
 
     fn subscribe_all(&mut self) -> AllTransactionsEvents<T> {
@@ -930,23 +958,25 @@ fn merge_receivers<T: Send + 'static>(
 ) -> mpsc::Receiver<T> {
     let (tx, rx) = mpsc::channel(SIDE_CAR_EVENT_CHANNEL_SIZE);
     spawn(async move {
-        loop {
+        let mut left_open = true;
+        let mut right_open = true;
+        while left_open || right_open {
             tokio::select! {
-                item = left.recv() => match item {
+                item = left.recv(), if left_open => match item {
                     Some(item) => {
                         if tx.send(item).await.is_err() {
                             break;
                         }
                     }
-                    None => break,
+                    None => left_open = false,
                 },
-                item = right.recv() => match item {
+                item = right.recv(), if right_open => match item {
                     Some(item) => {
                         if tx.send(item).await.is_err() {
                             break;
                         }
                     }
-                    None => break,
+                    None => right_open = false,
                 }
             }
         }

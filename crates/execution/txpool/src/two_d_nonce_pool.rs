@@ -205,10 +205,9 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         }
 
         let sender = transaction.sender();
-        let nonce_key = transaction
-            .transaction
-            .eip8130_nonce_channel_key()
-            .expect("2D nonce pool only accepts channelized EIP-8130 transactions");
+        let nonce_key = transaction.transaction.eip8130_nonce_channel_key().ok_or_else(|| {
+            PoolError::other(hash, "2D nonce pool only accepts channelized EIP-8130 transactions")
+        })?;
         debug_assert!(nonce_key != U256::ZERO && nonce_key != Eip8130Constants::NONCE_KEY_MAX);
 
         let lane_id = (sender, nonce_key);
@@ -266,7 +265,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut removed = Vec::new();
         for hash in hashes {
-            if let Some(transaction) = self.remove_hash(hash, false) {
+            if let Some(transaction) = self.remove_hash(*hash, false) {
                 removed.push(transaction);
             }
         }
@@ -300,7 +299,15 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Prunes mined transactions and advances the matching lane heads.
     pub(crate) fn prune_mined(&mut self, hashes: &[TxHash]) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut removed = Vec::new();
-        for hash in hashes {
+        let mut ordered_hashes: Vec<_> = hashes
+            .iter()
+            .filter_map(|hash| {
+                self.index.get(hash).map(|(lane_id, nonce)| (lane_id.0, lane_id.1, *nonce, *hash))
+            })
+            .collect();
+        ordered_hashes.sort_unstable();
+
+        for (_, _, _, hash) in ordered_hashes {
             if let Some(transaction) = self.remove_hash(hash, true) {
                 removed.push(transaction);
             }
@@ -325,10 +332,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
     fn remove_hash(
         &mut self,
-        hash: &TxHash,
+        hash: TxHash,
         advance_lane: bool,
     ) -> Option<Arc<ValidPoolTransaction<T>>> {
-        let ((sender, nonce_key), nonce) = self.index.remove(hash)?;
+        let ((sender, nonce_key), nonce) = self.index.remove(&hash)?;
         let lane_id = (sender, nonce_key);
         let transaction = {
             let lane = self.lanes.get_mut(&lane_id)?;
@@ -342,7 +349,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         if self.lanes.get(&lane_id).is_some_and(|lane| lane.transactions.is_empty()) {
             self.lanes.remove(&lane_id);
         }
-        self.hashes.remove(hash);
+        self.hashes.remove(&hash);
         Some(transaction)
     }
 }
@@ -586,5 +593,42 @@ mod tests {
             pool.queued_transactions().into_iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
             vec![gap_hash]
         );
+    }
+
+    #[test]
+    fn pruning_mined_sorts_hashes_within_lane() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+
+        let first = valid_pool_transaction(signed_channel_tx(&signer, U256::from(11), 0, 1_000));
+        let first_hash = *first.hash();
+        let second = valid_pool_transaction(signed_channel_tx(&signer, U256::from(11), 1, 900));
+        let second_hash = *second.hash();
+        let third = valid_pool_transaction(signed_channel_tx(&signer, U256::from(11), 2, 800));
+        let third_hash = *third.hash();
+        let queued = valid_pool_transaction(signed_channel_tx(&signer, U256::from(11), 4, 700));
+
+        pool.insert_validated(first).unwrap();
+        pool.insert_validated(second).unwrap();
+        pool.insert_validated(third).unwrap();
+        pool.insert_validated(queued).unwrap();
+
+        pool.prune_mined(&[third_hash, first_hash, second_hash]);
+
+        let replacement =
+            valid_pool_transaction(signed_channel_tx(&signer, U256::from(11), 2, 850));
+        let error = pool.insert_validated(replacement).unwrap_err();
+        assert!(matches!(error.kind, PoolErrorKind::InvalidTransaction(_)));
+    }
+
+    #[test]
+    fn inserting_non_channelized_transaction_returns_error() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let non_channelized =
+            valid_pool_transaction(signed_channel_tx(&signer, U256::ZERO, 0, 1_000));
+
+        let error = pool.insert_validated(non_channelized).unwrap_err();
+        assert!(matches!(error.kind, PoolErrorKind::Other(_)));
     }
 }
