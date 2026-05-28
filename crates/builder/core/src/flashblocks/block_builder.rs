@@ -112,9 +112,10 @@ impl<'a, DB> FlashblocksBlockBuilder<'a, DB> {
             .builder_for_next_block(self.state, ctx.parent(), ctx.block_env_attributes.clone())
             .map_err(PayloadBuilderError::other)?;
         if let Some(sender) = &self.state_root_updates {
-            // Divergence from upstream reth is only the extra sparse-trie streaming hook. The
-            // payload job owns the parallel state-root task, but flashblocks must forward
-            // pre-execution state changes as well as transaction changes.
+            // Install a plain streaming hook instead of `StateRootHandle::state_hook()`. This
+            // temporary reth builder is dropped after pre-execution work, but the sparse-trie stream
+            // must stay open for the block's actual transactions: typically flashblock batches, plus
+            // any transactions supplied by the FCU.
             let sender = sender.clone();
             builder.executor_mut().set_state_hook(Some(Box::new(
                 move |source: StateChangeSource, state: &EvmState| {
