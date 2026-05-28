@@ -43,16 +43,21 @@ impl<R: OutboxReader, Q: TaskQueue> OutboxProcessor<R, Q> {
             tokio::select! {
                 biased;
                 _ = cancel.cancelled() => {
-                    info!("stopping outbox processor");
                     break;
                 }
-                _ = interval.tick() => {
-                    if let Err(e) = self.process_batch().await {
-                        error!(error = %e, "failed to process outbox batch");
-                    }
-                }
+                _ = interval.tick() => {}
+            }
+
+            if cancel.is_cancelled() {
+                break;
+            }
+
+            if let Err(e) = self.process_batch().await {
+                error!(error = %e, "failed to process outbox batch");
             }
         }
+
+        info!("stopping outbox processor");
     }
 
     /// Poll and submit one batch of outbox tasks.
