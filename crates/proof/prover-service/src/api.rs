@@ -1,8 +1,6 @@
-// This module requires at least one of the RPC features to compile correctly.
-// The `lib.rs` cfg gate normally ensures this, but we add an explicit guard for
-// safety in case the module is ever included directly.
-#[cfg(not(any(feature = "rpc-server", feature = "rpc-client")))]
-compile_error!("this module requires the `rpc-server` or `rpc-client` feature");
+//! JSON-RPC trait definition for the prover service API.
+//!
+//! This module is gated behind `rpc-server` or `rpc-client` in `lib.rs`.
 
 use jsonrpsee::proc_macros::rpc;
 
