@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.5"
+BASEUP_INSTALLER_VERSION="0.1.6"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -20,7 +20,10 @@ BASEUP_RELEASE_GPG_KEY_URL="${BASEUP_RELEASE_GPG_KEY_URL:-}"
 BASEUP_GPG_HOME=""
 
 DEFAULT_BINS=("base" "base-reth-node" "base-consensus" "basectl")
+SUPPORTED_TARGETS=("x86_64-unknown-linux-gnu" "aarch64-unknown-linux-gnu" "aarch64-apple-darwin")
 SELECTED_BINS=()
+SELECTED_TARGETS=()
+COMMAND="install"
 VERSION=""
 VERSION_EXPLICIT=0
 UNSAFE_SKIP_VERIFY=0
@@ -452,7 +455,7 @@ cache_installer_version() {
     local remote_version="$2"
 
     ensure_dir "$BASEUP_HOME" "BASEUP_HOME"
-    printf '%s\n%s\n' "$checked_at" "$remote_version" > "$UPDATE_CHECK_CACHE_FILE" 2>/dev/null || true
+    { printf '%s\n%s\n' "$checked_at" "$remote_version" > "$UPDATE_CHECK_CACHE_FILE"; } 2>/dev/null || true
 }
 
 check_installer_up_to_date() {
@@ -572,6 +575,26 @@ add_selected_bin() {
 
     if ! array_contains "$normalized" "${SELECTED_BINS[@]}"; then
         SELECTED_BINS+=("$normalized")
+    fi
+}
+
+add_selected_target() {
+    local target="$1"
+
+    if [[ "$target" == "all" ]]; then
+        local supported_target
+        for supported_target in "${SUPPORTED_TARGETS[@]}"; do
+            add_selected_target "$supported_target"
+        done
+        return
+    fi
+
+    if ! array_contains "$target" "${SUPPORTED_TARGETS[@]}"; then
+        error "Unknown target '$target'. Valid values: ${SUPPORTED_TARGETS[*]}, all."
+    fi
+
+    if ! array_contains "$target" "${SELECTED_TARGETS[@]}"; then
+        SELECTED_TARGETS+=("$target")
     fi
 }
 
@@ -717,14 +740,51 @@ install_binary() {
     fi
 }
 
+verify_release_artifact() {
+    local binary_name="$1"
+    local version="$2"
+    local target="$3"
+    local archive_name
+    local archive_path
+    local checksum_path
+    local signature_path
+    local expected_checksum
+    local actual_checksum
+
+    archive_name="${binary_name}-${version}-${target}.tar.gz"
+    archive_path="$MAIN_TMP_DIR/$archive_name"
+    checksum_path="${archive_path}.sha256"
+    signature_path="${archive_path}.asc"
+
+    download_file "$version" "$archive_name" "$MAIN_TMP_DIR"
+    download_file "$version" "${archive_name}.sha256" "$MAIN_TMP_DIR"
+    if [[ "$UNSAFE_SKIP_VERIFY" -eq 0 ]]; then
+        download_file "$version" "${archive_name}.asc" "$MAIN_TMP_DIR"
+    fi
+
+    expected_checksum="$(head -n 1 "$checksum_path" | awk '{print $1}')"
+    actual_checksum="$(compute_sha256 "$archive_path")"
+
+    if [[ "$expected_checksum" != "$actual_checksum" ]]; then
+        error "Checksum verification failed for $archive_name"
+    fi
+
+    info "Checksum verified for $archive_name"
+    verify_gpg_signature "$archive_name" "$archive_path" "$signature_path"
+    verify_attestation "$archive_name" "$archive_path"
+}
+
 usage() {
     cat <<'EOF'
-Usage: baseup [OPTIONS]
+Usage:
+  baseup [OPTIONS]
+  baseup verify-release [OPTIONS]
 
 Options:
   -v, --version         Print the baseup installer version
   -i, --install <VER>   Install a specific release tag (for example: v0.6.0)
   -b, --bin <NAME>      Install only one binary (base, base-reth-node, base-consensus, basectl, all)
+  -t, --target <TRIPLE> Verify a release target triple (verify-release only; repeatable; default: all)
   -U, --update          Update baseup itself
       --unsafe-skip-verify
                          Skip GPG signature and SLSA attestation verification
@@ -736,10 +796,21 @@ Examples:
   baseup --bin base
   baseup --bin base-reth-node
   baseup --bin basectl
+  baseup verify-release
+  baseup verify-release -i v1.0.0 --target x86_64-unknown-linux-gnu
   baseup --update
 EOF
     exit 0
 }
+
+if [[ $# -gt 0 ]]; then
+    case "$1" in
+        verify | verify-release)
+            COMMAND="verify-release"
+            shift
+            ;;
+    esac
+fi
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -755,6 +826,11 @@ while [[ $# -gt 0 ]]; do
         -b | --bin)
             [[ $# -ge 2 ]] || error "Missing value for $1"
             add_selected_bin "$2"
+            shift 2
+            ;;
+        -t | --target)
+            [[ $# -ge 2 ]] || error "Missing value for $1"
+            add_selected_target "$2"
             shift 2
             ;;
         -U | --update)
@@ -774,13 +850,27 @@ while [[ $# -gt 0 ]]; do
 done
 
 main() {
-    if [[ "$VERSION_EXPLICIT" -eq 0 ]]; then
+    if [[ "$COMMAND" == "install" && ${#SELECTED_TARGETS[@]} -gt 0 ]]; then
+        error "--target is only supported by verify-release."
+    fi
+
+    if [[ "$COMMAND" == "verify-release" && "$UNSAFE_SKIP_VERIFY" -eq 1 ]]; then
+        error "verify-release does not support --unsafe-skip-verify."
+    fi
+
+    if [[ "$COMMAND" == "install" && "$VERSION_EXPLICIT" -eq 0 ]]; then
         check_installer_up_to_date
     fi
 
-    info "Installing Base release binaries..."
+    if [[ "$COMMAND" == "verify-release" ]]; then
+        info "Verifying Base release artifacts..."
+    else
+        info "Installing Base release binaries..."
+    fi
 
-    ensure_dir "$BIN_DIR" "BASE_BIN_DIR"
+    if [[ "$COMMAND" == "install" ]]; then
+        ensure_dir "$BIN_DIR" "BASE_BIN_DIR"
+    fi
 
     local platform
     local arch
@@ -792,59 +882,63 @@ main() {
 
     info "Detected platform: $platform ($arch)"
 
+    if [[ "$COMMAND" == "verify-release" ]]; then
+        if [[ ${#SELECTED_TARGETS[@]} -eq 0 ]]; then
+            SELECTED_TARGETS=("${SUPPORTED_TARGETS[@]}")
+        fi
+    else
+        SELECTED_TARGETS=("$target")
+    fi
+
     if [[ -z "$VERSION" ]]; then
         info "Fetching the latest release version..."
         VERSION="$(get_latest_version)"
     fi
 
-    info "Installing release $VERSION"
+    if [[ "$COMMAND" == "verify-release" ]]; then
+        info "Verifying release $VERSION"
+    else
+        info "Installing release $VERSION"
+    fi
 
     MAIN_TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t baseup)"
 
     local binary_name
-    for binary_name in "${SELECTED_BINS[@]}"; do
-        local archive_name
-        local archive_path
-        local checksum_path
-        local signature_path
-        local expected_checksum
-        local actual_checksum
-        local extract_dir
-        local binary_path
+    local selected_target
+    for selected_target in "${SELECTED_TARGETS[@]}"; do
+        for binary_name in "${SELECTED_BINS[@]}"; do
+            local archive_name
+            local archive_path
+            local extract_dir
+            local binary_path
 
-        archive_name="${binary_name}-${VERSION}-${target}.tar.gz"
-        archive_path="$MAIN_TMP_DIR/$archive_name"
-        checksum_path="${archive_path}.sha256"
-        signature_path="${archive_path}.asc"
-        extract_dir="$MAIN_TMP_DIR/${binary_name}-extract"
+            verify_release_artifact "$binary_name" "$VERSION" "$selected_target"
 
-        download_file "$VERSION" "$archive_name" "$MAIN_TMP_DIR"
-        download_file "$VERSION" "${archive_name}.sha256" "$MAIN_TMP_DIR"
-        if [[ "$UNSAFE_SKIP_VERIFY" -eq 0 ]]; then
-            download_file "$VERSION" "${archive_name}.asc" "$MAIN_TMP_DIR"
-        fi
+            if [[ "$COMMAND" == "verify-release" ]]; then
+                continue
+            fi
 
-        expected_checksum="$(head -n 1 "$checksum_path" | awk '{print $1}')"
-        actual_checksum="$(compute_sha256 "$archive_path")"
+            archive_name="${binary_name}-${VERSION}-${selected_target}.tar.gz"
+            archive_path="$MAIN_TMP_DIR/$archive_name"
+            extract_dir="$MAIN_TMP_DIR/${binary_name}-extract"
 
-        if [[ "$expected_checksum" != "$actual_checksum" ]]; then
-            error "Checksum verification failed for $archive_name"
-        fi
+            mkdir -p "$extract_dir"
+            extract_archive "$archive_path" "$extract_dir"
+            binary_path="$(find "$extract_dir" -name "$binary_name" -type f -not -type l | head -n 1)"
 
-        info "Checksum verified for $archive_name"
-        verify_gpg_signature "$archive_name" "$archive_path" "$signature_path"
-        verify_attestation "$archive_name" "$archive_path"
+            if [[ -z "$binary_path" ]]; then
+                error "Could not find $binary_name in $archive_name"
+            fi
 
-        mkdir -p "$extract_dir"
-        extract_archive "$archive_path" "$extract_dir"
-        binary_path="$(find "$extract_dir" -name "$binary_name" -type f -not -type l | head -n 1)"
-
-        if [[ -z "$binary_path" ]]; then
-            error "Could not find $binary_name in $archive_name"
-        fi
-
-        install_binary "$binary_path" "$binary_name"
+            install_binary "$binary_path" "$binary_name"
+        done
     done
+
+    if [[ "$COMMAND" == "verify-release" ]]; then
+        echo ""
+        info "Verified release $VERSION successfully"
+        return
+    fi
 
     echo ""
     info "Installed release $VERSION successfully"
