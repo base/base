@@ -186,6 +186,12 @@ pub trait RoleManaged: Token {
             self.ensure_role_admin_mutations_available(caller)?;
             self.ensure_role(caller, self.role_admin(role)?)?;
         }
+        if role == Self::default_admin_role()
+            && self.accounting().has_role(role, account)?
+            && self.accounting().role_member_count(role)? == U256::ONE
+        {
+            return Err(BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
+        }
         self.revoke_role_unchecked(role, account, caller)
     }
 
@@ -314,6 +320,36 @@ mod tests {
         assert_eq!(
             token.renounce_role(ADMIN, B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap_err(),
             BasePrecompileError::revert(IB20::LastAdminCannotRenounce {})
+        );
+    }
+
+    #[test]
+    fn revoke_role_rejects_final_default_admin() {
+        let mut token = token_with_default_admin();
+
+        assert_eq!(
+            token.revoke_role(ADMIN, B20TokenRole::DefaultAdmin.id(), ADMIN, false).unwrap_err(),
+            BasePrecompileError::revert(IB20::LastAdminCannotRenounce {})
+        );
+        assert!(token.has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
+        assert_eq!(
+            token.accounting().role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
+            U256::ONE
+        );
+    }
+
+    #[test]
+    fn revoke_role_allows_non_final_default_admin() {
+        let mut token = token_with_default_admin();
+        token.grant_role(ADMIN, B20TokenRole::DefaultAdmin.id(), ALICE, false).unwrap();
+
+        token.revoke_role(ADMIN, B20TokenRole::DefaultAdmin.id(), ALICE, false).unwrap();
+
+        assert!(token.has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
+        assert!(!token.has_role(B20TokenRole::DefaultAdmin.id(), ALICE).unwrap());
+        assert_eq!(
+            token.accounting().role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
+            U256::ONE
         );
     }
 
