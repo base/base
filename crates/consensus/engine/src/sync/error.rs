@@ -64,4 +64,14 @@ pub enum SyncStartError {
         /// Block hash recorded in the on-disk checkpoint.
         checkpoint_hash: B256,
     },
+    /// The pruned-tip binary search could not establish an unpruned upper bound.
+    #[error(
+        "no unpruned L2 block available for recovery: pruned_block_number={pruned_block_number}, latest_block_number={latest_block_number}"
+    )]
+    NoUnprunedBlockAvailable {
+        /// The labeled block whose body was pruned, triggering the recovery search.
+        pruned_block_number: u64,
+        /// The reth-reported latest L2 block number at the time of the search.
+        latest_block_number: u64,
+    },
 }

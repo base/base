@@ -585,10 +585,7 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             Self::Eip2930(tx) => tx.signature_hash(),
             Self::Eip1559(tx) => tx.signature_hash(),
             Self::Eip7702(tx) => tx.signature_hash(),
-            Self::Eip8130(tx) => match tx.explicit_sender() {
-                Some(sender) => return Ok(sender),
-                None => return Err(alloy_consensus::crypto::RecoveryError::new()),
-            },
+            Self::Eip8130(tx) => return tx.recover_sender(),
             // The Deposit transaction does not have a signature. Directly return the
             // `from` address.
             Self::Deposit(tx) => return Ok(tx.from),
@@ -613,10 +610,7 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             Self::Eip2930(tx) => tx.signature_hash(),
             Self::Eip1559(tx) => tx.signature_hash(),
             Self::Eip7702(tx) => tx.signature_hash(),
-            Self::Eip8130(tx) => match tx.explicit_sender() {
-                Some(sender) => return Ok(sender),
-                None => return Err(alloy_consensus::crypto::RecoveryError::new()),
-            },
+            Self::Eip8130(tx) => return tx.recover_sender_unchecked(),
             // The Deposit transaction does not have a signature. Directly return the
             // `from` address.
             Self::Deposit(tx) => return Ok(tx.from),
@@ -650,9 +644,7 @@ impl alloy_consensus::transaction::SignerRecoverable for BaseTxEnvelope {
             Self::Eip7702(tx) => {
                 alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
             }
-            Self::Eip8130(tx) => {
-                tx.explicit_sender().ok_or_else(alloy_consensus::crypto::RecoveryError::new)
-            }
+            Self::Eip8130(tx) => tx.recover_sender_unchecked(),
             Self::Deposit(tx) => Ok(tx.from),
         }
     }
@@ -1019,5 +1011,68 @@ mod tests {
         let mut slice = encoded.as_slice();
         let decoded = BaseTxEnvelope::decode_2718(&mut slice).unwrap();
         assert!(matches!(decoded, BaseTxEnvelope::Eip1559(_)));
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn eip8130_envelope_recovery_honors_checked_vs_unchecked_contract() {
+        use alloy_consensus::transaction::SignerRecoverable;
+        use alloy_signer::SignerSync;
+        use alloy_signer_local::PrivateKeySigner;
+
+        use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
+
+        // secp256k1 curve order N — used to flip a canonical signature into
+        // the upper half via (r, s, v) -> (r, N - s, !v).
+        const SECP256K1_N: U256 = U256::from_be_slice(&[
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c,
+            0xd0, 0x36, 0x41, 0x41,
+        ]);
+
+        let signer = PrivateKeySigner::random();
+        let expected = signer.address();
+
+        let tx = TxEip8130 { sender: None, ..Default::default() };
+        let hash = tx.sender_signature_hash();
+        let canonical = signer.sign_hash_sync(&hash).unwrap();
+        let high_s = Signature::new(canonical.r(), SECP256K1_N - canonical.s(), !canonical.v());
+
+        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
+            tx,
+            Bytes::from(high_s.as_bytes().to_vec()),
+            Bytes::new(),
+        ));
+
+        // Checked path enforces EIP-2 low-s and must reject; the unchecked
+        // path is contractually required to accept and recover the address.
+        assert!(envelope.recover_signer().is_err());
+        assert_eq!(envelope.recover_signer_unchecked().unwrap(), expected);
+
+        let mut buf = alloc::vec::Vec::new();
+        assert_eq!(envelope.recover_unchecked_with_buf(&mut buf).unwrap(), expected);
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn eip8130_envelope_recovery_short_circuits_configured_owner() {
+        use alloy_consensus::transaction::SignerRecoverable;
+
+        use crate::transaction::eip8130::{Eip8130Signed, TxEip8130};
+
+        let explicit = Address::repeat_byte(0xab);
+        let tx = TxEip8130 { sender: Some(explicit), ..Default::default() };
+        // sender_auth is irrelevant on the configured-owner path; supply 65
+        // zero bytes so the structural shape stays well-formed.
+        let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(
+            tx,
+            Bytes::from(vec![0u8; 65]),
+            Bytes::new(),
+        ));
+
+        assert_eq!(envelope.recover_signer().unwrap(), explicit);
+        assert_eq!(envelope.recover_signer_unchecked().unwrap(), explicit);
+        let mut buf = alloc::vec::Vec::new();
+        assert_eq!(envelope.recover_unchecked_with_buf(&mut buf).unwrap(), explicit);
     }
 }
