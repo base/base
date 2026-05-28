@@ -747,6 +747,15 @@ impl BatchPipeline for BatchEncoder {
                     ch.encoded_block_range.end =
                         ch.encoded_block_range.end.saturating_sub(prune_count);
                 }
+
+                // Adjust the open channel's block_start so that a subsequent
+                // close_current_channel() computes a correct encoded_block_range.
+                // Without this, block_start would be stale (too high) after pruning,
+                // yielding an inverted range that causes invalidate_ready_channel() to
+                // derive a wrong replay_from index and skip re-encoding affected blocks.
+                if let Some(ref mut open) = self.current_channel {
+                    open.block_start = open.block_start.saturating_sub(prune_count);
+                }
             }
         }
     }
@@ -1966,6 +1975,65 @@ mod tests {
         let sub = encoder.next_submission().unwrap();
         encoder.confirm(sub.id, 101);
         assert!(encoder.blocks.is_empty(), "confirm after prune_safe must finish pruning");
+    }
+
+    /// Confirming a fully-submitted channel must adjust `current_channel.block_start`
+    /// when the confirmation prunes blocks from the input queue.
+    ///
+    /// Regression test: before the fix, `block_start` in the open channel was left
+    /// stale (too high) after `confirm()` pruned leading blocks.  A subsequent call
+    /// to `close_current_channel()` would then compute
+    ///   `encoded_block_range = stale_block_start..block_cursor`
+    /// where `stale_block_start > block_cursor`, yielding an inverted (empty) range.
+    /// `invalidate_ready_channel()` uses `encoded_block_range.start` as `replay_from`
+    /// to rewind encoding after a timeout; with the stale value it would not rewind
+    /// far enough and those blocks would be silently skipped.
+    #[test]
+    fn test_confirm_adjusts_open_channel_block_start() {
+        let mut encoder = default_encoder();
+
+        // Build a two-block chain and encode both blocks into channel A.
+        let b1 = make_numbered_block(B256::ZERO, 1);
+        let b1_hash = b1.header.hash_slow();
+        encoder.add_block(b1).unwrap();
+
+        let b2 = make_numbered_block(b1_hash, 2);
+        let b2_hash = b2.header.hash_slow();
+        encoder.add_block(b2).unwrap();
+
+        encoder.step().unwrap(); // encode block 1
+        encoder.step().unwrap(); // encode block 2
+        assert_eq!(encoder.block_cursor, 2);
+
+        // Close channel A by advancing the L1 head past the channel duration.
+        encoder.advance_l1_head(100);
+        assert!(encoder.current_channel.is_none());
+        assert_eq!(encoder.ready_channels.len(), 1);
+
+        // Add a third block and start encoding it into a NEW open channel B.
+        let b3 = make_numbered_block(b2_hash, 3);
+        encoder.add_block(b3).unwrap();
+        encoder.step().unwrap(); // encode block 3 into channel B
+        assert_eq!(encoder.block_cursor, 3);
+
+        // Channel B is now open with block_start == 2.
+        let block_start_before = encoder.current_channel.as_ref().unwrap().block_start;
+        assert_eq!(block_start_before, 2);
+
+        // Confirm all frames of channel A.  This should prune 2 blocks from the
+        // deque and adjust block_cursor (3 → 1) as well as channel B's block_start.
+        let sub_a = encoder.next_submission().unwrap();
+        encoder.confirm(sub_a.id, 101);
+
+        // block_cursor must have been decremented.
+        assert_eq!(encoder.block_cursor, 1, "block_cursor must be adjusted after confirm prune");
+
+        // The open channel's block_start must also be adjusted (2 − 2 = 0).
+        let block_start_after = encoder.current_channel.as_ref().unwrap().block_start;
+        assert_eq!(
+            block_start_after, 0,
+            "current_channel.block_start must be adjusted when confirm() prunes blocks"
+        );
     }
 
     /// `encode_and_drain` steps until idle, force-closes, and returns all frames.
