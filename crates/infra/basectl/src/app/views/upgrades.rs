@@ -491,7 +491,6 @@ impl UpgradesView {
     /// Kick off an activation-check run for the currently selected chain, if
     /// the chain has a hardfork with defined checks and a usable RPC URL.
     fn start_checks(&mut self, resources: &Resources) {
-        self.apply_live_hardforks(resources);
         let now = now_unix();
         let Some((hardfork, timestamp)) =
             self.selected_check_spec(now).map(|spec| (spec.name, spec.timestamp))
@@ -519,8 +518,7 @@ impl UpgradesView {
         self.selected_check_spec(now).map(|spec| spec.name)
     }
 
-    fn move_selected_check_hardfork(&mut self, resources: &Resources, direction: i8) {
-        self.apply_live_hardforks(resources);
+    fn move_selected_check_hardfork(&mut self, direction: i8) {
         let now = now_unix();
         let current = self.selected_check_hardfork(now);
         let checkable: Vec<_> = checkable_specs_display(&self.chains[self.selected_chain])
@@ -583,10 +581,10 @@ impl View for UpgradesView {
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.move_selected_check_hardfork(resources, -1);
+                self.move_selected_check_hardfork(-1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.move_selected_check_hardfork(resources, 1);
+                self.move_selected_check_hardfork(1);
             }
             KeyCode::Char(c @ '1'..='4') => {
                 let idx = (c as usize) - ('1' as usize);
