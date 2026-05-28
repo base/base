@@ -144,7 +144,8 @@ mod tests {
         }
         async fn prove(
             &self,
-            _request: &base_zk_client::ProveBlockRequest,
+            _request: &base_zk_client::ZkProofRequest,
+            _proof_type: ProofType,
         ) -> anyhow::Result<ProveResult> {
             unimplemented!()
         }

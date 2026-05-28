@@ -28,7 +28,7 @@ use base_proof_primitives::{
 use base_proof_rpc::L2Provider;
 use base_runtime::{Clock, TokioRuntime};
 use base_tx_manager::TxManager;
-use base_zk_client::{ProofType, ProveBlockRequest, ZkProofProvider};
+use base_zk_client::{ProofRequest, ZkProofProvider, ZkProofRequest};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -615,28 +615,28 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         }
     }
 
-    /// Builds a [`ProveBlockRequest`] for the given candidate and invalid index.
+    /// Builds a [`ProofRequest`] for the given candidate and invalid index.
     fn build_zk_request(
         &self,
         candidate: &CandidateGame,
         invalid_index: u64,
-    ) -> eyre::Result<ProveBlockRequest> {
+    ) -> eyre::Result<ProofRequest> {
         let game_address = candidate.factory.proxy;
         let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
         let session_id = PendingProof::derive_session_id(game_address, invalid_index);
         let prover_address = format!("{:#x}", self.submitter.sender_address());
 
-        Ok(ProveBlockRequest {
-            start_block_number,
-            number_of_blocks_to_prove: candidate.intermediate_block_interval,
-            sequence_window: None,
-            proof_type: ProofType::SnarkGroth16.into(),
-            session_id: Some(session_id),
-            prover_address: Some(prover_address),
-            l1_head: Some(format!("{:#x}", candidate.l1_head)),
-            intermediate_root_interval: Some(candidate.intermediate_block_interval),
-            request: None,
-        })
+        Ok(ProofRequest::snark_groth16(
+            Some(session_id),
+            ZkProofRequest {
+                start_block_number,
+                number_of_blocks_to_prove: candidate.intermediate_block_interval,
+                sequence_window: None,
+                prover_address: Some(prover_address),
+                l1_head: Some(format!("{:#x}", candidate.l1_head)),
+                intermediate_root_interval: Some(candidate.intermediate_block_interval),
+            },
+        ))
     }
 
     /// Requests a ZK proof, stores the session, and polls for the result.
@@ -655,16 +655,16 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         // checkpoint: [prior_checkpoint .. invalid_checkpoint].
         let request = self.build_zk_request(&candidate, invalid_index)?;
 
-        let prove_response = self.zk_prover.prove_block(request.clone()).await?;
+        let response = self.zk_prover.submit_proof(request.clone()).await?;
 
         info!(
             game = %game_address,
-            session_id = %prove_response.session_id,
+            session_id = %response.session_id,
             "proof job initiated"
         );
 
         let pending = PendingProof::awaiting(
-            prove_response.session_id,
+            response.session_id,
             invalid_index,
             expected_root,
             request,
@@ -680,7 +680,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
     /// - **`AwaitingProof`** — polls the ZK service:
     ///   - `Succeeded` → transitions to `ReadyToSubmit` and falls through to
     ///     submission.
-    ///   - `Failed` → transitions to `NeedsRetry` so `prove_block` is
+    ///   - `Failed` → transitions to `NeedsRetry` so `submit_proof` is
     ///     re-initiated.
     ///   - Intermediate (`Created`/`Pending`/`Running`) → returns early
     ///     without any contract calls.
@@ -690,9 +690,9 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
     ///   - [`DisputeIntent::Challenge`] → calls `challenge()`.
     ///   - On success → removes the entry.
     ///   - On failure → leaves the entry so it is retried next tick.
-    /// - **`NeedsRetry`** — re-initiates `prove_block`:
+    /// - **`NeedsRetry`** — re-initiates `submit_proof`:
     ///   - If `retry_count > MAX_PROOF_RETRIES` → drops the entry.
-    ///   - Otherwise → calls `prove_block` and transitions to `AwaitingProof`.
+    ///   - Otherwise → calls `submit_proof` and transitions to `AwaitingProof`.
     async fn poll_or_submit(&mut self, game_address: Address) -> eyre::Result<()> {
         let (invalid_index, expected_root, intent, targets_tee) =
             match self.pending_proofs.get(&game_address) {
@@ -825,7 +825,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
 
     /// Handles a proof that needs retrying after failure.
     ///
-    /// If retries are exhausted the entry is dropped; otherwise `prove_block`
+    /// If retries are exhausted the entry is dropped; otherwise `submit_proof`
     /// is called and the phase transitions back to `AwaitingProof`.
     async fn handle_proof_retry(&mut self, game_address: Address) -> eyre::Result<()> {
         let pending = match self.pending_proofs.get(&game_address) {
@@ -846,7 +846,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         }
 
         // If this was a TEE proof, eagerly transition to ZK *before*
-        // calling `prove_block` so that subsequent retries take the ZK branch
+        // calling `submit_proof` so that subsequent retries take the ZK branch
         // and the fallback metric is emitted exactly once per transition.
         let request = match &pending.kind {
             ProofKind::Tee { zk_fallback_request, zk_fallback_intent } => {
@@ -867,19 +867,19 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
 
                 // Transition eagerly so retries use the ZK path.
                 if let Some(p) = self.pending_proofs.get_mut(&game_address) {
-                    p.kind = ProofKind::Zk { prove_request: fallback_request.clone() };
+                    p.kind = ProofKind::Zk { proof_request: fallback_request.clone() };
                     p.intent = fallback_intent;
                     p.retry_count = 0;
                 }
 
                 fallback_request
             }
-            ProofKind::Zk { prove_request } => prove_request.clone(),
+            ProofKind::Zk { proof_request } => proof_request.clone(),
         };
 
         ChallengerMetrics::proof_retries_total().increment(1);
 
-        match self.zk_prover.prove_block(request).await {
+        match self.zk_prover.submit_proof(request).await {
             Ok(response) => {
                 info!(
                     game = %game_address,
@@ -902,7 +902,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                     error = %e,
                     game = %game_address,
                     retry_count = retry_count,
-                    "prove_block failed on retry, will retry next tick"
+                    "submit_proof failed on retry, will retry next tick"
                 );
                 // Leave as NeedsRetry for next tick.
             }

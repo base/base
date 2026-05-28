@@ -6,8 +6,8 @@ use base_zk_client::{
     ClaimProofJobRequest, ClaimProofJobResponse, CompleteProofJobRequest, CompleteProofJobResponse,
     FailProofJobRequest, FailProofJobResponse, GetProofJobRequest, GetProofJobResponse,
     GetProofRequest, GetProofResponse, HeartbeatProofJobRequest, HeartbeatProofJobResponse,
-    ListProofsRequest, ListProofsResponse, ProveBlockRequest, ProveBlockResponse,
-    SubmitProofRequest, SubmitProofResponse, prover_service_server::ProverService,
+    ListProofsRequest, ListProofsResponse, SubmitProofRequest, SubmitProofResponse,
+    prover_service_server::ProverService,
 };
 use base_zk_db::ProofRequestRepo;
 use tonic::{Request, Response, Status};
@@ -16,7 +16,7 @@ use crate::proof_request_manager::ProofRequestManager;
 
 mod get_proof;
 mod list_proofs;
-mod prove_block;
+mod submit_proof;
 
 /// gRPC server implementing the `ProverService` trait.
 #[derive(Clone)]
@@ -48,13 +48,6 @@ impl ProverServiceServer {
 
 #[tonic::async_trait]
 impl ProverService for ProverServiceServer {
-    async fn prove_block(
-        &self,
-        request: Request<ProveBlockRequest>,
-    ) -> Result<Response<ProveBlockResponse>, Status> {
-        self.prove_block_impl(request).await
-    }
-
     async fn get_proof(
         &self,
         request: Request<GetProofRequest>,
@@ -71,9 +64,9 @@ impl ProverService for ProverServiceServer {
 
     async fn submit_proof(
         &self,
-        _request: Request<SubmitProofRequest>,
+        request: Request<SubmitProofRequest>,
     ) -> Result<Response<SubmitProofResponse>, Status> {
-        Err(Status::unimplemented("SubmitProof is not implemented yet"))
+        self.submit_proof_impl(request).await
     }
 
     async fn get_proof_job(

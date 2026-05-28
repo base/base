@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_succinct_elfs::{AGGREGATION_ELF, RANGE_ELF_EMBEDDED};
 use base_proof_succinct_host_utils::get_agg_proof_stdin;
-use base_zk_client::ProveBlockRequest;
+use base_zk_client::ZkProofRequest;
 use base_zk_db::{
     CreateProofSession, ProofRequest, ProofRequestRepo, ProofSession, ProofStatus, ProofType,
     SessionStatus as DbSessionStatus, SessionType, UpdateProofSession, UpdateReceipt,
@@ -58,7 +58,11 @@ impl ProvingBackend for ClusterBackend {
         BackendType::OpSuccinct
     }
 
-    async fn prove(&self, request: &ProveBlockRequest) -> anyhow::Result<ProveResult> {
+    async fn prove(
+        &self,
+        request: &ZkProofRequest,
+        _proof_type: ProofType,
+    ) -> anyhow::Result<ProveResult> {
         let BackendConfig::OpSuccinct {
             default_sequence_window,
             cluster_rpc,

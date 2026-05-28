@@ -4,8 +4,8 @@ ZK proof gRPC client implementation.
 
 ## Overview
 
-Provides a gRPC client for requesting ZK proofs from an external proving service.
-Implements a two-step async flow: `prove_block` initiates a proof job and returns a session ID,
+Provides a gRPC client for requesting proofs from an external proving service.
+Implements a two-step async flow: `submit_proof` initiates a proof job and returns a session ID,
 and `get_proof` polls for the result. The `ZkProofProvider` trait abstracts the client for
 testability, and `ZkProofError::is_retryable()` guides backoff logic for transient failures.
 
@@ -25,7 +25,7 @@ use std::time::Duration;
 use url::Url;
 use base_zk_client::{
     ZkProofClient, ZkProofClientConfig, ZkProofProvider,
-    ProveBlockRequest, ProofType,
+    ProofRequest, ZkProofRequest,
 };
 
 #[tokio::main]
@@ -37,19 +37,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let client = ZkProofClient::new(&config)?;
 
-    let request = ProveBlockRequest {
+    let request = ProofRequest::compressed(None, ZkProofRequest {
         start_block_number: 42,
         number_of_blocks_to_prove: 1,
         sequence_window: None,
-        proof_type: ProofType::Compressed.into(),
-        session_id: None,
         prover_address: None,
         l1_head: None,
         intermediate_root_interval: Some(30),
-        request: None,
-    };
+    });
 
-    let response = client.prove_block(request).await?;
+    let response = client.submit_proof(request).await?;
     println!("Session ID: {}", response.session_id);
 
     Ok(())
@@ -83,7 +80,7 @@ The `ZkProofProvider` trait allows consumers to mock the client for testing:
 use async_trait::async_trait;
 use base_zk_client::{
     ZkProofProvider, ZkProofError,
-    ProveBlockRequest, ProveBlockResponse,
+    ProofRequest, SubmitProofResponse,
     GetProofRequest, GetProofResponse, ProofJobStatus,
 };
 
@@ -91,11 +88,11 @@ struct MockProvider;
 
 #[async_trait]
 impl ZkProofProvider for MockProvider {
-    async fn prove_block(
+    async fn submit_proof(
         &self,
-        request: ProveBlockRequest,
-    ) -> Result<ProveBlockResponse, ZkProofError> {
-        Ok(ProveBlockResponse {
+        request: ProofRequest,
+    ) -> Result<SubmitProofResponse, ZkProofError> {
+        Ok(SubmitProofResponse {
             session_id: "mock-session".into(),
         })
     }

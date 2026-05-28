@@ -32,12 +32,13 @@ pub use proto::{
     ExecutionStats, FailProofJobRequest, FailProofJobResponse, GetProofJobRequest,
     GetProofJobResponse, GetProofRequest, GetProofResponse, HeartbeatProofJobRequest,
     HeartbeatProofJobResponse, ListProofsRequest, ListProofsResponse, ProofJob, ProofRequest,
-    ProofResult, ProofSummary, ProofType, ProveBlockRequest, ProveBlockResponse, ReceiptType,
-    SubmitProofRequest, SubmitProofResponse, TeeProofRequest, TeeProofResult, TeeProposal,
-    ZkProofRequest, ZkProofResult, get_proof_response,
-    get_proof_response::Status as ProofJobStatus, proof_request, proof_result, prove_block_request,
+    ProofResult, ProofSummary, ProofType, ReceiptType, SubmitProofRequest, SubmitProofResponse,
+    TeeProofRequest, TeeProofResult, TeeProposal, ZkProofRequest, ZkProofResult,
+    get_proof_response, get_proof_response::Status as ProofJobStatus, proof_request, proof_result,
     prover_service_client,
 };
+
+mod proof_request_ext;
 
 mod client;
 pub use client::{ZkProofClient, ZkProofClientConfig, ZkProofProvider};

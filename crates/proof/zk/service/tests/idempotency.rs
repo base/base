@@ -1,13 +1,13 @@
-//! Integration tests for `ProveBlock` `session_id` idempotency.
+//! Integration tests for `SubmitProof` `session_id` idempotency.
 //!
 //! These tests require a running prover-service.
 //! Set `PROVER_GRPC_ADDR` to override the default address.
 
-use base_zk_client::{ProveBlockRequest, prover_service_client::ProverServiceClient};
+use base_zk_client::{
+    ProofRequest, SubmitProofRequest, ZkProofRequest, prover_service_client::ProverServiceClient,
+};
 use tonic::transport::Channel;
 use uuid::Uuid;
-
-const PROOF_TYPE_COMPRESSED: i32 = 3;
 
 async fn connect() -> ProverServiceClient<Channel> {
     let addr =
@@ -18,25 +18,31 @@ async fn connect() -> ProverServiceClient<Channel> {
         .expect("failed to connect to prover-service - is it running?")
 }
 
+fn compressed_request(session_id: Option<String>, start_block_number: u64) -> SubmitProofRequest {
+    SubmitProofRequest {
+        proof: Some(ProofRequest::compressed(
+            session_id,
+            ZkProofRequest {
+                start_block_number,
+                number_of_blocks_to_prove: 1,
+                sequence_window: None,
+                prover_address: None,
+                l1_head: None,
+                intermediate_root_interval: None,
+            },
+        )),
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires a running prover-service (set PROVER_GRPC_ADDR); run with `cargo nextest run --run-ignored all -p base-zk-service --test idempotency`"]
-async fn prove_block_without_session_id_returns_uuid() {
+async fn submit_proof_without_session_id_returns_uuid() {
     let mut client = connect().await;
 
     let resp = client
-        .prove_block(ProveBlockRequest {
-            start_block_number: 100,
-            number_of_blocks_to_prove: 1,
-            sequence_window: None,
-            proof_type: PROOF_TYPE_COMPRESSED,
-            session_id: None,
-            prover_address: None,
-            l1_head: None,
-            intermediate_root_interval: None,
-            request: None,
-        })
+        .submit_proof(compressed_request(None, 100))
         .await
-        .expect("ProveBlock should succeed without session_id");
+        .expect("SubmitProof should succeed without session_id");
 
     let session_id = resp.into_inner().session_id;
     Uuid::parse_str(&session_id).expect("session_id should be a valid UUID");
@@ -44,61 +50,31 @@ async fn prove_block_without_session_id_returns_uuid() {
 
 #[tokio::test]
 #[ignore = "requires a running prover-service (set PROVER_GRPC_ADDR); run with `cargo nextest run --run-ignored all -p base-zk-service --test idempotency`"]
-async fn prove_block_with_session_id_uses_provided_id() {
+async fn submit_proof_with_session_id_uses_provided_id() {
     let mut client = connect().await;
     let session_id = "550e8400-e29b-41d4-a716-446655440000".to_string();
 
     let resp = client
-        .prove_block(ProveBlockRequest {
-            start_block_number: 200,
-            number_of_blocks_to_prove: 1,
-            sequence_window: None,
-            proof_type: PROOF_TYPE_COMPRESSED,
-            session_id: Some(session_id.clone()),
-            prover_address: None,
-            l1_head: None,
-            intermediate_root_interval: None,
-            request: None,
-        })
+        .submit_proof(compressed_request(Some(session_id.clone()), 200))
         .await
-        .expect("ProveBlock should succeed with session_id");
+        .expect("SubmitProof should succeed with session_id");
 
     assert_eq!(resp.into_inner().session_id, session_id);
 }
 
 #[tokio::test]
 #[ignore = "requires a running prover-service (set PROVER_GRPC_ADDR); run with `cargo nextest run --run-ignored all -p base-zk-service --test idempotency`"]
-async fn prove_block_duplicate_session_id_is_idempotent() {
+async fn submit_proof_duplicate_session_id_is_idempotent() {
     let mut client = connect().await;
     let session_id = "661f9a00-bbbb-4444-cccc-000000000001".to_string();
 
     let resp1 = client
-        .prove_block(ProveBlockRequest {
-            start_block_number: 300,
-            number_of_blocks_to_prove: 1,
-            sequence_window: None,
-            proof_type: PROOF_TYPE_COMPRESSED,
-            session_id: Some(session_id.clone()),
-            prover_address: None,
-            l1_head: None,
-            intermediate_root_interval: None,
-            request: None,
-        })
+        .submit_proof(compressed_request(Some(session_id.clone()), 300))
         .await
         .expect("first call should succeed");
 
     let resp2 = client
-        .prove_block(ProveBlockRequest {
-            start_block_number: 300,
-            number_of_blocks_to_prove: 1,
-            sequence_window: None,
-            proof_type: PROOF_TYPE_COMPRESSED,
-            session_id: Some(session_id.clone()),
-            prover_address: None,
-            l1_head: None,
-            intermediate_root_interval: None,
-            request: None,
-        })
+        .submit_proof(compressed_request(Some(session_id.clone()), 300))
         .await
         .expect("duplicate call should succeed (idempotent)");
 
@@ -111,21 +87,11 @@ async fn prove_block_duplicate_session_id_is_idempotent() {
 
 #[tokio::test]
 #[ignore = "requires a running prover-service (set PROVER_GRPC_ADDR); run with `cargo nextest run --run-ignored all -p base-zk-service --test idempotency`"]
-async fn prove_block_invalid_session_id_returns_error() {
+async fn submit_proof_invalid_session_id_returns_error() {
     let mut client = connect().await;
 
     let err = client
-        .prove_block(ProveBlockRequest {
-            start_block_number: 400,
-            number_of_blocks_to_prove: 1,
-            sequence_window: None,
-            proof_type: PROOF_TYPE_COMPRESSED,
-            session_id: Some("not-a-uuid".to_string()),
-            prover_address: None,
-            l1_head: None,
-            intermediate_root_interval: None,
-            request: None,
-        })
+        .submit_proof(compressed_request(Some("not-a-uuid".to_string()), 400))
         .await
         .expect_err("should fail with invalid session_id");
 
@@ -139,23 +105,13 @@ async fn prove_block_invalid_session_id_returns_error() {
 
 #[tokio::test]
 #[ignore = "requires a running prover-service (set PROVER_GRPC_ADDR); run with `cargo nextest run --run-ignored all -p base-zk-service --test idempotency`"]
-async fn prove_block_invalid_proof_type_returns_error() {
+async fn submit_proof_missing_request_variant_returns_error() {
     let mut client = connect().await;
 
     let err = client
-        .prove_block(ProveBlockRequest {
-            start_block_number: 500,
-            number_of_blocks_to_prove: 1,
-            sequence_window: None,
-            proof_type: 99,
-            session_id: None,
-            prover_address: None,
-            l1_head: None,
-            intermediate_root_interval: None,
-            request: None,
-        })
+        .submit_proof(SubmitProofRequest { proof: Some(ProofRequest::default()) })
         .await
-        .expect_err("should fail with invalid proof_type");
+        .expect_err("should fail with missing request variant");
 
     assert_eq!(err.code(), tonic::Code::InvalidArgument);
 }

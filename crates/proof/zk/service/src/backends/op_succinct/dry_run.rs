@@ -9,7 +9,7 @@ use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_succinct_proof_utils::get_range_elf_embedded;
-use base_zk_client::{ExecutionStats, ProveBlockRequest};
+use base_zk_client::{ExecutionStats, ZkProofRequest};
 use base_zk_db::{
     ProofRequest, ProofRequestRepo, ProofSession, ProofStatus, ProofType,
     SessionStatus as DbSessionStatus, UpdateProofSession,
@@ -136,13 +136,15 @@ impl ProvingBackend for DryRunBackend {
         BackendType::OpSuccinct
     }
 
-    async fn prove(&self, request: &ProveBlockRequest) -> anyhow::Result<ProveResult> {
+    async fn prove(
+        &self,
+        request: &ZkProofRequest,
+        proof_type: ProofType,
+    ) -> anyhow::Result<ProveResult> {
         if request.number_of_blocks_to_prove == 0 {
             anyhow::bail!("number_of_blocks_to_prove must be > 0");
         }
 
-        let proof_type = ProofType::try_from(request.proof_type)
-            .map_err(|e| anyhow::anyhow!("invalid proof_type: {e}"))?;
         if proof_type == ProofType::OpSuccinctSp1ClusterSnarkGroth16 {
             anyhow::bail!(
                 "dry-run backend only supports compressed proof types; SNARK_GROTH16 requires a proof-producing backend"

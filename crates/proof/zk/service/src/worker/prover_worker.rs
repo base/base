@@ -1,6 +1,6 @@
 use std::{fmt, sync::Arc};
 
-use base_zk_client::ProveBlockRequest;
+use base_zk_client::ZkProofRequest;
 use base_zk_db::{CreateProofSession, ProofRequestRepo, ProofType, SessionType};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -12,7 +12,8 @@ pub struct ProverWorker {
     repo: ProofRequestRepo,
     backend: Arc<dyn ProvingBackend>,
     proof_request_id: Uuid,
-    params: ProveBlockRequest,
+    params: ZkProofRequest,
+    proof_type: ProofType,
 }
 
 impl fmt::Debug for ProverWorker {
@@ -30,9 +31,10 @@ impl ProverWorker {
         repo: ProofRequestRepo,
         backend: Arc<dyn ProvingBackend>,
         proof_request_id: Uuid,
-        params: ProveBlockRequest,
+        params: ZkProofRequest,
+        proof_type: ProofType,
     ) -> Self {
-        Self { repo, backend, proof_request_id, params }
+        Self { repo, backend, proof_request_id, params, proof_type }
     }
 
     /// Run the proving task
@@ -70,11 +72,10 @@ impl ProverWorker {
             "Calling backend to prove block"
         );
 
-        let pt_label = ProofType::try_from(self.params.proof_type)
-            .map_or("unknown", metrics::proof_type_label);
+        let pt_label = metrics::proof_type_label(self.proof_type);
 
         // Call backend prove (backend handles temp dir creation and config)
-        let result = self.backend.prove(&self.params).await;
+        let result = self.backend.prove(&self.params, self.proof_type).await;
 
         match result {
             Ok(prove_result) => {

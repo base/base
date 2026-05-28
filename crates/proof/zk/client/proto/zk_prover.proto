@@ -3,10 +3,9 @@ syntax = "proto3";
 package prover;
 
 service ProverService {
-  rpc ProveBlock(ProveBlockRequest) returns (ProveBlockResponse);
+  rpc SubmitProof(SubmitProofRequest) returns (SubmitProofResponse);
   rpc GetProof(GetProofRequest) returns (GetProofResponse);
   rpc ListProofs(ListProofsRequest) returns (ListProofsResponse);
-  rpc SubmitProof(SubmitProofRequest) returns (SubmitProofResponse);
   rpc GetProofJob(GetProofJobRequest) returns (GetProofJobResponse);
   rpc ClaimProofJob(ClaimProofJobRequest) returns (ClaimProofJobResponse);
   rpc HeartbeatProofJob(HeartbeatProofJobRequest) returns (HeartbeatProofJobResponse);
@@ -22,35 +21,6 @@ enum ProofType {
   PROOF_TYPE_TEE = 5;
 }
 
-message ProveBlockRequest {
-  // The start block number to prove from.
-  uint64 start_block_number = 1;
-  uint64 number_of_blocks_to_prove = 2;
-  optional uint64 sequence_window = 3;
-  // The type of proof to generate
-  ProofType proof_type = 4;
-  // Optional: client-provided UUID for idempotent requests.
-  // If provided, a duplicate ID returns the existing session.
-  // If omitted, the server generates a UUID.
-  optional string session_id = 5;
-  // Ethereum address of the on-chain prover (required for SNARK_GROTH16 proofs)
-  optional string prover_address = 6;
-  // Optional: explicit L1 head hash (hex-encoded B256) to use for witness generation.
-  // When provided, bypasses SafeDB and sequence_window L1 head calculation.
-  optional string l1_head = 7;
-  optional uint64 intermediate_root_interval = 8;
-  // Structured request payload for new clients. ZK clients may continue using
-  // the legacy scalar fields above.
-  oneof request {
-    ZkProofRequest zk_request = 9;
-    TeeProofRequest tee_request = 10;
-  }
-}
-
-message ProveBlockResponse {
-  string session_id = 1;
-}
-
 message SubmitProofRequest {
   ProofRequest proof = 1;
 }
@@ -64,9 +34,10 @@ message ProofRequest {
   // If provided, a duplicate ID returns the existing job.
   // If omitted, the server generates a UUID.
   optional string session_id = 1;
-  ProofType proof_type = 2;
+  // Proof type is derived from the populated request variant.
   oneof request {
-    ZkProofRequest zk = 3;
+    ZkProofRequest compressed = 2;
+    ZkProofRequest snark_groth16 = 3;
     TeeProofRequest tee = 4;
   }
 }
@@ -85,6 +56,7 @@ message ZkProofRequest {
 }
 
 message TeeProofRequest {
+  // Servers must validate exact byte lengths before using any byte field.
   // 32-byte L1 head block hash.
   bytes l1_head = 1;
   // 32-byte agreed safe L2 block hash.
@@ -235,7 +207,8 @@ message ClaimProofJobRequest {
   ProofType proof_type = 1;
   string worker_id = 2;
   // The server atomically claims pending jobs or jobs with expired leases and
-  // extends the lease by this many seconds.
+  // extends the lease by this many seconds. A zero value uses the server
+  // default; non-zero values must be capped server-side.
   uint64 lease_duration_seconds = 3;
 }
 
@@ -248,7 +221,8 @@ message HeartbeatProofJobRequest {
   string session_id = 1;
   string lease_id = 2;
   string worker_id = 3;
-  // Extends the lease by this many seconds. A zero value uses the server default.
+  // Extends the lease by this many seconds. A zero value uses the server
+  // default; non-zero values must be capped server-side.
   uint64 lease_duration_seconds = 4;
 }
 

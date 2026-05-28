@@ -8,10 +8,10 @@ use tracing::{debug, warn};
 use url::Url;
 
 use crate::{
-    ProofJobStatus,
+    ProofJobStatus, ProofRequest,
     error::ZkProofError,
     proto::{
-        GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse,
+        GetProofRequest, GetProofResponse, SubmitProofRequest, SubmitProofResponse, proof_request,
         prover_service_client::ProverServiceClient,
     },
 };
@@ -28,21 +28,21 @@ pub struct ZkProofClientConfig {
 }
 
 /// Abstraction over a ZK proving service that supports a two-step async flow:
-/// initiate a proof job with [`prove_block`](ZkProofProvider::prove_block) and
+/// initiate a proof job with [`submit_proof`](ZkProofProvider::submit_proof) and
 /// poll for results with [`get_proof`](ZkProofProvider::get_proof).
 ///
 /// The canonical implementation is [`ZkProofClient`], but the trait allows
 /// callers to swap in a mock for testing without needing a real gRPC server.
 #[async_trait]
 pub trait ZkProofProvider: Send + Sync {
-    /// Initiate a proof job for a given block range.
+    /// Initiate a proof job.
     ///
-    /// Returns a [`ProveBlockResponse`] containing a session ID that can be
+    /// Returns a [`SubmitProofResponse`] containing a session ID that can be
     /// used to poll for the result via [`get_proof`](ZkProofProvider::get_proof).
-    async fn prove_block(
+    async fn submit_proof(
         &self,
-        request: ProveBlockRequest,
-    ) -> Result<ProveBlockResponse, ZkProofError>;
+        request: ProofRequest,
+    ) -> Result<SubmitProofResponse, ZkProofError>;
 
     /// Poll for the result of a previously initiated proof job.
     ///
@@ -86,22 +86,30 @@ impl ZkProofClient {
         Ok(Self { inner: ProverServiceClient::new(channel) })
     }
 
-    /// Initiate a proof job for a given block range.
+    /// Initiate a proof job.
     ///
     /// # Errors
     ///
     /// Returns [`ZkProofError::GrpcStatus`] if the server returns a non-OK
     /// status.
-    pub async fn prove_block(
+    pub async fn submit_proof(
         &self,
-        request: ProveBlockRequest,
-    ) -> Result<ProveBlockResponse, ZkProofError> {
-        let start_block = request.start_block_number;
-        let num_blocks = request.number_of_blocks_to_prove;
-        let response = self.inner.clone().prove_block(request).await?.into_inner();
+        request: ProofRequest,
+    ) -> Result<SubmitProofResponse, ZkProofError> {
+        let proof_kind = match request.request.as_ref() {
+            Some(proof_request::Request::Compressed(_)) => "compressed",
+            Some(proof_request::Request::SnarkGroth16(_)) => "snark_groth16",
+            Some(proof_request::Request::Tee(_)) => "tee",
+            None => "unspecified",
+        };
+        let response = self
+            .inner
+            .clone()
+            .submit_proof(SubmitProofRequest { proof: Some(request) })
+            .await?
+            .into_inner();
         debug!(
-            start_block,
-            num_blocks,
+            proof_kind,
             session_id = %response.session_id,
             "proof job initiated",
         );
@@ -131,11 +139,11 @@ impl ZkProofClient {
 
 #[async_trait]
 impl ZkProofProvider for ZkProofClient {
-    async fn prove_block(
+    async fn submit_proof(
         &self,
-        request: ProveBlockRequest,
-    ) -> Result<ProveBlockResponse, ZkProofError> {
-        self.prove_block(request).await
+        request: ProofRequest,
+    ) -> Result<SubmitProofResponse, ZkProofError> {
+        self.submit_proof(request).await
     }
 
     async fn get_proof(&self, request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {

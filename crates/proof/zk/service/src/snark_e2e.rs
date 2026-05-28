@@ -9,7 +9,7 @@ use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use anyhow::{Context, Result, bail};
 use base_common_network::Base;
 use base_zk_client::{
-    GetProofRequest, ProveBlockRequest, get_proof_response,
+    GetProofRequest, ProofRequest, SubmitProofRequest, ZkProofRequest, get_proof_response,
     prover_service_client::ProverServiceClient,
 };
 use sp1_sdk::{
@@ -21,7 +21,6 @@ use tracing::{info, warn};
 
 use crate::L1HeadCalculator;
 
-const PROOF_TYPE_SNARK_GROTH16: i32 = 4;
 const RECEIPT_TYPE_SNARK: i32 = 2; // ReceiptType::Snark
 
 const POLL_INTERVAL_SECS: u64 = 30;
@@ -105,7 +104,7 @@ impl SnarkE2e {
     ///
     /// 1. Query the L2 node for the safe head block (guaranteed derived from
     ///    L1)
-    /// 2. Submit a `ProveBlock` request with `proof_type=4` (SNARK Groth16)
+    /// 2. Submit a `snark_groth16` `SubmitProof` request
     ///    - `l1_head` is omitted so the prover service calculates it via `SafeDB`
     /// 3. Poll `GetProof` with `receipt_type=SNARK` until completion or timeout
     /// 4. Deserialize the SNARK receipt
@@ -200,7 +199,7 @@ impl SnarkE2e {
             safe_head = target_block - 1;
         }
 
-        // -- 2. Submit ProveBlock with proof_type=4 (SNARK Groth16) ---------------
+        // -- 2. Submit SNARK Groth16 proof request -------------------------------
         //
         // l1_head is omitted -- the prover service calculates it server-side
         // using SafeDB (optimism_safeHeadAtL1Block) with a sequence_window
@@ -208,21 +207,25 @@ impl SnarkE2e {
         // heuristic.
         let mut client = Self::connect().await?;
         let prove_resp = client
-            .prove_block(ProveBlockRequest {
-                start_block_number: safe_head,
-                number_of_blocks_to_prove: 1,
-                sequence_window: Some(SEQUENCE_WINDOW),
-                proof_type: PROOF_TYPE_SNARK_GROTH16,
-                session_id: None,
-                prover_address: Some("0x0000000000000000000000000000000000000000".to_string()),
-                l1_head: None,
-                intermediate_root_interval: None,
-                request: None,
+            .submit_proof(SubmitProofRequest {
+                proof: Some(ProofRequest::snark_groth16(
+                    None,
+                    ZkProofRequest {
+                        start_block_number: safe_head,
+                        number_of_blocks_to_prove: 1,
+                        sequence_window: Some(SEQUENCE_WINDOW),
+                        prover_address: Some(
+                            "0x0000000000000000000000000000000000000000".to_string(),
+                        ),
+                        l1_head: None,
+                        intermediate_root_interval: None,
+                    },
+                )),
             })
             .await?;
 
         let session_id = prove_resp.into_inner().session_id;
-        info!(session_id = %session_id, "ProveBlock submitted");
+        info!(session_id = %session_id, "SubmitProof submitted");
 
         // -- 3. Poll GetProof until SUCCEEDED or timeout --------------------------
         let start = std::time::Instant::now();

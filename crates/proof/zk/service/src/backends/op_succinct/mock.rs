@@ -9,7 +9,7 @@ use std::{collections::HashMap, sync::Mutex};
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_proof_succinct_client_utils::boot::BootInfoStruct;
-use base_zk_client::ProveBlockRequest;
+use base_zk_client::ZkProofRequest;
 use base_zk_db::{
     CreateProofSession, ProofRequest, ProofRequestRepo, ProofSession, ProofStatus, ProofType,
     SessionStatus as DbSessionStatus, SessionType, UpdateReceipt,
@@ -46,7 +46,7 @@ impl MockBackend {
     }
 
     /// Build synthetic [`BootInfoStruct`] public values from request parameters.
-    fn build_mock_public_values(request: &ProveBlockRequest) -> SP1PublicValues {
+    fn build_mock_public_values(request: &ZkProofRequest) -> SP1PublicValues {
         let start_block = request.start_block_number;
         let end_block = start_block + request.number_of_blocks_to_prove;
 
@@ -66,7 +66,7 @@ impl MockBackend {
     }
 
     /// Create a mock STARK (compressed) proof.
-    fn create_mock_stark_proof(&self, request: &ProveBlockRequest) -> Vec<u8> {
+    fn create_mock_stark_proof(&self, request: &ZkProofRequest) -> Vec<u8> {
         let pv = Self::build_mock_public_values(request);
         let proof = SP1ProofWithPublicValues::create_mock_proof(
             &self.range_vk,
@@ -98,7 +98,11 @@ impl ProvingBackend for MockBackend {
         BackendType::OpSuccinct
     }
 
-    async fn prove(&self, request: &ProveBlockRequest) -> anyhow::Result<ProveResult> {
+    async fn prove(
+        &self,
+        request: &ZkProofRequest,
+        _proof_type: ProofType,
+    ) -> anyhow::Result<ProveResult> {
         if request.number_of_blocks_to_prove == 0 {
             anyhow::bail!("number_of_blocks_to_prove must be > 0");
         }
@@ -154,22 +158,16 @@ impl ProvingBackend for MockBackend {
             if session.status == DbSessionStatus::Running {
                 let proof_bytes = match session.session_type {
                     SessionType::Stark => {
-                        let request = ProveBlockRequest {
+                        let request = ZkProofRequest {
                             start_block_number: proof_request.start_block_number as u64,
                             number_of_blocks_to_prove: proof_request.number_of_blocks_to_prove
                                 as u64,
                             sequence_window: proof_request.sequence_window.map(|w| w as u64),
-                            proof_type: match proof_request.proof_type {
-                                ProofType::OpSuccinctSp1ClusterCompressed => 3,
-                                ProofType::OpSuccinctSp1ClusterSnarkGroth16 => 4,
-                            },
-                            session_id: None,
                             prover_address: proof_request.prover_address.clone(),
                             l1_head: proof_request.l1_head.clone(),
                             intermediate_root_interval: proof_request
                                 .intermediate_root_interval
                                 .map(|v| v as u64),
-                            request: None,
                         };
                         self.create_mock_stark_proof(&request)
                     }
@@ -310,16 +308,13 @@ mod tests {
 
     #[test]
     fn test_mock_stark_proof_roundtrip() {
-        let request = ProveBlockRequest {
+        let request = ZkProofRequest {
             start_block_number: 100,
             number_of_blocks_to_prove: 5,
             sequence_window: Some(50),
-            proof_type: 3,
-            session_id: None,
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
-            request: None,
         };
 
         let pv = MockBackend::build_mock_public_values(&request);
