@@ -5974,7 +5974,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "base-zk-db",
+ "base-prover-service-db",
  "serde_json",
  "tokio",
  "tokio-util",

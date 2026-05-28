@@ -10,7 +10,7 @@ repository.workspace = true
 
 [dependencies]
 # database
-base-zk-db.workspace = true
+base-prover-service-db.workspace = true
 
 # async
 tokio-util.workspace = true

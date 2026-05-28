@@ -1,6 +1,6 @@
 use anyhow::Context;
 use async_trait::async_trait;
-use base_zk_db::{MarkOutboxError, MarkOutboxProcessed, ProofRequestRepo};
+use base_prover_service_db::{MarkOutboxError, MarkOutboxProcessed, ProofRequestRepo};
 
 use crate::{OutboxReader, OutboxTask};
 
