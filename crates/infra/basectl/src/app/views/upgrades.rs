@@ -204,14 +204,25 @@ fn check_names_for(hardfork: &str) -> &'static [&'static str] {
     }
 }
 
-/// Returns the last hardfork spec for a chain that has defined checks, or `None`.
-fn target_hardfork(chain: &ChainUpgrades) -> Option<&'static str> {
-    chain
-        .specs
+/// Returns the hardfork whose checks should be shown for this chain.
+fn target_hardfork(chain: &ChainUpgrades, now: u64) -> Option<&'static str> {
+    let check_specs: Vec<_> =
+        chain.specs.iter().filter(|spec| !check_names_for(spec.name).is_empty()).collect();
+
+    if let Some(upcoming) =
+        check_specs.iter().find(|spec| spec.timestamp.is_some_and(|timestamp| timestamp > now))
+    {
+        return Some(upcoming.name);
+    }
+
+    let latest_active = check_specs
         .iter()
-        .rev()
-        .find(|s| s.timestamp.is_some() && !check_names_for(s.name).is_empty())
-        .map(|s| s.name)
+        .rposition(|spec| spec.timestamp.is_some_and(|timestamp| timestamp <= now));
+
+    latest_active.map_or_else(
+        || check_specs.iter().find(|spec| spec.timestamp.is_some()).map(|spec| spec.name),
+        |index| check_specs.get(index + 1).or_else(|| check_specs.get(index)).map(|spec| spec.name),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -460,14 +471,15 @@ impl UpgradesView {
         self.apply_live_hardforks(resources);
         let now = now_unix();
         let chain = &self.chains[self.selected_chain];
-        let Some(spec) =
-            target_hardfork(chain).and_then(|name| chain.specs.iter().find(|s| s.name == name))
+        let Some(spec) = target_hardfork(chain, now)
+            .and_then(|name| chain.specs.iter().find(|s| s.name == name))
         else {
             return;
         };
-        let ts = spec.timestamp.unwrap();
         let Some(rpc) = self.rpc_for_selected(resources) else { return };
-        let mode = if ts > now { CheckMode::Before } else { CheckMode::After };
+        let mode = spec.timestamp.map_or(CheckMode::After, |ts| {
+            if ts > now { CheckMode::Before } else { CheckMode::After }
+        });
         self.checks.start(self.selected_chain, rpc, spec.name, mode);
     }
 
@@ -617,7 +629,7 @@ impl View for UpgradesView {
             .split(outer[2]);
 
         render_history(frame, bottom[0], chain, now);
-        let active_hf = target_hardfork(chain);
+        let active_hf = target_hardfork(chain, now);
         render_checks_panel(
             frame,
             bottom[1],
@@ -1660,22 +1672,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn live_hardforks_make_beryl_the_devnet_check_target() {
+    fn unscheduled_beryl_follows_active_azul_checks() {
         let mut chain = ChainUpgrades {
             display_name: "Devnet",
             rpc: None,
             specs: specs_from_config(ChainConfig::devnet()),
         };
-        assert_eq!(target_hardfork(&chain), Some("Azul"));
+        assert_eq!(target_hardfork(&chain, 100), Some("Beryl"));
 
         chain.apply_hardforks(&HardForkConfig {
             base: HardforkConfig { azul: Some(10), beryl: Some(12) },
             ..HardForkConfig::default()
         });
 
-        assert_eq!(target_hardfork(&chain), Some("Beryl"));
+        assert_eq!(target_hardfork(&chain, 11), Some("Beryl"));
         let beryl = chain.specs.iter().find(|spec| spec.name == "Beryl").unwrap();
         assert_eq!(beryl.timestamp, Some(12));
+    }
+
+    #[test]
+    fn upcoming_azul_remains_target_before_beryl() {
+        let mut chain = ChainUpgrades {
+            display_name: "Mainnet",
+            rpc: None,
+            specs: specs_from_config(ChainConfig::mainnet()),
+        };
+        chain.apply_hardforks(&HardForkConfig {
+            jovian_time: Some(10),
+            base: HardforkConfig { azul: Some(20), beryl: None },
+            ..HardForkConfig::default()
+        });
+
+        assert_eq!(target_hardfork(&chain, 15), Some("Azul"));
+        assert_eq!(target_hardfork(&chain, 21), Some("Beryl"));
     }
 
     #[test]
