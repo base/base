@@ -5952,6 +5952,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-prover-service-outbox"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base-zk-db",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "base-prover-zk"
 version = "0.0.0"
 dependencies = [

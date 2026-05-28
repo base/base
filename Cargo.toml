@@ -26,6 +26,7 @@ members = [
   "crates/proof/primitives",
   "crates/proof/host",
   "crates/proof/prover-service",
+  "crates/proof/prover-service/outbox",
   "crates/proof/tee/nitro-host",
   "crates/proof/tee/nitro-enclave",
   "crates/proof/tee/registrar",
@@ -239,6 +240,7 @@ base-proof = { path = "crates/proof/proof", default-features = false }
 base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
 base-proof-tee-nitro-enclave = { path = "crates/proof/tee/nitro-enclave" }
 base-proof-host = { path = "crates/proof/host", default-features = false }
+base-prover-service-outbox = { path = "crates/proof/prover-service/outbox" }
 base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier" }
 base-proof-client = { path = "crates/proof/client", default-features = false }
 base-proof-driver = { path = "crates/proof/driver", default-features = false }
