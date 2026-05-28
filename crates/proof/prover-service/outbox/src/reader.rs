@@ -15,7 +15,7 @@ pub struct OutboxTask {
 
 /// Abstraction for reading from outbox storage.
 #[async_trait]
-pub trait OutboxReader: Send + Sync + Clone {
+pub trait OutboxReader: Send + Sync {
     /// Poll for unprocessed tasks up to `batch_size`.
     async fn poll_tasks(&self, batch_size: u64) -> anyhow::Result<Vec<OutboxTask>>;
 

@@ -15,7 +15,7 @@ base-prover-service-db.workspace = true
 # async
 tokio-util.workspace = true
 async-trait.workspace = true
-tokio = { workspace = true, features = ["macros", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "time"] }
 
 # serialization
 serde_json.workspace = true
