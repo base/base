@@ -125,6 +125,17 @@ impl PolicyRegistryStorage<'_> {
         (policy_type as u64) << Self::POLICY_ID_TYPE_SHIFT | (counter & Self::COUNTER_MASK)
     }
 
+    /// Validates policy-creation inputs and returns the raw policy type discriminator.
+    pub fn validate_create_policy_inputs(admin: Address, policy_type: PolicyType) -> Result<u8> {
+        if !policy_type.is_valid() {
+            return Err(BasePrecompileError::enum_conversion_error());
+        }
+        if admin == Address::ZERO {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
+        }
+        Ok(policy_type.as_discriminant())
+    }
+
     /// Validates the policy exists and the caller is its current admin.
     /// Returns `(packed, caller)` on success.
     fn require_admin(&self, policy_id: u64) -> Result<(PackedPolicy, Address)> {
@@ -166,14 +177,16 @@ impl PolicyRegistryStorage<'_> {
 
     /// Creates a new ALLOWLIST or BLOCKLIST policy, returning its encoded ID.
     pub fn create_policy(&mut self, admin: Address, policy_type: PolicyType) -> Result<u64> {
-        if !policy_type.is_valid() {
-            return Err(BasePrecompileError::enum_conversion_error());
-        }
-        let policy_type_u8 = policy_type.as_discriminant();
-        if admin == Address::ZERO {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
-        }
+        let policy_type_u8 = Self::validate_create_policy_inputs(admin, policy_type)?;
+        self.create_policy_inner(admin, policy_type, policy_type_u8)
+    }
 
+    fn create_policy_inner(
+        &mut self,
+        admin: Address,
+        policy_type: PolicyType,
+        policy_type_u8: u8,
+    ) -> Result<u64> {
         // The registry account must be non-empty before the first policy storage write; otherwise
         // the EVM path can prune writes made under an empty native-precompile account.
         // TODO: Revisit this guard against the finalized Beryl gas model, since `is_initialized`
@@ -216,8 +229,9 @@ impl PolicyRegistryStorage<'_> {
         policy_type: PolicyType,
         accounts: Vec<Address>,
     ) -> Result<u64> {
+        let policy_type_u8 = Self::validate_create_policy_inputs(admin, policy_type)?;
         Self::require_account_batch_size(&accounts)?;
-        let policy_id = self.create_policy(admin, policy_type)?;
+        let policy_id = self.create_policy_inner(admin, policy_type, policy_type_u8)?;
         let caller = self.storage.caller();
         for account in &accounts {
             self.members.at_mut(&policy_id).at_mut(account).write(true)?;
@@ -1096,6 +1110,36 @@ mod tests {
                 maxBatchSize: U256::from(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH),
             })
         );
+    }
+
+    #[test]
+    fn create_policy_with_accounts_zero_admin_precedes_batch_size_revert() {
+        let mut s = storage();
+        let accounts = many_accounts(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH + 1);
+        let err = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
+                Address::ZERO,
+                PolicyType::ALLOWLIST,
+                accounts,
+            )
+        })
+        .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
+    }
+
+    #[test]
+    fn create_policy_with_accounts_invalid_policy_type_precedes_batch_size_revert() {
+        let mut s = storage();
+        let accounts = many_accounts(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH + 1);
+        let err = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
+                ADMIN,
+                PolicyType::__Invalid,
+                accounts,
+            )
+        })
+        .unwrap_err();
+        assert_eq!(err, BasePrecompileError::enum_conversion_error());
     }
 
     #[test]
