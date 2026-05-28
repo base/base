@@ -65,7 +65,7 @@ where
         }
 
         let mut i = 0;
-        while i < self.queue.len() - 1 {
+        while i + 1 < self.queue.len() {
             let prev_frame = &self.queue[i];
             let next_frame = &self.queue[i + 1];
             let extends_channel = prev_frame.id == next_frame.id;
@@ -534,6 +534,33 @@ pub(super) mod tests {
             .build();
         assert.holocene_active(true);
         assert.next_frames().await;
+    }
+
+    /// When Holocene is active and no frames are parsed from the transaction data
+    /// (e.g. the payload contained only the derivation version byte and no frame bodies),
+    /// `prune()` must not panic.
+    ///
+    /// Regression test: before the fix `while i < self.queue.len() - 1` would wrap
+    /// `0usize - 1` to `usize::MAX` in release mode (or panic in debug mode) when the
+    /// frame queue happened to be empty after extending with an empty frame list.
+    #[test]
+    fn test_prune_empty_queue_no_panic() {
+        let cfg = RollupConfig {
+            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            ..Default::default()
+        };
+        let mock = TestFrameQueueProvider::new(vec![]);
+        let mut fq = FrameQueue::new(mock, Arc::new(cfg));
+
+        // Queue is empty; Holocene is active.
+        let origin = BlockInfo::default(); // timestamp = 0 → holocene active
+        assert!(fq.is_holocene_active(origin));
+        assert!(fq.queue.is_empty());
+
+        // Must not panic.
+        fq.prune(origin);
+
+        assert!(fq.queue.is_empty());
     }
 
     #[tokio::test]
