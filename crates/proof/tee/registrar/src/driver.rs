@@ -787,8 +787,22 @@ where
             }
             permit = Arc::clone(&self.proof_semaphore).acquire_owned() => {
                 // `acquire_owned` only errors when the semaphore is
-                // closed; we never call `close()`, so this is unreachable.
-                permit.expect("proof semaphore is never closed")
+                // closed; we never call `close()`, so this branch should
+                // be unreachable. Treat it as a clean exit rather than a
+                // panic so a future refactor that introduces `close()`
+                // (or pulls in a third-party semaphore wrapper) cannot
+                // crash the registration driver loop.
+                match permit {
+                    Ok(p) => p,
+                    Err(_) => {
+                        warn!(
+                            signer = %signer_address,
+                            instance = %instance.instance_id,
+                            "proof semaphore closed unexpectedly, exiting task"
+                        );
+                        return Ok(());
+                    }
+                }
             }
         };
 
@@ -1135,7 +1149,20 @@ where
             if self.config.cancel.is_cancelled() {
                 return Ok(ResolveOutcome { addresses, attestations: None });
             }
-            match self.check_and_revoke_crls(&all_attestations[0], instance).await {
+            // Use `.first()` rather than `[0]` so the non-empty
+            // invariant is locally visible: the `addresses.is_empty()`
+            // early-return and the
+            // `all_attestations.len() < addresses.len()` length check
+            // above already guarantee at least one element, but those
+            // sites are 65+ lines upstream. Surfacing the `Option`
+            // here keeps `resolve_instance` indexing-panic-free even
+            // if a future refactor relaxes either upstream guard.
+            let first_attestation =
+                all_attestations.first().ok_or_else(|| RegistrarError::ProverClient {
+                    instance: instance.endpoint.to_string(),
+                    source: "no attestations available for CRL check".into(),
+                })?;
+            match self.check_and_revoke_crls(first_attestation, instance).await {
                 Ok(true) => {
                     warn!(
                         instance = %instance.instance_id,
