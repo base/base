@@ -140,6 +140,7 @@ where
     ) -> PoolResult<AddedTransactionOutcome> {
         match validated {
             TransactionValidationOutcome::Valid { transaction, propagate, authorities, .. } => {
+                // Keep the sidecar lock order consistent everywhere: nonce_pool before listeners.
                 let mut nonce_pool = self.nonce_pool.write();
                 let mut listeners = self.listeners.write();
                 let validated = self.validated_pool_transaction(

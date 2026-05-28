@@ -1,10 +1,11 @@
+//! Minimal 2D nonce sidecar storage and iteration for channelized EIP-8130 transactions.
+
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
 
 use alloy_primitives::{Address, TxHash, U256};
-use base_common_consensus::Eip8130Constants;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_transaction_pool::{
     AddedTransactionOutcome, BestTransactions, PoolResult, PriceBumpConfig, ValidPoolTransaction,
@@ -208,7 +209,6 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let nonce_key = transaction.transaction.eip8130_nonce_channel_key().ok_or_else(|| {
             PoolError::other(hash, "2D nonce pool only accepts channelized EIP-8130 transactions")
         })?;
-        debug_assert!(nonce_key != U256::ZERO && nonce_key != Eip8130Constants::NONCE_KEY_MAX);
 
         let lane_id = (sender, nonce_key);
         let sender_id = self.senders.sender_id_or_create(sender);
