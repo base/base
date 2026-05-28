@@ -181,6 +181,23 @@ impl AlloyL2ChainProvider {
         let rpc = RootProvider::<Base>::new(rpc_client);
         Self::new(rpc, rollup_config, cache_size)
     }
+
+    async fn block_by_hash(&mut self, hash: B256) -> Result<BaseBlock, AlloyL2ChainProviderError> {
+        Metrics::l2_chain_requests("l2_block_ref_by_hash").increment(1);
+
+        let block = base_metrics::time!(Metrics::request_duration("l2_block_ref_by_hash"), {
+            self.inner.get_block_by_hash(hash).full().await
+        })
+        .map_err(|e| {
+            Metrics::l2_chain_errors("l2_block_ref_by_hash").increment(1);
+            AlloyL2ChainProviderError::Transport(e)
+        })?
+        .ok_or(AlloyL2ChainProviderError::BlockNotFound(hash.into()))?;
+
+        self.verify_block_hash(block.header.hash, hash)?;
+
+        Ok(block.into_consensus().map_transactions(|t| t.inner.inner.into_inner()))
+    }
 }
 
 /// An error for the [`AlloyL2ChainProvider`].
@@ -191,13 +208,13 @@ pub enum AlloyL2ChainProviderError {
     Transport(#[from] RpcError<TransportErrorKind>),
     /// Failed to find a block.
     #[error("Failed to fetch block {0}")]
-    BlockNotFound(u64),
+    BlockNotFound(BlockId),
     /// Failed to construct [`L2BlockInfo`] from the block and genesis.
     #[error("Failed to construct L2BlockInfo from block {0} and genesis")]
-    L2BlockInfoConstruction(u64),
+    L2BlockInfoConstruction(BlockId),
     /// Failed to convert the block into a [`SystemConfig`].
     #[error("Failed to convert block {0} into SystemConfig")]
-    SystemConfigConversion(u64),
+    SystemConfigConversion(BlockId),
 }
 
 impl From<AlloyL2ChainProviderError> for PipelineErrorKind {
@@ -206,9 +223,7 @@ impl From<AlloyL2ChainProviderError> for PipelineErrorKind {
             AlloyL2ChainProviderError::Transport(e) => {
                 Self::Temporary(PipelineError::Provider(format!("Transport error: {e}")))
             }
-            AlloyL2ChainProviderError::BlockNotFound(number) => {
-                ResetError::BlockNotFound(alloy_eips::BlockId::Number(number.into())).reset()
-            }
+            AlloyL2ChainProviderError::BlockNotFound(id) => ResetError::BlockNotFound(id).reset(),
             AlloyL2ChainProviderError::L2BlockInfoConstruction(_) => Self::Temporary(
                 PipelineError::Provider("L2 block info construction failed".to_string()),
             ),
@@ -227,9 +242,9 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
         let block = self
             .block_by_number(number)
             .await
-            .map_err(|_| AlloyL2ChainProviderError::BlockNotFound(number))?;
+            .map_err(|_| AlloyL2ChainProviderError::BlockNotFound(number.into()))?;
         L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
-            .map_err(|_| AlloyL2ChainProviderError::L2BlockInfoConstruction(number))
+            .map_err(|_| AlloyL2ChainProviderError::L2BlockInfoConstruction(number.into()))
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
@@ -246,7 +261,7 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
             Metrics::l2_chain_errors("l2_block_ref_by_number").increment(1);
             AlloyL2ChainProviderError::Transport(e)
         })?
-        .ok_or(AlloyL2ChainProviderError::BlockNotFound(number))?
+        .ok_or(AlloyL2ChainProviderError::BlockNotFound(number.into()))?
         .into_consensus()
         .map_transactions(|t| t.inner.inner.into_inner());
 
@@ -267,9 +282,28 @@ impl L2ChainProvider for AlloyL2ChainProvider {
         let block = self
             .block_by_number(number)
             .await
-            .map_err(|_| AlloyL2ChainProviderError::BlockNotFound(number))?;
+            .map_err(|_| AlloyL2ChainProviderError::BlockNotFound(number.into()))?;
         to_system_config(&block, &rollup_config)
-            .map_err(|_| AlloyL2ChainProviderError::SystemConfigConversion(number))
+            .map_err(|_| AlloyL2ChainProviderError::SystemConfigConversion(number.into()))
+    }
+
+    async fn l2_block_info_by_hash(
+        &mut self,
+        hash: B256,
+    ) -> Result<L2BlockInfo, <Self as L2ChainProvider>::Error> {
+        let block = self.block_by_hash(hash).await?;
+        L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
+            .map_err(|_| AlloyL2ChainProviderError::L2BlockInfoConstruction(hash.into()))
+    }
+
+    async fn system_config_by_hash(
+        &mut self,
+        hash: B256,
+        rollup_config: Arc<RollupConfig>,
+    ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error> {
+        let block = self.block_by_hash(hash).await?;
+        to_system_config(&block, &rollup_config)
+            .map_err(|_| AlloyL2ChainProviderError::SystemConfigConversion(hash.into()))
     }
 }
 
@@ -288,16 +322,18 @@ mod tests {
         assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
 
         // L2BlockInfoConstruction is a decode failure — transient.
-        let kind: PipelineErrorKind = AlloyL2ChainProviderError::L2BlockInfoConstruction(0).into();
+        let kind: PipelineErrorKind =
+            AlloyL2ChainProviderError::L2BlockInfoConstruction(0u64.into()).into();
         assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
 
         // SystemConfigConversion is a decode failure — transient.
-        let kind: PipelineErrorKind = AlloyL2ChainProviderError::SystemConfigConversion(0).into();
+        let kind: PipelineErrorKind =
+            AlloyL2ChainProviderError::SystemConfigConversion(0u64.into()).into();
         assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
 
         // L2 BlockNotFound: the pipeline only requests blocks that should exist on the
         // canonical chain. A missing L2 block means a reorg occurred — must Reset.
-        let kind: PipelineErrorKind = AlloyL2ChainProviderError::BlockNotFound(42).into();
+        let kind: PipelineErrorKind = AlloyL2ChainProviderError::BlockNotFound(42u64.into()).into();
         assert!(
             matches!(kind, PipelineErrorKind::Reset(_)),
             "L2 BlockNotFound must map to Reset (block disappeared due to reorg)"

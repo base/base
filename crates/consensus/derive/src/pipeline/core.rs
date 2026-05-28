@@ -85,14 +85,14 @@ where
             }
             current = self
                 .l2_chain_provider
-                .l2_block_info_by_number(current.block_info.number - 1)
+                .l2_block_info_by_hash(current.block_info.parent_hash)
                 .await
                 .map_err(Into::into)?;
         }
 
         let system_config = self
             .l2_chain_provider
-            .system_config_by_number(current.block_info.number, Arc::clone(&self.rollup_config))
+            .system_config_by_hash(current.block_info.hash, Arc::clone(&self.rollup_config))
             .await
             .map_err(Into::into)?;
 
@@ -446,6 +446,9 @@ mod tests {
         const CODE_STOP_L1_ORIGIN: u64 = L1_HEAD - RollupConfig::GRANITE_CHANNEL_TIMEOUT;
         const BATCHER_AT_SPEC_STOP: Address = address!("BB00000000000000000000000000000000000002");
         const BATCHER_AT_CODE_STOP: Address = address!("AA00000000000000000000000000000000000001");
+        fn test_hash(n: u64) -> B256 {
+            B256::left_padding_from(&n.to_be_bytes())
+        }
 
         let rollup_config = Arc::new(RollupConfig {
             block_time: 2,
@@ -466,14 +469,11 @@ mod tests {
             l2_chain_provider.blocks.push(L2BlockInfo {
                 block_info: BlockInfo {
                     number: n,
-                    hash: B256::with_last_byte((n & 0xff) as u8),
-                    parent_hash: B256::ZERO,
+                    hash: test_hash(n),
+                    parent_hash: test_hash(n - 1),
                     timestamp,
                 },
-                l1_origin: BlockNumHash {
-                    number: n,
-                    hash: B256::with_last_byte(((n ^ 0x80) & 0xff) as u8),
-                },
+                l1_origin: BlockNumHash { number: n, hash: test_hash(n ^ 0x80) },
                 seq_num: 0,
             });
         }
@@ -492,14 +492,11 @@ mod tests {
         let safe_head = L2BlockInfo {
             block_info: BlockInfo {
                 number: L1_HEAD,
-                hash: B256::with_last_byte((L1_HEAD & 0xff) as u8),
-                parent_hash: B256::ZERO,
+                hash: test_hash(L1_HEAD),
+                parent_hash: test_hash(L1_HEAD - 1),
                 timestamp: L2_SAFE_HEAD_TIMESTAMP,
             },
-            l1_origin: BlockNumHash {
-                number: L1_HEAD,
-                hash: B256::with_last_byte(((L1_HEAD ^ 0x80) & 0xff) as u8),
-            },
+            l1_origin: BlockNumHash { number: L1_HEAD, hash: test_hash(L1_HEAD ^ 0x80) },
             seq_num: 0,
         };
 

@@ -7,7 +7,7 @@ use alloy_consensus::{Header, Receipt, TxEnvelope};
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
-use base_protocol::{BatchValidationProvider, BlockInfo};
+use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo};
 
 use crate::PipelineErrorKind;
 
@@ -45,6 +45,19 @@ pub trait L2ChainProvider: BatchValidationProviderDerive {
     async fn system_config_by_number(
         &mut self,
         number: u64,
+        rollup_config: Arc<RollupConfig>,
+    ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error>;
+
+    /// Returns the [`L2BlockInfo`] by L2 block hash.
+    async fn l2_block_info_by_hash(
+        &mut self,
+        hash: B256,
+    ) -> Result<L2BlockInfo, <Self as L2ChainProvider>::Error>;
+
+    /// Returns the [`SystemConfig`] by L2 block hash.
+    async fn system_config_by_hash(
+        &mut self,
+        hash: B256,
         rollup_config: Arc<RollupConfig>,
     ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error>;
 }

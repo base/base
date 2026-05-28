@@ -2,7 +2,7 @@
 
 use alloc::{boxed::Box, string::ToString, sync::Arc};
 
-use alloy_primitives::map::HashMap;
+use alloy_primitives::{B256, map::HashMap};
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::{RollupConfig, SystemConfig};
@@ -19,6 +19,8 @@ use crate::{
 pub struct TestSystemConfigL2Fetcher {
     /// A map from [u64] block number to a [`SystemConfig`].
     pub system_configs: HashMap<u64, SystemConfig>,
+    /// A map from L2 block hash to a [`SystemConfig`].
+    pub system_configs_by_hash: HashMap<B256, SystemConfig>,
 }
 
 impl TestSystemConfigL2Fetcher {
@@ -27,9 +29,15 @@ impl TestSystemConfigL2Fetcher {
         self.system_configs.insert(number, config);
     }
 
+    /// Inserts a new system config into the mock fetcher with the given L2 block hash.
+    pub fn insert_by_hash(&mut self, hash: B256, config: SystemConfig) {
+        self.system_configs_by_hash.insert(hash, config);
+    }
+
     /// Clears all system configs from the mock fetcher.
     pub fn clear(&mut self) {
         self.system_configs.clear();
+        self.system_configs_by_hash.clear();
     }
 }
 
@@ -39,6 +47,9 @@ pub enum TestSystemConfigL2FetcherError {
     /// The system config was not found.
     #[error("system config not found: {0}")]
     NotFound(u64),
+    /// The system config was not found by hash.
+    #[error("system config not found: {0}")]
+    HashNotFound(B256),
 }
 
 impl From<TestSystemConfigL2FetcherError> for PipelineErrorKind {
@@ -73,5 +84,23 @@ impl L2ChainProvider for TestSystemConfigL2Fetcher {
             .get(&number)
             .copied()
             .ok_or_else(|| TestSystemConfigL2FetcherError::NotFound(number))
+    }
+
+    async fn l2_block_info_by_hash(
+        &mut self,
+        _: B256,
+    ) -> Result<L2BlockInfo, <Self as L2ChainProvider>::Error> {
+        unimplemented!()
+    }
+
+    async fn system_config_by_hash(
+        &mut self,
+        hash: B256,
+        _: Arc<RollupConfig>,
+    ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error> {
+        self.system_configs_by_hash
+            .get(&hash)
+            .copied()
+            .ok_or_else(|| TestSystemConfigL2FetcherError::HashNotFound(hash))
     }
 }

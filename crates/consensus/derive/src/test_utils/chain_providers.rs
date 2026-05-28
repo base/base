@@ -96,6 +96,9 @@ pub enum TestProviderError {
     /// The system config was not found.
     #[error("System config not found")]
     SystemConfigNotFound(u64),
+    /// The system config was not found by hash.
+    #[error("System config not found")]
+    SystemConfigHashNotFound(B256),
 }
 
 impl From<TestProviderError> for PipelineErrorKind {
@@ -209,6 +212,38 @@ impl L2ChainProvider for TestL2ChainProvider {
         number: u64,
         _: Arc<RollupConfig>,
     ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error> {
+        self.system_configs
+            .get(&number)
+            .ok_or_else(|| TestProviderError::SystemConfigNotFound(number))
+            .cloned()
+    }
+
+    async fn l2_block_info_by_hash(
+        &mut self,
+        hash: B256,
+    ) -> Result<L2BlockInfo, <Self as L2ChainProvider>::Error> {
+        if self.short_circuit {
+            return self.blocks.first().copied().ok_or_else(|| TestProviderError::BlockNotFound);
+        }
+        self.blocks
+            .iter()
+            .find(|b| b.block_info.hash == hash)
+            .copied()
+            .ok_or_else(|| TestProviderError::BlockNotFound)
+    }
+
+    async fn system_config_by_hash(
+        &mut self,
+        hash: B256,
+        _: Arc<RollupConfig>,
+    ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error> {
+        let number = self
+            .blocks
+            .iter()
+            .find(|b| b.block_info.hash == hash)
+            .map(|b| b.block_info.number)
+            .or_else(|| (hash == B256::ZERO).then_some(0))
+            .ok_or_else(|| TestProviderError::SystemConfigHashNotFound(hash))?;
         self.system_configs
             .get(&number)
             .ok_or_else(|| TestProviderError::SystemConfigNotFound(number))
