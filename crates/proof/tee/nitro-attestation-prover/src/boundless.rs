@@ -424,14 +424,18 @@ impl BoundlessProver {
 impl AttestationProofProvider for BoundlessProver {
     /// # Cancellation
     ///
-    /// Cooperatively honors `cancel` at phase boundaries: before
-    /// building the client/params, and (via
-    /// [`generate_proof_for_signer`]) between recovery probe attempts.
-    /// The actual submit + wait-for-fulfillment loop is not interrupted
-    /// once started; dropping the future is safe because any submitted
-    /// request remains discoverable on the next call via the
-    /// deterministic request-id derivation (see the module docs on
-    /// proof recovery).
+    /// Cooperatively honors `cancel` once, at the top of the method,
+    /// before building the client/params. The build + submit +
+    /// wait-for-fulfillment phases are not interrupted once entered;
+    /// callers that need finer-grained cancellation should `select!`
+    /// against the cancel token externally. Dropping the future
+    /// mid-flight is safe because any submitted request remains
+    /// discoverable on the next call via the deterministic request-id
+    /// derivation (see the module docs on proof recovery).
+    ///
+    /// The per-probe cancel checks the doc previously referenced live
+    /// in [`Self::generate_proof_for_signer`], which has its own
+    /// recovery loop; this method has no probes to break between.
     async fn generate_proof(
         &self,
         attestation_bytes: &[u8],
