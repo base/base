@@ -170,9 +170,8 @@ impl ProverApiServer for NitroProverRpc {
         let timeout = self.proof_request_timeout;
 
         // Pick the first valid enclave with an available permit. Falling through busy enclaves
-        // matters in dual-enclave deployments with a checker: `select_valid_enclave` always
-        // returns the first valid enclave, so without fall-through a single in-flight request
-        // would make the second enclave unreachable even while it is idle.
+        // matters in dual-enclave deployments: without fall-through a single in-flight request
+        // would make idle enclaves unreachable even though they are valid and available.
         let candidate_indices: Vec<usize> = match &self.checker {
             Some(checker) => checker
                 .select_all_valid_enclaves()
