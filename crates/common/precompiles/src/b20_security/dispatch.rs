@@ -612,14 +612,14 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         amounts: Vec<U256>,
         privileged: bool,
     ) -> base_precompile_storage::Result<()> {
-        if recipients.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
-        }
         if recipients.len() != amounts.len() {
             return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
                 leftLen: U256::from(recipients.len()),
                 rightLen: U256::from(amounts.len()),
             }));
+        }
+        if recipients.is_empty() {
+            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
         }
         let caller = ctx.caller();
         for (recipient, amount) in recipients.into_iter().zip(amounts) {
@@ -1097,6 +1097,19 @@ mod tests {
             BasePrecompileError::revert(IB20Security::LengthMismatch {
                 leftLen: U256::ONE,
                 rightLen: U256::from(2u64),
+            })
+        );
+
+        assert_eq!(
+            call_security(
+                &mut token,
+                ALICE,
+                batch_mint_calldata(alloc::vec![], alloc::vec![U256::ONE]),
+            )
+            .unwrap_err(),
+            BasePrecompileError::revert(IB20Security::LengthMismatch {
+                leftLen: U256::ZERO,
+                rightLen: U256::ONE,
             })
         );
     }
