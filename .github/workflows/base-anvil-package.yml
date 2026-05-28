@@ -16,7 +16,7 @@ on:
         default: main
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.sha }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -59,10 +59,11 @@ jobs:
 
       - name: Prepare
         shell: bash
+        env:
+          PLATFORM: ${{ matrix.settings.platform }}
         run: |
           set -euo pipefail
-          platform="${{ matrix.settings.platform }}"
-          echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+          echo "PLATFORM_PAIR=${PLATFORM//\//-}" >> "$GITHUB_ENV"
 
       - name: Checkout Base
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -200,6 +201,8 @@ jobs:
         env:
           BASE_ANVIL_SHA: ${{ steps.base-anvil.outputs.sha }}
           BASE_STD_SHA: ${{ steps.base-std.outputs.sha }}
+          PLATFORM: ${{ matrix.settings.platform }}
+          SMOKE_TESTED: ${{ matrix.settings.smoke_test }}
         run: |
           set -euo pipefail
 
@@ -210,45 +213,48 @@ jobs:
           cp "$BASE_ANVIL_DIR/target/release/anvil" "$image_root/anvil"
           cp "$BASE_ANVIL_DIR/target/release/forge" "$image_root/forge"
 
-          cat > "$image_root/MANIFEST.json" <<EOF
-          {
-            "package": "$REGISTRY_IMAGE",
-            "platform": "${{ matrix.settings.platform }}",
-            "base": {
-              "repo": "$GITHUB_REPOSITORY",
-              "ref": "$GITHUB_REF_NAME",
-              "sha": "$GITHUB_SHA"
-            },
-            "base_anvil": {
-              "repo": "base/base-anvil",
-              "ref": "$BASE_ANVIL_REF",
-              "sha": "$BASE_ANVIL_SHA"
-            },
-            "base_std": {
-              "repo": "base/base-std",
-              "ref": "$BASE_STD_REF",
-              "sha": "$BASE_STD_SHA"
-            },
-            "binaries": [
-              "anvil",
-              "forge"
-            ]
-          }
-          EOF
+          jq -n \
+            --arg package "$REGISTRY_IMAGE" \
+            --arg platform "$PLATFORM" \
+            --arg base_repo "$GITHUB_REPOSITORY" \
+            --arg base_ref "$GITHUB_REF_NAME" \
+            --arg base_sha "$GITHUB_SHA" \
+            --arg anvil_repo "base/base-anvil" \
+            --arg anvil_ref "$BASE_ANVIL_REF" \
+            --arg anvil_sha "$BASE_ANVIL_SHA" \
+            --arg std_repo "base/base-std" \
+            --arg std_ref "$BASE_STD_REF" \
+            --arg std_sha "$BASE_STD_SHA" \
+            --argjson smoke_tested "$SMOKE_TESTED" \
+            '{
+              package: $package,
+              platform: $platform,
+              base: {repo: $base_repo, ref: $base_ref, sha: $base_sha},
+              base_anvil: {repo: $anvil_repo, ref: $anvil_ref, sha: $anvil_sha},
+              base_std: {
+                repo: $std_repo,
+                ref: $std_ref,
+                sha: $std_sha,
+                smoke_tested: $smoke_tested
+              },
+              binaries: ["anvil", "forge"]
+            }' > "$image_root/MANIFEST.json"
 
-          cat > "$image_root/Dockerfile" <<'EOF'
-          FROM public.ecr.aws/docker/library/debian:trixie-slim
-          RUN apt-get update \
-            && apt-get install -y --no-install-recommends ca-certificates \
-            && rm -rf /var/lib/apt/lists/*
-          COPY anvil forge /usr/local/bin/
-          COPY MANIFEST.json /usr/local/share/base-anvil/MANIFEST.json
-          ENTRYPOINT ["/usr/local/bin/anvil"]
-          EOF
+          {
+            printf '%s\n' 'FROM public.ecr.aws/docker/library/debian:trixie-slim'
+            printf '%s\n' 'RUN apt-get update \'
+            printf '%s\n' '  && apt-get install -y --no-install-recommends ca-certificates \'
+            printf '%s\n' '  && rm -rf /var/lib/apt/lists/*'
+            printf '%s\n' 'COPY anvil forge /usr/local/bin/'
+            printf '%s\n' 'COPY MANIFEST.json /usr/local/share/base-anvil/MANIFEST.json'
+            printf '%s\n' 'ENTRYPOINT ["/usr/local/bin/anvil"]'
+          } > "$image_root/Dockerfile"
 
       - name: Build and push package image
         id: image
         shell: bash
+        env:
+          PLATFORM: ${{ matrix.settings.platform }}
         run: |
           set -euo pipefail
 
@@ -257,7 +263,7 @@ jobs:
           metadata_file="$RUNNER_TEMP/base-anvil-metadata.json"
 
           docker buildx build "$image_root" \
-            --platform "${{ matrix.settings.platform }}" \
+            --platform "$PLATFORM" \
             --tag "$REGISTRY_IMAGE" \
             --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
@@ -347,6 +353,8 @@ jobs:
       - name: Create manifest list and push
         shell: bash
         working-directory: ${{ runner.temp }}/digests
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.docker_tags }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -361,7 +369,7 @@ jobs:
           while IFS= read -r tag; do
             [[ -n "$tag" ]] || continue
             tag_args+=("-t" "$tag")
-          done <<< "${{ steps.tags.outputs.docker_tags }}"
+          done <<< "$DOCKER_TAGS"
 
           digest_args=()
           for digest in "${digests[@]}"; do
