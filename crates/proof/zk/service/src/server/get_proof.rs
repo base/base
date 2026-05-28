@@ -197,7 +197,6 @@ impl ProverServiceServer {
             receipt: receipt_bytes,
             error_message,
             execution_stats,
-            proof: None,
         };
 
         Ok(Response::new(response))

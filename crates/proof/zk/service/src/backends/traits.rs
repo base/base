@@ -3,7 +3,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use base_zk_client::ZkProofRequest;
+use base_zk_client::ProveBlockRequest;
 use base_zk_db::{ProofRequest, ProofRequestRepo, ProofSession, ProofStatus, ProofType};
 use serde::{Deserialize, Serialize};
 
@@ -268,11 +268,7 @@ pub trait ProvingBackend: Send + Sync {
     fn backend_type(&self) -> BackendType;
 
     /// Starts proving for a block request.
-    async fn prove(
-        &self,
-        request: &ZkProofRequest,
-        proof_type: ProofType,
-    ) -> anyhow::Result<ProveResult>;
+    async fn prove(&self, request: &ProveBlockRequest) -> anyhow::Result<ProveResult>;
 
     /// Processes a queued proof request and returns the next status transition.
     async fn process_proof_request(
@@ -359,11 +355,7 @@ mod tests {
         fn backend_type(&self) -> BackendType {
             BackendType::OpSuccinct
         }
-        async fn prove(
-            &self,
-            _request: &ZkProofRequest,
-            _proof_type: ProofType,
-        ) -> anyhow::Result<ProveResult> {
+        async fn prove(&self, _request: &ProveBlockRequest) -> anyhow::Result<ProveResult> {
             unimplemented!()
         }
         async fn process_proof_request(

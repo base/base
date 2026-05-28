@@ -1,6 +1,6 @@
 //! Integration test for `GetProof` `error_message` field.
 //!
-//! Submits a `SubmitProof` request that will fail (`number_of_blocks_to_prove=0`),
+//! Submits a `ProveBlock` request that will fail (`number_of_blocks_to_prove=0`),
 //! polls `GetProof` until `FAILED`, and verifies the `error_message` field is populated.
 //!
 //! Requires a running prover-service.
@@ -8,11 +8,12 @@
 use std::time::{Duration, Instant};
 
 use base_zk_client::{
-    GetProofRequest, ProofRequest, SubmitProofRequest, ZkProofRequest, get_proof_response,
+    GetProofRequest, ProveBlockRequest, get_proof_response,
     prover_service_client::ProverServiceClient,
 };
 use tonic::transport::Channel;
 
+const PROOF_TYPE_COMPRESSED: i32 = 3;
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 const POLL_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -32,21 +33,18 @@ async fn get_proof_failed_returns_error_message() {
 
     // Submit a proof request that will fail (0 blocks is invalid)
     let resp = client
-        .submit_proof(SubmitProofRequest {
-            proof: Some(ProofRequest::compressed(
-                None,
-                ZkProofRequest {
-                    start_block_number: 100,
-                    number_of_blocks_to_prove: 0,
-                    sequence_window: None,
-                    prover_address: None,
-                    l1_head: None,
-                    intermediate_root_interval: None,
-                },
-            )),
+        .prove_block(ProveBlockRequest {
+            start_block_number: 100,
+            number_of_blocks_to_prove: 0,
+            sequence_window: None,
+            proof_type: PROOF_TYPE_COMPRESSED,
+            session_id: None,
+            prover_address: None,
+            l1_head: None,
+            intermediate_root_interval: None,
         })
         .await
-        .expect("SubmitProof should accept the request");
+        .expect("ProveBlock should accept the request");
 
     let session_id = resp.into_inner().session_id;
     println!("Submitted proof request: {session_id}");

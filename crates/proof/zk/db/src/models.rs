@@ -194,7 +194,7 @@ pub enum CreateProofRequestError {
         field: &'static str,
     },
     /// Conflicting row disappeared after insert conflict; safe to retry.
-    #[error("session_id {id}: proof request row missing after insert conflict; retry submit_proof")]
+    #[error("session_id {id}: proof request row missing after insert conflict; retry prove_block")]
     SessionRowMissingAfterConflict {
         /// Proof request UUID that was expected to exist.
         id: Uuid,

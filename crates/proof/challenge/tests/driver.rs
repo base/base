@@ -24,7 +24,7 @@ use base_proof_primitives::{ProofResult, Proposal, ProverClient};
 use base_protocol::OutputRoot;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManagerError;
-use base_zk_client::{ProofJobStatus, ProofRequest, ZkProofRequest};
+use base_zk_client::{ProofJobStatus, ProofType, ProveBlockRequest};
 use tokio_util::sync::CancellationToken;
 
 const STORAGE_HASH: B256 = B256::repeat_byte(0xBB);
@@ -131,17 +131,16 @@ fn tee_config(
 fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
     let session_id = PendingProof::derive_session_id(addr(0), 1);
 
-    let request = ProofRequest::snark_groth16(
-        Some(session_id),
-        ZkProofRequest {
-            start_block_number: 15,
-            number_of_blocks_to_prove: 5,
-            sequence_window: None,
-            prover_address: Some(format!("{:#x}", addr(0))),
-            l1_head: Some(format!("{DEFAULT_L1_HEAD:#x}")),
-            intermediate_root_interval: None,
-        },
-    );
+    let request = ProveBlockRequest {
+        start_block_number: 15,
+        number_of_blocks_to_prove: 5,
+        sequence_window: None,
+        proof_type: ProofType::SnarkGroth16.into(),
+        session_id: Some(session_id),
+        prover_address: Some(format!("{:#x}", addr(0))),
+        l1_head: Some(format!("{DEFAULT_L1_HEAD:#x}")),
+        intermediate_root_interval: None,
+    };
 
     PendingProof::ready(
         Bytes::from_static(&[0x01, 0xDE, 0xAD]),
@@ -404,7 +403,7 @@ async fn test_step_scan_error_propagated() {
 }
 
 #[tokio::test]
-async fn test_step_pending_proof_skips_submit_proof() {
+async fn test_step_pending_proof_skips_prove_block() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
@@ -566,7 +565,7 @@ async fn test_step_proof_retry_succeeds() {
     );
 
     // Step 2: proof polled → Failed → NeedsRetry → handle_proof_retry
-    // re-initiates submit_proof → AwaitingProof with retry_count == 1.
+    // re-initiates prove_block → AwaitingProof with retry_count == 1.
     driver.step().await.unwrap();
     let entry = driver.pending_proofs.get(&addr(0)).expect("entry should exist");
     assert!(
@@ -593,7 +592,7 @@ async fn test_step_proof_retry_succeeds() {
 }
 
 // Regression test for CHAIN-4297 / Immunefi #75829: after a FAILED proof, the
-// driver must re-invoke `submit_proof` with the same deterministic
+// driver must re-invoke `prove_block` with the same deterministic
 // `session_id` so the service-side fix in `create_with_outbox` can requeue
 // the row. Independent of the DB layer; fails on a challenger-side regression
 // such as dropping the retry call or losing `derive_session_id` determinism.
@@ -616,11 +615,11 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
     let tx_manager = default_tx_manager();
     let mut driver = test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
 
-    // Step 1: initial submit_proof call from initiate_zk_proof.
+    // Step 1: initial prove_block call from initiate_zk_proof.
     driver.step().await.unwrap();
     {
-        let log = &zk.state.lock().unwrap().submit_proof_log;
-        assert_eq!(log.len(), 1, "exactly one submit_proof call on initiation");
+        let log = &zk.state.lock().unwrap().prove_block_log;
+        assert_eq!(log.len(), 1, "exactly one prove_block call on initiation");
         assert_eq!(
             log[0].session_id.as_deref(),
             Some(expected_session_id.as_str()),
@@ -629,11 +628,11 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
     }
 
     // Step 2: poll observes Failed → NeedsRetry → handle_proof_retry must
-    // invoke submit_proof again, reusing the same deterministic session_id.
+    // invoke prove_block again, reusing the same deterministic session_id.
     driver.step().await.unwrap();
     {
-        let log = &zk.state.lock().unwrap().submit_proof_log;
-        assert_eq!(log.len(), 2, "retry must invoke submit_proof a second time");
+        let log = &zk.state.lock().unwrap().prove_block_log;
+        assert_eq!(log.len(), 2, "retry must invoke prove_block a second time");
         assert_eq!(
             log[1].session_id.as_deref(),
             Some(expected_session_id.as_str()),
@@ -652,7 +651,7 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
     );
     assert_eq!(entry.retry_count, 1);
 
-    // Simulate the service requeuing on the second submit_proof and the proof
+    // Simulate the service requeuing on the second prove_block and the proof
     // eventually succeeding on the retry session.
     {
         let mut state = zk.state.lock().unwrap();
@@ -1600,18 +1599,17 @@ async fn test_step_checkpoint_count_mismatch_surfaces_error() {
     );
 }
 
-fn minimal_proof_request(session_id: &str) -> ProofRequest {
-    ProofRequest::snark_groth16(
-        Some(session_id.to_string()),
-        ZkProofRequest {
-            start_block_number: 0,
-            number_of_blocks_to_prove: 1,
-            sequence_window: None,
-            prover_address: None,
-            l1_head: None,
-            intermediate_root_interval: None,
-        },
-    )
+fn minimal_prove_request(session_id: &str) -> base_zk_client::ProveBlockRequest {
+    base_zk_client::ProveBlockRequest {
+        start_block_number: 0,
+        number_of_blocks_to_prove: 1,
+        sequence_window: None,
+        proof_type: ProofType::SnarkGroth16.into(),
+        session_id: Some(session_id.to_string()),
+        prover_address: None,
+        l1_head: None,
+        intermediate_root_interval: None,
+    }
 }
 
 #[tokio::test]
@@ -1631,7 +1629,7 @@ async fn test_poll_unspecified_status_triggers_retry() {
             "unspecified-session".to_string(),
             0,
             B256::ZERO,
-            minimal_proof_request("unspecified-session"),
+            minimal_prove_request("unspecified-session"),
             DisputeIntent::Challenge,
         ),
     );
@@ -1663,7 +1661,7 @@ async fn test_poll_running_within_timeout_stays_pending() {
             "running-session".to_string(),
             0,
             B256::ZERO,
-            minimal_proof_request("running-session"),
+            minimal_prove_request("running-session"),
             DisputeIntent::Challenge,
         ),
     );
@@ -1695,7 +1693,7 @@ async fn test_poll_running_timeout_triggers_retry() {
             "stuck-session".to_string(),
             0,
             B256::ZERO,
-            minimal_proof_request("stuck-session"),
+            minimal_prove_request("stuck-session"),
             DisputeIntent::Challenge,
         ),
     );

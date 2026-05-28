@@ -5,18 +5,21 @@
 //! no SP1 cluster, no S3, no real witness generation. The full pipeline is
 //! exercised:
 //!
-//!   gRPC `SubmitProof` -> DB + outbox -> `OutboxProcessor` -> `ProverWorker`
+//!   gRPC `ProveBlock` -> DB + outbox -> `OutboxProcessor` -> `ProverWorker`
 //!   -> `MockBackend` (instant proof) -> `StatusPoller` -> `GetProof` returns receipt
 //!
 
 use std::time::{Duration, Instant};
 
 use base_zk_client::{
-    GetProofRequest, GetProofResponse, ProofRequest, ReceiptType, SubmitProofRequest,
-    ZkProofRequest, get_proof_response, prover_service_client::ProverServiceClient,
+    GetProofRequest, GetProofResponse, ProveBlockRequest, ReceiptType, get_proof_response,
+    prover_service_client::ProverServiceClient,
 };
 use tonic::transport::Channel;
 use uuid::Uuid;
+
+const PROOF_TYPE_COMPRESSED: i32 = 3;
+const PROOF_TYPE_SNARK_GROTH16: i32 = 4;
 
 /// Polling configuration -- mock proofs are instant, but the outbox processor
 /// and status poller run on intervals, so we need a small window.
@@ -30,48 +33,6 @@ async fn connect() -> ProverServiceClient<Channel> {
     ProverServiceClient::connect(addr)
         .await
         .expect("failed to connect to prover-service - is it running?")
-}
-
-fn compressed_request(
-    session_id: Option<String>,
-    start_block_number: u64,
-    number_of_blocks_to_prove: u64,
-    sequence_window: Option<u64>,
-) -> SubmitProofRequest {
-    SubmitProofRequest {
-        proof: Some(ProofRequest::compressed(
-            session_id,
-            ZkProofRequest {
-                start_block_number,
-                number_of_blocks_to_prove,
-                sequence_window,
-                prover_address: None,
-                l1_head: None,
-                intermediate_root_interval: None,
-            },
-        )),
-    }
-}
-
-fn snark_request(
-    start_block_number: u64,
-    number_of_blocks_to_prove: u64,
-    sequence_window: Option<u64>,
-    prover_address: Option<String>,
-) -> SubmitProofRequest {
-    SubmitProofRequest {
-        proof: Some(ProofRequest::snark_groth16(
-            None,
-            ZkProofRequest {
-                start_block_number,
-                number_of_blocks_to_prove,
-                sequence_window,
-                prover_address,
-                l1_head: None,
-                intermediate_root_interval: None,
-            },
-        )),
-    }
 }
 
 /// Poll `GetProof` until the status is terminal (`SUCCEEDED` or `FAILED`).
@@ -131,9 +92,18 @@ async fn test_compressed_proof_succeeds() {
     let mut client = connect().await;
 
     let resp = client
-        .submit_proof(compressed_request(None, 1000, 3, Some(50)))
+        .prove_block(ProveBlockRequest {
+            start_block_number: 1000,
+            number_of_blocks_to_prove: 3,
+            sequence_window: Some(50),
+            proof_type: PROOF_TYPE_COMPRESSED,
+            session_id: None,
+            prover_address: None,
+            l1_head: None,
+            intermediate_root_interval: None,
+        })
         .await
-        .expect("SubmitProof should succeed");
+        .expect("ProveBlock should succeed");
 
     let session_id = resp.into_inner().session_id;
     println!("  Submitted COMPRESSED proof: session_id={session_id}");
@@ -169,14 +139,18 @@ async fn test_snark_groth16_proof_succeeds() {
     let mut client = connect().await;
 
     let resp = client
-        .submit_proof(snark_request(
-            3000,
-            2,
-            Some(100),
-            Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
-        ))
+        .prove_block(ProveBlockRequest {
+            start_block_number: 3000,
+            number_of_blocks_to_prove: 2,
+            sequence_window: Some(100),
+            proof_type: PROOF_TYPE_SNARK_GROTH16,
+            session_id: None,
+            prover_address: Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
+            l1_head: None,
+            intermediate_root_interval: None,
+        })
         .await
-        .expect("SubmitProof SNARK should succeed");
+        .expect("ProveBlock SNARK should succeed");
 
     let session_id = resp.into_inner().session_id;
     println!("  Submitted SNARK_GROTH16 proof: session_id={session_id}");
@@ -205,12 +179,16 @@ async fn test_snark_groth16_both_receipts_available() {
     let mut client = connect().await;
 
     let resp = client
-        .submit_proof(snark_request(
-            4000,
-            1,
-            None,
-            Some("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd".to_string()),
-        ))
+        .prove_block(ProveBlockRequest {
+            start_block_number: 4000,
+            number_of_blocks_to_prove: 1,
+            sequence_window: None,
+            proof_type: PROOF_TYPE_SNARK_GROTH16,
+            session_id: None,
+            prover_address: Some("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd".to_string()),
+            l1_head: None,
+            intermediate_root_interval: None,
+        })
         .await
         .unwrap();
 
@@ -284,12 +262,30 @@ async fn test_idempotent_request_returns_same_session() {
     let session_id = Uuid::new_v4().to_string();
 
     let resp1 = client
-        .submit_proof(compressed_request(Some(session_id.clone()), 5000, 1, None))
+        .prove_block(ProveBlockRequest {
+            start_block_number: 5000,
+            number_of_blocks_to_prove: 1,
+            sequence_window: None,
+            proof_type: PROOF_TYPE_COMPRESSED,
+            session_id: Some(session_id.clone()),
+            prover_address: None,
+            l1_head: None,
+            intermediate_root_interval: None,
+        })
         .await
         .expect("first call should succeed");
 
     let resp2 = client
-        .submit_proof(compressed_request(Some(session_id.clone()), 5000, 1, None))
+        .prove_block(ProveBlockRequest {
+            start_block_number: 5000,
+            number_of_blocks_to_prove: 1,
+            sequence_window: None,
+            proof_type: PROOF_TYPE_COMPRESSED,
+            session_id: Some(session_id.clone()),
+            prover_address: None,
+            l1_head: None,
+            intermediate_root_interval: None,
+        })
         .await
         .expect("duplicate call should succeed (idempotent)");
 
@@ -322,9 +318,18 @@ async fn test_multiple_concurrent_compressed_proofs() {
     let mut session_ids = Vec::new();
     for i in 0..3 {
         let resp = client
-            .submit_proof(compressed_request(None, 6000 + i * 10, 1, None))
+            .prove_block(ProveBlockRequest {
+                start_block_number: 6000 + i * 10,
+                number_of_blocks_to_prove: 1,
+                sequence_window: None,
+                proof_type: PROOF_TYPE_COMPRESSED,
+                session_id: None,
+                prover_address: None,
+                l1_head: None,
+                intermediate_root_interval: None,
+            })
             .await
-            .expect("SubmitProof should succeed");
+            .expect("ProveBlock should succeed");
 
         let sid = resp.into_inner().session_id;
         println!("  Submitted proof {i}: session_id={sid}");
@@ -346,17 +351,26 @@ async fn test_multiple_concurrent_compressed_proofs() {
 
 #[tokio::test]
 #[ignore = "requires a running prover-service with a mock backend (SP1_PROVER=mock); run with `cargo nextest run --run-ignored all -p base-zk-service --test mock_backend_e2e`"]
-async fn test_missing_request_variant_rejected() {
-    println!("\n=== test_missing_request_variant_rejected ===");
+async fn test_invalid_proof_type_rejected() {
+    println!("\n=== test_invalid_proof_type_rejected ===");
     let mut client = connect().await;
 
     let err = client
-        .submit_proof(SubmitProofRequest { proof: Some(ProofRequest::default()) })
+        .prove_block(ProveBlockRequest {
+            start_block_number: 7000,
+            number_of_blocks_to_prove: 1,
+            sequence_window: None,
+            proof_type: 99,
+            session_id: None,
+            prover_address: None,
+            l1_head: None,
+            intermediate_root_interval: None,
+        })
         .await
-        .expect_err("missing request variant should be rejected");
+        .expect_err("invalid proof_type should be rejected");
 
     assert_eq!(err.code(), tonic::Code::InvalidArgument);
-    println!("  Correctly rejected missing request variant: {}", err.message());
+    println!("  Correctly rejected invalid proof_type: {}", err.message());
 }
 
 #[tokio::test]
@@ -366,7 +380,16 @@ async fn test_snark_without_prover_address_rejected() {
     let mut client = connect().await;
 
     let err = client
-        .submit_proof(snark_request(8000, 1, None, None))
+        .prove_block(ProveBlockRequest {
+            start_block_number: 8000,
+            number_of_blocks_to_prove: 1,
+            sequence_window: None,
+            proof_type: PROOF_TYPE_SNARK_GROTH16,
+            session_id: None,
+            prover_address: None, // required for SNARK_GROTH16
+            l1_head: None,
+            intermediate_root_interval: None,
+        })
         .await
         .expect_err("SNARK without prover_address should be rejected");
 

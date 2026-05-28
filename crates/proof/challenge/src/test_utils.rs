@@ -25,8 +25,8 @@ use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L2Provider, RpcError, RpcResult};
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
 use base_zk_client::{
-    GetProofRequest, GetProofResponse, ProofRequest as ZkServiceProofRequest, SubmitProofResponse,
-    ZkProofError, ZkProofProvider,
+    GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse, ZkProofError,
+    ZkProofProvider,
 };
 
 use crate::L1HeadProvider;
@@ -680,7 +680,7 @@ impl L2Provider for MockL2Provider {
 /// Mock ZK proof provider for testing the driver.
 #[derive(Debug)]
 pub struct MockZkProofProvider {
-    /// Session ID returned by [`submit_proof`](ZkProofProvider::submit_proof).
+    /// Session ID returned by [`prove_block`](ZkProofProvider::prove_block).
     pub session_id: String,
     /// Mutable proof state returned by [`get_proof`](ZkProofProvider::get_proof).
     pub state: Mutex<MockZkProofState>,
@@ -695,8 +695,8 @@ pub struct MockZkProofState {
     pub receipt: Vec<u8>,
     /// Error message returned when status is `Failed`.
     pub error_message: Option<String>,
-    /// Every [`ZkServiceProofRequest`] received by `submit_proof`, in call order.
-    pub submit_proof_log: Vec<ZkServiceProofRequest>,
+    /// Every [`ProveBlockRequest`] received by `prove_block`, in call order.
+    pub prove_block_log: Vec<ProveBlockRequest>,
 }
 
 impl Default for MockZkProofProvider {
@@ -707,12 +707,12 @@ impl Default for MockZkProofProvider {
 
 #[async_trait]
 impl ZkProofProvider for MockZkProofProvider {
-    async fn submit_proof(
+    async fn prove_block(
         &self,
-        request: ZkServiceProofRequest,
-    ) -> Result<SubmitProofResponse, ZkProofError> {
-        self.state.lock().unwrap().submit_proof_log.push(request);
-        Ok(SubmitProofResponse { session_id: self.session_id.clone() })
+        request: ProveBlockRequest,
+    ) -> Result<ProveBlockResponse, ZkProofError> {
+        self.state.lock().unwrap().prove_block_log.push(request);
+        Ok(ProveBlockResponse { session_id: self.session_id.clone() })
     }
 
     async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
@@ -722,7 +722,6 @@ impl ZkProofProvider for MockZkProofProvider {
             receipt: state.receipt,
             error_message: state.error_message,
             execution_stats: None,
-            proof: None,
         })
     }
 }

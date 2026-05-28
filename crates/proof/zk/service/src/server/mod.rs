@@ -3,11 +3,8 @@
 use std::fmt;
 
 use base_zk_client::{
-    ClaimProofJobRequest, ClaimProofJobResponse, CompleteProofJobRequest, CompleteProofJobResponse,
-    FailProofJobRequest, FailProofJobResponse, GetProofJobRequest, GetProofJobResponse,
-    GetProofRequest, GetProofResponse, HeartbeatProofJobRequest, HeartbeatProofJobResponse,
-    ListProofsRequest, ListProofsResponse, SubmitProofRequest, SubmitProofResponse,
-    prover_service_server::ProverService,
+    GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProveBlockRequest,
+    ProveBlockResponse, prover_service_server::ProverService,
 };
 use base_zk_db::ProofRequestRepo;
 use tonic::{Request, Response, Status};
@@ -16,7 +13,7 @@ use crate::proof_request_manager::ProofRequestManager;
 
 mod get_proof;
 mod list_proofs;
-mod submit_proof;
+mod prove_block;
 
 /// gRPC server implementing the `ProverService` trait.
 #[derive(Clone)]
@@ -48,6 +45,13 @@ impl ProverServiceServer {
 
 #[tonic::async_trait]
 impl ProverService for ProverServiceServer {
+    async fn prove_block(
+        &self,
+        request: Request<ProveBlockRequest>,
+    ) -> Result<Response<ProveBlockResponse>, Status> {
+        self.prove_block_impl(request).await
+    }
+
     async fn get_proof(
         &self,
         request: Request<GetProofRequest>,
@@ -60,47 +64,5 @@ impl ProverService for ProverServiceServer {
         request: Request<ListProofsRequest>,
     ) -> Result<Response<ListProofsResponse>, Status> {
         self.list_proofs_impl(request).await
-    }
-
-    async fn submit_proof(
-        &self,
-        request: Request<SubmitProofRequest>,
-    ) -> Result<Response<SubmitProofResponse>, Status> {
-        self.submit_proof_impl(request).await
-    }
-
-    async fn get_proof_job(
-        &self,
-        _request: Request<GetProofJobRequest>,
-    ) -> Result<Response<GetProofJobResponse>, Status> {
-        Err(Status::unimplemented("GetProofJob is not implemented yet"))
-    }
-
-    async fn claim_proof_job(
-        &self,
-        _request: Request<ClaimProofJobRequest>,
-    ) -> Result<Response<ClaimProofJobResponse>, Status> {
-        Err(Status::unimplemented("ClaimProofJob is not implemented yet"))
-    }
-
-    async fn heartbeat_proof_job(
-        &self,
-        _request: Request<HeartbeatProofJobRequest>,
-    ) -> Result<Response<HeartbeatProofJobResponse>, Status> {
-        Err(Status::unimplemented("HeartbeatProofJob is not implemented yet"))
-    }
-
-    async fn complete_proof_job(
-        &self,
-        _request: Request<CompleteProofJobRequest>,
-    ) -> Result<Response<CompleteProofJobResponse>, Status> {
-        Err(Status::unimplemented("CompleteProofJob is not implemented yet"))
-    }
-
-    async fn fail_proof_job(
-        &self,
-        _request: Request<FailProofJobRequest>,
-    ) -> Result<Response<FailProofJobResponse>, Status> {
-        Err(Status::unimplemented("FailProofJob is not implemented yet"))
     }
 }

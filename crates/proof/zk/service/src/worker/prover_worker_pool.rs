@@ -1,7 +1,7 @@
 use std::{fmt, sync::Arc};
 
 use async_trait::async_trait;
-use base_zk_client::ZkProofRequest;
+use base_zk_client::ProveBlockRequest;
 use base_zk_db::{ProofRequestRepo, ProofType};
 use base_zk_outbox::{OutboxTask, TaskQueue};
 use serde::Deserialize;
@@ -17,7 +17,7 @@ use crate::{
 /// Intermediate struct for deserializing from database JSON.
 /// The database stores `proof_type` as a string, but proto expects an integer.
 #[derive(Deserialize)]
-struct ZkProofRequestParams {
+struct ProveBlockRequestParams {
     start_block_number: u64,
     number_of_blocks_to_prove: u64,
     sequence_window: Option<u64>,
@@ -27,16 +27,18 @@ struct ZkProofRequestParams {
     intermediate_root_interval: Option<u64>,
 }
 
-impl ZkProofRequestParams {
-    /// Convert into proto `ZkProofRequest` and the parsed [`ProofType`], consuming `self`.
-    fn into_proto(self) -> anyhow::Result<(ZkProofRequest, ProofType)> {
+impl ProveBlockRequestParams {
+    /// Convert into proto `ProveBlockRequest` and the parsed [`ProofType`], consuming `self`.
+    fn into_proto(self) -> anyhow::Result<(ProveBlockRequest, ProofType)> {
         let proof_type =
             ProofType::try_from(self.proof_type.as_str()).map_err(|e| anyhow::anyhow!(e))?;
 
-        let request = ZkProofRequest {
+        let request = ProveBlockRequest {
             start_block_number: self.start_block_number,
             number_of_blocks_to_prove: self.number_of_blocks_to_prove,
             sequence_window: self.sequence_window,
+            proof_type: proof_type.proto_i32(),
+            session_id: None,
             prover_address: self.prover_address,
             l1_head: self.l1_head,
             intermediate_root_interval: self.intermediate_root_interval,
@@ -90,15 +92,15 @@ impl TaskQueue for ProverWorkerPool {
         let proof_request_id = task.proof_request_id;
 
         // Deserialize params from JSON (string proof_type) to intermediate struct
-        let params_intermediate: ZkProofRequestParams = serde_json::from_value(task.params)
+        let params_intermediate: ProveBlockRequestParams = serde_json::from_value(task.params)
             .map_err(|e| {
                 error!(
                     proof_request_id = %proof_request_id,
                     error = %e,
-                    "Failed to deserialize ZkProofRequestParams"
+                    "Failed to deserialize ProveBlockRequestParams"
                 );
                 metrics::inc_outbox_tasks_processed("failed", "unknown");
-                anyhow::anyhow!("Failed to deserialize ZkProofRequestParams: {e}")
+                anyhow::anyhow!("Failed to deserialize ProveBlockRequestParams: {e}")
             })?;
 
         // Convert to proto (integer proof_type) and extract the parsed ProofType
@@ -106,7 +108,7 @@ impl TaskQueue for ProverWorkerPool {
             error!(
                 proof_request_id = %proof_request_id,
                 error = %e,
-                "Failed to convert to ZkProofRequest"
+                "Failed to convert to ProveBlockRequest"
             );
             metrics::inc_outbox_tasks_processed("failed", "unknown");
             e
@@ -139,7 +141,7 @@ impl TaskQueue for ProverWorkerPool {
         let backend_name = backend.name();
 
         // Create a new ProverWorker
-        let worker = ProverWorker::new(repo, backend, proof_request_id, params, proof_type);
+        let worker = ProverWorker::new(repo, backend, proof_request_id, params);
 
         // Create a tracing span that propagates proof_request_id to ALL nested log
         // calls — including witness generation, L1-head calculation, cluster submission,

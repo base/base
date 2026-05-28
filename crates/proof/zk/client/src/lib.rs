@@ -28,17 +28,10 @@ pub const PROVER_FILE_DESCRIPTOR_SET: &[u8] =
     tonic::include_file_descriptor_set!("prover_descriptor");
 
 pub use proto::{
-    ClaimProofJobRequest, ClaimProofJobResponse, CompleteProofJobRequest, CompleteProofJobResponse,
-    ExecutionStats, FailProofJobRequest, FailProofJobResponse, GetProofJobRequest,
-    GetProofJobResponse, GetProofRequest, GetProofResponse, HeartbeatProofJobRequest,
-    HeartbeatProofJobResponse, ListProofsRequest, ListProofsResponse, ProofJob, ProofRequest,
-    ProofResult, ProofSummary, ProofType, ReceiptType, SubmitProofRequest, SubmitProofResponse,
-    TeeProofRequest, TeeProofResult, TeeProposal, ZkProofRequest, ZkProofResult,
-    get_proof_response, get_proof_response::Status as ProofJobStatus, proof_job, proof_request,
-    proof_result, prover_service_client,
+    ExecutionStats, GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
+    ProofSummary, ProofType, ProveBlockRequest, ProveBlockResponse, ReceiptType,
+    get_proof_response, get_proof_response::Status as ProofJobStatus, prover_service_client,
 };
-
-mod proof_request_ext;
 
 mod client;
 pub use client::{ZkProofClient, ZkProofClientConfig, ZkProofProvider};

@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 use base_zk_client::{
-    GetProofRequest, GetProofResponse, ProofJobStatus, ProofRequest, SubmitProofResponse,
-    ZkProofError, ZkProofProvider, ZkProofRequest,
+    GetProofRequest, GetProofResponse, ProofJobStatus, ProofType, ProveBlockRequest,
+    ProveBlockResponse, ZkProofError, ZkProofProvider,
 };
 use rstest::rstest;
 
@@ -13,11 +13,11 @@ struct MockZkProvider;
 
 #[async_trait]
 impl ZkProofProvider for MockZkProvider {
-    async fn submit_proof(
+    async fn prove_block(
         &self,
-        _request: ProofRequest,
-    ) -> Result<SubmitProofResponse, ZkProofError> {
-        Ok(SubmitProofResponse { session_id: "mock-session-123".into() })
+        _request: ProveBlockRequest,
+    ) -> Result<ProveBlockResponse, ZkProofError> {
+        Ok(ProveBlockResponse { session_id: "mock-session-123".into() })
     }
 
     async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
@@ -26,7 +26,6 @@ impl ZkProofProvider for MockZkProvider {
             receipt: vec![0xDE, 0xAD, 0xBE, 0xEF],
             error_message: None,
             execution_stats: None,
-            proof: None,
         })
     }
 }
@@ -36,10 +35,10 @@ struct FailingMockProvider;
 
 #[async_trait]
 impl ZkProofProvider for FailingMockProvider {
-    async fn submit_proof(
+    async fn prove_block(
         &self,
-        _request: ProofRequest,
-    ) -> Result<SubmitProofResponse, ZkProofError> {
+        _request: ProveBlockRequest,
+    ) -> Result<ProveBlockResponse, ZkProofError> {
         Err(ZkProofError::GrpcStatus(tonic::Status::unavailable("mock connection refused")))
     }
 
@@ -48,25 +47,24 @@ impl ZkProofProvider for FailingMockProvider {
     }
 }
 
-/// Verify that [`submit_proof`] returns the expected canned session ID and
+/// Verify that [`prove_block`] returns the expected canned session ID and
 /// pending status.
 #[tokio::test]
-async fn mock_submit_proof_returns_session_id() {
+async fn mock_prove_block_returns_session_id() {
     let provider = MockZkProvider;
 
-    let request = ProofRequest::compressed(
-        None,
-        ZkProofRequest {
-            start_block_number: 100,
-            number_of_blocks_to_prove: 1,
-            sequence_window: None,
-            prover_address: None,
-            l1_head: None,
-            intermediate_root_interval: None,
-        },
-    );
+    let request = ProveBlockRequest {
+        start_block_number: 100,
+        number_of_blocks_to_prove: 1,
+        sequence_window: None,
+        proof_type: ProofType::Compressed.into(),
+        session_id: None,
+        prover_address: None,
+        l1_head: None,
+        intermediate_root_interval: None,
+    };
 
-    let response = provider.submit_proof(request).await.expect("submit_proof should succeed");
+    let response = provider.prove_block(request).await.expect("prove_block should succeed");
 
     assert_eq!(response.session_id, "mock-session-123");
 }
@@ -125,8 +123,8 @@ fn grpc_status_from_conversion() {
 async fn trait_object_usage() {
     let provider: Box<dyn ZkProofProvider> = Box::new(MockZkProvider);
 
-    let request = ProofRequest::default();
-    let response = provider.submit_proof(request).await.expect("submit_proof should succeed");
+    let request = ProveBlockRequest::default();
+    let response = provider.prove_block(request).await.expect("prove_block should succeed");
 
     assert_eq!(response.session_id, "mock-session-123");
 }
@@ -136,9 +134,11 @@ async fn trait_object_usage() {
 async fn failing_mock_propagates_errors() {
     let provider = FailingMockProvider;
 
-    let submit_err =
-        provider.submit_proof(ProofRequest::default()).await.expect_err("submit_proof should fail");
-    assert!(matches!(submit_err, ZkProofError::GrpcStatus(_)));
+    let prove_err = provider
+        .prove_block(ProveBlockRequest::default())
+        .await
+        .expect_err("prove_block should fail");
+    assert!(matches!(prove_err, ZkProofError::GrpcStatus(_)));
 
     let get_err = provider
         .get_proof(GetProofRequest { session_id: "any".into(), receipt_type: None })

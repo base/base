@@ -8,8 +8,8 @@ use alloy_provider::RootProvider;
 use base_common_network::Base;
 use base_proof_rpc::OptimismRollupProviderExt;
 use base_zk_client::{
-    ExecutionStats, GetProofRequest, ProofJobStatus, ProofRequest, ReceiptType, ZkProofClient,
-    ZkProofClientConfig, ZkProofRequest,
+    ExecutionStats, GetProofRequest, ProofJobStatus, ProofType, ProveBlockRequest, ReceiptType,
+    ZkProofClient, ZkProofClientConfig,
 };
 use eyre::{Result, WrapErr, ensure};
 use tokio::time::{sleep, timeout};
@@ -53,7 +53,7 @@ impl ZkProofBench {
         )
         .await?;
 
-        Self::submit_proof_range_with_dry_run_stats(
+        Self::prove_block_range_with_dry_run_stats(
             prover_url,
             first_block_number,
             last_block_number,
@@ -92,7 +92,7 @@ impl ZkProofBench {
     }
 
     /// Requests a dry-run proof for a block range and returns execution stats.
-    pub async fn submit_proof_range_with_dry_run_stats(
+    pub async fn prove_block_range_with_dry_run_stats(
         prover_url: Url,
         first_block_number: u64,
         last_block_number: u64,
@@ -115,17 +115,16 @@ impl ZkProofBench {
             request_timeout: Duration::from_secs(30),
         })?;
         let response = client
-            .submit_proof(ProofRequest::compressed(
-                None,
-                ZkProofRequest {
-                    start_block_number,
-                    number_of_blocks_to_prove,
-                    sequence_window: None,
-                    prover_address: None,
-                    l1_head: Some(l1_head.to_string()),
-                    intermediate_root_interval: None,
-                },
-            ))
+            .prove_block(ProveBlockRequest {
+                start_block_number,
+                number_of_blocks_to_prove,
+                sequence_window: None,
+                proof_type: ProofType::Compressed.into(),
+                session_id: None,
+                prover_address: None,
+                l1_head: Some(l1_head.to_string()),
+                intermediate_root_interval: None,
+            })
             .await?;
 
         display.proof_requested(
