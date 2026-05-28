@@ -137,26 +137,3 @@ pub const fn proof_type_label(proof_type: ProofType) -> &'static str {
         ProofType::OpSuccinctSp1ClusterSnarkGroth16 => "snark_groth16",
     }
 }
-
-/// Map tonic gRPC status code to a short string for metric tags.
-pub const fn grpc_status_code_str(code: tonic::Code) -> &'static str {
-    match code {
-        tonic::Code::Ok => "OK",
-        tonic::Code::Cancelled => "CANCELLED",
-        tonic::Code::Unknown => "UNKNOWN",
-        tonic::Code::InvalidArgument => "INVALID_ARGUMENT",
-        tonic::Code::DeadlineExceeded => "DEADLINE_EXCEEDED",
-        tonic::Code::NotFound => "NOT_FOUND",
-        tonic::Code::AlreadyExists => "ALREADY_EXISTS",
-        tonic::Code::PermissionDenied => "PERMISSION_DENIED",
-        tonic::Code::ResourceExhausted => "RESOURCE_EXHAUSTED",
-        tonic::Code::FailedPrecondition => "FAILED_PRECONDITION",
-        tonic::Code::Aborted => "ABORTED",
-        tonic::Code::OutOfRange => "OUT_OF_RANGE",
-        tonic::Code::Unimplemented => "UNIMPLEMENTED",
-        tonic::Code::Internal => "INTERNAL",
-        tonic::Code::Unavailable => "UNAVAILABLE",
-        tonic::Code::DataLoss => "DATA_LOSS",
-        tonic::Code::Unauthenticated => "UNAUTHENTICATED",
-    }
-}

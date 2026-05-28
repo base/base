@@ -1,30 +1,21 @@
 #![doc = include_str!("../README.md")]
 
-#[allow(
-    unreachable_pub,
-    clippy::clone_on_ref_ptr,
-    clippy::derive_partial_eq_without_eq,
-    clippy::doc_markdown,
-    clippy::missing_const_for_fn
-)]
-mod proto {
-    tonic::include_proto!("prover_service");
-}
+#[cfg(any(feature = "rpc-server", feature = "rpc-client"))]
+mod api;
+#[cfg(feature = "rpc-client")]
+pub use api::ProverServiceApiClient;
+#[cfg(feature = "rpc-server")]
+pub use api::ProverServiceApiServer;
 
-pub use proto::prover_service_server;
-
-/// Serialized protobuf `FileDescriptorSet` for the prover service.
-pub const PROVER_SERVICE_FILE_DESCRIPTOR_SET: &[u8] =
-    tonic::include_file_descriptor_set!("prover_service_descriptor");
-
-pub use proto::{
+mod types;
+pub use types::{
     ClaimProofJobRequest, ClaimProofJobResponse, CompleteProofJobRequest, CompleteProofJobResponse,
     FailProofJobRequest, FailProofJobResponse, GetProofJobRequest, GetProofJobResponse,
     GetProofRequest, GetProofResponse, HeartbeatProofJobRequest, HeartbeatProofJobResponse,
-    ListProofsRequest, ListProofsResponse, ProofJob, ProofJobStatus, ProofRequest, ProofResult,
-    ProofStatus, ProofSummary, ProofType, SnarkGroth16ProofRequest, SnarkGroth16ProofResult,
-    SubmitProofRequest, SubmitProofResponse, TeeKind, TeeProofRequest, TeeProofResult, TeeProposal,
-    ZkProofRequest, ZkProofResult, ZkVm, proof_request, proof_result, prover_service_client,
+    ListProofsRequest, ListProofsResponse, ProofJob, ProofJobStatus, ProofRequest,
+    ProofRequestKind, ProofResult, ProofStatus, ProofSummary, ProofType, SnarkGroth16ProofRequest,
+    SnarkGroth16ProofResult, SubmitProofRequest, SubmitProofResponse, TeeKind, TeeProofRequest,
+    TeeProofResult, TeeProposal, ZkProofRequest, ZkProofResult, ZkVm,
 };
 
 mod backends;
@@ -40,10 +31,9 @@ mod metrics;
 pub use metrics::{
     OUTBOX_TASKS_PROCESSED, PROOF_REQUEST_DURATION_MS, PROOF_REQUESTS_COMPLETED, ProverMetrics,
     REQUESTS, RESPONSE_LATENCY_MS, RETRIED_REQUESTS, STUCK_REQUESTS,
-    WITNESS_GENERATION_DURATION_MS, grpc_status_code_str, inc_outbox_tasks_processed,
-    inc_proof_requests_completed, inc_requests, inc_retried_requests, inc_stuck_requests,
-    proof_type_label, record_proof_request_duration, record_response_latency,
-    record_witness_generation_duration,
+    WITNESS_GENERATION_DURATION_MS, inc_outbox_tasks_processed, inc_proof_requests_completed,
+    inc_requests, inc_retried_requests, inc_stuck_requests, proof_type_label,
+    record_proof_request_duration, record_response_latency, record_witness_generation_duration,
 };
 
 mod proof_request_manager;
@@ -55,10 +45,14 @@ pub use proxy::{ProxyConfig, ProxyConfigs, RateLimitConfig, start_all_proxies};
 mod request;
 pub use request::{ExecutionStats, ProveBlockRequest};
 
+#[cfg(feature = "rpc-server")]
 mod server;
+#[cfg(feature = "rpc-server")]
 pub use server::ProverServiceServer;
 
+#[cfg(feature = "rpc-client")]
 mod snark_e2e;
+#[cfg(feature = "rpc-client")]
 pub use snark_e2e::SnarkE2e;
 
 mod worker;

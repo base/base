@@ -1,16 +1,16 @@
-//! Implementation of the `ListProofs` gRPC endpoint.
+//! Implementation of the `ListProofs` JSON-RPC endpoint.
 
-use crate::{
-    ListProofsRequest, ListProofsResponse, ProofStatus as ProtoProofStatus, ProofSummary,
-    ProofType as ProtoProofType, TeeKind, ZkVm,
-};
-use base_prover_service_db::{ProofRequestPage, ProofStatus, ProofType as DbProofType};
-use chrono::{DateTime, Utc};
-use prost_types::Timestamp;
-use tonic::{Request, Response, Status};
+use jsonrpsee::core::RpcResult;
 use tracing::debug;
 
-use crate::{metrics, server::ProverServiceServer};
+use base_prover_service_db::{
+    ProofRequestPage, ProofStatus as DbProofStatus, ProofType as DbProofType,
+};
+
+use crate::{
+    ListProofsRequest, ListProofsResponse, ProofStatus, ProofSummary, ProofType, ZkVm,
+    server::{ProverServiceServer, internal, invalid_argument, record_rpc_result},
+};
 
 const MAX_LIMIT: u64 = 1000;
 const DEFAULT_LIMIT: u64 = 50;
@@ -19,32 +19,19 @@ impl ProverServiceServer {
     /// Returns a paginated list of proof summaries for the given filter.
     pub async fn list_proofs_impl(
         &self,
-        request: Request<ListProofsRequest>,
-    ) -> Result<Response<ListProofsResponse>, Status> {
+        request: ListProofsRequest,
+    ) -> RpcResult<ListProofsResponse> {
         let start = std::time::Instant::now();
         let result = self.list_proofs_inner(request).await;
-
-        let (success, status_code) = match &result {
-            Ok(_) => (true, "OK"),
-            Err(s) => (false, metrics::grpc_status_code_str(s.code())),
-        };
-        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-        metrics::inc_requests("ListProofs", success, status_code);
-        metrics::record_response_latency("ListProofs", success, elapsed_ms);
+        record_rpc_result("ListProofs", start, &result);
 
         result
     }
 
-    async fn list_proofs_inner(
-        &self,
-        request: Request<ListProofsRequest>,
-    ) -> Result<Response<ListProofsResponse>, Status> {
-        let req = request.into_inner();
-
+    async fn list_proofs_inner(&self, req: ListProofsRequest) -> RpcResult<ListProofsResponse> {
         let limit = parse_limit(req.limit)?;
-        let page =
-            ProofRequestPage::try_new(limit, req.offset).map_err(Status::invalid_argument)?;
-        let status_filter = parse_status_filter(req.status_filter)?;
+        let page = ProofRequestPage::try_new(limit, req.offset).map_err(invalid_argument)?;
+        let status_filter = parse_status_filter(req.status_filter);
 
         debug!(
             limit = limit,
@@ -57,74 +44,62 @@ impl ProverServiceServer {
             .repo
             .list_with_offset(&status_filter, page)
             .await
-            .map_err(|e| Status::internal(format!("database error: {e}")))?;
+            .map_err(|e| internal(format!("database error: {e}")))?;
 
         let summaries: Vec<ProofSummary> = proofs
             .into_iter()
             .map(|p| ProofSummary {
                 session_id: p.id.to_string(),
-                proof_type: proto_proof_type(p.proof_type).into(),
-                status: proto_status(p.status).into(),
-                created_at: Some(timestamp_from_datetime(p.created_at)),
-                updated_at: Some(timestamp_from_datetime(p.updated_at)),
-                completed_at: p.completed_at.map(timestamp_from_datetime),
+                proof_type: api_proof_type(p.proof_type),
+                status: api_status(p.status),
+                created_at: p.created_at,
+                updated_at: p.updated_at,
+                completed_at: p.completed_at,
                 error_message: p.error_message,
-                tee_kind: TeeKind::Unspecified.into(),
-                zk_vm: ZkVm::Sp1.into(),
+                tee_kind: None,
+                zk_vm: Some(ZkVm::Sp1),
             })
             .collect();
 
-        Ok(Response::new(ListProofsResponse { proofs: summaries, total_count }))
+        Ok(ListProofsResponse { proofs: summaries, total_count })
     }
 }
 
-fn parse_limit(limit: u32) -> Result<u64, Status> {
+fn parse_limit(limit: u32) -> RpcResult<u64> {
     let limit = u64::from(limit);
     match limit {
         0 => Ok(DEFAULT_LIMIT),
-        n if n > MAX_LIMIT => Err(Status::invalid_argument(format!(
-            "limit must be less than or equal to {MAX_LIMIT}"
-        ))),
+        n if n > MAX_LIMIT => {
+            Err(invalid_argument(format!("limit must be less than or equal to {MAX_LIMIT}")))
+        }
         n => Ok(n),
     }
 }
 
-fn parse_status_filter(status_filter: Option<i32>) -> Result<Vec<ProofStatus>, Status> {
+fn parse_status_filter(status_filter: Option<ProofStatus>) -> Vec<DbProofStatus> {
     match status_filter {
-        None => Ok(Vec::new()),
-        Some(v) => {
-            let proto_status = ProtoProofStatus::try_from(v).map_err(|_| {
-                Status::invalid_argument(format!("invalid status_filter value: {v}"))
-            })?;
-            Ok(match proto_status {
-                ProtoProofStatus::Unspecified => Vec::new(),
-                ProtoProofStatus::Queued => vec![ProofStatus::Created, ProofStatus::Pending],
-                ProtoProofStatus::Running => vec![ProofStatus::Running],
-                ProtoProofStatus::Succeeded => vec![ProofStatus::Succeeded],
-                ProtoProofStatus::Failed => vec![ProofStatus::Failed],
-            })
-        }
+        None => Vec::new(),
+        Some(ProofStatus::Queued) => vec![DbProofStatus::Created, DbProofStatus::Pending],
+        Some(ProofStatus::Running) => vec![DbProofStatus::Running],
+        Some(ProofStatus::Succeeded) => vec![DbProofStatus::Succeeded],
+        Some(ProofStatus::Failed) => vec![DbProofStatus::Failed],
     }
 }
 
-const fn proto_proof_type(proof_type: DbProofType) -> ProtoProofType {
+const fn api_proof_type(proof_type: DbProofType) -> ProofType {
     match proof_type {
-        DbProofType::OpSuccinctSp1ClusterCompressed => ProtoProofType::Compressed,
-        DbProofType::OpSuccinctSp1ClusterSnarkGroth16 => ProtoProofType::SnarkGroth16,
+        DbProofType::OpSuccinctSp1ClusterCompressed => ProofType::Compressed,
+        DbProofType::OpSuccinctSp1ClusterSnarkGroth16 => ProofType::SnarkGroth16,
     }
 }
 
-const fn proto_status(status: ProofStatus) -> ProtoProofStatus {
+const fn api_status(status: DbProofStatus) -> ProofStatus {
     match status {
-        ProofStatus::Created | ProofStatus::Pending => ProtoProofStatus::Queued,
-        ProofStatus::Running => ProtoProofStatus::Running,
-        ProofStatus::Succeeded => ProtoProofStatus::Succeeded,
-        ProofStatus::Failed => ProtoProofStatus::Failed,
+        DbProofStatus::Created | DbProofStatus::Pending => ProofStatus::Queued,
+        DbProofStatus::Running => ProofStatus::Running,
+        DbProofStatus::Succeeded => ProofStatus::Succeeded,
+        DbProofStatus::Failed => ProofStatus::Failed,
     }
-}
-
-const fn timestamp_from_datetime(datetime: DateTime<Utc>) -> Timestamp {
-    Timestamp { seconds: datetime.timestamp(), nanos: datetime.timestamp_subsec_nanos() as i32 }
 }
 
 #[cfg(test)]
@@ -132,23 +107,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn proto_status_maps_all_variants() {
-        assert_eq!(proto_status(ProofStatus::Created), ProtoProofStatus::Queued);
-        assert_eq!(proto_status(ProofStatus::Pending), ProtoProofStatus::Queued);
-        assert_eq!(proto_status(ProofStatus::Running), ProtoProofStatus::Running);
-        assert_eq!(proto_status(ProofStatus::Succeeded), ProtoProofStatus::Succeeded);
-        assert_eq!(proto_status(ProofStatus::Failed), ProtoProofStatus::Failed);
+    fn api_status_maps_all_variants() {
+        assert_eq!(api_status(DbProofStatus::Created), ProofStatus::Queued);
+        assert_eq!(api_status(DbProofStatus::Pending), ProofStatus::Queued);
+        assert_eq!(api_status(DbProofStatus::Running), ProofStatus::Running);
+        assert_eq!(api_status(DbProofStatus::Succeeded), ProofStatus::Succeeded);
+        assert_eq!(api_status(DbProofStatus::Failed), ProofStatus::Failed);
     }
 
     #[test]
-    fn proto_proof_type_maps_all_variants() {
+    fn api_proof_type_maps_all_variants() {
         assert_eq!(
-            proto_proof_type(DbProofType::OpSuccinctSp1ClusterCompressed),
-            ProtoProofType::Compressed
+            api_proof_type(DbProofType::OpSuccinctSp1ClusterCompressed),
+            ProofType::Compressed
         );
         assert_eq!(
-            proto_proof_type(DbProofType::OpSuccinctSp1ClusterSnarkGroth16),
-            ProtoProofType::SnarkGroth16
+            api_proof_type(DbProofType::OpSuccinctSp1ClusterSnarkGroth16),
+            ProofType::SnarkGroth16
         );
     }
 
@@ -163,7 +138,7 @@ mod tests {
     #[test]
     fn parse_limit_rejects_values_above_max() {
         let err = parse_limit(MAX_LIMIT as u32 + 1).unwrap_err();
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        assert_eq!(err.code(), jsonrpsee::types::error::INVALID_PARAMS_CODE);
     }
 
     #[test]
@@ -179,26 +154,16 @@ mod tests {
     }
 
     #[test]
-    fn status_filter_maps_unset_unspecified_and_valid_values() {
-        assert_eq!(parse_status_filter(None).unwrap(), Vec::<ProofStatus>::new());
-        assert_eq!(
-            parse_status_filter(Some(ProtoProofStatus::Unspecified as i32)).unwrap(),
-            Vec::<ProofStatus>::new()
-        );
+    fn status_filter_maps_unset_and_valid_values() {
+        assert_eq!(parse_status_filter(None), Vec::<DbProofStatus>::new());
 
-        for (proto, expected) in [
-            (ProtoProofStatus::Queued, vec![ProofStatus::Created, ProofStatus::Pending]),
-            (ProtoProofStatus::Running, vec![ProofStatus::Running]),
-            (ProtoProofStatus::Succeeded, vec![ProofStatus::Succeeded]),
-            (ProtoProofStatus::Failed, vec![ProofStatus::Failed]),
+        for (api, expected) in [
+            (ProofStatus::Queued, vec![DbProofStatus::Created, DbProofStatus::Pending]),
+            (ProofStatus::Running, vec![DbProofStatus::Running]),
+            (ProofStatus::Succeeded, vec![DbProofStatus::Succeeded]),
+            (ProofStatus::Failed, vec![DbProofStatus::Failed]),
         ] {
-            assert_eq!(parse_status_filter(Some(proto as i32)).unwrap(), expected);
+            assert_eq!(parse_status_filter(Some(api)), expected);
         }
-    }
-
-    #[test]
-    fn status_filter_rejects_invalid_value() {
-        let err = parse_status_filter(Some(999)).unwrap_err();
-        assert_eq!(err.code(), tonic::Code::InvalidArgument);
     }
 }

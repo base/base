@@ -1,88 +1,57 @@
+use alloy_primitives::B256;
+use jsonrpsee::core::RpcResult;
+use tracing::{info, warn};
+use uuid::Uuid;
+
 use crate::{
-    ProofRequest, SubmitProofRequest, SubmitProofResponse, ZkProofRequest, ZkVm, proof_request,
+    ProofRequest, ProofRequestKind, SubmitProofRequest, SubmitProofResponse, ZkProofRequest, ZkVm,
+    server::{
+        ProverServiceServer, failed_precondition, internal, invalid_argument, record_rpc_result,
+        resource_exhausted, unavailable,
+    },
 };
 use base_prover_service_db::{
     CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, ProofType,
 };
-use tonic::{Request, Response, Status};
-use tracing::{info, warn};
-use uuid::Uuid;
-
-use crate::{metrics, server::ProverServiceServer};
 
 impl ProverServiceServer {
     /// Enqueues a new proof request and returns the generated `session_id=<uuid>`.
     pub async fn submit_proof_impl(
         &self,
-        request: Request<SubmitProofRequest>,
-    ) -> Result<Response<SubmitProofResponse>, Status> {
+        request: SubmitProofRequest,
+    ) -> RpcResult<SubmitProofResponse> {
         let start = std::time::Instant::now();
         let result = self.submit_proof_inner(request).await;
-
-        // Emit unified request metrics at handler boundary
-        let (success, status_code) = match &result {
-            Ok(_) => (true, "OK"),
-            Err(s) => (false, metrics::grpc_status_code_str(s.code())),
-        };
-        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-        metrics::inc_requests("SubmitProof", success, status_code);
-        metrics::record_response_latency("SubmitProof", success, elapsed_ms);
+        record_rpc_result("SubmitProof", start, &result);
 
         result
     }
 
     async fn submit_proof_inner(
         &self,
-        request: Request<SubmitProofRequest>,
-    ) -> Result<Response<SubmitProofResponse>, Status> {
-        let submit_request = request.into_inner();
-        let proof_request = submit_request
-            .proof
-            .ok_or_else(|| Status::invalid_argument("proof request is required"))?;
-        let session_id = parse_session_id(proof_request.session_id.as_deref())?;
-        let (zk_request, proof_type, prover_address) = parse_zk_request(proof_request)?;
+        submit_request: SubmitProofRequest,
+    ) -> RpcResult<SubmitProofResponse> {
+        let session_id = parse_session_id(submit_request.proof.session_id.as_deref())?;
+        let (zk_request, proof_type, prover_address) = parse_zk_request(submit_request.proof)?;
+        let l1_head = zk_request.l1_head.map(format_hash);
 
         info!(
             start_block_number = zk_request.start_block_number,
             num_blocks_to_prove = zk_request.number_of_blocks_to_prove,
             proof_type = %proof_type,
             prover_address = ?prover_address,
-            l1_head = ?zk_request.l1_head,
+            l1_head = ?l1_head,
             "Attempting to prove base block(s)",
         );
 
-        // Validate prover_address for SNARK_GROTH16 proofs
-        if proof_type == ProofType::OpSuccinctSp1ClusterSnarkGroth16 {
-            let addr_str = prover_address.as_deref().ok_or_else(|| {
-                Status::invalid_argument("prover_address is required for SNARK_GROTH16 proof type")
-            })?;
-            addr_str.parse::<alloy_primitives::Address>().map_err(|e| {
-                Status::invalid_argument(format!(
-                    "Invalid prover_address: must be a valid Ethereum address: {e}"
-                ))
-            })?;
-        }
-
-        // Validate l1_head hex format if provided
-        if let Some(ref l1_head_str) = zk_request.l1_head {
-            l1_head_str.parse::<alloy_primitives::B256>().map_err(|e| {
-                Status::invalid_argument(format!(
-                    "Invalid l1_head: must be a hex-encoded 32-byte hash (0x-prefixed): {e}"
-                ))
-            })?;
-        }
-
         if let Some(interval) = zk_request.intermediate_root_interval {
-            // Reject `intermediate_root_interval == 0`
             if interval == 0 {
-                return Err(Status::invalid_argument(
+                return Err(invalid_argument(
                     "Invalid intermediate_root_interval: must be greater than 0",
                 ));
             }
-            // Reject misaligned ranges: `number_of_blocks_to_prove` must end on an
-            // intermediate-root boundary
             if !zk_request.number_of_blocks_to_prove.is_multiple_of(interval) {
-                return Err(Status::invalid_argument(format!(
+                return Err(invalid_argument(format!(
                     "Invalid number_of_blocks_to_prove ({}): must be a multiple of intermediate_root_interval ({})",
                     zk_request.number_of_blocks_to_prove, interval,
                 )));
@@ -96,33 +65,36 @@ impl ProverServiceServer {
             proof_type,
             session_id,
             prover_address,
-            l1_head: zk_request.l1_head,
+            l1_head,
             intermediate_root_interval: zk_request.intermediate_root_interval,
         };
 
-        let outcome =
-            self.repo.create_with_outbox(db_request, self.max_proof_retries).await.map_err(|e| match e {
-            CreateProofRequestError::IdCollision { id, field } => {
-                warn!(
-                    proof_request_id = %id,
-                    mismatched_field = field,
-                    "rejected SubmitProof: session_id already bound to a different request"
-                );
-                Status::failed_precondition(format!(
-                    "session_id {id} already exists with a different {field}"
-                ))
-            }
-            CreateProofRequestError::SessionRowMissingAfterConflict { id } => {
-                warn!(
-                    proof_request_id = %id,
-                    "rejected SubmitProof: session_id row missing after insert conflict"
-                );
-                Status::unavailable(format!(
-                    "session_id {id} is temporarily unavailable after conflict; retry submit_proof"
-                ))
-            }
-            CreateProofRequestError::Sqlx(e) => Status::internal(format!("Database error: {e}")),
-        })?;
+        let outcome = self
+            .repo
+            .create_with_outbox(db_request, self.max_proof_retries)
+            .await
+            .map_err(|e| match e {
+                CreateProofRequestError::IdCollision { id, field } => {
+                    warn!(
+                        proof_request_id = %id,
+                        mismatched_field = field,
+                        "rejected SubmitProof: session_id already bound to a different request"
+                    );
+                    failed_precondition(format!(
+                        "session_id {id} already exists with a different {field}"
+                    ))
+                }
+                CreateProofRequestError::SessionRowMissingAfterConflict { id } => {
+                    warn!(
+                        proof_request_id = %id,
+                        "rejected SubmitProof: session_id row missing after insert conflict"
+                    );
+                    unavailable(format!(
+                        "session_id {id} is temporarily unavailable after conflict; retry submit_proof"
+                    ))
+                }
+                CreateProofRequestError::Sqlx(e) => internal(format!("Database error: {e}")),
+            })?;
 
         let proof_request_id = outcome.id();
         match outcome {
@@ -132,7 +104,7 @@ impl ProverServiceServer {
                     max_proof_retries = self.max_proof_retries,
                     "rejected SubmitProof: proof request retry budget exhausted for this session_id",
                 );
-                return Err(Status::resource_exhausted(format!(
+                return Err(resource_exhausted(format!(
                     "session_id {id}: proof request retry budget exhausted; use get_proof for the stored terminal failure",
                 )));
             }
@@ -156,54 +128,45 @@ impl ProverServiceServer {
             }
         }
 
-        let response = SubmitProofResponse { session_id: proof_request_id.to_string() };
-
-        Ok(Response::new(response))
+        Ok(SubmitProofResponse { session_id: proof_request_id.to_string() })
     }
 }
 
-fn parse_session_id(session_id: Option<&str>) -> Result<Option<Uuid>, Status> {
+fn parse_session_id(session_id: Option<&str>) -> RpcResult<Option<Uuid>> {
     session_id
         .map(|id| {
-            Uuid::parse_str(id)
-                .map_err(|e| Status::invalid_argument(format!("Invalid session_id: {e}")))
+            Uuid::parse_str(id).map_err(|e| invalid_argument(format!("Invalid session_id: {e}")))
         })
         .transpose()
 }
 
 fn parse_zk_request(
     proof_request: ProofRequest,
-) -> Result<(ZkProofRequest, ProofType, Option<String>), Status> {
-    let request = proof_request
-        .request
-        .ok_or_else(|| Status::invalid_argument("proof request body is required"))?;
-
-    match request {
-        proof_request::Request::Compressed(request) => {
+) -> RpcResult<(ZkProofRequest, ProofType, Option<String>)> {
+    match proof_request.request {
+        ProofRequestKind::Compressed(request) => {
             validate_zk_vm(request.zk_vm)?;
             Ok((request, ProofType::OpSuccinctSp1ClusterCompressed, None))
         }
-        proof_request::Request::SnarkGroth16(request) => {
-            let proof = request
-                .proof
-                .ok_or_else(|| Status::invalid_argument("snark_groth16.proof is required"))?;
-            validate_zk_vm(proof.zk_vm)?;
-            let prover_address =
-                if request.prover_address.is_empty() { None } else { Some(request.prover_address) };
-            Ok((proof, ProofType::OpSuccinctSp1ClusterSnarkGroth16, prover_address))
+        ProofRequestKind::SnarkGroth16(request) => {
+            validate_zk_vm(request.proof.zk_vm)?;
+            let prover_address = Some(format!("{:#x}", request.prover_address));
+            Ok((request.proof, ProofType::OpSuccinctSp1ClusterSnarkGroth16, prover_address))
         }
-        proof_request::Request::Tee(_) => {
-            Err(Status::unimplemented("TEE proof requests are not supported by this ZK service"))
+        ProofRequestKind::Tee(_) => {
+            Err(invalid_argument("TEE proof requests are not supported by this ZK service"))
         }
     }
 }
 
-fn validate_zk_vm(zk_vm: i32) -> Result<(), Status> {
-    let zk_vm = ZkVm::try_from(zk_vm)
-        .map_err(|_| Status::invalid_argument(format!("invalid zk_vm value: {zk_vm}")))?;
+fn validate_zk_vm(zk_vm: ZkVm) -> RpcResult<()> {
     match zk_vm {
-        ZkVm::Unspecified | ZkVm::Sp1 => Ok(()),
+        ZkVm::Sp1 => Ok(()),
     }
+}
+
+fn format_hash(hash: B256) -> String {
+    format!("{hash:#x}")
 }
 
 #[cfg(test)]
@@ -226,18 +189,5 @@ mod tests {
             metrics::proof_type_label(ProofType::OpSuccinctSp1ClusterSnarkGroth16),
             "snark_groth16"
         );
-    }
-
-    #[test]
-    fn test_grpc_status_code_str() {
-        assert_eq!(metrics::grpc_status_code_str(tonic::Code::Ok), "OK");
-        assert_eq!(metrics::grpc_status_code_str(tonic::Code::InvalidArgument), "INVALID_ARGUMENT");
-        assert_eq!(metrics::grpc_status_code_str(tonic::Code::Internal), "INTERNAL");
-        assert_eq!(metrics::grpc_status_code_str(tonic::Code::NotFound), "NOT_FOUND");
-        assert_eq!(
-            metrics::grpc_status_code_str(tonic::Code::ResourceExhausted),
-            "RESOURCE_EXHAUSTED"
-        );
-        assert_eq!(metrics::grpc_status_code_str(tonic::Code::Unavailable), "UNAVAILABLE");
     }
 }

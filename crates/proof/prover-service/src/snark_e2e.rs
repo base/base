@@ -5,18 +5,19 @@
 //! `CronJob`.
 
 use crate::{
-    GetProofRequest, ProofRequest, ProofStatus, SnarkGroth16ProofRequest, SubmitProofRequest,
-    ZkProofRequest, ZkVm, proof_request, proof_result, prover_service_client::ProverServiceClient,
+    GetProofRequest, ProofRequest, ProofRequestKind, ProofResult, ProofStatus,
+    ProverServiceApiClient, SnarkGroth16ProofRequest, SubmitProofRequest, ZkProofRequest, ZkVm,
 };
+use alloy_primitives::Address;
 use alloy_provider::{Identity, Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use anyhow::{Context, Result, bail};
 use base_common_network::Base;
+use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use sp1_sdk::{
     SP1ProofWithPublicValues, SP1VerifyingKey,
     blocking::{CpuProver, MockProver, Prover as BlockingProver},
 };
-use tonic::transport::Channel;
 use tracing::{info, warn};
 
 use crate::L1HeadCalculator;
@@ -41,13 +42,14 @@ const MAX_STEP_BACKS: u64 = 300;
 pub struct SnarkE2e;
 
 impl SnarkE2e {
-    async fn connect() -> Result<ProverServiceClient<Channel>> {
-        let addr = std::env::var("PROVER_GRPC_ADDR")
+    async fn connect() -> Result<HttpClient> {
+        let addr = std::env::var("PROVER_RPC_ADDR")
+            .or_else(|_| std::env::var("PROVER_GRPC_ADDR"))
             .unwrap_or_else(|_| "http://localhost:9090".to_string());
 
         info!(addr = %addr, "connecting to prover-service");
-        let client = ProverServiceClient::connect(addr)
-            .await
+        let client = HttpClientBuilder::default()
+            .build(addr)
             .context("failed to connect to prover-service")?;
         Ok(client)
     }
@@ -203,27 +205,27 @@ impl SnarkE2e {
         // using SafeDB (optimism_safeHeadAtL1Block) with a sequence_window
         // fallback, which is more robust than the client-side l1_origin + 50
         // heuristic.
-        let mut client = Self::connect().await?;
+        let client = Self::connect().await?;
         let prove_resp = client
             .submit_proof(SubmitProofRequest {
-                proof: Some(ProofRequest {
+                proof: ProofRequest {
                     session_id: None,
-                    request: Some(proof_request::Request::SnarkGroth16(SnarkGroth16ProofRequest {
-                        proof: Some(ZkProofRequest {
+                    request: ProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
+                        proof: ZkProofRequest {
                             start_block_number: safe_head,
                             number_of_blocks_to_prove: 1,
                             sequence_window: Some(SEQUENCE_WINDOW),
                             l1_head: None,
                             intermediate_root_interval: None,
-                            zk_vm: ZkVm::Sp1.into(),
-                        }),
-                        prover_address: "0x0000000000000000000000000000000000000000".to_string(),
-                    })),
-                }),
+                            zk_vm: ZkVm::Sp1,
+                        },
+                        prover_address: Address::ZERO,
+                    }),
+                },
             })
             .await?;
 
-        let session_id = prove_resp.into_inner().session_id;
+        let session_id = prove_resp.session_id;
         info!(session_id = %session_id, "SNARK Groth16 proof submitted");
 
         // -- 3. Poll GetProof until SUCCEEDED or timeout --------------------------
@@ -237,37 +239,29 @@ impl SnarkE2e {
 
             let resp = client.get_proof(GetProofRequest { session_id: session_id.clone() }).await?;
 
-            let inner = resp.into_inner();
-            let status = ProofStatus::try_from(inner.status).unwrap_or(ProofStatus::Unspecified);
-
             info!(
                 elapsed_secs = start.elapsed().as_secs(),
-                status = ?status,
+                status = ?resp.status,
                 "poll status"
             );
 
-            match status {
+            match resp.status {
                 ProofStatus::Succeeded => {
-                    let Some(proof_result::Result::SnarkGroth16(result)) =
-                        inner.result.and_then(|result| result.result)
-                    else {
+                    let Some(ProofResult::SnarkGroth16(result)) = resp.result else {
                         bail!("SNARK result missing on SUCCEEDED status");
                     };
-                    let Some(proof) = result.proof else {
-                        bail!("SNARK proof payload missing on SUCCEEDED status");
-                    };
-                    if proof.proof.is_empty() {
+                    if result.proof.proof.is_empty() {
                         bail!("SNARK receipt is empty on SUCCEEDED status");
                     }
-                    break proof.proof;
+                    break result.proof.proof.to_vec();
                 }
                 ProofStatus::Failed => {
                     bail!(
                         "proof generation FAILED for session_id {session_id}: {}",
-                        inner.error_message.unwrap_or_else(|| "unknown error".to_string())
+                        resp.error_message.unwrap_or_else(|| "unknown error".to_string())
                     );
                 }
-                ProofStatus::Queued | ProofStatus::Running | ProofStatus::Unspecified => {
+                ProofStatus::Queued | ProofStatus::Running => {
                     // Still in progress, continue polling
                 }
             }

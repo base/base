@@ -1,18 +1,17 @@
-use crate::{
-    GetProofRequest, GetProofResponse, ProofResult, ProofStatus as ProtoProofStatus,
-    SnarkGroth16ProofResult, ZkProofResult, ZkVm, proof_result,
-};
-use base_prover_service_db::{
-    ProofRequest, ProofStatus, ProofType as DbProofType, SessionStatus as DbSessionStatus,
-};
-use tonic::{Request, Response, Status};
+use jsonrpsee::core::RpcResult;
 use tracing::{Instrument, info};
 use uuid::Uuid;
 
+use base_prover_service_db::{
+    ProofRequest, ProofStatus as DbProofStatus, ProofType as DbProofType,
+    SessionStatus as DbSessionStatus,
+};
+
 use crate::{
+    GetProofRequest, GetProofResponse, ProofResult, ProofStatus, SnarkGroth16ProofResult,
+    ZkProofResult, ZkVm,
     backends::{OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY},
-    metrics,
-    server::ProverServiceServer,
+    server::{ProverServiceServer, internal, invalid_argument, not_found, record_rpc_result},
 };
 
 fn is_dry_run_metadata(metadata: &serde_json::Value) -> bool {
@@ -23,61 +22,43 @@ fn is_dry_run_metadata(metadata: &serde_json::Value) -> bool {
         && metadata.get(OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY).is_some()
 }
 
-fn proof_result_for_request(proof_req: &ProofRequest) -> Result<ProofResult, Status> {
+fn proof_result_for_request(proof_req: &ProofRequest) -> RpcResult<ProofResult> {
     match proof_req.proof_type {
         DbProofType::OpSuccinctSp1ClusterCompressed => {
             let proof = proof_req
                 .stark_receipt
                 .clone()
-                .ok_or_else(|| Status::not_found("compressed proof receipt not available"))?;
-            Ok(ProofResult {
-                result: Some(proof_result::Result::Compressed(ZkProofResult {
-                    zk_vm: ZkVm::Sp1.into(),
-                    proof,
-                })),
-            })
+                .ok_or_else(|| not_found("compressed proof receipt not available"))?;
+            Ok(ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into() }))
         }
         DbProofType::OpSuccinctSp1ClusterSnarkGroth16 => {
             let proof = proof_req
                 .snark_receipt
                 .clone()
-                .ok_or_else(|| Status::not_found("SNARK Groth16 proof receipt not available"))?;
-            Ok(ProofResult {
-                result: Some(proof_result::Result::SnarkGroth16(SnarkGroth16ProofResult {
-                    proof: Some(ZkProofResult { zk_vm: ZkVm::Sp1.into(), proof }),
-                })),
-            })
+                .ok_or_else(|| not_found("SNARK Groth16 proof receipt not available"))?;
+            Ok(ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into() },
+            }))
         }
     }
 }
 
 impl ProverServiceServer {
     /// Returns current proof status and proof bytes for `session_id=<uuid>`.
-    pub async fn get_proof_impl(
-        &self,
-        request: Request<GetProofRequest>,
-    ) -> std::result::Result<Response<GetProofResponse>, Status> {
+    pub async fn get_proof_impl(&self, request: GetProofRequest) -> RpcResult<GetProofResponse> {
         let start = std::time::Instant::now();
         let result = self.get_proof_inner(request).await;
-
-        // Emit unified request metrics at handler boundary
-        let (success, status_code) = match &result {
-            Ok(_) => (true, "OK"),
-            Err(s) => (false, metrics::grpc_status_code_str(s.code())),
-        };
-        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-        metrics::inc_requests("GetProof", success, status_code);
-        metrics::record_response_latency("GetProof", success, elapsed_ms);
+        record_rpc_result("GetProof", start, &result);
 
         result
     }
 
-    async fn request_is_dry_run(&self, proof_request_id: Uuid) -> Result<bool, Status> {
+    async fn request_is_dry_run(&self, proof_request_id: Uuid) -> RpcResult<bool> {
         let sessions = self
             .repo
             .get_sessions_for_request(proof_request_id)
             .await
-            .map_err(|e| Status::internal(format!("Database error: {e}")))?;
+            .map_err(|e| internal(format!("Database error: {e}")))?;
 
         Ok(sessions
             .iter()
@@ -86,51 +67,36 @@ impl ProverServiceServer {
             .any(is_dry_run_metadata))
     }
 
-    async fn succeeded_result(
-        &self,
-        proof_req: &ProofRequest,
-    ) -> Result<Option<ProofResult>, Status> {
+    async fn succeeded_result(&self, proof_req: &ProofRequest) -> RpcResult<Option<ProofResult>> {
         if proof_req.stark_receipt.is_none()
             && proof_req.snark_receipt.is_none()
             && self.request_is_dry_run(proof_req.id).await?
         {
-            return Ok(Some(ProofResult {
-                result: Some(proof_result::Result::Compressed(ZkProofResult {
-                    zk_vm: ZkVm::Sp1.into(),
-                    proof: Vec::new(),
-                })),
-            }));
+            return Ok(Some(ProofResult::Compressed(ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: Vec::new().into(),
+            })));
         }
 
         Ok(Some(proof_result_for_request(proof_req)?))
     }
 
-    async fn get_proof_inner(
-        &self,
-        request: Request<GetProofRequest>,
-    ) -> std::result::Result<Response<GetProofResponse>, Status> {
-        let get_proof_request = request.into_inner();
-
-        // Parse UUID from request
-        let proof_request_id = Uuid::parse_str(&get_proof_request.session_id)
-            .map_err(|_| Status::invalid_argument("Invalid UUID"))?;
+    async fn get_proof_inner(&self, request: GetProofRequest) -> RpcResult<GetProofResponse> {
+        let proof_request_id =
+            Uuid::parse_str(&request.session_id).map_err(|_| invalid_argument("Invalid UUID"))?;
 
         info!(proof_request_id = %proof_request_id, "Getting proof status");
 
-        // Get from database
         let proof_req = self
             .repo
             .get(proof_request_id)
             .await
-            .map_err(|e| Status::internal(format!("Database error: {e}")))?
-            .ok_or_else(|| Status::not_found("Proof request not found"))?;
+            .map_err(|e| internal(format!("Database error: {e}")))?
+            .ok_or_else(|| not_found("Proof request not found"))?;
 
-        // Map database status to proto status
-        let (proto_status, result, error_message) = match proof_req.status {
-            ProofStatus::Created | ProofStatus::Pending => (ProtoProofStatus::Queued, None, None),
-            ProofStatus::Running => {
-                // Sync sessions and update proof status, with a tracing span so all
-                // nested log lines carry proof_request_id.
+        let (status, result, error_message) = match proof_req.status {
+            DbProofStatus::Created | DbProofStatus::Pending => (ProofStatus::Queued, None, None),
+            DbProofStatus::Running => {
                 let sync_span = tracing::info_span!(
                     "sync_proof_status",
                     proof_request_id = %proof_request_id,
@@ -139,37 +105,34 @@ impl ProverServiceServer {
                     .sync_and_update_proof_status(&proof_req)
                     .instrument(sync_span)
                     .await
-                    .map_err(|e| Status::internal(format!("Failed to sync proof status: {e}")))?;
+                    .map_err(|e| internal(format!("Failed to sync proof status: {e}")))?;
 
-                // Re-query proof request to get updated status
                 let updated_proof_req = self
                     .repo
                     .get(proof_request_id)
                     .await
-                    .map_err(|e| Status::internal(format!("Database error: {e}")))?
-                    .ok_or_else(|| Status::not_found("Proof request not found"))?;
+                    .map_err(|e| internal(format!("Database error: {e}")))?
+                    .ok_or_else(|| not_found("Proof request not found"))?;
 
                 match updated_proof_req.status {
-                    ProofStatus::Succeeded => (
-                        ProtoProofStatus::Succeeded,
+                    DbProofStatus::Succeeded => (
+                        ProofStatus::Succeeded,
                         self.succeeded_result(&updated_proof_req).await?,
                         None,
                     ),
-                    ProofStatus::Failed => {
-                        (ProtoProofStatus::Failed, None, updated_proof_req.error_message)
+                    DbProofStatus::Failed => {
+                        (ProofStatus::Failed, None, updated_proof_req.error_message)
                     }
-                    _ => (ProtoProofStatus::Running, None, None),
+                    _ => (ProofStatus::Running, None, None),
                 }
             }
-            ProofStatus::Succeeded => {
-                (ProtoProofStatus::Succeeded, self.succeeded_result(&proof_req).await?, None)
+            DbProofStatus::Succeeded => {
+                (ProofStatus::Succeeded, self.succeeded_result(&proof_req).await?, None)
             }
-            ProofStatus::Failed => (ProtoProofStatus::Failed, None, proof_req.error_message),
+            DbProofStatus::Failed => (ProofStatus::Failed, None, proof_req.error_message),
         };
 
-        let response = GetProofResponse { status: proto_status.into(), error_message, result };
-
-        Ok(Response::new(response))
+        Ok(GetProofResponse { status, error_message, result })
     }
 }
 
@@ -205,7 +168,7 @@ mod tests {
             proof_type,
             stark_receipt,
             snark_receipt,
-            status: ProofStatus::Succeeded,
+            status: DbProofStatus::Succeeded,
             error_message: None,
             prover_address: None,
             l1_head: None,
@@ -244,11 +207,8 @@ mod tests {
 
         let result = proof_result_for_request(&req).unwrap();
         assert_eq!(
-            result.result,
-            Some(proof_result::Result::Compressed(ZkProofResult {
-                zk_vm: ZkVm::Sp1.into(),
-                proof: stark_bytes,
-            }))
+            result,
+            ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: stark_bytes.into() })
         );
     }
 
@@ -263,10 +223,10 @@ mod tests {
 
         let result = proof_result_for_request(&req).unwrap();
         assert_eq!(
-            result.result,
-            Some(proof_result::Result::SnarkGroth16(SnarkGroth16ProofResult {
-                proof: Some(ZkProofResult { zk_vm: ZkVm::Sp1.into(), proof: snark_bytes }),
-            }))
+            result,
+            ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: snark_bytes.into() },
+            })
         );
     }
 }

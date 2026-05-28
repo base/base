@@ -1,52 +1,73 @@
 //! Shared helpers for prover-service integration tests.
 
-pub(crate) use base_prover_service::ProveBlockRequest;
+use alloy_primitives::{Address, B256};
+use anyhow::{Context, Result, bail};
 use base_prover_service::{
-    ProofRequest, SnarkGroth16ProofRequest, SubmitProofRequest, SubmitProofResponse,
-    TeeProofRequest, ZkProofRequest, ZkVm, proof_request,
-    prover_service_client::ProverServiceClient,
+    ProofRequest, ProofRequestKind, ProverServiceApiClient, SnarkGroth16ProofRequest,
+    SubmitProofRequest, SubmitProofResponse, TeeKind, TeeProofRequest, ZkProofRequest, ZkVm,
 };
-use tonic::{Response, Status, transport::Channel};
+use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 
-#[async_trait::async_trait]
-pub(crate) trait ProverServiceClientCompat {
-    async fn prove_block(
-        &mut self,
-        request: ProveBlockRequest,
-    ) -> Result<Response<SubmitProofResponse>, Status>;
+pub(crate) use base_prover_service::ProveBlockRequest;
+
+pub(crate) fn connect() -> HttpClient {
+    let addr = std::env::var("PROVER_RPC_ADDR")
+        .or_else(|_| std::env::var("PROVER_GRPC_ADDR"))
+        .unwrap_or_else(|_| "http://localhost:9000".to_string());
+
+    HttpClientBuilder::default()
+        .build(addr)
+        .expect("failed to connect to prover-service - is it running?")
 }
 
-#[async_trait::async_trait]
-impl ProverServiceClientCompat for ProverServiceClient<Channel> {
-    async fn prove_block(
-        &mut self,
-        request: ProveBlockRequest,
-    ) -> Result<Response<SubmitProofResponse>, Status> {
-        self.submit_proof(to_submit_proof_request(request)).await
-    }
+pub(crate) async fn prove_block(
+    client: &HttpClient,
+    request: ProveBlockRequest,
+) -> Result<SubmitProofResponse> {
+    let request = to_submit_proof_request(request)?;
+    client.submit_proof(request).await.context("submit_proof failed")
 }
 
-fn to_submit_proof_request(request: ProveBlockRequest) -> SubmitProofRequest {
-    let zk_vm =
-        if matches!(request.proof_type, 3 | 4) { ZkVm::Sp1.into() } else { request.proof_type };
+fn to_submit_proof_request(request: ProveBlockRequest) -> Result<SubmitProofRequest> {
+    let l1_head = request
+        .l1_head
+        .as_deref()
+        .map(str::parse::<B256>)
+        .transpose()
+        .context("l1_head must be a 0x-prefixed 32-byte hash")?;
     let proof = ZkProofRequest {
         start_block_number: request.start_block_number,
         number_of_blocks_to_prove: request.number_of_blocks_to_prove,
         sequence_window: request.sequence_window,
-        l1_head: request.l1_head,
+        l1_head,
         intermediate_root_interval: request.intermediate_root_interval,
-        zk_vm,
+        zk_vm: ZkVm::Sp1,
     };
     let body = match request.proof_type {
-        4 => proof_request::Request::SnarkGroth16(SnarkGroth16ProofRequest {
-            proof: Some(proof),
-            prover_address: request.prover_address.unwrap_or_default(),
+        3 => ProofRequestKind::Compressed(proof),
+        4 => {
+            let prover_address = request
+                .prover_address
+                .as_deref()
+                .context("prover_address is required for SNARK_GROTH16 proofs")?
+                .parse::<Address>()
+                .context("prover_address must be a valid Ethereum address")?;
+            ProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest { proof, prover_address })
+        }
+        -1 => ProofRequestKind::Tee(TeeProofRequest {
+            l1_head: B256::ZERO,
+            agreed_l2_head_hash: B256::ZERO,
+            agreed_l2_output_root: B256::ZERO,
+            claimed_l2_output_root: B256::ZERO,
+            claimed_l2_block_number: 0,
+            proposer: Address::ZERO,
+            intermediate_block_interval: 0,
+            l1_head_number: 0,
+            image_hash: B256::ZERO,
+            tee_kind: TeeKind::AwsNitro,
         }),
-        -1 => proof_request::Request::Tee(TeeProofRequest::default()),
-        _ => proof_request::Request::Compressed(proof),
+        proof_type => bail!("invalid proof_type {proof_type}"),
     };
 
-    SubmitProofRequest {
-        proof: Some(ProofRequest { session_id: request.session_id, request: Some(body) }),
-    }
+    Ok(SubmitProofRequest { proof: ProofRequest { session_id: request.session_id, request: body } })
 }
