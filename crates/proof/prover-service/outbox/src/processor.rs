@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use tokio::time;
+use tokio::time::{self, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{OutboxReader, OutboxTask, TaskQueue};
 
@@ -38,6 +38,7 @@ impl<R: OutboxReader, Q: TaskQueue> OutboxProcessor<R, Q> {
         );
 
         let mut interval = time::interval(Duration::from_secs(self.poll_interval_secs));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
@@ -86,10 +87,10 @@ impl<R: OutboxReader, Q: TaskQueue> OutboxProcessor<R, Q> {
             Ok(()) => {
                 // Task successfully submitted to queue; mark as processed in outbox.
                 if let Err(e) = self.reader.mark_processed(sequence_id).await {
-                    error!(
+                    warn!(
                         sequence_id = sequence_id,
                         error = %e,
-                        "failed to mark task as processed in outbox"
+                        "failed to mark task as processed in outbox; task may be resubmitted"
                     );
                 } else {
                     info!(
