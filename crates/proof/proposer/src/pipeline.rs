@@ -687,7 +687,6 @@ where
                     // naturally.
                     state.retry_counts.remove(&target);
                     state.cached_recovery = None;
-                    state.record_gauges();
                 } else {
                     warn!(
                         target_block = target,
@@ -695,8 +694,8 @@ where
                         error = %e,
                         "Proof failed, will retry next tick"
                     );
-                    state.record_gauges();
                 }
+                state.record_gauges();
             }
             Err(join_err) if join_err.is_cancelled() => {
                 debug!(error = %join_err, "Proof task cancelled");
