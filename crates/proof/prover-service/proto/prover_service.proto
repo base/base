@@ -51,8 +51,11 @@ message ProofRequest {
   optional string session_id = 1;
 
   oneof request {
+    // Request a compressed ZK proof. Maps to PROOF_TYPE_COMPRESSED.
     ZkProofRequest compressed = 2;
+    // Request a Groth16 SNARK proof. Maps to PROOF_TYPE_SNARK_GROTH16.
     SnarkGroth16ProofRequest snark_groth16 = 3;
+    // Request a TEE proof. Maps to PROOF_TYPE_TEE.
     TeeProofRequest tee = 4;
   }
 }

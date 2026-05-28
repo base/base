@@ -1,5 +1,12 @@
 #![doc = include_str!("../README.md")]
 
+#[allow(
+    unreachable_pub,
+    clippy::clone_on_ref_ptr,
+    clippy::derive_partial_eq_without_eq,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn
+)]
 mod proto {
     tonic::include_proto!("prover");
 }
