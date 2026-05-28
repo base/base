@@ -327,7 +327,9 @@ mod tests {
 
     use alloy_consensus::{SignableTransaction, TxLegacy, transaction::Recovered};
     use alloy_eips::eip2718::WithEncoded;
-    use alloy_evm::{EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory};
+    use alloy_evm::{
+        EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory, precompiles::PrecompilesMap,
+    };
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Signature, U256, uint};
     use base_common_chains::{BaseUpgrade, ChainUpgrades};
@@ -423,7 +425,7 @@ mod tests {
         gas_limit: u64,
         jovian_timestamp: u64,
     ) -> BaseBlockExecutor<
-        BaseEvm<&'a mut revm::database::State<InMemoryDB>, NoOpInspector>,
+        BaseEvm<&'a mut revm::database::State<InMemoryDB>, NoOpInspector, PrecompilesMap>,
         &'a AlloyReceiptBuilder,
         &'a ChainUpgrades,
     > {

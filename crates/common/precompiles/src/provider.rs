@@ -53,6 +53,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     }
 
     /// Sets the activation registry admin address.
+    #[must_use = "with_activation_admin_address returns a new BasePrecompiles value"]
     pub const fn with_activation_admin_address(
         mut self,
         activation_admin_address: Option<Address>,
