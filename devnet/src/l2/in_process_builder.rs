@@ -259,7 +259,7 @@ fn clear_otel_env_vars() {
 fn parse_genesis(genesis_json: &[u8]) -> Result<Arc<BaseChainSpec>> {
     let genesis: alloy_genesis::Genesis =
         serde_json::from_slice(genesis_json).wrap_err("Invalid genesis JSON")?;
-    Ok(Arc::new(BaseChainSpec::from_genesis(genesis)))
+    Ok(Arc::new(BaseChainSpec::try_from_genesis(genesis).wrap_err("Invalid genesis chain spec")?))
 }
 
 fn create_node_config(

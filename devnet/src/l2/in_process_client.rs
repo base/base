@@ -93,7 +93,9 @@ impl InProcessClient {
         // Parse genesis JSON to chain spec
         let genesis: alloy_genesis::Genesis = serde_json::from_slice(&config.genesis_json)
             .map_err(|e| eyre!("Failed to parse genesis JSON: {}", e))?;
-        let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
+        let chain_spec = Arc::new(
+            BaseChainSpec::try_from_genesis(genesis).wrap_err("Invalid genesis chain spec")?,
+        );
 
         let mut network_config = NetworkArgs {
             discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
