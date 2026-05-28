@@ -247,6 +247,28 @@ struct BoundlessArgs {
     #[arg(long, env = cli_env!("BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS"))]
     boundless_offer_lock_timeout_secs: Option<u32>,
 
+    /// Delay, in seconds, between request submission and the moment
+    /// bidding is allowed to begin (`Offer.rampUpStart`).
+    ///
+    /// The Boundless SDK's default for this value is roughly the
+    /// guest program's executor time (`cycles / 1 MHz`, capped at
+    /// 1 hour), giving provers a "discovery window" to see the
+    /// request and run the executor before bidding opens. That
+    /// window appears on the Boundless explorer as the "flat
+    /// period" preceding the price ramp and accounts for several
+    /// minutes of submission-to-fulfillment latency.
+    ///
+    /// Setting this to `0` eliminates the discovery window entirely:
+    /// bidding opens immediately at submission and the fastest prover
+    /// can lock as soon as it has executed the program. This minimises
+    /// end-to-end latency at the cost of higher prices (no time spent
+    /// on the ramp-up) and a smaller set of provers seeing the
+    /// request before it is locked.
+    ///
+    /// Defaults to SDK behaviour when unset.
+    #[arg(long, env = cli_env!("BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS"))]
+    boundless_offer_bidding_start_delay_secs: Option<u64>,
+
     /// Maximum number of deterministic request-ID slots to probe when
     /// recovering in-flight proofs after an instance rotation.
     #[arg(
@@ -426,6 +448,9 @@ impl Cli {
                     offer_max_price,
                     offer_ramp_up_period_secs: self.boundless.boundless_offer_ramp_up_period_secs,
                     offer_lock_timeout_secs: self.boundless.boundless_offer_lock_timeout_secs,
+                    offer_bidding_start_delay_secs: self
+                        .boundless
+                        .boundless_offer_bidding_start_delay_secs,
                 }))
             }
             ProvingMode::Direct => {
@@ -627,6 +652,7 @@ impl Cli {
                 offer_max_price: boundless.offer_max_price.clone(),
                 offer_ramp_up_period_secs: boundless.offer_ramp_up_period_secs,
                 offer_lock_timeout_secs: boundless.offer_lock_timeout_secs,
+                offer_bidding_start_delay_secs: boundless.offer_bidding_start_delay_secs,
                 submit_lock: Arc::new(tokio::sync::Mutex::new(())),
                 recovery_blocked: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             }),
@@ -735,6 +761,8 @@ mod tests {
     const TEST_BOUNDLESS_RAMP_UP_PERIOD_SECS: u32 = 30;
     const TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS: u32 = 600;
     const TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS_STR: &str = "600";
+    const TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS: u64 = 0;
+    const TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS_STR: &str = "0";
     const TEST_ELF_PATH: &str = "/tmp/guest.elf";
     const TEST_SIGNER_ENDPOINT: &str = "http://localhost:8546";
     const TEST_SIGNER_ADDR: &str = "0x0000000000000000000000000000000000000002";
@@ -947,6 +975,26 @@ mod tests {
         assert!(b.offer_max_price.is_none());
         assert!(b.offer_ramp_up_period_secs.is_none());
         assert!(b.offer_lock_timeout_secs.is_none());
+        assert!(b.offer_bidding_start_delay_secs.is_none());
+    }
+
+    #[rstest]
+    fn boundless_offer_bidding_start_delay_parses() {
+        let mut args = boundless_args();
+        args.extend([
+            "--boundless-offer-bidding-start-delay-secs",
+            TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS_STR,
+        ]);
+
+        let config = Cli::parse_from(args).into_config().unwrap();
+        let ProvingConfig::Boundless(b) = &config.proving else {
+            panic!("expected Boundless proving config");
+        };
+
+        assert_eq!(
+            b.offer_bidding_start_delay_secs,
+            Some(TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS)
+        );
     }
 
     #[rstest]

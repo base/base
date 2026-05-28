@@ -68,6 +68,15 @@ pub struct BoundlessConfig {
     /// in the first place. When unset, the Boundless SDK derives a
     /// recommended value from the program's cycle count.
     pub offer_lock_timeout_secs: Option<u32>,
+    /// Optional delay, in seconds, between request submission and the
+    /// moment bidding is allowed to begin (`Offer.rampUpStart`). With
+    /// this set to `0`, bidding opens immediately at submission, which
+    /// eliminates the SDK's default cycle-count-derived "discovery
+    /// window" (`bidding_start_delay`) and lets the fastest prover lock
+    /// as soon as they finish executing the guest program. When unset,
+    /// the Boundless SDK derives a delay roughly equal to the program's
+    /// executor time (`cycles / 1 MHz`, capped at 1 hour).
+    pub offer_bidding_start_delay_secs: Option<u64>,
 }
 
 impl std::fmt::Debug for BoundlessConfig {
@@ -85,6 +94,7 @@ impl std::fmt::Debug for BoundlessConfig {
             .field("offer_max_price", &self.offer_max_price)
             .field("offer_ramp_up_period_secs", &self.offer_ramp_up_period_secs)
             .field("offer_lock_timeout_secs", &self.offer_lock_timeout_secs)
+            .field("offer_bidding_start_delay_secs", &self.offer_bidding_start_delay_secs)
             .finish()
     }
 }
