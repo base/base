@@ -27,13 +27,5 @@ workspace = true
 
 [features]
 default = []
-rpc-client = [
-	"dep:jsonrpsee",
-	"jsonrpsee/http-client",
-	"jsonrpsee/macros",
-]
-rpc-server = [
-	"dep:jsonrpsee",
-	"jsonrpsee/macros",
-	"jsonrpsee/server",
-]
+rpc-client = [ "dep:jsonrpsee", "jsonrpsee/http-client", "jsonrpsee/macros" ]
+rpc-server = [ "dep:jsonrpsee", "jsonrpsee/macros", "jsonrpsee/server" ]
