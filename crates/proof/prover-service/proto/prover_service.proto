@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package prover;
+package prover_service;
 
 import "google/protobuf/timestamp.proto";
 
@@ -101,7 +101,7 @@ message TeeProofRequest {
 message ProofResult {
   oneof result {
     ZkProofResult compressed = 1;
-    ZkProofResult snark_groth16 = 2;
+    SnarkGroth16ProofResult snark_groth16 = 2;
     TeeProofResult tee = 3;
   }
 }
@@ -109,6 +109,10 @@ message ProofResult {
 message ZkProofResult {
   ZkVm zk_vm = 1;
   bytes proof = 2;
+}
+
+message SnarkGroth16ProofResult {
+  ZkProofResult proof = 1;
 }
 
 message TeeProofResult {
