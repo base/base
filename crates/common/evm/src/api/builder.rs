@@ -1,5 +1,6 @@
 //! [`Builder`] trait for constructing a [`BaseEvm`] directly from a [`BaseContext`].
 use alloy_evm::{Database, precompiles::PrecompilesMap};
+use alloy_primitives::Address;
 use revm::{
     context::FrameStack,
     handler::{EthFrame, instructions::EthInstructions},
@@ -22,24 +23,74 @@ pub trait Builder: Sized {
     /// [`alloy_evm::Evm::transact`].
     fn build_base(self) -> BaseEvm<Self::Db, (), PrecompilesMap>;
 
+    /// Builds a [`BaseEvm`] with a `()` inspector and an activation registry admin address.
+    ///
+    /// The inspect flag is `false`, so [`Inspector`][revm::Inspector] callbacks are never invoked
+    /// via [`alloy_evm::Evm::transact`].
+    fn build_base_with_activation_admin_address(
+        self,
+        activation_admin_address: Option<Address>,
+    ) -> BaseEvm<Self::Db, (), PrecompilesMap>;
+
+    /// Builds a [`BaseEvm`] with a `()` inspector and caller-supplied precompiles.
+    ///
+    /// The inspect flag is `false`, so [`Inspector`][revm::Inspector] callbacks are never invoked
+    /// via [`alloy_evm::Evm::transact`].
+    fn build_base_with_precompiles<P>(self, precompiles: P) -> BaseEvm<Self::Db, (), P>;
+
     /// Builds a [`BaseEvm`] with the given inspector. The inspect flag is `true`,
     /// so [`Inspector`][revm::Inspector] callbacks are invoked on every
     /// [`alloy_evm::Evm::transact`] call.
     fn build_with_inspector<INSP>(self, inspector: INSP)
     -> BaseEvm<Self::Db, INSP, PrecompilesMap>;
+
+    /// Builds a [`BaseEvm`] with the given inspector and activation registry admin address.
+    ///
+    /// The inspect flag is `true`, so [`Inspector`][revm::Inspector] callbacks are invoked on every
+    /// [`alloy_evm::Evm::transact`] call.
+    fn build_with_inspector_and_activation_admin_address<INSP>(
+        self,
+        inspector: INSP,
+        activation_admin_address: Option<Address>,
+    ) -> BaseEvm<Self::Db, INSP, PrecompilesMap>;
+
+    /// Builds a [`BaseEvm`] with the given inspector and caller-supplied precompiles.
+    ///
+    /// The inspect flag is `true`, so [`Inspector`][revm::Inspector] callbacks are invoked on every
+    /// [`alloy_evm::Evm::transact`] call.
+    fn build_with_inspector_and_precompiles<INSP, P>(
+        self,
+        inspector: INSP,
+        precompiles: P,
+    ) -> BaseEvm<Self::Db, INSP, P>;
 }
 
 impl<DB: Database> Builder for BaseContext<DB> {
     type Db = DB;
 
     fn build_base(self) -> BaseEvm<DB, (), PrecompilesMap> {
+        self.build_base_with_activation_admin_address(None)
+    }
+
+    fn build_base_with_activation_admin_address(
+        self,
+        activation_admin_address: Option<Address>,
+    ) -> BaseEvm<DB, (), PrecompilesMap> {
+        let spec: BaseSpecId = self.cfg.spec;
+        let precompiles = BasePrecompiles::new_with_spec(spec)
+            .with_activation_admin_address(activation_admin_address)
+            .install();
+        self.build_base_with_precompiles(precompiles)
+    }
+
+    fn build_base_with_precompiles<P>(self, precompiles: P) -> BaseEvm<DB, (), P> {
         let spec: BaseSpecId = self.cfg.spec;
         BaseEvm::new(
             revm::context::Evm {
                 ctx: self,
                 inspector: (),
                 instruction: EthInstructions::new_mainnet_with_spec(spec.into()),
-                precompiles: BasePrecompiles::new_with_spec(spec).install(),
+                precompiles,
                 frame_stack: FrameStack::<EthFrame<EthInterpreter>>::new_prealloc(8),
             },
             false,
@@ -47,13 +98,33 @@ impl<DB: Database> Builder for BaseContext<DB> {
     }
 
     fn build_with_inspector<INSP>(self, inspector: INSP) -> BaseEvm<DB, INSP, PrecompilesMap> {
+        self.build_with_inspector_and_activation_admin_address(inspector, None)
+    }
+
+    fn build_with_inspector_and_activation_admin_address<INSP>(
+        self,
+        inspector: INSP,
+        activation_admin_address: Option<Address>,
+    ) -> BaseEvm<DB, INSP, PrecompilesMap> {
+        let spec: BaseSpecId = self.cfg.spec;
+        let precompiles = BasePrecompiles::new_with_spec(spec)
+            .with_activation_admin_address(activation_admin_address)
+            .install();
+        self.build_with_inspector_and_precompiles(inspector, precompiles)
+    }
+
+    fn build_with_inspector_and_precompiles<INSP, P>(
+        self,
+        inspector: INSP,
+        precompiles: P,
+    ) -> BaseEvm<DB, INSP, P> {
         let spec: BaseSpecId = self.cfg.spec;
         BaseEvm::new(
             revm::context::Evm {
                 ctx: self,
                 inspector,
                 instruction: EthInstructions::new_mainnet_with_spec(spec.into()),
-                precompiles: BasePrecompiles::new_with_spec(spec).install(),
+                precompiles,
                 frame_stack: FrameStack::<EthFrame<EthInterpreter>>::new_prealloc(8),
             },
             true,
@@ -64,13 +135,21 @@ impl<DB: Database> Builder for BaseContext<DB> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256};
+    use alloy_sol_types::SolCall;
     use base_common_precompiles::{
-        ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
+        ActivationRegistryStorage, B20FactoryStorage, B20Variant, IActivationRegistry,
+        PolicyRegistryStorage,
     };
-    use revm::{Context, context::CfgEnv, handler::EvmTr, inspector::NoOpInspector};
+    use revm::{
+        Context, ExecuteEvm,
+        context::{CfgEnv, TxEnv},
+        handler::EvmTr,
+        inspector::NoOpInspector,
+        primitives::{Bytes, TxKind},
+    };
 
     use super::*;
-    use crate::{BaseUpgrade, DefaultBase};
+    use crate::{BaseTransaction, BaseUpgrade, DefaultBase};
 
     fn b20_token_address() -> Address {
         B20Variant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22)).0
@@ -111,5 +190,28 @@ mod tests {
 
         assert!(precompiles.get(&B20FactoryStorage::ADDRESS).is_some());
         assert!(precompiles.get(&b20_token_address()).is_some());
+    }
+
+    #[test]
+    fn build_base_with_activation_admin_address_configures_activation_registry() {
+        let admin = Address::repeat_byte(0xaa);
+        let ctx =
+            Context::base().with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Beryl)));
+        let mut evm = ctx.build_base_with_activation_admin_address(Some(admin));
+
+        let tx = BaseTransaction::builder()
+            .base(
+                TxEnv::builder()
+                    .kind(TxKind::Call(ActivationRegistryStorage::ADDRESS))
+                    .data(Bytes::from(IActivationRegistry::adminCall {}.abi_encode()))
+                    .gas_limit(100_000),
+            )
+            .build_fill();
+
+        let result = evm.transact_one(tx).unwrap();
+        let output = result.output().unwrap();
+        let actual = IActivationRegistry::adminCall::abi_decode_returns(output).unwrap();
+
+        assert_eq!(actual, admin);
     }
 }
