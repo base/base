@@ -133,18 +133,6 @@ impl PipelineState {
         }
     }
 
-    /// Clears just this target's per-block bookkeeping.
-    ///
-    /// Used when a single proof permanently fails (max retries, panic) so
-    /// that other in-flight proofs and completed entries in `proved` are
-    /// preserved. The dropped target naturally re-dispatches on the next
-    /// tick if the chain still needs it.
-    fn forget_target(&mut self, target: u64) {
-        self.inflight.remove(&target);
-        self.retry_counts.remove(&target);
-        self.record_gauges();
-    }
-
     fn record_gauges(&self) {
         Metrics::inflight_proofs().set(self.inflight.len() as f64);
         Metrics::proved_queue_depth().set(self.proved.len() as f64);
@@ -690,13 +678,16 @@ where
                         error = %e,
                         "Proof failed after max retries, dropping cached recovery"
                     );
-                    // Drop only this target's bookkeeping; other in-flight
-                    // proofs and completed entries in `proved` are independent
-                    // and must not be discarded. Drop `cached_recovery` so the
-                    // next tick re-walks the chain; if this block is still
-                    // needed it will be re-dispatched naturally.
-                    state.forget_target(target);
+                    // Drop only this target's retry bookkeeping (inflight was
+                    // already cleared above when the task finished). Other
+                    // in-flight proofs and completed entries in `proved` are
+                    // independent and must not be discarded. Drop
+                    // `cached_recovery` so the next tick re-walks the chain;
+                    // if this block is still needed it will be re-dispatched
+                    // naturally.
+                    state.retry_counts.remove(&target);
                     state.cached_recovery = None;
+                    state.record_gauges();
                 } else {
                     warn!(
                         target_block = target,
