@@ -192,8 +192,22 @@ struct BoundlessArgs {
     #[arg(long, env = cli_env!("BOUNDLESS_POLL_INTERVAL_SECS"), default_value_t = 5)]
     boundless_poll_interval_secs: u64,
 
-    /// Proof generation timeout in seconds.
-    #[arg(long, env = cli_env!("BOUNDLESS_TIMEOUT_SECS"), default_value_t = 600)]
+    /// Client-side fulfillment poll budget, in seconds.
+    ///
+    /// Maximum wall-clock time the registrar will wait for a Boundless
+    /// proof to be fulfilled before giving up. Purely a client-side cap
+    /// on `wait_for_request_fulfillment` — not submitted on-chain. The
+    /// on-chain request lifetime is controlled by
+    /// `--boundless-offer-lock-timeout-secs` (and the SDK-derived
+    /// `Offer.timeout = 2 * lockTimeout` default).
+    ///
+    /// Should be set greater than the on-chain `Offer.timeout` plus
+    /// headroom for clock skew, RPC latency, and the indexer catching
+    /// up after the on-chain `Fulfilled` event. The default of 1260 s
+    /// covers a `lockTimeout = 600 s` (10 min) deployment, in which
+    /// the SDK derives `Offer.timeout = 1200 s` (20 min total request
+    /// lifetime) and 1260 s gives ~60 s of headroom over that expiry.
+    #[arg(long, env = cli_env!("BOUNDLESS_TIMEOUT_SECS"), default_value_t = 1260)]
     boundless_timeout_secs: u64,
 
     /// Minimum Boundless offer price in ETH for each submitted proof request.
@@ -215,6 +229,23 @@ struct BoundlessArgs {
     /// Optional duration for the Boundless offer price to ramp from min to max.
     #[arg(long, env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS"))]
     boundless_offer_ramp_up_period_secs: Option<u32>,
+
+    /// Maximum time, in seconds, that a prover that locks a request has to
+    /// deliver the proof before forfeiting its stake bond and the request
+    /// opening up to permissionless secondary fulfillment.
+    ///
+    /// This is also the window during which any prover may lock the
+    /// request in the first place — locking and delivery share a single
+    /// deadline at `rampUpStart + lockTimeout`. Lowering this number
+    /// shortens the time the accepting prover has to prove. With
+    /// `Offer.timeout` left unset, the Boundless SDK derives
+    /// `Offer.timeout = 2 * lockTimeout`, so the secondary fallback
+    /// window equals the primary window.
+    ///
+    /// Defaults to SDK behaviour (cycle-count-derived recommendation)
+    /// when unset.
+    #[arg(long, env = cli_env!("BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS"))]
+    boundless_offer_lock_timeout_secs: Option<u32>,
 
     /// Maximum number of deterministic request-ID slots to probe when
     /// recovering in-flight proofs after an instance rotation.
@@ -394,6 +425,7 @@ impl Cli {
                     offer_min_price,
                     offer_max_price,
                     offer_ramp_up_period_secs: self.boundless.boundless_offer_ramp_up_period_secs,
+                    offer_lock_timeout_secs: self.boundless.boundless_offer_lock_timeout_secs,
                 }))
             }
             ProvingMode::Direct => {
@@ -594,6 +626,7 @@ impl Cli {
                 offer_min_price: boundless.offer_min_price.clone(),
                 offer_max_price: boundless.offer_max_price.clone(),
                 offer_ramp_up_period_secs: boundless.offer_ramp_up_period_secs,
+                offer_lock_timeout_secs: boundless.offer_lock_timeout_secs,
                 submit_lock: Arc::new(tokio::sync::Mutex::new(())),
                 recovery_blocked: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             }),
@@ -700,6 +733,8 @@ mod tests {
     const TEST_BOUNDLESS_MIN_PRICE_ETH: &str = "0.01";
     const TEST_BOUNDLESS_MAX_PRICE_ETH: &str = "0.03";
     const TEST_BOUNDLESS_RAMP_UP_PERIOD_SECS: u32 = 30;
+    const TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS: u32 = 600;
+    const TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS_STR: &str = "600";
     const TEST_ELF_PATH: &str = "/tmp/guest.elf";
     const TEST_SIGNER_ENDPOINT: &str = "http://localhost:8546";
     const TEST_SIGNER_ADDR: &str = "0x0000000000000000000000000000000000000002";
@@ -911,6 +946,36 @@ mod tests {
         assert!(b.offer_min_price.is_none());
         assert!(b.offer_max_price.is_none());
         assert!(b.offer_ramp_up_period_secs.is_none());
+        assert!(b.offer_lock_timeout_secs.is_none());
+    }
+
+    #[rstest]
+    fn boundless_offer_lock_timeout_parses() {
+        let mut args = boundless_args();
+        args.extend([
+            "--boundless-offer-lock-timeout-secs",
+            TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS_STR,
+        ]);
+
+        let config = Cli::parse_from(args).into_config().unwrap();
+        let ProvingConfig::Boundless(b) = &config.proving else {
+            panic!("expected Boundless proving config");
+        };
+
+        assert_eq!(b.offer_lock_timeout_secs, Some(TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS));
+    }
+
+    /// `--boundless-timeout-secs` default should cover a 10-minute
+    /// lock timeout with the SDK-derived `Offer.timeout = 1200 s`
+    /// plus headroom.
+    #[rstest]
+    fn boundless_timeout_default_covers_default_lock_timeout() {
+        let config = Cli::parse_from(boundless_args()).into_config().unwrap();
+        let ProvingConfig::Boundless(b) = &config.proving else {
+            panic!("expected Boundless proving config");
+        };
+
+        assert_eq!(b.timeout, Duration::from_secs(1260));
     }
 
     #[rstest]

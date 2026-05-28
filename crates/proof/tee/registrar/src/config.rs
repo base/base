@@ -61,6 +61,13 @@ pub struct BoundlessConfig {
     pub offer_max_price: Option<Amount>,
     /// Optional duration in seconds for Boundless price to ramp from min to max.
     pub offer_ramp_up_period_secs: Option<u32>,
+    /// Optional maximum time, in seconds, that a prover that locks a
+    /// request has to deliver the proof before forfeiting its stake bond
+    /// and the request opening up to permissionless secondary
+    /// fulfillment. Also the deadline for any prover to lock the request
+    /// in the first place. When unset, the Boundless SDK derives a
+    /// recommended value from the program's cycle count.
+    pub offer_lock_timeout_secs: Option<u32>,
 }
 
 impl std::fmt::Debug for BoundlessConfig {
@@ -77,6 +84,7 @@ impl std::fmt::Debug for BoundlessConfig {
             .field("offer_min_price", &self.offer_min_price)
             .field("offer_max_price", &self.offer_max_price)
             .field("offer_ramp_up_period_secs", &self.offer_ramp_up_period_secs)
+            .field("offer_lock_timeout_secs", &self.offer_lock_timeout_secs)
             .finish()
     }
 }

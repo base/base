@@ -90,6 +90,15 @@ pub struct BoundlessProver {
     pub offer_max_price: Option<Amount>,
     /// Optional duration in seconds for Boundless price to ramp from min to max.
     pub offer_ramp_up_period_secs: Option<u32>,
+    /// Optional maximum time, in seconds, that a prover that locks a
+    /// request has to deliver the proof before forfeiting its stake bond
+    /// and the request opening up to permissionless secondary
+    /// fulfillment. Also the deadline for any prover to lock the request
+    /// in the first place — locking and delivery share a single
+    /// deadline at `rampUpStart + lockTimeout`. When unset, the
+    /// Boundless SDK derives a recommended value from the program's
+    /// cycle count.
+    pub offer_lock_timeout_secs: Option<u32>,
     /// Serialises the `submit_onchain` call so that concurrent proof
     /// requests do not race on the Boundless wallet nonce. The lock is
     /// released immediately after submission, allowing the long-running
@@ -120,6 +129,7 @@ impl fmt::Debug for BoundlessProver {
             .field("offer_min_price", &self.offer_min_price)
             .field("offer_max_price", &self.offer_max_price)
             .field("offer_ramp_up_period_secs", &self.offer_ramp_up_period_secs)
+            .field("offer_lock_timeout_secs", &self.offer_lock_timeout_secs)
             .finish()
     }
 }
@@ -168,6 +178,7 @@ impl BoundlessProver {
         if self.offer_min_price.is_none()
             && self.offer_max_price.is_none()
             && self.offer_ramp_up_period_secs.is_none()
+            && self.offer_lock_timeout_secs.is_none()
         {
             return params;
         }
@@ -181,6 +192,9 @@ impl BoundlessProver {
         }
         if let Some(ramp_up_period) = self.offer_ramp_up_period_secs {
             offer.ramp_up_period(ramp_up_period);
+        }
+        if let Some(lock_timeout) = self.offer_lock_timeout_secs {
+            offer.lock_timeout(lock_timeout);
         }
 
         params.with_offer(offer)
@@ -756,6 +770,7 @@ mod tests {
     const TEST_MIN_PRICE_ETH: &str = "0.01";
     const TEST_MAX_PRICE_ETH: &str = "0.03";
     const TEST_RAMP_UP_PERIOD_SECS: u32 = 30;
+    const TEST_LOCK_TIMEOUT_SECS: u32 = 600;
 
     const TEST_MAX_ATTESTATION_AGE: Duration = Duration::from_secs(3300);
 
@@ -778,6 +793,7 @@ mod tests {
             offer_min_price: None,
             offer_max_price: None,
             offer_ramp_up_period_secs: None,
+            offer_lock_timeout_secs: None,
             submit_lock: Arc::new(Mutex::new(())),
             recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
         }
@@ -809,6 +825,7 @@ mod tests {
         assert!(prover.offer_min_price.is_none());
         assert!(prover.offer_max_price.is_none());
         assert!(prover.offer_ramp_up_period_secs.is_none());
+        assert!(prover.offer_lock_timeout_secs.is_none());
     }
 
     #[rstest]
@@ -818,6 +835,7 @@ mod tests {
         assert!(params.offer.min_price.is_none());
         assert!(params.offer.max_price.is_none());
         assert!(params.offer.ramp_up_period.is_none());
+        assert!(params.offer.lock_timeout.is_none());
     }
 
     #[rstest]
@@ -827,12 +845,29 @@ mod tests {
         prover.offer_min_price = Some(min_price.clone());
         prover.offer_max_price = Some(max_price.clone());
         prover.offer_ramp_up_period_secs = Some(TEST_RAMP_UP_PERIOD_SECS);
+        prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
 
         let params = prover.apply_offer_config(RequestParams::new());
 
         assert_eq!(params.offer.min_price, Some(min_price));
         assert_eq!(params.offer.max_price, Some(max_price));
         assert_eq!(params.offer.ramp_up_period, Some(TEST_RAMP_UP_PERIOD_SECS));
+        assert_eq!(params.offer.lock_timeout, Some(TEST_LOCK_TIMEOUT_SECS));
+    }
+
+    /// `lock_timeout` can be set independently of price/ramp fields,
+    /// in which case `apply_offer_config` must still emit an offer
+    /// override (not return params unchanged).
+    #[rstest]
+    fn apply_offer_config_sets_lock_timeout_alone(mut prover: BoundlessProver) {
+        prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
+
+        let params = prover.apply_offer_config(RequestParams::new());
+
+        assert_eq!(params.offer.lock_timeout, Some(TEST_LOCK_TIMEOUT_SECS));
+        assert!(params.offer.min_price.is_none());
+        assert!(params.offer.max_price.is_none());
+        assert!(params.offer.ramp_up_period.is_none());
     }
 
     // ── Clone ───────────────────────────────────────────────────────────
