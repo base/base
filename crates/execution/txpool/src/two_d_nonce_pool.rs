@@ -400,8 +400,11 @@ impl<T: BasePooledTx> Iterator for BestTwoDTransactions<T> {
             .iter()
             .enumerate()
             .filter_map(|(index, lane)| {
-                (!lane.invalidated && lane.index < lane.transactions.len())
-                    .then_some((index, lane.transactions[lane.index].transaction.max_fee_per_gas()))
+                if lane.invalidated || lane.index >= lane.transactions.len() {
+                    None
+                } else {
+                    Some((index, lane.transactions[lane.index].transaction.max_fee_per_gas()))
+                }
             })
             .max_by_key(|(_, fee)| *fee)
             .map(|(index, _)| index)?;
@@ -415,11 +418,14 @@ impl<T: BasePooledTx> Iterator for BestTwoDTransactions<T> {
 
 impl<T: BasePooledTx> BestTransactions for BestTwoDTransactions<T> {
     fn mark_invalid(&mut self, transaction: &Self::Item, _kind: &InvalidPoolTransactionError) {
-        if let Some(lane) = self.lanes.iter_mut().find(|lane| {
-            lane.id.0 == transaction.sender()
-                && lane.id.1
-                    == transaction.transaction.eip8130_nonce_channel_key().unwrap_or_default()
-        }) {
+        let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() else {
+            return;
+        };
+        if let Some(lane) = self
+            .lanes
+            .iter_mut()
+            .find(|lane| lane.id.0 == transaction.sender() && lane.id.1 == nonce_key)
+        {
             lane.invalidated = true;
         }
     }
@@ -630,5 +636,35 @@ mod tests {
 
         let error = pool.insert_validated(non_channelized).unwrap_err();
         assert!(matches!(error.kind, PoolErrorKind::Other(_)));
+    }
+
+    #[test]
+    fn mark_invalid_only_invalidates_matching_lane() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+
+        let first_lane_head =
+            valid_pool_transaction(signed_channel_tx(&signer, U256::from(21), 0, 1_000));
+        let first_lane_head_hash = *first_lane_head.hash();
+        let first_lane_next =
+            valid_pool_transaction(signed_channel_tx(&signer, U256::from(21), 1, 900));
+        let second_lane_head =
+            valid_pool_transaction(signed_channel_tx(&signer, U256::from(22), 0, 950));
+        let second_lane_head_hash = *second_lane_head.hash();
+
+        pool.insert_validated(first_lane_head).unwrap();
+        pool.insert_validated(first_lane_next).unwrap();
+        pool.insert_validated(second_lane_head).unwrap();
+
+        let lane_to_invalidate = pool.get(&first_lane_head_hash).unwrap();
+        let mut best = pool.best_transactions();
+        best.mark_invalid(
+            &lane_to_invalidate,
+            &InvalidPoolTransactionError::Consensus(InvalidTransactionError::TxTypeNotSupported),
+        );
+
+        let yielded_hashes: Vec<_> = best.map(|transaction| *transaction.hash()).collect();
+        assert_eq!(yielded_hashes.len(), 1);
+        assert_eq!(yielded_hashes[0], second_lane_head_hash);
     }
 }
