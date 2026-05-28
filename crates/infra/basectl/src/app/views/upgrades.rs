@@ -125,11 +125,15 @@ fn user_config_rpc(name: &str) -> Option<String> {
     Some(parsed.rpc.to_string())
 }
 
+fn devnet_rpc() -> String {
+    "http://localhost:7545/".to_string()
+}
+
 fn all_chains() -> [ChainUpgrades; 4] {
     [
         ChainUpgrades {
             display_name: "Devnet",
-            rpc: user_config_rpc("devnet"),
+            rpc: user_config_rpc("devnet").or_else(|| Some(devnet_rpc())),
             specs: specs_from_config(ChainConfig::devnet()),
         },
         ChainUpgrades {
@@ -204,10 +208,17 @@ fn check_names_for(hardfork: &str) -> &'static [&'static str] {
     }
 }
 
+fn has_checks(hardfork: &str) -> bool {
+    !check_names_for(hardfork).is_empty()
+}
+
+fn checkable_specs_display(chain: &ChainUpgrades) -> Vec<&UpgradeSpec> {
+    chain.specs.iter().filter(|spec| has_checks(spec.name)).rev().collect()
+}
+
 /// Returns the hardfork whose checks should be shown for this chain.
 fn target_hardfork(chain: &ChainUpgrades, now: u64) -> Option<&'static str> {
-    let check_specs: Vec<_> =
-        chain.specs.iter().filter(|spec| !check_names_for(spec.name).is_empty()).collect();
+    let check_specs: Vec<_> = chain.specs.iter().filter(|spec| has_checks(spec.name)).collect();
 
     if let Some(upcoming) =
         check_specs.iter().find(|spec| spec.timestamp.is_some_and(|timestamp| timestamp > now))
@@ -282,6 +293,7 @@ impl ChecksPanel {
         let (tx, rx) = mpsc::channel(64);
         let chain_changed = self.chain_idx != Some(chain_idx);
         let hardfork_changed = self.hardfork != Some(hardfork);
+        let mode_changed = self.mode != Some(mode);
         self.chain_idx = Some(chain_idx);
         self.hardfork = Some(hardfork);
         self.mode = Some(mode);
@@ -290,7 +302,7 @@ impl ChecksPanel {
         // Preserve previous results across auto-refreshes so the table updates
         // in-place rather than blanking on every tick. Only clear when the
         // target context actually changed.
-        if chain_changed || hardfork_changed {
+        if chain_changed || hardfork_changed || mode_changed {
             self.results.clear();
         }
         self.running = true;
@@ -414,6 +426,7 @@ fn fmt_elapsed(elapsed_secs: u64) -> String {
 
 const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "←/→", description: "Switch chain" },
+    Keybinding { key: "↑/↓", description: "Select checks upgrade" },
     Keybinding { key: "1-4", description: "Jump to chain" },
     Keybinding { key: "r", description: "Run checks now" },
     Keybinding { key: "a", description: "Toggle auto-refresh" },
@@ -429,6 +442,7 @@ const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 pub struct UpgradesView {
     chains: [ChainUpgrades; 4],
     selected_chain: usize,
+    selected_check_hardforks: [Option<&'static str>; 4],
     tick_count: u64,
     checks: ChecksPanel,
     /// When true, re-run the activation checks on the configured cadence
@@ -448,6 +462,7 @@ impl UpgradesView {
         Self {
             chains: all_chains(),
             selected_chain: 0,
+            selected_check_hardforks: [None; 4],
             tick_count: 0,
             checks: ChecksPanel {
                 chain_idx: None,
@@ -470,9 +485,10 @@ impl UpgradesView {
     fn start_checks(&mut self, resources: &Resources) {
         self.apply_live_hardforks(resources);
         let now = now_unix();
+        let selected_hardfork = self.selected_check_hardfork(now);
         let chain = &self.chains[self.selected_chain];
-        let Some(spec) = target_hardfork(chain, now)
-            .and_then(|name| chain.specs.iter().find(|s| s.name == name))
+        let Some(spec) =
+            selected_hardfork.and_then(|name| chain.specs.iter().find(|s| s.name == name))
         else {
             return;
         };
@@ -481,6 +497,38 @@ impl UpgradesView {
             if ts > now { CheckMode::Before } else { CheckMode::After }
         });
         self.checks.start(self.selected_chain, rpc, spec.name, mode);
+    }
+
+    fn selected_check_hardfork(&self, now: u64) -> Option<&'static str> {
+        let chain = &self.chains[self.selected_chain];
+        self.selected_check_hardforks[self.selected_chain]
+            .filter(|name| chain.specs.iter().any(|spec| spec.name == *name && has_checks(name)))
+            .or_else(|| target_hardfork(chain, now))
+    }
+
+    fn move_selected_check_hardfork(&mut self, resources: &Resources, direction: i8) {
+        self.apply_live_hardforks(resources);
+        let now = now_unix();
+        let current = self.selected_check_hardfork(now);
+        let checkable: Vec<_> = checkable_specs_display(&self.chains[self.selected_chain])
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        let Some(last_index) = checkable.len().checked_sub(1) else { return };
+
+        let current_index =
+            current.and_then(|name| checkable.iter().position(|candidate| *candidate == name));
+        let current_index = current_index.unwrap_or(0);
+        let next_index = match direction {
+            -1 => current_index.saturating_sub(1),
+            1 => (current_index + 1).min(last_index),
+            _ => current_index,
+        };
+        let next = checkable[next_index];
+        if self.selected_check_hardforks[self.selected_chain] != Some(next) {
+            self.selected_check_hardforks[self.selected_chain] = Some(next);
+            self.checks.reset();
+        }
     }
 
     fn apply_live_hardforks(&mut self, resources: &Resources) {
@@ -520,6 +568,12 @@ impl View for UpgradesView {
                     self.selected_chain += 1;
                     self.checks.reset();
                 }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.move_selected_check_hardfork(resources, -1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.move_selected_check_hardfork(resources, 1);
             }
             KeyCode::Char(c @ '1'..='4') => {
                 let idx = (c as usize) - ('1' as usize);
@@ -601,6 +655,7 @@ impl View for UpgradesView {
         };
 
         render_chain_tabs(frame, outer[0], &self.chains, self.selected_chain);
+        let selected_hardfork = self.selected_check_hardfork(now);
 
         match upcoming {
             Some((name, ts)) => {
@@ -628,14 +683,13 @@ impl View for UpgradesView {
             .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
             .split(outer[2]);
 
-        render_history(frame, bottom[0], chain, now);
-        let active_hf = target_hardfork(chain, now);
+        render_history(frame, bottom[0], chain, now, selected_hardfork);
         render_checks_panel(
             frame,
             bottom[1],
             &self.checks,
             self.tick_count,
-            active_hf,
+            selected_hardfork,
             self.auto_refresh,
         );
         render_footer(frame, outer[3], self.checks.running, self.auto_refresh);
@@ -811,7 +865,13 @@ fn render_tbd(frame: &mut Frame<'_>, area: Rect) {
     frame.render_widget(Paragraph::new(lines).block(block).alignment(Alignment::Center), area);
 }
 
-fn render_history(frame: &mut Frame<'_>, area: Rect, chain: &ChainUpgrades, now: u64) {
+fn render_history(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    chain: &ChainUpgrades,
+    now: u64,
+    selected_hardfork: Option<&'static str>,
+) {
     let block = Block::default()
         .title(" Upgrade History ")
         .borders(Borders::ALL)
@@ -822,6 +882,9 @@ fn render_history(frame: &mut Frame<'_>, area: Rect, chain: &ChainUpgrades, now:
         .iter()
         .rev()
         .map(|spec| {
+            let selected = selected_hardfork == Some(spec.name);
+            let upgrade_name =
+                if selected { format!("▶ {}", spec.name) } else { format!("  {}", spec.name) };
             let (date_str, status_str, status_color) = match spec.timestamp {
                 None => ("-".to_string(), "− TBD".to_string(), Color::DarkGray),
                 Some(ts) if ts <= now => {
@@ -830,11 +893,16 @@ fn render_history(frame: &mut Frame<'_>, area: Rect, chain: &ChainUpgrades, now:
                 Some(ts) => (fmt_timestamp(ts), "⏳ Upcoming".to_string(), Color::Yellow),
             };
             Row::new([
-                Cell::from(spec.name).style(Style::default().fg(Color::White)),
+                Cell::from(upgrade_name).style(Style::default().fg(Color::White)),
                 Cell::from(date_str).style(Style::default().fg(Color::Gray)),
                 Cell::from(status_str)
                     .style(Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
             ])
+            .style(if selected {
+                Style::default().bg(Color::Rgb(20, 35, 60))
+            } else {
+                Style::default()
+            })
         })
         .collect();
 
@@ -857,12 +925,26 @@ fn render_checks_panel(
 
     // Panel is idle and has never been run.
     if panel.chain_idx.is_none() {
-        let hf_name = active_hardfork.unwrap_or("?");
+        let Some(hf_name) = active_hardfork else {
+            let block = Block::default()
+                .title(" Checks ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray));
+            frame.render_widget(
+                Paragraph::new("No activation checks are defined for this network.")
+                    .block(block)
+                    .alignment(Alignment::Center),
+                area,
+            );
+            return;
+        };
         let check_list = check_names_for(hf_name).join(" · ");
         let hint = if auto_refresh {
-            format!("Auto-refreshing {hf_name} checks every 2s — [a] to disable")
+            format!("Auto-refreshing {hf_name} checks every 2s · ↑/↓ to change · [a] to disable")
         } else {
-            format!("Press [r] to run {hf_name} post-upgrade checks · [a] to enable auto-refresh")
+            format!(
+                "Press [r] to run {hf_name} checks · ↑/↓ to change · [a] to enable auto-refresh"
+            )
         };
         let lines: Vec<Line<'static>> = vec![
             Line::from(""),
@@ -989,6 +1071,10 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, checks_running: bool, auto_r
         Span::styled("[←/→]", key_style),
         Span::raw(" "),
         Span::styled("switch chain", desc_style),
+        sep.clone(),
+        Span::styled("[↑/↓]", key_style),
+        Span::raw(" "),
+        Span::styled("select checks", desc_style),
         sep.clone(),
         Span::styled("[1-4]", key_style),
         Span::raw(" "),
@@ -1668,8 +1754,10 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
 #[cfg(test)]
 mod tests {
     use base_common_genesis::HardforkConfig;
+    use crossterm::event::KeyModifiers;
 
     use super::*;
+    use crate::config::MonitoringConfig;
 
     #[test]
     fn unscheduled_beryl_follows_active_azul_checks() {
@@ -1712,5 +1800,32 @@ mod tests {
         assert!(chain_name_matches_loaded("Devnet", "devnet"));
         assert!(chain_name_matches_loaded("Devnet", "local-vibenet"));
         assert!(!chain_name_matches_loaded("Mainnet", "devnet"));
+    }
+
+    #[test]
+    fn checkable_specs_are_display_ordered() {
+        let chain = ChainUpgrades {
+            display_name: "Devnet",
+            rpc: None,
+            specs: specs_from_config(ChainConfig::devnet()),
+        };
+        let names: Vec<_> =
+            checkable_specs_display(&chain).into_iter().map(|spec| spec.name).collect();
+
+        assert_eq!(names, vec!["Beryl", "Azul", "Jovian"]);
+    }
+
+    #[test]
+    fn arrow_keys_select_check_hardfork() {
+        let mut view = UpgradesView::new();
+        let mut resources = Resources::new(MonitoringConfig::mainnet());
+
+        assert_eq!(view.selected_check_hardfork(100), Some("Beryl"));
+
+        view.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &mut resources);
+        assert_eq!(view.selected_check_hardfork(100), Some("Azul"));
+
+        view.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), &mut resources);
+        assert_eq!(view.selected_check_hardfork(100), Some("Beryl"));
     }
 }
