@@ -430,6 +430,23 @@ fn fmt_elapsed(elapsed_secs: u64) -> String {
     }
 }
 
+const fn countdown_progress_tenths(start_ts: u64, target_ts: u64, now: u64) -> u16 {
+    let total = target_ts.saturating_sub(start_ts);
+    if total == 0 {
+        return 1000;
+    }
+
+    let elapsed = now.saturating_sub(start_ts);
+    let elapsed = if elapsed > total { total } else { elapsed };
+    let tenths = ((elapsed as u128) * 1000) / (total as u128);
+    let max = if now < target_ts { 999 } else { 1000 };
+    if tenths > max { max as u16 } else { tenths as u16 }
+}
+
+fn fmt_progress_percent(tenths: u16) -> String {
+    format!("{}.{:01}%", tenths / 10, tenths % 10)
+}
+
 // ── View ──────────────────────────────────────────────────────────────────────
 
 const KEYBINDINGS: &[Keybinding] = &[
@@ -759,10 +776,10 @@ fn render_countdown(
     let total = ts.saturating_sub(start_ts) as f64;
     let elapsed = now.saturating_sub(start_ts) as f64;
     let pct = if total > 0.0 { (elapsed / total).clamp(0.0, 1.0) } else { 1.0 };
+    let pct_label = fmt_progress_percent(countdown_progress_tenths(start_ts, ts, now));
     let bar_w = 50usize;
     let filled = (bar_w as f64 * pct) as usize;
-    let bar =
-        format!("|{}{}|  {:.1}%", "█".repeat(filled), "░".repeat(bar_w - filled), pct * 100.0);
+    let bar = format!("|{}{}|  {pct_label}", "█".repeat(filled), "░".repeat(bar_w - filled));
 
     let mut lines: Vec<Line<'static>> = vec![Line::from("")];
     lines.extend(clock_lines(days, hours, minutes, seconds, color));
@@ -1901,5 +1918,26 @@ mod tests {
 
         assert!(!view.checks.running);
         assert!(view.checks.chain_idx.is_none());
+    }
+
+    #[test]
+    fn countdown_progress_does_not_show_complete_before_activation() {
+        let target_ts = 90 * SECS_PER_DAY;
+        let now = target_ts - 1;
+
+        let tenths = countdown_progress_tenths(0, target_ts, now);
+
+        assert_eq!(tenths, 999);
+        assert_eq!(fmt_progress_percent(tenths), "99.9%");
+    }
+
+    #[test]
+    fn countdown_progress_shows_complete_at_activation() {
+        let target_ts = 90 * SECS_PER_DAY;
+
+        let tenths = countdown_progress_tenths(0, target_ts, target_ts);
+
+        assert_eq!(tenths, 1000);
+        assert_eq!(fmt_progress_percent(tenths), "100.0%");
     }
 }
