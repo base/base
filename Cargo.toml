@@ -558,7 +558,6 @@ log = "0.4.22"
 anyhow = "1.0"
 rayon = "1.11"
 nanoid = "0.4"
-lz4 = "1.28"
 tar = "0.4.44"
 backon = "1.6"
 dotenv = "0.15.0"
@@ -631,7 +630,7 @@ async-stream = "0.3"
 async-channel = "2.5"
 alloc-no-stdlib = "2.0"
 libp2p-stream = "0.4.0-alpha"
-toml = "1.0"
+toml = { version = "1.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 unsigned-varint = { version = "0.8", default-features = false }
 ark-bls12-381 = { version = "0.5.0", default-features = false }
