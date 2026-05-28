@@ -238,9 +238,16 @@ impl BaseChainSpec {
     }
 
     /// Tries to convert the given [`ChainSpec`] into a [`BaseChainSpec`].
-    pub fn try_from_chainspec(value: ChainSpec) -> Result<Self, BaseChainSpecError> {
-        Self::validate_beryl_activation_admin(&value.hardforks, None, value.chain.id())?;
-        Ok(Self { inner: value, activation_admin_address: None })
+    pub fn try_from_chainspec(
+        value: ChainSpec,
+        activation_admin_address: Option<Address>,
+    ) -> Result<Self, BaseChainSpecError> {
+        Self::validate_beryl_activation_admin(
+            &value.hardforks,
+            activation_admin_address,
+            value.chain.id(),
+        )?;
+        Ok(Self { inner: value, activation_admin_address })
     }
 
     /// Validates that Beryl-enabled chains include an activation registry admin address.
@@ -458,7 +465,8 @@ impl From<Genesis> for BaseChainSpec {
 
 impl From<ChainSpec> for BaseChainSpec {
     fn from(value: ChainSpec) -> Self {
-        Self::try_from_chainspec(value).expect("Beryl-enabled chain spec requires activation admin")
+        Self::try_from_chainspec(value, None)
+            .expect("Beryl-enabled chain spec requires activation admin")
     }
 }
 
@@ -478,7 +486,7 @@ mod tests {
     use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
     use base_common_rpc_types::FeeInfo;
     use reth_chainspec::{
-        BaseFeeParams, BaseFeeParamsKind, EthChainSpec, EthereumHardforks, test_fork_ids,
+        BaseFeeParams, BaseFeeParamsKind, ChainSpec, EthChainSpec, EthereumHardforks, test_fork_ids,
     };
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
 
@@ -739,6 +747,22 @@ mod tests {
         assert!(
             matches!(err, BaseChainSpecError::MissingActivationAdminAddress { chain_id: id } if id == chain_id)
         );
+    }
+
+    #[test]
+    fn beryl_chainspec_can_be_built_with_activation_admin() {
+        let admin = address!("0xcb00000000000000000000000000000000000000");
+        let inner = ChainSpec::builder()
+            .chain(987_654.into())
+            .genesis(Genesis::default())
+            .with_fork(BaseUpgrade::Beryl, ForkCondition::Timestamp(0))
+            .build();
+
+        let chain_spec = BaseChainSpec::try_from_chainspec(inner, Some(admin))
+            .expect("Beryl chain spec with activation admin should build");
+
+        assert_eq!(chain_spec.activation_admin_address(), Some(admin));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 0));
     }
 
     #[test]
