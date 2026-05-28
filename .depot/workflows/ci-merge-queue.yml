@@ -1,0 +1,31 @@
+# Depot CI Migration
+# Source: .github/workflows/ci-merge-queue.yml
+#
+# Changes made:
+# - Rewrote .github/ path references to .depot/
+
+name: CI Merge Queue
+on:
+  merge_group:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+permissions:
+  checks: write
+  contents: read
+  issues: write
+  packages: read
+  pull-requests: write
+jobs:
+  ci:
+    uses: ./.depot/workflows/ci-core.yml
+    with:
+      allow_registry_login: true
+      base_ref: ""
+      build_command: just build::ci
+      clippy_command: just check::clippy-ci
+      run_devnet: true
+      run_sigsegv: true
+      save_rust_cache: false
+      test_command: just test-ci
+    secrets: inherit

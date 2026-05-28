@@ -1,0 +1,304 @@
+# Depot CI Migration
+# Source: .github/workflows/build-release.yml
+#
+# Changes made:
+# - Changed GitHub runs-on labels to their Depot equivalents
+
+name: Build Release
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Tag to build and publish'
+        required: true
+        type: string
+      is_final:
+        description: 'Whether this is a final release (creates GitHub release + uploads binaries)'
+        required: false
+        type: boolean
+        default: false
+env:
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node-reth-dev
+  RELEASE_BINS: |
+    base
+    base-reth-node
+    base-consensus
+    basectl
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+jobs:
+  # Build native binaries for release artifacts
+  build-binaries:
+    strategy:
+      matrix:
+        target:
+          - triple: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            os: linux
+          - triple: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            os: linux
+          - triple: aarch64-apple-darwin
+            runner: macos-14
+            os: macos
+    runs-on: ${{ matrix.target.runner }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        if: matrix.target.os == 'linux'
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 1
+      - name: Install system dependencies (Linux)
+        if: matrix.target.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev pkg-config
+      - name: Install mold linker (Linux)
+        if: matrix.target.os == 'linux'
+        uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
+      - name: Install lld linker (macOS)
+        if: matrix.target.os == 'macos'
+        run: |
+          # llvm@15 is pre-installed on GH runners and includes ld64.lld.
+          # Create a symlink so .cargo/config.toml's /opt/homebrew/opt/lld/ path resolves.
+          LLD_BIN="$(brew --prefix llvm@15)/bin/ld64.lld"
+          if [ -x "$LLD_BIN" ]; then
+            sudo mkdir -p /opt/homebrew/opt/lld/bin
+            sudo ln -sf "$LLD_BIN" /opt/homebrew/opt/lld/bin/ld64.lld
+          else
+            brew install lld
+          fi
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
+      - name: Build binaries
+        run: |
+          cargo_args=()
+          while IFS= read -r bin; do
+            [[ -n "$bin" ]] || continue
+            cargo_args+=(--bin "$bin")
+          done <<< "${RELEASE_BINS}"
+          cargo build --locked --profile maxperf "${cargo_args[@]}"
+      - name: Package binaries
+        run: |
+          TAG="${{ inputs.tag }}"
+          TARGET="${{ matrix.target.triple }}"
+          while IFS= read -r bin; do
+            [[ -n "$bin" ]] || continue
+            ARCHIVE="${bin}-${TAG}-${TARGET}.tar.gz"
+            tar -czf "$ARCHIVE" -C target/maxperf "$bin"
+            if command -v sha256sum &>/dev/null; then
+              sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+            else
+              shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
+            fi
+          done <<< "${RELEASE_BINS}"
+      - name: Sign archives
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          if [[ -z "$GPG_SIGNING_KEY" || -z "$GPG_PASSPHRASE" ]]; then
+            echo "::error::GPG_SIGNING_KEY and GPG_PASSPHRASE secrets are required to sign release binaries"
+            exit 1
+          fi
+
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
+          trap 'rm -rf "$GNUPGHOME"' EXIT
+
+          echo -n "$GPG_SIGNING_KEY" | base64 --decode | gpg --batch --import
+          for archive in *.tar.gz; do
+            printf '%s' "$GPG_PASSPHRASE" | \
+              gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --armor --detach-sign "$archive"
+          done
+      - name: Attest build provenance
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: "*.tar.gz"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: binaries-${{ matrix.target.triple }}
+          path: |
+            *.tar.gz
+            *.tar.gz.sha256
+            *.tar.gz.asc
+          if-no-files-found: error
+          retention-days: 1
+  # Build multi-arch Docker images
+  build-and-push:
+    strategy:
+      matrix:
+        settings:
+          - arch: linux/amd64
+            runs-on: ubuntu-24.04
+          - arch: linux/arm64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.settings.runs-on }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - name: Prepare
+        run: |
+          platform="${{ matrix.settings.arch }}"
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 1
+      - name: Prepare image labels
+        id: image-labels
+        run: |
+          echo "source=https://github.com/${{ github.repository }}" >> $GITHUB_OUTPUT
+          echo "revision=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+          echo "version=${{ inputs.tag }}" >> $GITHUB_OUTPUT
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push Docker image
+        run: |
+          docker buildx bake -f etc/docker/docker-bake.hcl client \
+            --set client.tags=${{ env.REGISTRY_IMAGE }} \
+            --set client.platform=${{ matrix.settings.arch }} \
+            --set client.output=type=image,push-by-digest=true,name-canonical=true,push=true \
+            --set client.cache-to=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-${{ env.PLATFORM_PAIR }},mode=max \
+            --set client.labels.org.opencontainers.image.source=${{ steps.image-labels.outputs.source }} \
+            --set client.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }} \
+            --set client.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }} \
+            --set client.labels.org.opencontainers.image.version=${{ steps.image-labels.outputs.version }} \
+            --metadata-file ${{ runner.temp }}/client-metadata.json
+      - name: Export digest
+        run: |
+          mkdir -p ${{ runner.temp }}/digests
+          digest="$(jq -er '."client"."containerimage.digest"' ${{ runner.temp }}/client-metadata.json)"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+      - name: Upload digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+  # Merge manifests and publish
+  publish:
+    needs: [build-and-push, build-binaries]
+    runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Determine Docker tags
+        id: tags
+        run: |
+          TAG="${{ inputs.tag }}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+          if [[ "$TAG" =~ -rc\. ]]; then
+            echo "docker_tags=${{ env.REGISTRY_IMAGE }}:${TAG}" >> $GITHUB_OUTPUT
+          else
+            VERSION="${TAG#v}"
+            IFS='.' read -r major minor patch <<< "$VERSION"
+            echo "docker_tags=${{ env.REGISTRY_IMAGE }}:${TAG},${{ env.REGISTRY_IMAGE }}:${major}.${minor},${{ env.REGISTRY_IMAGE }}:${major},${{ env.REGISTRY_IMAGE }}:latest" >> $GITHUB_OUTPUT
+          fi
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          shopt -s nullglob
+          DIGESTS=(*)
+          if [[ ${#DIGESTS[@]} -eq 0 ]]; then
+            echo "::error::No digests found — build-and-push may have failed"
+            exit 1
+          fi
+
+          IFS=',' read -ra TAGS <<< "${{ steps.tags.outputs.docker_tags }}"
+          TAG_ARGS=""
+          for tag in "${TAGS[@]}"; do
+            TAG_ARGS="$TAG_ARGS -t $tag"
+          done
+
+          docker buildx imagetools create $TAG_ARGS \
+            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' "${DIGESTS[@]}")
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.tags.outputs.tag }}
+      - name: Create GitHub Release
+        if: inputs.is_final
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists, skipping creation"
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes --draft
+          fi
+      - name: Download binary artifacts
+        if: inputs.is_final
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: ${{ runner.temp }}/binaries
+          pattern: binaries-*
+          merge-multiple: true
+      - name: Upload binaries to GitHub Release
+        if: inputs.is_final
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          gh release upload "$TAG" ${{ runner.temp }}/binaries/*.tar.gz ${{ runner.temp }}/binaries/*.tar.gz.sha256 ${{ runner.temp }}/binaries/*.tar.gz.asc
+      - name: Summary
+        run: |
+          TAG="${{ inputs.tag }}"
+
+          echo "## Release Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ inputs.is_final }}" == "true" ]]; then
+            echo "**Type**: Final Release" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Type**: Release Candidate" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY_IMAGE }}:${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,65 @@
+# Depot CI Migration
+# Source: .github/workflows/start-release.yml
+#
+# Changes made:
+# - Changed GitHub runs-on labels to their Depot equivalents
+
+name: Start Release
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - minor
+          - patch
+          - major
+        default: minor
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+jobs:
+  start:
+    runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+      - name: Create release branch
+        run: ./etc/scripts/release/start-release.sh "${{ inputs.bump_type }}"
+      - name: Run version sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH=$(cat "${{ runner.temp }}/release_branch")
+          git checkout "$BRANCH"
+          ./etc/scripts/release/version-sync.sh "$BRANCH"
+      - name: Create release tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH=$(cat "${{ runner.temp }}/release_branch")
+          ./etc/scripts/release/create-issue.sh "$BRANCH"
+      - name: Summary
+        run: |
+          CURRENT=$(cat "${{ runner.temp }}/current_version")
+          NEW=$(cat "${{ runner.temp }}/new_version")
+          BRANCH=$(cat "${{ runner.temp }}/release_branch")
+
+          echo "## Release Branch Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version**: v${CURRENT} → v${NEW}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch**: \`${BRANCH}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Next: merge the version sync PR, then run **Publish Release**" >> $GITHUB_STEP_SUMMARY

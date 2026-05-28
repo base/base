@@ -1,0 +1,154 @@
+name: Setup
+description: Shared CI setup for Rust projects
+
+inputs:
+  toolchain:
+    description: Rust toolchain channel (stable or nightly)
+    default: "stable"
+  components:
+    description: Rust components to install (e.g. clippy, rustfmt)
+    default: ""
+  tools:
+    description: Cargo tools to install via taiki-e/install-action
+    default: ""
+  foundry:
+    description: Install Foundry
+    default: "false"
+  sp1:
+    description: Install the SP1 toolchain (cargo-prove) for building ELFs
+    default: "false"
+  sp1-version:
+    description: SP1 release tag used when sp1 is enabled (matches etc/just/succinct.just)
+    default: "v6.1.0"
+  elf-cache:
+    description: Restore/save the ELF cache keyed on crates/proof/succinct/elf/manifest.toml
+    default: "false"
+  mold:
+    description: Install mold linker
+    default: "false"
+  native-deps:
+    description: Install native build dependencies (clang, llvm, etc.)
+    default: "false"
+  free-disk:
+    description: Free disk space before building
+    default: "false"
+  rust-cache-shared-key:
+    description: Shared key for Rust cache (empty to skip caching)
+    default: ""
+  rust-cache-save:
+    description: Whether to save the Rust cache
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Free Disk Space (fast pre-clean)
+      if: inputs.free-disk == 'true'
+      shell: bash
+      run: |
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        df -h
+
+    - name: Free Disk Space
+      if: inputs.free-disk == 'true'
+      continue-on-error: true
+      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+      with:
+        tool-cache: false
+        android: false
+        dotnet: false
+        haskell: true
+        large-packages: false
+        swap-storage: true
+
+    - name: Install native dependencies
+      if: inputs.native-deps == 'true'
+      uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+      with:
+        packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config protobuf-compiler
+        version: 1.4
+
+    - name: Install Rust (stable via rust-toolchain.toml)
+      if: inputs.toolchain == 'stable'
+      shell: bash
+      env:
+        COMPONENTS: ${{ inputs.components }}
+      run: |
+        rustup show active-toolchain
+        if [ -n "$COMPONENTS" ]; then
+          rustup component add $COMPONENTS
+        fi
+
+    - name: Install Rust (nightly)
+      if: inputs.toolchain == 'nightly'
+      uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
+      with:
+        components: ${{ inputs.components }}
+
+    - name: Install mold
+      if: inputs.mold == 'true'
+      uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
+
+    - name: Setup sccache
+      uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+
+    - name: Rust cache
+      if: inputs.rust-cache-shared-key != ''
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      with:
+        cache-on-failure: true
+        shared-key: ${{ inputs.rust-cache-shared-key }}
+        save-if: ${{ inputs.rust-cache-save }}
+        cache-targets: "false"
+
+    - name: Install just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      with:
+        just-version: "1.43.1"
+
+    - name: Install cargo tools
+      if: inputs.tools != ''
+      uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
+      with:
+        tool: ${{ inputs.tools }}
+
+    - name: Install Foundry
+      if: inputs.foundry == 'true'
+      uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
+      with:
+        version: stable
+
+    - name: Restore ELF cache
+      if: inputs.elf-cache == 'true'
+      uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+      with:
+        path: |
+          crates/proof/succinct/elf/range-elf-embedded
+          crates/proof/succinct/elf/aggregation-elf
+        key: sp1-elfs-${{ runner.os }}-${{ hashFiles('crates/proof/succinct/elf/manifest.toml') }}
+
+    - name: Install SP1 toolchain
+      if: inputs.sp1 == 'true'
+      shell: bash
+      env:
+        SP1_VERSION: ${{ inputs.sp1-version }}
+      run: |
+        if [ -x "$HOME/.sp1/bin/cargo-prove" ]; then
+          echo "cargo-prove already installed"
+        else
+          curl -L https://sp1up.succinct.xyz | bash
+          "$HOME/.sp1/bin/sp1up" --version "$SP1_VERSION"
+        fi
+        echo "$HOME/.sp1/bin" >> "$GITHUB_PATH"
+
+    - name: Set LIBCLANG_PATH
+      if: inputs.native-deps == 'true'
+      shell: bash
+      run: |
+        LLVM_BIN=$(command -v llvm-config || ls /usr/bin/llvm-config-* 2>/dev/null | sort -V | tail -1)
+        LLVM_VERSION=$($LLVM_BIN --version | cut -d. -f1)
+        echo "LIBCLANG_PATH=/usr/lib/llvm-${LLVM_VERSION}/lib" >> $GITHUB_ENV

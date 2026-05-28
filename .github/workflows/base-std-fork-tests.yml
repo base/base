@@ -22,8 +22,7 @@ permissions:
 jobs:
   fork-tests:
     name: Base Std Fork Tests
-    runs-on:
-      group: BasePerfRunnerGroup
+        runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - name: Harden the runner (Audit all outbound calls)
