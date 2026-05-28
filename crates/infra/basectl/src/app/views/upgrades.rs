@@ -5,7 +5,11 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use alloy_primitives::{Address, B256, hex};
+use alloy_sol_types::SolCall;
 use base_common_chains::ChainConfig;
+use base_common_genesis::HardForkConfig;
+use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent};
 use jsonrpsee::{
@@ -70,6 +74,27 @@ struct ChainUpgrades {
     specs: Vec<UpgradeSpec>,
 }
 
+impl ChainUpgrades {
+    fn set_timestamp(&mut self, name: &'static str, timestamp: Option<u64>) {
+        if let Some(spec) = self.specs.iter_mut().find(|spec| spec.name == name) {
+            spec.timestamp = timestamp;
+        }
+    }
+
+    fn apply_hardforks(&mut self, hardforks: &HardForkConfig) {
+        self.set_timestamp("Delta", hardforks.delta_time);
+        self.set_timestamp("Canyon", hardforks.canyon_time);
+        self.set_timestamp("Ecotone", hardforks.ecotone_time);
+        self.set_timestamp("Fjord", hardforks.fjord_time);
+        self.set_timestamp("Granite", hardforks.granite_time);
+        self.set_timestamp("Holocene", hardforks.holocene_time);
+        self.set_timestamp("Isthmus", hardforks.isthmus_time);
+        self.set_timestamp("Jovian", hardforks.jovian_time);
+        self.set_timestamp("Azul", hardforks.base.azul);
+        self.set_timestamp("Beryl", hardforks.base.beryl);
+    }
+}
+
 fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
     vec![
         UpgradeSpec { name: "Delta", timestamp: Some(cfg.delta_timestamp) },
@@ -127,6 +152,13 @@ fn all_chains() -> [ChainUpgrades; 4] {
     ]
 }
 
+fn chain_name_matches_loaded(display_name: &str, loaded_name: &str) -> bool {
+    let loaded = loaded_name.to_lowercase();
+    let selected = display_name.to_lowercase();
+    loaded == selected
+        || (selected == "devnet" && (loaded.contains("devnet") || loaded.contains("vibenet")))
+}
+
 // ── Check types ───────────────────────────────────────────────────────────────
 
 /// Expected check names for Azul, in execution order.
@@ -144,8 +176,28 @@ const AZUL_CHECK_NAMES: &[&str] = &[
 /// Expected check names for Jovian, in execution order.
 const JOVIAN_CHECK_NAMES: &[&str] = &["bn256Pairing limit", "extra data v1", "GPO implementation"];
 
+/// Expected check names for Beryl, in execution order.
+const BERYL_CHECK_NAMES: &[&str] = &[
+    "registry precompile",
+    "registry admin",
+    "B-20 token feature",
+    "B-20 factory feature",
+    "policy registry feature",
+    "B-20 stablecoin feature",
+    "B-20 security feature",
+];
+
+const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
+    ("B-20 token feature", ActivationFeature::B20Token),
+    ("B-20 factory feature", ActivationFeature::B20Factory),
+    ("policy registry feature", ActivationFeature::PolicyRegistry),
+    ("B-20 stablecoin feature", ActivationFeature::B20Stablecoin),
+    ("B-20 security feature", ActivationFeature::B20Security),
+];
+
 fn check_names_for(hardfork: &str) -> &'static [&'static str] {
     match hardfork {
+        "Beryl" => BERYL_CHECK_NAMES,
         "Azul" => AZUL_CHECK_NAMES,
         "Jovian" => JOVIAN_CHECK_NAMES,
         _ => &[],
@@ -405,6 +457,7 @@ impl UpgradesView {
     /// Kick off an activation-check run for the currently selected chain, if
     /// the chain has a hardfork with defined checks and a usable RPC URL.
     fn start_checks(&mut self, resources: &Resources) {
+        self.apply_live_hardforks(resources);
         let now = now_unix();
         let chain = &self.chains[self.selected_chain];
         let Some(spec) =
@@ -418,11 +471,17 @@ impl UpgradesView {
         self.checks.start(self.selected_chain, rpc, spec.name, mode);
     }
 
+    fn apply_live_hardforks(&mut self, resources: &Resources) {
+        let Some(hardforks) = resources.config.hardforks.as_ref() else { return };
+        let chain = &mut self.chains[self.selected_chain];
+        if chain_name_matches_loaded(chain.display_name, &resources.config.name) {
+            chain.apply_hardforks(hardforks);
+        }
+    }
+
     fn rpc_for_selected(&self, resources: &Resources) -> Option<String> {
         let chain = &self.chains[self.selected_chain];
-        let loaded = resources.config.name.to_lowercase();
-        let selected = chain.display_name.to_lowercase();
-        if loaded == selected || (selected == "devnet" && loaded.contains("devnet")) {
+        if chain_name_matches_loaded(chain.display_name, &resources.config.name) {
             Some(resources.config.rpc.to_string())
         } else {
             chain.rpc.clone()
@@ -482,7 +541,8 @@ impl View for UpgradesView {
         Action::None
     }
 
-    fn render(&mut self, frame: &mut Frame<'_>, area: Rect, _resources: &Resources) {
+    fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources) {
+        self.apply_live_hardforks(resources);
         let now = now_unix();
         let chain = &self.chains[self.selected_chain];
 
@@ -873,7 +933,7 @@ fn render_checks_panel(
     let header = Row::new(["CHECK", "", "DETAIL"])
         .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
 
-    let widths = [Constraint::Length(20), Constraint::Length(5), Constraint::Min(8)];
+    let widths = [Constraint::Length(24), Constraint::Length(5), Constraint::Min(8)];
 
     let block = Block::default()
         .title(title)
@@ -1011,9 +1071,181 @@ async fn run_checks_streaming(
     tx: mpsc::Sender<CheckUpdate>,
 ) {
     match hardfork {
+        "Beryl" => run_beryl_checks_streaming(rpc_url, mode, tx).await,
         "Azul" => run_azul_checks_streaming(rpc_url, tx).await,
         "Jovian" => run_jovian_checks_streaming(rpc_url, mode, tx).await,
         _ => {}
+    }
+}
+
+// ── Beryl activation checks ───────────────────────────────────────────────────
+
+fn activation_registry_address() -> String {
+    ActivationRegistryStorage::ADDRESS.to_string()
+}
+
+fn calldata_hex(calldata: impl AsRef<[u8]>) -> String {
+    format!("0x{}", hex::encode(calldata.as_ref()))
+}
+
+fn decode_rpc_bytes(value: &str) -> Result<Vec<u8>, String> {
+    hex::decode(value.trim_start_matches("0x")).map_err(|e| format!("invalid hex response: {e}"))
+}
+
+fn short_address(address: Address) -> String {
+    let value = address.to_string();
+    if value.len() <= 14 {
+        value
+    } else {
+        format!("{}..{}", &value[..10], &value[value.len() - 4..])
+    }
+}
+
+async fn activation_admin(client: &HttpClient) -> Result<Address, String> {
+    let data = calldata_hex(IActivationRegistry::adminCall {}.abi_encode());
+    let to = activation_registry_address();
+    let output = eth_call(client, &to, &data).await?;
+    let bytes = decode_rpc_bytes(&output)?;
+    IActivationRegistry::adminCall::abi_decode_returns(bytes.as_ref()).map_err(|e| e.to_string())
+}
+
+async fn activation_feature_state(client: &HttpClient, feature: B256) -> Result<bool, String> {
+    let data = calldata_hex(IActivationRegistry::isActivatedCall { feature }.abi_encode());
+    let to = activation_registry_address();
+    let output = eth_call(client, &to, &data).await?;
+    let bytes = decode_rpc_bytes(&output)?;
+    IActivationRegistry::isActivatedCall::abi_decode_returns(bytes.as_ref())
+        .map_err(|e| e.to_string())
+}
+
+fn evaluate_beryl_precompile(mode: CheckMode, result: &Result<Address, String>) -> CheckResult {
+    match (mode, result) {
+        (CheckMode::Before, Ok(admin)) => CheckResult {
+            passed: Some(false),
+            detail: format!("responded before Beryl; admin {}", short_address(*admin)),
+        },
+        (CheckMode::Before, Err(_)) => {
+            CheckResult { passed: Some(true), detail: "unavailable before Beryl".to_string() }
+        }
+        (CheckMode::After, Ok(_)) => CheckResult {
+            passed: Some(true),
+            detail: format!("responds at {}", activation_registry_address()),
+        },
+        (CheckMode::After, Err(e)) => {
+            CheckResult { passed: Some(false), detail: format!("unavailable after Beryl: {e}") }
+        }
+    }
+}
+
+fn evaluate_beryl_admin(mode: CheckMode, result: Result<Address, String>) -> CheckResult {
+    match (mode, result) {
+        (CheckMode::Before, Ok(admin)) => CheckResult {
+            passed: Some(false),
+            detail: format!("admin {} available before Beryl", short_address(admin)),
+        },
+        (CheckMode::Before, Err(_)) => {
+            CheckResult { passed: None, detail: "skipped before Beryl".to_string() }
+        }
+        (CheckMode::After, Ok(admin)) => {
+            CheckResult { passed: Some(true), detail: format!("admin {}", short_address(admin)) }
+        }
+        (CheckMode::After, Err(e)) => {
+            CheckResult { passed: Some(false), detail: format!("admin query failed: {e}") }
+        }
+    }
+}
+
+fn evaluate_beryl_feature(mode: CheckMode, result: Result<bool, String>) -> CheckResult {
+    match (mode, result) {
+        (CheckMode::Before, Ok(active)) => CheckResult {
+            passed: Some(false),
+            detail: format!("responded before Beryl: {}", feature_state(active)),
+        },
+        (CheckMode::Before, Err(_)) => {
+            CheckResult { passed: Some(true), detail: "unavailable before Beryl".to_string() }
+        }
+        (CheckMode::After, Ok(active)) => {
+            CheckResult { passed: Some(true), detail: feature_state(active).to_string() }
+        }
+        (CheckMode::After, Err(e)) => {
+            CheckResult { passed: Some(false), detail: format!("query failed: {e}") }
+        }
+    }
+}
+
+const fn feature_state(active: bool) -> &'static str {
+    if active { "active" } else { "inactive" }
+}
+
+async fn run_beryl_checks_streaming(
+    rpc_url: String,
+    mode: CheckMode,
+    tx: mpsc::Sender<CheckUpdate>,
+) {
+    macro_rules! send_start {
+        ($name:expr) => {
+            if tx.send(CheckUpdate::Starting($name.to_string())).await.is_err() {
+                return;
+            }
+        };
+    }
+    macro_rules! send_result {
+        ($name:expr, $result:expr) => {
+            if tx
+                .send(CheckUpdate::Completed { name: $name.to_string(), result: $result })
+                .await
+                .is_err()
+            {
+                return;
+            }
+        };
+    }
+
+    let client = match make_rpc_client(&rpc_url) {
+        Ok(c) => c,
+        Err(e) => {
+            let conn_result = CheckResult {
+                passed: Some(false),
+                detail: format!("cannot build client for {rpc_url}: {e}"),
+            };
+            send_result!("registry precompile", conn_result);
+            for &name in &BERYL_CHECK_NAMES[1..] {
+                send_result!(
+                    name,
+                    CheckResult { passed: None, detail: "skipped (no connection)".into() }
+                );
+            }
+            return;
+        }
+    };
+
+    match ClientT::request::<String, _>(&client, "eth_blockNumber", rpc_params![]).await {
+        Ok(_) => {}
+        Err(e) => {
+            let conn_result =
+                CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
+            send_result!("registry precompile", conn_result);
+            for &name in &BERYL_CHECK_NAMES[1..] {
+                send_result!(
+                    name,
+                    CheckResult { passed: None, detail: "skipped (no connection)".into() }
+                );
+            }
+            return;
+        }
+    }
+
+    send_start!("registry precompile");
+    let admin = activation_admin(&client).await;
+    send_result!("registry precompile", evaluate_beryl_precompile(mode, &admin));
+
+    send_start!("registry admin");
+    send_result!("registry admin", evaluate_beryl_admin(mode, admin));
+
+    for &(name, feature) in BERYL_FEATURE_CHECKS {
+        send_start!(name);
+        let result = activation_feature_state(&client, feature.id()).await;
+        send_result!(name, evaluate_beryl_feature(mode, result));
     }
 }
 
@@ -1419,4 +1651,37 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
         }
     };
     send_result!("eth_config", eth_config_check);
+}
+
+#[cfg(test)]
+mod tests {
+    use base_common_genesis::HardforkConfig;
+
+    use super::*;
+
+    #[test]
+    fn live_hardforks_make_beryl_the_devnet_check_target() {
+        let mut chain = ChainUpgrades {
+            display_name: "Devnet",
+            rpc: None,
+            specs: specs_from_config(ChainConfig::devnet()),
+        };
+        assert_eq!(target_hardfork(&chain), Some("Azul"));
+
+        chain.apply_hardforks(&HardForkConfig {
+            base: HardforkConfig { azul: Some(10), beryl: Some(12) },
+            ..HardForkConfig::default()
+        });
+
+        assert_eq!(target_hardfork(&chain), Some("Beryl"));
+        let beryl = chain.specs.iter().find(|spec| spec.name == "Beryl").unwrap();
+        assert_eq!(beryl.timestamp, Some(12));
+    }
+
+    #[test]
+    fn devnet_selection_accepts_vibenet_configs() {
+        assert!(chain_name_matches_loaded("Devnet", "devnet"));
+        assert!(chain_name_matches_loaded("Devnet", "local-vibenet"));
+        assert!(!chain_name_matches_loaded("Mainnet", "devnet"));
+    }
 }

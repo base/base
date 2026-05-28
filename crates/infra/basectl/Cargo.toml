@@ -20,6 +20,7 @@ alloy-contract = { workspace = true }
 base-common-chains = { workspace = true }
 base-common-network = { workspace = true }
 base-consensus-gossip = { workspace = true }
+base-common-precompiles = { workspace = true }
 base-common-flashblocks = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["std"] }

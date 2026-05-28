@@ -6393,6 +6393,7 @@ dependencies = [
  "base-common-flashblocks",
  "base-common-genesis",
  "base-common-network",
+ "base-common-precompiles",
  "base-consensus-gossip",
  "base-consensus-rpc",
  "base-protocol",
