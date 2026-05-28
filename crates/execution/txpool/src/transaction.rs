@@ -1,5 +1,6 @@
 use core::fmt::Debug;
 use std::{
+    any::Any,
     borrow::Cow,
     sync::{Arc, OnceLock},
 };
@@ -12,7 +13,7 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
-use base_common_consensus::{BaseTransactionSigned, Eip8130Signed};
+use base_common_consensus::{BaseTransactionSigned, Eip8130Constants, Eip8130Signed};
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
@@ -20,6 +21,16 @@ use reth_transaction_pool::{
 };
 
 use crate::estimated_da_size::DataAvailabilitySized;
+
+fn eip8130_nonce_channel_key<Cons>(transaction: &Cons) -> Option<U256>
+where
+    Cons: SignedTransaction + 'static,
+{
+    let transaction = (transaction as &dyn Any).downcast_ref::<BaseTransactionSigned>()?;
+    let signed = transaction.as_eip8130()?;
+    let nonce_key = signed.tx().nonce_key;
+    (!nonce_key.is_zero() && nonce_key != Eip8130Constants::NONCE_KEY_MAX).then_some(nonce_key)
+}
 
 /// Assumed L2 block time in seconds, used to convert block-based bundle windows
 /// to time-based bounds.
@@ -154,7 +165,7 @@ impl<Cons: SignedTransaction, Pooled> DataAvailabilitySized
 
 impl<Cons, Pooled> PoolTransaction for BasePooledTransaction<Cons, Pooled>
 where
-    Cons: SignedTransaction + From<Pooled>,
+    Cons: SignedTransaction + From<Pooled> + 'static,
     Pooled: SignedTransaction + TryFrom<Cons, Error: core::error::Error>,
 {
     type TryFromConsensusError = <Pooled as TryFrom<Cons>>::Error;
@@ -201,6 +212,10 @@ where
 
     fn encoded_length(&self) -> usize {
         self.inner.encoded_length
+    }
+
+    fn requires_nonce_check(&self) -> bool {
+        eip8130_nonce_channel_key(self.inner.transaction.inner()).is_none()
     }
 }
 
@@ -292,7 +307,7 @@ where
 
 impl<Cons, Pooled> EthPoolTransaction for BasePooledTransaction<Cons, Pooled>
 where
-    Cons: SignedTransaction + From<Pooled>,
+    Cons: SignedTransaction + From<Pooled> + 'static,
     Pooled: SignedTransaction + TryFrom<Cons>,
     <Pooled as TryFrom<Cons>>::Error: core::error::Error,
 {
@@ -337,6 +352,12 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
         None
     }
+
+    /// Returns the EIP-8130 `nonce_key` when this transaction belongs to a
+    /// finite non-zero nonce channel handled by the 2D nonce pool.
+    fn eip8130_nonce_channel_key(&self) -> Option<U256> {
+        None
+    }
 }
 
 impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
@@ -351,6 +372,10 @@ where
 
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
         self.inner.transaction().inner().as_eip8130()
+    }
+
+    fn eip8130_nonce_channel_key(&self) -> Option<U256> {
+        eip8130_nonce_channel_key(self.inner.transaction().inner())
     }
 }
 
