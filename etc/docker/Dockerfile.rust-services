@@ -57,12 +57,11 @@ FROM rust-builder-base AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM rust-builder-base AS deps
+FROM zk-builder-base AS deps
 ARG PROFILE=release
 COPY --from=planner /app/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=deps-target,sharing=locked \
     cargo chef cook --profile $PROFILE --recipe-path recipe.json
 
 FROM deps AS source
@@ -140,18 +139,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --package base-batcher-bin --bin base-batcher && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-batcher /app/base-batcher
 
-FROM zk-builder-base AS zk-deps
-ARG PROFILE=release
-COPY --from=planner /app/recipe.json recipe.json
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=zk-deps-target,sharing=locked \
-    cargo chef cook --profile $PROFILE --recipe-path recipe.json
-
-FROM zk-deps AS zk-source
-COPY . .
-
-FROM zk-source AS zk-prover-builder
+FROM source AS zk-prover-builder
 ARG PROFILE=release
 ARG BASE_SUCCINCT_ELF_REQUIRE=1
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
