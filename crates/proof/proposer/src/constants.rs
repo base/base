@@ -10,4 +10,4 @@ pub const PROPOSAL_TIMEOUT: Duration = Duration::from_mins(10);
 pub const RECOVERY_SCAN_CONCURRENCY: usize = 8;
 
 /// Maximum retries for a single proof range before a full pipeline reset.
-pub const MAX_PROOF_RETRIES: u32 = 3;
+pub const MAX_PROOF_RETRIES: u32 = 8;
