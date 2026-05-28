@@ -1,6 +1,6 @@
 [package]
 name = "base-prover-service"
-description = "Base prover service protobuf definitions"
+description = "Base prover service JSON-RPC definitions"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,17 +9,31 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-# gRPC
-prost.workspace = true
-prost-types.workspace = true
-tonic-prost.workspace = true
-tonic = { workspace = true, features = ["transport"] }
+# primitives
+chrono = { workspace = true, features = ["serde"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
 
-[build-dependencies]
-tonic-prost-build.workspace = true
+# rpc
+jsonrpsee = { workspace = true, optional = true }
+
+# serialization
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_json = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true
 
 [features]
-server = []
+default = []
+rpc-client = [
+	"dep:jsonrpsee",
+	"jsonrpsee/http-client",
+	"jsonrpsee/macros",
+]
+rpc-server = [
+	"dep:jsonrpsee",
+	"jsonrpsee/macros",
+	"jsonrpsee/server",
+]

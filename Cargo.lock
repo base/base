@@ -5946,11 +5946,11 @@ dependencies = [
 name = "base-prover-service"
 version = "0.0.0"
 dependencies = [
- "prost 0.14.3",
- "prost-types 0.14.3",
- "tonic 0.14.6",
- "tonic-prost",
- "tonic-prost-build",
+ "alloy-primitives",
+ "chrono",
+ "jsonrpsee",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
