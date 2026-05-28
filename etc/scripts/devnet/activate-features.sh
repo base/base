@@ -7,7 +7,7 @@
 #
 # Usage:
 #   ./activate-features.sh [network] [rpc-url]
-#   ./activate-features.sh --network <network> [--rpc-url <url>] [--admin-key <private-key>]
+#   ./activate-features.sh --network <network> [--rpc-url <url>]
 #
 # Examples:
 #   ./activate-features.sh
@@ -26,24 +26,11 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[0;33m'; BO
 # ── Config ────────────────────────────────────────────────────────────────────
 REGISTRY="0x8453000000000000000000000000000000000001"
 
-# Feature id ↔ canonical name pairs (kept in sync with
-# crates/common/precompiles/src/activation/storage.rs::ActivationFeature).
-FEATURES=(
-    "base.b20_token:0x47a1afe8d3d691b87e090ee972d223a11f4da971ff5416c04985bb2393aca752"
-    "base.b20_factory:0x78751e29c8bcc0d609ab18e9fbc4158e73f7db25ae2ee095dad42e2578b1e800"
-    "base.policy_registry:0xb582ebae03f16fee49a6763f78df482fb11ae73f103ed0d330bbe556aa90a43f"
-    "base.b20_stablecoin:0xecfa0def2c10020caaf65e6155aa69c84b24892aaef76eeac52e0e2b3a0b8601"
-    "base.b20_security:0x83d32fab502ae0e8bc4352a117767262cb5e47cc8d67a744008ed4ff03fcf5e6"
-)
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-trim() { echo "$1" | tr -d '"' | sed 's/ \[.*\]$//' | xargs; }
-
 usage() {
     cat <<EOF
 Usage:
   $0 [network] [rpc-url]
-  $0 --network <network> [--rpc-url <url>] [--admin-addr <address>] [--admin-key <private-key>]
+  $0 --network <network> [--rpc-url <url>] [--admin-addr <address>]
 
 Networks: $(activation_supported_networks)
 
@@ -51,7 +38,7 @@ Examples:
   $0
   $0 vibes
   $0 devnet http://localhost:8545
-  $0 --network base-sepolia --rpc-url <url> --admin-key <private-key>
+  ACTIVATION_ADMIN_KEY=<private-key> $0 --network base-sepolia --rpc-url <url>
 EOF
 }
 
@@ -87,14 +74,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --admin-addr=*)
             ADMIN_ADDR="${1#*=}"
-            ;;
-        --admin-key)
-            shift
-            [[ $# -gt 0 ]] || { echo "--admin-key requires a value" >&2; exit 1; }
-            ADMIN_KEY="$1"
-            ;;
-        --admin-key=*)
-            ADMIN_KEY="${1#*=}"
             ;;
         *)
             if activation_arg_is_url "$1"; then
@@ -136,7 +115,7 @@ ON_CHAIN_ADMIN_RAW=$(cast call --rpc-url "$RPC_URL" "$REGISTRY" "admin()(address
     echo -e "${RED}admin() call failed:${NC} $ON_CHAIN_ADMIN_RAW" >&2
     exit 1
 }
-ON_CHAIN_ADMIN=$(trim "$ON_CHAIN_ADMIN_RAW")
+ON_CHAIN_ADMIN=$(activation_trim "$ON_CHAIN_ADMIN_RAW")
 ADMIN_ADDR="${ADMIN_ADDR:-$ON_CHAIN_ADMIN}"
 echo -e "${YELLOW}  → Admin:   ${ADMIN_ADDR} (on-chain: ${ON_CHAIN_ADMIN})${NC}"
 
@@ -147,22 +126,14 @@ fi
 
 if [[ -z "${ADMIN_KEY:-}" ]]; then
     echo -e "${RED}No activation admin private key configured for network '${NETWORK}'.${NC}" >&2
-    echo -e "${RED}Pass --admin-key or set ACTIVATION_ADMIN_KEY / a network-specific admin key env var.${NC}" >&2
+    echo -e "${RED}Set ACTIVATION_ADMIN_KEY or a network-specific admin key env var.${NC}" >&2
     exit 1
 fi
 
-KEY_ADDR_RAW=$(cast wallet address --private-key "$ADMIN_KEY" 2>&1) || {
-    echo -e "${RED}Could not derive address from activation admin private key:${NC} $KEY_ADDR_RAW" >&2
+BAL=$(cast balance --rpc-url "$RPC_URL" "$ADMIN_ADDR" 2>&1) || {
+    echo -e "${RED}Failed to query admin balance on ${RPC_URL}: ${BAL}${NC}" >&2
     exit 1
 }
-KEY_ADDR=$(trim "$KEY_ADDR_RAW")
-
-if [[ "$(echo "$KEY_ADDR" | tr '[:upper:]' '[:lower:]')" != "$(echo "$ON_CHAIN_ADMIN" | tr '[:upper:]' '[:lower:]')" ]]; then
-    echo -e "${RED}Activation admin key resolves to ${KEY_ADDR}, but on-chain admin is ${ON_CHAIN_ADMIN}.${NC}" >&2
-    exit 1
-fi
-
-BAL=$(cast balance --rpc-url "$RPC_URL" "$ADMIN_ADDR" 2>&1)
 [[ -n "$BAL" && "$BAL" != "0" ]] || {
     echo -e "${RED}Admin (${ADMIN_ADDR}) has no ETH on ${RPC_URL}${NC}" >&2
     exit 1
@@ -175,7 +146,7 @@ activated=0
 skipped=0
 failed=0
 
-for entry in "${FEATURES[@]}"; do
+for entry in "${ACTIVATION_FEATURES[@]}"; do
     name="${entry%%:*}"
     id="${entry##*:}"
 
@@ -185,7 +156,7 @@ for entry in "${FEATURES[@]}"; do
         failed=$((failed + 1))
         continue
     }
-    current=$(trim "$current_raw")
+    current=$(activation_trim "$current_raw")
 
     if [[ "$current" == "true" ]]; then
         echo -e "  ${YELLOW}↷ skip${NC}  ${BOLD}${name}${NC} — already active"
@@ -194,9 +165,8 @@ for entry in "${FEATURES[@]}"; do
     fi
 
     echo -e "  ${CYAN}→ send${NC}  activate(${name}) …"
-    out=$(cast send \
+    out=$(ETH_PRIVATE_KEY="$ADMIN_KEY" cast send \
         --rpc-url "$RPC_URL" \
-        --private-key "$ADMIN_KEY" \
         --json \
         --confirmations 1 \
         "$REGISTRY" \

@@ -11,6 +11,16 @@ if [[ -f "$ACTIVATION_ENV_FILE" ]]; then
     set +a
 fi
 
+# Feature id ↔ canonical name pairs (kept in sync with
+# crates/common/precompiles/src/activation/storage.rs::ActivationFeature).
+ACTIVATION_FEATURES=(
+    "base.b20_token:0x47a1afe8d3d691b87e090ee972d223a11f4da971ff5416c04985bb2393aca752"
+    "base.b20_factory:0x78751e29c8bcc0d609ab18e9fbc4158e73f7db25ae2ee095dad42e2578b1e800"
+    "base.policy_registry:0xb582ebae03f16fee49a6763f78df482fb11ae73f103ed0d330bbe556aa90a43f"
+    "base.b20_stablecoin:0xecfa0def2c10020caaf65e6155aa69c84b24892aaef76eeac52e0e2b3a0b8601"
+    "base.b20_security:0x83d32fab502ae0e8bc4352a117767262cb5e47cc8d67a744008ed4ff03fcf5e6"
+)
+
 activation_supported_networks() {
     echo "vibes, devnet, base, base-sepolia, base-zeronet, custom"
 }
@@ -49,6 +59,17 @@ activation_arg_is_url() {
     [[ "$1" == http://* || "$1" == https://* ]]
 }
 
+activation_trim() {
+    local value="$1"
+    value="${value//\"/}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    value="${value% \[*\]}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s\n' "$value"
+}
+
 resolve_activation_network_defaults() {
     local hardhat_account_5_addr="${ANVIL_ACCOUNT_5_ADDR:-0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc}"
     local hardhat_account_5_key="${ANVIL_ACCOUNT_5_KEY:-0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba}"
@@ -62,7 +83,7 @@ resolve_activation_network_defaults() {
         vibes)
             RPC_URL="${RPC_URL:-${VIBES_RPC_URL:-https://rpc.vibes.base.org}}"
             ADMIN_ADDR="${ADMIN_ADDR:-${VIBES_ACTIVATION_ADMIN_ADDR:-$hardhat_account_5_addr}}"
-            ADMIN_KEY="${ADMIN_KEY:-${VIBES_ACTIVATION_ADMIN_KEY:-$hardhat_account_5_key}}"
+            ADMIN_KEY="${ADMIN_KEY:-${VIBES_ACTIVATION_ADMIN_KEY:-}}"
             ;;
         devnet)
             RPC_URL="${RPC_URL:-${DEVNET_RPC_URL:-${L2_CLIENT_RPC_URL:-http://localhost:8545}}}"

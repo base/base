@@ -26,19 +26,6 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[0;33m'; BO
 # ── Config ────────────────────────────────────────────────────────────────────
 REGISTRY="0x8453000000000000000000000000000000000001"
 
-# Feature id ↔ canonical name pairs (kept in sync with
-# crates/common/precompiles/src/activation/storage.rs::ActivationFeature).
-FEATURES=(
-    "base.b20_token:0x47a1afe8d3d691b87e090ee972d223a11f4da971ff5416c04985bb2393aca752"
-    "base.b20_factory:0x78751e29c8bcc0d609ab18e9fbc4158e73f7db25ae2ee095dad42e2578b1e800"
-    "base.policy_registry:0xb582ebae03f16fee49a6763f78df482fb11ae73f103ed0d330bbe556aa90a43f"
-    "base.b20_stablecoin:0xecfa0def2c10020caaf65e6155aa69c84b24892aaef76eeac52e0e2b3a0b8601"
-    "base.b20_security:0x83d32fab502ae0e8bc4352a117767262cb5e47cc8d67a744008ed4ff03fcf5e6"
-)
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-trim() { echo "$1" | tr -d '"' | sed 's/ \[.*\]$//' | xargs; }
-
 usage() {
     cat <<EOF
 Usage:
@@ -119,7 +106,7 @@ echo -e "${YELLOW}  → Chain ID: ${CHAIN_ID}${NC}"
 # admin() — surfaces who can activate/deactivate features on this chain.
 ADMIN_RAW=$(cast call --rpc-url "$RPC_URL" "$REGISTRY" "admin()(address)" 2>&1) \
     || { echo -e "${RED}admin() call failed:${NC} $ADMIN_RAW" >&2; exit 1; }
-ADMIN=$(trim "$ADMIN_RAW")
+ADMIN=$(activation_trim "$ADMIN_RAW")
 echo -e "${YELLOW}  → Admin: ${ADMIN}${NC}"
 echo ""
 
@@ -131,18 +118,20 @@ printf "  %-24s  %-66s  %s\n" "------------------------" \
 
 active_count=0
 inactive_count=0
-total=${#FEATURES[@]}
+error_count=0
+total=${#ACTIVATION_FEATURES[@]}
 
-for entry in "${FEATURES[@]}"; do
+for entry in "${ACTIVATION_FEATURES[@]}"; do
     name="${entry%%:*}"
     id="${entry##*:}"
 
     result=$(cast call --rpc-url "$RPC_URL" "$REGISTRY" \
         "isActivated(bytes32)(bool)" "$id" 2>&1) || {
         printf "  %-24s  %-66s  ${RED}ERROR${NC}  %s\n" "$name" "$id" "$result"
+        error_count=$((error_count + 1))
         continue
     }
-    result=$(trim "$result")
+    result=$(activation_trim "$result")
 
     if [[ "$result" == "true" ]]; then
         printf "  %-24s  %-66s  ${GREEN}✓ ACTIVE${NC}\n" "$name" "$id"
@@ -160,6 +149,6 @@ if [[ "$active_count" -eq "$total" ]]; then
     exit 0
 else
     echo -e "${YELLOW}${BOLD}${active_count}/${total} features activated${NC}" \
-        "(${inactive_count} inactive)"
+        "(${inactive_count} inactive, ${error_count} errors)"
     exit 1
 fi
