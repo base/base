@@ -1,4 +1,7 @@
 use alloy_primitives::B256;
+use base_prover_service_db::{
+    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, ProofType,
+};
 use jsonrpsee::core::RpcResult;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -9,9 +12,6 @@ use crate::{
         ProverServiceServer, failed_precondition, internal, invalid_argument, record_rpc_result,
         resource_exhausted, unavailable,
     },
-};
-use base_prover_service_db::{
-    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, ProofType,
 };
 
 impl ProverServiceServer {
@@ -159,7 +159,7 @@ fn parse_zk_request(
     }
 }
 
-fn validate_zk_vm(zk_vm: ZkVm) -> RpcResult<()> {
+const fn validate_zk_vm(zk_vm: ZkVm) -> RpcResult<()> {
     match zk_vm {
         ZkVm::Sp1 => Ok(()),
     }

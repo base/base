@@ -129,7 +129,7 @@ fn failed_precondition(message: impl Into<String>) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(ERROR_FAILED_PRECONDITION, message.into(), None::<()>)
 }
 
-fn rpc_status_code_str(code: i32) -> &'static str {
+const fn rpc_status_code_str(code: i32) -> &'static str {
     match code {
         code if code == ErrorCode::InvalidParams.code() => "INVALID_ARGUMENT",
         code if code == ErrorCode::InternalError.code() => "INTERNAL",

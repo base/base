@@ -1,11 +1,10 @@
 //! Implementation of the `ListProofs` JSON-RPC endpoint.
 
-use jsonrpsee::core::RpcResult;
-use tracing::debug;
-
 use base_prover_service_db::{
     ProofRequestPage, ProofStatus as DbProofStatus, ProofType as DbProofType,
 };
+use jsonrpsee::core::RpcResult;
+use tracing::debug;
 
 use crate::{
     ListProofsRequest, ListProofsResponse, ProofStatus, ProofSummary, ProofType, ZkVm,

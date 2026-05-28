@@ -6,7 +6,6 @@
 
 use std::{collections::HashMap, sync::Mutex};
 
-use crate::ProveBlockRequest;
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_proof_succinct_client_utils::boot::BootInfoStruct;
@@ -21,8 +20,11 @@ use sp1_sdk::{
 use tracing::info;
 use uuid::Uuid;
 
-use crate::backends::traits::{
-    BackendType, ProofProcessingResult, ProveResult, ProvingBackend, SessionStatus,
+use crate::{
+    ProveBlockRequest,
+    backends::traits::{
+        BackendType, ProofProcessingResult, ProveResult, ProvingBackend, SessionStatus,
+    },
 };
 
 /// Mock backend that produces instant fake proofs.

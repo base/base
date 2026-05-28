@@ -5,7 +5,6 @@
 
 use std::{collections::HashMap, fmt};
 
-use crate::{ExecutionStats, ProveBlockRequest};
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
@@ -24,8 +23,11 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::provider::{OpSuccinctProvider, WitnessParams};
-use crate::backends::traits::{
-    BackendType, ProofProcessingResult, ProveResult, ProvingBackend, SessionStatus,
+use crate::{
+    ExecutionStats, ProveBlockRequest,
+    backends::traits::{
+        BackendType, ProofProcessingResult, ProveResult, ProvingBackend, SessionStatus,
+    },
 };
 
 /// Metadata key where dry-run execution stats are stored on proof sessions.

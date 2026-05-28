@@ -1,11 +1,10 @@
 use std::{fmt, sync::Arc};
 
-use crate::ProveBlockRequest;
 use base_prover_service_db::{CreateProofSession, ProofRequestRepo, ProofType, SessionType};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::{backends::ProvingBackend, metrics};
+use crate::{ProveBlockRequest, backends::ProvingBackend, metrics};
 
 /// Individual worker that processes a single proving task
 pub struct ProverWorker {

@@ -6,7 +6,6 @@
 
 use std::{fmt, sync::Arc, time::Duration};
 
-use crate::ProveBlockRequest;
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
@@ -24,8 +23,12 @@ use sp1_sdk::{
 use tracing::{error, info, warn};
 
 use super::provider::{OpSuccinctProvider, WitnessParams};
-use crate::backends::traits::{
-    BackendConfig, BackendType, ProofProcessingResult, ProveResult, ProvingBackend, SessionStatus,
+use crate::{
+    ProveBlockRequest,
+    backends::traits::{
+        BackendConfig, BackendType, ProofProcessingResult, ProveResult, ProvingBackend,
+        SessionStatus,
+    },
 };
 
 /// SP1 Network proving backend.

@@ -1,11 +1,10 @@
-use jsonrpsee::core::RpcResult;
-use tracing::{Instrument, info};
-use uuid::Uuid;
-
 use base_prover_service_db::{
     ProofRequest, ProofStatus as DbProofStatus, ProofType as DbProofType,
     SessionStatus as DbSessionStatus,
 };
+use jsonrpsee::core::RpcResult;
+use tracing::{Instrument, info};
+use uuid::Uuid;
 
 use crate::{
     GetProofRequest, GetProofResponse, ProofResult, ProofStatus, SnarkGroth16ProofResult,

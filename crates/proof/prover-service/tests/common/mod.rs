@@ -2,13 +2,12 @@
 
 use alloy_primitives::{Address, B256};
 use anyhow::{Context, Result, bail};
+pub(crate) use base_prover_service::ProveBlockRequest;
 use base_prover_service::{
     ProofRequest, ProofRequestKind, ProverServiceApiClient, SnarkGroth16ProofRequest,
     SubmitProofRequest, SubmitProofResponse, TeeKind, TeeProofRequest, ZkProofRequest, ZkVm,
 };
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-
-pub(crate) use base_prover_service::ProveBlockRequest;
 
 pub(crate) fn connect() -> HttpClient {
     let addr = std::env::var("PROVER_RPC_ADDR")

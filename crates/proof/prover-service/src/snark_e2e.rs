@@ -4,10 +4,6 @@
 //! standalone binary (`bin/prover/zk/src/bin/snark_e2e.rs`) that runs as a K8s
 //! `CronJob`.
 
-use crate::{
-    GetProofRequest, ProofRequest, ProofRequestKind, ProofResult, ProofStatus,
-    ProverServiceApiClient, SnarkGroth16ProofRequest, SubmitProofRequest, ZkProofRequest, ZkVm,
-};
 use alloy_primitives::Address;
 use alloy_provider::{Identity, Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
@@ -20,7 +16,10 @@ use sp1_sdk::{
 };
 use tracing::{info, warn};
 
-use crate::L1HeadCalculator;
+use crate::{
+    GetProofRequest, L1HeadCalculator, ProofRequest, ProofRequestKind, ProofResult, ProofStatus,
+    ProverServiceApiClient, SnarkGroth16ProofRequest, SubmitProofRequest, ZkProofRequest, ZkVm,
+};
 
 const POLL_INTERVAL_SECS: u64 = 30;
 const POLL_TIMEOUT_SECS: u64 = 14400; // 4 hours

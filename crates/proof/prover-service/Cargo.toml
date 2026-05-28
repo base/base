@@ -69,6 +69,6 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 workspace = true
 
 [features]
-default = ["rpc-client", "rpc-server"]
+default = [ "rpc-client", "rpc-server" ]
 rpc-client = [ "dep:jsonrpsee", "jsonrpsee/http-client", "jsonrpsee/macros" ]
 rpc-server = [ "dep:jsonrpsee", "jsonrpsee/macros", "jsonrpsee/server" ]

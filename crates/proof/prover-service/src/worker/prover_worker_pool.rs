@@ -1,6 +1,5 @@
 use std::{fmt, sync::Arc};
 
-use crate::ProveBlockRequest;
 use async_trait::async_trait;
 use base_prover_service_db::{ProofRequestRepo, ProofType};
 use base_prover_service_outbox::{OutboxTask, TaskQueue};
@@ -9,6 +8,7 @@ use tokio::{sync::Mutex, task::JoinHandle};
 use tracing::{Instrument, error, info};
 
 use crate::{
+    ProveBlockRequest,
     backends::{BackendRegistry, BackendType},
     metrics,
     worker::prover_worker::ProverWorker,

@@ -2,7 +2,6 @@
 
 use std::{fmt, time::SystemTime};
 
-use crate::ProveBlockRequest;
 use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_succinct_elfs::{AGGREGATION_ELF, RANGE_ELF_EMBEDDED};
@@ -23,9 +22,12 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::provider::{OpSuccinctProvider, WitnessParams};
-use crate::backends::traits::{
-    ArtifactClientWrapper, BackendConfig, BackendType, ProofProcessingResult, ProveResult,
-    ProvingBackend, SessionStatus,
+use crate::{
+    ProveBlockRequest,
+    backends::traits::{
+        ArtifactClientWrapper, BackendConfig, BackendType, ProofProcessingResult, ProveResult,
+        ProvingBackend, SessionStatus,
+    },
 };
 
 /// SP1 Cluster proving backend.

@@ -2,12 +2,13 @@
 
 use std::fmt;
 
-use crate::ProveBlockRequest;
 use async_trait::async_trait;
 use base_prover_service_db::{
     ProofRequest, ProofRequestRepo, ProofSession, ProofStatus, ProofType,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::ProveBlockRequest;
 
 /// Wrapper enum for different artifact client implementations.
 #[derive(Clone)]
