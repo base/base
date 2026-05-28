@@ -76,8 +76,9 @@ struct ChainUpgrades {
 
 impl ChainUpgrades {
     fn set_timestamp(&mut self, name: &'static str, timestamp: Option<u64>) {
+        let Some(timestamp) = timestamp else { return };
         if let Some(spec) = self.specs.iter_mut().find(|spec| spec.name == name) {
-            spec.timestamp = timestamp;
+            spec.timestamp = Some(timestamp);
         }
     }
 
@@ -157,10 +158,13 @@ fn all_chains() -> [ChainUpgrades; 4] {
 }
 
 fn chain_name_matches_loaded(display_name: &str, loaded_name: &str) -> bool {
-    let loaded = loaded_name.to_lowercase();
-    let selected = display_name.to_lowercase();
-    loaded == selected
-        || (selected == "devnet" && (loaded.contains("devnet") || loaded.contains("vibenet")))
+    loaded_name.eq_ignore_ascii_case(display_name)
+        || (display_name.eq_ignore_ascii_case("devnet") && loaded_name_is_devnet_alias(loaded_name))
+}
+
+fn loaded_name_is_devnet_alias(loaded_name: &str) -> bool {
+    const DEVNET_ALIASES: &[&str] = &["devnet", "vibenet", "local-devnet", "local-vibenet"];
+    DEVNET_ALIASES.iter().any(|alias| loaded_name.eq_ignore_ascii_case(alias))
 }
 
 // ── Check types ───────────────────────────────────────────────────────────────
@@ -231,8 +235,12 @@ fn target_hardfork(chain: &ChainUpgrades, now: u64) -> Option<&'static str> {
         .rposition(|spec| spec.timestamp.is_some_and(|timestamp| timestamp <= now));
 
     latest_active.map_or_else(
-        || check_specs.iter().find(|spec| spec.timestamp.is_some()).map(|spec| spec.name),
-        |index| check_specs.get(index + 1).or_else(|| check_specs.get(index)).map(|spec| spec.name),
+        || check_specs.last().map(|spec| spec.name),
+        |index| {
+            // Prefer the next checkable hardfork when it exists, even before it
+            // is scheduled. At the frontier, keep showing the active hardfork.
+            check_specs.get(index + 1).or_else(|| check_specs.get(index)).map(|spec| spec.name)
+        },
     )
 }
 
@@ -485,25 +493,30 @@ impl UpgradesView {
     fn start_checks(&mut self, resources: &Resources) {
         self.apply_live_hardforks(resources);
         let now = now_unix();
-        let selected_hardfork = self.selected_check_hardfork(now);
-        let chain = &self.chains[self.selected_chain];
-        let Some(spec) =
-            selected_hardfork.and_then(|name| chain.specs.iter().find(|s| s.name == name))
+        let Some((hardfork, timestamp)) =
+            self.selected_check_spec(now).map(|spec| (spec.name, spec.timestamp))
         else {
             return;
         };
+        let Some(ts) = timestamp else {
+            self.checks.reset();
+            return;
+        };
         let Some(rpc) = self.rpc_for_selected(resources) else { return };
-        let mode = spec.timestamp.map_or(CheckMode::After, |ts| {
-            if ts > now { CheckMode::Before } else { CheckMode::After }
-        });
-        self.checks.start(self.selected_chain, rpc, spec.name, mode);
+        let mode = if ts > now { CheckMode::Before } else { CheckMode::After };
+        self.checks.start(self.selected_chain, rpc, hardfork, mode);
     }
 
-    fn selected_check_hardfork(&self, now: u64) -> Option<&'static str> {
+    fn selected_check_spec(&self, now: u64) -> Option<&UpgradeSpec> {
         let chain = &self.chains[self.selected_chain];
         self.selected_check_hardforks[self.selected_chain]
             .filter(|name| chain.specs.iter().any(|spec| spec.name == *name && has_checks(name)))
             .or_else(|| target_hardfork(chain, now))
+            .and_then(|name| chain.specs.iter().find(|spec| spec.name == name))
+    }
+
+    fn selected_check_hardfork(&self, now: u64) -> Option<&'static str> {
+        self.selected_check_spec(now).map(|spec| spec.name)
     }
 
     fn move_selected_check_hardfork(&mut self, resources: &Resources, direction: i8) {
@@ -596,10 +609,13 @@ impl View for UpgradesView {
     fn tick(&mut self, resources: &mut Resources) -> Action {
         self.tick_count = self.tick_count.wrapping_add(1);
         self.checks.poll();
+        self.apply_live_hardforks(resources);
 
         if self.auto_refresh && !self.checks.running {
             let due = self.checks.last_run_at.is_none_or(|t| t.elapsed() >= AUTO_REFRESH_INTERVAL);
-            if due {
+            let scheduled =
+                self.selected_check_spec(now_unix()).is_some_and(|spec| spec.timestamp.is_some());
+            if due && scheduled {
                 self.start_checks(resources);
             }
         }
@@ -607,8 +623,7 @@ impl View for UpgradesView {
         Action::None
     }
 
-    fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources) {
-        self.apply_live_hardforks(resources);
+    fn render(&mut self, frame: &mut Frame<'_>, area: Rect, _resources: &Resources) {
         let now = now_unix();
         let chain = &self.chains[self.selected_chain];
 
@@ -655,7 +670,8 @@ impl View for UpgradesView {
         };
 
         render_chain_tabs(frame, outer[0], &self.chains, self.selected_chain);
-        let selected_hardfork = self.selected_check_hardfork(now);
+        let selected_check_spec = self.selected_check_spec(now);
+        let selected_hardfork = selected_check_spec.map(|spec| spec.name);
 
         match upcoming {
             Some((name, ts)) => {
@@ -689,7 +705,7 @@ impl View for UpgradesView {
             bottom[1],
             &self.checks,
             self.tick_count,
-            selected_hardfork,
+            selected_check_spec,
             self.auto_refresh,
         );
         render_footer(frame, outer[3], self.checks.running, self.auto_refresh);
@@ -918,14 +934,14 @@ fn render_checks_panel(
     area: Rect,
     panel: &ChecksPanel,
     tick: u64,
-    active_hardfork: Option<&'static str>,
+    selected_spec: Option<&UpgradeSpec>,
     auto_refresh: bool,
 ) {
     let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
     // Panel is idle and has never been run.
     if panel.chain_idx.is_none() {
-        let Some(hf_name) = active_hardfork else {
+        let Some(spec) = selected_spec else {
             let block = Block::default()
                 .title(" Checks ")
                 .borders(Borders::ALL)
@@ -938,6 +954,30 @@ fn render_checks_panel(
             );
             return;
         };
+        let hf_name = spec.name;
+        if spec.timestamp.is_none() {
+            let lines: Vec<Line<'static>> = vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    format!("{hf_name} is not scheduled for this network."),
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Checks are skipped until an activation timestamp is configured.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ];
+            let block = Block::default()
+                .title(format!(" {hf_name} Checks "))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray));
+            frame.render_widget(
+                Paragraph::new(lines).block(block).alignment(Alignment::Center),
+                area,
+            );
+            return;
+        }
         let check_list = check_names_for(hf_name).join(" · ");
         let hint = if auto_refresh {
             format!("Auto-refreshing {hf_name} checks every 2s · ↑/↓ to change · [a] to disable")
@@ -1796,9 +1836,32 @@ mod tests {
     }
 
     #[test]
+    fn live_hardforks_do_not_clear_known_static_timestamps() {
+        let mut chain = ChainUpgrades {
+            display_name: "Mainnet",
+            rpc: None,
+            specs: specs_from_config(ChainConfig::mainnet()),
+        };
+        let delta = chain.specs.iter().find(|spec| spec.name == "Delta").unwrap().timestamp;
+
+        chain.apply_hardforks(&HardForkConfig {
+            base: HardforkConfig { azul: Some(20), beryl: None },
+            ..HardForkConfig::default()
+        });
+
+        assert_eq!(chain.specs.iter().find(|spec| spec.name == "Delta").unwrap().timestamp, delta);
+        assert_eq!(
+            chain.specs.iter().find(|spec| spec.name == "Azul").unwrap().timestamp,
+            Some(20)
+        );
+    }
+
+    #[test]
     fn devnet_selection_accepts_vibenet_configs() {
         assert!(chain_name_matches_loaded("Devnet", "devnet"));
+        assert!(chain_name_matches_loaded("Devnet", "LOCAL-VIBENET"));
         assert!(chain_name_matches_loaded("Devnet", "local-vibenet"));
+        assert!(!chain_name_matches_loaded("Devnet", "not-vibenet-really"));
         assert!(!chain_name_matches_loaded("Mainnet", "devnet"));
     }
 
@@ -1827,5 +1890,18 @@ mod tests {
 
         view.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), &mut resources);
         assert_eq!(view.selected_check_hardfork(100), Some("Beryl"));
+    }
+
+    #[test]
+    fn unscheduled_selected_checks_do_not_start() {
+        let mut view = UpgradesView::new();
+        view.selected_chain = 3;
+        let resources = Resources::new(MonitoringConfig::mainnet());
+
+        assert_eq!(view.selected_check_hardfork(now_unix()), Some("Beryl"));
+        view.start_checks(&resources);
+
+        assert!(!view.checks.running);
+        assert!(view.checks.chain_idx.is_none());
     }
 }
