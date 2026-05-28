@@ -5952,6 +5952,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-prover-service-db"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "futures",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "base-prover-zk"
 version = "0.0.0"
 dependencies = [
