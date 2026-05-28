@@ -339,6 +339,21 @@ mod tests {
     }
 
     #[test]
+    fn revoke_role_rejects_final_default_admin_even_privileged() {
+        let mut token = token_with_default_admin();
+
+        assert_eq!(
+            token.revoke_role(ALICE, B20TokenRole::DefaultAdmin.id(), ADMIN, true).unwrap_err(),
+            BasePrecompileError::revert(IB20::LastAdminCannotRenounce {})
+        );
+        assert!(token.has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
+        assert_eq!(
+            token.accounting().role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(),
+            U256::ONE
+        );
+    }
+
+    #[test]
     fn revoke_role_allows_non_final_default_admin() {
         let mut token = token_with_default_admin();
         token.grant_role(ADMIN, B20TokenRole::DefaultAdmin.id(), ALICE, false).unwrap();
