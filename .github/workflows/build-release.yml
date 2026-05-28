@@ -15,11 +15,6 @@ on:
 
 env:
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node-reth-dev
-  RELEASE_BINS: |
-    base
-    base-reth-node
-    base-consensus
-    basectl
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
@@ -47,6 +42,11 @@ jobs:
           - triple: aarch64-apple-darwin
             runner: macos-14
             os: macos
+        binary:
+          - base
+          - base-reth-node
+          - base-consensus
+          - basectl
 
     runs-on: ${{ matrix.target.runner }}
 
@@ -100,29 +100,22 @@ jobs:
           save-if: ${{ true }}
           cache-targets: "false"
 
-      - name: Build binaries
+      - name: Build binary
         run: |
-          cargo_args=()
-          while IFS= read -r bin; do
-            [[ -n "$bin" ]] || continue
-            cargo_args+=(--bin "$bin")
-          done <<< "${RELEASE_BINS}"
-          cargo build --locked --profile maxperf "${cargo_args[@]}"
+          cargo build --locked --profile maxperf --bin "${{ matrix.binary }}"
 
-      - name: Package binaries
+      - name: Package binary
         run: |
           TAG="${{ inputs.tag }}"
           TARGET="${{ matrix.target.triple }}"
-          while IFS= read -r bin; do
-            [[ -n "$bin" ]] || continue
-            ARCHIVE="${bin}-${TAG}-${TARGET}.tar.gz"
-            tar -czf "$ARCHIVE" -C target/maxperf "$bin"
-            if command -v sha256sum &>/dev/null; then
-              sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
-            else
-              shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
-            fi
-          done <<< "${RELEASE_BINS}"
+          BIN="${{ matrix.binary }}"
+          ARCHIVE="${BIN}-${TAG}-${TARGET}.tar.gz"
+          tar -czf "$ARCHIVE" -C target/maxperf "$BIN"
+          if command -v sha256sum &>/dev/null; then
+            sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+          else
+            shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
+          fi
 
       - name: Sign archives
         env:
@@ -152,7 +145,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: binaries-${{ matrix.target.triple }}
+          name: binaries-${{ matrix.binary }}-${{ matrix.target.triple }}
           path: |
             *.tar.gz
             *.tar.gz.sha256
