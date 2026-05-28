@@ -59,8 +59,13 @@ pub struct BoundlessConfig {
     pub offer_min_price: Option<Amount>,
     /// Optional maximum Boundless offer price for each submitted proof request.
     pub offer_max_price: Option<Amount>,
-    /// Optional duration in seconds for Boundless price to ramp from min to max.
-    pub offer_ramp_up_period_secs: Option<u32>,
+    /// Duration in seconds for the Boundless offer price to ramp from
+    /// `offer_min_price` to `offer_max_price`. Defaults to `0` so that
+    /// the maximum price is offered immediately, eliminating the
+    /// "discount window" at the start of the auction and minimising
+    /// time-to-lock. Set to a non-zero value to introduce a price ramp
+    /// (e.g. for cost optimisation when latency is less critical).
+    pub offer_ramp_up_period_secs: u32,
     /// Optional maximum time, in seconds, that a prover that locks a
     /// request has to deliver the proof before forfeiting its stake bond
     /// and the request opening up to permissionless secondary
@@ -68,15 +73,15 @@ pub struct BoundlessConfig {
     /// in the first place. When unset, the Boundless SDK derives a
     /// recommended value from the program's cycle count.
     pub offer_lock_timeout_secs: Option<u32>,
-    /// Optional delay, in seconds, between request submission and the
-    /// moment bidding is allowed to begin (`Offer.rampUpStart`). With
-    /// this set to `0`, bidding opens immediately at submission, which
-    /// eliminates the SDK's default cycle-count-derived "discovery
-    /// window" (`bidding_start_delay`) and lets the fastest prover lock
-    /// as soon as they finish executing the guest program. When unset,
-    /// the Boundless SDK derives a delay roughly equal to the program's
-    /// executor time (`cycles / 1 MHz`, capped at 1 hour).
-    pub offer_bidding_start_delay_secs: Option<u64>,
+    /// Delay, in seconds, between request submission and the moment
+    /// bidding is allowed to begin (`Offer.rampUpStart`). Defaults to
+    /// `0` so that bidding opens immediately at submission, eliminating
+    /// the SDK's default cycle-count-derived "discovery window" and
+    /// letting the fastest prover lock as soon as it finishes executing
+    /// the guest program. Set to a non-zero value to introduce a
+    /// discovery delay (typically to give more provers time to see the
+    /// request, at the cost of latency).
+    pub offer_bidding_start_delay_secs: u64,
 }
 
 impl std::fmt::Debug for BoundlessConfig {

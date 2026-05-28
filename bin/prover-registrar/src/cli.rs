@@ -226,9 +226,18 @@ struct BoundlessArgs {
     #[arg(long, env = cli_env!("BOUNDLESS_MAX_PRICE_ETH"))]
     boundless_max_price_eth: Option<String>,
 
-    /// Optional duration for the Boundless offer price to ramp from min to max.
-    #[arg(long, env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS"))]
-    boundless_offer_ramp_up_period_secs: Option<u32>,
+    /// Duration in seconds for the Boundless offer price to ramp from
+    /// `--boundless-min-price-eth` to `--boundless-max-price-eth`.
+    ///
+    /// Defaults to `0` so that the max price is offered immediately,
+    /// eliminating the auction "discount window" that the SDK would
+    /// otherwise insert. With `0`, a prover that locks the request
+    /// receives the full max price, which minimises time-to-lock at
+    /// the cost of paying the max price every time. Set to a non-zero
+    /// value to reintroduce a price ramp (typically for cost
+    /// optimisation when latency is less critical).
+    #[arg(long, env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS"), default_value_t = 0)]
+    boundless_offer_ramp_up_period_secs: u32,
 
     /// Maximum time, in seconds, that a prover that locks a request has to
     /// deliver the proof before forfeiting its stake bond and the request
@@ -250,24 +259,21 @@ struct BoundlessArgs {
     /// Delay, in seconds, between request submission and the moment
     /// bidding is allowed to begin (`Offer.rampUpStart`).
     ///
-    /// The Boundless SDK's default for this value is roughly the
-    /// guest program's executor time (`cycles / 1 MHz`, capped at
-    /// 1 hour), giving provers a "discovery window" to see the
-    /// request and run the executor before bidding opens. That
-    /// window appears on the Boundless explorer as the "flat
-    /// period" preceding the price ramp and accounts for several
-    /// minutes of submission-to-fulfillment latency.
-    ///
-    /// Setting this to `0` eliminates the discovery window entirely:
-    /// bidding opens immediately at submission and the fastest prover
-    /// can lock as soon as it has executed the program. This minimises
-    /// end-to-end latency at the cost of higher prices (no time spent
-    /// on the ramp-up) and a smaller set of provers seeing the
-    /// request before it is locked.
-    ///
-    /// Defaults to SDK behaviour when unset.
-    #[arg(long, env = cli_env!("BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS"))]
-    boundless_offer_bidding_start_delay_secs: Option<u64>,
+    /// Defaults to `0` so that bidding opens immediately at submission
+    /// and the fastest prover can lock as soon as it has executed the
+    /// guest program. This eliminates the SDK's default "discovery
+    /// window" (roughly `cycles / 1 MHz`, capped at 1 hour) — visible
+    /// on the Boundless explorer as the "flat period" preceding the
+    /// price ramp — which accounts for several minutes of
+    /// submission-to-fulfillment latency on large workloads. Set to a
+    /// non-zero value to reintroduce a discovery window so more provers
+    /// can see the request before it is locked.
+    #[arg(
+        long,
+        env = cli_env!("BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS"),
+        default_value_t = 0
+    )]
+    boundless_offer_bidding_start_delay_secs: u64,
 
     /// Maximum number of deterministic request-ID slots to probe when
     /// recovering in-flight proofs after an instance rotation.
@@ -761,8 +767,8 @@ mod tests {
     const TEST_BOUNDLESS_RAMP_UP_PERIOD_SECS: u32 = 30;
     const TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS: u32 = 600;
     const TEST_BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS_STR: &str = "600";
-    const TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS: u64 = 0;
-    const TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS_STR: &str = "0";
+    const TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS: u64 = 90;
+    const TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS_STR: &str = "90";
     const TEST_ELF_PATH: &str = "/tmp/guest.elf";
     const TEST_SIGNER_ENDPOINT: &str = "http://localhost:8546";
     const TEST_SIGNER_ADDR: &str = "0x0000000000000000000000000000000000000002";
@@ -964,6 +970,11 @@ mod tests {
         assert_eq!(b.image_id, [1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
+    /// Price and lock-timeout fields remain `Option`-typed and default
+    /// to `None` so the Boundless SDK derives sensible values from the
+    /// workload's cycle count. Ramp-up period and bidding-start delay
+    /// default to `0` ("fast lane") so the binary is latency-optimised
+    /// out of the box.
     #[rstest]
     fn boundless_offer_pricing_defaults_to_sdk() {
         let config = Cli::parse_from(boundless_args()).into_config().unwrap();
@@ -973,9 +984,9 @@ mod tests {
 
         assert!(b.offer_min_price.is_none());
         assert!(b.offer_max_price.is_none());
-        assert!(b.offer_ramp_up_period_secs.is_none());
         assert!(b.offer_lock_timeout_secs.is_none());
-        assert!(b.offer_bidding_start_delay_secs.is_none());
+        assert_eq!(b.offer_ramp_up_period_secs, 0);
+        assert_eq!(b.offer_bidding_start_delay_secs, 0);
     }
 
     #[rstest]
@@ -991,10 +1002,7 @@ mod tests {
             panic!("expected Boundless proving config");
         };
 
-        assert_eq!(
-            b.offer_bidding_start_delay_secs,
-            Some(TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS)
-        );
+        assert_eq!(b.offer_bidding_start_delay_secs, TEST_BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS);
     }
 
     #[rstest]
@@ -1063,7 +1071,7 @@ mod tests {
                 .unwrap(),
             ),
         );
-        assert_eq!(b.offer_ramp_up_period_secs, Some(TEST_BOUNDLESS_RAMP_UP_PERIOD_SECS));
+        assert_eq!(b.offer_ramp_up_period_secs, TEST_BOUNDLESS_RAMP_UP_PERIOD_SECS);
     }
 
     #[rstest]
