@@ -747,6 +747,12 @@ impl BatchPipeline for BatchEncoder {
                     ch.encoded_block_range.end =
                         ch.encoded_block_range.end.saturating_sub(prune_count);
                 }
+                // Adjust the open channel's block_start by the same amount so that
+                // when it is later closed, encoded_block_range.start = open.block_start
+                // reflects the post-prune index space, not the pre-prune one.
+                if let Some(ref mut open) = self.current_channel {
+                    open.block_start = open.block_start.saturating_sub(prune_count);
+                }
             }
         }
     }
@@ -857,6 +863,13 @@ impl BatchPipeline for BatchEncoder {
             ch.block_range.end = ch.block_range.end.saturating_sub(prune_count);
             ch.encoded_block_range.start = ch.encoded_block_range.start.saturating_sub(prune_count);
             ch.encoded_block_range.end = ch.encoded_block_range.end.saturating_sub(prune_count);
+        }
+        // Mirror the same shift on the open channel so that its eventual
+        // encoded_block_range.start (= block_start at close time) is expressed in
+        // post-prune index space.  Without this, invalidate_ready_channel() would
+        // derive a stale replay_from and silently skip blocks.
+        if let Some(ref mut open) = self.current_channel {
+            open.block_start = open.block_start.saturating_sub(prune_count);
         }
     }
 
@@ -2154,5 +2167,97 @@ mod tests {
         // No assertion on next_submission — drain already consumed everything.
         // The contract is just that the override does not corrupt state.
         assert!(encoder.next_submission().is_none());
+    }
+
+    /// prune_safe must keep current_channel.block_start in sync with
+    /// ready_channels indices after a block drain.
+    ///
+    /// Regression: before the fix, prune_safe adjusted encoded_block_range on
+    /// ready_channels but left OpenChannel::block_start stale. When the open
+    /// channel was later closed and invalidated by a timeout, the stale
+    /// block_start was used as replay_from, setting block_cursor too high and
+    /// silently skipping those blocks on replay.
+    #[test]
+    fn prune_safe_adjusts_open_channel_block_start() {
+        let rollup_config = Arc::new(RollupConfig::default());
+        let config = EncoderConfig::default();
+        let mut encoder = BatchEncoder::new(rollup_config, config);
+
+        let h0 = B256::ZERO;
+        let b0 = make_block(h0, 1, 100);
+        let b1 = make_block(b0.header.hash(), 2, 101);
+        let b2 = make_block(b1.header.hash(), 3, 102);
+        let b3 = make_block(b2.header.hash(), 4, 103);
+
+        encoder.add_block(b0).unwrap();
+        encoder.add_block(b1).unwrap();
+        encoder.step().unwrap();
+        encoder.step().unwrap();
+        encoder.force_close_channel();
+
+        encoder.add_block(b2).unwrap();
+        encoder.add_block(b3).unwrap();
+        encoder.step().unwrap();
+        encoder.step().unwrap();
+
+        let block_start_before =
+            encoder.current_channel.as_ref().map(|c| c.block_start).unwrap_or(0);
+        assert_eq!(block_start_before, 2, "open channel must start at block index 2");
+
+        // Prune blocks 0 and 1 as safe (L2 numbers 1 and 2).
+        encoder.prune_safe(2);
+
+        let block_start_after =
+            encoder.current_channel.as_ref().map(|c| c.block_start).unwrap_or(usize::MAX);
+        assert_eq!(
+            block_start_after, 0,
+            "prune_safe must adjust open channel block_start: expected 0, got {}",
+            block_start_after
+        );
+        assert_eq!(encoder.block_cursor, 2, "block_cursor must reflect the pruned count");
+    }
+
+    /// confirm must keep current_channel.block_start in sync when it prunes
+    /// confirmed blocks from the front of the deque.
+    #[test]
+    fn confirm_adjusts_open_channel_block_start() {
+        let rollup_config = Arc::new(RollupConfig::default());
+        let config = EncoderConfig::default();
+        let mut encoder = BatchEncoder::new(rollup_config, config);
+
+        let h0 = B256::ZERO;
+        let b0 = make_block(h0, 1, 100);
+        let b1 = make_block(b0.header.hash(), 2, 101);
+        let b2 = make_block(b1.header.hash(), 3, 102);
+        let b3 = make_block(b2.header.hash(), 4, 103);
+
+        for b in [b0, b1, b2, b3] {
+            encoder.add_block(b).unwrap();
+        }
+        encoder.step().unwrap();
+        encoder.step().unwrap();
+        encoder.force_close_channel();
+
+        encoder.step().unwrap();
+        encoder.step().unwrap();
+
+        let block_start_before =
+            encoder.current_channel.as_ref().map(|c| c.block_start).unwrap_or(0);
+        assert_eq!(block_start_before, 2);
+
+        // Confirm all frames for the first ready channel.
+        while let Some(sub) = encoder.next_submission() {
+            let id = sub.id;
+            encoder.confirm(id, 999);
+            break;
+        }
+
+        let block_start_after =
+            encoder.current_channel.as_ref().map(|c| c.block_start).unwrap_or(usize::MAX);
+        assert_eq!(
+            block_start_after, 0,
+            "confirm must adjust open channel block_start: expected 0, got {}",
+            block_start_after
+        );
     }
 }
