@@ -20,7 +20,7 @@ jobs:
   ci:
     uses: ./.depot/workflows/ci-core.yml
     with:
-      allow_registry_login: ${{ github.event.pull_request.head.repo.fork != true }}
+      allow_registry_login: true
       base_ref: ${{ github.base_ref || 'main' }}
       build_command: >-
         just build::affected-ci "origin/${{ github.base_ref || 'main' }}"
