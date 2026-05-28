@@ -156,15 +156,22 @@ jobs:
       - name: Clone base-std
         if: matrix.settings.smoke_test
         shell: bash
+        env:
+          BASE_STD_SHA: ${{ steps.base-std.outputs.sha }}
         run: |
           set -euo pipefail
 
           workdir="$RUNNER_TEMP/base-anvil-package"
-          git clone --depth 1 --single-branch --recurse-submodules --shallow-submodules \
-            --branch "$BASE_STD_REF" \
-            https://github.com/base/base-std.git "$workdir/base-std"
+          base_std_dir="$workdir/base-std"
+          mkdir -p "$workdir"
 
-          echo "BASE_STD_DIR=$workdir/base-std" >> "$GITHUB_ENV"
+          git init "$base_std_dir"
+          git -C "$base_std_dir" remote add origin https://github.com/base/base-std.git
+          git -C "$base_std_dir" fetch --depth 1 origin "$BASE_STD_SHA"
+          git -C "$base_std_dir" checkout --detach FETCH_HEAD
+          git -C "$base_std_dir" submodule update --init --recursive --depth 1
+
+          echo "BASE_STD_DIR=$base_std_dir" >> "$GITHUB_ENV"
 
       - name: Run base-std fork tests
         if: matrix.settings.smoke_test
