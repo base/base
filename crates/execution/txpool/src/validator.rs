@@ -228,33 +228,13 @@ where
         if !origin.is_external() {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
-        let tx = signed.tx();
         let local_chain_id = self.inner.chain_spec().chain().id();
-        if tx.chain_id != local_chain_id {
-            return Err(InvalidTransactionError::ChainIdMismatch.into());
-        }
-        if tx.max_fee_per_gas < tx.max_priority_fee_per_gas {
-            return Err(InvalidTransactionError::TipAboveFeeCap.into());
-        }
-        if tx.gas_limit == 0 || tx.max_fee_per_gas == 0 {
-            return Err(InvalidTransactionError::TxTypeNotSupported.into());
-        }
+        signed.validate_static(local_chain_id).map_err(InvalidPoolTransactionError::from)?;
         // Single read of the head-block timestamp so both branches see the
         // same value even when `on_new_head_block` updates the atomic
         // concurrently.
         let now = self.block_timestamp();
-        if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-            if tx.nonce_sequence != 0 || tx.expiry == 0 {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
-            }
-            if tx.expiry <= now
-                || tx.expiry > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW)
-            {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
-            }
-        } else if tx.expiry != 0 && tx.expiry <= now {
-            return Err(InvalidTransactionError::TxTypeNotSupported.into());
-        }
+        signed.validate_timestamp(now).map_err(InvalidPoolTransactionError::from)?;
         Self::validate_sender_auth(signed)?;
         Self::validate_payer_auth(signed)?;
         Self::validate_account_changes(signed, local_chain_id)?;
