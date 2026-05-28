@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use tokio::time;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use crate::{OutboxReader, OutboxTask, TaskQueue};
@@ -10,7 +11,7 @@ pub struct OutboxProcessor<R: OutboxReader, Q: TaskQueue> {
     reader: R,
     queue: Q,
     poll_interval_secs: u64,
-    batch_size: i64,
+    batch_size: u64,
 }
 
 impl<R: OutboxReader, Q: TaskQueue> std::fmt::Debug for OutboxProcessor<R, Q> {
@@ -24,12 +25,12 @@ impl<R: OutboxReader, Q: TaskQueue> std::fmt::Debug for OutboxProcessor<R, Q> {
 
 impl<R: OutboxReader, Q: TaskQueue> OutboxProcessor<R, Q> {
     /// Create a new processor.
-    pub const fn new(reader: R, queue: Q, poll_interval_secs: u64, batch_size: i64) -> Self {
+    pub const fn new(reader: R, queue: Q, poll_interval_secs: u64, batch_size: u64) -> Self {
         Self { reader, queue, poll_interval_secs, batch_size }
     }
 
-    /// Run the processor loop indefinitely.
-    pub async fn run(&self) {
+    /// Run the processor loop until `cancel` is cancelled.
+    pub async fn run(&self, cancel: CancellationToken) {
         info!(
             poll_interval_secs = self.poll_interval_secs,
             batch_size = self.batch_size,
@@ -39,10 +40,17 @@ impl<R: OutboxReader, Q: TaskQueue> OutboxProcessor<R, Q> {
         let mut interval = time::interval(Duration::from_secs(self.poll_interval_secs));
 
         loop {
-            interval.tick().await;
-
-            if let Err(e) = self.process_batch().await {
-                error!(error = %e, "failed to process outbox batch");
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    info!("stopping outbox processor");
+                    break;
+                }
+                _ = interval.tick() => {
+                    if let Err(e) = self.process_batch().await {
+                        error!(error = %e, "failed to process outbox batch");
+                    }
+                }
             }
         }
     }

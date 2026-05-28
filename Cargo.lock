@@ -5960,6 +5960,7 @@ dependencies = [
  "base-zk-db",
  "serde_json",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]

@@ -13,8 +13,9 @@ repository.workspace = true
 base-zk-db.workspace = true
 
 # async
+tokio-util.workspace = true
 async-trait.workspace = true
-tokio = { workspace = true, features = ["time", "sync"] }
+tokio = { workspace = true, features = ["macros", "sync", "time"] }
 
 # serialization
 serde_json.workspace = true

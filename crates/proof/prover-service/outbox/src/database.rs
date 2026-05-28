@@ -1,3 +1,4 @@
+use anyhow::Context;
 use async_trait::async_trait;
 use base_zk_db::{MarkOutboxError, MarkOutboxProcessed, ProofRequestRepo};
 
@@ -25,28 +26,38 @@ impl DatabaseOutboxReader {
 
 #[async_trait]
 impl OutboxReader for DatabaseOutboxReader {
-    async fn poll_tasks(&self, batch_size: i64) -> anyhow::Result<Vec<OutboxTask>> {
+    async fn poll_tasks(&self, batch_size: u64) -> anyhow::Result<Vec<OutboxTask>> {
+        let batch_size =
+            i64::try_from(batch_size).context("outbox batch size exceeds i64 range")?;
         let entries =
             self.repo.get_unprocessed_outbox_entries(batch_size, self.max_retries).await?;
 
         let tasks = entries
             .into_iter()
-            .map(|entry| OutboxTask {
-                sequence_id: entry.sequence_id,
-                proof_request_id: entry.proof_request_id,
-                params: entry.request_params,
+            .map(|entry| {
+                let sequence_id =
+                    u64::try_from(entry.sequence_id).context("outbox sequence ID is negative")?;
+                Ok(OutboxTask {
+                    sequence_id,
+                    proof_request_id: entry.proof_request_id,
+                    params: entry.request_params,
+                })
             })
-            .collect();
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         Ok(tasks)
     }
 
-    async fn mark_processed(&self, sequence_id: i64) -> anyhow::Result<()> {
+    async fn mark_processed(&self, sequence_id: u64) -> anyhow::Result<()> {
+        let sequence_id =
+            i64::try_from(sequence_id).context("outbox sequence ID exceeds i64 range")?;
         self.repo.mark_outbox_processed(MarkOutboxProcessed { sequence_id }).await?;
         Ok(())
     }
 
-    async fn mark_error(&self, sequence_id: i64, error_message: String) -> anyhow::Result<()> {
+    async fn mark_error(&self, sequence_id: u64, error_message: String) -> anyhow::Result<()> {
+        let sequence_id =
+            i64::try_from(sequence_id).context("outbox sequence ID exceeds i64 range")?;
         self.repo.mark_outbox_error(MarkOutboxError { sequence_id, error_message }).await?;
         Ok(())
     }
