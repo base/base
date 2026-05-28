@@ -18,4 +18,3 @@ fn main() {
 
     cli.run(|builder, args| async move { StandardBaseRethNode::run(builder, args).await }).unwrap();
 }
-
