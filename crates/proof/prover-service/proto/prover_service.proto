@@ -22,6 +22,16 @@ enum ProofType {
   PROOF_TYPE_TEE = 3;
 }
 
+enum TeeKind {
+  TEE_KIND_UNSPECIFIED = 0;
+  TEE_KIND_AWS_NITRO = 1;
+}
+
+enum ZkVm {
+  ZK_VM_UNSPECIFIED = 0;
+  ZK_VM_SP1 = 1;
+}
+
 enum ProofStatus {
   PROOF_STATUS_UNSPECIFIED = 0;
   PROOF_STATUS_QUEUED = 1;
@@ -66,6 +76,7 @@ message ZkProofRequest {
   optional uint64 sequence_window = 3;
   optional string l1_head = 4;
   optional uint64 intermediate_root_interval = 5;
+  ZkVm zk_vm = 6;
 }
 
 message SnarkGroth16ProofRequest {
@@ -84,19 +95,26 @@ message TeeProofRequest {
   uint64 intermediate_block_interval = 7;
   uint64 l1_head_number = 8;
   bytes image_hash = 9; // 32 bytes.
+  TeeKind tee_kind = 10;
 }
 
 message ProofResult {
   oneof result {
-    bytes compressed = 1;
-    bytes snark_groth16 = 2;
+    ZkProofResult compressed = 1;
+    ZkProofResult snark_groth16 = 2;
     TeeProofResult tee = 3;
   }
+}
+
+message ZkProofResult {
+  ZkVm zk_vm = 1;
+  bytes proof = 2;
 }
 
 message TeeProofResult {
   TeeProposal aggregate_proposal = 1;
   repeated TeeProposal proposals = 2;
+  TeeKind tee_kind = 3;
 }
 
 message TeeProposal {
@@ -134,6 +152,8 @@ message ProofSummary {
   google.protobuf.Timestamp updated_at = 5;
   google.protobuf.Timestamp completed_at = 6;
   optional string error_message = 7;
+  TeeKind tee_kind = 8;
+  ZkVm zk_vm = 9;
 }
 
 message ListProofsResponse {
@@ -168,6 +188,10 @@ message ClaimProofJobRequest {
   string worker_id = 2;
   // A zero value uses the server default; values greater than 3600 must be rejected.
   uint32 lease_duration_seconds = 3;
+  // Empty means no TEE subtype restriction. Used only when proof_type is PROOF_TYPE_TEE.
+  repeated TeeKind tee_kinds = 4;
+  // Empty means no ZK VM subtype restriction. Used only for ZK proof types.
+  repeated ZkVm zk_vms = 5;
 }
 
 message ClaimProofJobResponse {

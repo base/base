@@ -25,6 +25,6 @@ pub use proto::{
     GetProofRequest, GetProofResponse, HeartbeatProofJobRequest, HeartbeatProofJobResponse,
     ListProofsRequest, ListProofsResponse, ProofJob, ProofJobStatus, ProofRequest, ProofResult,
     ProofStatus, ProofSummary, ProofType, SnarkGroth16ProofRequest, SubmitProofRequest,
-    SubmitProofResponse, TeeProofRequest, TeeProofResult, TeeProposal, ZkProofRequest,
-    proof_request, proof_result, prover_service_client,
+    SubmitProofResponse, TeeKind, TeeProofRequest, TeeProofResult, TeeProposal, ZkProofRequest,
+    ZkProofResult, ZkVm, proof_request, proof_result, prover_service_client,
 };
