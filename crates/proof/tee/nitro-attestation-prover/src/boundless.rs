@@ -195,9 +195,15 @@ impl BoundlessProver {
     /// tests can bracket calls between `before`/`after` snapshots to
     /// assert the resulting timestamp falls in the expected window.
     fn now_unix_secs() -> u64 {
+        // Matches the fail-soft pattern used elsewhere in this file
+        // (`effective_expiry`, `is_journal_fresh`): a pre-epoch system
+        // clock is unrealistic, and on a long-running registrar
+        // returning 0 here is preferable to panicking — the resulting
+        // bidding_start would be rejected downstream rather than
+        // crashing the process.
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock before UNIX epoch")
+            .unwrap_or_default()
             .as_secs()
     }
 
