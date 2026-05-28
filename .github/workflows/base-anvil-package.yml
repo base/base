@@ -241,7 +241,7 @@ jobs:
             }' > "$image_root/MANIFEST.json"
 
           {
-            printf '%s\n' 'FROM public.ecr.aws/docker/library/debian:trixie-slim'
+            printf '%s\n' 'FROM public.ecr.aws/docker/library/debian:trixie-slim@sha256:b6e2a152f22a40ff69d92cb397223c906017e1391a73c952b588e51af8883bf8'
             printf '%s\n' 'RUN apt-get update \'
             printf '%s\n' '  && apt-get install -y --no-install-recommends ca-certificates \'
             printf '%s\n' '  && rm -rf /var/lib/apt/lists/*'
@@ -379,13 +379,17 @@ jobs:
           docker buildx imagetools create "${tag_args[@]}" "${digest_args[@]}"
 
       - name: Inspect image
+        env:
+          PRIMARY_TAG: ${{ steps.tags.outputs.primary_tag }}
         run: |
-          docker buildx imagetools inspect "$REGISTRY_IMAGE:${{ steps.tags.outputs.primary_tag }}"
+          docker buildx imagetools inspect "$REGISTRY_IMAGE:$PRIMARY_TAG"
 
       - name: Summary
+        env:
+          PRIMARY_TAG: ${{ steps.tags.outputs.primary_tag }}
         run: |
           echo "## Base Anvil package published" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "\`\`\`bash" >> "$GITHUB_STEP_SUMMARY"
-          echo "docker pull $REGISTRY_IMAGE:${{ steps.tags.outputs.primary_tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "docker pull $REGISTRY_IMAGE:$PRIMARY_TAG" >> "$GITHUB_STEP_SUMMARY"
           echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
