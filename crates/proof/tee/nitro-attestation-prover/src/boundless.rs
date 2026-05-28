@@ -189,8 +189,10 @@ impl BoundlessProver {
     }
 
     /// Returns the current Unix timestamp in seconds, used to compute
-    /// `Offer.rampUpStart` when `offer_bidding_start_delay_secs` is
-    /// configured. Factored out so tests can substitute a fixed clock.
+    /// `Offer.rampUpStart` as `now + offer_bidding_start_delay_secs`.
+    /// Factored out so tests can bracket calls between `before`/`after`
+    /// snapshots to assert the resulting timestamp falls in the
+    /// expected window.
     fn now_unix_secs() -> u64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
