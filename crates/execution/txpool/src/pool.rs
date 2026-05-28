@@ -569,7 +569,13 @@ where
     where
         A: HandleMempoolData,
     {
-        self.protocol_pool.retain_unknown(announcement)
+        self.protocol_pool.retain_unknown(announcement);
+        if announcement.is_empty() {
+            return;
+        }
+
+        let nonce_pool = self.nonce_pool.read();
+        announcement.retain_by_hash(|hash| !nonce_pool.contains(hash));
     }
 
     fn get(&self, tx_hash: &TxHash) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
