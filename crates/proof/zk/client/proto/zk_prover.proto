@@ -80,7 +80,6 @@ message TeeProofRequest {
 }
 
 message ProofResult {
-  ProofType proof_type = 1;
   oneof result {
     ZkProofResult zk = 2;
     TeeProofResult tee = 3;
