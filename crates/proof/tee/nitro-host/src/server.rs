@@ -280,12 +280,17 @@ impl EnclaveApiServer for NitroSignerRpc {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use alloy_genesis::ChainConfig;
+    use alloy_signer::utils::public_key_to_address;
     use base_common_genesis::RollupConfig;
     use base_proof_primitives::EnclaveApiServer;
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
+    use k256::ecdsa::VerifyingKey;
 
     use super::*;
+    use crate::test_utils::AddressBasedMockRegistry;
 
     fn test_prover_config() -> ProverConfig {
         ProverConfig {
@@ -424,13 +429,6 @@ mod tests {
 
     #[tokio::test]
     async fn prove_falls_through_to_second_enclave_when_first_is_busy() {
-        use std::collections::HashMap;
-
-        use alloy_signer::utils::public_key_to_address;
-        use k256::ecdsa::VerifyingKey;
-
-        use crate::test_utils::AddressBasedMockRegistry;
-
         async fn signer_for(transport: &NitroTransport) -> alloy_primitives::Address {
             let pk = transport.signer_public_key().await.unwrap();
             let vk = VerifyingKey::from_sec1_bytes(&pk).unwrap();
