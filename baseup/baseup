@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.6"
+BASEUP_INSTALLER_VERSION="0.1.7"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -213,11 +213,13 @@ normalize_fingerprint() {
 
 release_gpg_public_key() {
     if [[ -n "$BASEUP_RELEASE_GPG_PUBLIC_KEY" ]]; then
+        warn "Using Base release signing key from BASEUP_RELEASE_GPG_PUBLIC_KEY environment variable." >&2
         printf '%s\n' "$BASEUP_RELEASE_GPG_PUBLIC_KEY"
         return
     fi
 
     if [[ -n "$BASEUP_RELEASE_GPG_KEY_URL" ]]; then
+        warn "Fetching Base release signing key from BASEUP_RELEASE_GPG_KEY_URL=$BASEUP_RELEASE_GPG_KEY_URL" >&2
         fetch_text "$BASEUP_RELEASE_GPG_KEY_URL"
         return
     fi
@@ -872,21 +874,21 @@ main() {
         ensure_dir "$BIN_DIR" "BASE_BIN_DIR"
     fi
 
-    local platform
-    local arch
-    local target
-    platform="$(detect_platform)"
-    arch="$(detect_arch)"
-    target="$(detect_target "$platform" "$arch")"
     resolve_selected_bins
-
-    info "Detected platform: $platform ($arch)"
 
     if [[ "$COMMAND" == "verify-release" ]]; then
         if [[ ${#SELECTED_TARGETS[@]} -eq 0 ]]; then
             SELECTED_TARGETS=("${SUPPORTED_TARGETS[@]}")
         fi
     else
+        local platform
+        local arch
+        local target
+
+        platform="$(detect_platform)"
+        arch="$(detect_arch)"
+        target="$(detect_target "$platform" "$arch")"
+        info "Detected platform: $platform ($arch)"
         SELECTED_TARGETS=("$target")
     fi
 
