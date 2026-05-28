@@ -19,7 +19,7 @@ tokio = { workspace = true, features = ["macros", "time"] }
 
 # serialization
 serde_json.workspace = true
-uuid = { workspace = true, features = ["v4", "serde"] }
+uuid = { workspace = true, features = ["serde"] }
 
 # error handling
 anyhow.workspace = true
