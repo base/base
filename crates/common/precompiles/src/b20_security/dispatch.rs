@@ -581,10 +581,10 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
                 needed: amount,
             }));
         }
-        self.accounting_mut().set_balance(caller, balance - amount)?;
         let supply = self.accounting().total_supply()?;
         let new_supply =
             supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.accounting_mut().set_balance(caller, balance - amount)?;
         self.accounting_mut().set_total_supply(new_supply)?;
         self.accounting_mut().emit_event(
             IB20::Transfer { from: caller, to: Address::ZERO, amount }.encode_log_data(),
@@ -662,10 +662,10 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
                     needed: amount,
                 }));
             }
-            self.accounting_mut().set_balance(account, balance - amount)?;
             let supply = self.accounting().total_supply()?;
             let new_supply =
                 supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+            self.accounting_mut().set_balance(account, balance - amount)?;
             self.accounting_mut().set_total_supply(new_supply)?;
             self.accounting_mut().emit_event(
                 IB20::Transfer { from: account, to: Address::ZERO, amount }.encode_log_data(),
@@ -792,6 +792,10 @@ mod tests {
         IB20Security::batchBurnCall { accounts, amounts }.abi_encode()
     }
 
+    fn redeem_calldata(amount: U256) -> Vec<u8> {
+        IB20Security::redeemCall { amount }.abi_encode()
+    }
+
     #[test]
     fn to_shares_one_to_one_ratio() {
         let token = make_token();
@@ -901,6 +905,26 @@ mod tests {
                 needed: U256::from(100u64),
             })
         );
+    }
+
+    #[test]
+    fn batch_burn_reverts_when_total_supply_underflows() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
+        token.accounting_mut().balances.insert(ALICE, U256::from(10u64));
+        token.accounting_mut().total_supply = U256::from(5u64);
+
+        let err = call_security(
+            &mut token,
+            ALICE,
+            batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::from(10u64)]),
+        )
+        .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::under_overflow());
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(5u64));
+        assert_eq!(token.accounting().events.len(), 0);
     }
 
     #[test]
@@ -1264,20 +1288,18 @@ mod tests {
     }
 
     #[test]
-    fn security_redeem_supply_underflow_is_under_overflow_panic() {
-        // Regression: before BOP-160, saturating_sub silently clamped supply to zero.
-        // If an accounting bug left total_supply < balance, the correct behavior is to
-        // revert with an arithmetic under/overflow panic rather than zeroing the supply.
+    fn security_redeem_reverts_when_total_supply_underflows() {
         let mut token = make_token();
-        // Supply invariant violated: balance exceeds total supply.
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(50u64);
+        token.accounting_mut().balances.insert(ALICE, U256::from(10u64));
+        token.accounting_mut().total_supply = U256::from(5u64);
+        token.accounting_mut().minimum_redeemable = U256::from(1u64);
 
-        // amount=75 passes the balance check (100 >= 75) but underflows total_supply (50 - 75).
-        assert_eq!(
-            token.security_redeem(ALICE, U256::from(75u64)).unwrap_err(),
-            BasePrecompileError::under_overflow()
-        );
+        let err = call_security(&mut token, ALICE, redeem_calldata(U256::from(10u64))).unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::under_overflow());
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(5u64));
+        assert_eq!(token.accounting().events.len(), 0);
     }
 
     #[test]
