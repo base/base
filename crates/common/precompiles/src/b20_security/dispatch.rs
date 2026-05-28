@@ -1411,7 +1411,7 @@ mod tests {
     }
 
     /// `to_shares` must return an arithmetic overflow panic rather than silently
-    /// saturating when `balance * sharesToTokensRatio` exceeds U256::MAX.
+    /// saturating when `balance * sharesToTokensRatio` exceeds `U256::MAX`.
     #[test]
     fn to_shares_overflows_when_product_exceeds_u256_max() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
@@ -1426,7 +1426,7 @@ mod tests {
     }
 
     /// `security_redeem` must return an arithmetic overflow panic rather than
-    /// silently saturating when `amount * sharesToTokensRatio` exceeds U256::MAX.
+    /// silently saturating when `amount * sharesToTokensRatio` exceeds `U256::MAX`.
     #[test]
     fn security_redeem_overflows_when_product_exceeds_u256_max() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
