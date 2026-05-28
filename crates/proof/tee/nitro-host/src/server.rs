@@ -191,9 +191,7 @@ impl ProverApiServer for NitroProverRpc {
         let (enclave, _permit) = candidate_indices
             .iter()
             .find_map(|&i| {
-                self.enclaves[i]
-                    .prove_permit
-                    .clone()
+                Arc::clone(&self.enclaves[i].prove_permit)
                     .try_acquire_owned()
                     .ok()
                     .map(|permit| (&self.enclaves[i], permit))
