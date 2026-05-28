@@ -86,12 +86,15 @@ jobs:
 
       - name: Build binaries
         run: |
-          cargo_args=()
+          cargo_args=(--locked --profile maxperf)
+          if [[ "${{ matrix.target.triple }}" == "aarch64-unknown-linux-gnu" ]]; then
+            cargo_args+=(--jobs 2)
+          fi
           while IFS= read -r bin; do
             [[ -n "$bin" ]] || continue
             cargo_args+=(--bin "$bin")
           done <<< "${RELEASE_BINS}"
-          cargo build --locked --profile maxperf "${cargo_args[@]}"
+          cargo build "${cargo_args[@]}"
 
       - name: Package binaries
         run: |
