@@ -108,20 +108,13 @@ pub struct DriverConfig {
 pub struct PendingRegistration {
     /// Originating instance ID — recorded only for logging.
     pub instance_id: String,
-    /// `JoinSet` task id for this proof task. Retained so the failure
-    /// paths in [`RegistrationDriver::apply_join_outcome`] (`Err(_)`
-    /// inner or `JoinError` panic — neither of which can return a
-    /// signer) can recover the address by O(n) scan over `pending`,
-    /// which is bounded by [`DriverConfig::max_concurrency`] (typically
-    /// <20) so a single-pass linear scan is cheaper than a second
-    /// reverse `task::Id → Address` map.
-    ///
-    /// Also gates the cleanup in the `Ok((id, Ok(signer)))` happy path:
-    /// after reconcile overwrites a stale (cancelled) entry with a
-    /// fresh one for the same signer, the stale task's terminal
-    /// outcome must NOT evict the fresh entry. The `apply_join_outcome`
-    /// success arm checks `pending[signer].task_id == id` before
-    /// removing so a same-signer respawn within a cycle is safe.
+    /// `JoinSet` task id for this proof task. Used by
+    /// [`RegistrationDriver::apply_join_outcome`] for two things: (1)
+    /// recovering the signer address on failure paths via an O(n) scan
+    /// over `pending` (bounded by [`DriverConfig::max_concurrency`]),
+    /// and (2) gating success-arm cleanup with a `task_id == id` check
+    /// so a stale task's terminal outcome cannot evict a same-signer
+    /// respawn that reconcile dropped into the slot mid-cycle.
     pub task_id: task::Id,
     /// Cooperative cancel handle for this single task.
     pub cancel: CancellationToken,
@@ -1542,6 +1535,30 @@ where
         pending.iter().find_map(|(addr, p)| (p.task_id == task_id).then_some(*addr))
     }
 
+    /// Removes the `pending` entry for `signer` only when its
+    /// `task_id` matches `id`. Returns the removed entry or `None` if
+    /// the slot was already overwritten by a same-signer respawn.
+    ///
+    /// Every [`Self::apply_join_outcome`] arm funnels through this
+    /// helper so the same stale-task / fresh-respawn invariant applies
+    /// uniformly: a terminal outcome from a stale task must never
+    /// evict the fresh entry reconcile dropped into the slot
+    /// mid-cycle. The check is technically redundant on the
+    /// [`Self::find_signer_by_task_id`] paths (the scan already filters
+    /// by `task_id`), but making the guard local rather than implicit
+    /// in another helper hardens the invariant against future
+    /// refactors of the recovery routine.
+    fn remove_if_task_matches(
+        pending: &mut HashMap<Address, PendingRegistration>,
+        signer: Address,
+        id: task::Id,
+    ) -> Option<PendingRegistration> {
+        match pending.get(&signer) {
+            Some(entry) if entry.task_id == id => pending.remove(&signer),
+            _ => None,
+        }
+    }
+
     /// Consumes one `JoinSet` outcome and updates `pending` + metrics.
     ///
     /// Handles all three termination paths:
@@ -1565,16 +1582,7 @@ where
         RegistrarMetrics::proof_tasks_completed().increment(1);
         match result {
             Ok((id, Ok(signer))) => {
-                // Guard against stale-task cleanup clobbering a same-
-                // cycle respawn: only remove if the entry's task_id
-                // matches the just-completed task. A mismatch means
-                // reconcile already overwrote this slot with a fresh
-                // task for the same signer; that fresh entry must
-                // survive the stale task's terminal outcome.
-                let removed = match pending.get(&signer) {
-                    Some(entry) if entry.task_id == id => pending.remove(&signer),
-                    _ => None,
-                };
+                let removed = Self::remove_if_task_matches(pending, signer, id);
                 debug!(
                     task_id = ?id,
                     signer = %signer,
@@ -1585,12 +1593,13 @@ where
             }
             Ok((id, Err(e))) => {
                 let signer = Self::find_signer_by_task_id(pending, id);
-                let removed = signer.and_then(|s| pending.remove(&s));
+                let removed = signer.and_then(|s| Self::remove_if_task_matches(pending, s, id));
                 warn!(
                     task_id = ?id,
                     error = %e,
                     signer = ?signer,
                     instance = ?removed.as_ref().map(|t| t.instance_id.as_str()),
+                    superseded = signer.is_some() && removed.is_none(),
                     "proof task failed"
                 );
                 RegistrarMetrics::processing_errors_total().increment(1);
@@ -1598,12 +1607,13 @@ where
             Err(join_err) => {
                 let id = join_err.id();
                 let signer = Self::find_signer_by_task_id(pending, id);
-                let removed = signer.and_then(|s| pending.remove(&s));
+                let removed = signer.and_then(|s| Self::remove_if_task_matches(pending, s, id));
                 warn!(
                     task_id = ?id,
                     error = %join_err,
                     signer = ?signer,
                     instance = ?removed.as_ref().map(|t| t.instance_id.as_str()),
+                    superseded = signer.is_some() && removed.is_none(),
                     "proof task join error (panic or abort)"
                 );
                 RegistrarMetrics::processing_errors_total().increment(1);
@@ -1662,36 +1672,26 @@ where
         RegistrarMetrics::proof_tasks_pending().set(0.0);
     }
 
-    /// Checks the attestation's intermediate certificates against the
-    /// on-chain durable revocation sentinel and AWS CRL distribution points,
-    /// and submits `revokeCert` transactions for any newly-revoked
-    /// certificates.
-    ///
-    /// Two layered checks are performed:
+    /// Checks the attestation's intermediate certificates against two
+    /// revocation sources and submits `revokeCert` transactions for any
+    /// newly-revoked certificates. Returns `Ok(true)` if any intermediate
+    /// is revoked at either layer, `Ok(false)` if all are clean.
     ///
     /// 1. **On-chain pre-check** (CHAIN-4194 / Immunefi #75608): each
-    ///    intermediate's accumulated path digest is queried against
-    ///    [`NitroVerifierClient::is_revoked`]. The contract's `revokedCerts`
-    ///    sentinel is persistent across `_cacheNewCert` overwrites, so a hash
-    ///    that an operator previously revoked must continue to fail
-    ///    registration even if the AWS CRL has since been pruned. A hit here
-    ///    short-circuits the AWS fetch — no `revokeCert` tx is submitted
-    ///    because the on-chain state already reflects the revocation.
-    /// 2. **AWS CRL check**: any intermediate found on its CRL distribution
-    ///    point triggers a `revokeCert` transaction to the
-    ///    `NitroEnclaveVerifier` contract.
+    ///    intermediate's path digest is queried via
+    ///    [`NitroVerifierClient::is_revoked`]. The contract's
+    ///    `revokedCerts` sentinel is persistent across `_cacheNewCert`
+    ///    overwrites, so an operator-revoked hash keeps failing
+    ///    registration even after the AWS CRL is pruned. A hit
+    ///    short-circuits the AWS fetch; no `revokeCert` tx is needed.
+    /// 2. **AWS CRL check**: any intermediate matched against its CRL
+    ///    distribution point triggers a `revokeCert` tx to the
+    ///    `NitroEnclaveVerifier`.
     ///
-    /// Returns `Ok(true)` if any certificate is revoked (on-chain or via
-    /// AWS CRL), `Ok(false)` if all certificates are clean.
-    ///
-    /// Layer 1 fails open internally: an on-chain RPC/decode error (for
-    /// example, when this binary is deployed against a verifier contract
-    /// that predates the `revokedCerts` selector) is logged, counted, and
-    /// the call falls through to Layer 2 — never silently disabling AWS CRL
-    /// enforcement. The shared cert chain parse happens once up front; if
-    /// it fails, the error propagates and the caller fail-opens uniformly.
-    /// Confirmed revocations at either layer block registration for the
-    /// instance.
+    /// Layer 1 fails open: RPC/decode errors (e.g. against a verifier
+    /// contract predating the `revokedCerts` selector) are logged and
+    /// the call falls through to Layer 2, never silently disabling AWS
+    /// CRL enforcement.
     async fn check_and_revoke_crls(
         &self,
         attestation_bytes: &[u8],
@@ -5838,6 +5838,73 @@ mod tests {
         assert!(!entry.cancel.is_cancelled(), "fresh cancel handle untouched");
 
         // Tear down: cancel the fresh task and drain.
+        drain_test_tasks(&mut tasks, &mut pending).await;
+    }
+
+    /// Mirror of the success-arm fresh/stale test for the
+    /// [`RegistrationDriver::apply_join_outcome`] inner-`Err` arm: a
+    /// stale task failing must NOT evict the fresh entry that
+    /// reconcile dropped into the slot for the same signer. The
+    /// [`RegistrationDriver::remove_if_task_matches`] guard threaded
+    /// through all three arms is what enforces this — without it,
+    /// `find_signer_by_task_id` returning `None` for the stale id is
+    /// the only thing preventing fresh-entry eviction, which is a
+    /// fragile implicit invariant.
+    #[tokio::test]
+    async fn apply_join_outcome_err_arm_preserves_fresh_entry_when_stale_task_fails_for_same_signer()
+     {
+        let mut tasks: JoinSet<Result<Address>> = JoinSet::new();
+        let mut pending: HashMap<Address, PendingRegistration> = HashMap::new();
+
+        let signer = HARDHAT_ACCOUNT;
+
+        // Stale task returns an immediate `Err`. Its task_id is NOT in
+        // `pending` — simulating the post-overwrite state.
+        let stale_handle = tasks.spawn(async move {
+            Err(RegistrarError::Config("synthetic stale proof failure".to_string()))
+        });
+        let stale_task_id = stale_handle.id();
+
+        // Fresh task parked on its cancel token; pending keys it under
+        // `signer`. This entry must survive the stale `Err` outcome.
+        let fresh_cancel = CancellationToken::new();
+        let fresh_cancel_inner = fresh_cancel.clone();
+        let fresh_handle = tasks.spawn(async move {
+            fresh_cancel_inner.cancelled().await;
+            Ok(signer)
+        });
+        let fresh_task_id = fresh_handle.id();
+        assert_ne!(stale_task_id, fresh_task_id, "test setup: distinct task ids");
+
+        pending.insert(
+            signer,
+            PendingRegistration {
+                instance_id: TEST_PENDING_INSTANCE_ID.to_string(),
+                task_id: fresh_task_id,
+                cancel: fresh_cancel.clone(),
+                cancelled_by_reconcile: false,
+            },
+        );
+
+        // Drain just the stale task; the fresh one parks on its
+        // cancel token so reap only sees the stale outcome.
+        let started = std::time::Instant::now();
+        loop {
+            if let Some(joined) = tasks.try_join_next_with_id() {
+                RunDriver::apply_join_outcome(Some(joined), &mut pending);
+                break;
+            }
+            if started.elapsed() > GATED_WAIT_TIMEOUT {
+                panic!("stale task never resolved");
+            }
+            tokio::time::sleep(REAP_POLL_INTERVAL).await;
+        }
+
+        assert_eq!(pending.len(), 1, "fresh entry must NOT be evicted by stale Err");
+        let entry = pending.get(&signer).expect("fresh entry still keyed by signer");
+        assert_eq!(entry.task_id, fresh_task_id, "fresh task_id preserved");
+        assert!(!entry.cancel.is_cancelled(), "fresh cancel handle untouched");
+
         drain_test_tasks(&mut tasks, &mut pending).await;
     }
 
