@@ -516,7 +516,6 @@ mod tests {
 
     #[test]
     fn checkpoint_revert_restores_events() {
-        use alloy_primitives::Bytes;
         let mut p = HashMapStorageProvider::new(1);
         let event_before = LogData::new_unchecked(vec![], Bytes::from_static(b"before"));
         p.emit_event(ADDR, event_before).unwrap();
