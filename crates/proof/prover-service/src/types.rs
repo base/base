@@ -114,7 +114,7 @@ pub struct ZkProofRequest {
     pub sequence_window: Option<u64>,
     /// Optional L1 head hash used for witness generation.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub l1_head: Option<String>,
+    pub l1_head: Option<B256>,
     /// Optional intermediate output root interval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intermediate_root_interval: Option<u64>,
@@ -462,7 +462,7 @@ mod tests {
                     start_block_number: 10,
                     number_of_blocks_to_prove: 20,
                     sequence_window: None,
-                    l1_head: Some("0xabc".to_owned()),
+                    l1_head: Some(B256::repeat_byte(0xab)),
                     intermediate_root_interval: Some(128),
                     zk_vm: ZkVm::Sp1,
                 }),
@@ -481,7 +481,7 @@ mod tests {
                         "payload": {
                             "startBlockNumber": 10,
                             "numberOfBlocksToProve": 20,
-                            "l1Head": "0xabc",
+                            "l1Head": format!("{:#x}", B256::repeat_byte(0xab)),
                             "intermediateRootInterval": 128,
                             "zkVm": "sp1"
                         }
@@ -511,6 +511,40 @@ mod tests {
         assert_eq!(value["l1Head"], json!(format!("{:#x}", B256::repeat_byte(1))));
         assert_eq!(value["proposer"], json!("0x0000000000000000000000000000000000000006"));
         assert_eq!(value["teeKind"], json!("aws_nitro"));
+    }
+
+    #[test]
+    fn omitted_optional_fields_deserialize_to_none() {
+        let request: ZkProofRequest = serde_json::from_value(json!({
+            "startBlockNumber": 10,
+            "numberOfBlocksToProve": 20,
+            "zkVm": "sp1"
+        }))
+        .expect("zk request should accept omitted optional fields");
+
+        assert_eq!(
+            request,
+            ZkProofRequest {
+                start_block_number: 10,
+                number_of_blocks_to_prove: 20,
+                sequence_window: None,
+                l1_head: None,
+                intermediate_root_interval: None,
+                zk_vm: ZkVm::Sp1,
+            }
+        );
+    }
+
+    #[test]
+    fn zk_l1_head_rejects_malformed_hash() {
+        let result = serde_json::from_value::<ZkProofRequest>(json!({
+            "startBlockNumber": 10,
+            "numberOfBlocksToProve": 20,
+            "l1Head": "0xabc",
+            "zkVm": "sp1"
+        }));
+
+        assert!(result.is_err());
     }
 
     #[test]
