@@ -59,13 +59,13 @@ pub struct BoundlessConfig {
     pub offer_min_price: Option<Amount>,
     /// Optional maximum Boundless offer price for each submitted proof request.
     pub offer_max_price: Option<Amount>,
-    /// Duration in seconds for the Boundless offer price to ramp from
-    /// `offer_min_price` to `offer_max_price`. Defaults to `0` so that
-    /// the maximum price is offered immediately, eliminating the
-    /// "discount window" at the start of the auction and minimising
-    /// time-to-lock. Set to a non-zero value to introduce a price ramp
-    /// (e.g. for cost optimisation when latency is less critical).
-    pub offer_ramp_up_period_secs: u32,
+    /// Optional duration in seconds for the Boundless offer price to
+    /// ramp from `offer_min_price` to `offer_max_price`. When unset
+    /// the Boundless SDK derives a cycle-count-based ramp; set to `0`
+    /// to eliminate the ramp entirely so that the max price is offered
+    /// immediately (a "fast lane" tradeoff that minimises time-to-lock
+    /// at the cost of paying the max price every time).
+    pub offer_ramp_up_period_secs: Option<u32>,
     /// Optional maximum time, in seconds, that a prover that locks a
     /// request has to deliver the proof before forfeiting its stake bond
     /// and the request opening up to permissionless secondary

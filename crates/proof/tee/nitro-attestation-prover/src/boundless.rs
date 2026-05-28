@@ -89,10 +89,11 @@ pub struct BoundlessProver {
     pub offer_min_price: Option<Amount>,
     /// Optional maximum Boundless offer price for each submitted proof request.
     pub offer_max_price: Option<Amount>,
-    /// Duration in seconds for the Boundless offer price to ramp from
-    /// `offer_min_price` to `offer_max_price`. Defaults to `0` so that
-    /// the maximum price is offered immediately, minimising time-to-lock.
-    pub offer_ramp_up_period_secs: u32,
+    /// Optional duration in seconds for the Boundless offer price to
+    /// ramp from `offer_min_price` to `offer_max_price`. When unset
+    /// the Boundless SDK derives a cycle-count-based ramp; set to `0`
+    /// to eliminate the ramp entirely (max price offered immediately).
+    pub offer_ramp_up_period_secs: Option<u32>,
     /// Optional maximum time, in seconds, that a prover that locks a
     /// request has to deliver the proof before forfeiting its stake bond
     /// and the request opening up to permissionless secondary
@@ -203,11 +204,10 @@ impl BoundlessProver {
     /// Applies the time-independent Boundless offer overrides to
     /// request params.
     ///
-    /// `ramp_up_period` is always set from the prover's configuration
-    /// (defaults to `0` to minimise auction latency); `min_price`,
-    /// `max_price`, and `lock_timeout` are only passed through when
-    /// explicitly configured, otherwise the Boundless SDK derives
-    /// sensible values.
+    /// `min_price`, `max_price`, `ramp_up_period`, and `lock_timeout`
+    /// are only passed through when explicitly configured; when unset,
+    /// the Boundless SDK derives sensible values from the workload's
+    /// cycle count.
     ///
     /// `bidding_start` is intentionally **not** set here: it is a
     /// wall-clock-relative deadline anchor (the SDK computes
@@ -227,7 +227,9 @@ impl BoundlessProver {
         if let Some(max_price) = &self.offer_max_price {
             offer.max_price(max_price.clone());
         }
-        offer.ramp_up_period(self.offer_ramp_up_period_secs);
+        if let Some(ramp_up_period) = self.offer_ramp_up_period_secs {
+            offer.ramp_up_period(ramp_up_period);
+        }
         if let Some(lock_timeout) = self.offer_lock_timeout_secs {
             offer.lock_timeout(lock_timeout);
         }
@@ -886,7 +888,7 @@ mod tests {
             max_attestation_age: TEST_MAX_ATTESTATION_AGE,
             offer_min_price: None,
             offer_max_price: None,
-            offer_ramp_up_period_secs: 0,
+            offer_ramp_up_period_secs: None,
             offer_lock_timeout_secs: None,
             offer_bidding_start_delay_secs: 0,
             submit_lock: Arc::new(Mutex::new(())),
@@ -919,22 +921,21 @@ mod tests {
         assert_eq!(prover.max_recovery_attempts, TEST_MAX_RECOVERY_ATTEMPTS);
         assert!(prover.offer_min_price.is_none());
         assert!(prover.offer_max_price.is_none());
-        assert_eq!(prover.offer_ramp_up_period_secs, 0);
+        assert!(prover.offer_ramp_up_period_secs.is_none());
         assert!(prover.offer_lock_timeout_secs.is_none());
         assert_eq!(prover.offer_bidding_start_delay_secs, 0);
     }
 
-    /// With defaults (ramp = 0), `apply_offer_config` always emits an
-    /// offer override that sets `ramp_up_period = 0`. The other
-    /// (still-Option) price/timeout fields remain unset so the
-    /// Boundless SDK derives them from cycle count. `bidding_start`
-    /// is intentionally **not** set here — it is anchored later by
-    /// `apply_bidding_start` immediately before on-chain submission.
+    /// With every Option-typed offer override unset, `apply_offer_config`
+    /// leaves the corresponding offer fields unset so the Boundless SDK
+    /// derives them from cycle count. `bidding_start` is intentionally
+    /// **not** set here — it is anchored later by `apply_bidding_start`
+    /// immediately before on-chain submission.
     #[rstest]
-    fn apply_offer_config_defaults_enable_fast_lane(prover: BoundlessProver) {
+    fn apply_offer_config_defaults_to_sdk(prover: BoundlessProver) {
         let params = prover.apply_offer_config(RequestParams::new());
 
-        assert_eq!(params.offer.ramp_up_period, Some(0));
+        assert!(params.offer.ramp_up_period.is_none());
         assert!(params.offer.min_price.is_none());
         assert!(params.offer.max_price.is_none());
         assert!(params.offer.lock_timeout.is_none());
@@ -951,7 +952,7 @@ mod tests {
         let max_price = eth_amount(TEST_MAX_PRICE_ETH);
         prover.offer_min_price = Some(min_price.clone());
         prover.offer_max_price = Some(max_price.clone());
-        prover.offer_ramp_up_period_secs = TEST_RAMP_UP_PERIOD_SECS;
+        prover.offer_ramp_up_period_secs = Some(TEST_RAMP_UP_PERIOD_SECS);
         prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
         prover.offer_bidding_start_delay_secs = TEST_NON_ZERO_BIDDING_START_DELAY_SECS;
 
@@ -967,8 +968,7 @@ mod tests {
         );
     }
 
-    /// `lock_timeout` can be set independently of price fields; the
-    /// always-set ramp default still flows through.
+    /// `lock_timeout` can be set independently of price/ramp fields.
     #[rstest]
     fn apply_offer_config_sets_lock_timeout_alone(mut prover: BoundlessProver) {
         prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
@@ -976,7 +976,7 @@ mod tests {
         let params = prover.apply_offer_config(RequestParams::new());
 
         assert_eq!(params.offer.lock_timeout, Some(TEST_LOCK_TIMEOUT_SECS));
-        assert_eq!(params.offer.ramp_up_period, Some(0));
+        assert!(params.offer.ramp_up_period.is_none());
         assert!(params.offer.min_price.is_none());
         assert!(params.offer.max_price.is_none());
         assert!(params.offer.bidding_start.is_none());
@@ -1026,7 +1026,7 @@ mod tests {
         let max_price = eth_amount(TEST_MAX_PRICE_ETH);
         prover.offer_min_price = Some(min_price.clone());
         prover.offer_max_price = Some(max_price.clone());
-        prover.offer_ramp_up_period_secs = TEST_RAMP_UP_PERIOD_SECS;
+        prover.offer_ramp_up_period_secs = Some(TEST_RAMP_UP_PERIOD_SECS);
         prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
 
         let params = prover.apply_offer_config(RequestParams::new());

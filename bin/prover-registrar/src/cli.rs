@@ -226,18 +226,18 @@ struct BoundlessArgs {
     #[arg(long, env = cli_env!("BOUNDLESS_MAX_PRICE_ETH"))]
     boundless_max_price_eth: Option<String>,
 
-    /// Duration in seconds for the Boundless offer price to ramp from
-    /// `--boundless-min-price-eth` to `--boundless-max-price-eth`.
+    /// Optional duration in seconds for the Boundless offer price to
+    /// ramp from `--boundless-min-price-eth` to
+    /// `--boundless-max-price-eth`.
     ///
-    /// Defaults to `0` so that the max price is offered immediately,
-    /// eliminating the auction "discount window" that the SDK would
-    /// otherwise insert. With `0`, a prover that locks the request
-    /// receives the full max price, which minimises time-to-lock at
-    /// the cost of paying the max price every time. Set to a non-zero
-    /// value to reintroduce a price ramp (typically for cost
-    /// optimisation when latency is less critical).
-    #[arg(long, env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS"), default_value_t = 0)]
-    boundless_offer_ramp_up_period_secs: u32,
+    /// Defaults to the Boundless SDK's cycle-count-derived value when
+    /// unset (preserving the standard Dutch-auction price ramp). Set
+    /// to `0` to eliminate the ramp entirely so that the max price is
+    /// offered immediately — useful in "fast lane" deployments that
+    /// minimise time-to-lock at the cost of paying the max price every
+    /// time.
+    #[arg(long, env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS"))]
+    boundless_offer_ramp_up_period_secs: Option<u32>,
 
     /// Maximum time, in seconds, that a prover that locks a request has to
     /// deliver the proof before forfeiting its stake bond and the request
@@ -970,11 +970,11 @@ mod tests {
         assert_eq!(b.image_id, [1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
-    /// Price and lock-timeout fields remain `Option`-typed and default
-    /// to `None` so the Boundless SDK derives sensible values from the
-    /// workload's cycle count. Ramp-up period and bidding-start delay
-    /// default to `0` ("fast lane") so the binary is latency-optimised
-    /// out of the box.
+    /// Price, ramp-up period, and lock-timeout fields remain
+    /// `Option`-typed and default to `None` so the Boundless SDK
+    /// derives sensible values from the workload's cycle count. Only
+    /// `bidding-start-delay` defaults to `0` ("fast lane") to minimise
+    /// time-to-lock out of the box.
     #[rstest]
     fn boundless_offer_pricing_defaults_to_sdk() {
         let config = Cli::parse_from(boundless_args()).into_config().unwrap();
@@ -984,8 +984,8 @@ mod tests {
 
         assert!(b.offer_min_price.is_none());
         assert!(b.offer_max_price.is_none());
+        assert!(b.offer_ramp_up_period_secs.is_none());
         assert!(b.offer_lock_timeout_secs.is_none());
-        assert_eq!(b.offer_ramp_up_period_secs, 0);
         assert_eq!(b.offer_bidding_start_delay_secs, 0);
     }
 
@@ -1071,7 +1071,7 @@ mod tests {
                 .unwrap(),
             ),
         );
-        assert_eq!(b.offer_ramp_up_period_secs, TEST_BOUNDLESS_RAMP_UP_PERIOD_SECS);
+        assert_eq!(b.offer_ramp_up_period_secs, Some(TEST_BOUNDLESS_RAMP_UP_PERIOD_SECS));
     }
 
     #[rstest]
