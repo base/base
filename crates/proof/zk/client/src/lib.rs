@@ -34,8 +34,8 @@ pub use proto::{
     HeartbeatProofJobResponse, ListProofsRequest, ListProofsResponse, ProofJob, ProofRequest,
     ProofResult, ProofSummary, ProofType, ReceiptType, SubmitProofRequest, SubmitProofResponse,
     TeeProofRequest, TeeProofResult, TeeProposal, ZkProofRequest, ZkProofResult,
-    get_proof_response, get_proof_response::Status as ProofJobStatus, proof_request, proof_result,
-    prover_service_client,
+    get_proof_response, get_proof_response::Status as ProofJobStatus, proof_job, proof_request,
+    proof_result, prover_service_client,
 };
 
 mod proof_request_ext;

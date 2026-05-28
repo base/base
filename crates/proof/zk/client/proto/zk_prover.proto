@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package prover;
 
+import "google/protobuf/timestamp.proto";
+
 service ProverService {
   rpc SubmitProof(SubmitProofRequest) returns (SubmitProofResponse);
   rpc GetProof(GetProofRequest) returns (GetProofResponse);
@@ -179,17 +181,31 @@ message ListProofsResponse {
 }
 
 message ProofJob {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_QUEUED = 1;
+    STATUS_LEASED = 2;
+    STATUS_LEASE_EXPIRED = 3;
+    STATUS_SUCCEEDED = 4;
+    STATUS_FAILED = 5;
+  }
+
   string session_id = 1;
   ProofType proof_type = 2;
-  GetProofResponse.Status status = 3;
+  Status status = 3;
   ProofRequest request = 4;
   uint32 attempt = 5;
   optional string lease_id = 6;
   optional string worker_id = 7;
-  optional string lease_expires_at = 8;
-  string created_at = 9;
-  string updated_at = 10;
-  optional string completed_at = 11;
+  // Lease expiration for the current or most recent worker claim. Unset when
+  // the job has never been leased.
+  google.protobuf.Timestamp lease_expires_at = 8;
+  // Job creation time. Always populated by the server.
+  google.protobuf.Timestamp created_at = 9;
+  // Last job update time. Always populated by the server.
+  google.protobuf.Timestamp updated_at = 10;
+  // Terminal completion time. Unset until the job succeeds or fails.
+  google.protobuf.Timestamp completed_at = 11;
   optional string error_message = 12;
 }
 

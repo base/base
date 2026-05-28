@@ -11,6 +11,7 @@ repository.workspace = true
 # gRPC
 url.workspace = true
 prost.workspace = true
+prost-types.workspace = true
 tonic-prost.workspace = true
 tonic = { workspace = true, features = ["transport"] }
 
