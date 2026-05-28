@@ -24,10 +24,10 @@ reth-node-api.workspace = true
 reth-provider.workspace = true
 reth-chainspec.workspace = true
 reth-execution-types.workspace = true
+reth-eth-wire-types.workspace = true
 reth-storage-api.workspace = true
 reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
-reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", tag = "v2.2.0" }
 
 base-common-flz.workspace = true
 base-common-chains.workspace = true

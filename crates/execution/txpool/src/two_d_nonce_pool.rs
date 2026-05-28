@@ -29,6 +29,26 @@ impl<T: BasePooledTx> Default for NonceLane<T> {
     }
 }
 
+impl<T: BasePooledTx> NonceLane<T> {
+    fn consecutive_pending_transactions(
+        &self,
+    ) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
+        self.transactions
+            .range(self.next_nonce..)
+            .enumerate()
+            .take_while(|(offset, (nonce, _))| **nonce == self.next_nonce + *offset as u64)
+            .map(|(_, (_, transaction))| transaction)
+    }
+
+    fn consecutive_pending_len(&self) -> usize {
+        self.consecutive_pending_transactions().count()
+    }
+
+    fn queued_transactions(&self) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
+        self.transactions.values().skip(self.consecutive_pending_len())
+    }
+}
+
 /// Outcome returned after inserting into the 2D nonce sidecar.
 #[derive(Debug)]
 pub(crate) struct InsertOutcome<T: BasePooledTx> {
@@ -68,33 +88,30 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         let mut pending = 0;
         let mut queued = 0;
         for lane in self.lanes.values() {
-            for nonce in lane.transactions.keys() {
-                if *nonce == lane.next_nonce {
-                    pending += 1;
-                } else {
-                    queued += 1;
-                }
-            }
+            let pending_in_lane = lane.consecutive_pending_len();
+            pending += pending_in_lane;
+            queued += lane.transactions.len().saturating_sub(pending_in_lane);
         }
         (pending, queued)
     }
 
     /// Returns all pending transactions.
     pub(crate) fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
-        self.lanes
-            .values()
-            .filter_map(|lane| lane.transactions.get(&lane.next_nonce).cloned())
-            .collect()
+        let mut transactions = Vec::new();
+        for lane in self.lanes.values() {
+            for transaction in lane.consecutive_pending_transactions() {
+                transactions.push(Arc::clone(transaction));
+            }
+        }
+        transactions
     }
 
     /// Returns all queued transactions.
     pub(crate) fn queued_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut transactions = Vec::new();
         for lane in self.lanes.values() {
-            for (nonce, transaction) in &lane.transactions {
-                if *nonce != lane.next_nonce {
-                    transactions.push(Arc::clone(transaction));
-                }
+            for transaction in lane.queued_transactions() {
+                transactions.push(Arc::clone(transaction));
             }
         }
         transactions
@@ -523,7 +540,11 @@ mod tests {
         pool.insert_validated(queued).unwrap();
 
         let (pending, queued_count) = pool.pending_and_queued_txn_count();
-        assert_eq!((pending, queued_count), (1, 1));
+        assert_eq!((pending, queued_count), (2, 0));
+        assert_eq!(
+            pool.pending_transactions().into_iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
+            vec![head_hash, queued_hash]
+        );
 
         pool.prune_mined(&[head_hash]);
 
@@ -532,6 +553,38 @@ mod tests {
         assert_eq!(
             pool.pending_transactions().into_iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
             vec![queued_hash]
+        );
+    }
+
+    #[test]
+    fn contiguous_lane_counts_full_run_as_pending() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+
+        let first = valid_pool_transaction(signed_channel_tx(&signer, U256::from(9), 0, 1_000));
+        let second = valid_pool_transaction(signed_channel_tx(&signer, U256::from(9), 1, 900));
+        let third = valid_pool_transaction(signed_channel_tx(&signer, U256::from(9), 2, 800));
+        let gap = valid_pool_transaction(signed_channel_tx(&signer, U256::from(9), 4, 700));
+
+        let first_hash = *first.hash();
+        let second_hash = *second.hash();
+        let third_hash = *third.hash();
+        let gap_hash = *gap.hash();
+
+        pool.insert_validated(first).unwrap();
+        pool.insert_validated(second).unwrap();
+        pool.insert_validated(third).unwrap();
+        pool.insert_validated(gap).unwrap();
+
+        let (pending, queued) = pool.pending_and_queued_txn_count();
+        assert_eq!((pending, queued), (3, 1));
+        assert_eq!(
+            pool.pending_transactions().into_iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
+            vec![first_hash, second_hash, third_hash]
+        );
+        assert_eq!(
+            pool.queued_transactions().into_iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
+            vec![gap_hash]
         );
     }
 }
