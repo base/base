@@ -383,7 +383,7 @@ impl<T: BasePooledTx> Iterator for BestTwoDTransactions<T> {
             .map(|(index, _)| index)?;
 
         let lane = &mut self.lanes[best_index];
-        let transaction = lane.transactions[lane.index].clone();
+        let transaction = Arc::clone(&lane.transactions[lane.index]);
         lane.index += 1;
         Some(transaction)
     }
