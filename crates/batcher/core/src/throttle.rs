@@ -122,6 +122,12 @@ impl ThrottleController {
     }
 
     /// Compute DA size limits from the given intensity.
+    ///
+    /// The result is clamped to `[lower_limit, upper_limit]` so that a
+    /// misconfigured `max_intensity > 1.0` (or any floating-point rounding that
+    /// would otherwise push the value below the lower bound) can never produce a
+    /// limit of zero — which would block all transactions even though a
+    /// non-zero lower-bound is explicitly configured.
     fn compute_limits(&self, intensity: f64) -> (u64, u64) {
         let block_range =
             self.config.block_size_upper_limit as f64 - self.config.block_size_lower_limit as f64;
@@ -129,9 +135,18 @@ impl ThrottleController {
             self.config.tx_size_upper_limit as f64 - self.config.tx_size_lower_limit as f64;
 
         let max_block_size =
-            (self.config.block_size_upper_limit as f64 - intensity * block_range).round() as u64;
-        let max_tx_size =
-            (self.config.tx_size_upper_limit as f64 - intensity * tx_range).round() as u64;
+            (self.config.block_size_upper_limit as f64 - intensity * block_range)
+                .round()
+                .clamp(
+                    self.config.block_size_lower_limit as f64,
+                    self.config.block_size_upper_limit as f64,
+                ) as u64;
+        let max_tx_size = (self.config.tx_size_upper_limit as f64 - intensity * tx_range)
+            .round()
+            .clamp(
+                self.config.tx_size_lower_limit as f64,
+                self.config.tx_size_upper_limit as f64,
+            ) as u64;
 
         (max_block_size, max_tx_size)
     }
@@ -332,6 +347,43 @@ mod tests {
             }
         }
     }
+
+    /// Verifies that `compute_limits` always clamps its output to
+    /// `[lower_limit, upper_limit]`.
+    ///
+    /// When `max_intensity > 1.0` the formula `upper - intensity * (upper - lower)`
+    /// goes negative; without clamping the cast to `u64` silently produces 0,
+    /// far below the configured lower bound.  This regression test uses a
+    /// `max_intensity` of 2.0 (intentionally out-of-range) to drive the
+    /// intensity to 2.0 (via the Step strategy) and asserts that the returned
+    /// limits equal the configured lower bounds rather than 0.
+    #[test]
+    fn test_compute_limits_clamps_to_lower_bound() {
+        let cfg = ThrottleConfig {
+            threshold_bytes: 1_000,
+            max_intensity: 2.0, // deliberately > 1.0
+            block_size_lower_limit: 2_000,
+            block_size_upper_limit: 130_000,
+            tx_size_lower_limit: 150,
+            tx_size_upper_limit: 20_000,
+        };
+        let ctrl = ThrottleController::new(cfg.clone(), ThrottleStrategy::Step);
+
+        // With intensity = 2.0:
+        //   max_block_size = 130_000 - 2.0 * (130_000 - 2_000) = 130_000 - 256_000 = -126_000
+        //   Without clamping: cast to u64 → 0 (silent data loss)
+        //   With clamping:    saturates at block_size_lower_limit = 2_000
+        let params = ctrl.update(cfg.threshold_bytes).expect("throttle must be active");
+        assert_eq!(
+            params.max_block_size, cfg.block_size_lower_limit,
+            "max_block_size must be clamped to lower_limit, not silently wrap to 0"
+        );
+        assert_eq!(
+            params.max_tx_size, cfg.tx_size_lower_limit,
+            "max_tx_size must be clamped to lower_limit, not silently wrap to 0"
+        );
+    }
+
 
     #[test]
     fn strategy_display_parse_roundtrip() {
