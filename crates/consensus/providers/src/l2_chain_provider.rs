@@ -1,6 +1,6 @@
 //! Providers that use alloy provider types on the backend.
 
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{future::Future, num::NonZeroUsize, sync::Arc, time::Duration};
 
 use alloy_eips::BlockId;
 use alloy_primitives::{B256, Bytes};
@@ -23,6 +23,10 @@ use lru::LruCache;
 use tower::ServiceBuilder;
 
 use crate::Metrics;
+
+const L2_BLOCK_REF_BY_NUMBER_METHOD: &str = "l2_block_ref_by_number";
+const L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS: usize = 5;
+const L2_BLOCK_VISIBILITY_RETRY_DELAY: Duration = Duration::from_millis(20);
 
 /// The [`AlloyL2ChainProvider`] is a concrete implementation of the [`L2ChainProvider`] trait,
 /// providing data over Ethereum JSON-RPC using an alloy provider as the backend.
@@ -183,6 +187,63 @@ impl AlloyL2ChainProvider {
     }
 }
 
+fn l2_block_visibility_retry_delay(attempt: usize) -> Option<Duration> {
+    (attempt + 1 < L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS).then_some(L2_BLOCK_VISIBILITY_RETRY_DELAY)
+}
+
+// The local execution RPC can briefly return `null` for a just-imported L2 block while the
+// canonical block is still becoming visible through the RPC cache/DB path.
+async fn fetch_l2_block_with_visibility_retries<F, Fut, Sleep, SleepFut>(
+    number: u64,
+    mut fetch: F,
+    mut sleep: Sleep,
+) -> Result<Option<BaseBlock>, AlloyL2ChainProviderError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Option<BaseBlock>, AlloyL2ChainProviderError>>,
+    Sleep: FnMut(Duration) -> SleepFut,
+    SleepFut: Future<Output = ()>,
+{
+    for attempt in 0..L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS {
+        if let Some(block) = fetch().await? {
+            return Ok(Some(block));
+        }
+
+        if let Some(delay) = l2_block_visibility_retry_delay(attempt) {
+            Metrics::l2_block_visibility_retries().increment(1);
+            tracing::debug!(
+                target: "l2_chain_provider",
+                number,
+                attempt = attempt + 1,
+                attempts = L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS,
+                ?delay,
+                "L2 block not visible yet; retrying"
+            );
+            sleep(delay).await;
+        }
+    }
+
+    Ok(None)
+}
+
+async fn fetch_block_by_number_once(
+    inner: RootProvider<Base>,
+    number: u64,
+) -> Result<Option<BaseBlock>, AlloyL2ChainProviderError> {
+    Metrics::l2_chain_requests(L2_BLOCK_REF_BY_NUMBER_METHOD).increment(1);
+
+    base_metrics::time!(Metrics::request_duration(L2_BLOCK_REF_BY_NUMBER_METHOD), {
+        inner.get_block_by_number(number.into()).full().await
+    })
+    .map_err(|e| {
+        Metrics::l2_chain_errors(L2_BLOCK_REF_BY_NUMBER_METHOD).increment(1);
+        AlloyL2ChainProviderError::Transport(e)
+    })
+    .map(|block| {
+        block.map(|block| block.into_consensus().map_transactions(|t| t.inner.inner.into_inner()))
+    })
+}
+
 /// An error for the [`AlloyL2ChainProvider`].
 #[derive(Debug, thiserror::Error)]
 pub enum AlloyL2ChainProviderError {
@@ -237,18 +298,17 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
             return Ok(block.clone());
         }
 
-        Metrics::l2_chain_requests("l2_block_ref_by_number").increment(1);
-
-        let block = base_metrics::time!(Metrics::request_duration("l2_block_ref_by_number"), {
-            self.inner.get_block_by_number(number.into()).full().await
-        })
-        .map_err(|e| {
-            Metrics::l2_chain_errors("l2_block_ref_by_number").increment(1);
-            AlloyL2ChainProviderError::Transport(e)
-        })?
-        .ok_or(AlloyL2ChainProviderError::BlockNotFound(number))?
-        .into_consensus()
-        .map_transactions(|t| t.inner.inner.into_inner());
+        let inner = self.inner.clone();
+        let block = fetch_l2_block_with_visibility_retries(
+            number,
+            || {
+                let inner = inner.clone();
+                async move { fetch_block_by_number_once(inner, number).await }
+            },
+            tokio::time::sleep,
+        )
+        .await?
+        .ok_or(AlloyL2ChainProviderError::BlockNotFound(number))?;
 
         self.block_by_number_cache.put(number, block.clone());
         Ok(block)
@@ -302,5 +362,88 @@ mod tests {
             matches!(kind, PipelineErrorKind::Reset(_)),
             "L2 BlockNotFound must map to Reset (block disappeared due to reorg)"
         );
+    }
+
+    #[test]
+    fn test_l2_block_visibility_retry_delay() {
+        assert_eq!(l2_block_visibility_retry_delay(0), Some(L2_BLOCK_VISIBILITY_RETRY_DELAY));
+        assert_eq!(
+            l2_block_visibility_retry_delay(L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS - 2),
+            Some(L2_BLOCK_VISIBILITY_RETRY_DELAY)
+        );
+        assert_eq!(l2_block_visibility_retry_delay(L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS - 1), None);
+    }
+
+    #[tokio::test]
+    async fn test_l2_block_visibility_retry_succeeds_after_transient_misses() {
+        let mut attempts = 0;
+        let mut sleeps = 0;
+
+        let result = fetch_l2_block_with_visibility_retries(
+            42,
+            || {
+                attempts += 1;
+                let block = (attempts == 3).then(BaseBlock::default);
+                std::future::ready(Ok(block))
+            },
+            |_| {
+                sleeps += 1;
+                std::future::ready(())
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(result.is_some());
+        assert_eq!(attempts, 3);
+        assert_eq!(sleeps, 2);
+    }
+
+    #[tokio::test]
+    async fn test_l2_block_visibility_retry_stops_after_attempt_budget() {
+        let mut attempts = 0;
+        let mut sleeps = 0;
+
+        let result = fetch_l2_block_with_visibility_retries(
+            42,
+            || {
+                attempts += 1;
+                std::future::ready(Ok(None))
+            },
+            |_| {
+                sleeps += 1;
+                std::future::ready(())
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(result.is_none());
+        assert_eq!(attempts, L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS);
+        assert_eq!(sleeps, L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS - 1);
+    }
+
+    #[tokio::test]
+    async fn test_l2_block_visibility_retry_returns_errors_without_retrying() {
+        let mut attempts = 0;
+        let mut sleeps = 0;
+
+        let err = fetch_l2_block_with_visibility_retries(
+            42,
+            || {
+                attempts += 1;
+                std::future::ready(Err(AlloyL2ChainProviderError::BlockNotFound(42)))
+            },
+            |_| {
+                sleeps += 1;
+                std::future::ready(())
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(err, AlloyL2ChainProviderError::BlockNotFound(42)));
+        assert_eq!(attempts, 1);
+        assert_eq!(sleeps, 0);
     }
 }

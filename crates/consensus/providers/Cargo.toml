@@ -45,6 +45,7 @@ async-trait.workspace = true
 http-body-util.workspace = true
 serde = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["time"] }
 
 c-kzg.workspace = true
 tracing.workspace = true
