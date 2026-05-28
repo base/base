@@ -20,6 +20,8 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, Bytes, ChainId, TxKind, U256, bytes::BufMut, keccak256};
 use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
+#[cfg(feature = "reth")]
+use reth_primitives_traits::transaction::error::InvalidTransactionError;
 
 use crate::transaction::eip8130::{constants::Eip8130Constants, tx::TxEip8130};
 
@@ -129,6 +131,53 @@ impl Eip8130Signed {
     /// Returns the cached EIP-2718 transaction hash.
     pub const fn hash(&self) -> &B256 {
         &self.hash
+    }
+
+    /// Validates the static admission rules that depend only on the transaction
+    /// body and the local chain id.
+    ///
+    /// This keeps the chain-id, fee-cap ordering, and non-zero gas/fee-cap
+    /// checks colocated with [`TxEip8130`]'s signed wrapper so txpool callers
+    /// only need to orchestrate pool-specific concerns.
+    #[cfg(feature = "reth")]
+    pub const fn validate_static(
+        &self,
+        local_chain_id: u64,
+    ) -> Result<(), InvalidTransactionError> {
+        let tx = self.tx();
+        if tx.chain_id != local_chain_id {
+            return Err(InvalidTransactionError::ChainIdMismatch);
+        }
+        if tx.max_fee_per_gas < tx.max_priority_fee_per_gas {
+            return Err(InvalidTransactionError::TipAboveFeeCap);
+        }
+        if tx.gas_limit == 0 || tx.max_fee_per_gas == 0 {
+            return Err(InvalidTransactionError::TxTypeNotSupported);
+        }
+        Ok(())
+    }
+
+    /// Validates the timestamp-sensitive admission rules for nonce-bearing and
+    /// nonce-free transactions against a single caller-supplied `now` value.
+    ///
+    /// Txpool passes in one head-block timestamp snapshot so both branches see
+    /// the same wall-clock value even if the tip updates concurrently.
+    #[cfg(feature = "reth")]
+    pub fn validate_timestamp(&self, now: u64) -> Result<(), InvalidTransactionError> {
+        let tx = self.tx();
+        if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            if tx.nonce_sequence != 0 || tx.expiry == 0 {
+                return Err(InvalidTransactionError::TxTypeNotSupported);
+            }
+            if tx.expiry <= now
+                || tx.expiry > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW)
+            {
+                return Err(InvalidTransactionError::TxTypeNotSupported);
+            }
+        } else if tx.expiry != 0 && tx.expiry <= now {
+            return Err(InvalidTransactionError::TxTypeNotSupported);
+        }
+        Ok(())
     }
 
     fn recompute_hash(&self) -> B256 {
