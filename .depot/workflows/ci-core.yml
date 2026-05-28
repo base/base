@@ -125,7 +125,6 @@ jobs:
         run: git fetch origin "$BASE_REF":refs/remotes/origin/"$BASE_REF"
       - uses: ./.depot/actions/setup
         with:
-          free-disk: "true"
           native-deps: "true"
           mold: "true"
           foundry: "true"
@@ -154,7 +153,6 @@ jobs:
         run: git fetch origin "$BASE_REF":refs/remotes/origin/"$BASE_REF"
       - uses: ./.depot/actions/setup
         with:
-          free-disk: "true"
           native-deps: "true"
           mold: "true"
           foundry: "true"
@@ -182,7 +180,6 @@ jobs:
         run: git fetch origin "$BASE_REF":refs/remotes/origin/"$BASE_REF"
       - uses: ./.depot/actions/setup
         with:
-          free-disk: "true"
           native-deps: "true"
           mold: "true"
           foundry: "true"
@@ -223,7 +220,6 @@ jobs:
           fetch-depth: 1
       - uses: ./.depot/actions/setup
         with:
-          free-disk: "true"
           native-deps: "true"
           mold: "true"
           rust-cache-shared-key: "stable"
@@ -306,7 +302,6 @@ jobs:
           fetch-depth: 1
       - uses: ./.depot/actions/setup
         with:
-          free-disk: "true"
           native-deps: "true"
           mold: "true"
           foundry: "true"

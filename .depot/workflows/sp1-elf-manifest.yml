@@ -46,7 +46,6 @@ jobs:
         if: >-
           github.event_name == 'workflow_dispatch' || steps.elf-inputs.outputs.needs_rebuild == 'true'
         with:
-          free-disk: "true"
           sp1: "true"
       - name: Rebuild and update SP1 ELF manifest
         id: elf-manifest

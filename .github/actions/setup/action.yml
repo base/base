@@ -29,9 +29,6 @@ inputs:
   native-deps:
     description: Install native build dependencies (clang, llvm, etc.)
     default: "false"
-  free-disk:
-    description: Free disk space before building
-    default: "false"
   rust-cache-shared-key:
     description: Shared key for Rust cache (empty to skip caching)
     default: ""
@@ -42,29 +39,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Free Disk Space (fast pre-clean)
-      if: inputs.free-disk == 'true'
-      shell: bash
-      run: |
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /usr/local/share/boost
-        sudo rm -rf /opt/hostedtoolcache/CodeQL
-        df -h
-
-    - name: Free Disk Space
-      if: inputs.free-disk == 'true'
-      continue-on-error: true
-      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-      with:
-        tool-cache: false
-        android: false
-        dotnet: false
-        haskell: true
-        large-packages: false
-        swap-storage: true
-
     - name: Install native dependencies
       if: inputs.native-deps == 'true'
       uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3

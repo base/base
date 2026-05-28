@@ -33,7 +33,6 @@ jobs:
           fetch-depth: 1
       - uses: ./.depot/actions/setup
         with:
-          free-disk: "true"
           toolchain: nightly
           native-deps: "true"
           mold: "true"
