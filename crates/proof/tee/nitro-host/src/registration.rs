@@ -207,6 +207,43 @@ impl RegistrationChecker {
 
         Err(RegistrationError::NoValidSigner { signers: discovered })
     }
+
+    /// Returns every enclave whose signer is currently valid on-chain, in
+    /// config order.
+    ///
+    /// Same fail-closed semantics as [`select_valid_enclave`](Self::select_valid_enclave):
+    /// an RPC error short-circuits the whole call. Returns
+    /// [`RegistrationError::NoValidSigner`] if no enclave is valid.
+    pub async fn select_all_valid_enclaves(&self) -> Result<Vec<ValidSigner>, RegistrationError> {
+        let mut valid = Vec::new();
+        let mut discovered = Vec::new();
+
+        for (index, transport) in self.transports.iter().enumerate() {
+            let signer = match Self::signer_address(transport).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(error = %e, index, "skipping transport: key fetch failed");
+                    continue;
+                }
+            };
+
+            discovered.push(signer);
+
+            match self.is_valid_signer(signer).await {
+                Ok(true) => valid.push(ValidSigner { index, signer }),
+                Ok(false) => {
+                    warn!(signer = %signer, index, "signer not valid in TEEProverRegistry");
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        if valid.is_empty() {
+            Err(RegistrationError::NoValidSigner { signers: discovered })
+        } else {
+            Ok(valid)
+        }
+    }
 }
 
 #[cfg(test)]

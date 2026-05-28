@@ -166,30 +166,45 @@ struct NitroProverRpc {
 #[async_trait]
 impl ProverApiServer for NitroProverRpc {
     async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult> {
-        let enclave = match &self.checker {
-            Some(checker) => {
-                let valid = checker.select_valid_enclave().await.map_err(|e| {
-                    warn!(error = %e, "rejecting proof request: signer validation failed");
-                    NitroProverServer::rpc_err(-32001, e)
-                })?;
-                &self.enclaves[valid.index]
-            }
-            // Constructor guarantees at least one enclave.
-            None => &self.enclaves[0],
-        };
-
         let l2_block = request.claimed_l2_block_number;
         let timeout = self.proof_request_timeout;
 
-        let _permit = enclave.prove_permit.clone().try_acquire_owned().map_err(|_| {
-            warn!(l2_block, "rejecting proof request: enclave already proving");
-            NitroProverServer::rpc_err(
-                -32002,
-                format!(
-                    "enclave busy: another proof request is already in flight for L2 block {l2_block}"
-                ),
-            )
-        })?;
+        // Pick the first valid enclave with an available permit. Falling through busy enclaves
+        // matters in dual-enclave deployments with a checker: `select_valid_enclave` always
+        // returns the first valid enclave, so without fall-through a single in-flight request
+        // would make the second enclave unreachable even while it is idle.
+        let candidate_indices: Vec<usize> = match &self.checker {
+            Some(checker) => checker
+                .select_all_valid_enclaves()
+                .await
+                .map_err(|e| {
+                    warn!(error = %e, "rejecting proof request: signer validation failed");
+                    NitroProverServer::rpc_err(-32001, e)
+                })?
+                .into_iter()
+                .map(|v| v.index)
+                .collect(),
+            // Constructor guarantees at least one enclave.
+            None => vec![0],
+        };
+
+        let (enclave, _permit) = candidate_indices
+            .iter()
+            .find_map(|&i| {
+                self.enclaves[i]
+                    .prove_permit
+                    .clone()
+                    .try_acquire_owned()
+                    .ok()
+                    .map(|permit| (&self.enclaves[i], permit))
+            })
+            .ok_or_else(|| {
+                warn!(l2_block, "rejecting proof request: all valid enclaves already proving");
+                NitroProverServer::rpc_err(
+                    -32002,
+                    "enclave busy: another proof request is already in flight",
+                )
+            })?;
 
         match tokio::time::timeout(timeout, enclave.service.prove_block(request)).await {
             Ok(result) => result.map_err(|e| NitroProverServer::rpc_err(-32000, e)),
@@ -408,5 +423,62 @@ mod tests {
         let _held = Arc::clone(&rpc.enclaves[0].prove_permit).try_acquire_owned().unwrap();
 
         assert_eq!(rpc.enclaves[1].prove_permit.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn prove_falls_through_to_second_enclave_when_first_is_busy() {
+        use std::collections::HashMap;
+
+        use alloy_signer::utils::public_key_to_address;
+        use k256::ecdsa::VerifyingKey;
+
+        use crate::test_utils::AddressBasedMockRegistry;
+
+        async fn signer_for(transport: &NitroTransport) -> alloy_primitives::Address {
+            let pk = transport.signer_public_key().await.unwrap();
+            let vk = VerifyingKey::from_sec1_bytes(&pk).unwrap();
+            public_key_to_address(&vk)
+        }
+
+        let s1 = Arc::new(EnclaveServer::new_local().unwrap());
+        let s2 = Arc::new(EnclaveServer::new_local().unwrap());
+        let t1 = Arc::new(NitroTransport::local(s1));
+        let t2 = Arc::new(NitroTransport::local(s2));
+
+        let addr1 = signer_for(&t1).await;
+        let addr2 = signer_for(&t2).await;
+
+        let mut map = HashMap::new();
+        map.insert(addr1, true);
+        map.insert(addr2, true);
+        let registry = AddressBasedMockRegistry::new(map);
+
+        let checker = Arc::new(
+            RegistrationChecker::new(vec![Arc::clone(&t1), Arc::clone(&t2)], registry).unwrap(),
+        );
+
+        let enclave0 = EnclaveService {
+            transport: Arc::clone(&t1),
+            service: ProverService::new(test_prover_config(), NitroBackend::new(Arc::clone(&t1))),
+            prove_permit: Arc::new(Semaphore::new(MAX_CONCURRENT_PROOF_REQUESTS_PER_ENCLAVE)),
+        };
+        let enclave1 = EnclaveService {
+            transport: Arc::clone(&t2),
+            service: ProverService::new(test_prover_config(), NitroBackend::new(Arc::clone(&t2))),
+            prove_permit: Arc::new(Semaphore::new(MAX_CONCURRENT_PROOF_REQUESTS_PER_ENCLAVE)),
+        };
+        let rpc = NitroProverRpc {
+            enclaves: vec![enclave0, enclave1],
+            proof_request_timeout: Duration::from_secs(60),
+            checker: Some(checker),
+        };
+
+        // Saturate the first enclave; the second is still free.
+        let _held = Arc::clone(&rpc.enclaves[0].prove_permit).try_acquire_owned().unwrap();
+
+        // prove() must not return -32002 (busy) because enclave[1] is available; the request will
+        // route there and only fail later because RPCs are bogus (-32000).
+        let err = rpc.prove(ProofRequest::default()).await.unwrap_err();
+        assert_ne!(err.code(), -32002, "expected fall-through to second enclave, got busy");
     }
 }
