@@ -99,12 +99,6 @@ impl LoadRunner {
     /// measured loop starts.
     #[instrument(skip(self, setup), fields(accounts = self.accounts.len()))]
     pub async fn setup_real_tokens(&mut self, setup: &RealTokenSetup) -> Result<()> {
-        if self.config.chain_id == 8453 && !setup.allow_chain_id_8453 {
-            return Err(BaselineError::Config(
-                "real-token setup on chain_id 8453 requires allow_chain_id_8453".into(),
-            ));
-        }
-
         let swap_routers = self.collect_swap_routers();
         if swap_routers.is_empty() {
             return Err(BaselineError::Config(

@@ -9,8 +9,9 @@
 # deployed, but its factory does not currently have a WETH/USDC pool.
 
 transaction_submission_rpcs:
-  - "https://c3-chainproxy-base-sepolia-archive-dev.cbhq.net"
-query_rpc: "https://c3-chainproxy-base-sepolia-archive-dev.cbhq.net"
+  - "https://sepolia.base.org/"
+# Must point at an RPC that supports eth_getBlockReceipts for confirmation tracking.
+query_rpc: "https://base-sepolia-rpc.publicnode.com"
 txpool_nodes: []
 flashblocks_ws: "wss://sepolia.flashblocks.base.org/ws"
 
