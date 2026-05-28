@@ -106,7 +106,7 @@ where
     }
 
     /// Returns the wrapped reth pool.
-    pub fn protocol_pool(
+    pub const fn protocol_pool(
         &self,
     ) -> &Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>, O, S>
     {
