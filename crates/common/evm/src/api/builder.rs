@@ -18,10 +18,15 @@ pub trait Builder: Sized {
     /// The database type of the context.
     type Db: Database;
 
+    /// Returns the active [`BaseSpecId`] for this builder.
+    fn spec(&self) -> BaseSpecId;
+
     /// Builds a [`BaseEvm`] with a `()` inspector. The inspect flag is `false`,
     /// so [`Inspector`][revm::Inspector] callbacks are never invoked via
     /// [`alloy_evm::Evm::transact`].
-    fn build_base(self) -> BaseEvm<Self::Db, (), PrecompilesMap>;
+    fn build_base(self) -> BaseEvm<Self::Db, (), PrecompilesMap> {
+        self.build_base_with_activation_admin_address(None)
+    }
 
     /// Builds a [`BaseEvm`] with a `()` inspector and an activation registry admin address.
     ///
@@ -30,7 +35,13 @@ pub trait Builder: Sized {
     fn build_base_with_activation_admin_address(
         self,
         activation_admin_address: Option<Address>,
-    ) -> BaseEvm<Self::Db, (), PrecompilesMap>;
+    ) -> BaseEvm<Self::Db, (), PrecompilesMap> {
+        let spec = self.spec();
+        let precompiles = BasePrecompiles::new_with_spec(spec)
+            .with_activation_admin_address(activation_admin_address)
+            .install();
+        self.build_base_with_precompiles(precompiles)
+    }
 
     /// Builds a [`BaseEvm`] with a `()` inspector and caller-supplied precompiles.
     ///
@@ -41,8 +52,12 @@ pub trait Builder: Sized {
     /// Builds a [`BaseEvm`] with the given inspector. The inspect flag is `true`,
     /// so [`Inspector`][revm::Inspector] callbacks are invoked on every
     /// [`alloy_evm::Evm::transact`] call.
-    fn build_with_inspector<INSP>(self, inspector: INSP)
-    -> BaseEvm<Self::Db, INSP, PrecompilesMap>;
+    fn build_with_inspector<INSP>(
+        self,
+        inspector: INSP,
+    ) -> BaseEvm<Self::Db, INSP, PrecompilesMap> {
+        self.build_with_inspector_and_activation_admin_address(inspector, None)
+    }
 
     /// Builds a [`BaseEvm`] with the given inspector and activation registry admin address.
     ///
@@ -52,7 +67,13 @@ pub trait Builder: Sized {
         self,
         inspector: INSP,
         activation_admin_address: Option<Address>,
-    ) -> BaseEvm<Self::Db, INSP, PrecompilesMap>;
+    ) -> BaseEvm<Self::Db, INSP, PrecompilesMap> {
+        let spec = self.spec();
+        let precompiles = BasePrecompiles::new_with_spec(spec)
+            .with_activation_admin_address(activation_admin_address)
+            .install();
+        self.build_with_inspector_and_precompiles(inspector, precompiles)
+    }
 
     /// Builds a [`BaseEvm`] with the given inspector and caller-supplied precompiles.
     ///
@@ -68,19 +89,8 @@ pub trait Builder: Sized {
 impl<DB: Database> Builder for BaseContext<DB> {
     type Db = DB;
 
-    fn build_base(self) -> BaseEvm<DB, (), PrecompilesMap> {
-        self.build_base_with_activation_admin_address(None)
-    }
-
-    fn build_base_with_activation_admin_address(
-        self,
-        activation_admin_address: Option<Address>,
-    ) -> BaseEvm<DB, (), PrecompilesMap> {
-        let spec: BaseSpecId = self.cfg.spec;
-        let precompiles = BasePrecompiles::new_with_spec(spec)
-            .with_activation_admin_address(activation_admin_address)
-            .install();
-        self.build_base_with_precompiles(precompiles)
+    fn spec(&self) -> BaseSpecId {
+        self.cfg.spec
     }
 
     fn build_base_with_precompiles<P>(self, precompiles: P) -> BaseEvm<DB, (), P> {
@@ -95,22 +105,6 @@ impl<DB: Database> Builder for BaseContext<DB> {
             },
             false,
         )
-    }
-
-    fn build_with_inspector<INSP>(self, inspector: INSP) -> BaseEvm<DB, INSP, PrecompilesMap> {
-        self.build_with_inspector_and_activation_admin_address(inspector, None)
-    }
-
-    fn build_with_inspector_and_activation_admin_address<INSP>(
-        self,
-        inspector: INSP,
-        activation_admin_address: Option<Address>,
-    ) -> BaseEvm<DB, INSP, PrecompilesMap> {
-        let spec: BaseSpecId = self.cfg.spec;
-        let precompiles = BasePrecompiles::new_with_spec(spec)
-            .with_activation_admin_address(activation_admin_address)
-            .install();
-        self.build_with_inspector_and_precompiles(inspector, precompiles)
     }
 
     fn build_with_inspector_and_precompiles<INSP, P>(
