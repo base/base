@@ -257,7 +257,7 @@ single receiver — it is the primary way components communicate in async Rust. 
 persists the current set of known ENRs to the boot store every 60 seconds.
 
 The driver communicates with the rest of the system through a
-[`Discv5Handler`](https://github.com/base/base/blob/main/crates/consensus/disc/src/handler.rs),
+[`Discv5Handler`](../../crates/consensus/disc/src/handler.rs),
 which is just a thin wrapper around an `mpsc::Sender`. Other parts of the system can request
 metrics, peer lists, the local ENR, or ask the discovery service to ban specific addresses. This
 channel-based design avoids the need for shared mutable state across async boundaries.
