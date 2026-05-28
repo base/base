@@ -40,7 +40,8 @@ By default, `baseup` installs every binary this repo publishes in GitHub release
 
 - downloads `<binary>-<version>-<target>.tar.gz`
 - checks `<archive>.sha256`
-- verifies `<archive>.asc` with GPG
+- imports the pinned Base Releases public key into a temporary GPG keyring
+- verifies `<archive>.asc` with GPG and requires fingerprint `5EFE7BCFCD85682711F9FC30904841FFEBD38BAD`
 - verifies GitHub SLSA provenance when `gh` is installed and authenticated
 
 Use `--unsafe-skip-verify` only for local testing; checksum verification is still required.

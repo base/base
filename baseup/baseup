@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.4"
+BASEUP_INSTALLER_VERSION="0.1.5"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -14,8 +14,10 @@ BIN_DIR="${BASE_BIN_DIR:-$BASEUP_HOME/bin}"
 BASEUP_HOST_BASE_URL="${BASEUP_HOST_BASE_URL:-https://raw.githubusercontent.com/${BASEUP_REPO}/${BASEUP_REPO_REF}/baseup}"
 BASEUP_BIN_URL="${BASEUP_BIN_URL:-${BASEUP_HOST_BASE_URL}/baseup}"
 BASEUP_BIN_PATH="$BIN_DIR/baseup"
-BASEUP_RELEASE_GPG_FINGERPRINT="${BASEUP_RELEASE_GPG_FINGERPRINT:-}"
+BASEUP_RELEASE_GPG_FINGERPRINT="${BASEUP_RELEASE_GPG_FINGERPRINT:-5EFE7BCFCD85682711F9FC30904841FFEBD38BAD}"
+BASEUP_RELEASE_GPG_PUBLIC_KEY="${BASEUP_RELEASE_GPG_PUBLIC_KEY:-}"
 BASEUP_RELEASE_GPG_KEY_URL="${BASEUP_RELEASE_GPG_KEY_URL:-}"
+BASEUP_GPG_HOME=""
 
 DEFAULT_BINS=("base" "base-reth-node" "base-consensus" "basectl")
 SELECTED_BINS=()
@@ -206,27 +208,101 @@ normalize_fingerprint() {
     printf '%s' "$1" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]'
 }
 
+release_gpg_public_key() {
+    if [[ -n "$BASEUP_RELEASE_GPG_PUBLIC_KEY" ]]; then
+        printf '%s\n' "$BASEUP_RELEASE_GPG_PUBLIC_KEY"
+        return
+    fi
+
+    if [[ -n "$BASEUP_RELEASE_GPG_KEY_URL" ]]; then
+        fetch_text "$BASEUP_RELEASE_GPG_KEY_URL"
+        return
+    fi
+
+    cat <<'EOF'
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+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
+h/Y1kv4atro=
+=tCvr
+-----END PGP PUBLIC KEY BLOCK-----
+EOF
+}
+
 ensure_gpg_key() {
     local fingerprint
     fingerprint="$(normalize_fingerprint "$BASEUP_RELEASE_GPG_FINGERPRINT")"
 
-    [[ -n "$fingerprint" ]] || return 0
+    [[ -n "$fingerprint" ]] || error "BASEUP_RELEASE_GPG_FINGERPRINT must not be empty."
 
-    if gpg --batch --list-keys "$fingerprint" >/dev/null 2>&1; then
+    if [[ -z "$BASEUP_GPG_HOME" ]]; then
+        [[ -n "$MAIN_TMP_DIR" ]] || error "Temporary install directory is not initialized."
+        BASEUP_GPG_HOME="$MAIN_TMP_DIR/gnupg"
+    fi
+
+    if ! mkdir -p "$BASEUP_GPG_HOME" 2>/dev/null; then
+        error "Failed to create temporary GPG keyring."
+    fi
+    chmod 700 "$BASEUP_GPG_HOME" 2>/dev/null || true
+
+    if gpg --homedir "$BASEUP_GPG_HOME" --batch --list-keys "$fingerprint" >/dev/null 2>&1; then
         return 0
     fi
 
-    if [[ -z "$BASEUP_RELEASE_GPG_KEY_URL" ]]; then
-        error "Base release signing key $fingerprint is not in your keyring. Set BASEUP_RELEASE_GPG_KEY_URL or import the key before installing."
-    fi
-
-    info "Fetching Base release signing key..."
-    if ! fetch_text "$BASEUP_RELEASE_GPG_KEY_URL" | gpg --batch --import >/dev/null 2>&1; then
+    info "Importing Base release signing key..."
+    if ! release_gpg_public_key | gpg --homedir "$BASEUP_GPG_HOME" --batch --import >/dev/null 2>&1; then
         error "Failed to import Base release signing key"
     fi
 
-    if ! gpg --batch --list-keys "$fingerprint" >/dev/null 2>&1; then
-        error "Imported key does not match Base release signing fingerprint $fingerprint"
+    if ! gpg --homedir "$BASEUP_GPG_HOME" --batch --list-keys "$fingerprint" >/dev/null 2>&1; then
+        error "Imported Base release signing key does not match fingerprint $fingerprint"
     fi
 }
 
@@ -249,20 +325,16 @@ verify_gpg_signature() {
 
     ensure_gpg_key
 
-    if ! status_output="$(gpg --batch --status-fd 1 --verify "$signature_path" "$archive_path" 2>/dev/null)"; then
+    if ! status_output="$(gpg --homedir "$BASEUP_GPG_HOME" --batch --status-fd 1 --verify "$signature_path" "$archive_path" 2>/dev/null)"; then
         error "GPG signature verification failed for $archive_name"
     fi
 
     expected_fingerprint="$(normalize_fingerprint "$BASEUP_RELEASE_GPG_FINGERPRINT")"
-    if [[ -n "$expected_fingerprint" ]]; then
-        actual_fingerprint="$(printf '%s\n' "$status_output" | awk '/^\[GNUPG:\] VALIDSIG / { print $3; exit }')"
-        actual_fingerprint="$(normalize_fingerprint "$actual_fingerprint")"
+    actual_fingerprint="$(printf '%s\n' "$status_output" | awk '/^\[GNUPG:\] VALIDSIG / { print $3; exit }')"
+    actual_fingerprint="$(normalize_fingerprint "$actual_fingerprint")"
 
-        if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
-            error "GPG signature for $archive_name was made by $actual_fingerprint, expected $expected_fingerprint"
-        fi
-    else
-        warn "BASEUP_RELEASE_GPG_FINGERPRINT is not set; accepted any locally available GPG signing key."
+    if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+        error "GPG signature for $archive_name was made by ${actual_fingerprint:-unknown key}, expected $expected_fingerprint"
     fi
 
     info "GPG signature verified for $archive_name"
