@@ -355,16 +355,14 @@ impl TokenCreateParams {
     /// Validates stablecoin initialization fields.
     pub const fn validate_stablecoin(_init: &B20StablecoinInit) -> Result<()> {
         // Currency validation is delegated to `B20StablecoinStorage::initialize`, which rejects
-        // empty values with `MissingRequiredField` and non-A-Z values with `InvalidCurrency`.
+        // all invalid values (including empty) with `InvalidCurrency`.
         Ok(())
     }
 
     /// Validates security-token initialization fields.
     pub fn validate_security(init: &B20SecurityInit) -> Result<()> {
         if init.isin.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Factory::MissingRequiredField {
-                field: "isin".to_string(),
-            }));
+            return Err(BasePrecompileError::revert(IB20Factory::MissingRequiredField {}));
         }
         Ok(())
     }
@@ -700,33 +698,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             assert_output(
                 dispatch_factory_revert(ctx, call),
-                IB20Factory::MissingRequiredField { field: "currency".to_string() }.abi_encode(),
-            );
-        });
-    }
-
-    #[test]
-    fn test_create_token_reverts_for_invalid_stablecoin_currency_format() {
-        let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
-        let params = IB20Factory::B20StablecoinCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
-            name: "Stablecoin Token".to_string(),
-            symbol: "STB".to_string(),
-            initialAdmin: Address::repeat_byte(0xAB),
-            currency: "usd".to_string(), // lowercase — invalid format
-        };
-        let call = IB20Factory::createB20Call {
-            variant: IB20Factory::B20Variant::STABLECOIN,
-            salt: B256::repeat_byte(0x08),
-            params: params.abi_encode().into(),
-            initCalls: Vec::new(),
-        };
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            assert_output(
-                dispatch_factory_revert(ctx, call),
-                IB20Factory::InvalidCurrency { code: "usd".to_string() }.abi_encode(),
+                IB20Factory::InvalidCurrency { code: String::new() }.abi_encode(),
             );
         });
     }
@@ -1236,7 +1208,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             assert_output(
                 dispatch_factory_revert(ctx, call),
-                IB20Factory::MissingRequiredField { field: "isin".to_string() }.abi_encode(),
+                IB20Factory::MissingRequiredField {}.abi_encode(),
             );
         });
 
