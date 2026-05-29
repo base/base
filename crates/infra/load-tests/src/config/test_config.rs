@@ -276,6 +276,14 @@ pub enum TxTypeConfig {
         #[serde(default = "default_swap_max_amount")]
         max_amount: String,
     },
+    /// B-20 precompile token transfer.
+    B20 {
+        /// B-20 token precompile address. When omitted, a new token is created via the factory
+        /// during setup.
+        #[serde(default)]
+        contract: Option<String>,
+    },
+
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
         /// CL Router contract address.
@@ -584,6 +592,19 @@ impl TestConfig {
                     iterations: *iterations,
                     looper_contract,
                 }
+            }
+            TxTypeConfig::B20 { contract } => {
+                let contract = contract
+                    .as_ref()
+                    .map(|c| {
+                        c.parse::<Address>().map_err(|e| {
+                            BaselineError::Config(format!(
+                                "invalid b20 contract address '{c}': {e}"
+                            ))
+                        })
+                    })
+                    .transpose()?;
+                TxType::B20 { contract }
             }
             TxTypeConfig::Osaka { target } => TxType::Osaka { target: target.clone() },
             TxTypeConfig::UniswapV3 {

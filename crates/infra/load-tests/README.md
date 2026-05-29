@@ -144,3 +144,24 @@ looper_contract: "0x..."  # Deployed PrecompileLooper contract
 ```
 
 The `PrecompileLooper` contract enables batch testing by calling a precompile multiple times in a single transaction, useful for scenarios like multi-signature verification or repeated hash operations.
+
+#### B-20 Token Testing
+
+B-20 precompile tokens can be load-tested to benchmark the precompile's `transfer` performance.
+The load tester handles the full lifecycle: token creation via the B-20 factory, role grants
+(`MINT_ROLE` / `BURN_ROLE` to every sender), minting during setup, and burning during teardown.
+
+Requires Beryl activation (B-20 factory and token features must be active on the target chain).
+
+```yaml
+# Auto-create a new B-20 token per run (devnet/zeronet)
+transactions:
+  - weight: 100
+    type: b20
+
+# Use a pre-deployed B-20 token
+transactions:
+  - weight: 100
+    type: b20
+    contract: "0x..."
+```
