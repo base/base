@@ -62,18 +62,18 @@ pub enum ProofJobStatus {
     Failed,
 }
 
-/// Request to submit a proof.
+/// Request to prove a block range.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SubmitProofRequest {
+pub struct ProveBlockRangeRequest {
     /// Proof request payload.
     pub proof: ProofRequest,
 }
 
-/// Response returned after a proof request is accepted.
+/// Response returned after a prove-block-range request is accepted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SubmitProofResponse {
+pub struct ProveBlockRangeResponse {
     /// Server-assigned or client-supplied session identifier.
     pub session_id: String,
 }
@@ -455,7 +455,7 @@ mod tests {
 
     #[test]
     fn proof_request_serializes_as_json_rpc_payload() {
-        let request = SubmitProofRequest {
+        let request = ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: Some("proof-session".to_owned()),
                 request: ProofRequestKind::Compressed(ZkProofRequest {
