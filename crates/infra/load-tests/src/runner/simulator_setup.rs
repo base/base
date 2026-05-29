@@ -1,16 +1,16 @@
 //! CREATE-based deployment and storage initialization for the Simulator contract.
 //!
-//! Computes the expected CREATE address from the deployer's current nonce, checks
-//! whether the contract is already deployed (idempotent), and if not, deploys it.
-//! Then initializes the storage and account slots required by the configured workload.
+//! Deploys the `Simulator.sol` contract at the funder's current nonce if no contract
+//! address is provided in the tx config, then initializes the required storage and
+//! account slots. On a fresh chain the funder's nonce is deterministic; on an existing
+//! chain supply an explicit contract address in the YAML config to skip deployment.
 
 use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, TxKind, U256, hex, keccak256};
+use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rlp::Encodable;
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
-use tracing::{info, warn};
+use tracing::info;
 use url::Url;
 
 use crate::{
@@ -83,7 +83,7 @@ pub async fn deploy_and_init_simulator(
     let query = EthProvider::new_http(rpc_url);
 
     let nonce = query.get_transaction_count(funder_address).await.rpc("get funder nonce")?;
-    let simulator_address = compute_create_address(funder_address, nonce);
+    let simulator_address = Address::create(&funder_address, nonce);
 
     let existing_code = query.get_code_at(simulator_address).await.rpc("get simulator code")?;
 
@@ -152,19 +152,6 @@ pub async fn deploy_and_init_simulator(
         "simulator deployment and initialization complete"
     );
     Ok(())
-}
-
-#[derive(alloy_rlp::RlpEncodable)]
-struct CreateInput {
-    address: Address,
-    nonce: u64,
-}
-
-fn compute_create_address(deployer: Address, nonce: u64) -> Address {
-    let mut encoded = Vec::new();
-    CreateInput { address: deployer, nonce }.encode(&mut encoded);
-    let hash = keccak256(&encoded);
-    Address::from_slice(&hash[12..])
 }
 
 async fn initialize_slots(
@@ -255,7 +242,10 @@ async fn initialize_slots(
             .await
             .rpc("wait initialize_storage_chunk receipt")?;
         if !receipt.status() {
-            warn!(tx_hash = %receipt.transaction_hash, "initialize_storage_chunk reverted");
+            return Err(BaselineError::Rpc(format!(
+                "initialize_storage_chunk reverted (tx {})",
+                receipt.transaction_hash
+            )));
         }
         nonce = nonce.saturating_add(1);
     }
@@ -277,7 +267,10 @@ async fn initialize_slots(
             .await
             .rpc("wait initialize_address_chunk receipt")?;
         if !receipt.status() {
-            warn!(tx_hash = %receipt.transaction_hash, "initialize_address_chunk reverted");
+            return Err(BaselineError::Rpc(format!(
+                "initialize_address_chunk reverted (tx {})",
+                receipt.transaction_hash
+            )));
         }
         nonce = nonce.saturating_add(1);
     }

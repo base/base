@@ -363,14 +363,19 @@ impl LoadRunner {
                     precompile_calls,
                     ..
                 } => {
-                    let storage_gas = (load_storage * 2_100
-                        + update_storage * 5_000
-                        + delete_storage * 5_000
-                        + create_storage * 20_000)
-                        + 21_000;
-                    let account_gas = (load_accounts + update_accounts + create_accounts) * 2_500;
-                    let precompile_gas: u64 = precompile_calls.iter().map(|(_, n)| n * 3_000).sum();
-                    storage_gas + account_gas + precompile_gas
+                    let storage_gas = load_storage
+                        .saturating_mul(2_100)
+                        .saturating_add(update_storage.saturating_mul(5_000))
+                        .saturating_add(delete_storage.saturating_mul(5_000))
+                        .saturating_add(create_storage.saturating_mul(20_000))
+                        .saturating_add(21_000);
+                    let account_gas = load_accounts
+                        .saturating_add(*update_accounts)
+                        .saturating_add(*create_accounts)
+                        .saturating_mul(2_500);
+                    let precompile_gas: u64 =
+                        precompile_calls.iter().map(|(_, n)| n.saturating_mul(3_000)).sum();
+                    storage_gas.saturating_add(account_gas).saturating_add(precompile_gas)
                 }
             };
             weighted_gas += gas_estimate * tx_config.weight as u64;

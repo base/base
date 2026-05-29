@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 # alloy
-alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-signer.workspace = true
 alloy-network.workspace = true
