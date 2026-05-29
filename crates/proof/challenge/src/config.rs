@@ -371,8 +371,6 @@ mod tests {
 
     #[test]
     fn test_log_config_from_args() {
-        use tracing::level_filters::LevelFilter;
-
         let args = LogArgs {
             level: 4,
             stdout_quiet: false,
