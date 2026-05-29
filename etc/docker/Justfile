@@ -106,7 +106,15 @@ build-image target='client' profile='dev':
       arm64|aarch64) platform_pair="linux-arm64" ;;
       *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
     esac
-    PROFILE="{{ profile }}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
+    elf_require=1
+    case "{{ profile }}" in
+      dev|profiling)
+        case "{{ target }}" in
+          zk-prover|devnet) elf_require=0 ;;
+        esac
+        ;;
+    esac
+    PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
 
 # Prepares Docker images needed for devnet tests
 pull-images:
@@ -148,7 +156,15 @@ _build-rust-images group profile='dev':
       arm64|aarch64) platform_pair="linux-arm64" ;;
       *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
     esac
-    PROFILE="{{ profile }}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
+    elf_require=1
+    case "{{ profile }}" in
+      dev|profiling)
+        case "{{ group }}" in
+          devnet) elf_require=0 ;;
+        esac
+        ;;
+    esac
+    PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
 _up-devnet compose_profile zk:

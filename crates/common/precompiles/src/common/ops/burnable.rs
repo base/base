@@ -140,6 +140,38 @@ mod tests {
     }
 
     #[test]
+    fn burn_unauthorized_caller_gets_role_error_not_balance_error() {
+        let mut token = TestToken::with_storage_and_policy(
+            InMemoryTokenAccounting::new(TOKEN_ADDR),
+            InMemoryPolicy::new(),
+        );
+
+        assert_eq!(
+            token.burn(CALLER, ALICE, U256::ONE, false).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: CALLER,
+                neededRole: B20TokenRole::Burn.id(),
+            })
+        );
+    }
+
+    #[test]
+    fn burn_blocked_unauthorized_caller_gets_role_error_not_blocked_error() {
+        let mut token = TestToken::with_storage_and_policy(
+            InMemoryTokenAccounting::new(TOKEN_ADDR),
+            InMemoryPolicy::new(),
+        );
+
+        assert_eq!(
+            token.burn_blocked(CALLER, ALICE, U256::ONE, false).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: CALLER,
+                neededRole: B20TokenRole::BurnBlocked.id(),
+            })
+        );
+    }
+
+    #[test]
     fn non_privileged_burn_with_role_succeeds() {
         let mut token = token_with_role(B20TokenRole::Burn, CALLER, U256::from(10u64));
 

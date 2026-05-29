@@ -10,6 +10,10 @@ variable "RUST_VERSION" {
   default = "1.93"
 }
 
+variable "BASE_SUCCINCT_ELF_REQUIRE" {
+  default = "1"
+}
+
 variable "REGISTRY_IMAGE" {
   default = "ghcr.io/base/node-reth-dev"
 }
@@ -133,7 +137,8 @@ target "zk-prover" {
   inherits = ["_rust-service-common"]
   target = "zk-prover"
   args = {
-    PROFILE = "${ZK_PROVER_PROFILE}"
+    PROFILE                   = "${ZK_PROVER_PROFILE}"
+    BASE_SUCCINCT_ELF_REQUIRE = "${BASE_SUCCINCT_ELF_REQUIRE}"
   }
   tags = ["base-prover-zk:local"]
   cache-from = [

@@ -562,18 +562,18 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     ) -> base_precompile_storage::Result<U256> {
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::REDEEM)?;
         B20Guards::ensure_policy::<Self>(self, Self::REDEEM_SENDER_POLICY, caller)?;
-        if amount.is_zero() {
-            return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
-        }
         let ratio = self.accounting().shares_to_tokens_ratio()?;
-        let shares = amount.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)?
-            / B20SecurityStorage::WAD;
-        let minimum = self.accounting().minimum_redeemable()?;
-        if shares == U256::ZERO || shares < minimum {
-            return Err(BasePrecompileError::revert(IB20Security::BelowMinimumRedeemable {
-                shares,
-                minimum,
-            }));
+        if !amount.is_zero() {
+            let shares =
+                amount.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)?
+                    / B20SecurityStorage::WAD;
+            let minimum = self.accounting().minimum_redeemable()?;
+            if shares == U256::ZERO || shares < minimum {
+                return Err(BasePrecompileError::revert(IB20Security::BelowMinimumRedeemable {
+                    shares,
+                    minimum,
+                }));
+            }
         }
         let balance = self.accounting().balance_of(caller)?;
         if balance < amount {
@@ -653,9 +653,6 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         }
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         for (account, amount) in accounts.into_iter().zip(amounts) {
-            if amount.is_zero() {
-                return Err(BasePrecompileError::revert(IB20::InvalidAmount {}));
-            }
             let balance = self.accounting().balance_of(account)?;
             if balance < amount {
                 return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
@@ -988,6 +985,20 @@ mod tests {
     }
 
     #[test]
+    fn security_redeem_zero_amount_is_no_op() {
+        let mut token = make_token();
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().total_supply = U256::from(100u64);
+        token.accounting_mut().minimum_redeemable = U256::from(1u64);
+
+        token.security_redeem(ALICE, U256::ZERO).unwrap();
+
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(100u64));
+        assert_eq!(token.accounting().events.len(), 2); // Transfer(ALICE, 0x0, 0) + Redeemed(ALICE, 0, ratio)
+    }
+
+    #[test]
     fn security_redeem_rejects_below_minimum_shares() {
         let mut token = make_token();
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
@@ -1191,23 +1202,46 @@ mod tests {
     }
 
     #[test]
-    fn batch_burn_rejects_zero_amount() {
+    fn batch_burn_zero_amount_is_no_op() {
         let mut token = make_token();
         token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
         token.accounting_mut().total_supply = U256::from(100u64);
 
-        assert_eq!(
-            call_security(
-                &mut token,
-                ALICE,
-                batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::ZERO]),
-            )
-            .unwrap_err(),
-            BasePrecompileError::revert(IB20::InvalidAmount {})
-        );
+        call_security(
+            &mut token,
+            ALICE,
+            batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::ZERO]),
+        )
+        .unwrap();
+
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
-        assert_eq!(token.accounting().events.len(), 0);
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(100u64));
+        assert_eq!(token.accounting().events.len(), 1); // Transfer(ALICE, 0x0, 0) emitted
+    }
+
+    #[test]
+    fn batch_burn_does_not_revert_on_zero_value_transfer() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().balances.insert(BOB, U256::from(50u64));
+        token.accounting_mut().total_supply = U256::from(150u64);
+
+        call_security(
+            &mut token,
+            ALICE,
+            batch_burn_calldata(
+                alloc::vec![ALICE, BOB],
+                alloc::vec![U256::from(10u64), U256::ZERO],
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(90u64));
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(140u64));
+        assert_eq!(token.accounting().events.len(), 2); // one Transfer per element
     }
 
     #[test]

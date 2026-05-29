@@ -65,9 +65,6 @@ pub trait Transferable: Token {
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
-        if !privileged && spender != from {
-            B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferExecutor, spender)?;
-        }
         let allowance = self.accounting().allowance(from, spender)?;
         if allowance == U256::MAX {
             return self.transfer(from, to, amount, privileged);
@@ -78,6 +75,9 @@ pub trait Transferable: Token {
                 allowance,
                 needed: amount,
             }));
+        }
+        if !privileged && spender != from {
+            B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferExecutor, spender)?;
         }
         self.transfer(from, to, amount, privileged)?;
         self.accounting_mut().set_allowance(from, spender, allowance - amount)
@@ -371,6 +371,25 @@ mod tests {
             BasePrecompileError::revert(IB20::PolicyForbids {
                 policyScope: B20PolicyType::TransferReceiver.id(),
                 policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            })
+        );
+    }
+
+    #[test]
+    fn transfer_from_allowance_check_should_be_done_before_executor_policy() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::TransferExecutor.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(
+            token.transfer_from(SPENDER, ALICE, BOB, U256::ONE, false).unwrap_err(),
+            BasePrecompileError::revert(IB20::InsufficientAllowance {
+                spender: SPENDER,
+                allowance: U256::ZERO,
+                needed: U256::ONE,
             })
         );
     }

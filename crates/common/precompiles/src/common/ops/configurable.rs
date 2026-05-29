@@ -124,6 +124,20 @@ mod tests {
     }
 
     #[test]
+    fn update_supply_cap_unauthorized_caller_gets_role_error_not_cap_error() {
+        let mut token = make_token();
+        token.accounting_mut().total_supply = U256::from(100u64);
+
+        assert_eq!(
+            token.update_supply_cap(CALLER, U256::from(99u64), false).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: CALLER,
+                neededRole: B20TokenRole::DefaultAdmin.id(),
+            })
+        );
+    }
+
+    #[test]
     fn update_name_round_trips_and_emits_event() {
         let mut token = make_token();
 
