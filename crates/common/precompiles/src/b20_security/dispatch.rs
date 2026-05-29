@@ -563,7 +563,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::REDEEM)?;
         B20Guards::ensure_policy::<Self>(self, Self::REDEEM_SENDER_POLICY, caller)?;
         let ratio = self.accounting().shares_to_tokens_ratio()?;
-        if amount > U256::ZERO {
+        if !amount.is_zero() {
             let shares = amount.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)?
                 / B20SecurityStorage::WAD;
             let minimum = self.accounting().minimum_redeemable()?;
