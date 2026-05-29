@@ -81,6 +81,7 @@ impl ProverWorkerClient {
     ) -> Result<HeartbeatResponse, ProverServiceClientError> {
         debug!(
             session_id = %request.session_id,
+            lock_id = %request.lock_id,
             worker_id = %request.worker_id,
             lock_duration_seconds = request.lock_duration_seconds,
             "heartbeating proof job"
@@ -95,6 +96,7 @@ impl ProverWorkerClient {
     ) -> Result<WorkerSubmitProofResponse, ProverServiceClientError> {
         debug!(
             session_id = %request.session_id,
+            lock_id = %request.lock_id,
             worker_id = %request.worker_id,
             "submitting proof job result"
         );
