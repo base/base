@@ -58,23 +58,23 @@ combined_ca_file=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --service-name)
-      service_name="${2:-}"
+      service_name="${2:?--service-name requires a value}"
       shift 2
       ;;
     --service-command)
-      service_command="${2:-}"
+      service_command="${2:?--service-command requires a value}"
       shift 2
       ;;
     --system-ca-file)
-      system_ca_file="${2:-}"
+      system_ca_file="${2:?--system-ca-file requires a value}"
       shift 2
       ;;
     --extra-ca-file)
-      extra_ca_file="${2:-}"
+      extra_ca_file="${2:?--extra-ca-file requires a value}"
       shift 2
       ;;
     --combined-ca-file)
-      combined_ca_file="${2:-}"
+      combined_ca_file="${2:?--combined-ca-file requires a value}"
       shift 2
       ;;
     *)
