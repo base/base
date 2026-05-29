@@ -4,9 +4,8 @@ use alloy_primitives::{Address, B256};
 use anyhow::{Context, Result, bail};
 pub(crate) use base_prover_service::ProveBlockRequest;
 use base_prover_service_protocol::{
-    ProofRequest, ProofRequestKind, ProveBlockRangeRequest, ProveBlockRangeResponse,
-    ProverRequesterApiClient, SnarkGroth16ProofRequest, TeeKind, TeeProofRequest, ZkProofRequest,
-    ZkVm,
+    ProofRequest, ProofRequestKind, ProverRequesterApiClient, SnarkGroth16ProofRequest,
+    SubmitProofRequest, SubmitProofResponse, TeeKind, TeeProofRequest, ZkProofRequest, ZkVm,
 };
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 
@@ -23,12 +22,12 @@ pub(crate) fn connect() -> HttpClient {
 pub(crate) async fn prove_block(
     client: &HttpClient,
     request: ProveBlockRequest,
-) -> Result<ProveBlockRangeResponse> {
-    let request = to_prove_block_range_request(request)?;
-    client.prove_block_range(request).await.context("prove_block_range failed")
+) -> Result<SubmitProofResponse> {
+    let request = to_submit_proof_request(request)?;
+    client.submit_proof(request).await.context("submit_proof failed")
 }
 
-fn to_prove_block_range_request(request: ProveBlockRequest) -> Result<ProveBlockRangeRequest> {
+fn to_submit_proof_request(request: ProveBlockRequest) -> Result<SubmitProofRequest> {
     let l1_head = request
         .l1_head
         .as_deref()
@@ -69,7 +68,5 @@ fn to_prove_block_range_request(request: ProveBlockRequest) -> Result<ProveBlock
         proof_type => bail!("invalid proof_type {proof_type}"),
     };
 
-    Ok(ProveBlockRangeRequest {
-        proof: ProofRequest { session_id: request.session_id, request: body },
-    })
+    Ok(SubmitProofRequest { proof: ProofRequest { session_id: request.session_id, request: body } })
 }

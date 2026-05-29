@@ -2,7 +2,7 @@
 
 use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiClient,
+    ProverRequesterApiClient, SubmitProofRequest, SubmitProofResponse,
 };
 use jsonrpsee::http_client::HttpClient;
 use tracing::debug;
@@ -31,16 +31,16 @@ impl ProverRequesterClient {
         &self.inner
     }
 
-    /// Prove a block range.
-    pub async fn prove_block_range(
+    /// Submit a proof request.
+    pub async fn submit_proof(
         &self,
-        request: ProveBlockRangeRequest,
-    ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
+        request: SubmitProofRequest,
+    ) -> Result<SubmitProofResponse, ProverServiceClientError> {
         debug!(
             session_id = ?request.proof.session_id,
-            "proving block range"
+            "submitting proof request"
         );
-        Ok(self.inner.prove_block_range(request).await?)
+        Ok(self.inner.submit_proof(request).await?)
     }
 
     /// Return proof status and result data for a submitted proof request.

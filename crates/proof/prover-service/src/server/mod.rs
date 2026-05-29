@@ -5,7 +5,7 @@ use std::fmt;
 use base_prover_service_db::ProofRequestRepo;
 use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer,
+    ProverRequesterApiServer, SubmitProofRequest, SubmitProofResponse,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -16,7 +16,7 @@ use crate::ProofRequestManager;
 
 mod get_proof;
 mod list_proofs;
-mod prove_block_range;
+mod submit_proof;
 
 const ERROR_NOT_FOUND: i32 = -32004;
 const ERROR_UNAVAILABLE: i32 = -32014;
@@ -53,11 +53,8 @@ impl ProverServiceServer {
 
 #[async_trait]
 impl ProverRequesterApiServer for ProverServiceServer {
-    async fn prove_block_range(
-        &self,
-        request: ProveBlockRangeRequest,
-    ) -> RpcResult<ProveBlockRangeResponse> {
-        self.prove_block_range_impl(request).await
+    async fn submit_proof(&self, request: SubmitProofRequest) -> RpcResult<SubmitProofResponse> {
+        self.submit_proof_impl(request).await
     }
 
     async fn get_proof(&self, request: GetProofRequest) -> RpcResult<GetProofResponse> {
