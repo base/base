@@ -109,28 +109,28 @@ jobs:
 
           if [ ! -s "$output" ] || [ "$((passed + failed))" -eq 0 ]; then
             body="${marker}
-          ### ❌ base-std fork tests did not run
-          The build or setup step failed before any tests could execute. Check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+### ❌ base-std fork tests did not run
+The build or setup step failed before any tests could execute. Check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
           elif [ "$failed" -eq 0 ]; then
             body="${marker}
-          ### ✅ base-std fork tests: all ${passed} passed
-          base/base is fully in sync with the base-std spec."
+### ✅ base-std fork tests: all ${passed} passed
+base/base is fully in sync with the base-std spec."
           else
             failing=$(grep '\[FAIL' "$output" \
               | sed 's/\x1B\[[0-9;]*m//g' \
               | sed 's/^\[FAIL: \(.*\)\] \(.*\) (runs.*$/- **\2**: `\1`/' \
               | sort -u || true)
             body="${marker}
-          ### ❌ base-std fork tests: ${failed} failed, ${passed} passed
+### ❌ base-std fork tests: ${failed} failed, ${passed} passed
 
-          base/base diverges from the base-std spec. These failures must be fixed before merging.
+base/base diverges from the base-std spec.
 
-          <details>
-          <summary>Failing tests</summary>
+<details>
+<summary>Failing tests</summary>
 
-          ${failing}
+${failing}
 
-          </details>"
+</details>"
           fi
 
           pr="${{ github.event.pull_request.number }}"
