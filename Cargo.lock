@@ -5707,9 +5707,11 @@ dependencies = [
 name = "base-proof-tee-nitro-host"
 version = "0.0.0"
 dependencies = [
+ "alloy-genesis 2.0.5",
  "alloy-primitives",
  "alloy-signer 2.0.5",
  "async-trait",
+ "base-common-genesis",
  "base-health",
  "base-proof-contracts",
  "base-proof-host",

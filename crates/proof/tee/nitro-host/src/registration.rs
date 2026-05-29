@@ -179,11 +179,19 @@ impl RegistrationChecker {
         }
     }
 
-    /// Selects the first enclave whose signer is currently valid on-chain.
+    /// Returns every enclave whose signer is currently valid on-chain, in
+    /// config order.
     ///
-    /// Returns as soon as a valid signer is found (config order).
-    pub async fn select_valid_enclave(&self) -> Result<ValidSigner, RegistrationError> {
+    /// Best-effort across enclaves: RPC errors for individual signers are
+    /// logged and skipped rather than failing the whole call. If no valid
+    /// signer was found, returns the first RPC error encountered (so the
+    /// caller surfaces L1 reachability problems) or
+    /// [`RegistrationError::NoValidSigner`] if every signer was reachable
+    /// but invalid.
+    pub async fn select_all_valid_enclaves(&self) -> Result<Vec<ValidSigner>, RegistrationError> {
+        let mut valid = Vec::new();
         let mut discovered = Vec::new();
+        let mut first_rpc_error = None;
 
         for (index, transport) in self.transports.iter().enumerate() {
             let signer = match Self::signer_address(transport).await {
@@ -197,15 +205,29 @@ impl RegistrationChecker {
             discovered.push(signer);
 
             match self.is_valid_signer(signer).await {
-                Ok(true) => return Ok(ValidSigner { index, signer }),
+                Ok(true) => valid.push(ValidSigner { index, signer }),
                 Ok(false) => {
                     warn!(signer = %signer, index, "signer not valid in TEEProverRegistry");
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        signer = %signer,
+                        index,
+                        "L1 RPC failed during validity check, skipping enclave"
+                    );
+                    first_rpc_error.get_or_insert(e);
+                }
             }
         }
 
-        Err(RegistrationError::NoValidSigner { signers: discovered })
+        if !valid.is_empty() {
+            Ok(valid)
+        } else if let Some(e) = first_rpc_error {
+            Err(e)
+        } else {
+            Err(RegistrationError::NoValidSigner { signers: discovered })
+        }
     }
 }
 
@@ -343,7 +365,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn select_first_invalid_second_valid_returns_index_1() {
+    async fn select_all_skips_invalid_returns_only_valid() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
         let checker = two_transport_checker(registry.clone());
         let (addr0, addr1) = two_transport_signers(&checker).await;
@@ -351,13 +373,14 @@ mod tests {
         registry.validity_map.lock().unwrap().insert(addr0, false);
         registry.validity_map.lock().unwrap().insert(addr1, true);
 
-        let valid = checker.select_valid_enclave().await.unwrap();
-        assert_eq!(valid.index, 1);
-        assert_eq!(valid.signer, addr1);
+        let valid = checker.select_all_valid_enclaves().await.unwrap();
+        assert_eq!(valid.len(), 1);
+        assert_eq!(valid[0].index, 1);
+        assert_eq!(valid[0].signer, addr1);
     }
 
     #[tokio::test]
-    async fn select_both_valid_returns_first() {
+    async fn select_all_both_valid_returns_in_config_order() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
         let checker = two_transport_checker(registry.clone());
         let (addr0, addr1) = two_transport_signers(&checker).await;
@@ -365,17 +388,20 @@ mod tests {
         registry.validity_map.lock().unwrap().insert(addr0, true);
         registry.validity_map.lock().unwrap().insert(addr1, true);
 
-        let valid = checker.select_valid_enclave().await.unwrap();
-        assert_eq!(valid.index, 0);
-        assert_eq!(valid.signer, addr0);
+        let valid = checker.select_all_valid_enclaves().await.unwrap();
+        assert_eq!(valid.len(), 2);
+        assert_eq!(valid[0].index, 0);
+        assert_eq!(valid[0].signer, addr0);
+        assert_eq!(valid[1].index, 1);
+        assert_eq!(valid[1].signer, addr1);
     }
 
     #[tokio::test]
-    async fn select_none_valid_returns_no_valid_signer() {
+    async fn select_all_none_valid_returns_no_valid_signer() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
         let checker = two_transport_checker(registry);
 
-        let err = checker.select_valid_enclave().await.unwrap_err();
+        let err = checker.select_all_valid_enclaves().await.unwrap_err();
         match err {
             RegistrationError::NoValidSigner { signers } => {
                 assert_eq!(signers.len(), 2);
@@ -411,6 +437,39 @@ mod tests {
         registry.should_fail.store(true, Ordering::Relaxed);
 
         assert!(checker.check_health().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn select_all_valid_returns_valid_when_other_rpc_fails() {
+        let registry = AddressBasedMockRegistry::new(HashMap::new());
+        let checker = two_transport_checker(registry.clone());
+        let (addr0, addr1) = two_transport_signers(&checker).await;
+
+        registry.validity_map.lock().unwrap().insert(addr0, true);
+        registry.validity_map.lock().unwrap().insert(addr1, true);
+        // Enclave 1's validity check will fail at the RPC layer; enclave 0
+        // is still valid and must be returned.
+        registry.fail_signers.lock().unwrap().insert(addr1);
+
+        let valid = checker.select_all_valid_enclaves().await.unwrap();
+        assert_eq!(valid.len(), 1);
+        assert_eq!(valid[0].index, 0);
+        assert_eq!(valid[0].signer, addr0);
+    }
+
+    #[tokio::test]
+    async fn select_all_valid_propagates_rpc_error_when_none_valid() {
+        let registry = AddressBasedMockRegistry::new(HashMap::new());
+        let checker = two_transport_checker(registry.clone());
+        let (addr0, addr1) = two_transport_signers(&checker).await;
+
+        // Enclave 0 RPC fails, enclave 1 reports not-valid. No valid signer,
+        // so the RPC error should surface so the operator sees L1 trouble.
+        registry.fail_signers.lock().unwrap().insert(addr0);
+        registry.validity_map.lock().unwrap().insert(addr1, false);
+
+        let err = checker.select_all_valid_enclaves().await.unwrap_err();
+        assert!(matches!(err, RegistrationError::Rpc { .. }), "got {err:?}");
     }
 
     #[tokio::test]
