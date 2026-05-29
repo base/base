@@ -66,13 +66,10 @@ async fn test_policy_registry_admin_handoff_and_frozen_policy() -> Result<()> {
         admin: admin.address(),
         policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
     };
-    let output =
-        admin_client.call(PolicyRegistryStorage::ADDRESS, create_call.clone()).await?;
+    let output = admin_client.call(PolicyRegistryStorage::ADDRESS, create_call.clone()).await?;
     let policy_id = IPolicyRegistry::createPolicyCall::abi_decode_returns(output.as_ref())
         .wrap_err("Failed to decode createPolicy return")?;
-    admin_client
-        .send_call(PolicyRegistryStorage::ADDRESS, create_call, "createPolicy")
-        .await?;
+    admin_client.send_call(PolicyRegistryStorage::ADDRESS, create_call, "createPolicy").await?;
 
     // Stage the admin transfer to new_admin.
     admin_client
