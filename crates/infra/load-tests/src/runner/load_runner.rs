@@ -369,16 +369,19 @@ impl LoadRunner {
                         .saturating_add(delete_storage.saturating_mul(5_000))
                         .saturating_add(create_storage.saturating_mul(20_000))
                         .saturating_add(21_000);
+                    // BALANCE cold ~2600, value CALL to warm account ~9000,
+                    // value CALL to new account ~25000
                     let account_gas = load_accounts
-                        .saturating_add(*update_accounts)
-                        .saturating_add(*create_accounts)
-                        .saturating_mul(2_500);
+                        .saturating_mul(2_600)
+                        .saturating_add(update_accounts.saturating_mul(9_000))
+                        .saturating_add(create_accounts.saturating_mul(25_000));
                     let precompile_gas: u64 =
                         precompile_calls.iter().map(|(_, n)| n.saturating_mul(3_000)).sum();
                     storage_gas.saturating_add(account_gas).saturating_add(precompile_gas)
                 }
             };
-            weighted_gas += gas_estimate * tx_config.weight as u64;
+            weighted_gas =
+                weighted_gas.saturating_add(gas_estimate.saturating_mul(tx_config.weight as u64));
         }
 
         weighted_gas / total_weight as u64
