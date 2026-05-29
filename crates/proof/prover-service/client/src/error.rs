@@ -45,7 +45,7 @@ impl ProverServiceClientError {
     /// JSON-RPC code used by the prover service when a dependency is unavailable.
     pub const ERROR_UNAVAILABLE: i32 = -32014;
 
-    /// JSON-RPC code used by the prover service when capacity is exhausted.
+    /// JSON-RPC code used by the prover service when the proof request retry budget is exhausted.
     pub const ERROR_RESOURCE_EXHAUSTED: i32 = -32016;
 
     /// JSON-RPC code used by the prover service for failed preconditions.
@@ -74,13 +74,7 @@ impl ProverServiceClientError {
             | JsonRpcClientError::RequestTimeout
             | JsonRpcClientError::RestartNeeded(_)
             | JsonRpcClientError::ServiceDisconnect => true,
-            JsonRpcClientError::ParseError(_)
-            | JsonRpcClientError::InvalidSubscriptionId
-            | JsonRpcClientError::InvalidRequestId(_)
-            | JsonRpcClientError::Custom(_)
-            | JsonRpcClientError::HttpNotImplemented
-            | JsonRpcClientError::EmptyBatchRequest(_)
-            | JsonRpcClientError::RegisterMethod(_) => false,
+            _ => false,
         }
     }
 
