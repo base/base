@@ -5988,10 +5988,13 @@ dependencies = [
 name = "base-prover-service-client"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "base-prover-service-protocol",
+ "chrono",
  "jsonrpsee",
  "rstest",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "url",
 ]
