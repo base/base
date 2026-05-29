@@ -30,6 +30,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
+    panic::AssertUnwindSafe,
     sync::Arc,
 };
 
@@ -42,7 +43,7 @@ use base_proof_contracts::{
 use base_proof_primitives::{ProofJournal, ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider, RpcError};
 use eyre::Result;
-use futures::{StreamExt, stream};
+use futures::{FutureExt, StreamExt, stream};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
@@ -59,7 +60,9 @@ use crate::{
 pub struct PipelineConfig {
     /// Maximum number of concurrent proof tasks.
     pub max_parallel_proofs: usize,
-    /// Maximum retries for a single proof range before full pipeline reset.
+    /// Maximum retries for a single proof range before dropping that target
+    /// and the cached recovery; other in-flight and proved entries are
+    /// preserved.
     pub max_retries: u32,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
@@ -81,7 +84,8 @@ pub struct PipelineConfig {
 /// typically 1–2 steps).
 ///
 /// A full re-walk from the anchor is only needed when:
-/// - No cache exists (cold start / pipeline reset).
+/// - No cache exists (cold start, or invalidated by a submit `RootMismatch`
+///   or a target hitting `max_retries`).
 /// - The anchor advanced past the cached tip (governance intervention).
 /// - `game_count` decreased (L1 reorg removed games).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,17 +131,6 @@ impl PipelineState {
             retry_counts: BTreeMap::new(),
             cached_recovery: None,
         }
-    }
-
-    fn reset(&mut self) {
-        self.prove_tasks.abort_all();
-        self.submit_tasks.abort_all();
-        self.inflight.clear();
-        self.proved.clear();
-        self.submitting = None;
-        self.retry_counts.clear();
-        self.cached_recovery = None;
-        self.record_gauges();
     }
 
     fn record_gauges(&self) {
@@ -422,17 +415,31 @@ where
             );
             state.inflight.insert(plan.target_block);
             state.prove_tasks.spawn(async move {
-                let mut proof_timer = base_metrics::timed!(Metrics::proof_duration_seconds());
-                tokio::select! {
-                    () = cancel.cancelled() => {
-                        proof_timer.disarm();
-                        (plan.target_block, Err(ProposerError::Internal("cancelled".into())))
+                let target = plan.target_block;
+                let inner = async move {
+                    let mut proof_timer = base_metrics::timed!(Metrics::proof_duration_seconds());
+                    tokio::select! {
+                        () = cancel.cancelled() => {
+                            proof_timer.disarm();
+                            Err(ProposerError::Internal("cancelled".into()))
+                        }
+                        result = prover.prove(request) => {
+                            drop(proof_timer);
+                            result.map_err(|e| ProposerError::Prover(e.to_string()))
+                        }
                     }
-                    result = prover.prove(request) => {
-                        drop(proof_timer);
-                        (plan.target_block, result.map_err(|e| ProposerError::Prover(e.to_string())))
-                    }
-                }
+                };
+                // Catch panics inside the prove future so a single bad task
+                // never bubbles up as a tokio JoinError that the coordinator
+                // can't attribute to a specific target.
+                let result = match AssertUnwindSafe(inner).catch_unwind().await {
+                    Ok(r) => r,
+                    Err(panic) => Err(ProposerError::Internal(format!(
+                        "proof task panicked: {}",
+                        panic_message(&panic)
+                    ))),
+                };
+                (target, result)
             });
         }
 
@@ -468,35 +475,54 @@ where
         info!(target_block = next_to_submit, parent_address = %parent_address, "Spawning submission task");
 
         let pipeline = self.clone();
+        // Keep a clone outside the spawned future so a panic inside the task
+        // does not destroy the proof; the catch_unwind branch re-attaches it
+        // to a Failed outcome so the coordinator can re-queue it for retry.
+        let proof_for_panic = proof_result.clone();
         state.submit_tasks.spawn(async move {
-            let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
-            let result =
-                pipeline.validate_and_submit(&proof_result, next_to_submit, parent_address).await;
-            match result {
-                Ok(()) => {
-                    drop(submit_timer);
-                    SubmitOutcome::Success { target_block: next_to_submit }
-                }
-                Err(SubmitAction::RootMismatch) => {
-                    submit_timer.disarm();
-                    SubmitOutcome::RootMismatch { target_block: next_to_submit }
-                }
-                Err(SubmitAction::Failed(e)) => {
-                    submit_timer.disarm();
-                    SubmitOutcome::Failed {
-                        target_block: next_to_submit,
-                        proof: proof_result,
-                        error: e,
+            let inner = async move {
+                let mut submit_timer =
+                    base_metrics::timed!(Metrics::proposal_total_duration_seconds());
+                let result = pipeline
+                    .validate_and_submit(&proof_result, next_to_submit, parent_address)
+                    .await;
+                match result {
+                    Ok(()) => {
+                        drop(submit_timer);
+                        SubmitOutcome::Success { target_block: next_to_submit }
+                    }
+                    Err(SubmitAction::RootMismatch) => {
+                        submit_timer.disarm();
+                        SubmitOutcome::RootMismatch { target_block: next_to_submit }
+                    }
+                    Err(SubmitAction::Failed(e)) => {
+                        submit_timer.disarm();
+                        SubmitOutcome::Failed {
+                            target_block: next_to_submit,
+                            proof: proof_result,
+                            error: e,
+                        }
+                    }
+                    Err(SubmitAction::GameAlreadyExists) => {
+                        submit_timer.disarm();
+                        SubmitOutcome::GameAlreadyExists { target_block: next_to_submit }
+                    }
+                    Err(SubmitAction::Discard(e)) => {
+                        submit_timer.disarm();
+                        SubmitOutcome::Discard { target_block: next_to_submit, error: e }
                     }
                 }
-                Err(SubmitAction::GameAlreadyExists) => {
-                    submit_timer.disarm();
-                    SubmitOutcome::GameAlreadyExists { target_block: next_to_submit }
-                }
-                Err(SubmitAction::Discard(e)) => {
-                    submit_timer.disarm();
-                    SubmitOutcome::Discard { target_block: next_to_submit, error: e }
-                }
+            };
+            match AssertUnwindSafe(inner).catch_unwind().await {
+                Ok(outcome) => outcome,
+                Err(panic) => SubmitOutcome::Failed {
+                    target_block: next_to_submit,
+                    proof: proof_for_panic,
+                    error: ProposerError::Internal(format!(
+                        "submit task panicked: {}",
+                        panic_message(&panic)
+                    )),
+                },
             }
         });
     }
@@ -517,8 +543,13 @@ where
                 return false;
             }
             Err(join_err) => {
-                warn!(error = %join_err, "Submit task panicked");
-                state.reset();
+                // Panics are caught inside the spawned future and reported as
+                // SubmitOutcome::Failed (with the proof re-attached) so this
+                // branch should not normally fire. Treat as a transient
+                // failure: release the slot and leave `proved` intact.
+                warn!(error = %join_err, "Submit task join error");
+                state.submitting = None;
+                state.record_gauges();
                 return false;
             }
         };
@@ -569,9 +600,22 @@ where
                 true
             }
             SubmitOutcome::RootMismatch { target_block } => {
-                warn!(target_block, "Output root mismatch at submit time, resetting pipeline");
+                warn!(
+                    target_block,
+                    "Output root mismatch at submit time, dropping cached recovery"
+                );
                 Metrics::root_mismatch_total().increment(1);
-                state.reset();
+                // The mismatched proof was already removed from `proved` by
+                // `try_submit`. Drop the recovery cache so the next tick
+                // re-walks the chain and `prune_stale` evicts any newly
+                // overtaken entries. Other proved entries are left intact:
+                // each faces JIT validation independently at submit time and
+                // any that have gone stale will self-eject via this same
+                // path. Re-proving a still-valid block is much more expensive
+                // than one extra JIT validation RPC.
+                state.cached_recovery = None;
+                state.submitting = None;
+                state.record_gauges();
                 false
             }
             SubmitOutcome::Failed { target_block, proof, error } => {
@@ -632,9 +676,17 @@ where
                         target_block = target,
                         attempts = *count,
                         error = %e,
-                        "Proof failed after max retries, resetting pipeline"
+                        "Proof failed after max retries, dropping cached recovery"
                     );
-                    state.reset();
+                    // Drop only this target's retry bookkeeping (inflight was
+                    // already cleared above when the task finished). Other
+                    // in-flight proofs and completed entries in `proved` are
+                    // independent and must not be discarded. Drop
+                    // `cached_recovery` so the next tick re-walks the chain;
+                    // if this block is still needed it will be re-dispatched
+                    // naturally.
+                    state.retry_counts.remove(&target);
+                    state.cached_recovery = None;
                 } else {
                     warn!(
                         target_block = target,
@@ -642,15 +694,19 @@ where
                         error = %e,
                         "Proof failed, will retry next tick"
                     );
-                    state.record_gauges();
                 }
+                state.record_gauges();
             }
             Err(join_err) if join_err.is_cancelled() => {
                 debug!(error = %join_err, "Proof task cancelled");
             }
             Err(join_err) => {
-                warn!(error = %join_err, "Proof task panicked");
-                state.reset();
+                // Panics inside the prove future are caught and surfaced as
+                // `Ok((target, Err(_)))`; this branch is reached only for
+                // non-cancellation join errors that aren't tied to a known
+                // target. Don't blow away the proved queue.
+                warn!(error = %join_err, "Proof task join error");
+                state.record_gauges();
             }
         }
     }
@@ -803,7 +859,8 @@ where
         // O(1).
         //
         // A full walk from the anchor is required when:
-        // - No cache exists (cold start / pipeline reset).
+        // - No cache exists (cold start, or invalidated by RootMismatch /
+        //   max_retries).
         // - The anchor advanced past the cached tip (governance / anomaly).
         // - game_count decreased (L1 reorg removed games).
         let start = match cache.as_ref() {
@@ -1452,6 +1509,15 @@ where
         }
         Ok(roots)
     }
+}
+
+/// Extracts a printable message from a `catch_unwind` panic payload.
+fn panic_message(panic: &Box<dyn std::any::Any + Send + 'static>) -> String {
+    panic
+        .downcast_ref::<&'static str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "non-string panic payload".to_string())
 }
 
 /// Internal action after a submission attempt.
@@ -2525,20 +2591,134 @@ mod tests {
         );
     }
 
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_pipeline_state_reset_clears_cache() {
+    /// Builds a `PipelineState` populated with several proved entries plus a
+    /// couple of in-flight bookkeeping targets, used for failure-isolation
+    /// tests that need to assert sibling entries survive.
+    fn state_with_proved_siblings() -> PipelineState {
         let mut state = PipelineState::new();
+        for target in [TEST_BLOCK_INTERVAL, TEST_BLOCK_INTERVAL * 2, TEST_BLOCK_INTERVAL * 3] {
+            let p = test_proposal(target);
+            state.proved.insert(
+                target,
+                ProofResult::Tee { aggregate_proposal: p.clone(), proposals: vec![p] },
+            );
+        }
+        // Unrelated in-flight + retry-count entries that must not be wiped
+        // when a sibling target hits a failure path.
+        state.inflight.insert(TEST_BLOCK_INTERVAL * 4);
+        state.retry_counts.insert(TEST_BLOCK_INTERVAL * 4, 1);
         state.cached_recovery = Some(CachedRecovery {
             game_count: 10,
             state: RecoveredState {
                 parent_address: proxy_addr(5),
                 output_root: B256::repeat_byte(0x11),
-                l2_block_number: TEST_BLOCK_INTERVAL,
+                l2_block_number: 0,
             },
         });
+        state
+    }
 
-        state.reset();
-        assert!(state.cached_recovery.is_none(), "reset() should clear cached_recovery");
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_proof_max_retries_preserves_proved_queue() {
+        let pipeline =
+            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
+        let mut state = state_with_proved_siblings();
+        let failing_target = TEST_BLOCK_INTERVAL * 7;
+        state.inflight.insert(failing_target);
+        state.retry_counts.insert(failing_target, pipeline.config.max_retries.saturating_sub(1));
+
+        // Final attempt fails and pushes the counter to max_retries.
+        pipeline.handle_proof_result(
+            Ok((failing_target, Err(ProposerError::Prover("boom".into())))),
+            &mut state,
+        );
+
+        assert!(!state.inflight.contains(&failing_target), "failing target cleared");
+        assert!(!state.retry_counts.contains_key(&failing_target), "retry count cleared");
+        assert!(
+            state.cached_recovery.is_none(),
+            "cached_recovery should be dropped to force a re-walk"
+        );
+        assert_eq!(state.proved.len(), 3, "proved entries for sibling targets must survive");
+        assert!(state.inflight.contains(&(TEST_BLOCK_INTERVAL * 4)), "unrelated inflight survives");
+        assert_eq!(
+            state.retry_counts.get(&(TEST_BLOCK_INTERVAL * 4)),
+            Some(&1),
+            "unrelated retry count survives"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_proof_join_error_preserves_proved_queue() {
+        // Construct a synthetic JoinError by joining an aborted task.
+        let cancelled_err = {
+            let mut js: JoinSet<()> = JoinSet::new();
+            let handle = js.spawn(async { std::future::pending::<()>().await });
+            handle.abort();
+            js.join_next().await.unwrap().unwrap_err()
+        };
+        assert!(cancelled_err.is_cancelled(), "fixture must produce a cancellation error");
+
+        let pipeline =
+            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
+        let mut state = state_with_proved_siblings();
+        let proved_before = state.proved.clone();
+        let cached_before = state.cached_recovery;
+
+        // A cancellation join error is the only join error reachable in practice
+        // (panics are caught inside the spawned future). Verify it leaves
+        // state alone.
+        pipeline.handle_proof_result(Err(cancelled_err), &mut state);
+        assert_eq!(state.proved, proved_before, "proved queue untouched on cancellation");
+        assert_eq!(state.cached_recovery, cached_before, "cache untouched on cancellation");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_root_mismatch_preserves_proved_queue() {
+        let pipeline =
+            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
+        let mut state = state_with_proved_siblings();
+        state.submitting = Some(TEST_BLOCK_INTERVAL * 5);
+
+        let chain_next = pipeline
+            .handle_submit_result(
+                Ok(SubmitOutcome::RootMismatch { target_block: TEST_BLOCK_INTERVAL * 5 }),
+                &mut state,
+            )
+            .await;
+
+        assert!(!chain_next, "root mismatch must not chain another submit");
+        assert!(state.submitting.is_none(), "submitting slot released");
+        assert!(state.cached_recovery.is_none(), "cached_recovery dropped on mismatch");
+        assert_eq!(
+            state.proved.len(),
+            3,
+            "sibling proved entries must survive a root mismatch on a different target"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_submit_join_error_preserves_proved_queue() {
+        // Build a real cancellation JoinError (only join error reachable
+        // post-catch_unwind).
+        let cancelled_err = {
+            let mut js: JoinSet<()> = JoinSet::new();
+            let handle = js.spawn(async { std::future::pending::<()>().await });
+            handle.abort();
+            js.join_next().await.unwrap().unwrap_err()
+        };
+
+        let pipeline =
+            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
+        let mut state = state_with_proved_siblings();
+        state.submitting = Some(TEST_BLOCK_INTERVAL * 9);
+        let proved_before = state.proved.clone();
+
+        let chain_next = pipeline.handle_submit_result(Err(cancelled_err), &mut state).await;
+
+        assert!(!chain_next);
+        assert!(state.submitting.is_none(), "slot released");
+        assert_eq!(state.proved, proved_before, "proved queue survives a submit join error");
     }
 
     /// Pipeline, primed state with a cached recovery tip, and a proof ready

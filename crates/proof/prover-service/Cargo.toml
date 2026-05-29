@@ -1,6 +1,6 @@
 [package]
 name = "base-prover-service"
-description = "Base prover service protobuf definitions"
+description = "Base prover service JSON-RPC definitions and server implementation"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,17 +9,75 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-# gRPC
-prost.workspace = true
-prost-types.workspace = true
-tonic-prost.workspace = true
-tonic = { workspace = true, features = ["transport"] }
+base-prover-service-db.workspace = true
+base-prover-service-outbox.workspace = true
+base-prover-service-protocol.workspace = true
 
-[build-dependencies]
-tonic-prost-build.workspace = true
+# Succinct / SP1
+sp1-sdk.workspace = true
+sp1-prover-types.workspace = true
+sp1-cluster-utils.workspace = true
+sp1-cluster-common.workspace = true
+sp1-cluster-artifact.workspace = true
+base-proof-succinct-elfs.workspace = true
+base-proof-succinct-host-utils.workspace = true
+base-proof-succinct-proof-utils.workspace = true
+base-proof-succinct-client-utils.workspace = true
+base-proof-succinct-ethereum-host-utils.workspace = true
+
+# Network
+alloy-provider.workspace = true
+base-proof-rpc.workspace = true
+alloy-rpc-types.workspace = true
+base-common-network.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+
+# RPC
+jsonrpsee = { workspace = true, optional = true }
+
+# Async
+async-trait.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+# HTTP
+reqwest = { workspace = true, features = ["json"] }
+tower-http = { workspace = true, features = ["trace"] }
+axum = { workspace = true, features = ["tokio", "http1"] }
+tower = { workspace = true, features = ["limit", "timeout"] }
+
+# Rate limiting
+governor.workspace = true
+nonzero_ext.workspace = true
+
+# Serialization
+serde_json.workspace = true
+serde = { workspace = true, features = ["derive"] }
+chrono = { workspace = true, features = ["serde"] }
+bincode = { workspace = true, features = ["serde"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
+
+# Error handling
+anyhow.workspace = true
+
+# Observability
+metrics.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [lints]
 workspace = true
 
 [features]
-server = []
+default = [ "rpc-client", "rpc-server" ]
+rpc-client = [
+	"base-prover-service-protocol/rpc-client",
+	"dep:jsonrpsee",
+	"jsonrpsee/http-client",
+]
+rpc-server = [
+	"base-prover-service-protocol/rpc-server",
+	"dep:jsonrpsee",
+	"jsonrpsee/server",
+]
