@@ -34,7 +34,7 @@ mod state;
 pub use state::FlashblocksState;
 
 mod subscription;
-pub use subscription::FlashblocksSubscriber;
+pub use subscription::{FlashblocksSubscriber, FlashblocksSubscriberRunner};
 
 mod traits;
 pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};

@@ -1,8 +1,10 @@
 //! Standard Base execution-node arguments and runner wiring.
 
+use std::fmt;
+
 use base_bundle_extension::BundleExtension;
 use base_flashblocks::FlashblocksConfig;
-use base_flashblocks_node::FlashblocksExtension;
+use base_flashblocks_node::{FlashblocksExtension, SubscriberFactory};
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode};
@@ -14,6 +16,32 @@ use base_tx_forwarding::{
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use url::Url;
+
+/// Customization knobs for [`StandardBaseRethNode::runner_with_options`].
+#[derive(Default)]
+pub struct StandardRunnerOptions {
+    /// Optional override for the flashblocks subscriber. When `None`, the default subscriber is used.
+    pub flashblocks_subscriber_factory: Option<SubscriberFactory>,
+}
+
+impl fmt::Debug for StandardRunnerOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StandardRunnerOptions")
+            .field(
+                "flashblocks_subscriber_factory",
+                &self.flashblocks_subscriber_factory.as_ref().map(|_| "<factory>"),
+            )
+            .finish()
+    }
+}
+
+impl StandardRunnerOptions {
+    /// Sets the flashblocks subscriber factory override.
+    pub fn with_flashblocks_subscriber_factory(mut self, factory: SubscriberFactory) -> Self {
+        self.flashblocks_subscriber_factory = Some(factory);
+        self
+    }
+}
 
 /// CLI arguments for a standard Base execution node.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -198,6 +226,15 @@ pub struct StandardBaseRethNode;
 impl StandardBaseRethNode {
     /// Builds a runner with the standard Base execution-node extensions installed.
     pub fn runner(args: StandardNodeArgs) -> eyre::Result<BaseNodeRunner> {
+        Self::runner_with_options(args, StandardRunnerOptions::default())
+    }
+
+    /// Builds a runner with the standard Base execution-node extensions installed, applying the
+    /// supplied [`StandardRunnerOptions`] to customize specific extensions.
+    pub fn runner_with_options(
+        args: StandardNodeArgs,
+        options: StandardRunnerOptions,
+    ) -> eyre::Result<BaseNodeRunner> {
         let mut runner = BaseNodeRunner::new(args.rpc.rollup_args.clone());
 
         // Create flashblocks config first so we can share its state with metering.
@@ -242,7 +279,13 @@ impl StandardBaseRethNode {
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<BundleExtension>(());
         runner.install_ext::<TxForwardingExtension>((&args).into());
-        runner.install_ext::<FlashblocksExtension>(flashblocks_config);
+
+        let mut flashblocks_ext = FlashblocksExtension::new(flashblocks_config);
+        if let Some(factory) = options.flashblocks_subscriber_factory {
+            flashblocks_ext = flashblocks_ext.with_subscriber_factory(factory);
+        }
+        runner.add_extension(flashblocks_ext);
+
         runner.install_ext::<ProofsHistoryExtension>(args.rpc.rollup_args);
 
         Ok(runner)

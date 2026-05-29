@@ -173,3 +173,20 @@ where
         std::cmp::min(backoff * 2, Self::MAX_BACKOFF)
     }
 }
+
+/// Decouples the flashblocks extension from a concrete subscriber so callers can substitute
+/// custom implementations without forking the extension.
+pub trait FlashblocksSubscriberRunner: Send + 'static {
+    /// Starts the subscriber. Called from inside the flashblocks extension's node-started hook
+    /// after the state processor has been started.
+    fn start(&mut self);
+}
+
+impl<Receiver> FlashblocksSubscriberRunner for FlashblocksSubscriber<Receiver>
+where
+    Receiver: FlashblocksReceiver + Send + Sync + 'static,
+{
+    fn start(&mut self) {
+        Self::start(self);
+    }
+}

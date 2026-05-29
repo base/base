@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod extension;
-pub use extension::FlashblocksExtension;
+pub use extension::{FlashblocksExtension, SubscriberFactory};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_harness;

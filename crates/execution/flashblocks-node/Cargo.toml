@@ -42,6 +42,9 @@ tokio-stream.workspace = true
 # tracing
 tracing = { workspace = true, features = ["std"] }
 
+# misc
+url.workspace = true
+
 # test-utils (optional)
 eyre = { workspace = true, optional = true }
 base-test-utils = { workspace = true, optional = true }

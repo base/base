@@ -96,6 +96,13 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         self.extensions.push(Box::new(T::from_config(config)));
     }
 
+    /// Registers a pre-built extension. Use this when an extension needs to be customized via
+    /// builder methods before installing; otherwise prefer [`install_ext`](Self::install_ext)
+    /// which constructs the extension from a config.
+    pub fn add_extension<E: BaseNodeExtension + 'static>(&mut self, ext: E) {
+        self.extensions.push(Box::new(ext));
+    }
+
     /// Registers a callback to run after the node has started.
     pub fn add_started_callback<F>(&mut self, callback: F)
     where

@@ -1,30 +1,58 @@
 //! Contains the [`FlashblocksExtension`] which wires up the flashblocks feature
 //! (canonical block subscription and RPC surface) on the Base node builder.
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use base_engine_tree::BaseEngineValidatorBuilder;
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksConfig,
-    FlashblocksSubscriber,
+    FlashblocksState, FlashblocksSubscriber, FlashblocksSubscriberRunner,
 };
 use base_node_core::BasePayloadValidatorBuilder;
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_chain_state::CanonStateSubscriptions;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::info;
+use url::Url;
+
+/// Factory that produces a flashblocks subscriber given the shared state and the WebSocket URL.
+/// Used with [`FlashblocksExtension::with_subscriber_factory`] to substitute the default
+/// [`FlashblocksSubscriber`] for a custom implementation.
+pub type SubscriberFactory = Box<
+    dyn FnOnce(Arc<FlashblocksState>, Url) -> Box<dyn FlashblocksSubscriberRunner + Send>
+        + Send
+        + Sync
+        + 'static,
+>;
 
 /// Helper struct that wires the Flashblocks feature (canonical subscription and RPC) into the node builder.
-#[derive(Debug)]
 pub struct FlashblocksExtension {
     /// Optional Flashblocks configuration (includes state).
     config: Option<FlashblocksConfig>,
+    /// Optional override for the subscriber. When `None`, the default [`FlashblocksSubscriber`] is used.
+    subscriber_factory: Option<SubscriberFactory>,
+}
+
+impl fmt::Debug for FlashblocksExtension {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FlashblocksExtension")
+            .field("config", &self.config)
+            .field("subscriber_factory", &self.subscriber_factory.as_ref().map(|_| "<factory>"))
+            .finish()
+    }
 }
 
 impl FlashblocksExtension {
     /// Create a new Flashblocks extension helper.
     pub const fn new(config: Option<FlashblocksConfig>) -> Self {
-        Self { config }
+        Self { config, subscriber_factory: None }
+    }
+
+    /// Overrides the subscriber used when the extension is enabled. If unset, the default
+    /// [`FlashblocksSubscriber`] is used.
+    pub fn with_subscriber_factory(mut self, factory: SubscriberFactory) -> Self {
+        self.subscriber_factory = Some(factory);
+        self
     }
 }
 
@@ -37,7 +65,11 @@ impl BaseNodeExtension for FlashblocksExtension {
         };
 
         let state = cfg.state;
-        let mut subscriber = FlashblocksSubscriber::new(Arc::clone(&state), cfg.websocket_url);
+        let mut subscriber: Box<dyn FlashblocksSubscriberRunner + Send> =
+            match self.subscriber_factory {
+                Some(factory) => factory(Arc::clone(&state), cfg.websocket_url),
+                None => Box::new(FlashblocksSubscriber::new(Arc::clone(&state), cfg.websocket_url)),
+            };
 
         let state_for_canonical = Arc::clone(&state);
         let state_for_rpc = Arc::clone(&state);
