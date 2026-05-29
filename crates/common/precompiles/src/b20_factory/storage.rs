@@ -742,6 +742,32 @@ mod tests {
     }
 
     #[test]
+    fn test_create_token_reverts_for_invalid_stablecoin_currency_format() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let params = IB20Factory::B20StablecoinCreateParams {
+            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            name: "Stablecoin Token".to_string(),
+            symbol: "STB".to_string(),
+            initialAdmin: Address::repeat_byte(0xAB),
+            currency: "usd".to_string(), // lowercase — invalid format
+        };
+        let call = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::STABLECOIN,
+            salt: B256::repeat_byte(0x08),
+            params: params.abi_encode().into(),
+            initCalls: Vec::new(),
+        };
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_output(
+                dispatch_factory_revert(ctx, call),
+                IB20Factory::InvalidCurrency { code: "usd".to_string() }.abi_encode(),
+            );
+        });
+    }
+
+    #[test]
     fn test_create_token_checks_stablecoin_version_before_currency() {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
