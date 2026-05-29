@@ -287,7 +287,7 @@ impl BlockHandler {
         }
 
         // Same as v3, except:
-        // 1. The block should have an non-empty withdrawals root (checked by type-safety)
+        // 1. The block should have a non-empty withdrawals root (checked by type-safety)
         fn validate_v4(
             rollup_config: &RollupConfig,
             block: &BaseExecutionPayloadV4,
