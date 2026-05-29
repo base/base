@@ -2,7 +2,8 @@
 # Source: .github/workflows/base-std-fork-tests.yml
 #
 # Changes made:
-# - runs-on: ubuntu-latest → depot-ubuntu-latest
+# - runs-on: ubuntu-latest → depot-ubuntu-24.04-8
+# - cache compiled anvil/forge binaries keyed on base-anvil SHA + patched crate hashes
 name: Base Std Fork Tests
 
 on:
@@ -26,7 +27,7 @@ permissions:
 jobs:
   fork-tests:
     name: Base Std Fork Tests
-    runs-on: depot-ubuntu-latest
+    runs-on: depot-ubuntu-24.04-8
     timeout-minutes: 120
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -63,8 +64,19 @@ jobs:
 
           echo "BASE_STD_DIR=$workdir/base-std" >> "$GITHUB_ENV"
           echo "BASE_ANVIL_DIR=$workdir/base-anvil" >> "$GITHUB_ENV"
+          echo "BASE_ANVIL_SHA=$(git -C "$workdir/base-anvil" rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Restore patched anvil/forge binary cache
+        id: anvil-cache
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        with:
+          path: |
+            ${{ runner.temp }}/base-std-fork-tests/base-anvil/target/release/anvil
+            ${{ runner.temp }}/base-std-fork-tests/base-anvil/target/release/forge
+          key: base-anvil-${{ runner.os }}-${{ env.BASE_ANVIL_SHA }}-${{ hashFiles('crates/common/precompiles/**', 'crates/common/chains/**') }}
 
       - name: Build patched base-anvil binaries
+        if: steps.anvil-cache.outputs.cache-hit != 'true'
         shell: bash
         env:
           CARGO_PROFILE_RELEASE_LTO: "false"
