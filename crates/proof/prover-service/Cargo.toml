@@ -71,5 +71,13 @@ workspace = true
 
 [features]
 default = [ "rpc-client", "rpc-server" ]
-rpc-client = [ "dep:jsonrpsee", "jsonrpsee/http-client", "base-prover-service-protocol/rpc-client" ]
-rpc-server = [ "dep:jsonrpsee", "jsonrpsee/server", "base-prover-service-protocol/rpc-server" ]
+rpc-client = [
+	"base-prover-service-protocol/rpc-client",
+	"dep:jsonrpsee",
+	"jsonrpsee/http-client",
+]
+rpc-server = [
+	"base-prover-service-protocol/rpc-server",
+	"dep:jsonrpsee",
+	"jsonrpsee/server",
+]
