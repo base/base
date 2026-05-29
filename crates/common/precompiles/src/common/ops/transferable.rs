@@ -20,11 +20,11 @@ pub trait Transferable: Token {
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
-        if from == Address::ZERO {
-            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
-        }
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        if from == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
         if !privileged {
             B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::TRANSFER)?;
@@ -208,6 +208,16 @@ mod tests {
         assert_eq!(
             token.transfer(Address::ZERO, BOB, U256::ONE, false).unwrap_err(),
             BasePrecompileError::revert(IB20::InvalidSender { sender: Address::ZERO })
+        );
+    }
+
+    #[test]
+    fn transfer_receiver_error_should_fire_before_sender_error() {
+        let mut token = make_token();
+
+        assert_eq!(
+            token.transfer(Address::ZERO, Address::ZERO, U256::ONE, false).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
         );
     }
 

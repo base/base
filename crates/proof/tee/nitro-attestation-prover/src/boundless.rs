@@ -89,7 +89,10 @@ pub struct BoundlessProver {
     pub offer_min_price: Option<Amount>,
     /// Optional maximum Boundless offer price for each submitted proof request.
     pub offer_max_price: Option<Amount>,
-    /// Optional duration in seconds for Boundless price to ramp from min to max.
+    /// Optional duration in seconds for the Boundless offer price to
+    /// ramp from `offer_min_price` to `offer_max_price`. When unset
+    /// the Boundless SDK derives a cycle-count-based ramp; set to `0`
+    /// to eliminate the ramp entirely (max price offered immediately).
     pub offer_ramp_up_period_secs: Option<u32>,
     /// Optional maximum time, in seconds, that a prover that locks a
     /// request has to deliver the proof before forfeiting its stake bond
@@ -100,6 +103,17 @@ pub struct BoundlessProver {
     /// Boundless SDK derives a recommended value from the program's
     /// cycle count.
     pub offer_lock_timeout_secs: Option<u32>,
+    /// Delay, in seconds, between request submission and the moment
+    /// bidding is allowed to begin (`Offer.rampUpStart`).
+    ///
+    /// Defaults to `0` so that bidding opens immediately at submission,
+    /// eliminating the SDK's default "pre-bid flat period" (visible on
+    /// the Boundless explorer as the gap before the price-ramp begins).
+    /// With `0`, the fastest prover can lock as soon as it finishes
+    /// executing — at the cost of fewer provers seeing the request
+    /// before lock. The value is added to the current wall-clock time
+    /// per request to produce `Offer.rampUpStart`.
+    pub offer_bidding_start_delay_secs: u64,
     /// Serialises the `submit_onchain` call so that concurrent proof
     /// requests do not race on the Boundless wallet nonce. The lock is
     /// released immediately after submission, allowing the long-running
@@ -131,6 +145,7 @@ impl fmt::Debug for BoundlessProver {
             .field("offer_max_price", &self.offer_max_price)
             .field("offer_ramp_up_period_secs", &self.offer_ramp_up_period_secs)
             .field("offer_lock_timeout_secs", &self.offer_lock_timeout_secs)
+            .field("offer_bidding_start_delay_secs", &self.offer_bidding_start_delay_secs)
             .finish()
     }
 }
@@ -174,16 +189,43 @@ impl BoundlessProver {
         debug.to_ascii_lowercase().contains(NEEDLE)
     }
 
-    /// Applies optional explicit Boundless offer pricing to request params.
-    fn apply_offer_config(&self, params: RequestParams) -> RequestParams {
-        if self.offer_min_price.is_none()
-            && self.offer_max_price.is_none()
-            && self.offer_ramp_up_period_secs.is_none()
-            && self.offer_lock_timeout_secs.is_none()
-        {
-            return params;
-        }
+    /// Returns the current Unix timestamp in seconds, used to compute
+    /// `Offer.rampUpStart` as `now + offer_bidding_start_delay_secs`
+    /// immediately before each on-chain submission. Factored out so
+    /// tests can bracket calls between `before`/`after` snapshots to
+    /// assert the resulting timestamp falls in the expected window.
+    fn now_unix_secs() -> u64 {
+        // Matches the fail-soft pattern used elsewhere in this file
+        // (`effective_expiry`, `is_journal_fresh`): a pre-epoch system
+        // clock is unrealistic, and on a long-running registrar
+        // returning 0 here is preferable to panicking — the resulting
+        // bidding_start would be rejected downstream rather than
+        // crashing the process.
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
 
+    /// Applies the time-independent Boundless offer overrides to
+    /// request params.
+    ///
+    /// `min_price`, `max_price`, `ramp_up_period`, and `lock_timeout`
+    /// are only passed through when explicitly configured; when unset,
+    /// the Boundless SDK derives sensible values from the workload's
+    /// cycle count.
+    ///
+    /// `bidding_start` is intentionally **not** set here: it is a
+    /// wall-clock-relative deadline anchor (the SDK computes
+    /// `Offer.lockTimeout = bidding_start + lock_timeout_secs` and
+    /// `Offer.timeout = bidding_start + timeout_secs`), so capturing
+    /// it at params-build time would let the recovery scan,
+    /// `submit_lock` contention, and preflight execution consume the
+    /// lock/expiry window before the request is even submitted. It is
+    /// instead set by [`apply_bidding_start`](Self::apply_bidding_start)
+    /// immediately before `client.submit_onchain` inside the
+    /// `submit_lock` guard.
+    fn apply_offer_config(&self, params: RequestParams) -> RequestParams {
         let mut offer = OfferParams::builder();
         if let Some(min_price) = &self.offer_min_price {
             offer.min_price(min_price.clone());
@@ -199,6 +241,25 @@ impl BoundlessProver {
         }
 
         params.with_offer(offer)
+    }
+
+    /// Sets `Offer.rampUpStart` to `now_unix_secs() + offer_bidding_start_delay_secs`
+    /// on the given params, mutating the existing offer in place rather
+    /// than replacing it (so prior `apply_offer_config` settings are
+    /// preserved).
+    ///
+    /// Must be called as late as possible — ideally inside the
+    /// `submit_lock` guard, immediately before `client.submit_onchain`
+    /// — so that the deadline anchor is fresh at the moment the
+    /// request actually hits the chain. Calling it earlier (e.g. when
+    /// the params are first built) lets recovery RPC latency and lock
+    /// contention silently consume the lock/expiry window before the
+    /// request exists, which can result in requests submitted with
+    /// little or no remaining lock window.
+    fn apply_bidding_start(&self, mut params: RequestParams) -> RequestParams {
+        params.offer.bidding_start =
+            Some(Self::now_unix_secs().saturating_add(self.offer_bidding_start_delay_secs));
+        params
     }
 
     /// Fetches and ABI-encodes the set inclusion receipt for a fulfilled
@@ -438,6 +499,12 @@ impl BoundlessProver {
     ) -> Result<AttestationProof> {
         let (request_id, expires_at) = {
             let _guard = self.submit_lock.lock().await;
+            // Anchor `Offer.rampUpStart` to the current wall-clock as
+            // late as possible — after any recovery scan, preflight,
+            // and `submit_lock` contention — so the full configured
+            // lock/timeout window is available to provers once the
+            // request hits the chain. See `apply_bidding_start`.
+            let params = self.apply_bidding_start(params);
             client.submit_onchain(params).await.map_err(|e| {
                 warn!(
                     error = %e,
@@ -805,6 +872,7 @@ mod tests {
     const TEST_MAX_PRICE_ETH: &str = "0.03";
     const TEST_RAMP_UP_PERIOD_SECS: u32 = 30;
     const TEST_LOCK_TIMEOUT_SECS: u32 = 600;
+    const TEST_NON_ZERO_BIDDING_START_DELAY_SECS: u64 = 120;
 
     const TEST_MAX_ATTESTATION_AGE: Duration = Duration::from_secs(3300);
 
@@ -828,6 +896,7 @@ mod tests {
             offer_max_price: None,
             offer_ramp_up_period_secs: None,
             offer_lock_timeout_secs: None,
+            offer_bidding_start_delay_secs: 0,
             submit_lock: Arc::new(Mutex::new(())),
             recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
         }
@@ -860,16 +929,27 @@ mod tests {
         assert!(prover.offer_max_price.is_none());
         assert!(prover.offer_ramp_up_period_secs.is_none());
         assert!(prover.offer_lock_timeout_secs.is_none());
+        assert_eq!(prover.offer_bidding_start_delay_secs, 0);
     }
 
+    /// With every Option-typed offer override unset, `apply_offer_config`
+    /// leaves the corresponding offer fields unset so the Boundless SDK
+    /// derives them from cycle count. `bidding_start` is intentionally
+    /// **not** set here — it is anchored later by `apply_bidding_start`
+    /// immediately before on-chain submission.
     #[rstest]
-    fn apply_offer_config_preserves_default_when_unset(prover: BoundlessProver) {
+    fn apply_offer_config_defaults_to_sdk(prover: BoundlessProver) {
         let params = prover.apply_offer_config(RequestParams::new());
 
+        assert!(params.offer.ramp_up_period.is_none());
         assert!(params.offer.min_price.is_none());
         assert!(params.offer.max_price.is_none());
-        assert!(params.offer.ramp_up_period.is_none());
         assert!(params.offer.lock_timeout.is_none());
+        assert!(
+            params.offer.bidding_start.is_none(),
+            "bidding_start must be left unset by apply_offer_config and only \
+             populated by apply_bidding_start at submission time"
+        );
     }
 
     #[rstest]
@@ -880,6 +960,7 @@ mod tests {
         prover.offer_max_price = Some(max_price.clone());
         prover.offer_ramp_up_period_secs = Some(TEST_RAMP_UP_PERIOD_SECS);
         prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
+        prover.offer_bidding_start_delay_secs = TEST_NON_ZERO_BIDDING_START_DELAY_SECS;
 
         let params = prover.apply_offer_config(RequestParams::new());
 
@@ -887,11 +968,13 @@ mod tests {
         assert_eq!(params.offer.max_price, Some(max_price));
         assert_eq!(params.offer.ramp_up_period, Some(TEST_RAMP_UP_PERIOD_SECS));
         assert_eq!(params.offer.lock_timeout, Some(TEST_LOCK_TIMEOUT_SECS));
+        assert!(
+            params.offer.bidding_start.is_none(),
+            "bidding_start is set by apply_bidding_start, not apply_offer_config"
+        );
     }
 
-    /// `lock_timeout` can be set independently of price/ramp fields,
-    /// in which case `apply_offer_config` must still emit an offer
-    /// override (not return params unchanged).
+    /// `lock_timeout` can be set independently of price/ramp fields.
     #[rstest]
     fn apply_offer_config_sets_lock_timeout_alone(mut prover: BoundlessProver) {
         prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
@@ -899,9 +982,67 @@ mod tests {
         let params = prover.apply_offer_config(RequestParams::new());
 
         assert_eq!(params.offer.lock_timeout, Some(TEST_LOCK_TIMEOUT_SECS));
+        assert!(params.offer.ramp_up_period.is_none());
         assert!(params.offer.min_price.is_none());
         assert!(params.offer.max_price.is_none());
-        assert!(params.offer.ramp_up_period.is_none());
+        assert!(params.offer.bidding_start.is_none());
+    }
+
+    /// `apply_bidding_start` with the default (`0`) delay sets
+    /// `bidding_start` to the current wall-clock at call time.
+    #[rstest]
+    fn apply_bidding_start_defaults_to_now(prover: BoundlessProver) {
+        let before = BoundlessProver::now_unix_secs();
+        let params = prover.apply_bidding_start(RequestParams::new());
+        let after = BoundlessProver::now_unix_secs();
+
+        let bidding_start = params.offer.bidding_start.expect("bidding_start set");
+        assert!(
+            (before..=after).contains(&bidding_start),
+            "bidding_start {bidding_start} outside [{before}, {after}]"
+        );
+    }
+
+    /// Non-zero `bidding_start_delay` is offset from the current clock
+    /// at call time (per-request, not captured at startup), so the
+    /// resulting timestamp is always in the configured window.
+    #[rstest]
+    fn apply_bidding_start_uses_current_clock(mut prover: BoundlessProver) {
+        prover.offer_bidding_start_delay_secs = TEST_NON_ZERO_BIDDING_START_DELAY_SECS;
+
+        let before = BoundlessProver::now_unix_secs();
+        let params = prover.apply_bidding_start(RequestParams::new());
+        let after = BoundlessProver::now_unix_secs();
+
+        let bidding_start = params.offer.bidding_start.expect("bidding_start set");
+        assert!(
+            (before.saturating_add(TEST_NON_ZERO_BIDDING_START_DELAY_SECS)
+                ..=after.saturating_add(TEST_NON_ZERO_BIDDING_START_DELAY_SECS))
+                .contains(&bidding_start),
+            "bidding_start {bidding_start} outside expected window"
+        );
+    }
+
+    /// `apply_bidding_start` preserves all other offer fields set by
+    /// `apply_offer_config` — it mutates `bidding_start` in place
+    /// rather than replacing the offer.
+    #[rstest]
+    fn apply_bidding_start_preserves_other_offer_fields(mut prover: BoundlessProver) {
+        let min_price = eth_amount(TEST_MIN_PRICE_ETH);
+        let max_price = eth_amount(TEST_MAX_PRICE_ETH);
+        prover.offer_min_price = Some(min_price.clone());
+        prover.offer_max_price = Some(max_price.clone());
+        prover.offer_ramp_up_period_secs = Some(TEST_RAMP_UP_PERIOD_SECS);
+        prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
+
+        let params = prover.apply_offer_config(RequestParams::new());
+        let params = prover.apply_bidding_start(params);
+
+        assert_eq!(params.offer.min_price, Some(min_price));
+        assert_eq!(params.offer.max_price, Some(max_price));
+        assert_eq!(params.offer.ramp_up_period, Some(TEST_RAMP_UP_PERIOD_SECS));
+        assert_eq!(params.offer.lock_timeout, Some(TEST_LOCK_TIMEOUT_SECS));
+        assert!(params.offer.bidding_start.is_some());
     }
 
     // ── Clone ───────────────────────────────────────────────────────────

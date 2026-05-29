@@ -1086,37 +1086,14 @@ impl ProofRequestRepo {
     }
 
     /// List proof requests with offset-based pagination and return total count.
+    ///
+    /// An empty status filter returns all proof requests.
     pub async fn list_with_offset(
         &self,
-        status_filter: Option<ProofStatus>,
+        status_filter: &[ProofStatus],
         page: ProofRequestPage,
     ) -> Result<(Vec<ProofRequestListItem>, u64)> {
-        let (rows, count) = if let Some(status) = status_filter {
-            let rows = sqlx::query_as::<_, ProofRequestListItem>(
-                r#"
-                SELECT
-                    id, start_block_number, number_of_blocks_to_prove,
-                    proof_type, status, error_message,
-                    created_at, updated_at, completed_at
-                FROM proof_requests
-                WHERE status = $1
-                ORDER BY created_at DESC
-                LIMIT $2 OFFSET $3
-                "#,
-            )
-            .bind(status.as_str())
-            .bind(page.limit())
-            .bind(page.offset())
-            .fetch_all(&self.pool);
-
-            let count = sqlx::query_as::<_, (i64,)>(
-                "SELECT COUNT(*) FROM proof_requests WHERE status = $1",
-            )
-            .bind(status.as_str())
-            .fetch_one(&self.pool);
-
-            futures::try_join!(rows, count)?
-        } else {
+        let (rows, count) = if status_filter.is_empty() {
             let rows = sqlx::query_as::<_, ProofRequestListItem>(
                 r#"
                 SELECT
@@ -1134,6 +1111,32 @@ impl ProofRequestRepo {
 
             let count = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM proof_requests")
                 .fetch_one(&self.pool);
+
+            futures::try_join!(rows, count)?
+        } else {
+            let statuses = status_filter.iter().map(ProofStatus::as_str).collect::<Vec<_>>();
+            let rows = sqlx::query_as::<_, ProofRequestListItem>(
+                r#"
+                SELECT
+                    id, start_block_number, number_of_blocks_to_prove,
+                    proof_type, status, error_message,
+                    created_at, updated_at, completed_at
+                FROM proof_requests
+                WHERE status::text = ANY($1::text[])
+                ORDER BY created_at DESC
+                LIMIT $2 OFFSET $3
+                "#,
+            )
+            .bind(&statuses)
+            .bind(page.limit())
+            .bind(page.offset())
+            .fetch_all(&self.pool);
+
+            let count = sqlx::query_as::<_, (i64,)>(
+                "SELECT COUNT(*) FROM proof_requests WHERE status::text = ANY($1::text[])",
+            )
+            .bind(&statuses)
+            .fetch_one(&self.pool);
 
             futures::try_join!(rows, count)?
         };
