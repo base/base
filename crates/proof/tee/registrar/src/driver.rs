@@ -267,6 +267,15 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     /// the ~20 minute Boundless proof generation) so deduplication holds
     /// across cycles as well as within one.
     in_flight_registrations: Arc<Mutex<HashSet<Address>>>,
+    /// Last-known EC2 instance ID for every signer address the registrar
+    /// has ever observed advertising itself in a discovery cycle.
+    /// Updated in `discover_and_resolve`, consulted by
+    /// `submit_deregistration` so the "Deregistering signer" log line
+    /// can attribute the orphan to the EC2 instance it last lived on.
+    /// `None` on dereg is the strongest single diagnostic that another
+    /// registrar (or a prior deployment) wrote the signer.
+    /// Entries are never evicted — bounded by historic fleet size.
+    signer_history: Arc<Mutex<HashMap<Address, String>>>,
 }
 
 /// RAII guard that removes a signer address from [`RegistrationDriver::in_flight_registrations`]
@@ -358,6 +367,7 @@ where
             nitro_verifier,
             proof_semaphore,
             in_flight_registrations: Arc::new(Mutex::new(HashSet::new())),
+            signer_history: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -879,6 +889,7 @@ where
 
         info!(
             signer = %signer_address,
+            instance = %instance.instance_id,
             registry = %self.config.registry_address,
             calldata_len = calldata.len(),
             "Registering signer"
@@ -1258,6 +1269,17 @@ where
                     reachable_count += 1;
                     for addr in &outcome.addresses {
                         active_signers.insert(*addr);
+                    }
+                    // Record signer -> instance attribution before the
+                    // `instance` is moved into `RegisterableSigner` below.
+                    // Consumed by `submit_deregistration` to annotate the
+                    // dereg log with the last-known instance.
+                    {
+                        let mut history =
+                            self.signer_history.lock().unwrap_or_else(|e| e.into_inner());
+                        for addr in &outcome.addresses {
+                            history.insert(*addr, instance.instance_id.clone());
+                        }
                     }
                     if let Some(attestations) = outcome.attestations {
                         // `resolve_instance` already enforced the pairing
@@ -1836,8 +1858,17 @@ where
         let calldata =
             Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode());
 
+        // `last_known_instance = None` is the strongest single diagnostic
+        // for phantom rotations: a signer we never observed in any
+        // discovery cycle implies another registrar (or a prior
+        // deployment) wrote it.
+        let last_known_instance = {
+            let history = self.signer_history.lock().unwrap_or_else(|e| e.into_inner());
+            history.get(&signer).cloned()
+        };
         info!(
             signer = %signer,
+            last_known_instance = ?last_known_instance,
             registry = %self.config.registry_address,
             calldata_len = calldata.len(),
             "Deregistering signer"
