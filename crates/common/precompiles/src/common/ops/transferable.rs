@@ -212,7 +212,7 @@ mod tests {
     }
 
     #[test]
-    fn transfer_zero_receiver_beats_zero_sender() {
+    fn transfer_receiver_error_should_fire_before_sender_error() {
         let mut token = make_token();
 
         assert_eq!(
