@@ -48,6 +48,8 @@ jobs:
 
       - name: Clone fork-test repositories
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -55,9 +57,10 @@ jobs:
           rm -rf "$workdir"
           mkdir -p "$workdir"
 
-          git clone --depth 1 --single-branch --recurse-submodules --shallow-submodules \
-            --branch "$BASE_STD_REF" \
-            https://github.com/base/base-std.git "$workdir/base-std"
+          # base-std is internal — use gh CLI so GITHUB_TOKEN is passed automatically.
+          gh repo clone base/base-std "$workdir/base-std" -- \
+            --depth 1 --single-branch --branch "$BASE_STD_REF" \
+            --recurse-submodules --shallow-submodules
           git clone --depth 1 --single-branch --branch "$BASE_ANVIL_REF" \
             https://github.com/base/base-anvil.git "$workdir/base-anvil"
 
