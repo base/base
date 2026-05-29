@@ -59,6 +59,20 @@ impl PermitArgs {
         keccak256(buf)
     }
 
+    /// Validates a recovered ECDSA address against the declared `owner`.
+    ///
+    /// Returns `Err(InvalidSigner)` when `recovered` is `Address::ZERO` (matching Solidity's
+    /// explicit zero-address guard) or when `recovered != owner`.
+    pub fn validate_recovered(recovered: Address, owner: Address) -> Result<()> {
+        if recovered.is_zero() || recovered != owner {
+            return Err(BasePrecompileError::revert(IB20::InvalidSigner {
+                signer: recovered,
+                owner,
+            }));
+        }
+        Ok(())
+    }
+
     /// Maps Ethereum `v` (27/28) to secp256k1 recovery parity, then recovers the signer.
     pub fn recover_signer(&self, signing_hash: B256) -> Result<Address> {
         let odd_y_parity = match self.v {
@@ -143,24 +157,7 @@ pub trait Permittable: Transferable {
         let nonce = self.accounting().nonce(args.owner)?;
         let signing_hash = args.signing_hash(domain_sep, nonce);
         let recovered = args.recover_signer(signing_hash)?;
-
-        // Alloy's ECDSA recovery returns Err rather than Address::ZERO for degenerate inputs,
-        // making this branch cryptographically infeasible. The check is kept to match Solidity's
-        // explicit guard and ensure InvalidSigner (not InvalidApprover) is always the revert when
-        // recovery produces a zero address.
-        if recovered.is_zero() {
-            return Err(BasePrecompileError::revert(IB20::InvalidSigner {
-                signer: Address::ZERO,
-                owner: args.owner,
-            }));
-        }
-
-        if recovered != args.owner {
-            return Err(BasePrecompileError::revert(IB20::InvalidSigner {
-                signer: recovered,
-                owner: args.owner,
-            }));
-        }
+        PermitArgs::validate_recovered(recovered, args.owner)?;
 
         self.accounting_mut().increment_nonce(args.owner)?;
         self.approve(args.owner, args.spender, args.value)
@@ -288,6 +285,33 @@ mod tests {
             args.signing_hash(domain_sep, U256::ZERO),
             args.signing_hash(domain_sep, U256::ONE)
         );
+    }
+
+    #[test]
+    fn validate_recovered_rejects_zero_address() {
+        let owner = Address::repeat_byte(0xaa);
+
+        assert_eq!(
+            PermitArgs::validate_recovered(Address::ZERO, owner).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidSigner { signer: Address::ZERO, owner })
+        );
+    }
+
+    #[test]
+    fn validate_recovered_rejects_wrong_signer() {
+        let owner = Address::repeat_byte(0xaa);
+        let wrong = Address::repeat_byte(0xbb);
+
+        assert_eq!(
+            PermitArgs::validate_recovered(wrong, owner).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidSigner { signer: wrong, owner })
+        );
+    }
+
+    #[test]
+    fn validate_recovered_accepts_matching_signer() {
+        let owner = Address::repeat_byte(0xaa);
+        PermitArgs::validate_recovered(owner, owner).unwrap();
     }
 
     #[test]
