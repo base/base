@@ -272,7 +272,7 @@ fn assert_token_created_log(env: &BerylTestEnv, block: &BaseBlock, token: Addres
         name: BerylTestEnv::B20_NAME.to_string(),
         symbol: BerylTestEnv::B20_SYMBOL.to_string(),
         decimals: BerylTestEnv::B20_DECIMALS,
-        variantParams: alloy_primitives::Bytes::new(),
+        variantParams: Bytes::new(),
     }
     .encode_log_data();
     assert!(
