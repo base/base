@@ -3,18 +3,16 @@
 use std::fmt;
 
 use base_prover_service_db::ProofRequestRepo;
+use base_prover_service_protocol::{
+    GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
+    ProverRequesterApiServer, SubmitProofRequest, SubmitProofResponse,
+};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     types::{ErrorCode, ErrorObjectOwned},
 };
 
-use crate::{
-    ClaimProofJobRequest, ClaimProofJobResponse, CompleteProofJobRequest, CompleteProofJobResponse,
-    FailProofJobRequest, FailProofJobResponse, GetProofJobRequest, GetProofJobResponse,
-    GetProofRequest, GetProofResponse, HeartbeatProofJobRequest, HeartbeatProofJobResponse,
-    ListProofsRequest, ListProofsResponse, ProofRequestManager, ProverServiceApiServer,
-    SubmitProofRequest, SubmitProofResponse,
-};
+use crate::ProofRequestManager;
 
 mod get_proof;
 mod list_proofs;
@@ -22,11 +20,10 @@ mod submit_proof;
 
 const ERROR_NOT_FOUND: i32 = -32004;
 const ERROR_UNAVAILABLE: i32 = -32014;
-const ERROR_UNIMPLEMENTED: i32 = -32015;
 const ERROR_RESOURCE_EXHAUSTED: i32 = -32016;
 const ERROR_FAILED_PRECONDITION: i32 = -32017;
 
-/// JSON-RPC server implementing the `ProverServiceApi` trait.
+/// JSON-RPC server implementing the requester API trait.
 #[derive(Clone)]
 pub struct ProverServiceServer {
     repo: ProofRequestRepo,
@@ -55,7 +52,7 @@ impl ProverServiceServer {
 }
 
 #[async_trait]
-impl ProverServiceApiServer for ProverServiceServer {
+impl ProverRequesterApiServer for ProverServiceServer {
     async fn submit_proof(&self, request: SubmitProofRequest) -> RpcResult<SubmitProofResponse> {
         self.submit_proof_impl(request).await
     }
@@ -66,38 +63,6 @@ impl ProverServiceApiServer for ProverServiceServer {
 
     async fn list_proofs(&self, request: ListProofsRequest) -> RpcResult<ListProofsResponse> {
         self.list_proofs_impl(request).await
-    }
-
-    async fn get_proof_job(&self, _request: GetProofJobRequest) -> RpcResult<GetProofJobResponse> {
-        Err(unimplemented("proof job leasing is not supported by this service"))
-    }
-
-    async fn claim_proof_job(
-        &self,
-        _request: ClaimProofJobRequest,
-    ) -> RpcResult<ClaimProofJobResponse> {
-        Err(unimplemented("proof job leasing is not supported by this service"))
-    }
-
-    async fn heartbeat_proof_job(
-        &self,
-        _request: HeartbeatProofJobRequest,
-    ) -> RpcResult<HeartbeatProofJobResponse> {
-        Err(unimplemented("proof job leasing is not supported by this service"))
-    }
-
-    async fn complete_proof_job(
-        &self,
-        _request: CompleteProofJobRequest,
-    ) -> RpcResult<CompleteProofJobResponse> {
-        Err(unimplemented("proof job leasing is not supported by this service"))
-    }
-
-    async fn fail_proof_job(
-        &self,
-        _request: FailProofJobRequest,
-    ) -> RpcResult<FailProofJobResponse> {
-        Err(unimplemented("proof job leasing is not supported by this service"))
     }
 }
 
@@ -117,10 +82,6 @@ fn unavailable(message: impl Into<String>) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(ERROR_UNAVAILABLE, message.into(), None::<()>)
 }
 
-fn unimplemented(message: impl Into<String>) -> ErrorObjectOwned {
-    ErrorObjectOwned::owned(ERROR_UNIMPLEMENTED, message.into(), None::<()>)
-}
-
 fn resource_exhausted(message: impl Into<String>) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(ERROR_RESOURCE_EXHAUSTED, message.into(), None::<()>)
 }
@@ -135,7 +96,6 @@ const fn rpc_status_code_str(code: i32) -> &'static str {
         code if code == ErrorCode::InternalError.code() => "INTERNAL",
         ERROR_NOT_FOUND => "NOT_FOUND",
         ERROR_UNAVAILABLE => "UNAVAILABLE",
-        ERROR_UNIMPLEMENTED => "UNIMPLEMENTED",
         ERROR_RESOURCE_EXHAUSTED => "RESOURCE_EXHAUSTED",
         ERROR_FAILED_PRECONDITION => "FAILED_PRECONDITION",
         _ => "ERROR",

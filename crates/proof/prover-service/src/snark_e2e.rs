@@ -9,6 +9,10 @@ use alloy_provider::{Identity, Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use anyhow::{Context, Result, bail};
 use base_common_network::Base;
+use base_prover_service_protocol::{
+    GetProofRequest, ProofRequest, ProofRequestKind, ProofResult, ProofStatus,
+    ProverRequesterApiClient, SnarkGroth16ProofRequest, SubmitProofRequest, ZkProofRequest, ZkVm,
+};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use sp1_sdk::{
     SP1ProofWithPublicValues, SP1VerifyingKey,
@@ -16,10 +20,7 @@ use sp1_sdk::{
 };
 use tracing::{info, warn};
 
-use crate::{
-    GetProofRequest, L1HeadCalculator, ProofRequest, ProofRequestKind, ProofResult, ProofStatus,
-    ProverServiceApiClient, SnarkGroth16ProofRequest, SubmitProofRequest, ZkProofRequest, ZkVm,
-};
+use crate::L1HeadCalculator;
 
 const POLL_INTERVAL_SECS: u64 = 30;
 const POLL_TIMEOUT_SECS: u64 = 14400; // 4 hours

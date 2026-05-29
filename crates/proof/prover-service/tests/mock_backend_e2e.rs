@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 mod common;
 
-use base_prover_service::{
-    GetProofRequest, GetProofResponse, ProofResult, ProofStatus, ProverServiceApiClient,
+use base_prover_service_protocol::{
+    GetProofRequest, GetProofResponse, ProofResult, ProofStatus, ProverRequesterApiClient,
 };
 use common::{ProveBlockRequest, connect, prove_block};
 use jsonrpsee::http_client::HttpClient;

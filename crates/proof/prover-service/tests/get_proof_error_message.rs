@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 mod common;
 
-use base_prover_service::{GetProofRequest, ProofStatus, ProverServiceApiClient};
+use base_prover_service_protocol::{GetProofRequest, ProofStatus, ProverRequesterApiClient};
 use common::{ProveBlockRequest, connect, prove_block};
 
 const PROOF_TYPE_COMPRESSED: i32 = 3;

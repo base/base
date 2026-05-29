@@ -3,8 +3,8 @@
 use alloy_primitives::{Address, B256};
 use anyhow::{Context, Result, bail};
 pub(crate) use base_prover_service::ProveBlockRequest;
-use base_prover_service::{
-    ProofRequest, ProofRequestKind, ProverServiceApiClient, SnarkGroth16ProofRequest,
+use base_prover_service_protocol::{
+    ProofRequest, ProofRequestKind, ProverRequesterApiClient, SnarkGroth16ProofRequest,
     SubmitProofRequest, SubmitProofResponse, TeeKind, TeeProofRequest, ZkProofRequest, ZkVm,
 };
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};

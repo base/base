@@ -2,16 +2,16 @@ use alloy_primitives::B256;
 use base_prover_service_db::{
     CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, ProofType,
 };
+use base_prover_service_protocol::{
+    ProofRequest, ProofRequestKind, SubmitProofRequest, SubmitProofResponse, ZkProofRequest, ZkVm,
+};
 use jsonrpsee::core::RpcResult;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::{
-    ProofRequest, ProofRequestKind, SubmitProofRequest, SubmitProofResponse, ZkProofRequest, ZkVm,
-    server::{
-        ProverServiceServer, failed_precondition, internal, invalid_argument, record_rpc_result,
-        resource_exhausted, unavailable,
-    },
+use crate::server::{
+    ProverServiceServer, failed_precondition, internal, invalid_argument, record_rpc_result,
+    resource_exhausted, unavailable,
 };
 
 impl ProverServiceServer {

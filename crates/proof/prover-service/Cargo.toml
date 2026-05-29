@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 base-prover-service-db.workspace = true
 base-prover-service-outbox.workspace = true
+base-prover-service-protocol.workspace = true
 
 # Succinct / SP1
 sp1-sdk.workspace = true
@@ -70,5 +71,5 @@ workspace = true
 
 [features]
 default = [ "rpc-client", "rpc-server" ]
-rpc-client = [ "dep:jsonrpsee", "jsonrpsee/http-client", "jsonrpsee/macros" ]
-rpc-server = [ "dep:jsonrpsee", "jsonrpsee/macros", "jsonrpsee/server" ]
+rpc-client = [ "dep:jsonrpsee", "jsonrpsee/http-client", "base-prover-service-protocol/rpc-client" ]
+rpc-server = [ "dep:jsonrpsee", "jsonrpsee/server", "base-prover-service-protocol/rpc-server" ]

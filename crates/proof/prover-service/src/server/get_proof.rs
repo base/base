@@ -2,13 +2,15 @@ use base_prover_service_db::{
     ProofRequest, ProofStatus as DbProofStatus, ProofType as DbProofType,
     SessionStatus as DbSessionStatus,
 };
+use base_prover_service_protocol::{
+    GetProofRequest, GetProofResponse, ProofResult, ProofStatus, SnarkGroth16ProofResult,
+    ZkProofResult, ZkVm,
+};
 use jsonrpsee::core::RpcResult;
 use tracing::{Instrument, info};
 use uuid::Uuid;
 
 use crate::{
-    GetProofRequest, GetProofResponse, ProofResult, ProofStatus, SnarkGroth16ProofResult,
-    ZkProofResult, ZkVm,
     backends::{OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY},
     server::{ProverServiceServer, internal, invalid_argument, not_found, record_rpc_result},
 };

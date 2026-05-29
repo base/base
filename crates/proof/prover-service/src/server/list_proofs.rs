@@ -3,13 +3,13 @@
 use base_prover_service_db::{
     ProofRequestPage, ProofStatus as DbProofStatus, ProofType as DbProofType,
 };
+use base_prover_service_protocol::{
+    ListProofsRequest, ListProofsResponse, ProofStatus, ProofSummary, ProofType, ZkVm,
+};
 use jsonrpsee::core::RpcResult;
 use tracing::debug;
 
-use crate::{
-    ListProofsRequest, ListProofsResponse, ProofStatus, ProofSummary, ProofType, ZkVm,
-    server::{ProverServiceServer, internal, invalid_argument, record_rpc_result},
-};
+use crate::server::{ProverServiceServer, internal, invalid_argument, record_rpc_result};
 
 const MAX_LIMIT: u64 = 1000;
 const DEFAULT_LIMIT: u64 = 50;

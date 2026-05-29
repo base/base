@@ -5961,6 +5961,7 @@ dependencies = [
  "base-proof-succinct-proof-utils",
  "base-prover-service-db",
  "base-prover-service-outbox",
+ "base-prover-service-protocol",
  "bincode 2.0.1",
  "chrono",
  "governor",
