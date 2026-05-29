@@ -63,7 +63,7 @@ impl PermitArgs {
     ///
     /// Returns `Err(InvalidSigner)` when `recovered` is `Address::ZERO` (matching Solidity's
     /// explicit zero-address guard) or when `recovered != owner`.
-    pub fn validate_recovered(recovered: Address, owner: Address) -> Result<()> {
+    pub fn validate_recovered_address(recovered: Address, owner: Address) -> Result<()> {
         if recovered.is_zero() || recovered != owner {
             return Err(BasePrecompileError::revert(IB20::InvalidSigner {
                 signer: recovered,
@@ -157,7 +157,7 @@ pub trait Permittable: Transferable {
         let nonce = self.accounting().nonce(args.owner)?;
         let signing_hash = args.signing_hash(domain_sep, nonce);
         let recovered = args.recover_signer(signing_hash)?;
-        PermitArgs::validate_recovered(recovered, args.owner)?;
+        PermitArgs::validate_recovered_address(recovered, args.owner)?;
 
         self.accounting_mut().increment_nonce(args.owner)?;
         self.approve(args.owner, args.spender, args.value)
@@ -288,30 +288,30 @@ mod tests {
     }
 
     #[test]
-    fn validate_recovered_rejects_zero_address() {
+    fn validate_recovered_address_rejects_zero_address() {
         let owner = Address::repeat_byte(0xaa);
 
         assert_eq!(
-            PermitArgs::validate_recovered(Address::ZERO, owner).unwrap_err(),
+            PermitArgs::validate_recovered_address(Address::ZERO, owner).unwrap_err(),
             BasePrecompileError::revert(IB20::InvalidSigner { signer: Address::ZERO, owner })
         );
     }
 
     #[test]
-    fn validate_recovered_rejects_wrong_signer() {
+    fn validate_recovered_address_rejects_wrong_signer() {
         let owner = Address::repeat_byte(0xaa);
         let wrong = Address::repeat_byte(0xbb);
 
         assert_eq!(
-            PermitArgs::validate_recovered(wrong, owner).unwrap_err(),
+            PermitArgs::validate_recovered_address(wrong, owner).unwrap_err(),
             BasePrecompileError::revert(IB20::InvalidSigner { signer: wrong, owner })
         );
     }
 
     #[test]
-    fn validate_recovered_accepts_matching_signer() {
+    fn validate_recovered_address_accepts_matching_signer() {
         let owner = Address::repeat_byte(0xaa);
-        PermitArgs::validate_recovered(owner, owner).unwrap();
+        PermitArgs::validate_recovered_address(owner, owner).unwrap();
     }
 
     #[test]
