@@ -14,9 +14,7 @@ use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use base_common_network::Base;
-use base_common_precompiles::{
-    B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory,
-};
+use base_common_precompiles::{B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory};
 use base_tx_manager::NonceManager;
 use futures::{StreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -1044,32 +1042,47 @@ impl LoadRunner {
             }
         }
 
-        // Phase 2: Grant MINT_ROLE and BURN_ROLE to all senders.
+        // Phase 2: Grant MINT_ROLE to funder + MINT_ROLE and BURN_ROLE to all senders.
         let sender_addresses: Vec<Address> =
             self.accounts.accounts().iter().map(|a| a.address).collect();
         let roles = [B20TokenRole::Mint.id(), B20TokenRole::Burn.id()];
 
-        let total_grants = sender_addresses.len() * roles.len();
+        let total_grants = 1 + sender_addresses.len() * roles.len();
         let pb = self.progress_bar(total_grants as u64, "Granting B-20 roles");
 
-        let grant_txs: Vec<TransactionRequest> = sender_addresses
-            .iter()
-            .flat_map(|&sender| {
-                roles.iter().map(move |&role| {
-                    let call = IB20::grantRoleCall { role, account: sender };
-                    let tx = TransactionRequest::default()
+        let mut grant_txs: Vec<TransactionRequest> = Vec::with_capacity(total_grants);
+
+        // Funder needs MINT_ROLE to execute Phase 3 mints.
+        let funder_mint_grant =
+            IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: funder_address };
+        grant_txs.push(
+            TransactionRequest::default()
+                .with_to(token)
+                .with_input(Bytes::from(funder_mint_grant.abi_encode()))
+                .with_nonce(nonce)
+                .with_chain_id(chain_id)
+                .with_gas_limit(b20_gas_limit)
+                .with_max_fee_per_gas(max_fee)
+                .with_max_priority_fee_per_gas(max_priority_fee),
+        );
+        nonce += 1;
+
+        for &sender in &sender_addresses {
+            for &role in &roles {
+                let call = IB20::grantRoleCall { role, account: sender };
+                grant_txs.push(
+                    TransactionRequest::default()
                         .with_to(token)
                         .with_input(Bytes::from(call.abi_encode()))
                         .with_nonce(nonce)
                         .with_chain_id(chain_id)
                         .with_gas_limit(b20_gas_limit)
                         .with_max_fee_per_gas(max_fee)
-                        .with_max_priority_fee_per_gas(max_priority_fee);
-                    nonce += 1;
-                    tx
-                })
-            })
-            .collect();
+                        .with_max_priority_fee_per_gas(max_priority_fee),
+                );
+                nonce += 1;
+            }
+        }
 
         let mut grant_failed = 0usize;
         let mut txs_remaining = grant_txs.into_iter().peekable();
@@ -1077,13 +1090,21 @@ impl LoadRunner {
             let batch: Vec<_> = txs_remaining.by_ref().take(FUNDING_BATCH_SIZE).collect();
             let send_futs = batch.into_iter().map(|tx| {
                 let provider = Arc::clone(&funder_provider);
-                async move { provider.send_transaction(tx).await }
+                async move {
+                    let pending = provider.send_transaction(tx).await?;
+                    pending.get_receipt().await
+                }
             });
 
             let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_BATCH_SIZE);
             while let Some(result) = send_stream.next().await {
                 match result {
-                    Ok(_) => pb.inc(1),
+                    Ok(receipt) if receipt.status() => pb.inc(1),
+                    Ok(receipt) => {
+                        warn!(tx_hash = %receipt.transaction_hash, "B-20 role grant reverted");
+                        grant_failed += 1;
+                        pb.inc(1);
+                    }
                     Err(e) => {
                         warn!(error = %e, "B-20 role grant failed");
                         grant_failed += 1;
@@ -1124,7 +1145,6 @@ impl LoadRunner {
             .collect();
 
         let mut mint_failed = 0usize;
-        let mut pending_balances: Vec<(Address, Address)> = Vec::new();
         let mut txs_remaining = mint_txs.into_iter().peekable();
 
         while txs_remaining.peek().is_some() {
@@ -1132,33 +1152,38 @@ impl LoadRunner {
             let send_futs = batch.into_iter().map(|(tx, sender)| {
                 let provider = Arc::clone(&funder_provider);
                 async move {
-                    let result = provider.send_transaction(tx).await;
-                    (result, sender)
+                    match provider.send_transaction(tx).await {
+                        Ok(pending) => {
+                            let receipt = pending
+                                .get_receipt()
+                                .await
+                                .map_err(|e| eyre::eyre!("mint receipt failed: {e}"))?;
+                            Ok::<_, eyre::Report>((receipt, sender))
+                        }
+                        Err(e) => Err(eyre::eyre!("mint send failed: {e}")),
+                    }
                 }
             });
 
             let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_BATCH_SIZE);
-            while let Some((result, sender)) = send_stream.next().await {
+            while let Some(result) = send_stream.next().await {
                 match result {
-                    Ok(pending) => {
-                        let tx_hash = *pending.tx_hash();
-                        debug!(to = %sender, tx_hash = %tx_hash, "B-20 mint sent");
-                        pending_balances.push((token, sender));
+                    Ok((receipt, sender)) if receipt.status() => {
+                        debug!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint confirmed");
+                        pb_mint.inc(1);
+                    }
+                    Ok((receipt, sender)) => {
+                        warn!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint reverted");
+                        mint_failed += 1;
+                        pb_mint.inc(1);
                     }
                     Err(e) => {
-                        warn!(to = %sender, error = %e, "B-20 mint failed");
+                        warn!(error = %e, "B-20 mint failed");
                         mint_failed += 1;
+                        pb_mint.inc(1);
                     }
                 }
             }
-
-            Self::await_token_balances(
-                &self.client,
-                &mut pending_balances,
-                amount_per_sender,
-                &pb_mint,
-            )
-            .await?;
         }
 
         pb_mint.finish_and_clear();
@@ -1197,7 +1222,7 @@ impl LoadRunner {
         let gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
         let max_priority_fee = (gas_price / 10).max(1);
         let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
-        let b20_gas_limit = 10_000_000u64;
+        let burn_gas_limit = 200_000u64;
 
         let sender_addresses: Vec<Address> =
             self.accounts.accounts().iter().map(|a| a.address).collect();
@@ -1244,7 +1269,7 @@ impl LoadRunner {
                 .with_input(Bytes::from(burn_call.abi_encode()))
                 .with_nonce(sender_nonce)
                 .with_chain_id(chain_id)
-                .with_gas_limit(b20_gas_limit)
+                .with_gas_limit(burn_gas_limit)
                 .with_max_fee_per_gas(max_fee)
                 .with_max_priority_fee_per_gas(max_priority_fee);
 
