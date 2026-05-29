@@ -3,6 +3,7 @@ x-rust-service-build: &rust-service-build
   dockerfile: etc/docker/Dockerfile.rust-services
   args:
     PROFILE: "${CARGO_PROFILE:-dev}"
+    BASE_SUCCINCT_ELF_REQUIRE: "${BASE_SUCCINCT_ELF_REQUIRE:-0}"
 
 services:
   setup-l1:
