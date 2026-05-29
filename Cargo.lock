@@ -5990,7 +5990,9 @@ version = "0.0.0"
 dependencies = [
  "base-prover-service-protocol",
  "jsonrpsee",
+ "thiserror 2.0.18",
  "tracing",
+ "url",
 ]
 
 [[package]]

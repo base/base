@@ -15,6 +15,12 @@ base-prover-service-protocol = { workspace = true, features = ["rpc-client"] }
 # RPC
 jsonrpsee = { workspace = true, features = ["http-client"] }
 
+# URL parsing
+url.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
 # Observability
 tracing.workspace = true
 

@@ -2,23 +2,39 @@
 
 use std::time::Duration;
 
-use jsonrpsee::{
-    core::client::Error,
-    http_client::{HttpClient, HttpClientBuilder},
-};
+use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tracing::debug;
+use url::Url;
+
+use crate::ProverServiceClientError;
 
 /// Configuration shared by prover-service client roles.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProverServiceClientConfig {
     endpoint: String,
-    request_timeout: Option<Duration>,
+    request_timeout: Duration,
+    poll_interval: Duration,
+    max_wait: Duration,
 }
 
 impl ProverServiceClientConfig {
+    /// Default per-request timeout for prover-service JSON-RPC calls.
+    pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+    /// Default interval used by polling helpers when waiting for proof completion.
+    pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+    /// Default maximum time to wait for proof completion.
+    pub const DEFAULT_MAX_WAIT: Duration = Duration::from_secs(30 * 60);
+
     /// Create a client configuration for the given HTTP endpoint.
     pub fn new(endpoint: impl Into<String>) -> Self {
-        Self { endpoint: endpoint.into(), request_timeout: None }
+        Self {
+            endpoint: endpoint.into(),
+            request_timeout: Self::DEFAULT_REQUEST_TIMEOUT,
+            poll_interval: Self::DEFAULT_POLL_INTERVAL,
+            max_wait: Self::DEFAULT_MAX_WAIT,
+        }
     }
 
     /// Return the prover-service HTTP endpoint.
@@ -27,24 +43,159 @@ impl ProverServiceClientConfig {
     }
 
     /// Return the configured per-request timeout.
-    pub const fn request_timeout(&self) -> Option<Duration> {
+    pub const fn request_timeout(&self) -> Duration {
         self.request_timeout
+    }
+
+    /// Return the interval used by polling helpers.
+    pub const fn poll_interval(&self) -> Duration {
+        self.poll_interval
+    }
+
+    /// Return the maximum time to wait for proof completion.
+    pub const fn max_wait(&self) -> Duration {
+        self.max_wait
     }
 
     /// Set the per-request timeout used by the JSON-RPC HTTP client.
     pub const fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
-        self.request_timeout = Some(request_timeout);
+        self.request_timeout = request_timeout;
         self
     }
 
-    /// Build a JSON-RPC HTTP client from this configuration.
-    pub fn build_http_client(&self) -> Result<HttpClient, Error> {
-        let mut builder = HttpClientBuilder::default();
-        if let Some(request_timeout) = self.request_timeout {
-            builder = builder.request_timeout(request_timeout);
+    /// Set the interval used by polling helpers.
+    pub const fn with_poll_interval(mut self, poll_interval: Duration) -> Self {
+        self.poll_interval = poll_interval;
+        self
+    }
+
+    /// Set the maximum time to wait for proof completion.
+    pub const fn with_max_wait(mut self, max_wait: Duration) -> Self {
+        self.max_wait = max_wait;
+        self
+    }
+
+    /// Validate the endpoint and duration fields.
+    pub fn validate(&self) -> Result<(), ProverServiceClientError> {
+        let endpoint = Url::parse(&self.endpoint).map_err(|err| {
+            ProverServiceClientError::InvalidConfig(format!("endpoint URL is invalid: {err}"))
+        })?;
+
+        if endpoint.host().is_none() {
+            return Err(ProverServiceClientError::InvalidConfig(
+                "endpoint URL must include a host".to_owned(),
+            ));
         }
 
+        if !matches!(endpoint.scheme(), "http" | "https") {
+            return Err(ProverServiceClientError::InvalidConfig(
+                "endpoint URL scheme must be http or https".to_owned(),
+            ));
+        }
+
+        if self.request_timeout.is_zero() {
+            return Err(ProverServiceClientError::InvalidConfig(
+                "request timeout must be greater than zero".to_owned(),
+            ));
+        }
+
+        if self.poll_interval.is_zero() {
+            return Err(ProverServiceClientError::InvalidConfig(
+                "poll interval must be greater than zero".to_owned(),
+            ));
+        }
+
+        if self.max_wait.is_zero() {
+            return Err(ProverServiceClientError::InvalidConfig(
+                "max wait must be greater than zero".to_owned(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Build a JSON-RPC HTTP client from this configuration.
+    pub fn build_http_client(&self) -> Result<HttpClient, ProverServiceClientError> {
+        self.validate()?;
+
+        let builder = HttpClientBuilder::default().request_timeout(self.request_timeout);
+
         debug!(endpoint = %self.endpoint, "building prover-service client");
-        builder.build(&self.endpoint)
+        builder.build(&self.endpoint).map_err(ProverServiceClientError::from)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn config_validation_accepts_valid_config() {
+        let config = ProverServiceClientConfig::new("http://localhost:8545")
+            .with_request_timeout(Duration::from_secs(1))
+            .with_poll_interval(Duration::from_millis(100))
+            .with_max_wait(Duration::from_secs(10));
+
+        config.validate().expect("valid config should pass validation");
+    }
+
+    #[test]
+    fn config_validation_rejects_url_without_host() {
+        let config = ProverServiceClientConfig::new("file:///tmp/prover-service.sock");
+
+        let err = config.validate().expect_err("URL without host should fail validation");
+
+        assert!(
+            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains("host"))
+        );
+    }
+
+    #[test]
+    fn config_validation_rejects_non_http_url_scheme() {
+        let config = ProverServiceClientConfig::new("ws://localhost:8545");
+
+        let err = config.validate().expect_err("non-HTTP URL scheme should fail validation");
+
+        assert!(
+            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains("scheme"))
+        );
+    }
+
+    #[test]
+    fn config_validation_rejects_zero_request_timeout() {
+        let config = ProverServiceClientConfig::new("http://localhost:8545")
+            .with_request_timeout(Duration::ZERO);
+
+        let err = config.validate().expect_err("zero request timeout should fail validation");
+
+        assert!(
+            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains("request timeout"))
+        );
+    }
+
+    #[test]
+    fn config_validation_rejects_zero_poll_interval() {
+        let config = ProverServiceClientConfig::new("http://localhost:8545")
+            .with_poll_interval(Duration::ZERO);
+
+        let err = config.validate().expect_err("zero poll interval should fail validation");
+
+        assert!(
+            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains("poll interval"))
+        );
+    }
+
+    #[test]
+    fn config_validation_rejects_zero_max_wait() {
+        let config =
+            ProverServiceClientConfig::new("http://localhost:8545").with_max_wait(Duration::ZERO);
+
+        let err = config.validate().expect_err("zero max wait should fail validation");
+
+        assert!(
+            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains("max wait"))
+        );
     }
 }

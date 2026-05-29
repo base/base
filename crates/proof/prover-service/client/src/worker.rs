@@ -5,10 +5,10 @@ use base_prover_service_protocol::{
     FailProofJobRequest, FailProofJobResponse, GetProofJobRequest, GetProofJobResponse,
     HeartbeatProofJobRequest, HeartbeatProofJobResponse, ProverWorkerApiClient,
 };
-use jsonrpsee::{core::client::Error, http_client::HttpClient};
+use jsonrpsee::http_client::HttpClient;
 use tracing::debug;
 
-use crate::ProverServiceClientConfig;
+use crate::{ProverServiceClientConfig, ProverServiceClientError};
 
 /// JSON-RPC client for prover worker methods.
 #[derive(Clone, Debug)]
@@ -23,7 +23,7 @@ impl ProverWorkerClient {
     }
 
     /// Connect a worker client using the provided configuration.
-    pub fn connect(config: &ProverServiceClientConfig) -> Result<Self, Error> {
+    pub fn connect(config: &ProverServiceClientConfig) -> Result<Self, ProverServiceClientError> {
         Ok(Self::new(config.build_http_client()?))
     }
 
@@ -36,44 +36,44 @@ impl ProverWorkerClient {
     pub async fn get_proof_job(
         &self,
         request: GetProofJobRequest,
-    ) -> Result<GetProofJobResponse, Error> {
+    ) -> Result<GetProofJobResponse, ProverServiceClientError> {
         debug!("fetching proof job");
-        self.inner.get_proof_job(request).await
+        Ok(self.inner.get_proof_job(request).await?)
     }
 
     /// Claim the next eligible queued proof job.
     pub async fn claim_proof_job(
         &self,
         request: ClaimProofJobRequest,
-    ) -> Result<ClaimProofJobResponse, Error> {
+    ) -> Result<ClaimProofJobResponse, ProverServiceClientError> {
         debug!("claiming proof job");
-        self.inner.claim_proof_job(request).await
+        Ok(self.inner.claim_proof_job(request).await?)
     }
 
     /// Extend a proof job lease.
     pub async fn heartbeat_proof_job(
         &self,
         request: HeartbeatProofJobRequest,
-    ) -> Result<HeartbeatProofJobResponse, Error> {
+    ) -> Result<HeartbeatProofJobResponse, ProverServiceClientError> {
         debug!("heartbeating proof job");
-        self.inner.heartbeat_proof_job(request).await
+        Ok(self.inner.heartbeat_proof_job(request).await?)
     }
 
     /// Complete a leased proof job.
     pub async fn complete_proof_job(
         &self,
         request: CompleteProofJobRequest,
-    ) -> Result<CompleteProofJobResponse, Error> {
+    ) -> Result<CompleteProofJobResponse, ProverServiceClientError> {
         debug!("completing proof job");
-        self.inner.complete_proof_job(request).await
+        Ok(self.inner.complete_proof_job(request).await?)
     }
 
     /// Fail a leased proof job.
     pub async fn fail_proof_job(
         &self,
         request: FailProofJobRequest,
-    ) -> Result<FailProofJobResponse, Error> {
+    ) -> Result<FailProofJobResponse, ProverServiceClientError> {
         debug!("failing proof job");
-        self.inner.fail_proof_job(request).await
+        Ok(self.inner.fail_proof_job(request).await?)
     }
 }

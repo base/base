@@ -4,10 +4,10 @@ use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
     ProverRequesterApiClient, SubmitProofRequest, SubmitProofResponse,
 };
-use jsonrpsee::{core::client::Error, http_client::HttpClient};
+use jsonrpsee::http_client::HttpClient;
 use tracing::debug;
 
-use crate::ProverServiceClientConfig;
+use crate::{ProverServiceClientConfig, ProverServiceClientError};
 
 /// JSON-RPC client for proof requester methods.
 #[derive(Clone, Debug)]
@@ -22,7 +22,7 @@ impl ProverRequesterClient {
     }
 
     /// Connect a requester client using the provided configuration.
-    pub fn connect(config: &ProverServiceClientConfig) -> Result<Self, Error> {
+    pub fn connect(config: &ProverServiceClientConfig) -> Result<Self, ProverServiceClientError> {
         Ok(Self::new(config.build_http_client()?))
     }
 
@@ -35,23 +35,26 @@ impl ProverRequesterClient {
     pub async fn submit_proof(
         &self,
         request: SubmitProofRequest,
-    ) -> Result<SubmitProofResponse, Error> {
+    ) -> Result<SubmitProofResponse, ProverServiceClientError> {
         debug!("submitting proof request");
-        self.inner.submit_proof(request).await
+        Ok(self.inner.submit_proof(request).await?)
     }
 
     /// Return proof status and result data for a submitted proof request.
-    pub async fn get_proof(&self, request: GetProofRequest) -> Result<GetProofResponse, Error> {
+    pub async fn get_proof(
+        &self,
+        request: GetProofRequest,
+    ) -> Result<GetProofResponse, ProverServiceClientError> {
         debug!("fetching proof request");
-        self.inner.get_proof(request).await
+        Ok(self.inner.get_proof(request).await?)
     }
 
     /// List submitted proof requests.
     pub async fn list_proofs(
         &self,
         request: ListProofsRequest,
-    ) -> Result<ListProofsResponse, Error> {
+    ) -> Result<ListProofsResponse, ProverServiceClientError> {
         debug!("listing proof requests");
-        self.inner.list_proofs(request).await
+        Ok(self.inner.list_proofs(request).await?)
     }
 }
