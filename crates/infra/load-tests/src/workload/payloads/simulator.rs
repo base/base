@@ -76,16 +76,6 @@ impl SimulatorPayload {
         Self { contract, params }
     }
 
-    /// Returns the contract address, if set.
-    pub const fn contract(&self) -> Option<Address> {
-        self.contract
-    }
-
-    /// Sets the contract address after CREATE deployment.
-    pub const fn set_contract(&mut self, addr: Address) {
-        self.contract = Some(addr);
-    }
-
     /// Returns the per-call simulator parameters as a `SimulatorConfig`.
     pub fn simulator_config(&self) -> SimulatorConfig {
         SimulatorConfig {
@@ -154,7 +144,9 @@ impl Payload for SimulatorPayload {
     }
 
     fn generate(&self, _rng: &mut SeededRng, _from: Address, _to: Address) -> TransactionRequest {
-        let contract = self.contract.unwrap_or(Address::ZERO);
+        let contract = self
+            .contract
+            .expect("SimulatorPayload: contract address must be set before calling generate(); call setup_simulator_contracts() first");
         let gas_limit = self.params.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT);
         TransactionRequest::default()
             .with_to(contract)
