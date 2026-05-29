@@ -85,12 +85,15 @@ async fn test_policy_registry_policy_exists() -> Result<()> {
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
 
     let output = client
-        .call(PolicyRegistryStorage::ADDRESS, IPolicyRegistry::policyExistsCall { policyId: 0 })
+        .call(
+            PolicyRegistryStorage::ADDRESS,
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID },
+        )
         .await?;
     let result = IPolicyRegistry::policyExistsCall::abi_decode_returns(output.as_ref())
         .wrap_err("Failed to decode policyExists")?;
 
-    assert!(result, "policyExists(0) should return true after Beryl activation");
+    assert!(result, "policyExists(ALWAYS_ALLOW_ID) should return true after Beryl activation");
 
     Ok(())
 }
