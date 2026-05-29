@@ -848,10 +848,7 @@ impl AttestationProofProvider for BoundlessProver {
                         target_signer = %signer_address,
                         "recovered fulfilled proof, fetching receipt"
                     );
-                    match self
-                        .fetch_and_encode_receipt(&client, request_id, true)
-                        .await
-                    {
+                    match self.fetch_and_encode_receipt(&client, request_id, true).await {
                         Ok(proof) => {
                             if !self.is_journal_fresh(&proof) {
                                 continue;
@@ -1543,8 +1540,7 @@ mod tests {
         /// never observed, not just its fulfillment event).
         #[rstest]
         fn rejects_request_not_found() {
-            let err =
-                MarketError::RequestNotFound(TEST_REQUEST_ID, TEST_FROM_BLOCK, TEST_TO_BLOCK);
+            let err = MarketError::RequestNotFound(TEST_REQUEST_ID, TEST_FROM_BLOCK, TEST_TO_BLOCK);
             assert!(
                 !BoundlessProver::is_proof_not_found_error(&err),
                 "should NOT match RequestNotFound (different scenario). \
