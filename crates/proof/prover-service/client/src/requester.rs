@@ -206,8 +206,7 @@ mod tests {
             self.state.lock().expect("state lock should not be poisoned").prove_request =
                 Some(request.clone());
 
-            let session_id =
-                request.proof.session_id.clone().expect("test request should set session_id");
+            let session_id = request.proof.session_id.expect("test request should set session_id");
             Ok(ProveBlockRangeResponse { session_id })
         }
 
@@ -233,10 +232,7 @@ mod tests {
             })
         }
 
-        async fn list_proofs(
-            &self,
-            request: ListProofsRequest,
-        ) -> RpcResult<ListProofsResponse> {
+        async fn list_proofs(&self, request: ListProofsRequest) -> RpcResult<ListProofsResponse> {
             self.state.lock().expect("state lock should not be poisoned").list_request =
                 Some(request);
 
@@ -296,11 +292,8 @@ mod tests {
             other => panic!("unexpected proof result variant: {other:?}"),
         }
 
-        let list_request = ListProofsRequest {
-            offset: 7,
-            limit: 25,
-            status_filter: Some(ProofStatus::Succeeded),
-        };
+        let list_request =
+            ListProofsRequest { offset: 7, limit: 25, status_filter: Some(ProofStatus::Succeeded) };
         let list_response =
             provider.list_proofs(list_request).await.expect("list_proofs should succeed");
         assert_eq!(list_response.total_count, 1);
