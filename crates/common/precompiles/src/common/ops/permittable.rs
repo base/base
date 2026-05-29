@@ -144,6 +144,17 @@ pub trait Permittable: Transferable {
         let signing_hash = args.signing_hash(domain_sep, nonce);
         let recovered = args.recover_signer(signing_hash)?;
 
+        // Alloy's ECDSA recovery returns Err rather than Address::ZERO for degenerate inputs,
+        // making this branch cryptographically infeasible. The check is kept to match Solidity's
+        // explicit guard and ensure InvalidSigner (not InvalidApprover) is always the revert when
+        // recovery produces a zero address.
+        if recovered.is_zero() {
+            return Err(BasePrecompileError::revert(IB20::InvalidSigner {
+                signer: Address::ZERO,
+                owner: args.owner,
+            }));
+        }
+
         if recovered != args.owner {
             return Err(BasePrecompileError::revert(IB20::InvalidSigner {
                 signer: recovered,
@@ -402,6 +413,34 @@ mod tests {
         args.owner = wrong_owner;
 
         assert!(token.permit(CHAIN_ID, now, args).is_err());
+    }
+
+    #[test]
+    fn permit_zero_owner_returns_invalid_signer_not_invalid_approver() {
+        // A unit test for the recovered == Address::ZERO branch is not feasible: alloy's ECDSA
+        // recovery returns Err (not zero) for degenerate inputs, and producing a signature that
+        // recovers to zero is cryptographically infeasible. This test instead confirms that when
+        // owner is Address::ZERO the function returns InvalidSigner (from the signature guard),
+        // not InvalidApprover (from approve()) — proving the guard fires before the approve() call.
+        let mut token = make_token();
+        let real_owner = owner_address();
+        let base_args = signed_permit_args(&token, real_owner, SPENDER, U256::ONE, U256::MAX);
+        let args = PermitArgs { owner: Address::ZERO, ..base_args };
+
+        // Swapping owner to zero changes the struct hash, so the recovered signer is some
+        // arbitrary address. Compute it from the same args permit() would use.
+        let domain_sep = token.domain_separator(CHAIN_ID).unwrap();
+        let nonce = token.accounting().nonce(Address::ZERO).unwrap();
+        let signing_hash = args.signing_hash(domain_sep, nonce);
+        let expected_signer = args.recover_signer(signing_hash).unwrap();
+
+        assert_eq!(
+            token.permit(CHAIN_ID, U256::ZERO, args).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidSigner {
+                signer: expected_signer,
+                owner: Address::ZERO,
+            })
+        );
     }
 
     #[test]
