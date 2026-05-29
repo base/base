@@ -57,11 +57,7 @@ impl UploadStrategy {
     ///
     /// Everything else (state, rocksdb, manifest) is always uploaded.
     pub fn classify(filename: &str) -> Self {
-        if ChunkFilename::parse(filename).is_some() {
-            Self::DiffByHash
-        } else {
-            Self::AlwaysUpload
-        }
+        if ChunkFilename::parse(filename).is_some() { Self::DiffByHash } else { Self::AlwaysUpload }
     }
 }
 

@@ -9,8 +9,7 @@ use std::{
 use anyhow::Result;
 use async_trait::async_trait;
 use base_snapshotter::{
-    ContainerManager, DockerContainerManager, SnapshotGenerator, SnapshotManifest,
-    SnapshotUploader,
+    ContainerManager, DockerContainerManager, SnapshotGenerator, SnapshotManifest, SnapshotUploader,
 };
 use bollard::{
     Docker,
@@ -353,7 +352,10 @@ fn seeded_snapshot(
         for i in 0..num_chunks {
             let start = i * blocks_per_file;
             let end = start + blocks_per_file - 1;
-            std::fs::write(output_dir.join(format!("{component}-{start}-{end}.tar.zst")), chunk_content)?;
+            std::fs::write(
+                output_dir.join(format!("{component}-{start}-{end}.tar.zst")),
+                chunk_content,
+            )?;
         }
     }
 
@@ -477,9 +479,7 @@ async fn diff_upload_reuploads_on_blake3_mismatch_even_when_size_matches() -> Re
             s3.put_object()
                 .bucket(bucket)
                 .key(&key)
-                .body(aws_sdk_s3::primitives::ByteStream::from(
-                    b"corrupted-bytes-x".to_vec(),
-                ))
+                .body(aws_sdk_s3::primitives::ByteStream::from(b"corrupted-bytes-x".to_vec()))
                 .send()
                 .await?;
         }
@@ -543,8 +543,7 @@ async fn diff_upload_uploads_everything_on_first_run() -> Result<()> {
 
     let tmp = tempfile::tempdir()?;
     let output_dir = tmp.path().join("output");
-    let files =
-        seeded_snapshot(&output_dir, 500_000, 500_000, &["headers"], "v1", b"fresh-chunk")?;
+    let files = seeded_snapshot(&output_dir, 500_000, 500_000, &["headers"], "v1", b"fresh-chunk")?;
     let local_manifest = parse_local_manifest(&output_dir)?;
     let remote_manifest = uploader.fetch_previous_manifest().await?;
     assert!(remote_manifest.is_none(), "fresh bucket should have no previous manifest");
@@ -553,7 +552,8 @@ async fn diff_upload_uploads_everything_on_first_run() -> Result<()> {
         .upload(&output_dir, &files, 1_700_000_000, &local_manifest, remote_manifest.as_ref())
         .await?;
 
-    let body = get_object_bytes(s3, bucket, "first-run/static_files/headers-0-499999.tar.zst").await?;
+    let body =
+        get_object_bytes(s3, bucket, "first-run/static_files/headers-0-499999.tar.zst").await?;
     assert_eq!(body.as_slice(), b"fresh-chunk", "static file should be uploaded on first run");
 
     Ok(())
