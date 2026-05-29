@@ -954,7 +954,7 @@ where
         let transaction_pool = TxPoolBuilder::new(ctx)
             .with_validator(validator)
             .build_with_ordering_and_spawn_maintenance_task(
-                ordering,
+                ordering.clone(),
                 blob_store,
                 final_pool_config,
             )?;
@@ -962,7 +962,7 @@ where
         info!(target: "reth::cli", max_inflight_delegated_slots, "Transaction pool initialized");
         debug!(target: "reth::cli", "Spawned txpool maintenance task");
 
-        Ok(BaseTransactionPool::new(transaction_pool))
+        Ok(BaseTransactionPool::new(transaction_pool, ordering))
     }
 }
 

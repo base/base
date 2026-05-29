@@ -1,6 +1,7 @@
 //! Minimal 2D nonce sidecar storage and iteration for channelized EIP-8130 transactions.
 
 use std::{
+    cmp::Reverse,
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
@@ -8,7 +9,8 @@ use std::{
 use alloy_primitives::{Address, TxHash, U256};
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_transaction_pool::{
-    AddedTransactionOutcome, BestTransactions, PoolResult, PriceBumpConfig, ValidPoolTransaction,
+    AddedTransactionOutcome, BestTransactions, PoolResult, PriceBumpConfig, Priority,
+    TransactionOrdering, ValidPoolTransaction,
     error::{InvalidPoolTransactionError, PoolError, PoolErrorKind},
     identifier::{SenderIdentifiers, TransactionId},
     pool::{AddedTransactionState, QueuedReason},
@@ -55,6 +57,7 @@ impl<T: BasePooledTx> NonceLane<T> {
 pub(crate) struct InsertOutcome<T: BasePooledTx> {
     pub outcome: AddedTransactionOutcome,
     pub replaced: Option<Arc<ValidPoolTransaction<T>>>,
+    pub promoted: Vec<Arc<ValidPoolTransaction<T>>>,
 }
 
 /// Minimal 2D nonce sidecar for finite non-zero `nonce_key` channels.
@@ -216,6 +219,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         transaction.transaction_id = TransactionId::new(sender_id, nonce);
         let transaction = Arc::new(transaction);
         let lane = self.lanes.entry(lane_id).or_default();
+        let pending_len_before = lane.consecutive_pending_len();
 
         if nonce < lane.next_nonce {
             return Err(PoolError::new(
@@ -249,13 +253,24 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.index.remove(&replaced_hash);
         }
 
-        let state = if nonce == lane.next_nonce {
+        let pending_len_after = lane.consecutive_pending_len();
+        let state = if nonce < lane.next_nonce + pending_len_after as u64 {
             AddedTransactionState::Pending
         } else {
             AddedTransactionState::Queued(QueuedReason::NonceGap)
         };
 
-        Ok(InsertOutcome { outcome: AddedTransactionOutcome { hash, state }, replaced })
+        let promoted = if matches!(state, AddedTransactionState::Pending) {
+            lane.consecutive_pending_transactions()
+                .skip(pending_len_before)
+                .filter(|candidate| *candidate.hash() != hash)
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        Ok(InsertOutcome { outcome: AddedTransactionOutcome { hash, state }, replaced, promoted })
     }
 
     /// Removes the exact transactions by hash without advancing lane state.
@@ -326,8 +341,15 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     }
 
     /// Returns a best-transactions iterator snapshot.
-    pub(crate) fn best_transactions(&self) -> BestTwoDTransactions<T> {
-        BestTwoDTransactions::new(&self.lanes)
+    pub(crate) fn best_transactions<O>(
+        &self,
+        ordering: O,
+        base_fee: u64,
+    ) -> BestTwoDTransactions<T, O>
+    where
+        O: TransactionOrdering<Transaction = T>,
+    {
+        BestTwoDTransactions::new(&self.lanes, ordering, base_fee)
     }
 
     fn remove_hash(
@@ -356,8 +378,13 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
 /// Snapshot iterator over the current best transactions of the 2D nonce sidecar.
 #[derive(Debug)]
-pub(crate) struct BestTwoDTransactions<T: BasePooledTx> {
+pub(crate) struct BestTwoDTransactions<T: BasePooledTx, O>
+where
+    O: TransactionOrdering<Transaction = T>,
+{
     lanes: Vec<LaneIterator<T>>,
+    ordering: O,
+    base_fee: u64,
 }
 
 #[derive(Debug)]
@@ -368,8 +395,11 @@ struct LaneIterator<T: BasePooledTx> {
     invalidated: bool,
 }
 
-impl<T: BasePooledTx> BestTwoDTransactions<T> {
-    fn new(lanes: &HashMap<LaneId, NonceLane<T>>) -> Self {
+impl<T: BasePooledTx, O> BestTwoDTransactions<T, O>
+where
+    O: TransactionOrdering<Transaction = T>,
+{
+    fn new(lanes: &HashMap<LaneId, NonceLane<T>>, ordering: O, base_fee: u64) -> Self {
         let lanes = lanes
             .iter()
             .filter_map(|(id, lane)| {
@@ -387,11 +417,25 @@ impl<T: BasePooledTx> BestTwoDTransactions<T> {
                 })
             })
             .collect();
-        Self { lanes }
+        Self { lanes, ordering, base_fee }
+    }
+
+    fn priority_key(
+        &self,
+        transaction: &Arc<ValidPoolTransaction<T>>,
+    ) -> (Priority<O::PriorityValue>, Reverse<std::time::Instant>, TxHash) {
+        (
+            self.ordering.priority(&transaction.transaction, self.base_fee),
+            Reverse(transaction.timestamp),
+            *transaction.hash(),
+        )
     }
 }
 
-impl<T: BasePooledTx> Iterator for BestTwoDTransactions<T> {
+impl<T: BasePooledTx, O> Iterator for BestTwoDTransactions<T, O>
+where
+    O: TransactionOrdering<Transaction = T>,
+{
     type Item = Arc<ValidPoolTransaction<T>>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -403,10 +447,10 @@ impl<T: BasePooledTx> Iterator for BestTwoDTransactions<T> {
                 if lane.invalidated || lane.index >= lane.transactions.len() {
                     None
                 } else {
-                    Some((index, lane.transactions[lane.index].transaction.max_fee_per_gas()))
+                    Some((index, self.priority_key(&lane.transactions[lane.index])))
                 }
             })
-            .max_by_key(|(_, fee)| *fee)
+            .max_by_key(|(_, priority)| priority.clone())
             .map(|(index, _)| index)?;
 
         let lane = &mut self.lanes[best_index];
@@ -416,7 +460,10 @@ impl<T: BasePooledTx> Iterator for BestTwoDTransactions<T> {
     }
 }
 
-impl<T: BasePooledTx> BestTransactions for BestTwoDTransactions<T> {
+impl<T: BasePooledTx, O> BestTransactions for BestTwoDTransactions<T, O>
+where
+    O: TransactionOrdering<Transaction = T>,
+{
     fn mark_invalid(&mut self, transaction: &Self::Item, _kind: &InvalidPoolTransactionError) {
         let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() else {
             return;
@@ -450,7 +497,7 @@ mod tests {
     use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, TransactionOrigin};
 
     use super::*;
-    use crate::BasePooledTransaction;
+    use crate::{BaseOrdering, BasePooledTransaction};
 
     fn test_chain_id() -> u64 {
         ChainConfig::mainnet().chain_id
@@ -466,13 +513,23 @@ mod tests {
         nonce_sequence: u64,
         max_fee_per_gas: u128,
     ) -> BasePooledTransaction {
+        signed_channel_tx_with_tip(signer, nonce_key, nonce_sequence, 0, max_fee_per_gas)
+    }
+
+    fn signed_channel_tx_with_tip(
+        signer: &PrivateKeySigner,
+        nonce_key: U256,
+        nonce_sequence: u64,
+        max_priority_fee_per_gas: u128,
+        max_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
         let tx = TxEip8130 {
             chain_id: test_chain_id(),
             sender: None,
             nonce_key,
             nonce_sequence,
             expiry: 0,
-            max_priority_fee_per_gas: 0,
+            max_priority_fee_per_gas,
             max_fee_per_gas,
             gas_limit: 50_000,
             account_changes: Vec::new(),
@@ -489,11 +546,18 @@ mod tests {
     fn valid_pool_transaction(
         transaction: BasePooledTransaction,
     ) -> ValidPoolTransaction<BasePooledTransaction> {
+        valid_pool_transaction_at(transaction, Instant::now())
+    }
+
+    fn valid_pool_transaction_at(
+        transaction: BasePooledTransaction,
+        timestamp: Instant,
+    ) -> ValidPoolTransaction<BasePooledTransaction> {
         ValidPoolTransaction {
             transaction_id: TransactionId::new(0u64.into(), transaction.nonce()),
             transaction,
             propagate: true,
-            timestamp: Instant::now(),
+            timestamp,
             origin: TransactionOrigin::External,
             authority_ids: None,
         }
@@ -602,6 +666,27 @@ mod tests {
     }
 
     #[test]
+    fn gap_fill_reports_newly_promoted_transactions() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+
+        let first = valid_pool_transaction(signed_channel_tx(&signer, U256::from(13), 0, 1_000));
+        let gap = valid_pool_transaction(signed_channel_tx(&signer, U256::from(13), 2, 800));
+        let middle = valid_pool_transaction(signed_channel_tx(&signer, U256::from(13), 1, 900));
+        let gap_hash = *gap.hash();
+
+        pool.insert_validated(first).unwrap();
+        pool.insert_validated(gap).unwrap();
+
+        let outcome = pool.insert_validated(middle).unwrap();
+
+        assert_eq!(
+            outcome.promoted.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>(),
+            vec![gap_hash]
+        );
+    }
+
+    #[test]
     fn pruning_mined_sorts_hashes_within_lane() {
         let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
         let signer = signer();
@@ -657,7 +742,7 @@ mod tests {
         pool.insert_validated(second_lane_head).unwrap();
 
         let lane_to_invalidate = pool.get(&first_lane_head_hash).unwrap();
-        let mut best = pool.best_transactions();
+        let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0);
         best.mark_invalid(
             &lane_to_invalidate,
             &InvalidPoolTransactionError::Consensus(InvalidTransactionError::TxTypeNotSupported),
@@ -666,5 +751,46 @@ mod tests {
         let yielded_hashes: Vec<_> = best.map(|transaction| *transaction.hash()).collect();
         assert_eq!(yielded_hashes.len(), 1);
         assert_eq!(yielded_hashes[0], second_lane_head_hash);
+    }
+
+    #[test]
+    fn best_transactions_uses_effective_tip_across_sidecar_lanes() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+
+        let low_tip_high_cap =
+            valid_pool_transaction(signed_channel_tx_with_tip(&signer, U256::from(31), 0, 1, 100));
+        let high_tip_lower_cap =
+            valid_pool_transaction(signed_channel_tx_with_tip(&signer, U256::from(32), 0, 50, 50));
+        let high_tip_hash = *high_tip_lower_cap.hash();
+
+        pool.insert_validated(low_tip_high_cap).unwrap();
+        pool.insert_validated(high_tip_lower_cap).unwrap();
+
+        let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 10);
+        assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(high_tip_hash));
+    }
+
+    #[test]
+    fn equal_priority_prefers_earlier_submission_timestamp_across_sidecar_lanes() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let now = Instant::now();
+
+        let older = valid_pool_transaction_at(
+            signed_channel_tx_with_tip(&signer, U256::from(41), 0, 10, 100),
+            now,
+        );
+        let older_hash = *older.hash();
+        let newer = valid_pool_transaction_at(
+            signed_channel_tx_with_tip(&signer, U256::from(42), 0, 10, 100),
+            now + std::time::Duration::from_secs(1),
+        );
+
+        pool.insert_validated(older).unwrap();
+        pool.insert_validated(newer).unwrap();
+
+        let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 10);
+        assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(older_hash));
     }
 }

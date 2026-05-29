@@ -39,11 +39,12 @@ pub struct BaseTransactionPool<
 > where
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
-    O: reth_transaction_pool::TransactionOrdering<Transaction = T>,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore,
 {
     protocol_pool:
         Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>, O, S>,
+    ordering: O,
     nonce_pool: Arc<RwLock<TwoDNoncePool<T>>>,
     listeners: Arc<RwLock<SidecarListeners<T>>>,
 }
@@ -54,7 +55,7 @@ where
     Evm: 'static,
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
-    O: reth_transaction_pool::TransactionOrdering<Transaction = T>,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -68,16 +69,28 @@ where
     Evm: 'static,
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
-    O: reth_transaction_pool::TransactionOrdering<Transaction = T>,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore,
 {
     fn clone(&self) -> Self {
         Self {
             protocol_pool: self.protocol_pool.clone(),
+            ordering: self.ordering.clone(),
             nonce_pool: Arc::clone(&self.nonce_pool),
             listeners: Arc::clone(&self.listeners),
         }
     }
+}
+
+impl<Client, S, Evm, T, O> Unpin for BaseTransactionPool<Client, S, Evm, T, O>
+where
+    Client: 'static,
+    Evm: 'static,
+    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
+    S: BlobStore,
+{
 }
 
 impl<Client, S, Evm, T, O> BaseTransactionPool<Client, S, Evm, T, O>
@@ -86,7 +99,7 @@ where
     Evm: 'static,
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
-    O: reth_transaction_pool::TransactionOrdering<Transaction = T>,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore,
 {
     /// Creates a new wrapper around the reth protocol pool.
@@ -96,10 +109,12 @@ where
             O,
             S,
         >,
+        ordering: O,
     ) -> Self {
         let price_bump_config = protocol_pool.config().price_bumps;
         Self {
             protocol_pool,
+            ordering,
             nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new(price_bump_config))),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
         }
@@ -253,7 +268,7 @@ where
     Evm: 'static,
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
-    O: reth_transaction_pool::TransactionOrdering<Transaction = T>,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore,
 {
     type Transaction = T;
@@ -462,9 +477,17 @@ where
     fn best_transactions(
         &self,
     ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
+        let block_info = self.protocol_pool.block_info();
+        let best_transactions_attributes = BestTransactionsAttributes::new(
+            block_info.pending_basefee,
+            block_info.pending_blob_fee.map(|fee| fee as u64),
+        );
+        let base_fee = best_transactions_attributes.basefee;
         Box::new(MergeBestTransactions::new(
-            self.protocol_pool.best_transactions(),
-            Box::new(self.nonce_pool.read().best_transactions()),
+            self.protocol_pool.best_transactions_with_attributes(best_transactions_attributes),
+            Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
+            self.ordering.clone(),
+            base_fee,
         ))
     }
 
@@ -472,9 +495,12 @@ where
         &self,
         best_transactions_attributes: BestTransactionsAttributes,
     ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
+        let base_fee = best_transactions_attributes.basefee;
         Box::new(MergeBestTransactions::new(
             self.protocol_pool.best_transactions_with_attributes(best_transactions_attributes),
-            Box::new(self.nonce_pool.read().best_transactions()),
+            Box::new(self.nonce_pool.read().best_transactions(self.ordering.clone(), base_fee)),
+            self.ordering.clone(),
+            base_fee,
         ))
     }
 
@@ -769,7 +795,7 @@ where
     Evm: 'static,
     BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
-    O: reth_transaction_pool::TransactionOrdering<Transaction = T>,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
     S: BlobStore,
 {
     type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>> as TransactionValidator>::Block;
@@ -900,16 +926,17 @@ impl<T: BasePooledTx> SidecarListeners<T> {
 
         match &outcome.outcome.state {
             AddedTransactionState::Pending => {
-                self.broadcast_hash_event(&hash, TransactionEvent::Pending);
-                self.broadcast_all(FullTransactionEvent::Pending(hash));
-                self.broadcast_pending(&transaction);
-                self.broadcast_new(NewTransactionEvent::pending(transaction));
+                self.broadcast_pending_transaction(&transaction);
             }
             AddedTransactionState::Queued(reason) => {
                 self.broadcast_hash_event(&hash, TransactionEvent::Queued);
                 self.broadcast_all(FullTransactionEvent::Queued(hash, Some(reason.clone())));
                 self.broadcast_new(NewTransactionEvent { subpool: SubPool::Queued, transaction });
             }
+        }
+
+        for promoted in &outcome.promoted {
+            self.broadcast_pending_transaction(promoted);
         }
     }
 
@@ -933,6 +960,14 @@ impl<T: BasePooledTx> SidecarListeners<T> {
 
     fn broadcast_all(&mut self, event: FullTransactionEvent<T>) {
         self.all_events.retain(|listener| listener.try_send(event.clone()).is_ok());
+    }
+
+    fn broadcast_pending_transaction(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
+        let hash = *transaction.hash();
+        self.broadcast_hash_event(&hash, TransactionEvent::Pending);
+        self.broadcast_all(FullTransactionEvent::Pending(hash));
+        self.broadcast_pending(transaction);
+        self.broadcast_new(NewTransactionEvent::pending(Arc::clone(transaction)));
     }
 
     fn broadcast_pending(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
@@ -996,4 +1031,96 @@ fn pooled_element<T: BasePooledTx>(
         .ok()
         .map(|recovered| recovered.into_parts().0)
         .map(|pooled| (pooled, encoded_length))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use alloy_consensus::{Transaction, transaction::Recovered};
+    use alloy_primitives::{Bytes, U256};
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+    use base_common_chains::ChainConfig;
+    use base_common_consensus::{
+        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
+    };
+    use futures::StreamExt;
+    use reth_transaction_pool::{PriceBumpConfig, TransactionOrigin, identifier::TransactionId};
+
+    use super::*;
+    use crate::BasePooledTransaction;
+
+    fn test_chain_id() -> u64 {
+        ChainConfig::mainnet().chain_id
+    }
+
+    fn signer() -> PrivateKeySigner {
+        PrivateKeySigner::random()
+    }
+
+    fn signed_channel_tx(
+        signer: &PrivateKeySigner,
+        nonce_key: U256,
+        nonce_sequence: u64,
+        max_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: None,
+            nonce_key,
+            nonce_sequence,
+            expiry: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas,
+            gas_limit: 50_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            payer: None,
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+    }
+
+    fn valid_pool_transaction(
+        transaction: BasePooledTransaction,
+    ) -> ValidPoolTransaction<BasePooledTransaction> {
+        ValidPoolTransaction {
+            transaction_id: TransactionId::new(0u64.into(), transaction.nonce()),
+            transaction,
+            propagate: true,
+            timestamp: Instant::now(),
+            origin: TransactionOrigin::External,
+            authority_ids: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn gap_fill_broadcasts_pending_for_promoted_sidecar_transaction() {
+        let mut nonce_pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let mut listeners = SidecarListeners::default();
+        let signer = signer();
+
+        let first = valid_pool_transaction(signed_channel_tx(&signer, U256::from(1), 0, 1_000));
+        let queued = valid_pool_transaction(signed_channel_tx(&signer, U256::from(1), 2, 800));
+        let queued_hash = *queued.hash();
+        let middle = valid_pool_transaction(signed_channel_tx(&signer, U256::from(1), 1, 900));
+        let middle_hash = *middle.hash();
+
+        nonce_pool.insert_validated(first).unwrap();
+        nonce_pool.insert_validated(queued).unwrap();
+
+        let mut pending = listeners.subscribe_pending(TransactionListenerKind::All);
+        let mut queued_events = listeners.subscribe_hash(queued_hash).0;
+
+        let outcome = nonce_pool.insert_validated(middle).unwrap();
+        listeners.on_inserted(&nonce_pool, &outcome);
+
+        assert_eq!(pending.recv().await, Some(middle_hash));
+        assert_eq!(pending.recv().await, Some(queued_hash));
+        assert!(matches!(queued_events.next().await, Some(TransactionEvent::Pending)));
+    }
 }
