@@ -1220,6 +1220,30 @@ mod tests {
     }
 
     #[test]
+    fn batch_burn_does_not_revert_on_zero_value_transfer() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
+        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
+        token.accounting_mut().balances.insert(BOB, U256::from(50u64));
+        token.accounting_mut().total_supply = U256::from(150u64);
+
+        call_security(
+            &mut token,
+            ALICE,
+            batch_burn_calldata(
+                alloc::vec![ALICE, BOB],
+                alloc::vec![U256::from(10u64), U256::ZERO],
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(90u64));
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
+        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(140u64));
+        assert_eq!(token.accounting().events.len(), 2); // one Transfer per element
+    }
+
+    #[test]
     fn batch_burn_multiple_accounts_emits_one_transfer_each() {
         let mut token = make_token();
         token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
