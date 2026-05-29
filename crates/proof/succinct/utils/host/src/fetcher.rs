@@ -234,10 +234,18 @@ impl OPSuccinctDataFetcher {
 
         let block_data = stream::iter(start + 1..=end)
             .map(|block_number| async move {
-                let block =
-                    self.l2_provider.get_block_by_number(block_number.into()).await?.unwrap();
-                let receipts =
-                    self.l2_provider.get_block_receipts(block_number.into()).await?.unwrap();
+                let block = self
+                    .l2_provider
+                    .get_block_by_number(block_number.into())
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("L2 block {} not found", block_number))?;
+                let receipts = self
+                    .l2_provider
+                    .get_block_receipts(block_number.into())
+                    .await?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("receipts for L2 block {} not found", block_number)
+                    })?;
                 let total_l1_fees: u128 =
                     receipts.iter().map(|tx| tx.l1_block_info.l1_fee.unwrap_or(0)).sum();
                 let total_tx_fees: u128 = receipts
@@ -502,7 +510,8 @@ impl OPSuccinctDataFetcher {
                 earliest_l1_header = Some(l1_block_header);
             }
         }
-        Ok(earliest_l1_header.unwrap())
+        earliest_l1_header
+            .ok_or_else(|| anyhow::anyhow!("no L1 headers found in batch (empty boot_infos?)"))
     }
 
     /// Get the latest L1 header in a batch of boot infos.
@@ -762,7 +771,10 @@ impl OPSuccinctDataFetcher {
         let agreed_l2_output_root = keccak256(l2_output_encoded.abi_encode());
 
         // Get L2 claim data.
-        let l2_claim_block = l2_provider.get_block_by_number(l2_end_block.into()).await?.unwrap();
+        let l2_claim_block = l2_provider
+            .get_block_by_number(l2_end_block.into())
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("L2 claim block {} not found", l2_end_block))?;
         let l2_claim_state_root = l2_claim_block.header.state_root;
         let l2_claim_hash = l2_claim_block.header.hash;
         let l2_claim_storage_hash = l2_provider
