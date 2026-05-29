@@ -27,9 +27,10 @@ const MAX_NONCE_BYTES: usize = 512;
 
 /// Maximum number of concurrent `prover_prove` requests per enclave.
 ///
-/// Proving is CPU- and memory-intensive and the enclave processes one request at a time, so any
-/// excess concurrency only adds queueing latency and resource pressure. Additional concurrent
-/// requests are rejected with `-32002` so callers can back off and retry instead of piling up.
+/// Proving is CPU- and memory-intensive. The enclave does not reject concurrent requests itself;
+/// it would serialize them under load, adding queueing latency and resource pressure. We enforce
+/// the limit host-side and reject excess requests with `-32002` so callers can back off and retry
+/// instead of piling up.
 const MAX_CONCURRENT_PROOF_REQUESTS_PER_ENCLAVE: usize = 1;
 
 struct EnclaveService {
@@ -163,15 +164,14 @@ struct NitroProverRpc {
     checker: Option<Arc<RegistrationChecker>>,
 }
 
-#[async_trait]
-impl ProverApiServer for NitroProverRpc {
-    async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult> {
-        let l2_block = request.claimed_l2_block_number;
-        let timeout = self.proof_request_timeout;
-
-        // Pick the first valid enclave with an available permit. Falling through busy enclaves
-        // matters in dual-enclave deployments: without fall-through a single in-flight request
-        // would make idle enclaves unreachable even though they are valid and available.
+impl NitroProverRpc {
+    /// Pick the first valid enclave with an available permit. Falling through busy enclaves
+    /// matters in dual-enclave deployments: without fall-through a single in-flight request
+    /// would make idle enclaves unreachable even though they are valid and available.
+    async fn acquire_enclave(
+        &self,
+        l2_block: u64,
+    ) -> RpcResult<(&EnclaveService, tokio::sync::OwnedSemaphorePermit)> {
         let candidate_indices: Vec<usize> = match &self.checker {
             Some(checker) => checker
                 .select_all_valid_enclaves()
@@ -187,7 +187,7 @@ impl ProverApiServer for NitroProverRpc {
             None => vec![0],
         };
 
-        let (enclave, _permit) = candidate_indices
+        candidate_indices
             .iter()
             .find_map(|&i| {
                 Arc::clone(&self.enclaves[i].prove_permit)
@@ -201,7 +201,17 @@ impl ProverApiServer for NitroProverRpc {
                     -32002,
                     "enclave busy: another proof request is already in flight",
                 )
-            })?;
+            })
+    }
+}
+
+#[async_trait]
+impl ProverApiServer for NitroProverRpc {
+    async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult> {
+        let l2_block = request.claimed_l2_block_number;
+        let timeout = self.proof_request_timeout;
+
+        let (enclave, _permit) = self.acquire_enclave(l2_block).await?;
 
         match tokio::time::timeout(timeout, enclave.service.prove_block(request)).await {
             Ok(result) => result.map_err(|e| NitroProverServer::rpc_err(-32000, e)),
@@ -397,15 +407,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prove_permit_is_released_after_request_completes() {
+    async fn prove_permit_is_released_when_handle_dropped() {
         let rpc = test_prover_rpc();
 
-        let _ = rpc.prove(ProofRequest::default()).await;
+        let (_enclave, permit) = rpc.acquire_enclave(0).await.unwrap();
+        assert_eq!(rpc.enclaves[0].prove_permit.available_permits(), 0);
 
+        drop(permit);
         assert_eq!(
             rpc.enclaves[0].prove_permit.available_permits(),
             MAX_CONCURRENT_PROOF_REQUESTS_PER_ENCLAVE,
-            "permit must be released after the proof request returns"
+            "permit must be released when the RAII handle is dropped"
         );
     }
 
@@ -471,9 +483,13 @@ mod tests {
         // Saturate the first enclave; the second is still free.
         let _held = Arc::clone(&rpc.enclaves[0].prove_permit).try_acquire_owned().unwrap();
 
-        // prove() must not return -32002 (busy) because enclave[1] is available; the request will
-        // route there and only fail later because RPCs are bogus (-32000).
-        let err = rpc.prove(ProofRequest::default()).await.unwrap_err();
-        assert_ne!(err.code(), -32002, "expected fall-through to second enclave, got busy");
+        // acquire_enclave must select enclave[1] since enclave[0] has no permits. We test the
+        // selection helper directly because prove_block requires a live beacon endpoint.
+        let (enclave, _permit) = rpc.acquire_enclave(0).await.expect("fall-through to enclave[1]");
+        assert!(
+            Arc::ptr_eq(&enclave.transport, &rpc.enclaves[1].transport),
+            "expected enclave[1] selected via fall-through"
+        );
+        assert_eq!(rpc.enclaves[1].prove_permit.available_permits(), 0);
     }
 }

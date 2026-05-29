@@ -179,35 +179,6 @@ impl RegistrationChecker {
         }
     }
 
-    /// Selects the first enclave whose signer is currently valid on-chain.
-    ///
-    /// Returns as soon as a valid signer is found (config order).
-    pub async fn select_valid_enclave(&self) -> Result<ValidSigner, RegistrationError> {
-        let mut discovered = Vec::new();
-
-        for (index, transport) in self.transports.iter().enumerate() {
-            let signer = match Self::signer_address(transport).await {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!(error = %e, index, "skipping transport: key fetch failed");
-                    continue;
-                }
-            };
-
-            discovered.push(signer);
-
-            match self.is_valid_signer(signer).await {
-                Ok(true) => return Ok(ValidSigner { index, signer }),
-                Ok(false) => {
-                    warn!(signer = %signer, index, "signer not valid in TEEProverRegistry");
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        Err(RegistrationError::NoValidSigner { signers: discovered })
-    }
-
     /// Returns every enclave whose signer is currently valid on-chain, in
     /// config order.
     ///
@@ -394,7 +365,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn select_first_invalid_second_valid_returns_index_1() {
+    async fn select_all_skips_invalid_returns_only_valid() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
         let checker = two_transport_checker(registry.clone());
         let (addr0, addr1) = two_transport_signers(&checker).await;
@@ -402,13 +373,14 @@ mod tests {
         registry.validity_map.lock().unwrap().insert(addr0, false);
         registry.validity_map.lock().unwrap().insert(addr1, true);
 
-        let valid = checker.select_valid_enclave().await.unwrap();
-        assert_eq!(valid.index, 1);
-        assert_eq!(valid.signer, addr1);
+        let valid = checker.select_all_valid_enclaves().await.unwrap();
+        assert_eq!(valid.len(), 1);
+        assert_eq!(valid[0].index, 1);
+        assert_eq!(valid[0].signer, addr1);
     }
 
     #[tokio::test]
-    async fn select_both_valid_returns_first() {
+    async fn select_all_both_valid_returns_in_config_order() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
         let checker = two_transport_checker(registry.clone());
         let (addr0, addr1) = two_transport_signers(&checker).await;
@@ -416,17 +388,20 @@ mod tests {
         registry.validity_map.lock().unwrap().insert(addr0, true);
         registry.validity_map.lock().unwrap().insert(addr1, true);
 
-        let valid = checker.select_valid_enclave().await.unwrap();
-        assert_eq!(valid.index, 0);
-        assert_eq!(valid.signer, addr0);
+        let valid = checker.select_all_valid_enclaves().await.unwrap();
+        assert_eq!(valid.len(), 2);
+        assert_eq!(valid[0].index, 0);
+        assert_eq!(valid[0].signer, addr0);
+        assert_eq!(valid[1].index, 1);
+        assert_eq!(valid[1].signer, addr1);
     }
 
     #[tokio::test]
-    async fn select_none_valid_returns_no_valid_signer() {
+    async fn select_all_none_valid_returns_no_valid_signer() {
         let registry = AddressBasedMockRegistry::new(HashMap::new());
         let checker = two_transport_checker(registry);
 
-        let err = checker.select_valid_enclave().await.unwrap_err();
+        let err = checker.select_all_valid_enclaves().await.unwrap_err();
         match err {
             RegistrationError::NoValidSigner { signers } => {
                 assert_eq!(signers.len(), 2);
