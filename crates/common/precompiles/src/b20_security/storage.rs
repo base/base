@@ -261,7 +261,9 @@ mod tests {
             }
 
             let redeem_policy_slot = REDEEM_ROOT
-                + U256::from(__packing_b20_redeem_storage::REDEEM_SENDER_POLICY_ID_LOC.offset_slots);
+                + U256::from(
+                    __packing_b20_redeem_storage::REDEEM_SENDER_POLICY_ID_LOC.offset_slots,
+                );
             assert_eq!(ctx.sload(TOKEN, redeem_policy_slot).unwrap(), U256::from(policy_id));
         });
     }
