@@ -100,8 +100,8 @@ impl B20SecurityStorage<'_> {
     /// WAD precision for share ratio arithmetic: 1e18.
     pub const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
-    /// Writes the initial packed `redeem_policy_ids` word with `REDEEM_SENDER_POLICY`
-    /// set to `ALWAYS_BLOCK_ID`. Called once from [`initialize`].
+    /// Writes the default `redeem_sender_policy_id` to `ALWAYS_BLOCK_ID`.
+    /// Called once from [`initialize`].
     fn write_redeem_policy_ids_default(&mut self) -> Result<()> {
         self.redeem.set_redeem_sender_policy_id(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
     }
