@@ -2,7 +2,7 @@
 
 use alloc::string::String;
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, FixedBytes, U256};
 use base_precompile_macros::{Storable, TokenAccounting, contract};
 use base_precompile_storage::{Handler, Mapping, Result, StorageCtx};
 
@@ -76,6 +76,7 @@ pub struct B20CoreStorage {
     #[accessor]
     #[mutator]
     pub mint_receiver_policy_id: u64, // slot 10, offset 0
+    pub mint_reserved: FixedBytes<24>, // slot 10, offset 8 (fills remaining 24 bytes)
     /// Paused feature bitmask.
     #[accessor]
     #[mutator]
