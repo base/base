@@ -355,7 +355,7 @@ impl TokenCreateParams {
     /// Validates stablecoin initialization fields.
     pub const fn validate_stablecoin(_init: &B20StablecoinInit) -> Result<()> {
         // Currency validation is delegated to `B20StablecoinStorage::initialize`, which rejects
-        // all invalid values (including empty) with `InvalidCurrency`.
+        // empty values with `MissingRequiredField` and non-A-Z values with `InvalidCurrency`.
         Ok(())
     }
 
@@ -700,7 +700,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             assert_output(
                 dispatch_factory_revert(ctx, call),
-                IB20Factory::InvalidCurrency { code: String::new() }.abi_encode(),
+                IB20Factory::MissingRequiredField { field: "currency".to_string() }.abi_encode(),
             );
         });
     }
