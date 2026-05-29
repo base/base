@@ -25,6 +25,26 @@ const SETUP_IMAGE_BUILD_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const SETUP_IMAGE_BUILD_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const DEPLOY_TIMEOUT_SECS: u64 = 300;
 
+/// Host `<uid>:<gid>` to run the devnet setup container as, so that files it
+/// writes into the bind-mounted output dir are owned by the test process and
+/// can be read back. Without this, the container runs as root (no `USER` in
+/// `Dockerfile.devnet`) and the genesis files land as `root:root`, which the
+/// unprivileged CI runner cannot read.
+///
+/// Linux-only: Docker Desktop on macOS/Windows already maps bind-mount
+/// ownership to the host user; pinning `--user` there would just fight the VM.
+#[cfg(target_os = "linux")]
+fn host_user_spec() -> Option<String> {
+    // SAFETY: getuid/getgid are infallible and have no preconditions.
+    let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+    Some(format!("{uid}:{gid}"))
+}
+
+#[cfg(not(target_os = "linux"))]
+const fn host_user_spec() -> Option<String> {
+    None
+}
+
 /// Builder enode ID
 pub const BUILDER_ENODE_ID: &str = "3255458e24278e31d5940f304b16300fdff3f6efd3e2a030b5818310ac67af45e28d057e6a332d07e0c5ab09d6947fd4eed1a646edbf224e2d2fec6f49f90abc";
 /// Execution-layer bootnode private key.
@@ -199,7 +219,7 @@ impl SetupContainer {
         let output_mount = output_dir.to_string_lossy().to_string();
         let shared_mount = shared_dir.to_string_lossy().to_string();
 
-        let _container = GenericImage::new("devnet-setup", "local")
+        let mut request = GenericImage::new("devnet-setup", "local")
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)))
             .with_env_var("OUTPUT_DIR", "/output")
             .with_env_var("SHARED_DIR", "/shared")
@@ -208,9 +228,11 @@ impl SetupContainer {
             .with_env_var("SLOT_DURATION", self.slot_duration.to_string())
             .with_mount(Mount::bind_mount(output_mount, "/output"))
             .with_mount(Mount::bind_mount(shared_mount, "/shared"))
-            .with_cmd(["setup-l1.sh"])
-            .start()
-            .wrap_err("Failed to run setup-l1.sh")?;
+            .with_cmd(["setup-l1.sh"]);
+        if let Some(user) = host_user_spec() {
+            request = request.with_user(user);
+        }
+        let _container = request.start().wrap_err("Failed to run setup-l1.sh")?;
 
         ensure!(self.output_dir.join("cl/genesis.ssz").exists(), "genesis.ssz was not generated");
 
@@ -270,12 +292,14 @@ impl SetupContainer {
             container = container.with_env_var("L2_BASE_BERYL_BLOCK", block.to_string());
         }
 
-        let _container = container
+        let mut request = container
             .with_mount(Mount::bind_mount(l2_output_mount, "/output/l2"))
             .with_mount(Mount::bind_mount(shared_mount, "/shared"))
-            .with_cmd(["setup-l2.sh"])
-            .start()
-            .wrap_err("Failed to run setup-l2.sh")?;
+            .with_cmd(["setup-l2.sh"]);
+        if let Some(user) = host_user_spec() {
+            request = request.with_user(user);
+        }
+        let _container = request.start().wrap_err("Failed to run setup-l2.sh")?;
 
         ensure!(
             self.output_dir.join("l2/genesis.json").exists(),

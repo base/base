@@ -88,6 +88,9 @@ serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
 [dev-dependencies]
 # cli
 clap = { workspace = true, features = ["derive"] }
