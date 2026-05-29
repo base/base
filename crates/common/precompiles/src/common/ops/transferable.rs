@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn transfer_from_insufficient_allowance_beats_executor_policy_denial() {
+    fn transfer_from_allowance_check_should_be_done_before_executor_policy() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::from(10u64));
         accounting
