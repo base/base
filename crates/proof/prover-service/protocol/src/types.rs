@@ -1,4 +1,4 @@
-//! JSON-RPC request and response types for the shared prover service.
+//! JSON-RPC request and response types for the shared prover service protocol.
 
 use alloy_primitives::{Address, B256, Bytes};
 use chrono::{DateTime, Utc};

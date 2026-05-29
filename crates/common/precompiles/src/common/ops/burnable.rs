@@ -62,6 +62,7 @@ pub trait Burnable: Token {
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::BurnBlocked)?;
         }
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         B20Guards::ensure_blocked::<Self>(self, from)?;
         // Intentional asymmetry: BURN_BLOCKED_ROLE replaces BURN_ROLE, but emergency burn pauses
         // still halt every burn path, including burnBlocked.
@@ -157,6 +158,20 @@ mod tests {
 
         assert_eq!(
             token.burn(CALLER, ALICE, U256::ONE, true).unwrap_err(),
+            BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::BURN,
+            })
+        );
+    }
+
+    #[test]
+    fn burn_blocked_paused_gets_pause_error_not_blocked_error() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(
+            token.burn_blocked(CALLER, ALICE, U256::ONE, true).unwrap_err(),
             BasePrecompileError::revert(IB20::ContractPaused {
                 feature: IB20::PausableFeature::BURN,
             })

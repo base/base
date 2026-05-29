@@ -1,6 +1,4 @@
-//! JSON-RPC trait definition for the prover service API.
-//!
-//! This module is gated behind `rpc-server` or `rpc-client` in `lib.rs`.
+//! Role-specific JSON-RPC trait definitions for the prover service API.
 
 use jsonrpsee::proc_macros::rpc;
 
@@ -23,8 +21,8 @@ use crate::{
     all(feature = "rpc-client", not(feature = "rpc-server")),
     rpc(client, namespace = "prover")
 )]
-/// JSON-RPC interface for submitting proof requests and coordinating proof jobs.
-pub trait ProverServiceApi {
+/// JSON-RPC interface for proof requesters.
+pub trait ProverRequesterApi {
     /// Submit a proof request.
     #[method(name = "submitProof")]
     async fn submit_proof(
@@ -45,7 +43,22 @@ pub trait ProverServiceApi {
         &self,
         request: ListProofsRequest,
     ) -> jsonrpsee::core::RpcResult<ListProofsResponse>;
+}
 
+#[cfg_attr(
+    all(feature = "rpc-server", feature = "rpc-client"),
+    rpc(server, client, namespace = "prover")
+)]
+#[cfg_attr(
+    all(feature = "rpc-server", not(feature = "rpc-client")),
+    rpc(server, namespace = "prover")
+)]
+#[cfg_attr(
+    all(feature = "rpc-client", not(feature = "rpc-server")),
+    rpc(client, namespace = "prover")
+)]
+/// JSON-RPC interface for prover workers.
+pub trait ProverWorkerApi {
     /// Return a worker-owned proof job by session id.
     #[method(name = "getProofJob")]
     async fn get_proof_job(

@@ -5707,9 +5707,11 @@ dependencies = [
 name = "base-proof-tee-nitro-host"
 version = "0.0.0"
 dependencies = [
+ "alloy-genesis 2.0.5",
  "alloy-primitives",
  "alloy-signer 2.0.5",
  "async-trait",
+ "base-common-genesis",
  "base-health",
  "base-proof-contracts",
  "base-proof-host",
@@ -5947,10 +5949,56 @@ name = "base-prover-service"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-rpc-types 2.0.5",
+ "anyhow",
+ "async-trait",
+ "axum 0.8.9",
+ "base-common-network",
+ "base-proof-rpc",
+ "base-proof-succinct-client-utils",
+ "base-proof-succinct-elfs",
+ "base-proof-succinct-ethereum-host-utils",
+ "base-proof-succinct-host-utils",
+ "base-proof-succinct-proof-utils",
+ "base-prover-service-db",
+ "base-prover-service-outbox",
+ "base-prover-service-protocol",
+ "bincode 2.0.1",
  "chrono",
+ "governor",
  "jsonrpsee",
+ "metrics",
+ "nonzero_ext",
+ "reqwest 0.13.3",
  "serde",
  "serde_json",
+ "sp1-cluster-artifact",
+ "sp1-cluster-common",
+ "sp1-cluster-utils",
+ "sp1-prover-types",
+ "sp1-sdk",
+ "tokio",
+ "tower 0.5.3",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+ "uuid",
+]
+
+[[package]]
+name = "base-prover-service-client"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "base-prover-service-protocol",
+ "chrono",
+ "jsonrpsee",
+ "rstest",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -5981,6 +6029,17 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "base-prover-service-protocol"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "chrono",
+ "jsonrpsee",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -6393,6 +6452,7 @@ dependencies = [
  "base-common-flashblocks",
  "base-common-genesis",
  "base-common-network",
+ "base-common-precompiles",
  "base-consensus-gossip",
  "base-consensus-rpc",
  "base-protocol",

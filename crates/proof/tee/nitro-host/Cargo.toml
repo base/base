@@ -42,6 +42,8 @@ tokio-vsock.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
+alloy-genesis.workspace = true
+base-common-genesis = { workspace = true, features = ["serde", "std"] }
 
 [features]
 metrics = [ "base-proof-host/metrics" ]

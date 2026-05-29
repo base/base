@@ -17,8 +17,8 @@ pub trait Mintable: Token {
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Mint)?;
         }
-        B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::MintReceiver, to)?;
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::MINT)?;
+        B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::MintReceiver, to)?;
         let supply = self.accounting().total_supply()?;
         let cap = self.accounting().supply_cap()?;
         let new_supply =
@@ -162,6 +162,23 @@ mod tests {
     fn mint_reverts_when_mint_feature_paused() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::MINT);
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(
+            token.mint(CALLER, ALICE, U256::ONE, true).unwrap_err(),
+            BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::MINT,
+            })
+        );
+    }
+
+    #[test]
+    fn mint_paused_gets_pause_error_not_policy_error() {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::MINT);
+        accounting
+            .policy_ids
+            .insert(B20PolicyType::MintReceiver.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
