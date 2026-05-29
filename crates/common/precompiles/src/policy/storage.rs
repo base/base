@@ -21,11 +21,14 @@ impl PackedPolicy {
     const EXISTS_BIT: U256 = U256::from_limbs([0, 0, 0, 1u64 << 63]);
     /// Mask covering the low 160 bits where the admin address lives.
     const ADMIN_MASK: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0xFFFF_FFFF, 0]);
+    /// Byte offset of an Ethereum address in a 32-byte big-endian word.
+    /// An `Address` is 20 bytes, so it occupies bytes `[12..32]`.
+    const ADDRESS_OFFSET: usize = 32 - 20;
 
     /// Creates a packed policy word for `admin`.
     pub fn new(admin: Address) -> Self {
         let mut word = [0u8; 32];
-        word[12..32].copy_from_slice(admin.as_slice());
+        word[Self::ADDRESS_OFFSET..].copy_from_slice(admin.as_slice());
         Self(U256::from_be_slice(&word) | Self::EXISTS_BIT)
     }
 
@@ -37,7 +40,7 @@ impl PackedPolicy {
     /// Returns the admin address encoded in this policy word.
     pub fn admin(self) -> Address {
         let bytes = (self.0 & Self::ADMIN_MASK).to_be_bytes::<32>();
-        Address::from_slice(&bytes[12..])
+        Address::from_slice(&bytes[Self::ADDRESS_OFFSET..])
     }
 
     /// Returns whether this policy word has the exists bit set.
@@ -101,7 +104,7 @@ impl PolicyRegistryStorage<'_> {
     }
 
     fn require_custom(&self, policy_id: u64) -> Result<PackedPolicy> {
-        let packed: PackedPolicy = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
+        let packed = self.read_packed(policy_id)?;
         if !packed.exists() {
             return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
         }
@@ -123,6 +126,16 @@ impl PolicyRegistryStorage<'_> {
 
     const fn make_id(policy_type: u8, counter: u64) -> u64 {
         (policy_type as u64) << Self::POLICY_ID_TYPE_SHIFT | (counter & Self::COUNTER_MASK)
+    }
+
+    /// Reads the packed policy word for `policy_id` from the `policies` mapping.
+    fn read_packed(&self, policy_id: u64) -> Result<PackedPolicy> {
+        Ok(PackedPolicy::from_raw(self.policies.at(&policy_id).read()?))
+    }
+
+    /// Writes `packed` as the policy word for `policy_id` into the `policies` mapping.
+    fn write_packed(&mut self, policy_id: u64, packed: PackedPolicy) -> Result<()> {
+        self.policies.at_mut(&policy_id).write(packed.into_u256())
     }
 
     /// Validates policy-creation inputs and returns the raw policy type discriminator.
@@ -168,9 +181,9 @@ impl PolicyRegistryStorage<'_> {
             Self::make_id(PolicyType::ALLOWLIST.as_discriminant(), 1),
             Self::ALWAYS_BLOCK_ID
         );
-        let builtin = PackedPolicy::new(Address::ZERO).into_u256();
-        self.policies.at_mut(&Self::ALWAYS_ALLOW_ID).write(builtin)?;
-        self.policies.at_mut(&Self::ALWAYS_BLOCK_ID).write(builtin)?;
+        let builtin = PackedPolicy::new(Address::ZERO);
+        self.write_packed(Self::ALWAYS_ALLOW_ID, builtin)?;
+        self.write_packed(Self::ALWAYS_BLOCK_ID, builtin)?;
         self.next_counter.write(Self::BUILTIN_POLICY_COUNT)?;
         Ok(())
     }
@@ -205,7 +218,7 @@ impl PolicyRegistryStorage<'_> {
         let next = counter.checked_add(1).ok_or_else(BasePrecompileError::under_overflow)?;
         self.next_counter.write(next)?;
         let policy_id = Self::make_id(policy_type_u8, counter);
-        self.policies.at_mut(&policy_id).write(PackedPolicy::new(admin).into_u256())?;
+        self.write_packed(policy_id, PackedPolicy::new(admin))?;
 
         let caller = self.storage.caller();
         self.emit_event(IPolicyRegistry::PolicyCreated {
@@ -284,7 +297,7 @@ impl PolicyRegistryStorage<'_> {
             return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
         }
         let previous_admin = packed.admin();
-        self.policies.at_mut(&policy_id).write(packed.with_admin(caller).into_u256())?;
+        self.write_packed(policy_id, packed.with_admin(caller))?;
         self.pending_admins.at_mut(&policy_id).delete()?;
         self.emit_event(IPolicyRegistry::PolicyAdminUpdated {
             policyId: policy_id,
@@ -297,7 +310,7 @@ impl PolicyRegistryStorage<'_> {
     /// Clears the admin of `policy_id`, leaving it permanently un-administered.
     pub fn renounce_admin(&mut self, policy_id: u64) -> Result<()> {
         let (packed, caller) = self.require_admin(policy_id)?;
-        self.policies.at_mut(&policy_id).write(packed.with_admin(Address::ZERO).into_u256())?;
+        self.write_packed(policy_id, packed.with_admin(Address::ZERO))?;
         self.pending_admins.at_mut(&policy_id).delete()?;
         self.emit_event(IPolicyRegistry::PolicyAdminUpdated {
             policyId: policy_id,
@@ -408,8 +421,7 @@ impl PolicyRegistryStorage<'_> {
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(true);
         }
-        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
-        Ok(packed.exists())
+        Ok(self.read_packed(policy_id)?.exists())
     }
 
     /// Returns the current admin of `policy_id`, or `address(0)` for policies with renounced admin.
@@ -420,7 +432,7 @@ impl PolicyRegistryStorage<'_> {
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
             return Ok(Address::ZERO);
         }
-        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
+        let packed = self.read_packed(policy_id)?;
         if !packed.exists() {
             return Ok(Address::ZERO);
         }
