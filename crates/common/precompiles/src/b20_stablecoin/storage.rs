@@ -55,7 +55,7 @@ impl<'a> B20StablecoinStorage<'a> {
     pub fn initialize(&mut self, init: B20StablecoinInit) -> Result<()> {
         if init.currency.is_empty() {
             return Err(BasePrecompileError::revert(IB20Factory::MissingRequiredField {
-                field: "currency".to_string(),
+                field: String::from("currency"),
             }));
         }
         if !init.currency.bytes().all(|b| b.is_ascii_uppercase()) {
