@@ -48,7 +48,9 @@ jobs:
       - name: Clone fork-test repositories
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # BASE_STD_TOKEN must be a PAT with Contents:Read on base/base-std.
+          # GITHUB_TOKEN is repo-scoped and cannot access other repos, even internal ones.
+          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -56,7 +58,7 @@ jobs:
           rm -rf "$workdir"
           mkdir -p "$workdir"
 
-          # base-std is internal — use gh CLI so GITHUB_TOKEN is passed automatically.
+          # base-std is internal — use gh CLI with a cross-repo PAT.
           gh repo clone base/base-std "$workdir/base-std" -- \
             --depth 1 --single-branch --branch "$BASE_STD_REF" \
             --recurse-submodules --shallow-submodules
@@ -107,11 +109,11 @@ jobs:
 
           if [ ! -s "$output" ] || [ "$((passed + failed))" -eq 0 ]; then
             body="${marker}
-          ### ❌ Fork tests did not run
+          ### ❌ base-std fork tests did not run
           The build or setup step failed before any tests could execute. Check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
           elif [ "$failed" -eq 0 ]; then
             body="${marker}
-          ### ✅ Fork tests: all ${passed} passed
+          ### ✅ base-std fork tests: all ${passed} passed
           base/base is fully in sync with the base-std spec."
           else
             failing=$(grep '\[FAIL' "$output" \
@@ -119,7 +121,7 @@ jobs:
               | sed 's/^\[FAIL: \(.*\)\] \(.*\) (runs.*$/- **\2**: `\1`/' \
               | sort -u || true)
             body="${marker}
-          ### ❌ Fork tests: ${failed} failed, ${passed} passed
+          ### ❌ base-std fork tests: ${failed} failed, ${passed} passed
 
           base/base diverges from the base-std spec. These failures must be fixed before merging.
 
