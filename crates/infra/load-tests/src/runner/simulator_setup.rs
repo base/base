@@ -104,6 +104,7 @@ pub async fn deploy_and_init_simulator(
             .with_chain_id(chain_id)
             .with_kind(TxKind::Create)
             .with_input(initcode)
+            .with_value(U256::from(1_000_000_000_000_000_000_u128))
             .with_gas_limit(DEPLOY_GAS)
             .with_max_priority_fee_per_gas(max_priority_fee)
             .with_max_fee_per_gas(max_fee);
