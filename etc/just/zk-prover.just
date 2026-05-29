@@ -2,7 +2,7 @@ set positional-arguments := true
 set working-directory := '../..'
 
 _script := "etc/scripts/zk-prover/grpc.sh"
-_ca_compose := "etc/scripts/zk-prover/ca-compose.py"
+_ca_compose := "etc/scripts/zk-prover/ca-compose.sh"
 _ca_combined_file := "/tmp/zk-prover-ca-certificates.crt"
 _ca_extra_file := "/etc/ssl/certs/zk-prover-extra-ca.pem"
 _ca_service := "base-prover-zk"
@@ -176,7 +176,7 @@ _up network mode:
             exit 1
           fi
           ca_compose="$(mktemp)"
-          python3 "{{ _ca_compose }}" "$ca_cert_file" "$ca_compose" \
+          bash "{{ _ca_compose }}" "$ca_cert_file" "$ca_compose" \
             --service-name "{{ _ca_service }}" \
             --service-command "{{ _ca_service_command }}" \
             --system-ca-file "{{ _ca_system_file }}" \
