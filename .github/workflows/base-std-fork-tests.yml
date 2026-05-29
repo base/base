@@ -21,10 +21,12 @@ permissions:
 
 jobs:
   fork-tests:
-    name: Base Std Fork Tests
+    name: Base Std Fork Tests (advisory)
     runs-on:
       group: BasePerfRunnerGroup
     timeout-minutes: 120
+    # Advisory: failures indicate base-std interface changes base/base needs to catch up to.
+    continue-on-error: true
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
