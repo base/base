@@ -1,5 +1,6 @@
 use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 
+use alloy_signer::utils::public_key_to_address;
 use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_contracts::TEEProverRegistryContractClient;
 use base_proof_host::{ProverConfig, ProverService};
@@ -9,6 +10,7 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     server::{Server, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
+use k256::ecdsa::VerifyingKey;
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
@@ -116,6 +118,19 @@ impl NitroProverServer {
         let transports: Vec<Arc<NitroTransport>> =
             self.enclaves.iter().map(|enclave| Arc::clone(&enclave.transport)).collect();
 
+        // Background startup task: log the enclave-observed signer address
+        // for each configured transport as soon as the enclave first
+        // responds. Without this, an investigator chasing a phantom
+        // signer rotation (e.g. enclave restart silently re-keying) has
+        // no host-side record of which signer this host was last
+        // advertising — only the registrar's discovery logs would carry
+        // that attribution, and only if discovery happened to run first.
+        for (index, transport) in transports.iter().cloned().enumerate() {
+            tokio::spawn(async move {
+                log_enclave_signer_on_first_fetch(index, transport).await;
+            });
+        }
+
         let checker = match self.registration_health {
             Some(config) => {
                 info!(
@@ -154,6 +169,56 @@ impl NitroProverServer {
         module.merge(NitroSignerRpc { transports }.into_rpc())?;
 
         Ok(server.start(module))
+    }
+}
+
+/// Polls the enclave at increasing intervals until `signer_public_key`
+/// returns successfully, then logs the derived signer address once and
+/// exits. Intended to be spawned per-transport at host startup so the
+/// host-observed signer is captured in logs before any traffic flows.
+///
+/// Retry budget is bounded (~5 minutes total) — beyond that the absence
+/// of an enclave-signer log line is itself the diagnostic signal, and
+/// `/healthz` will already be failing.
+async fn log_enclave_signer_on_first_fetch(index: usize, transport: Arc<NitroTransport>) {
+    const MAX_ATTEMPTS: u32 = 60;
+    const RETRY_DELAY: Duration = Duration::from_secs(5);
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        match transport.signer_public_key().await {
+            Ok(public_key) => match VerifyingKey::from_sec1_bytes(&public_key) {
+                Ok(vk) => {
+                    let signer = public_key_to_address(&vk);
+                    info!(
+                        enclave_index = index,
+                        signer = %signer,
+                        attempts = attempt,
+                        "nitro_host.enclave_signer_first_observed"
+                    );
+                    return;
+                }
+                Err(e) => {
+                    warn!(
+                        enclave_index = index,
+                        error = %e,
+                        "nitro_host.enclave_signer_parse_failed"
+                    );
+                    return;
+                }
+            },
+            Err(e) => {
+                if attempt == MAX_ATTEMPTS {
+                    warn!(
+                        enclave_index = index,
+                        error = %e,
+                        attempts = attempt,
+                        "nitro_host.enclave_signer_fetch_giving_up"
+                    );
+                    return;
+                }
+                tokio::time::sleep(RETRY_DELAY).await;
+            }
+        }
     }
 }
 
@@ -251,6 +316,19 @@ impl EnclaveApiServer for NitroSignerRpc {
                     .map_err(|e| NitroProverServer::rpc_err(-32001, e))?,
             );
         }
+        // Per-call signer log so an investigator can trace every signer
+        // the host has ever returned to the registrar. Makes a silent
+        // mid-run enclave re-key visible as a sequence of log lines
+        // with changing addresses.
+        let signers: Vec<String> = keys
+            .iter()
+            .map(|k| {
+                VerifyingKey::from_sec1_bytes(k)
+                    .map(|vk| format!("{}", public_key_to_address(&vk)))
+                    .unwrap_or_else(|_| "<unparseable>".to_string())
+            })
+            .collect();
+        info!(signers = ?signers, "nitro_host.signer_public_key_rpc");
         Ok(keys)
     }
 
