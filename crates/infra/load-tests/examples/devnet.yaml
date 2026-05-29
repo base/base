@@ -44,19 +44,24 @@ funding_amount: "10000000000000000"
 # Only used when swap transaction types are configured.
 # swap_token_amount: "1000000000000000000000"
 
+# Amount of B-20 tokens to mint per sender during setup (1000 tokens).
+# Only used when B-20 transaction types are configured.
+# b20_mint_amount: "1000000000000000000000"
+
 # Transaction mix
 transactions:
-  #- weight: 70
-  #  type: transfer
-  #- weight: 20
-  #  type: calldata
-  #  max_size: 256
-  #- weight: 10
-  #  type: precompile
-  #  target: sha256
+  - weight: 70
+    type: transfer
+  - weight: 20
+    type: calldata
+    max_size: 256
+    repeat_count: 1
+  - weight: 10
+    type: precompile
+    target: sha256
   # B-20 precompile token transfer (requires Beryl activation):
-  - weight: 100
-    type: b20
+  # - weight: 100
+  #   type: b20
   #   # contract: "0x..."  # Optional: omit to auto-create via factory
   # Swap transaction types (require deployed contracts):
   # - weight: 5

@@ -26,10 +26,10 @@ use tracing::{debug, error, info, instrument, warn};
 /// Maximum number of concurrent RPC requests during funding/draining operations.
 const FUNDING_CONCURRENCY: usize = 32;
 
-/// Maximum number of funding TXs to send before waiting for confirmation.
+/// Maximum number of TXs to send before waiting for confirmation.
 /// Kept below typical per-sender txpool limits (e.g. reth default is 16) to
 /// avoid "txpool is full" rejections when all TXs originate from one funder.
-const FUNDING_BATCH_SIZE: usize = 16;
+const BATCH_SIZE: usize = 16;
 
 use super::{
     BlockWatcher, DisplaySnapshot, FlashblockWatcher, LoadConfig, LoadTestDisplay, PreparedBatch,
@@ -214,7 +214,13 @@ impl LoadRunner {
                     generator = generator.with_payload(payload, weight_pct);
                 }
                 TxType::B20 { contract } => {
-                    let token = contract.expect("b20 contract must be resolved before run");
+                    let token = contract.ok_or_else(|| {
+                        BaselineError::Config(
+                            "b20 contract must be resolved before run; \
+                             call setup_b20_tokens first"
+                                .into(),
+                        )
+                    })?;
                     generator = generator.with_payload(
                         B20TransferPayload::new(token, U256::from(1000), U256::from(10000)),
                         weight_pct,
@@ -450,7 +456,7 @@ impl LoadRunner {
         let pb_fund = self.progress_bar(total_txs, "Funding accounts");
         let mut txs_remaining = txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(FUNDING_BATCH_SIZE).collect();
+            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
             let mut batch_pending: Vec<Address> = Vec::with_capacity(batch.len());
             let mut retries: Vec<(Address, U256, u64)> = Vec::new();
             let mut fatal_errors: Vec<String> = Vec::new();
@@ -463,7 +469,7 @@ impl LoadRunner {
                 }
             });
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_BATCH_SIZE);
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
 
             let mut nonce_refresh_needed: Vec<(Address, U256)> = Vec::new();
 
@@ -516,7 +522,7 @@ impl LoadRunner {
                 });
 
                 let mut retry_stream =
-                    stream::iter(retry_futs).buffer_unordered(FUNDING_BATCH_SIZE);
+                    stream::iter(retry_futs).buffer_unordered(BATCH_SIZE);
 
                 while let Some((result, address, nonce)) = retry_stream.next().await {
                     match result {
@@ -565,7 +571,7 @@ impl LoadRunner {
                     });
 
                 let mut nonce_retry_stream =
-                    stream::iter(nonce_retry_futs).buffered(FUNDING_BATCH_SIZE);
+                    stream::iter(nonce_retry_futs).buffered(BATCH_SIZE);
 
                 let mut nonce_retry_pending: Vec<Address> = Vec::new();
                 while let Some((result, address, retry_nonce)) = nonce_retry_stream.next().await {
@@ -879,7 +885,7 @@ impl LoadRunner {
         let total_txs = txs.len();
         let mut txs_remaining = txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(FUNDING_BATCH_SIZE).collect();
+            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
             let mut pending_txs: Vec<(Address, Address)> = Vec::new();
 
             let send_futs = batch.into_iter().map(|(tx, token, sender)| {
@@ -890,7 +896,7 @@ impl LoadRunner {
                 }
             });
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_BATCH_SIZE);
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
 
             while let Some((result, token, sender)) = send_stream.next().await {
                 match result {
@@ -1034,7 +1040,9 @@ impl LoadRunner {
             token_address = Some(predicted);
         }
 
-        let token = token_address.expect("token address must be resolved");
+        let token = token_address.ok_or_else(|| {
+            BaselineError::Config("b20 token address was not resolved during setup".into())
+        })?;
 
         for tx_config in &mut self.config.transactions {
             if let TxType::B20 { contract } = &mut tx_config.tx_type {
@@ -1087,7 +1095,7 @@ impl LoadRunner {
         let mut grant_failed = 0usize;
         let mut txs_remaining = grant_txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(FUNDING_BATCH_SIZE).collect();
+            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
             let send_futs = batch.into_iter().map(|tx| {
                 let provider = Arc::clone(&funder_provider);
                 async move {
@@ -1096,7 +1104,7 @@ impl LoadRunner {
                 }
             });
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_BATCH_SIZE);
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
             while let Some(result) = send_stream.next().await {
                 match result {
                     Ok(receipt) if receipt.status() => pb.inc(1),
@@ -1148,7 +1156,7 @@ impl LoadRunner {
         let mut txs_remaining = mint_txs.into_iter().peekable();
 
         while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(FUNDING_BATCH_SIZE).collect();
+            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
             let send_futs = batch.into_iter().map(|(tx, sender)| {
                 let provider = Arc::clone(&funder_provider);
                 async move {
@@ -1165,7 +1173,7 @@ impl LoadRunner {
                 }
             });
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_BATCH_SIZE);
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
             while let Some(result) = send_stream.next().await {
                 match result {
                     Ok((receipt, sender)) if receipt.status() => {
@@ -1226,60 +1234,92 @@ impl LoadRunner {
 
         let sender_addresses: Vec<Address> =
             self.accounts.accounts().iter().map(|a| a.address).collect();
-        let pb = self.progress_bar(sender_addresses.len() as u64, "Burning B-20 tokens");
 
         let signers = Self::build_signers(&self.accounts);
+        let client = &self.client;
+        let rpc_url = self.config.primary_submission_rpc().clone();
+
+        // Phase 1: Query all balances in parallel.
+        let balance_futs: Vec<_> = sender_addresses
+            .iter()
+            .map(|&sender| {
+                let client = client.clone();
+                let call_data = Self::encode_erc20_balance_of(sender);
+                async move {
+                    let balance = client
+                        .call(
+                            TransactionRequest::default()
+                                .with_to(token)
+                                .with_input(call_data)
+                                .into(),
+                        )
+                        .await
+                        .rpc("eth_call")
+                        .map(|bytes| U256::from_be_slice(bytes.as_ref()))
+                        .unwrap_or(U256::ZERO);
+                    (sender, balance)
+                }
+            })
+            .collect();
+
+        let balances: Vec<_> = stream::iter(balance_futs)
+            .buffer_unordered(FUNDING_CONCURRENCY)
+            .collect()
+            .await;
+
+        let senders_with_balance: Vec<_> = balances
+            .into_iter()
+            .filter(|(_, balance)| !balance.is_zero())
+            .collect();
+
+        if senders_with_balance.is_empty() {
+            info!("all B-20 balances are zero, skipping teardown");
+            return Ok(());
+        }
+
+        // Phase 2: Build burn txs — each sender burns their own balance.
+        let pb = self.progress_bar(senders_with_balance.len() as u64, "Burning B-20 tokens");
         let mut burn_failed = 0usize;
         let mut burn_count = 0usize;
 
-        for &sender in &sender_addresses {
-            let call_data = Self::encode_erc20_balance_of(sender);
-            let balance = self
-                .client
-                .call(TransactionRequest::default().with_to(token).with_input(call_data).into())
-                .await
-                .rpc("eth_call")
-                .map(|bytes| U256::from_be_slice(bytes.as_ref()))
-                .unwrap_or(U256::ZERO);
+        let burn_futs: Vec<_> = senders_with_balance
+            .into_iter()
+            .filter_map(|(sender, balance)| {
+                let signer = signers.get(&sender)?.clone();
+                let wallet = EthereumWallet::from(signer);
+                let provider = create_wallet_provider(rpc_url.clone(), wallet);
+                let burn_call = IB20::burnCall { amount: balance };
+                let tx = TransactionRequest::default()
+                    .with_to(token)
+                    .with_input(Bytes::from(burn_call.abi_encode()))
+                    .with_chain_id(chain_id)
+                    .with_gas_limit(burn_gas_limit)
+                    .with_max_fee_per_gas(max_fee)
+                    .with_max_priority_fee_per_gas(max_priority_fee);
+                Some(async move {
+                    match provider.send_transaction(tx).await {
+                        Ok(pending) => match pending.get_receipt().await {
+                            Ok(receipt) => Ok((sender, balance, receipt)),
+                            Err(e) => Err((sender, eyre::eyre!("receipt failed: {e}"))),
+                        },
+                        Err(e) => Err((sender, eyre::eyre!("send failed: {e}"))),
+                    }
+                })
+            })
+            .collect();
 
-            if balance.is_zero() {
-                pb.inc(1);
-                continue;
-            }
-
-            let Some(signer) = signers.get(&sender) else {
-                warn!(sender = %sender, "no signer for B-20 burn");
-                pb.inc(1);
-                continue;
-            };
-
-            let wallet = EthereumWallet::from(signer.clone());
-            let sender_provider =
-                create_wallet_provider(self.config.primary_submission_rpc().clone(), wallet);
-
-            let sender_nonce = sender_provider
-                .get_transaction_count(sender)
-                .pending()
-                .await
-                .rpc("get pending transaction count")?;
-
-            let burn_call = IB20::burnCall { amount: balance };
-            let tx = TransactionRequest::default()
-                .with_to(token)
-                .with_input(Bytes::from(burn_call.abi_encode()))
-                .with_nonce(sender_nonce)
-                .with_chain_id(chain_id)
-                .with_gas_limit(burn_gas_limit)
-                .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas(max_priority_fee);
-
-            match sender_provider.send_transaction(tx).await {
-                Ok(pending) => {
-                    let tx_hash = *pending.tx_hash();
-                    debug!(sender = %sender, amount = %balance, tx_hash = %tx_hash, "B-20 burn sent");
+        let mut burn_stream = stream::iter(burn_futs).buffer_unordered(BATCH_SIZE);
+        while let Some(result) = burn_stream.next().await {
+            match result {
+                Ok((sender, balance, receipt)) if receipt.status() => {
+                    debug!(sender = %sender, amount = %balance, tx_hash = %receipt.transaction_hash, "B-20 burn confirmed");
                     burn_count += 1;
                 }
-                Err(e) => {
+                Ok((sender, _, receipt)) => {
+                    warn!(sender = %sender, tx_hash = %receipt.transaction_hash, "B-20 burn reverted");
+                    burn_failed += 1;
+                }
+                Err((sender, e)) => {
                     warn!(sender = %sender, error = %e, "B-20 burn failed");
                     burn_failed += 1;
                 }

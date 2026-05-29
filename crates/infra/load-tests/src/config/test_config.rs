@@ -144,6 +144,11 @@ pub struct TestConfig {
     /// Only used when swap transaction types are configured.
     #[serde(default = "default_swap_token_amount")]
     pub swap_token_amount: String,
+
+    /// Amount of B-20 tokens to mint per sender during setup (in wei, as string).
+    /// Only used when B-20 transaction types are configured.
+    #[serde(default = "default_b20_mint_amount")]
+    pub b20_mint_amount: String,
 }
 
 impl Default for TestConfig {
@@ -169,6 +174,7 @@ impl Default for TestConfig {
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
             looper_contract: None,
             swap_token_amount: default_swap_token_amount(),
+            b20_mint_amount: default_b20_mint_amount(),
         }
     }
 }
@@ -192,6 +198,7 @@ impl fmt::Debug for TestConfig {
             .field("transactions", &self.transactions)
             .field("looper_contract", &self.looper_contract)
             .field("swap_token_amount", &self.swap_token_amount)
+            .field("b20_mint_amount", &self.b20_mint_amount)
             .finish()
     }
 }
@@ -336,6 +343,10 @@ fn default_swap_token_amount() -> String {
     "1000000000000000000000".to_string() // 1000 tokens (1000e18)
 }
 
+fn default_b20_mint_amount() -> String {
+    "1000000000000000000000".to_string() // 1000 tokens (1000e18)
+}
+
 impl TestConfig {
     /// Loads configuration from a YAML file.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -476,6 +487,16 @@ impl TestConfig {
         })
     }
 
+    /// Parses the B-20 mint amount string into a U256.
+    pub fn parse_b20_mint_amount(&self) -> Result<alloy_primitives::U256> {
+        self.b20_mint_amount.parse().map_err(|e| {
+            BaselineError::Config(format!(
+                "invalid b20_mint_amount '{}': {e}",
+                self.b20_mint_amount
+            ))
+        })
+    }
+
     /// Returns a summary of the config for JSON output (excludes URLs and secrets).
     pub fn to_summary(&self) -> ConfigSummary {
         ConfigSummary {
@@ -499,6 +520,7 @@ impl TestConfig {
                 .unwrap_or_default(),
             looper_contract: self.looper_contract.clone(),
             swap_token_amount: self.swap_token_amount.clone(),
+            b20_mint_amount: self.b20_mint_amount.clone(),
         }
     }
 
