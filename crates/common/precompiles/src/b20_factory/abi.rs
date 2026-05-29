@@ -67,8 +67,16 @@ sol! {
             B20Variant indexed variant,
             string name,
             string symbol,
-            uint8 decimals
+            uint8 decimals,
+            bytes variantParams
         );
+
+        /// ABI-encoded payload for the `variantParams` field of `B20Created`
+        /// when variant is `STABLECOIN`.
+        struct B20StablecoinEventParams {
+            uint8 version;
+            string currency;
+        }
 
         // ── Functions ────────────────────────────────────────────────────────
 

@@ -12,6 +12,9 @@ use crate::{
     IB20Factory, PolicyHandle, RoleManaged, Token,
 };
 
+/// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
+const B20_STABLECOIN_EVENT_PARAMS_VERSION: u8 = 1;
+
 /// Maximum total supply for all newly-created B-20 tokens.
 const DEFAULT_SUPPLY_CAP: U256 = U256::MAX;
 
@@ -108,6 +111,7 @@ impl<'a> B20FactoryStorage<'a> {
             name,
             symbol,
             decimals: B20Variant::B20.decimals(),
+            variantParams: Bytes::new(),
         })?;
 
         if !common.initial_admin.is_zero() {
@@ -140,15 +144,23 @@ impl<'a> B20FactoryStorage<'a> {
             B20StablecoinStorage::from_address(token_address, self.storage),
             PolicyHandle::new(self.storage),
         );
-        let (name, symbol) = (init.name.clone(), init.symbol.clone());
+        let (name, symbol, currency) =
+            (init.name.clone(), init.symbol.clone(), init.currency.clone());
         token.accounting_mut().initialize(init)?;
 
+        let variant_params = IB20Factory::B20StablecoinEventParams {
+            version: B20_STABLECOIN_EVENT_PARAMS_VERSION,
+            currency,
+        }
+        .abi_encode()
+        .into();
         self.emit_event(IB20Factory::B20Created {
             token: token_address,
             variant: B20Variant::Stablecoin.abi(),
             name,
             symbol,
             decimals: B20Variant::Stablecoin.decimals(),
+            variantParams: variant_params,
         })?;
 
         if !common.initial_admin.is_zero() {
@@ -187,6 +199,7 @@ impl<'a> B20FactoryStorage<'a> {
             name,
             symbol,
             decimals: B20Variant::Security.decimals(),
+            variantParams: Bytes::new(),
         })?;
 
         if !common.initial_admin.is_zero() {
