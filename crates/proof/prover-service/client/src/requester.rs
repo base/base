@@ -36,7 +36,10 @@ impl ProverRequesterClient {
         &self,
         request: SubmitProofRequest,
     ) -> Result<SubmitProofResponse, ProverServiceClientError> {
-        debug!("submitting proof request");
+        debug!(
+            session_id = ?request.proof.session_id,
+            "submitting proof request"
+        );
         Ok(self.inner.submit_proof(request).await?)
     }
 
@@ -45,7 +48,7 @@ impl ProverRequesterClient {
         &self,
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ProverServiceClientError> {
-        debug!("fetching proof request");
+        debug!(session_id = %request.session_id, "fetching proof request");
         Ok(self.inner.get_proof(request).await?)
     }
 
@@ -54,7 +57,12 @@ impl ProverRequesterClient {
         &self,
         request: ListProofsRequest,
     ) -> Result<ListProofsResponse, ProverServiceClientError> {
-        debug!("listing proof requests");
+        debug!(
+            offset = request.offset,
+            limit = request.limit,
+            status_filter = ?request.status_filter,
+            "listing proof requests"
+        );
         Ok(self.inner.list_proofs(request).await?)
     }
 }

@@ -37,7 +37,7 @@ impl ProverWorkerClient {
         &self,
         request: GetProofJobRequest,
     ) -> Result<GetProofJobResponse, ProverServiceClientError> {
-        debug!("fetching proof job");
+        debug!(session_id = %request.session_id, "fetching proof job");
         Ok(self.inner.get_proof_job(request).await?)
     }
 
@@ -46,7 +46,14 @@ impl ProverWorkerClient {
         &self,
         request: ClaimProofJobRequest,
     ) -> Result<ClaimProofJobResponse, ProverServiceClientError> {
-        debug!("claiming proof job");
+        debug!(
+            worker_id = %request.worker_id,
+            proof_type = ?request.proof_type,
+            lease_duration_seconds = request.lease_duration_seconds,
+            tee_kinds = ?request.tee_kinds,
+            zk_vms = ?request.zk_vms,
+            "claiming proof job"
+        );
         Ok(self.inner.claim_proof_job(request).await?)
     }
 
@@ -55,7 +62,13 @@ impl ProverWorkerClient {
         &self,
         request: HeartbeatProofJobRequest,
     ) -> Result<HeartbeatProofJobResponse, ProverServiceClientError> {
-        debug!("heartbeating proof job");
+        debug!(
+            session_id = %request.session_id,
+            worker_id = %request.worker_id,
+            lease_id = %request.lease_id,
+            lease_duration_seconds = request.lease_duration_seconds,
+            "heartbeating proof job"
+        );
         Ok(self.inner.heartbeat_proof_job(request).await?)
     }
 
@@ -64,7 +77,12 @@ impl ProverWorkerClient {
         &self,
         request: CompleteProofJobRequest,
     ) -> Result<CompleteProofJobResponse, ProverServiceClientError> {
-        debug!("completing proof job");
+        debug!(
+            session_id = %request.session_id,
+            worker_id = %request.worker_id,
+            lease_id = %request.lease_id,
+            "completing proof job"
+        );
         Ok(self.inner.complete_proof_job(request).await?)
     }
 
@@ -73,7 +91,13 @@ impl ProverWorkerClient {
         &self,
         request: FailProofJobRequest,
     ) -> Result<FailProofJobResponse, ProverServiceClientError> {
-        debug!("failing proof job");
+        debug!(
+            session_id = %request.session_id,
+            worker_id = %request.worker_id,
+            lease_id = %request.lease_id,
+            retryable = request.retryable,
+            "failing proof job"
+        );
         Ok(self.inner.fail_proof_job(request).await?)
     }
 }
