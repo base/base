@@ -39,7 +39,11 @@ impl<T: BasePooledTx> NonceLane<T> {
         self.transactions
             .range(self.next_nonce..)
             .enumerate()
-            .take_while(|(offset, (nonce, _))| **nonce == self.next_nonce + *offset as u64)
+            .take_while(|(offset, (nonce, _))| {
+                self.next_nonce
+                    .checked_add(*offset as u64)
+                    .is_some_and(|expected| **nonce == expected)
+            })
             .map(|(_, (_, transaction))| transaction)
     }
 
@@ -48,7 +52,10 @@ impl<T: BasePooledTx> NonceLane<T> {
     }
 
     fn queued_transactions(&self) -> impl Iterator<Item = &Arc<ValidPoolTransaction<T>>> {
-        self.transactions.values().skip(self.consecutive_pending_len())
+        self.transactions
+            .range(self.next_nonce..)
+            .map(|(_, transaction)| transaction)
+            .skip(self.consecutive_pending_len())
     }
 }
 
@@ -663,6 +670,58 @@ mod tests {
             pool.queued_transactions().into_iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
             vec![gap_hash]
         );
+    }
+
+    #[test]
+    fn queued_transactions_ignore_stale_nonces_below_lane_head() {
+        let signer = signer();
+        let stale =
+            Arc::new(valid_pool_transaction(signed_channel_tx(&signer, U256::from(15), 3, 1_000)));
+        let first_pending =
+            Arc::new(valid_pool_transaction(signed_channel_tx(&signer, U256::from(15), 5, 900)));
+        let second_pending =
+            Arc::new(valid_pool_transaction(signed_channel_tx(&signer, U256::from(15), 6, 800)));
+        let queued =
+            Arc::new(valid_pool_transaction(signed_channel_tx(&signer, U256::from(15), 10, 700)));
+
+        let lane = NonceLane {
+            next_nonce: 5,
+            transactions: BTreeMap::from([
+                (3, Arc::clone(&stale)),
+                (5, Arc::clone(&first_pending)),
+                (6, Arc::clone(&second_pending)),
+                (10, Arc::clone(&queued)),
+            ]),
+        };
+
+        assert_eq!(
+            lane.queued_transactions().map(|transaction| *transaction.hash()).collect::<Vec<_>>(),
+            vec![*queued.hash()]
+        );
+    }
+
+    #[test]
+    fn consecutive_pending_handles_u64_max_nonce_without_overflow() {
+        let signer = signer();
+        let transaction = Arc::new(valid_pool_transaction(signed_channel_tx(
+            &signer,
+            U256::from(16),
+            u64::MAX,
+            1_000,
+        )));
+
+        let lane = NonceLane {
+            next_nonce: u64::MAX,
+            transactions: BTreeMap::from([(u64::MAX, Arc::clone(&transaction))]),
+        };
+
+        assert_eq!(
+            lane.consecutive_pending_transactions()
+                .map(|transaction| *transaction.hash())
+                .collect::<Vec<_>>(),
+            vec![*transaction.hash()]
+        );
+        assert!(lane.queued_transactions().next().is_none());
     }
 
     #[test]

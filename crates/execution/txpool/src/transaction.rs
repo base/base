@@ -1,6 +1,5 @@
 use core::fmt::Debug;
 use std::{
-    any::Any,
     borrow::Cow,
     sync::{Arc, OnceLock},
 };
@@ -21,16 +20,6 @@ use reth_transaction_pool::{
 };
 
 use crate::estimated_da_size::DataAvailabilitySized;
-
-fn eip8130_nonce_channel_key<Cons>(transaction: &Cons) -> Option<U256>
-where
-    Cons: SignedTransaction + 'static,
-{
-    let transaction = (transaction as &dyn Any).downcast_ref::<BaseTransactionSigned>()?;
-    let signed = transaction.as_eip8130()?;
-    let nonce_key = signed.tx().nonce_key;
-    (!nonce_key.is_zero() && nonce_key != Eip8130Constants::NONCE_KEY_MAX).then_some(nonce_key)
-}
 
 /// Assumed L2 block time in seconds, used to convert block-based bundle windows
 /// to time-based bounds.
@@ -163,13 +152,13 @@ impl<Cons: SignedTransaction, Pooled> DataAvailabilitySized
     }
 }
 
-impl<Cons, Pooled> PoolTransaction for BasePooledTransaction<Cons, Pooled>
+impl<Pooled> PoolTransaction for BasePooledTransaction<BaseTransactionSigned, Pooled>
 where
-    Cons: SignedTransaction + From<Pooled> + 'static,
-    Pooled: SignedTransaction + TryFrom<Cons, Error: core::error::Error>,
+    BaseTransactionSigned: From<Pooled>,
+    Pooled: SignedTransaction + TryFrom<BaseTransactionSigned, Error: core::error::Error>,
 {
-    type TryFromConsensusError = <Pooled as TryFrom<Cons>>::Error;
-    type Consensus = Cons;
+    type TryFromConsensusError = <Pooled as TryFrom<BaseTransactionSigned>>::Error;
+    type Consensus = BaseTransactionSigned;
     type Pooled = Pooled;
 
     fn clone_into_consensus(&self) -> Recovered<Self::Consensus> {
@@ -195,7 +184,7 @@ where
     }
 
     fn hash(&self) -> &TxHash {
-        self.inner.transaction.tx_hash()
+        alloy_consensus::transaction::TxHashRef::tx_hash(self.inner.transaction.inner())
     }
 
     fn sender(&self) -> Address {
@@ -215,7 +204,7 @@ where
     }
 
     fn requires_nonce_check(&self) -> bool {
-        eip8130_nonce_channel_key(self.inner.transaction.inner()).is_none()
+        self.eip8130_nonce_channel_key().is_none()
     }
 }
 
@@ -305,11 +294,11 @@ where
     }
 }
 
-impl<Cons, Pooled> EthPoolTransaction for BasePooledTransaction<Cons, Pooled>
+impl<Pooled> EthPoolTransaction for BasePooledTransaction<BaseTransactionSigned, Pooled>
 where
-    Cons: SignedTransaction + From<Pooled> + 'static,
-    Pooled: SignedTransaction + TryFrom<Cons>,
-    <Pooled as TryFrom<Cons>>::Error: core::error::Error,
+    BaseTransactionSigned: From<Pooled>,
+    Pooled: SignedTransaction + TryFrom<BaseTransactionSigned>,
+    <Pooled as TryFrom<BaseTransactionSigned>>::Error: core::error::Error,
 {
     fn take_blob(&mut self) -> EthBlobTransactionSidecar {
         EthBlobTransactionSidecar::None
@@ -375,7 +364,9 @@ where
     }
 
     fn eip8130_nonce_channel_key(&self) -> Option<U256> {
-        eip8130_nonce_channel_key(self.inner.transaction().inner())
+        let signed = self.as_eip8130()?;
+        let nonce_key = signed.tx().nonce_key;
+        (!nonce_key.is_zero() && nonce_key != Eip8130Constants::NONCE_KEY_MAX).then_some(nonce_key)
     }
 }
 
