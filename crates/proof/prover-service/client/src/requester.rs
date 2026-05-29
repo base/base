@@ -31,16 +31,16 @@ impl ProverRequesterClient {
         &self.inner
     }
 
-    /// Submit a proof request.
-    pub async fn submit_proof(
+    /// Prove a block range.
+    pub async fn prove_block_range(
         &self,
         request: SubmitProofRequest,
     ) -> Result<SubmitProofResponse, ProverServiceClientError> {
         debug!(
             session_id = ?request.proof.session_id,
-            "submitting proof request"
+            "proving block range"
         );
-        Ok(self.inner.submit_proof(request).await?)
+        Ok(self.inner.prove_block_range(request).await?)
     }
 
     /// Return proof status and result data for a submitted proof request.

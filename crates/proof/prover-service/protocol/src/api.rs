@@ -3,10 +3,9 @@
 use jsonrpsee::proc_macros::rpc;
 
 use crate::{
-    ClaimProofJobRequest, ClaimProofJobResponse, CompleteProofJobRequest, CompleteProofJobResponse,
-    FailProofJobRequest, FailProofJobResponse, GetProofJobRequest, GetProofJobResponse,
-    GetProofRequest, GetProofResponse, HeartbeatProofJobRequest, HeartbeatProofJobResponse,
-    ListProofsRequest, ListProofsResponse, SubmitProofRequest, SubmitProofResponse,
+    GetNextProofRequest, GetNextProofResponse, GetProofRequest, GetProofResponse, HeartbeatRequest,
+    HeartbeatResponse, ListProofsRequest, ListProofsResponse, SubmitProofRequest,
+    SubmitProofResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
 
 #[cfg_attr(
@@ -23,9 +22,9 @@ use crate::{
 )]
 /// JSON-RPC interface for proof requesters.
 pub trait ProverRequesterApi {
-    /// Submit a proof request.
-    #[method(name = "submitProof")]
-    async fn submit_proof(
+    /// Prove a block range.
+    #[method(name = "proveBlockRange")]
+    async fn prove_block_range(
         &self,
         request: SubmitProofRequest,
     ) -> jsonrpsee::core::RpcResult<SubmitProofResponse>;
@@ -59,38 +58,24 @@ pub trait ProverRequesterApi {
 )]
 /// JSON-RPC interface for prover workers.
 pub trait ProverWorkerApi {
-    /// Return a worker-owned proof job by session id.
-    #[method(name = "getProofJob")]
-    async fn get_proof_job(
+    /// Return and atomically claim the next available proof job.
+    #[method(name = "getNextProof")]
+    async fn get_next_proof(
         &self,
-        request: GetProofJobRequest,
-    ) -> jsonrpsee::core::RpcResult<GetProofJobResponse>;
+        request: GetNextProofRequest,
+    ) -> jsonrpsee::core::RpcResult<GetNextProofResponse>;
 
-    /// Claim the next eligible queued proof job.
-    #[method(name = "claimProofJob")]
-    async fn claim_proof_job(
+    /// Extend a worker-owned proof job lock.
+    #[method(name = "heartbeat")]
+    async fn heartbeat(
         &self,
-        request: ClaimProofJobRequest,
-    ) -> jsonrpsee::core::RpcResult<ClaimProofJobResponse>;
+        request: HeartbeatRequest,
+    ) -> jsonrpsee::core::RpcResult<HeartbeatResponse>;
 
-    /// Extend a proof job lease.
-    #[method(name = "heartbeatProofJob")]
-    async fn heartbeat_proof_job(
+    /// Submit a proof result for a proof job.
+    #[method(name = "submitProof")]
+    async fn submit_proof(
         &self,
-        request: HeartbeatProofJobRequest,
-    ) -> jsonrpsee::core::RpcResult<HeartbeatProofJobResponse>;
-
-    /// Complete a leased proof job.
-    #[method(name = "completeProofJob")]
-    async fn complete_proof_job(
-        &self,
-        request: CompleteProofJobRequest,
-    ) -> jsonrpsee::core::RpcResult<CompleteProofJobResponse>;
-
-    /// Fail a leased proof job.
-    #[method(name = "failProofJob")]
-    async fn fail_proof_job(
-        &self,
-        request: FailProofJobRequest,
-    ) -> jsonrpsee::core::RpcResult<FailProofJobResponse>;
+        request: WorkerSubmitProofRequest,
+    ) -> jsonrpsee::core::RpcResult<WorkerSubmitProofResponse>;
 }

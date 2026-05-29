@@ -24,7 +24,7 @@ pub(crate) async fn prove_block(
     request: ProveBlockRequest,
 ) -> Result<SubmitProofResponse> {
     let request = to_submit_proof_request(request)?;
-    client.submit_proof(request).await.context("submit_proof failed")
+    client.prove_block_range(request).await.context("prove_block_range failed")
 }
 
 fn to_submit_proof_request(request: ProveBlockRequest) -> Result<SubmitProofRequest> {

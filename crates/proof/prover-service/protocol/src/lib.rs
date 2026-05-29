@@ -9,11 +9,10 @@ pub use api::{ProverRequesterApiServer, ProverWorkerApiServer};
 
 mod types;
 pub use types::{
-    ClaimProofJobRequest, ClaimProofJobResponse, CompleteProofJobRequest, CompleteProofJobResponse,
-    FailProofJobRequest, FailProofJobResponse, GetProofJobRequest, GetProofJobResponse,
-    GetProofRequest, GetProofResponse, HeartbeatProofJobRequest, HeartbeatProofJobResponse,
-    ListProofsRequest, ListProofsResponse, ProofJob, ProofJobStatus, ProofRequest,
-    ProofRequestKind, ProofResult, ProofStatus, ProofSummary, ProofType, SnarkGroth16ProofRequest,
-    SnarkGroth16ProofResult, SubmitProofRequest, SubmitProofResponse, TeeKind, TeeProofRequest,
-    TeeProofResult, TeeProposal, ZkProofRequest, ZkProofResult, ZkVm,
+    GetNextProofRequest, GetNextProofResponse, GetProofRequest, GetProofResponse, HeartbeatRequest,
+    HeartbeatResponse, ListProofsRequest, ListProofsResponse, ProofJob, ProofJobStatus,
+    ProofRequest, ProofRequestKind, ProofResult, ProofStatus, ProofSummary, ProofType,
+    SnarkGroth16ProofRequest, SnarkGroth16ProofResult, SubmitProofRequest, SubmitProofResponse,
+    TeeKind, TeeProofRequest, TeeProofResult, TeeProposal, WorkerSubmitProofRequest,
+    WorkerSubmitProofResponse, ZkProofRequest, ZkProofResult, ZkVm,
 };

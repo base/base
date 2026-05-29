@@ -207,7 +207,7 @@ impl SnarkE2e {
         // heuristic.
         let client = Self::connect().await?;
         let prove_resp = client
-            .submit_proof(SubmitProofRequest {
+            .prove_block_range(SubmitProofRequest {
                 proof: ProofRequest {
                     session_id: None,
                     request: ProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {

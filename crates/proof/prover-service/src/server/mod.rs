@@ -53,7 +53,10 @@ impl ProverServiceServer {
 
 #[async_trait]
 impl ProverRequesterApiServer for ProverServiceServer {
-    async fn submit_proof(&self, request: SubmitProofRequest) -> RpcResult<SubmitProofResponse> {
+    async fn prove_block_range(
+        &self,
+        request: SubmitProofRequest,
+    ) -> RpcResult<SubmitProofResponse> {
         self.submit_proof_impl(request).await
     }
 

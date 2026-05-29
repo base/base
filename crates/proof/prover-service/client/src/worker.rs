@@ -2,9 +2,8 @@
 
 use async_trait::async_trait;
 use base_prover_service_protocol::{
-    ClaimProofJobRequest, ClaimProofJobResponse, CompleteProofJobRequest, CompleteProofJobResponse,
-    FailProofJobRequest, FailProofJobResponse, GetProofJobRequest, GetProofJobResponse,
-    HeartbeatProofJobRequest, HeartbeatProofJobResponse, ProverWorkerApiClient,
+    GetNextProofRequest, GetNextProofResponse, HeartbeatRequest, HeartbeatResponse,
+    ProverWorkerApiClient, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
 use jsonrpsee::http_client::HttpClient;
 use tracing::debug;
@@ -18,35 +17,23 @@ use crate::{ProverServiceClientConfig, ProverServiceClientError};
 /// helpers such as submit-and-wait flows.
 #[async_trait]
 pub trait ProverWorkerProvider: Send + Sync {
-    /// Return a worker-owned proof job by session id.
-    async fn get_proof_job(
+    /// Atomically claim the next available proof job for this worker.
+    async fn get_next_proof(
         &self,
-        request: GetProofJobRequest,
-    ) -> Result<GetProofJobResponse, ProverServiceClientError>;
+        request: GetNextProofRequest,
+    ) -> Result<GetNextProofResponse, ProverServiceClientError>;
 
-    /// Claim the next eligible queued proof job.
-    async fn claim_proof_job(
+    /// Extend a claimed proof job lock.
+    async fn heartbeat(
         &self,
-        request: ClaimProofJobRequest,
-    ) -> Result<ClaimProofJobResponse, ProverServiceClientError>;
+        request: HeartbeatRequest,
+    ) -> Result<HeartbeatResponse, ProverServiceClientError>;
 
-    /// Extend a proof job lease.
-    async fn heartbeat_proof_job(
+    /// Submit a proof result for a proof job.
+    async fn submit_proof(
         &self,
-        request: HeartbeatProofJobRequest,
-    ) -> Result<HeartbeatProofJobResponse, ProverServiceClientError>;
-
-    /// Complete a leased proof job.
-    async fn complete_proof_job(
-        &self,
-        request: CompleteProofJobRequest,
-    ) -> Result<CompleteProofJobResponse, ProverServiceClientError>;
-
-    /// Fail a leased proof job.
-    async fn fail_proof_job(
-        &self,
-        request: FailProofJobRequest,
-    ) -> Result<FailProofJobResponse, ProverServiceClientError>;
+        request: WorkerSubmitProofRequest,
+    ) -> Result<WorkerSubmitProofResponse, ProverServiceClientError>;
 }
 
 /// JSON-RPC client for prover worker methods.
@@ -71,111 +58,71 @@ impl ProverWorkerClient {
         &self.inner
     }
 
-    /// Return a worker-owned proof job by session id.
-    pub async fn get_proof_job(
+    /// Atomically claim the next available proof job for this worker.
+    pub async fn get_next_proof(
         &self,
-        request: GetProofJobRequest,
-    ) -> Result<GetProofJobResponse, ProverServiceClientError> {
-        debug!(session_id = %request.session_id, "fetching proof job");
-        Ok(self.inner.get_proof_job(request).await?)
-    }
-
-    /// Claim the next eligible queued proof job.
-    pub async fn claim_proof_job(
-        &self,
-        request: ClaimProofJobRequest,
-    ) -> Result<ClaimProofJobResponse, ProverServiceClientError> {
+        request: GetNextProofRequest,
+    ) -> Result<GetNextProofResponse, ProverServiceClientError> {
         debug!(
             worker_id = %request.worker_id,
             proof_type = ?request.proof_type,
-            lease_duration_seconds = request.lease_duration_seconds,
             tee_kinds = ?request.tee_kinds,
             zk_vms = ?request.zk_vms,
-            "claiming proof job"
+            lock_duration_seconds = request.lock_duration_seconds,
+            "claiming next proof job"
         );
-        Ok(self.inner.claim_proof_job(request).await?)
+        Ok(self.inner.get_next_proof(request).await?)
     }
 
-    /// Extend a proof job lease.
-    pub async fn heartbeat_proof_job(
+    /// Extend a claimed proof job lock.
+    pub async fn heartbeat(
         &self,
-        request: HeartbeatProofJobRequest,
-    ) -> Result<HeartbeatProofJobResponse, ProverServiceClientError> {
+        request: HeartbeatRequest,
+    ) -> Result<HeartbeatResponse, ProverServiceClientError> {
         debug!(
             session_id = %request.session_id,
             worker_id = %request.worker_id,
-            lease_id = %request.lease_id,
-            lease_duration_seconds = request.lease_duration_seconds,
+            lock_duration_seconds = request.lock_duration_seconds,
             "heartbeating proof job"
         );
-        Ok(self.inner.heartbeat_proof_job(request).await?)
+        Ok(self.inner.heartbeat(request).await?)
     }
 
-    /// Complete a leased proof job.
-    pub async fn complete_proof_job(
+    /// Submit a proof result for a proof job.
+    pub async fn submit_proof(
         &self,
-        request: CompleteProofJobRequest,
-    ) -> Result<CompleteProofJobResponse, ProverServiceClientError> {
+        request: WorkerSubmitProofRequest,
+    ) -> Result<WorkerSubmitProofResponse, ProverServiceClientError> {
         debug!(
             session_id = %request.session_id,
             worker_id = %request.worker_id,
-            lease_id = %request.lease_id,
-            "completing proof job"
+            "submitting proof job result"
         );
-        Ok(self.inner.complete_proof_job(request).await?)
-    }
-
-    /// Fail a leased proof job.
-    pub async fn fail_proof_job(
-        &self,
-        request: FailProofJobRequest,
-    ) -> Result<FailProofJobResponse, ProverServiceClientError> {
-        debug!(
-            session_id = %request.session_id,
-            worker_id = %request.worker_id,
-            lease_id = %request.lease_id,
-            retryable = request.retryable,
-            "failing proof job"
-        );
-        Ok(self.inner.fail_proof_job(request).await?)
+        Ok(self.inner.submit_proof(request).await?)
     }
 }
 
 #[async_trait]
 impl ProverWorkerProvider for ProverWorkerClient {
-    async fn get_proof_job(
+    async fn get_next_proof(
         &self,
-        request: GetProofJobRequest,
-    ) -> Result<GetProofJobResponse, ProverServiceClientError> {
-        Self::get_proof_job(self, request).await
+        request: GetNextProofRequest,
+    ) -> Result<GetNextProofResponse, ProverServiceClientError> {
+        Self::get_next_proof(self, request).await
     }
 
-    async fn claim_proof_job(
+    async fn heartbeat(
         &self,
-        request: ClaimProofJobRequest,
-    ) -> Result<ClaimProofJobResponse, ProverServiceClientError> {
-        Self::claim_proof_job(self, request).await
+        request: HeartbeatRequest,
+    ) -> Result<HeartbeatResponse, ProverServiceClientError> {
+        Self::heartbeat(self, request).await
     }
 
-    async fn heartbeat_proof_job(
+    async fn submit_proof(
         &self,
-        request: HeartbeatProofJobRequest,
-    ) -> Result<HeartbeatProofJobResponse, ProverServiceClientError> {
-        Self::heartbeat_proof_job(self, request).await
-    }
-
-    async fn complete_proof_job(
-        &self,
-        request: CompleteProofJobRequest,
-    ) -> Result<CompleteProofJobResponse, ProverServiceClientError> {
-        Self::complete_proof_job(self, request).await
-    }
-
-    async fn fail_proof_job(
-        &self,
-        request: FailProofJobRequest,
-    ) -> Result<FailProofJobResponse, ProverServiceClientError> {
-        Self::fail_proof_job(self, request).await
+        request: WorkerSubmitProofRequest,
+    ) -> Result<WorkerSubmitProofResponse, ProverServiceClientError> {
+        Self::submit_proof(self, request).await
     }
 }
 
@@ -186,23 +133,23 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
-    use async_trait::async_trait;
     use base_prover_service_protocol::{
-        ClaimProofJobRequest, ClaimProofJobResponse, CompleteProofJobRequest,
-        CompleteProofJobResponse, FailProofJobRequest, FailProofJobResponse, GetProofJobRequest,
-        GetProofJobResponse, HeartbeatProofJobRequest, HeartbeatProofJobResponse, ProofJob,
-        ProofJobStatus, ProofRequest, ProofRequestKind, ProofResult, ProofType,
+        ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind, ProofResult, ProofType,
         ProverWorkerApiServer, ZkProofRequest, ZkProofResult, ZkVm,
     };
     use chrono::Utc;
     use jsonrpsee::{
-        core::{RpcResult, client::Error as JsonRpcClientError},
+        core::{RpcResult, async_trait, client::Error as JsonRpcClientError},
         http_client::HttpClientBuilder,
         server::{Server, ServerHandle},
         types::ErrorObjectOwned,
     };
 
-    use super::{ProverWorkerClient, ProverWorkerProvider};
+    use super::{
+        GetNextProofRequest, GetNextProofResponse, HeartbeatRequest, HeartbeatResponse,
+        ProverWorkerClient, ProverWorkerProvider, WorkerSubmitProofRequest,
+        WorkerSubmitProofResponse,
+    };
     use crate::ProverServiceClientError;
 
     #[derive(Clone, Debug)]
@@ -213,11 +160,9 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct MockWorkerState {
-        get_request: Option<GetProofJobRequest>,
-        claim_request: Option<ClaimProofJobRequest>,
-        heartbeat_request: Option<HeartbeatProofJobRequest>,
-        complete_request: Option<CompleteProofJobRequest>,
-        fail_request: Option<FailProofJobRequest>,
+        get_next_request: Option<GetNextProofRequest>,
+        heartbeat_request: Option<HeartbeatRequest>,
+        submit_request: Option<WorkerSubmitProofRequest>,
     }
 
     #[derive(Debug)]
@@ -239,6 +184,72 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl ProverWorkerApiServer for MockWorkerApi {
+        async fn get_next_proof(
+            &self,
+            request: GetNextProofRequest,
+        ) -> RpcResult<GetNextProofResponse> {
+            self.state.lock().expect("state lock should not be poisoned").get_next_request =
+                Some(request.clone());
+            let session_id = format!("session-for-{}", request.worker_id);
+
+            Ok(GetNextProofResponse {
+                job: Some(proof_job(
+                    session_id,
+                    ProofJobStatus::Claimed,
+                    Some("lock-claim".to_owned()),
+                    Some(request.worker_id),
+                    None,
+                )),
+            })
+        }
+
+        async fn heartbeat(&self, request: HeartbeatRequest) -> RpcResult<HeartbeatResponse> {
+            self.state.lock().expect("state lock should not be poisoned").heartbeat_request =
+                Some(request.clone());
+
+            if self.reject_heartbeat {
+                return Err(ErrorObjectOwned::owned(
+                    ProverServiceClientError::ERROR_FAILED_PRECONDITION,
+                    format!(
+                        "proof job lock {} is not claimed by worker {}",
+                        request.lock_id, request.worker_id
+                    ),
+                    None::<()>,
+                ));
+            }
+
+            Ok(HeartbeatResponse {
+                job: proof_job(
+                    request.session_id,
+                    ProofJobStatus::Claimed,
+                    Some(request.lock_id),
+                    Some(request.worker_id),
+                    None,
+                ),
+            })
+        }
+
+        async fn submit_proof(
+            &self,
+            request: WorkerSubmitProofRequest,
+        ) -> RpcResult<WorkerSubmitProofResponse> {
+            self.state.lock().expect("state lock should not be poisoned").submit_request =
+                Some(request.clone());
+
+            Ok(WorkerSubmitProofResponse {
+                job: proof_job(
+                    request.session_id,
+                    ProofJobStatus::Succeeded,
+                    Some(request.lock_id),
+                    Some(request.worker_id),
+                    None,
+                ),
+            })
+        }
+    }
+
     impl RunningWorkerServer {
         async fn spawn(api: MockWorkerApi) -> Self {
             let addr: SocketAddr = "127.0.0.1:0".parse().expect("test address should parse");
@@ -257,128 +268,23 @@ mod tests {
         }
     }
 
-    #[async_trait]
-    impl ProverWorkerApiServer for MockWorkerApi {
-        async fn get_proof_job(
-            &self,
-            request: GetProofJobRequest,
-        ) -> RpcResult<GetProofJobResponse> {
-            self.state.lock().expect("state lock should not be poisoned").get_request =
-                Some(request.clone());
-
-            Ok(GetProofJobResponse {
-                job: Some(proof_job(
-                    request.session_id,
-                    ProofJobStatus::Leased,
-                    Some("lease-get".to_owned()),
-                    Some("worker-get".to_owned()),
-                    None,
-                )),
-            })
-        }
-
-        async fn claim_proof_job(
-            &self,
-            request: ClaimProofJobRequest,
-        ) -> RpcResult<ClaimProofJobResponse> {
-            self.state.lock().expect("state lock should not be poisoned").claim_request =
-                Some(request.clone());
-
-            Ok(ClaimProofJobResponse {
-                claimed: true,
-                job: Some(proof_job(
-                    "session-claim",
-                    ProofJobStatus::Leased,
-                    Some("lease-claim".to_owned()),
-                    Some(request.worker_id),
-                    None,
-                )),
-            })
-        }
-
-        async fn heartbeat_proof_job(
-            &self,
-            request: HeartbeatProofJobRequest,
-        ) -> RpcResult<HeartbeatProofJobResponse> {
-            self.state.lock().expect("state lock should not be poisoned").heartbeat_request =
-                Some(request.clone());
-
-            if self.reject_heartbeat {
-                return Err(ErrorObjectOwned::owned(
-                    ProverServiceClientError::ERROR_FAILED_PRECONDITION,
-                    format!(
-                        "lease {} is not owned by worker {}",
-                        request.lease_id, request.worker_id
-                    ),
-                    None::<()>,
-                ));
-            }
-
-            Ok(HeartbeatProofJobResponse {
-                accepted: true,
-                job: Some(proof_job(
-                    request.session_id,
-                    ProofJobStatus::Leased,
-                    Some(request.lease_id),
-                    Some(request.worker_id),
-                    None,
-                )),
-            })
-        }
-
-        async fn complete_proof_job(
-            &self,
-            request: CompleteProofJobRequest,
-        ) -> RpcResult<CompleteProofJobResponse> {
-            self.state.lock().expect("state lock should not be poisoned").complete_request =
-                Some(request.clone());
-
-            Ok(CompleteProofJobResponse {
-                job: proof_job(
-                    request.session_id,
-                    ProofJobStatus::Succeeded,
-                    Some(request.lease_id),
-                    Some(request.worker_id),
-                    None,
-                ),
-            })
-        }
-
-        async fn fail_proof_job(
-            &self,
-            request: FailProofJobRequest,
-        ) -> RpcResult<FailProofJobResponse> {
-            self.state.lock().expect("state lock should not be poisoned").fail_request =
-                Some(request.clone());
-
-            Ok(FailProofJobResponse {
-                job: proof_job(
-                    request.session_id,
-                    ProofJobStatus::Failed,
-                    Some(request.lease_id),
-                    Some(request.worker_id),
-                    Some(request.error_message),
-                ),
-                will_retry: request.retryable,
-            })
-        }
-    }
-
     fn proof_job(
         session_id: impl Into<String>,
         status: ProofJobStatus,
-        lease_id: Option<String>,
+        lock_id: Option<String>,
         worker_id: Option<String>,
         error_message: Option<String>,
     ) -> ProofJob {
+        let session_id = session_id.into();
+
         ProofJob {
-            session_id: session_id.into(),
+            request: proof_request(session_id.clone()),
+            session_id,
             status,
-            request: proof_request(),
             attempt: 2,
-            lease_id,
+            lock_id,
             worker_id,
-            lease_expires_at: Some(Utc::now()),
+            lock_expires_at: Some(Utc::now()),
             created_at: Utc::now(),
             updated_at: Utc::now(),
             completed_at: matches!(status, ProofJobStatus::Succeeded | ProofJobStatus::Failed)
@@ -387,9 +293,9 @@ mod tests {
         }
     }
 
-    fn proof_request() -> ProofRequest {
+    fn proof_request(session_id: impl Into<String>) -> ProofRequest {
         ProofRequest {
-            session_id: Some("session-request".to_owned()),
+            session_id: Some(session_id.into()),
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: 10,
                 number_of_blocks_to_prove: 2,
@@ -410,90 +316,59 @@ mod tests {
         let api = MockWorkerApi::new();
         let server = RunningWorkerServer::spawn(api.clone()).await;
 
-        let get_request = GetProofJobRequest { session_id: "session-get".to_owned() };
-        let provider: &dyn ProverWorkerProvider = &server.client;
-        let get_response = provider
-            .get_proof_job(get_request.clone())
-            .await
-            .expect("get_proof_job should succeed");
-        let get_job = get_response.job.expect("get response should include a job");
-        assert_eq!(get_job.session_id, "session-get");
-        assert_eq!(get_job.lease_id.as_deref(), Some("lease-get"));
-        assert_eq!(get_job.worker_id.as_deref(), Some("worker-get"));
-
-        let claim_request = ClaimProofJobRequest {
-            proof_type: ProofType::Compressed,
+        let get_next_request = GetNextProofRequest {
             worker_id: "worker-claim".to_owned(),
-            lease_duration_seconds: 60,
+            proof_type: ProofType::Compressed,
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
+            lock_duration_seconds: 60,
         };
-        let claim_response = provider
-            .claim_proof_job(claim_request.clone())
+        let provider: &dyn ProverWorkerProvider = &server.client;
+        let get_next_response = provider
+            .get_next_proof(get_next_request.clone())
             .await
-            .expect("claim_proof_job should succeed");
-        let claim_job = claim_response.job.expect("claim response should include a job");
-        assert!(claim_response.claimed);
-        assert_eq!(claim_job.session_id, "session-claim");
-        assert_eq!(claim_job.status, ProofJobStatus::Leased);
-        assert_eq!(claim_job.lease_id.as_deref(), Some("lease-claim"));
+            .expect("get_next_proof should succeed");
+        let claim_job = get_next_response.job.expect("get next response should include a job");
+        assert_eq!(claim_job.session_id, "session-for-worker-claim");
+        assert_eq!(claim_job.request.session_id.as_deref(), Some("session-for-worker-claim"));
+        assert_eq!(claim_job.status, ProofJobStatus::Claimed);
+        assert_eq!(claim_job.lock_id.as_deref(), Some("lock-claim"));
         assert_eq!(claim_job.worker_id.as_deref(), Some("worker-claim"));
 
-        let heartbeat_request = HeartbeatProofJobRequest {
+        let heartbeat_request = HeartbeatRequest {
             session_id: "session-heartbeat".to_owned(),
-            lease_id: "lease-heartbeat".to_owned(),
+            lock_id: "lock-heartbeat".to_owned(),
             worker_id: "worker-heartbeat".to_owned(),
-            lease_duration_seconds: 30,
+            lock_duration_seconds: 30,
         };
-        let heartbeat_response = provider
-            .heartbeat_proof_job(heartbeat_request.clone())
-            .await
-            .expect("heartbeat_proof_job should succeed");
-        let heartbeat_job =
-            heartbeat_response.job.expect("heartbeat response should include a job");
-        assert!(heartbeat_response.accepted);
-        assert_eq!(heartbeat_job.session_id, "session-heartbeat");
-        assert_eq!(heartbeat_job.lease_id.as_deref(), Some("lease-heartbeat"));
-        assert_eq!(heartbeat_job.worker_id.as_deref(), Some("worker-heartbeat"));
+        let heartbeat_response =
+            provider.heartbeat(heartbeat_request.clone()).await.expect("heartbeat should succeed");
+        assert_eq!(heartbeat_response.job.session_id, "session-heartbeat");
+        assert_eq!(heartbeat_response.job.request.session_id.as_deref(), Some("session-heartbeat"));
+        assert_eq!(heartbeat_response.job.lock_id.as_deref(), Some("lock-heartbeat"));
+        assert_eq!(heartbeat_response.job.worker_id.as_deref(), Some("worker-heartbeat"));
 
-        let complete_request = CompleteProofJobRequest {
-            session_id: "session-complete".to_owned(),
-            lease_id: "lease-complete".to_owned(),
-            worker_id: "worker-complete".to_owned(),
+        let submit_request = WorkerSubmitProofRequest {
+            session_id: "session-submit".to_owned(),
+            lock_id: "lock-submit".to_owned(),
+            worker_id: "worker-submit".to_owned(),
             result: proof_result(),
         };
-        let complete_response = provider
-            .complete_proof_job(complete_request.clone())
+        let submit_response = provider
+            .submit_proof(submit_request.clone())
             .await
-            .expect("complete_proof_job should succeed");
-        assert_eq!(complete_response.job.status, ProofJobStatus::Succeeded);
-        assert_eq!(complete_response.job.lease_id.as_deref(), Some("lease-complete"));
-        assert_eq!(complete_response.job.worker_id.as_deref(), Some("worker-complete"));
-
-        let fail_request = FailProofJobRequest {
-            session_id: "session-fail".to_owned(),
-            lease_id: "lease-fail".to_owned(),
-            worker_id: "worker-fail".to_owned(),
-            error_message: "proof backend exited".to_owned(),
-            retryable: true,
-        };
-        let fail_response = provider
-            .fail_proof_job(fail_request.clone())
-            .await
-            .expect("fail_proof_job should succeed");
-        assert!(fail_response.will_retry);
-        assert_eq!(fail_response.job.status, ProofJobStatus::Failed);
-        assert_eq!(fail_response.job.lease_id.as_deref(), Some("lease-fail"));
-        assert_eq!(fail_response.job.worker_id.as_deref(), Some("worker-fail"));
-        assert_eq!(fail_response.job.error_message.as_deref(), Some("proof backend exited"));
+            .expect("submit_proof should succeed");
+        assert_eq!(submit_response.job.session_id, "session-submit");
+        assert_eq!(submit_response.job.request.session_id.as_deref(), Some("session-submit"));
+        assert_eq!(submit_response.job.status, ProofJobStatus::Succeeded);
+        assert_eq!(submit_response.job.lock_id.as_deref(), Some("lock-submit"));
+        assert_eq!(submit_response.job.worker_id.as_deref(), Some("worker-submit"));
 
         {
             let state = api.state.lock().expect("state lock should not be poisoned");
-            assert_eq!(state.get_request, Some(get_request));
-            assert_eq!(state.claim_request, Some(claim_request));
+            assert_eq!(state.get_next_request, Some(get_next_request));
             assert_eq!(state.heartbeat_request, Some(heartbeat_request));
-            assert_eq!(state.complete_request, Some(complete_request));
-            assert_eq!(state.fail_request, Some(fail_request));
+            assert_eq!(state.submit_request, Some(submit_request));
         }
 
         server.shutdown().await;
@@ -506,11 +381,11 @@ mod tests {
         let provider: &dyn ProverWorkerProvider = &server.client;
 
         let err = provider
-            .heartbeat_proof_job(HeartbeatProofJobRequest {
+            .heartbeat(HeartbeatRequest {
                 session_id: "session-error".to_owned(),
-                lease_id: "lease-error".to_owned(),
+                lock_id: "lock-error".to_owned(),
                 worker_id: "worker-error".to_owned(),
-                lease_duration_seconds: 30,
+                lock_duration_seconds: 30,
             })
             .await
             .expect_err("heartbeat should be rejected");
@@ -520,7 +395,7 @@ mod tests {
         match err {
             ProverServiceClientError::RpcTransport(JsonRpcClientError::Call(call)) => {
                 assert_eq!(call.code(), ProverServiceClientError::ERROR_FAILED_PRECONDITION);
-                assert!(call.message().contains("lease-error"));
+                assert!(call.message().contains("lock-error"));
                 assert!(call.message().contains("worker-error"));
             }
             other => panic!("unexpected error variant: {other:?}"),

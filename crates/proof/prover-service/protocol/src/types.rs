@@ -50,12 +50,10 @@ pub enum ProofStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProofJobStatus {
-    /// Proof job is queued.
-    Queued,
-    /// Proof job is currently leased by a worker.
-    Leased,
-    /// Proof job lease expired before completion.
-    LeaseExpired,
+    /// Proof job is pending and not currently claimed by a worker.
+    Pending,
+    /// Proof job is currently claimed by a worker.
+    Claimed,
     /// Proof job completed successfully.
     Succeeded,
     /// Proof job failed.
@@ -306,15 +304,15 @@ pub struct ProofJob {
     pub request: ProofRequest,
     /// Current attempt number.
     pub attempt: u32,
-    /// Current lease identifier, if the job is leased.
+    /// Server-issued lock identifier, if the job is claimed.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub lease_id: Option<String>,
-    /// Worker identifier, if the job is leased.
+    pub lock_id: Option<String>,
+    /// Worker identifier, if the job is claimed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worker_id: Option<String>,
-    /// Timestamp when the lease expires.
+    /// Timestamp when the worker claim expires.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub lease_expires_at: Option<DateTime<Utc>>,
+    pub lock_expires_at: Option<DateTime<Utc>>,
     /// Timestamp when the job was created.
     pub created_at: DateTime<Utc>,
     /// Timestamp when the job was last updated.
@@ -327,123 +325,75 @@ pub struct ProofJob {
     pub error_message: Option<String>,
 }
 
-/// Request to fetch a proof job.
+/// Request to claim the next available proof job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GetProofJobRequest {
-    /// Proof session identifier.
-    pub session_id: String,
-}
-
-/// Proof job response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetProofJobResponse {
-    /// Matching proof job, if it exists.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub job: Option<ProofJob>,
-}
-
-/// Request to claim a proof job.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaimProofJobRequest {
-    /// Proof type the worker can process.
-    pub proof_type: ProofType,
+pub struct GetNextProofRequest {
     /// Worker identifier.
     pub worker_id: String,
-    /// Requested lease duration in seconds. Zero uses the server default.
-    pub lease_duration_seconds: u32,
-    /// Optional TEE implementation restrictions.
+    /// Proof type this worker can execute.
+    pub proof_type: ProofType,
+    /// TEE implementations this worker can execute for TEE proofs.
     #[serde(default)]
     pub tee_kinds: Vec<TeeKind>,
-    /// Optional ZK virtual machine restrictions.
+    /// ZK virtual machines this worker can execute for ZK proofs.
     #[serde(default)]
     pub zk_vms: Vec<ZkVm>,
+    /// Requested lock duration in seconds. Zero uses the server default.
+    pub lock_duration_seconds: u32,
 }
 
-/// Response returned when a worker attempts to claim a proof job.
+/// Response returned when a worker claims the next proof job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ClaimProofJobResponse {
-    /// Whether a job was claimed.
-    pub claimed: bool,
+pub struct GetNextProofResponse {
     /// Claimed proof job, if one was available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job: Option<ProofJob>,
 }
 
-/// Request to extend a proof job lease.
+/// Request to extend a proof job lock.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct HeartbeatProofJobRequest {
+pub struct HeartbeatRequest {
     /// Proof session identifier.
     pub session_id: String,
-    /// Lease identifier.
-    pub lease_id: String,
+    /// Server-issued lock identifier for this worker claim.
+    pub lock_id: String,
     /// Worker identifier.
     pub worker_id: String,
-    /// Requested lease duration in seconds. Zero uses the server default.
-    pub lease_duration_seconds: u32,
+    /// Requested lock duration in seconds. Zero uses the server default.
+    pub lock_duration_seconds: u32,
 }
 
 /// Response returned after a proof job heartbeat.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct HeartbeatProofJobResponse {
-    /// Whether the heartbeat was accepted.
-    pub accepted: bool,
-    /// Updated proof job, if accepted.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub job: Option<ProofJob>,
+pub struct HeartbeatResponse {
+    /// Updated proof job.
+    pub job: ProofJob,
 }
 
-/// Request to complete a proof job.
+/// Request to submit a proof result for a proof job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CompleteProofJobRequest {
+pub struct WorkerSubmitProofRequest {
     /// Proof session identifier.
     pub session_id: String,
-    /// Lease identifier.
-    pub lease_id: String,
+    /// Server-issued lock identifier for this worker claim.
+    pub lock_id: String,
     /// Worker identifier.
     pub worker_id: String,
     /// Proof result.
     pub result: ProofResult,
 }
 
-/// Response returned after a proof job is completed.
+/// Response returned after a worker proof submission.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CompleteProofJobResponse {
+pub struct WorkerSubmitProofResponse {
     /// Completed proof job.
     pub job: ProofJob,
-}
-
-/// Request to fail a proof job.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FailProofJobRequest {
-    /// Proof session identifier.
-    pub session_id: String,
-    /// Lease identifier.
-    pub lease_id: String,
-    /// Worker identifier.
-    pub worker_id: String,
-    /// Failure reason.
-    pub error_message: String,
-    /// Whether the job should be retried.
-    pub retryable: bool,
-}
-
-/// Response returned after a proof job is failed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FailProofJobResponse {
-    /// Updated proof job.
-    pub job: ProofJob,
-    /// Whether the server will retry the job.
-    pub will_retry: bool,
 }
 
 #[cfg(test)]
@@ -548,23 +498,87 @@ mod tests {
     }
 
     #[test]
-    fn claim_request_defaults_omitted_filters_to_empty_lists() {
-        let request: ClaimProofJobRequest = serde_json::from_value(json!({
-            "proofType": "compressed",
-            "workerId": "worker-1",
-            "leaseDurationSeconds": 30
-        }))
-        .expect("claim request should accept omitted optional filters");
+    fn get_next_proof_request_serializes_as_worker_claim() {
+        let request = GetNextProofRequest {
+            worker_id: "worker-1".to_owned(),
+            proof_type: ProofType::Compressed,
+            tee_kinds: Vec::new(),
+            zk_vms: vec![ZkVm::Sp1],
+            lock_duration_seconds: 30,
+        };
+
+        let value = serde_json::to_value(request).expect("get next proof request should serialize");
 
         assert_eq!(
-            request,
-            ClaimProofJobRequest {
-                proof_type: ProofType::Compressed,
-                worker_id: "worker-1".to_owned(),
-                lease_duration_seconds: 30,
-                tee_kinds: Vec::new(),
-                zk_vms: Vec::new(),
-            }
+            value,
+            json!({
+                "workerId": "worker-1",
+                "proofType": "compressed",
+                "teeKinds": [],
+                "zkVms": ["sp1"],
+                "lockDurationSeconds": 30
+            })
+        );
+    }
+
+    #[test]
+    fn get_next_proof_request_defaults_omitted_capability_lists() {
+        let request: GetNextProofRequest = serde_json::from_value(json!({
+            "workerId": "worker-1",
+            "proofType": "compressed",
+            "lockDurationSeconds": 30
+        }))
+        .expect("get next proof request should accept omitted capability lists");
+
+        assert_eq!(request.tee_kinds, Vec::new());
+        assert_eq!(request.zk_vms, Vec::new());
+    }
+
+    #[test]
+    fn worker_ownership_requests_require_lock_fencing_token() {
+        let heartbeat = HeartbeatRequest {
+            session_id: "session-1".to_owned(),
+            lock_id: "lock-1".to_owned(),
+            worker_id: "worker-1".to_owned(),
+            lock_duration_seconds: 30,
+        };
+
+        let heartbeat_value = serde_json::to_value(heartbeat).expect("heartbeat should serialize");
+        assert_eq!(heartbeat_value["lockId"], json!("lock-1"));
+        assert!(
+            serde_json::from_value::<HeartbeatRequest>(json!({
+                "sessionId": "session-1",
+                "workerId": "worker-1",
+                "lockDurationSeconds": 30,
+            }))
+            .is_err()
+        );
+
+        let submit = WorkerSubmitProofRequest {
+            session_id: "session-1".to_owned(),
+            lock_id: "lock-1".to_owned(),
+            worker_id: "worker-1".to_owned(),
+            result: ProofResult::Compressed(ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: vec![1, 2, 3].into(),
+            }),
+        };
+
+        let submit_value = serde_json::to_value(submit).expect("submit should serialize");
+        assert_eq!(submit_value["lockId"], json!("lock-1"));
+        assert!(
+            serde_json::from_value::<WorkerSubmitProofRequest>(json!({
+                "sessionId": "session-1",
+                "workerId": "worker-1",
+                "result": {
+                    "proofType": "compressed",
+                    "payload": {
+                        "zkVm": "sp1",
+                        "proof": "0x010203"
+                    }
+                }
+            }))
+            .is_err()
         );
     }
 }
