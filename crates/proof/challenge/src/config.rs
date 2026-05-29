@@ -237,6 +237,7 @@ impl ChallengerConfig {
 #[cfg(test)]
 mod tests {
     use base_cli_utils::LogFormat;
+    use tracing::level_filters::LevelFilter;
     use clap::Parser;
     use rstest::rstest;
 
