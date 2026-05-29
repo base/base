@@ -230,7 +230,7 @@ impl SetupContainer {
             .with_mount(Mount::bind_mount(shared_mount, "/shared"))
             .with_cmd(["setup-l1.sh"]);
         if let Some(user) = host_user_spec() {
-            request = request.with_user(user);
+            request = request.with_user(user).with_env_var("HOME", "/tmp");
         }
         let _container = request.start().wrap_err("Failed to run setup-l1.sh")?;
 
@@ -297,7 +297,7 @@ impl SetupContainer {
             .with_mount(Mount::bind_mount(shared_mount, "/shared"))
             .with_cmd(["setup-l2.sh"]);
         if let Some(user) = host_user_spec() {
-            request = request.with_user(user);
+            request = request.with_user(user).with_env_var("HOME", "/tmp");
         }
         let _container = request.start().wrap_err("Failed to run setup-l2.sh")?;
 
