@@ -24,5 +24,8 @@ thiserror.workspace = true
 # Observability
 tracing.workspace = true
 
+[dev-dependencies]
+rstest.workspace = true
+
 [lints]
 workspace = true

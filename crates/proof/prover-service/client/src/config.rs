@@ -135,6 +135,8 @@ impl ProverServiceClientConfig {
 mod tests {
     use std::time::Duration;
 
+    use rstest::rstest;
+
     use super::*;
 
     #[test]
@@ -147,76 +149,65 @@ mod tests {
         config.validate().expect("valid config should pass validation");
     }
 
-    #[test]
-    fn config_validation_rejects_url_without_host() {
-        let config = ProverServiceClientConfig::new("http://");
+    #[rstest]
+    #[case::url_without_host(
+        "http://",
+        Duration::from_secs(1),
+        Duration::from_millis(100),
+        Duration::from_secs(10),
+        "host"
+    )]
+    #[case::non_http_url_scheme(
+        "file:///tmp/prover-service.sock",
+        Duration::from_secs(1),
+        Duration::from_millis(100),
+        Duration::from_secs(10),
+        "scheme"
+    )]
+    #[case::zero_request_timeout(
+        "http://localhost:8545",
+        Duration::ZERO,
+        Duration::from_millis(100),
+        Duration::from_secs(10),
+        "request timeout"
+    )]
+    #[case::zero_poll_interval(
+        "http://localhost:8545",
+        Duration::from_secs(1),
+        Duration::ZERO,
+        Duration::from_secs(10),
+        "poll interval"
+    )]
+    #[case::zero_max_wait(
+        "http://localhost:8545",
+        Duration::from_secs(1),
+        Duration::from_millis(100),
+        Duration::ZERO,
+        "max wait"
+    )]
+    #[case::poll_interval_greater_than_max_wait(
+        "http://localhost:8545",
+        Duration::from_secs(1),
+        Duration::from_secs(11),
+        Duration::from_secs(10),
+        "poll interval"
+    )]
+    fn config_validation_rejects_invalid_config(
+        #[case] endpoint: &str,
+        #[case] request_timeout: Duration,
+        #[case] poll_interval: Duration,
+        #[case] max_wait: Duration,
+        #[case] expected_message: &str,
+    ) {
+        let config = ProverServiceClientConfig::new(endpoint)
+            .with_request_timeout(request_timeout)
+            .with_poll_interval(poll_interval)
+            .with_max_wait(max_wait);
 
-        let err = config.validate().expect_err("URL without host should fail validation");
-
-        assert!(
-            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains("host"))
-        );
-    }
-
-    #[test]
-    fn config_validation_rejects_non_http_url_scheme() {
-        let config = ProverServiceClientConfig::new("file:///tmp/prover-service.sock");
-
-        let err = config.validate().expect_err("non-HTTP URL scheme should fail validation");
-
-        assert!(
-            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains("scheme"))
-        );
-    }
-
-    #[test]
-    fn config_validation_rejects_zero_request_timeout() {
-        let config = ProverServiceClientConfig::new("http://localhost:8545")
-            .with_request_timeout(Duration::ZERO);
-
-        let err = config.validate().expect_err("zero request timeout should fail validation");
-
-        assert!(
-            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains("request timeout"))
-        );
-    }
-
-    #[test]
-    fn config_validation_rejects_zero_poll_interval() {
-        let config = ProverServiceClientConfig::new("http://localhost:8545")
-            .with_poll_interval(Duration::ZERO);
-
-        let err = config.validate().expect_err("zero poll interval should fail validation");
-
-        assert!(
-            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains("poll interval"))
-        );
-    }
-
-    #[test]
-    fn config_validation_rejects_zero_max_wait() {
-        let config =
-            ProverServiceClientConfig::new("http://localhost:8545").with_max_wait(Duration::ZERO);
-
-        let err = config.validate().expect_err("zero max wait should fail validation");
-
-        assert!(
-            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains("max wait"))
-        );
-    }
-
-    #[test]
-    fn config_validation_rejects_poll_interval_greater_than_max_wait() {
-        let config = ProverServiceClientConfig::new("http://localhost:8545")
-            .with_poll_interval(Duration::from_secs(11))
-            .with_max_wait(Duration::from_secs(10));
-
-        let err = config
-            .validate()
-            .expect_err("poll interval greater than max wait should fail validation");
+        let err = config.validate().expect_err("invalid config should fail validation");
 
         assert!(
-            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains("poll interval"))
+            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains(expected_message))
         );
     }
 }

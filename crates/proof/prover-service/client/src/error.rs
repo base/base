@@ -96,68 +96,70 @@ mod tests {
     use std::io;
 
     use jsonrpsee::types::ErrorObjectOwned;
+    use rstest::rstest;
 
     use super::*;
 
-    #[test]
-    fn retry_classification_marks_transient_rpc_failures_retryable() {
-        let request_timeout = ProverServiceClientError::from(JsonRpcClientError::RequestTimeout);
-        let transport = ProverServiceClientError::from(JsonRpcClientError::Transport(
+    fn rpc_call_error(code: i32, message: &str) -> ProverServiceClientError {
+        ProverServiceClientError::from(JsonRpcClientError::Call(ErrorObjectOwned::owned(
+            code, message, None::<()>,
+        )))
+    }
+
+    #[rstest]
+    #[case::request_timeout(
+        ProverServiceClientError::from(JsonRpcClientError::RequestTimeout),
+        true
+    )]
+    #[case::transport(
+        ProverServiceClientError::from(JsonRpcClientError::Transport(
             io::Error::other("connection refused").into(),
-        ));
-        let unavailable =
-            ProverServiceClientError::from(JsonRpcClientError::Call(ErrorObjectOwned::owned(
-                ProverServiceClientError::ERROR_UNAVAILABLE,
-                "service unavailable",
-                None::<()>,
-            )));
-
-        assert!(request_timeout.is_retryable());
-        assert!(transport.is_retryable());
-        assert!(unavailable.is_retryable());
-    }
-
-    #[test]
-    fn retry_classification_marks_terminal_service_failures_non_retryable() {
-        let proof_failure =
-            ProverServiceClientError::ProofFailure { message: "proof failed".to_owned() };
-        let missing_result =
-            ProverServiceClientError::MissingResult("succeeded response had no result".to_owned());
-        let unexpected_payload =
-            ProverServiceClientError::UnexpectedResultPayload("expected TEE proof".to_owned());
-        let resource_exhausted =
-            ProverServiceClientError::from(JsonRpcClientError::Call(ErrorObjectOwned::owned(
-                ProverServiceClientError::ERROR_RESOURCE_EXHAUSTED,
-                "proof retries exhausted; use get_proof",
-                None::<()>,
-            )));
-
-        assert!(!proof_failure.is_retryable());
-        assert!(!missing_result.is_retryable());
-        assert!(!unexpected_payload.is_retryable());
-        assert!(!resource_exhausted.is_retryable());
-    }
-
-    #[test]
-    fn retry_classification_marks_worker_lease_rejections_non_retryable() {
-        let lease_rejection =
-            ProverServiceClientError::WorkerLeaseRejected { message: "lease mismatch".to_owned() };
-        let failed_precondition =
-            ProverServiceClientError::from(JsonRpcClientError::Call(ErrorObjectOwned::owned(
-                ProverServiceClientError::ERROR_FAILED_PRECONDITION,
-                "lease is not owned by this worker",
-                None::<()>,
-            )));
-
-        assert!(!lease_rejection.is_retryable());
-        assert!(!failed_precondition.is_retryable());
-    }
-
-    #[test]
-    fn retry_classification_marks_invalid_config_non_retryable() {
-        let invalid_config =
-            ProverServiceClientError::InvalidConfig("endpoint URL must include a host".to_owned());
-
-        assert!(!invalid_config.is_retryable());
+        )),
+        true
+    )]
+    #[case::unavailable(
+        rpc_call_error(ProverServiceClientError::ERROR_UNAVAILABLE, "service unavailable"),
+        true
+    )]
+    #[case::timeout(ProverServiceClientError::Timeout("proof not ready".to_owned()), true)]
+    #[case::invalid_config(
+        ProverServiceClientError::InvalidConfig("endpoint URL must include a host".to_owned()),
+        false
+    )]
+    #[case::proof_failure(
+        ProverServiceClientError::ProofFailure { message: "proof failed".to_owned() },
+        false
+    )]
+    #[case::worker_lease_rejected(
+        ProverServiceClientError::WorkerLeaseRejected { message: "lease mismatch".to_owned() },
+        false
+    )]
+    #[case::missing_result(
+        ProverServiceClientError::MissingResult("succeeded response had no result".to_owned()),
+        false
+    )]
+    #[case::unexpected_payload(
+        ProverServiceClientError::UnexpectedResultPayload("expected TEE proof".to_owned()),
+        false
+    )]
+    #[case::resource_exhausted(
+        rpc_call_error(
+            ProverServiceClientError::ERROR_RESOURCE_EXHAUSTED,
+            "proof retries exhausted; use get_proof"
+        ),
+        false
+    )]
+    #[case::failed_precondition(
+        rpc_call_error(
+            ProverServiceClientError::ERROR_FAILED_PRECONDITION,
+            "lease is not owned by this worker"
+        ),
+        false
+    )]
+    fn retry_classification_matches_expected(
+        #[case] error: ProverServiceClientError,
+        #[case] expected_retryable: bool,
+    ) {
+        assert_eq!(error.is_retryable(), expected_retryable);
     }
 }
