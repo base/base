@@ -53,10 +53,7 @@ get session_id receipt_type='':
 
 # Fetch and parse a proof receipt
 receipt session_id receipt_type='snark' export_json='':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    endpoint="$(just --justfile {{ source_file() }} _endpoint)"
-    bash "{{ _script }}" receipt "{{ session_id }}" "$endpoint" "{{ receipt_type }}" "{{ export_json }}"
+    bash "{{ _script }}" receipt "{{ session_id }}" "{{ _endpoint }}" "{{ receipt_type }}" "{{ export_json }}"
 
 # List recent proof requests
 list-proofs limit='20' offset='0' status_filter='':
