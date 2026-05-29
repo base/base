@@ -262,7 +262,10 @@ impl EnclaveApiServer for NitroSignerRpc {
             .map(|k| {
                 VerifyingKey::from_sec1_bytes(k)
                     .map(|vk| format!("{}", public_key_to_address(&vk)))
-                    .unwrap_or_else(|_| "<unparseable>".to_string())
+                    .unwrap_or_else(|e| {
+                        warn!(error = %e, "failed to parse enclave signer public key");
+                        "<unparseable>".to_string()
+                    })
             })
             .collect();
         info!(signers = ?signers, "nitro_host.signer_public_key_rpc");
