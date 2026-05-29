@@ -18,15 +18,14 @@ env:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   fork-tests:
-    name: Base Std Fork Tests (advisory)
+    name: Base Std Fork Tests
     runs-on:
       group: BasePerfRunnerGroup
     timeout-minutes: 120
-    # Advisory: failures indicate base-std interface changes base/base needs to catch up to.
-    continue-on-error: true
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -93,4 +92,56 @@ jobs:
           ANVIL_BIN="$BASE_ANVIL_DIR/target/release/anvil" \
             FORGE_BIN="$BASE_ANVIL_DIR/target/release/forge" \
             ANVIL_LOG="$RUNNER_TEMP/base-std-anvil.log" \
-            ./script/run-fork-tests.sh
+            ./script/run-fork-tests.sh 2>&1 | tee "$RUNNER_TEMP/fork-test-output.txt"
+
+      - name: Comment fork test results on PR
+        if: github.event_name == 'pull_request' && always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          output="$RUNNER_TEMP/fork-test-output.txt"
+          passed=$(grep -c '\[PASS\]' "$output" 2>/dev/null || echo 0)
+          failed=$(grep -c '\[FAIL' "$output" 2>/dev/null || echo 0)
+          marker="<!-- fork-test-results -->"
+
+          if [ ! -s "$output" ] || [ "$((passed + failed))" -eq 0 ]; then
+            body="${marker}
+          ### ❌ Fork tests did not run
+          The build or setup step failed before any tests could execute. Check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+          elif [ "$failed" -eq 0 ]; then
+            body="${marker}
+          ### ✅ Fork tests: all ${passed} passed
+          base/base is fully in sync with the base-std spec."
+          else
+            failing=$(grep '\[FAIL' "$output" \
+              | sed 's/\x1B\[[0-9;]*m//g' \
+              | sed 's/^\[FAIL: \(.*\)\] \(.*\) (runs.*$/- **\2**: `\1`/' \
+              | sort -u || true)
+            body="${marker}
+          ### ❌ Fork tests: ${failed} failed, ${passed} passed
+
+          base/base diverges from the base-std spec. These failures must be fixed before merging.
+
+          <details>
+          <summary>Failing tests</summary>
+
+          ${failing}
+
+          </details>"
+          fi
+
+          pr="${{ github.event.pull_request.number }}"
+          repo="${{ github.repository }}"
+
+          existing_id=$(gh api "repos/${repo}/issues/${pr}/comments" \
+            --jq ".[] | select(.body | startswith(\"${marker}\")) | .id" \
+            | head -1)
+
+          if [ -n "$existing_id" ]; then
+            gh api "repos/${repo}/issues/comments/${existing_id}" \
+              -X PATCH --field body="$body" > /dev/null
+          else
+            gh api "repos/${repo}/issues/${pr}/comments" \
+              --field body="$body" > /dev/null
+          fi
