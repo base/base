@@ -6014,6 +6014,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-prover-service-protocol"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "chrono",
+ "jsonrpsee",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "base-prover-zk"
 version = "0.0.0"
 dependencies = [

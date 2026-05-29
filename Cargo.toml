@@ -26,6 +26,7 @@ members = [
   "crates/proof/primitives",
   "crates/proof/host",
   "crates/proof/prover-service",
+  "crates/proof/prover-service/protocol",
   "crates/proof/prover-service/db",
   "crates/proof/prover-service/outbox",
   "crates/proof/tee/nitro-host",
@@ -246,6 +247,7 @@ base-prover-service-outbox = { path = "crates/proof/prover-service/outbox" }
 base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier" }
 base-proof-client = { path = "crates/proof/client", default-features = false }
 base-proof-driver = { path = "crates/proof/driver", default-features = false }
+base-prover-service-protocol = { path = "crates/proof/prover-service/protocol" }
 base-proof-executor = { path = "crates/proof/executor", default-features = false }
 base-proof-preimage = { path = "crates/proof/preimage", default-features = false }
 base-proof-primitives = { path = "crates/proof/primitives", default-features = false }
