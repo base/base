@@ -108,8 +108,7 @@ jobs:
       - run: just check::format
   build:
     name: Build
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: depot-ubuntu-24.04-16
     env:
       BASE_REF: ${{ inputs.base_ref }}
     steps:
@@ -136,8 +135,7 @@ jobs:
         run: ${{ inputs.build_command }}
   clippy:
     name: Clippy
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: depot-ubuntu-24.04-16
     env:
       BASE_REF: ${{ inputs.base_ref }}
     steps:
@@ -163,8 +161,7 @@ jobs:
         run: ${{ inputs.clippy_command }}
   test:
     name: Test
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: depot-ubuntu-24.04-16
     env:
       BASE_REF: ${{ inputs.base_ref }}
     steps:
@@ -289,8 +286,7 @@ jobs:
   devnet-tests:
     name: Devnet Tests
     if: inputs.run_devnet
-    runs-on:
-      group: BasePerfRunnerGroup
+    runs-on: depot-ubuntu-24.04-16
     timeout-minutes: 60
     steps:
       - name: Harden the runner (Audit all outbound calls)
