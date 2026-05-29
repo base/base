@@ -59,14 +59,23 @@ pub struct B20CoreStorage {
     #[accessor]
     #[mutator]
     pub admin_count: U256, // offset 8
-    /// Packed transfer-side policy IDs.
+    /// Transfer sender policy ID.
     #[accessor]
     #[mutator]
-    pub transfer_policy_ids: U256, // offset 9: sender, receiver, executor, reserved
-    /// Packed mint-side policy IDs.
+    pub transfer_sender_policy_id: u64, // slot 9, offset 0
+    /// Transfer receiver policy ID.
     #[accessor]
     #[mutator]
-    pub mint_policy_ids: U256, // offset 10: receiver, reserved, reserved, reserved
+    pub transfer_receiver_policy_id: u64, // slot 9, offset 8
+    /// Transfer executor policy ID.
+    #[accessor]
+    #[mutator]
+    pub transfer_executor_policy_id: u64, // slot 9, offset 16
+    pub transfer_reserved_0: u64, // slot 9, offset 24 (filler to close the slot)
+    /// Mint receiver policy ID.
+    #[accessor]
+    #[mutator]
+    pub mint_receiver_policy_id: u64, // slot 10, offset 0
     /// Paused feature bitmask.
     #[accessor]
     #[mutator]
@@ -138,8 +147,14 @@ mod tests {
         assert_eq!(__packing_b20_core_storage::ROLES_LOC.offset_slots, 6);
         assert_eq!(__packing_b20_core_storage::ROLE_ADMINS_LOC.offset_slots, 7);
         assert_eq!(__packing_b20_core_storage::ADMIN_COUNT_LOC.offset_slots, 8);
-        assert_eq!(__packing_b20_core_storage::TRANSFER_POLICY_IDS_LOC.offset_slots, 9);
-        assert_eq!(__packing_b20_core_storage::MINT_POLICY_IDS_LOC.offset_slots, 10);
+        assert_eq!(__packing_b20_core_storage::TRANSFER_SENDER_POLICY_ID_LOC.offset_slots, 9);
+        assert_eq!(__packing_b20_core_storage::TRANSFER_SENDER_POLICY_ID_LOC.offset_bytes, 0);
+        assert_eq!(__packing_b20_core_storage::TRANSFER_RECEIVER_POLICY_ID_LOC.offset_slots, 9);
+        assert_eq!(__packing_b20_core_storage::TRANSFER_RECEIVER_POLICY_ID_LOC.offset_bytes, 8);
+        assert_eq!(__packing_b20_core_storage::TRANSFER_EXECUTOR_POLICY_ID_LOC.offset_slots, 9);
+        assert_eq!(__packing_b20_core_storage::TRANSFER_EXECUTOR_POLICY_ID_LOC.offset_bytes, 16);
+        assert_eq!(__packing_b20_core_storage::MINT_RECEIVER_POLICY_ID_LOC.offset_slots, 10);
+        assert_eq!(__packing_b20_core_storage::MINT_RECEIVER_POLICY_ID_LOC.offset_bytes, 0);
         assert_eq!(__packing_b20_core_storage::PAUSED_LOC.offset_slots, 11);
         assert_eq!(__packing_b20_core_storage::SUPPLY_CAP_LOC.offset_slots, 12);
         assert_eq!(__packing_b20_core_storage::NONCES_LOC.offset_slots, 13);

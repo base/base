@@ -22,32 +22,17 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
     let name = input.ident;
     let redeem = has_redeem.then_some(quote! {
         if policy_scope == Self::REDEEM_SENDER_POLICY {
-            return Ok(Self::__read_policy_lane(
-                self.redeem.redeem_policy_ids()?,
-                Self::__REDEEM_SENDER_POLICY_LANE,
-            ));
+            return self.redeem.redeem_sender_policy_id();
         }
     });
     let set_redeem = has_redeem.then_some(quote! {
         if policy_scope == Self::REDEEM_SENDER_POLICY {
-            let packed = Self::__write_policy_lane(
-                self.redeem.redeem_policy_ids()?,
-                Self::__REDEEM_SENDER_POLICY_LANE,
-                policy_id,
-            );
-            return self.redeem.set_redeem_policy_ids(packed);
+            return self.redeem.set_redeem_sender_policy_id(policy_id);
         }
     });
 
     Ok(quote! {
         impl #name<'_> {
-            const __TRANSFER_SENDER_POLICY_LANE: usize = 0;
-            const __TRANSFER_RECEIVER_POLICY_LANE: usize = 1;
-            const __TRANSFER_EXECUTOR_POLICY_LANE: usize = 2;
-            const __MINT_RECEIVER_POLICY_LANE: usize = 0;
-            const __REDEEM_SENDER_POLICY_LANE: usize = 0;
-            const __POLICY_LANE_BITS: usize = 64;
-
             fn __require_policy_type(
                 policy_scope: ::alloy_primitives::B256,
             ) -> ::base_precompile_storage::Result<crate::B20PolicyType> {
@@ -56,22 +41,6 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                         crate::IB20::UnsupportedPolicyType { policyScope: policy_scope },
                     )
                 })
-            }
-
-            fn __read_policy_lane(packed: ::alloy_primitives::U256, lane: usize) -> u64 {
-                ((packed >> (lane * Self::__POLICY_LANE_BITS))
-                    & ::alloy_primitives::U256::from(u64::MAX))
-                    .to::<u64>()
-            }
-
-            fn __write_policy_lane(
-                packed: ::alloy_primitives::U256,
-                lane: usize,
-                policy_id: u64,
-            ) -> ::alloy_primitives::U256 {
-                let shift = lane * Self::__POLICY_LANE_BITS;
-                let mask = ::alloy_primitives::U256::from(u64::MAX) << shift;
-                (packed & !mask) | (::alloy_primitives::U256::from(policy_id) << shift)
             }
         }
 
@@ -275,22 +244,14 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
             ) -> ::base_precompile_storage::Result<u64> {
                 #redeem
                 match Self::__require_policy_type(policy_scope)? {
-                    crate::B20PolicyType::TransferSender => Ok(Self::__read_policy_lane(
-                        self.b20.transfer_policy_ids()?,
-                        Self::__TRANSFER_SENDER_POLICY_LANE,
-                    )),
-                    crate::B20PolicyType::TransferReceiver => Ok(Self::__read_policy_lane(
-                        self.b20.transfer_policy_ids()?,
-                        Self::__TRANSFER_RECEIVER_POLICY_LANE,
-                    )),
-                    crate::B20PolicyType::TransferExecutor => Ok(Self::__read_policy_lane(
-                        self.b20.transfer_policy_ids()?,
-                        Self::__TRANSFER_EXECUTOR_POLICY_LANE,
-                    )),
-                    crate::B20PolicyType::MintReceiver => Ok(Self::__read_policy_lane(
-                        self.b20.mint_policy_ids()?,
-                        Self::__MINT_RECEIVER_POLICY_LANE,
-                    )),
+                    crate::B20PolicyType::TransferSender => self.b20.transfer_sender_policy_id(),
+                    crate::B20PolicyType::TransferReceiver => {
+                        self.b20.transfer_receiver_policy_id()
+                    }
+                    crate::B20PolicyType::TransferExecutor => {
+                        self.b20.transfer_executor_policy_id()
+                    }
+                    crate::B20PolicyType::MintReceiver => self.b20.mint_receiver_policy_id(),
                 }
             }
 
@@ -300,33 +261,19 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 policy_id: u64,
             ) -> ::base_precompile_storage::Result<()> {
                 #set_redeem
-                let (packed, lane, mint) = match Self::__require_policy_type(policy_scope)? {
-                    crate::B20PolicyType::TransferSender => (
-                        self.b20.transfer_policy_ids()?,
-                        Self::__TRANSFER_SENDER_POLICY_LANE,
-                        false,
-                    ),
-                    crate::B20PolicyType::TransferReceiver => (
-                        self.b20.transfer_policy_ids()?,
-                        Self::__TRANSFER_RECEIVER_POLICY_LANE,
-                        false,
-                    ),
-                    crate::B20PolicyType::TransferExecutor => (
-                        self.b20.transfer_policy_ids()?,
-                        Self::__TRANSFER_EXECUTOR_POLICY_LANE,
-                        false,
-                    ),
-                    crate::B20PolicyType::MintReceiver => (
-                        self.b20.mint_policy_ids()?,
-                        Self::__MINT_RECEIVER_POLICY_LANE,
-                        true,
-                    ),
-                };
-                let packed = Self::__write_policy_lane(packed, lane, policy_id);
-                if mint {
-                    self.b20.set_mint_policy_ids(packed)
-                } else {
-                    self.b20.set_transfer_policy_ids(packed)
+                match Self::__require_policy_type(policy_scope)? {
+                    crate::B20PolicyType::TransferSender => {
+                        self.b20.set_transfer_sender_policy_id(policy_id)
+                    }
+                    crate::B20PolicyType::TransferReceiver => {
+                        self.b20.set_transfer_receiver_policy_id(policy_id)
+                    }
+                    crate::B20PolicyType::TransferExecutor => {
+                        self.b20.set_transfer_executor_policy_id(policy_id)
+                    }
+                    crate::B20PolicyType::MintReceiver => {
+                        self.b20.set_mint_receiver_policy_id(policy_id)
+                    }
                 }
             }
 
