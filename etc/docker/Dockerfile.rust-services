@@ -131,10 +131,11 @@ COPY . .
 
 FROM zk-source AS zk-prover-builder
 ARG PROFILE=release
+ARG BASE_SUCCINCT_ELF_REQUIRE=1
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/app/target,id=zk-prover-target,sharing=locked \
-    BASE_SUCCINCT_ELF_REQUIRE=1 cargo build --profile $PROFILE --package base-prover-zk --bin base-prover-zk && \
+    cargo build --profile $PROFILE --package base-prover-zk --bin base-prover-zk && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-zk /app/base-prover-zk
 
 FROM public.ecr.aws/docker/library/debian:trixie-slim AS runtime-base
