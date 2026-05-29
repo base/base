@@ -107,8 +107,12 @@ build-image target='client' profile='dev':
       *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
     esac
     elf_require=1
-    case "{{ target }}" in
-      zk-prover|devnet) elf_require=0 ;;
+    case "{{ profile }}" in
+      dev|profiling)
+        case "{{ target }}" in
+          zk-prover|devnet) elf_require=0 ;;
+        esac
+        ;;
     esac
     PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
 
@@ -153,8 +157,12 @@ _build-rust-images group profile='dev':
       *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
     esac
     elf_require=1
-    case "{{ group }}" in
-      devnet) elf_require=0 ;;
+    case "{{ profile }}" in
+      dev|profiling)
+        case "{{ group }}" in
+          devnet) elf_require=0 ;;
+        esac
+        ;;
     esac
     PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
