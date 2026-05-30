@@ -20,10 +20,10 @@ use base_proof_tee_nitro_attestation_prover::{
 use base_proof_tee_registrar::{
     AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, CrlConfig,
     DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_ATTESTATION_AGE_SECS, DEFAULT_MAX_CONCURRENCY,
-    DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, NitroVerifierClient,
-    NitroVerifierContractClient, ProverClient, ProvingConfig, RegistrarConfig, RegistrarError,
-    RegistrarMetrics, RegistrationDriver, RegistryContractClient,
+    DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_TX_RETRIES, DEFAULT_ORPHAN_DEREG_GRACE_PERIOD_SECS,
+    DEFAULT_TX_RETRY_DELAY_SECS, DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig,
+    NitroVerifierClient, NitroVerifierContractClient, ProverClient, ProvingConfig, RegistrarConfig,
+    RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use boundless_market::{
@@ -134,6 +134,15 @@ pub(crate) struct Cli {
     /// checks while the application initializes. Set to 0 to disable.
     #[arg(long, env = cli_env!("UNHEALTHY_REGISTRATION_WINDOW_SECS"), default_value_t = DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS)]
     unhealthy_registration_window_secs: u64,
+
+    // ── Orphan Deregistration Grace Period ────────────────────────────────
+    /// Duration (seconds) an on-chain signer must remain absent from the
+    /// protected-signer set before it is deregistered as an orphan. Absorbs
+    /// transient discovery / signer-RPC blips that would otherwise cause a
+    /// still-live signer to be dereg'd and re-registered every cycle. Set
+    /// to 0 to disable and restore eager pre-fix behaviour.
+    #[arg(long, env = cli_env!("ORPHAN_DEREG_GRACE_PERIOD_SECS"), default_value_t = DEFAULT_ORPHAN_DEREG_GRACE_PERIOD_SECS)]
+    orphan_dereg_grace_period_secs: u64,
 
     // ── CRL Checking ───────────────────────────────────────────────────────────
     #[command(flatten)]
@@ -524,6 +533,7 @@ impl Cli {
             unhealthy_registration_window: Duration::from_secs(
                 self.unhealthy_registration_window_secs,
             ),
+            orphan_dereg_grace_period: Duration::from_secs(self.orphan_dereg_grace_period_secs),
             health_addr,
             crl,
         })
@@ -692,6 +702,7 @@ impl Cli {
             max_tx_retries: config.max_tx_retries,
             tx_retry_delay: config.tx_retry_delay,
             unhealthy_registration_window: config.unhealthy_registration_window,
+            orphan_dereg_grace_period: config.orphan_dereg_grace_period,
             crl: config.crl,
         };
 

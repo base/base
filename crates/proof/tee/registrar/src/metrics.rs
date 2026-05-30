@@ -57,6 +57,9 @@ base_metrics::define_metrics! {
 
     #[describe("Number of proof-generation tasks currently in-flight in the run() loop")]
     proof_tasks_pending: gauge,
+
+    #[describe("Number of orphan signer candidates currently within the grace period before deregistration")]
+    orphans_within_grace_period: gauge,
 }
 
 impl RegistrarMetrics {

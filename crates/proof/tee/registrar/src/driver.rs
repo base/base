@@ -9,7 +9,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_primitives::{Address, Bytes, FixedBytes, hex};
@@ -59,6 +59,29 @@ pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
 /// of 90 minutes.
 pub const DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS: u64 = 5100;
 
+/// Default grace period (in seconds) before an orphan signer is actually
+/// deregistered on-chain.
+///
+/// A signer becomes an orphan candidate when it is registered on-chain
+/// but absent from the protected-signer set built from the current
+/// discovery snapshot. Without hysteresis, a single transient
+/// `signer_public_key` RPC failure or AWS discovery blip drops the
+/// signer from the snapshot, triggers an immediate deregistration, and
+/// is followed a cycle later by a fresh ~20 minute Boundless proof and
+/// re-registration — wasted gas, wasted compute, and (because the
+/// post-dereg re-registration occasionally collides with stale
+/// recovered proofs) recurring on-chain reverts.
+///
+/// The grace period requires a signer to be observed as an orphan
+/// continuously for at least this long before it is actually
+/// deregistered, absorbing transient blips. Set to `0` to restore the
+/// eager pre-fix behaviour.
+///
+/// 600 seconds (10 minutes) is generous enough to absorb a slow
+/// rolling deploy or a stuck signer process while still letting truly
+/// terminated instances be cleaned up well within a single shift.
+pub const DEFAULT_ORPHAN_DEREG_GRACE_PERIOD_SECS: u64 = 600;
+
 /// Runtime parameters for the [`RegistrationDriver`] that are not
 /// trait-based dependencies.
 #[derive(Debug, Clone)]
@@ -84,6 +107,13 @@ pub struct DriverConfig {
     /// while the application is still initializing. Set to zero to disable.
     /// Defaults to [`DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS`] seconds.
     pub unhealthy_registration_window: Duration,
+    /// Grace period a signer must remain absent from the protected-signer
+    /// set before being deregistered as an orphan. Absorbs transient
+    /// discovery / signer-RPC blips that would otherwise cause a still-live
+    /// signer to be dereg'd and re-registered every cycle. Set to zero to
+    /// disable and restore eager deregistration.
+    /// Defaults to [`DEFAULT_ORPHAN_DEREG_GRACE_PERIOD_SECS`] seconds.
+    pub orphan_dereg_grace_period: Duration,
     /// CRL checking configuration. When enabled, intermediate certificates
     /// are checked against CRL distribution points before registration.
     pub crl: CrlConfig,
@@ -276,6 +306,18 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     /// registrar (or a prior deployment) wrote the signer.
     /// Entries are never evicted — bounded by historic fleet size.
     signer_history: Arc<Mutex<HashMap<Address, String>>>,
+    /// First-seen-as-orphan timestamp for every on-chain signer that
+    /// is not in the current protected-signer set.
+    ///
+    /// Populated by [`Self::eligible_orphans`] (called from
+    /// [`Self::deregister_orphans`]) and only consulted/mutated there.
+    /// Entries are evicted when the signer either (1) reappears in the
+    /// protected set or (2) is no longer in the on-chain registered
+    /// list. The grace period gate guarantees a single transient
+    /// discovery / signer-RPC blip cannot trigger a deregistration —
+    /// see [`DriverConfig::orphan_dereg_grace_period`] for the full
+    /// rationale.
+    orphan_first_seen: Arc<Mutex<HashMap<Address, Instant>>>,
 }
 
 /// RAII guard that removes a signer address from [`RegistrationDriver::in_flight_registrations`]
@@ -368,6 +410,7 @@ where
             proof_semaphore,
             in_flight_registrations: Arc::new(Mutex::new(HashSet::new())),
             signer_history: Arc::new(Mutex::new(HashMap::new())),
+            orphan_first_seen: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -1911,6 +1954,78 @@ where
         }
     }
 
+    /// Filters orphan candidates through the configured grace period and
+    /// records the first time each candidate was observed as an orphan.
+    ///
+    /// A signer is returned as eligible only when it has been
+    /// continuously absent from `protected_signers` for at least
+    /// [`DriverConfig::orphan_dereg_grace_period`]. The grace map is
+    /// repaired in place every call so that:
+    ///
+    /// - signers that reappeared in `protected_signers` lose their
+    ///   pending timestamp (a future blip starts a fresh grace window);
+    /// - signers no longer present in `registered_signers` (e.g.
+    ///   deregistered out-of-band) are evicted so the map stays
+    ///   bounded by the on-chain registered fleet.
+    ///
+    /// Eager pre-fix behaviour is restored when the configured grace
+    /// period is zero — every orphan candidate is returned immediately
+    /// without touching the map. `now` is passed by the caller so tests
+    /// can drive grace expiry deterministically without sleeping.
+    fn eligible_orphans(
+        &self,
+        protected_signers: &HashSet<Address>,
+        registered_signers: &[Address],
+        now: Instant,
+    ) -> Vec<Address> {
+        let grace = self.config.orphan_dereg_grace_period;
+        let registered: HashSet<Address> = registered_signers.iter().copied().collect();
+
+        let mut first_seen = self.orphan_first_seen.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Drop entries for signers that have either reappeared as
+        // protected (the live-instance side recovered) or are no longer
+        // on-chain (dereg'd out-of-band or by a prior cycle of this
+        // loop). Keeps the map bounded and ensures a future orphan
+        // observation always starts with a fresh `now` timestamp.
+        first_seen
+            .retain(|signer, _| registered.contains(signer) && !protected_signers.contains(signer));
+
+        let mut eligible = Vec::new();
+        let mut pending = 0usize;
+        for signer in registered_signers.iter().copied() {
+            if protected_signers.contains(&signer) {
+                continue;
+            }
+
+            // Eager mode: skip the grace bookkeeping entirely so the
+            // map stays empty and the pre-fix call shape is preserved
+            // bit-for-bit. The retain pass above is a no-op in this
+            // mode (the map is always empty).
+            if grace.is_zero() {
+                eligible.push(signer);
+                continue;
+            }
+
+            let seen = *first_seen.entry(signer).or_insert(now);
+            let elapsed = now.saturating_duration_since(seen);
+            if elapsed >= grace {
+                eligible.push(signer);
+            } else {
+                pending += 1;
+                debug!(
+                    signer = %signer,
+                    elapsed_secs = elapsed.as_secs(),
+                    grace_secs = grace.as_secs(),
+                    "orphan candidate within grace period, deferring deregistration"
+                );
+            }
+        }
+
+        RegistrarMetrics::orphans_within_grace_period().set(pending as f64);
+        eligible
+    }
+
     /// Deregisters any on-chain signer that is not in the `protected_signers` set.
     ///
     /// These orphans arise when a prover instance is terminated (e.g. ASG
@@ -1919,6 +2034,16 @@ where
     /// the union of resolved-this-cycle signers and signers with an
     /// in-flight proof task, so transiently-unresolved instances and
     /// mid-flight registrations are both shielded from the sweep.
+    ///
+    /// # Grace period
+    ///
+    /// Orphan candidates are filtered through
+    /// [`Self::eligible_orphans`] so that a signer must remain absent
+    /// from `protected_signers` for at least
+    /// [`DriverConfig::orphan_dereg_grace_period`] before its
+    /// deregistration transaction is submitted. This absorbs transient
+    /// discovery / signer-RPC blips that would otherwise cause a
+    /// still-live signer to be dereg'd and re-registered every cycle.
     ///
     /// # Defense in depth
     ///
@@ -1942,11 +2067,7 @@ where
         protected_signers: &HashSet<Address>,
         registered_signers: &[Address],
     ) -> Result<()> {
-        let orphans: Vec<_> = registered_signers
-            .iter()
-            .copied()
-            .filter(|addr| !protected_signers.contains(addr))
-            .collect();
+        let orphans = self.eligible_orphans(protected_signers, registered_signers, Instant::now());
 
         if orphans.is_empty() {
             return Ok(());
@@ -2434,6 +2555,11 @@ mod tests {
             unhealthy_registration_window: Duration::from_secs(
                 DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS,
             ),
+            // Tests default to eager (pre-fix) behaviour so existing
+            // `deregister_orphans` cases keep asserting against the
+            // immediate-tx codepath. Grace-period tests construct
+            // their own config below.
+            orphan_dereg_grace_period: Duration::ZERO,
             crl: CrlConfig {
                 enabled: false,
                 nitro_verifier_address: None,
@@ -3280,6 +3406,143 @@ mod tests {
         driver.deregister_orphans(&HashSet::new(), &registered).await.unwrap();
 
         assert!(tx.sent_calldata().is_empty(), "all ghosts should be skipped, no txs sent");
+    }
+
+    // ── orphan grace-period tests ───────────────────────────────────────
+
+    /// Builds a driver wired for grace-period assertions.
+    ///
+    /// All paths in `eligible_orphans` go through
+    /// `RegistrationDriver::config.orphan_dereg_grace_period`, so the
+    /// helper just swaps that one field on the eager-test default config.
+    fn grace_driver(
+        registered_signers: Vec<Address>,
+        grace: Duration,
+    ) -> RegistrationDriver<
+        MockDiscovery,
+        StubProofProvider,
+        MockRegistry,
+        SharedTxManager,
+        StubSignerClient,
+    > {
+        let mut config = default_config(CancellationToken::new());
+        config.orphan_dereg_grace_period = grace;
+        RegistrationDriver::new(
+            MockDiscovery { instances: vec![] },
+            StubProofProvider,
+            MockRegistry::with_signers(registered_signers),
+            SharedTxManager::new(),
+            StubSignerClient,
+            config,
+            None,
+        )
+        .expect("test driver construction succeeds")
+    }
+
+    #[test]
+    fn eligible_orphans_defers_first_observation_within_grace() {
+        // A fresh orphan candidate observed for the first time must NOT
+        // be eligible for deregistration. This is the core regression
+        // guard for the "Dereg→Register→Dereg" thrash: a transient
+        // discovery miss should not immediately produce a dereg tx.
+        let driver = grace_driver(vec![ORPHAN_A], Duration::from_secs(600));
+        let now = Instant::now();
+
+        let eligible = driver.eligible_orphans(&HashSet::new(), &[ORPHAN_A], now);
+
+        assert!(eligible.is_empty(), "first observation must be within grace, got {eligible:?}");
+    }
+
+    #[test]
+    fn eligible_orphans_releases_after_grace_elapses() {
+        // After the grace period elapses, the same orphan candidate
+        // must be returned for deregistration.
+        let driver = grace_driver(vec![ORPHAN_A], Duration::from_secs(600));
+        let t0 = Instant::now();
+
+        // First observation arms the timer.
+        let _ = driver.eligible_orphans(&HashSet::new(), &[ORPHAN_A], t0);
+        // Second observation past the grace window releases it.
+        let eligible =
+            driver.eligible_orphans(&HashSet::new(), &[ORPHAN_A], t0 + Duration::from_secs(601));
+
+        assert_eq!(eligible, vec![ORPHAN_A]);
+    }
+
+    #[test]
+    fn eligible_orphans_clears_grace_when_signer_reappears_as_protected() {
+        // A signer that reappeared in `protected_signers` (e.g. its
+        // instance recovered from a signer-RPC blip) must lose its
+        // pending grace timestamp so a *future* blip starts a fresh
+        // grace window rather than tripping the threshold immediately.
+        let driver = grace_driver(vec![ORPHAN_A], Duration::from_secs(600));
+        let t0 = Instant::now();
+
+        // Cycle 1: armed at t0.
+        let _ = driver.eligible_orphans(&HashSet::new(), &[ORPHAN_A], t0);
+        // Cycle 2 (just before expiry): signer reappears as protected;
+        // entry should be evicted.
+        let protected: HashSet<Address> = [ORPHAN_A].into_iter().collect();
+        let _ = driver.eligible_orphans(&protected, &[ORPHAN_A], t0 + Duration::from_secs(599));
+        // Cycle 3 (well past the original arm time): signer is orphaned
+        // again. The grace window must restart from t2, not from t0,
+        // so it must NOT be eligible yet.
+        let eligible =
+            driver.eligible_orphans(&HashSet::new(), &[ORPHAN_A], t0 + Duration::from_secs(800));
+
+        assert!(eligible.is_empty(), "grace timer must reset after reappearance, got {eligible:?}");
+    }
+
+    #[test]
+    fn eligible_orphans_evicts_entries_for_signers_no_longer_on_chain() {
+        // A signer that disappears from `registered_signers` (e.g.
+        // dereg'd by a sibling cycle) must be removed from the grace
+        // map so it does not leak across the process lifetime.
+        let driver = grace_driver(vec![], Duration::from_secs(600));
+        let t0 = Instant::now();
+
+        // Arm the grace timer for ORPHAN_A.
+        let _ = driver.eligible_orphans(&HashSet::new(), &[ORPHAN_A], t0);
+        assert_eq!(driver.orphan_first_seen.lock().unwrap().len(), 1);
+
+        // ORPHAN_A is gone from the on-chain set on the next cycle.
+        let _ = driver.eligible_orphans(&HashSet::new(), &[], t0 + Duration::from_secs(60));
+        assert!(driver.orphan_first_seen.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn eligible_orphans_zero_grace_preserves_eager_behaviour() {
+        // Setting the grace period to zero must restore the pre-fix
+        // call shape — every orphan candidate is returned immediately
+        // without populating the map. This is the operator-visible
+        // escape hatch.
+        let driver = grace_driver(vec![ORPHAN_A, ORPHAN_B], Duration::ZERO);
+        let now = Instant::now();
+
+        let eligible = driver.eligible_orphans(&HashSet::new(), &[ORPHAN_A, ORPHAN_B], now);
+
+        assert_eq!(eligible.len(), 2);
+        assert!(eligible.contains(&ORPHAN_A));
+        assert!(eligible.contains(&ORPHAN_B));
+        assert!(
+            driver.orphan_first_seen.lock().unwrap().is_empty(),
+            "zero-grace mode must not allocate map entries"
+        );
+    }
+
+    #[tokio::test]
+    async fn deregister_orphans_skips_initial_tx_under_grace() {
+        // End-to-end: with a non-zero grace and a fresh orphan, no
+        // dereg tx must be submitted on the first cycle.
+        let driver = grace_driver(vec![ORPHAN_A], Duration::from_secs(600));
+        let tx = driver.tx_manager.clone();
+
+        driver.deregister_orphans(&HashSet::new(), &[ORPHAN_A]).await.unwrap();
+
+        assert!(
+            tx.sent_calldata().is_empty(),
+            "no dereg tx should be submitted within the grace window"
+        );
     }
 
     // ── process_instance tests ──────────────────────────────────────────

@@ -170,6 +170,10 @@ pub struct RegistrarConfig {
     /// Duration after launch during which unhealthy instances are still
     /// eligible for registration.
     pub unhealthy_registration_window: Duration,
+    /// Grace period a signer must remain absent from the protected-signer
+    /// set before being deregistered as an orphan. Absorbs transient
+    /// discovery / signer-RPC blips. Set to zero to disable.
+    pub orphan_dereg_grace_period: Duration,
     /// Health server socket address.
     pub health_addr: SocketAddr,
     // ── CRL Checking ──────────────────────────────────────────────────────
@@ -193,6 +197,7 @@ impl std::fmt::Debug for RegistrarConfig {
             .field("max_tx_retries", &self.max_tx_retries)
             .field("tx_retry_delay", &self.tx_retry_delay)
             .field("unhealthy_registration_window", &self.unhealthy_registration_window)
+            .field("orphan_dereg_grace_period", &self.orphan_dereg_grace_period)
             .field("health_addr", &self.health_addr)
             .field("crl", &self.crl)
             .finish()
