@@ -6,6 +6,13 @@ pub use error::NitroHostError;
 mod config;
 pub use config::{ConfigError, NitroWorkerConfig};
 
+mod job_discovery;
+pub use job_discovery::{
+    DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
+    DEFAULT_JOB_DISCOVERY_POLL_INTERVAL, DEFAULT_JOB_DISCOVERY_WORKER_ID, JobDiscovery,
+    JobDiscoveryConfig, JobDiscoveryPollOutcome, MIN_JOB_DISCOVERY_POLL_INTERVAL,
+};
+
 mod backend;
 pub use backend::NitroBackend;
 

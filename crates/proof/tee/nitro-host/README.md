@@ -16,6 +16,7 @@ development mode the enclave server runs in-process without vsock or NSM hardwar
 |---|---|
 | `server` | `NitroProverServer` — JSON-RPC server (`prover_*`, `enclave_*`) |
 | `pool` | `NitroEnclavePool` — reusable enclave selection, concurrency, timeout, and registration guard |
+| `job_discovery` | `JobDiscovery` — prover-service polling loop that claims Nitro jobs and spawns proof generation |
 | `backend` | `NitroBackend` — `ProverBackend` impl dispatching to enclave via transport |
 | `transport` | `NitroTransport` — vsock (production) or in-process (local dev) |
 | `vsock` | *(Linux-only)* `VsockTransport` — frame-based vsock communication with timeouts |
