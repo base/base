@@ -17,6 +17,7 @@ use base_prover_service_protocol::{
 };
 use thiserror::Error;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 /// Minimum delay used to avoid tight retry loops.
@@ -75,6 +76,9 @@ pub enum ProofSubmitterError {
     /// Nitro proof submitter only submits TEE proof results.
     #[error("nitro proof submitter only accepts TEE proof results")]
     UnsupportedProofResult,
+    /// Proof submission was cancelled before delivery.
+    #[error("proof submission cancelled before delivery")]
+    Cancelled,
     /// Prover service worker API submission failed.
     #[error(transparent)]
     Submit(#[from] ProverServiceClientError),
@@ -196,6 +200,32 @@ where
             }
         }
     }
+
+    /// Submits a generated proof until success or cooperative cancellation.
+    pub async fn submit_until_delivered_or_cancelled(
+        &self,
+        request: WorkerSubmitProofRequest,
+        cancel: &CancellationToken,
+    ) -> Result<WorkerSubmitProofResponse, ProofSubmitterError> {
+        let session_id = request.session_id.clone();
+        let lock_id = request.lock_id.clone();
+        let worker_id = request.worker_id.clone();
+
+        tokio::select! {
+            biased;
+
+            () = cancel.cancelled() => {
+                info!(
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
+                    "proof submission cancelled"
+                );
+                Err(ProofSubmitterError::Cancelled)
+            }
+            response = self.submit_until_delivered(request) => response,
+        }
+    }
 }
 
 impl<Client> ProofSubmitter<Client>
@@ -206,8 +236,11 @@ where
     pub fn spawn_until_delivered(
         self,
         request: WorkerSubmitProofRequest,
+        cancel: CancellationToken,
     ) -> JoinHandle<Result<WorkerSubmitProofResponse, ProofSubmitterError>> {
-        tokio::spawn(async move { self.submit_until_delivered(request).await })
+        tokio::spawn(
+            async move { self.submit_until_delivered_or_cancelled(request, &cancel).await },
+        )
     }
 }
 
@@ -223,6 +256,7 @@ mod tests {
         ProofJobStatus, ProofRequest, ProofRequestKind, TeeProofRequest,
     };
     use chrono::Utc;
+    use tokio::time::{sleep, timeout};
 
     use super::*;
 
@@ -235,12 +269,27 @@ mod tests {
     struct MockWorkerState {
         failures: Vec<ProverServiceClientError>,
         submissions: Vec<WorkerSubmitProofRequest>,
+        always_retryable_failure: bool,
     }
 
     impl MockWorkerClient {
         fn new(failures: Vec<ProverServiceClientError>) -> Self {
             Self {
-                state: Arc::new(Mutex::new(MockWorkerState { failures, submissions: Vec::new() })),
+                state: Arc::new(Mutex::new(MockWorkerState {
+                    failures,
+                    submissions: Vec::new(),
+                    always_retryable_failure: false,
+                })),
+            }
+        }
+
+        fn always_retryable_failure() -> Self {
+            Self {
+                state: Arc::new(Mutex::new(MockWorkerState {
+                    failures: Vec::new(),
+                    submissions: Vec::new(),
+                    always_retryable_failure: true,
+                })),
             }
         }
 
@@ -271,6 +320,9 @@ mod tests {
         ) -> Result<WorkerSubmitProofResponse, ProverServiceClientError> {
             let mut state = self.state.lock().expect("mock state poisoned");
             state.submissions.push(request.clone());
+            if state.always_retryable_failure {
+                return Err(retryable_error());
+            }
             if !state.failures.is_empty() {
                 return Err(state.failures.remove(0));
             }
@@ -339,6 +391,17 @@ mod tests {
             completed_at: Some(now),
             error_message: None,
         }
+    }
+
+    async fn wait_for_submission(client: &MockWorkerClient) {
+        for _ in 0..50 {
+            if client.submission_count() > 0 {
+                return;
+            }
+            sleep(Duration::from_millis(1)).await;
+        }
+
+        panic!("expected proof submission attempt")
     }
 
     #[test]
@@ -416,7 +479,7 @@ mod tests {
             ProofSubmitterBackoffConfig::new(Duration::from_millis(1), Duration::from_millis(2)),
         );
 
-        let handle = submitter.spawn_until_delivered(submit_request());
+        let handle = submitter.spawn_until_delivered(submit_request(), CancellationToken::new());
         let response = handle
             .await
             .expect("submission task should not panic")
@@ -424,5 +487,26 @@ mod tests {
 
         assert_eq!(response.job.status, ProofJobStatus::Succeeded);
         assert_eq!(client.submission_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn spawned_submitter_stops_when_cancelled() {
+        let client = MockWorkerClient::always_retryable_failure();
+        let submitter = ProofSubmitter::new(client.clone()).with_backoff_config(
+            ProofSubmitterBackoffConfig::new(Duration::from_secs(1), Duration::from_secs(1)),
+        );
+        let cancel = CancellationToken::new();
+
+        let handle = submitter.spawn_until_delivered(submit_request(), cancel.clone());
+        wait_for_submission(&client).await;
+
+        cancel.cancel();
+        let result = timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("cancelled submission task should finish")
+            .expect("submission task should not panic");
+
+        assert!(matches!(result, Err(ProofSubmitterError::Cancelled)));
+        assert_eq!(client.submission_count(), 1);
     }
 }
