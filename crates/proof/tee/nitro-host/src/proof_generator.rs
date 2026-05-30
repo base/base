@@ -223,8 +223,15 @@ where
 
                 return Err(ProofGeneratorError::Heartbeat { session_id, source });
             }
-            Err(source) => {
-                return Err(source);
+            Err(
+                source @ (ProofGeneratorError::MissingLockId { .. }
+                | ProofGeneratorError::MissingWorkerId { .. }
+                | ProofGeneratorError::UnsupportedProofRequest { .. }
+                | ProofGeneratorError::BuildSubmission { .. }),
+            ) => {
+                unreachable!(
+                    "with_heartbeat_while_generating returned an impossible error: {source}"
+                );
             }
         };
 
