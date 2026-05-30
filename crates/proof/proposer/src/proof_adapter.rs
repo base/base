@@ -18,6 +18,9 @@ impl ProposerProofAdapter {
     /// Namespace used to derive proposer proof session IDs.
     pub const SESSION_NAMESPACE: &'static [u8] = b"base/proposer/proof-session/v1";
 
+    /// Separator used between session ID components before `UUIDv5` hashing.
+    pub const SESSION_COMPONENT_SEPARATOR: &'static [u8] = b":";
+
     /// Returns the session-ID proof subtype label for a TEE implementation.
     pub const fn tee_session_label(tee_kind: TeeKind) -> &'static str {
         match tee_kind {
@@ -27,14 +30,20 @@ impl ProposerProofAdapter {
 
     /// Derives an idempotent TEE proof session ID from proof subtype and claimed root.
     pub fn tee_session_id(request: &PrimitiveProofRequest, tee_kind: TeeKind) -> String {
+        let label = Self::tee_session_label(tee_kind).as_bytes();
+        let root = request.claimed_l2_output_root.as_slice();
         let mut name = Vec::with_capacity(
             Self::SESSION_NAMESPACE.len()
-                + Self::tee_session_label(tee_kind).len()
-                + request.claimed_l2_output_root.len(),
+                + Self::SESSION_COMPONENT_SEPARATOR.len()
+                + label.len()
+                + Self::SESSION_COMPONENT_SEPARATOR.len()
+                + root.len(),
         );
         name.extend_from_slice(Self::SESSION_NAMESPACE);
-        name.extend_from_slice(Self::tee_session_label(tee_kind).as_bytes());
-        name.extend_from_slice(request.claimed_l2_output_root.as_slice());
+        name.extend_from_slice(Self::SESSION_COMPONENT_SEPARATOR);
+        name.extend_from_slice(label);
+        name.extend_from_slice(Self::SESSION_COMPONENT_SEPARATOR);
+        name.extend_from_slice(root);
 
         Uuid::new_v5(&Uuid::NAMESPACE_OID, &name).to_string()
     }
