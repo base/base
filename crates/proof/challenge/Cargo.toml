@@ -31,6 +31,7 @@ base-balance-monitor.workspace = true
 base-proof-rpc.workspace = true
 base-zk-client.workspace = true
 base-proof-contracts.workspace = true
+base-prover-service-protocol.workspace = true
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
 # Protocol
