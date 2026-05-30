@@ -5718,6 +5718,7 @@ dependencies = [
  "base-proof-preimage",
  "base-proof-primitives",
  "base-proof-tee-nitro-enclave",
+ "base-prover-service-client",
  "eyre",
  "jsonrpsee",
  "k256",

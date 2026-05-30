@@ -3,6 +3,9 @@
 mod error;
 pub use error::NitroHostError;
 
+mod config;
+pub use config::NitroWorkerConfig;
+
 mod backend;
 pub use backend::NitroBackend;
 

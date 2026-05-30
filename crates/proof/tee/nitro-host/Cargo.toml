@@ -17,6 +17,7 @@ base-health.workspace = true
 base-proof-host.workspace = true
 base-proof-preimage.workspace = true
 base-proof-contracts.workspace = true
+base-prover-service-client.workspace = true
 base-proof-tee-nitro-enclave.workspace = true
 base-proof-primitives = { workspace = true, features = ["std", "serde", "rpc-server"] }
 
