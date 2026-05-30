@@ -16,7 +16,7 @@ use base_prover_service_protocol::{
     WorkerSubmitProofResponse,
 };
 use thiserror::Error;
-use tokio::task::JoinHandle;
+use tokio::{task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -153,26 +153,74 @@ where
         &self,
         request: WorkerSubmitProofRequest,
     ) -> Result<WorkerSubmitProofResponse, ProofSubmitterError> {
+        let cancel = CancellationToken::new();
+        self.submit_until_delivered_or_cancelled(request, &cancel).await
+    }
+
+    /// Submits a generated proof until success or cooperative cancellation.
+    ///
+    /// Cancellation is checked between submission attempts so an in-flight RPC can complete.
+    pub async fn submit_until_delivered_or_cancelled(
+        &self,
+        request: WorkerSubmitProofRequest,
+        cancel: &CancellationToken,
+    ) -> Result<WorkerSubmitProofResponse, ProofSubmitterError> {
         let attempts = Arc::new(AtomicU64::new(0));
         let request_for_submit = request.clone();
         let attempts_for_submit = Arc::clone(&attempts);
+        let cancel_for_submit = cancel.clone();
+        let cancel_for_retry = cancel.clone();
+        let cancel_for_sleep = cancel.clone();
 
         let response = (|| {
-            attempts_for_submit.fetch_add(1, Ordering::Relaxed);
-            self.client.submit_proof(request_for_submit.clone())
+            let request = request_for_submit.clone();
+            let attempts = Arc::clone(&attempts_for_submit);
+            let cancel = cancel_for_submit.clone();
+
+            async move {
+                if cancel.is_cancelled() {
+                    return Err(ProofSubmitterError::Cancelled);
+                }
+
+                attempts.fetch_add(1, Ordering::Relaxed);
+                match self.client.submit_proof(request).await {
+                    Ok(response) => Ok(response),
+                    Err(error) if cancel.is_cancelled() && error.is_retryable() => {
+                        Err(ProofSubmitterError::Cancelled)
+                    }
+                    Err(error) => Err(ProofSubmitterError::Submit(error)),
+                }
+            }
         })
         .retry(self.backoff.to_backoff_builder())
-        .when(ProverServiceClientError::is_retryable)
+        .sleep(move |delay| {
+            let cancel = cancel_for_sleep.clone();
+
+            async move {
+                tokio::select! {
+                    () = cancel.cancelled() => {}
+                    () = sleep(delay) => {}
+                }
+            }
+        })
+        .when(move |error| match error {
+            ProofSubmitterError::Submit(error) => {
+                !cancel_for_retry.is_cancelled() && error.is_retryable()
+            }
+            ProofSubmitterError::UnsupportedProofResult | ProofSubmitterError::Cancelled => false,
+        })
         .notify(|error, delay| {
-            warn!(
-                session_id = %request.session_id,
-                lock_id = %request.lock_id,
-                worker_id = %request.worker_id,
-                attempts = attempts.load(Ordering::Relaxed),
-                backoff_ms = delay.as_millis(),
-                error = %error,
-                "proof submission failed; retrying"
-            );
+            if let ProofSubmitterError::Submit(error) = error {
+                warn!(
+                    session_id = %request.session_id,
+                    lock_id = %request.lock_id,
+                    worker_id = %request.worker_id,
+                    attempts = attempts.load(Ordering::Relaxed),
+                    backoff_ms = delay.as_millis(),
+                    error = %error,
+                    "proof submission failed; retrying"
+                );
+            }
         })
         .await;
 
@@ -187,7 +235,17 @@ where
                 );
                 Ok(response)
             }
-            Err(error) => {
+            Err(ProofSubmitterError::Cancelled) => {
+                info!(
+                    session_id = %request.session_id,
+                    lock_id = %request.lock_id,
+                    worker_id = %request.worker_id,
+                    attempts = attempts.load(Ordering::Relaxed),
+                    "proof submission cancelled"
+                );
+                Err(ProofSubmitterError::Cancelled)
+            }
+            Err(ProofSubmitterError::Submit(error)) => {
                 warn!(
                     session_id = %request.session_id,
                     lock_id = %request.lock_id,
@@ -198,32 +256,17 @@ where
                 );
                 Err(ProofSubmitterError::Submit(error))
             }
-        }
-    }
-
-    /// Submits a generated proof until success or cooperative cancellation.
-    pub async fn submit_until_delivered_or_cancelled(
-        &self,
-        request: WorkerSubmitProofRequest,
-        cancel: &CancellationToken,
-    ) -> Result<WorkerSubmitProofResponse, ProofSubmitterError> {
-        let session_id = request.session_id.clone();
-        let lock_id = request.lock_id.clone();
-        let worker_id = request.worker_id.clone();
-
-        tokio::select! {
-            biased;
-
-            () = cancel.cancelled() => {
-                info!(
-                    session_id = %session_id,
-                    lock_id = %lock_id,
-                    worker_id = %worker_id,
-                    "proof submission cancelled"
+            Err(error) => {
+                warn!(
+                    session_id = %request.session_id,
+                    lock_id = %request.lock_id,
+                    worker_id = %request.worker_id,
+                    attempts = attempts.load(Ordering::Relaxed),
+                    error = %error,
+                    "proof submission failed permanently"
                 );
-                Err(ProofSubmitterError::Cancelled)
+                Err(error)
             }
-            response = self.submit_until_delivered(request) => response,
         }
     }
 }
@@ -270,6 +313,7 @@ mod tests {
         failures: Vec<ProverServiceClientError>,
         submissions: Vec<WorkerSubmitProofRequest>,
         always_retryable_failure: bool,
+        response_delay: Option<Duration>,
     }
 
     impl MockWorkerClient {
@@ -279,6 +323,7 @@ mod tests {
                     failures,
                     submissions: Vec::new(),
                     always_retryable_failure: false,
+                    response_delay: None,
                 })),
             }
         }
@@ -289,8 +334,14 @@ mod tests {
                     failures: Vec::new(),
                     submissions: Vec::new(),
                     always_retryable_failure: true,
+                    response_delay: None,
                 })),
             }
+        }
+
+        fn with_response_delay(self, response_delay: Duration) -> Self {
+            self.state.lock().expect("mock state poisoned").response_delay = Some(response_delay);
+            self
         }
 
         fn submission_count(&self) -> usize {
@@ -318,13 +369,20 @@ mod tests {
             &self,
             request: WorkerSubmitProofRequest,
         ) -> Result<WorkerSubmitProofResponse, ProverServiceClientError> {
-            let mut state = self.state.lock().expect("mock state poisoned");
-            state.submissions.push(request.clone());
-            if state.always_retryable_failure {
-                return Err(retryable_error());
-            }
-            if !state.failures.is_empty() {
-                return Err(state.failures.remove(0));
+            let response_delay = {
+                let mut state = self.state.lock().expect("mock state poisoned");
+                state.submissions.push(request.clone());
+                if state.always_retryable_failure {
+                    return Err(retryable_error());
+                }
+                if !state.failures.is_empty() {
+                    return Err(state.failures.remove(0));
+                }
+                state.response_delay
+            };
+
+            if let Some(response_delay) = response_delay {
+                sleep(response_delay).await;
             }
 
             Ok(WorkerSubmitProofResponse { job: proof_job_for_submission(&request) })
@@ -507,6 +565,30 @@ mod tests {
             .expect("submission task should not panic");
 
         assert!(matches!(result, Err(ProofSubmitterError::Cancelled)));
+        assert_eq!(client.submission_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn cancellation_does_not_abort_in_flight_submission() {
+        let client =
+            MockWorkerClient::new(Vec::new()).with_response_delay(Duration::from_millis(25));
+        let submitter = ProofSubmitter::new(client.clone());
+        let cancel = CancellationToken::new();
+        let cancel_for_task = cancel.clone();
+
+        let handle = tokio::spawn(async move {
+            submitter.submit_until_delivered_or_cancelled(submit_request(), &cancel_for_task).await
+        });
+        wait_for_submission(&client).await;
+
+        cancel.cancel();
+        let response = timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("in-flight submission should finish")
+            .expect("submission task should not panic")
+            .expect("in-flight submission should return its response");
+
+        assert_eq!(response.job.status, ProofJobStatus::Succeeded);
         assert_eq!(client.submission_count(), 1);
     }
 }
