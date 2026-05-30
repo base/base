@@ -19,6 +19,11 @@ pub use proof_submitter::{
     ProofSubmitterRequest,
 };
 
+mod proof_generator;
+pub use proof_generator::{
+    ProofGenerator, ProofGeneratorError, ProofGeneratorRequest, ProofGeneratorTask, ProofProducer,
+};
+
 mod pool;
 pub use pool::{
     MAX_CONCURRENT_PROOF_REQUESTS_PER_ENCLAVE, NitroEnclavePool, NitroEnclavePoolError,
