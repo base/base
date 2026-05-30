@@ -140,7 +140,7 @@ impl NitroEnclavePool {
                 .map(|v| v.index)
                 .collect(),
             // Constructor guarantees at least one enclave.
-            None => vec![0],
+            None => (0..self.enclaves.len()).collect(),
         };
 
         candidate_indices
@@ -345,6 +345,28 @@ mod tests {
         assert!(
             Arc::ptr_eq(&enclave.transport, &pool.enclaves[1].transport),
             "expected enclave[1] selected via fall-through"
+        );
+        assert_eq!(pool.enclaves[1].prove_permit.available_permits(), 0);
+    }
+
+    #[tokio::test]
+    async fn prove_without_registration_checker_falls_through_when_first_is_busy() {
+        let s1 = Arc::new(EnclaveServer::new_local().unwrap());
+        let s2 = Arc::new(EnclaveServer::new_local().unwrap());
+        let t1 = Arc::new(NitroTransport::local(s1));
+        let t2 = Arc::new(NitroTransport::local(s2));
+        let pool = NitroEnclavePool::new_multi(
+            test_prover_config(),
+            vec![Arc::clone(&t1), Arc::clone(&t2)],
+            Duration::from_secs(60),
+        );
+
+        let _held = Arc::clone(&pool.enclaves[0].prove_permit).try_acquire_owned().unwrap();
+
+        let (enclave, _permit) = pool.acquire_enclave(0).await.expect("fall-through to enclave[1]");
+        assert!(
+            Arc::ptr_eq(&enclave.transport, &pool.enclaves[1].transport),
+            "expected enclave[1] selected via fall-through without registration checker"
         );
         assert_eq!(pool.enclaves[1].prove_permit.available_permits(), 0);
     }
