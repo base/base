@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use base_proof_primitives::ProofRequest as NitroProofRequest;
 use base_prover_service_client::ProverWorkerProvider;
-use base_prover_service_protocol::{ProofJob, ProofRequestKind, WorkerSubmitProofResponse};
+use base_prover_service_protocol::{
+    ProofJob, ProofRequestKind, TeeKind, WorkerSubmitProofResponse,
+};
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -43,6 +45,7 @@ impl TryFrom<ProofJob> for ProofGeneratorRequest {
         let ProofRequestKind::Tee(tee) = job.request.request else {
             return Err(ProofGeneratorError::UnsupportedProofRequest { session_id });
         };
+        let TeeKind::AwsNitro = tee.tee_kind;
 
         Ok(Self { session_id, lock_id, worker_id, proof: tee.proof })
     }
@@ -130,7 +133,7 @@ where
                 );
 
                 return Err(ProofGeneratorError::Generate {
-                    session_id: request.session_id.clone(),
+                    session_id: request.session_id,
                     source,
                 });
             }
