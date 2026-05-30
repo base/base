@@ -2,11 +2,50 @@
 
 use std::time::Duration;
 
-use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
+use jsonrpsee::{
+    core::client::Error as JsonRpcClientError,
+    http_client::{HttpClient, HttpClientBuilder},
+};
+use thiserror::Error;
 use tracing::debug;
 use url::Url;
 
-use crate::ProverServiceClientError;
+/// Errors that can occur during prover-service client configuration validation.
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+pub enum ProverServiceClientConfigError {
+    /// The configured endpoint URL cannot be parsed.
+    #[error("endpoint URL is invalid: {0}")]
+    InvalidEndpointUrl(String),
+    /// The configured endpoint URL uses an unsupported scheme.
+    #[error("endpoint URL scheme must be http or https")]
+    InvalidEndpointScheme,
+    /// The configured endpoint URL does not include a host.
+    #[error("endpoint URL must include a host")]
+    MissingEndpointHost,
+    /// The configured request timeout is zero.
+    #[error("request timeout must be greater than zero")]
+    ZeroRequestTimeout,
+    /// The configured poll interval is zero.
+    #[error("poll interval must be greater than zero")]
+    ZeroPollInterval,
+    /// The configured maximum wait duration is zero.
+    #[error("max wait must be greater than zero")]
+    ZeroMaxWait,
+    /// The configured poll interval is greater than the maximum wait duration.
+    #[error("poll interval must be less than or equal to max wait")]
+    PollIntervalExceedsMaxWait,
+}
+
+/// Errors that can occur when building a prover-service client.
+#[derive(Debug, Error)]
+pub enum ProverServiceClientBuildError {
+    /// The client configuration is invalid.
+    #[error("invalid prover-service client config: {0}")]
+    InvalidConfig(#[from] ProverServiceClientConfigError),
+    /// A JSON-RPC client, server, or transport error occurred.
+    #[error("prover-service RPC/transport failure: {0}")]
+    RpcTransport(#[from] JsonRpcClientError),
+}
 
 /// Configuration shared by prover-service client roles.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -76,58 +115,45 @@ impl ProverServiceClientConfig {
     }
 
     /// Validate the endpoint and duration fields.
-    pub fn validate(&self) -> Result<(), ProverServiceClientError> {
-        let endpoint = Url::parse(&self.endpoint).map_err(|err| {
-            ProverServiceClientError::InvalidConfig(format!("endpoint URL is invalid: {err}"))
-        })?;
+    pub fn validate(&self) -> Result<(), ProverServiceClientConfigError> {
+        let endpoint = Url::parse(&self.endpoint)
+            .map_err(|err| ProverServiceClientConfigError::InvalidEndpointUrl(err.to_string()))?;
 
         if !matches!(endpoint.scheme(), "http" | "https") {
-            return Err(ProverServiceClientError::InvalidConfig(
-                "endpoint URL scheme must be http or https".to_owned(),
-            ));
+            return Err(ProverServiceClientConfigError::InvalidEndpointScheme);
         }
 
         if endpoint.host().is_none() {
-            return Err(ProverServiceClientError::InvalidConfig(
-                "endpoint URL must include a host".to_owned(),
-            ));
+            return Err(ProverServiceClientConfigError::MissingEndpointHost);
         }
 
         if self.request_timeout.is_zero() {
-            return Err(ProverServiceClientError::InvalidConfig(
-                "request timeout must be greater than zero".to_owned(),
-            ));
+            return Err(ProverServiceClientConfigError::ZeroRequestTimeout);
         }
 
         if self.poll_interval.is_zero() {
-            return Err(ProverServiceClientError::InvalidConfig(
-                "poll interval must be greater than zero".to_owned(),
-            ));
+            return Err(ProverServiceClientConfigError::ZeroPollInterval);
         }
 
         if self.max_wait.is_zero() {
-            return Err(ProverServiceClientError::InvalidConfig(
-                "max wait must be greater than zero".to_owned(),
-            ));
+            return Err(ProverServiceClientConfigError::ZeroMaxWait);
         }
 
         if self.poll_interval > self.max_wait {
-            return Err(ProverServiceClientError::InvalidConfig(
-                "poll interval must be less than or equal to max wait".to_owned(),
-            ));
+            return Err(ProverServiceClientConfigError::PollIntervalExceedsMaxWait);
         }
 
         Ok(())
     }
 
     /// Build a JSON-RPC HTTP client from this configuration.
-    pub fn build_http_client(&self) -> Result<HttpClient, ProverServiceClientError> {
+    pub fn build_http_client(&self) -> Result<HttpClient, ProverServiceClientBuildError> {
         self.validate()?;
 
         let builder = HttpClientBuilder::default().request_timeout(self.request_timeout);
 
         debug!(endpoint = %self.endpoint, "building prover-service client");
-        builder.build(&self.endpoint).map_err(ProverServiceClientError::from)
+        builder.build(&self.endpoint).map_err(ProverServiceClientBuildError::from)
     }
 }
 
@@ -206,8 +232,6 @@ mod tests {
 
         let err = config.validate().expect_err("invalid config should fail validation");
 
-        assert!(
-            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains(expected_message))
-        );
+        assert!(err.to_string().contains(expected_message));
     }
 }

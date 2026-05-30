@@ -3,13 +3,9 @@
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorCode};
 use thiserror::Error;
 
-/// Errors that can occur when constructing or using prover-service clients.
+/// Errors that can occur when using prover-service clients.
 #[derive(Debug, Error)]
 pub enum ProverServiceClientError {
-    /// The client configuration is invalid.
-    #[error("invalid prover-service client config: {0}")]
-    InvalidConfig(String),
-
     /// A JSON-RPC client, server, or transport error occurred.
     #[error("prover-service RPC/transport failure: {0}")]
     RpcTransport(#[from] JsonRpcClientError),
@@ -57,8 +53,7 @@ impl ProverServiceClientError {
         match self {
             Self::RpcTransport(err) => Self::is_retryable_rpc_error(err),
             Self::Timeout(_) => true,
-            Self::InvalidConfig(_)
-            | Self::ProofFailure { .. }
+            Self::ProofFailure { .. }
             | Self::WorkerLeaseRejected { .. }
             | Self::MissingResult(_)
             | Self::UnexpectedResultPayload(_) => false,
@@ -116,10 +111,6 @@ mod tests {
         true
     )]
     #[case::timeout(ProverServiceClientError::Timeout("proof not ready".to_owned()), true)]
-    #[case::invalid_config(
-        ProverServiceClientError::InvalidConfig("endpoint URL must include a host".to_owned()),
-        false
-    )]
     #[case::proof_failure(
         ProverServiceClientError::ProofFailure { message: "proof failed".to_owned() },
         false

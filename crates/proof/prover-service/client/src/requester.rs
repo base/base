@@ -8,7 +8,7 @@ use base_prover_service_protocol::{
 use jsonrpsee::http_client::HttpClient;
 use tracing::debug;
 
-use crate::{ProverServiceClientConfig, ProverServiceClientError};
+use crate::{ProverServiceClientBuildError, ProverServiceClientConfig, ProverServiceClientError};
 
 /// Abstraction over proof requester JSON-RPC methods.
 ///
@@ -50,7 +50,9 @@ impl ProofRequesterClient {
     }
 
     /// Connect a requester client using the provided configuration.
-    pub fn connect(config: &ProverServiceClientConfig) -> Result<Self, ProverServiceClientError> {
+    pub fn connect(
+        config: &ProverServiceClientConfig,
+    ) -> Result<Self, ProverServiceClientBuildError> {
         Ok(Self::new(config.build_http_client()?))
     }
 

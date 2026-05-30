@@ -1,7 +1,9 @@
 #![doc = include_str!("../README.md")]
 
 mod config;
-pub use config::ProverServiceClientConfig;
+pub use config::{
+    ProverServiceClientBuildError, ProverServiceClientConfig, ProverServiceClientConfigError,
+};
 
 mod error;
 pub use error::ProverServiceClientError;
