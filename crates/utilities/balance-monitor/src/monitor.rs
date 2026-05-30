@@ -110,12 +110,35 @@ where
             interval.tick().await;
             loop {
                 tokio::select! {
+                    // Prioritise cancellation: if both the cancel token and a
+                    // tick fire simultaneously, always exit rather than
+                    // performing one more RPC call.  Mirrors the `biased;`
+                    // pattern used in SafeHeadPoller.
+                    biased;
                     () = cancel.cancelled() => break,
                     _ = interval.tick() => {
                         match provider.get_balance(address).await {
                             Ok(bal) => {
-                                let _ = tx.send(bal);
-                                debug!(balance = %bal, address = %address, "recorded account balance");
+                                // Only wake receivers when the balance actually
+                                // changes.  Using `send` unconditionally woke
+                                // every downstream metric writer and watcher on
+                                // every poll tick even when nothing had changed,
+                                // causing spurious metric updates.
+                                // `send_if_modified` returns true only when the
+                                // value is new, matching the SafeHeadPoller pattern.
+                                let changed = tx.send_if_modified(|prev| {
+                                    if *prev != bal {
+                                        *prev = bal;
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                });
+                                if changed {
+                                    debug!(balance = %bal, address = %address, "balance changed");
+                                } else {
+                                    debug!(address = %address, "balance unchanged");
+                                }
                             }
                             Err(e) => {
                                 warn!(error = %e, address = %address, "failed to fetch account balance");
