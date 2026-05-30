@@ -193,10 +193,8 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
         // making the orphan sweep deregister a signer whose target was still
         // present in ELB.
         let missing_ids = Self::missing_target_ids(&targets, &instance_data);
-        for (id, _) in &targets {
-            if missing_ids.contains(&id.as_str()) {
-                warn!(instance_id = %id, "instance missing from EC2 response");
-            }
+        for id in &missing_ids {
+            warn!(instance_id = %id, "instance missing from EC2 response");
         }
         if !missing_ids.is_empty() {
             return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(format!(
