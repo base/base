@@ -174,7 +174,7 @@ where
 
             match result {
                 Ok(JobDiscoveryPollOutcome::Spawned { task }) => {
-                    proof_tasks.spawn(async move { task.await });
+                    proof_tasks.spawn(task);
                 }
                 Ok(JobDiscoveryPollOutcome::Empty) => {
                     self.sleep_until_next_poll(&cancel).await;
