@@ -18,6 +18,9 @@ impl ChallengerProofAdapter {
     /// Namespace used to derive challenger proof session IDs.
     pub const SESSION_NAMESPACE: &'static [u8] = b"base/challenger/proof-session/v1";
 
+    /// Separator used between session ID components before `UUIDv5` hashing.
+    pub const SESSION_COMPONENT_SEPARATOR: &'static [u8] = b":";
+
     /// Returns the session-ID proof subtype label for challenger SNARK proofs.
     pub const fn snark_groth16_session_label() -> &'static str {
         "zk/sp1/snark_groth16"
@@ -32,12 +35,19 @@ impl ChallengerProofAdapter {
 
     /// Derives an idempotent proof session ID from proof subtype and disputed root.
     pub fn session_id(proof_subtype: &str, disputed_root: B256) -> String {
+        let root = disputed_root.as_slice();
         let mut name = Vec::with_capacity(
-            Self::SESSION_NAMESPACE.len() + proof_subtype.len() + disputed_root.len(),
+            Self::SESSION_NAMESPACE.len()
+                + Self::SESSION_COMPONENT_SEPARATOR.len()
+                + proof_subtype.len()
+                + Self::SESSION_COMPONENT_SEPARATOR.len()
+                + root.len(),
         );
         name.extend_from_slice(Self::SESSION_NAMESPACE);
+        name.extend_from_slice(Self::SESSION_COMPONENT_SEPARATOR);
         name.extend_from_slice(proof_subtype.as_bytes());
-        name.extend_from_slice(disputed_root.as_slice());
+        name.extend_from_slice(Self::SESSION_COMPONENT_SEPARATOR);
+        name.extend_from_slice(root);
 
         Uuid::new_v5(&Uuid::NAMESPACE_OID, &name).to_string()
     }
@@ -98,11 +108,11 @@ impl ChallengerProofAdapter {
     }
 
     /// Builds a prover-service request for a challenger TEE proof.
-    pub const fn tee_prove_block_range_request(
-        session_id: String,
+    pub fn tee_prove_block_range_request(
         request: PrimitiveProofRequest,
         tee_kind: TeeKind,
     ) -> ProveBlockRangeRequest {
+        let session_id = Self::tee_session_id(request.claimed_l2_output_root, tee_kind);
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: Some(session_id),
@@ -115,7 +125,12 @@ impl ChallengerProofAdapter {
     pub fn snark_groth16_dispute_proof_bytes(result: ProofResult) -> Result<Bytes> {
         let proof = match result {
             ProofResult::SnarkGroth16(result) => result.proof.proof,
-            other => bail!("expected SNARK_GROTH16 proof result, got {other:?}"),
+            ProofResult::Compressed(result) => {
+                bail!("expected SNARK_GROTH16 proof result, got {result:?}")
+            }
+            ProofResult::Tee(result) => {
+                bail!("expected SNARK_GROTH16 proof result, got {result:?}")
+            }
         };
 
         let mut raw = Vec::with_capacity(1 + proof.len());
@@ -128,7 +143,12 @@ impl ChallengerProofAdapter {
     pub fn tee_dispute_proof_bytes(result: ProofResult, expected_root: B256) -> Result<Bytes> {
         let aggregate_proposal = match result {
             ProofResult::Tee(result) => result.aggregate_proposal,
-            other => bail!("expected TEE proof result, got {other:?}"),
+            ProofResult::Compressed(result) => {
+                bail!("expected TEE proof result, got {result:?}")
+            }
+            ProofResult::SnarkGroth16(result) => {
+                bail!("expected TEE proof result, got {result:?}")
+            }
         };
 
         if aggregate_proposal.output_root != expected_root {
@@ -252,7 +272,6 @@ mod tests {
         let session_id = ChallengerProofAdapter::tee_session_id(root, TeeKind::AwsNitro);
 
         let wrapped = ChallengerProofAdapter::tee_prove_block_range_request(
-            session_id.clone(),
             request.clone(),
             TeeKind::AwsNitro,
         );
