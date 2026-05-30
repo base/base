@@ -9,7 +9,7 @@ use base_prover_service_protocol::{ProofJob, ProofRequestKind, WorkerSubmitProof
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     NitroEnclavePool, NitroEnclavePoolError, ProofSubmitter, ProofSubmitterError,
@@ -19,15 +19,17 @@ use crate::{
 /// Executes Nitro proof generation from a primitive proof request.
 #[async_trait]
 pub trait ProofProducer: Send + Sync {
+    /// Error returned when proof generation fails.
+    type Error: std::error::Error + Send + Sync + 'static;
+
     /// Generate a proof for the requested block range.
-    async fn prove(
-        &self,
-        request: NitroProofRequest,
-    ) -> Result<NitroProofResult, NitroEnclavePoolError>;
+    async fn prove(&self, request: NitroProofRequest) -> Result<NitroProofResult, Self::Error>;
 }
 
 #[async_trait]
 impl ProofProducer for NitroEnclavePool {
+    type Error = NitroEnclavePoolError;
+
     async fn prove(
         &self,
         request: NitroProofRequest,
@@ -138,9 +140,25 @@ where
             "starting nitro proof generation"
         );
 
-        let proof = self.producer.prove(request.proof).await.map_err(|source| {
-            ProofGeneratorError::Generate { session_id: request.session_id.clone(), source }
-        })?;
+        let l2_block = request.proof.claimed_l2_block_number;
+        let proof = match self.producer.prove(request.proof).await {
+            Ok(proof) => proof,
+            Err(source) => {
+                warn!(
+                    session_id = %request.session_id,
+                    lock_id = %request.lock_id,
+                    worker_id = %request.worker_id,
+                    l2_block,
+                    error = %source,
+                    "nitro proof generation failed"
+                );
+
+                return Err(ProofGeneratorError::Generate {
+                    session_id: request.session_id.clone(),
+                    source: Box::new(source),
+                });
+            }
+        };
 
         let submit_request = ProofSubmitterRequest::from_tee_proof(
             request.session_id.clone(),
@@ -200,7 +218,7 @@ pub enum ProofGeneratorError {
         session_id: String,
         /// Underlying proof generation error.
         #[source]
-        source: NitroEnclavePoolError,
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
     /// The generated proof could not be converted into a worker submission request.
     #[error("failed to build proof submission for job {session_id}: {source}")]
@@ -232,7 +250,7 @@ mod tests {
 
     #[derive(Debug)]
     struct MockProducer {
-        result: Mutex<Option<Result<NitroProofResult, NitroEnclavePoolError>>>,
+        result: Mutex<Option<Result<NitroProofResult, MockProducerError>>>,
         requests: Mutex<Vec<NitroProofRequest>>,
     }
 
@@ -244,7 +262,7 @@ mod tests {
             }
         }
 
-        fn failing(error: NitroEnclavePoolError) -> Self {
+        fn failing(error: MockProducerError) -> Self {
             Self { result: Mutex::new(Some(Err(error))), requests: Mutex::new(Vec::new()) }
         }
 
@@ -253,12 +271,17 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Error)]
+    enum MockProducerError {
+        #[error("mock proof failed")]
+        Failed,
+    }
+
     #[async_trait]
     impl ProofProducer for MockProducer {
-        async fn prove(
-            &self,
-            request: NitroProofRequest,
-        ) -> Result<NitroProofResult, NitroEnclavePoolError> {
+        type Error = MockProducerError;
+
+        async fn prove(&self, request: NitroProofRequest) -> Result<NitroProofResult, Self::Error> {
             self.requests.lock().expect("requests lock should not be poisoned").push(request);
             self.result
                 .lock()
@@ -449,7 +472,7 @@ mod tests {
 
     #[tokio::test]
     async fn generate_failure_does_not_spawn_submitter() {
-        let producer = Arc::new(MockProducer::failing(NitroEnclavePoolError::Busy));
+        let producer = Arc::new(MockProducer::failing(MockProducerError::Failed));
         let client = MockWorkerClient::default();
         let generator =
             ProofGenerator::new(Arc::clone(&producer), ProofSubmitter::new(client.clone()));
