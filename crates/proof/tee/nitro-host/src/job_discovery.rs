@@ -12,7 +12,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::{ProofGenerator, ProofGeneratorTask};
+use crate::ProofGenerator;
 
 /// Minimum delay used by the discovery loop when no job is available or an error occurs.
 pub const MIN_JOB_DISCOVERY_POLL_INTERVAL: Duration = Duration::from_millis(1);
@@ -238,7 +238,7 @@ where
             match proof_generator.generate_and_submit(job).await {
                 Ok(task) => {
                     drop(permit);
-                    Self::await_proof_submission(task).await;
+                    drop(task);
                 }
                 Err(error) => {
                     drop(permit);
@@ -259,47 +259,6 @@ where
         tokio::select! {
             () = cancel.cancelled() => {}
             () = sleep_until(deadline) => {}
-        }
-    }
-
-    async fn await_proof_submission(task: ProofGeneratorTask) {
-        let ProofGeneratorTask { session_id, lock_id, worker_id, submit_handle } = task;
-
-        info!(
-            session_id = %session_id,
-            lock_id = %lock_id,
-            worker_id = %worker_id,
-            "nitro proof generation completed; awaiting proof submission"
-        );
-
-        match submit_handle.await {
-            Ok(Ok(response)) => {
-                info!(
-                    session_id = %session_id,
-                    lock_id = %lock_id,
-                    worker_id = %worker_id,
-                    status = ?response.job.status,
-                    "nitro proof generator task completed"
-                );
-            }
-            Ok(Err(error)) => {
-                warn!(
-                    session_id = %session_id,
-                    lock_id = %lock_id,
-                    worker_id = %worker_id,
-                    error = %error,
-                    "nitro proof submission task failed"
-                );
-            }
-            Err(error) => {
-                warn!(
-                    session_id = %session_id,
-                    lock_id = %lock_id,
-                    worker_id = %worker_id,
-                    error = %error,
-                    "nitro proof submission task join failed"
-                );
-            }
         }
     }
 
