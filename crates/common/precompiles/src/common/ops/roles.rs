@@ -15,6 +15,10 @@ const UNPAUSE_ROLE: B256 =
     b256!("265b220c5a8891efdd9e1b1b7fa72f257bd5169f8d87e319cf3dad6ff52b94ae");
 const METADATA_ROLE: B256 =
     b256!("6bd6b5318a46e5fff572d5e4258a20774aab40cc35ac7680654b9081fcc82f80");
+const SECURITY_OPERATOR_ROLE: B256 =
+    b256!("e63901dfe7775ace99fa3654743976eb0ab2009f5d19c4fc1ecd40aed27d59af");
+const BURN_FROM_ROLE: B256 =
+    b256!("25400dba76bf0d00acf274c2b61ff56aa4ed19826e21e0186e3fecd6a6671875");
 
 /// Built-in B-20 roles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +37,10 @@ pub enum B20TokenRole {
     Unpause,
     /// Role required for `updateName` and `updateSymbol`.
     Metadata,
+    /// Role required for `announce`, `updateShareRatio`, and `updateSecurityIdentifier`.
+    SecurityOperator,
+    /// Role required for `batchBurn`.
+    BurnFrom,
 }
 
 impl B20TokenRole {
@@ -46,6 +54,8 @@ impl B20TokenRole {
             Self::Pause => PAUSE_ROLE,
             Self::Unpause => UNPAUSE_ROLE,
             Self::Metadata => METADATA_ROLE,
+            Self::SecurityOperator => SECURITY_OPERATOR_ROLE,
+            Self::BurnFrom => BURN_FROM_ROLE,
         }
     }
 }

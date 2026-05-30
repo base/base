@@ -15,7 +15,7 @@ use crate::{
     Configurable,
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
-    Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
+    Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy, PolicyManaged,
     PrecompileCallObserver, RoleManaged, StablecoinAccounting, Token, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };

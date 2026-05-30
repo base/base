@@ -5,7 +5,8 @@ use alloy_primitives::{Address, B256, Bytes, LogData, TxKind, U256, keccak256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_precompiles::{
-    B20FactoryStorage, B20SecurityStorage, B20TokenRole, IB20, IB20Factory, IB20Security,
+    B20FactoryStorage, B20PolicyType, B20SecurityStorage, B20TokenRole, IB20, IB20Factory,
+    IB20Security,
     PolicyRegistryStorage,
 };
 
@@ -142,11 +143,13 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                 StaticcallCase::bytes32(
                     "REDEEM_SENDER_POLICY",
                     IB20Security::REDEEM_SENDER_POLICYCall {}.abi_encode(),
-                    B20SecurityStorage::REDEEM_SENDER_POLICY,
+                    B20PolicyType::RedeemSender.id(),
                 ),
                 StaticcallCase::word(
                     "policyId(REDEEM_SENDER_POLICY)",
-                    IB20::policyIdCall { policyScope: B20SecurityStorage::REDEEM_SENDER_POLICY }
+                    IB20::policyIdCall {
+                        policyScope: B20PolicyType::RedeemSender.id(),
+                    }
                         .abi_encode(),
                     U256::from(PolicyRegistryStorage::ALWAYS_ALLOW_ID),
                 ),

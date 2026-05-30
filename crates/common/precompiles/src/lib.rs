@@ -38,8 +38,9 @@ pub use bls12_381::{
 
 mod common;
 pub use common::{
-    B20Guards, B20TokenRole, Burnable, Configurable, Eip712Domain, Mintable, Pausable, PermitArgs,
-    Permittable, Policy, PolicyRegistry, RoleManaged, Token, TokenAccounting, Transferable,
+    B20Guards, B20PolicyType, B20TokenRole, Burnable, Configurable, Eip712Domain, Mintable,
+    Pausable, PermitArgs, Permittable, Policy, PolicyManaged, PolicyRegistry, RoleManaged, Token,
+    TokenAccounting, Transferable,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
@@ -49,8 +50,8 @@ pub use observer::{EndGuard, NoopPrecompileCallObserver, PrecompileCallObserver}
 
 mod b20;
 pub use b20::{
-    B20CoreStorage, B20PausableFeature, B20PolicyType, B20Token, B20TokenInit, B20TokenPrecompile,
-    B20TokenStorage, IB20,
+    B20CoreStorage, B20PausableFeature, B20Token, B20TokenInit, B20TokenPrecompile, B20TokenStorage,
+    IB20,
 };
 
 mod b20_security;

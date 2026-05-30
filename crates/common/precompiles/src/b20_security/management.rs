@@ -8,13 +8,13 @@
 
 use alloc::{string::String, vec::Vec};
 
-use alloy_primitives::{Address, B256, Bytes, U256, b256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
 
 use crate::{
-    B20Guards, B20SecurityStorage, IB20, IB20Security, Mintable, RoleManaged, SecurityAccounting,
-    Token, TokenAccounting,
+    B20Guards, B20PolicyType, B20SecurityStorage, B20TokenRole, IB20, IB20Security, Mintable,
+    RoleManaged, SecurityAccounting, Token, TokenAccounting,
 };
 
 /// Security-variant operations: redemption, batched mint/burn, announcements,
@@ -27,16 +27,10 @@ pub trait SecurityManagement: Token + Mintable + RoleManaged
 where
     Self::Accounting: SecurityAccounting,
 {
-    /// Role identifier for security operators: `keccak256("SECURITY_OPERATOR_ROLE")`.
-    const SECURITY_OPERATOR_ROLE: B256 =
-        b256!("e63901dfe7775ace99fa3654743976eb0ab2009f5d19c4fc1ecd40aed27d59af");
-
-    /// Role identifier for delegated burns: `keccak256("BURN_FROM_ROLE")`.
-    const BURN_FROM_ROLE: B256 =
-        b256!("25400dba76bf0d00acf274c2b61ff56aa4ed19826e21e0186e3fecd6a6671875");
-
-    /// Policy scope identifier for redeem senders: `keccak256("REDEEM_SENDER_POLICY")`.
-    const REDEEM_SENDER_POLICY: B256 = B20SecurityStorage::REDEEM_SENDER_POLICY;
+    /// Policy slot checked against redeem senders.
+    fn redeem_sender_policy() -> B256 {
+        B20PolicyType::RedeemSender.id()
+    }
 
     /// Returns whether the token is currently executing an `announce` block.
     fn is_announcement_active(&self) -> bool;
@@ -57,12 +51,12 @@ where
 
     /// Ensures `caller` holds `SECURITY_OPERATOR_ROLE` (skipped when `privileged`).
     fn ensure_security_operator(&self, caller: Address, privileged: bool) -> Result<()> {
-        if privileged { Ok(()) } else { self.ensure_role(caller, Self::SECURITY_OPERATOR_ROLE) }
+        if privileged { Ok(()) } else { self.ensure_role(caller, B20TokenRole::SecurityOperator.id()) }
     }
 
     /// Ensures `caller` holds `BURN_FROM_ROLE`.
     fn ensure_burn_from_role(&self, caller: Address) -> Result<()> {
-        self.ensure_role(caller, Self::BURN_FROM_ROLE)
+        self.ensure_role(caller, B20TokenRole::BurnFrom.id())
     }
 
     /// Converts a token balance to shares: `balance * sharesToTokensRatio / WAD`.
@@ -93,7 +87,7 @@ where
     /// Performs the shared security redeem burn and returns the ratio used for the floor check.
     fn security_redeem_burn(&mut self, caller: Address, amount: U256) -> Result<U256> {
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::REDEEM)?;
-        B20Guards::ensure_policy::<Self>(self, Self::REDEEM_SENDER_POLICY, caller)?;
+        B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::RedeemSender, caller)?;
         let ratio = self.accounting().shares_to_tokens_ratio()?;
         if !amount.is_zero() {
             let shares =
@@ -169,6 +163,7 @@ where
         amounts: Vec<U256>,
     ) -> Result<()> {
         let caller = ctx.caller();
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         self.ensure_burn_from_role(caller)?;
         if accounts.len() != amounts.len() {
             return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
@@ -179,7 +174,6 @@ where
         if accounts.is_empty() {
             return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
         }
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         for (account, amount) in accounts.into_iter().zip(amounts) {
             let balance = self.accounting().balance_of(account)?;
             if balance < amount {

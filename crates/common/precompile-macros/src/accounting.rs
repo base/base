@@ -21,7 +21,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
     let has_redeem = has_field(&input, "redeem");
     let name = input.ident;
     let redeem = has_redeem.then_some(quote! {
-        if policy_scope == Self::REDEEM_SENDER_POLICY {
+        if policy_scope == crate::B20PolicyType::RedeemSender.id() {
             return Ok(Self::__read_policy_lane(
                 self.redeem.redeem_policy_ids()?,
                 Self::__REDEEM_SENDER_POLICY_LANE,
@@ -29,7 +29,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
         }
     });
     let set_redeem = has_redeem.then_some(quote! {
-        if policy_scope == Self::REDEEM_SENDER_POLICY {
+        if policy_scope == crate::B20PolicyType::RedeemSender.id() {
             let packed = Self::__write_policy_lane(
                 self.redeem.redeem_policy_ids()?,
                 Self::__REDEEM_SENDER_POLICY_LANE,
@@ -51,7 +51,9 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
             fn __require_policy_type(
                 policy_scope: ::alloy_primitives::B256,
             ) -> ::base_precompile_storage::Result<crate::B20PolicyType> {
-                crate::B20PolicyType::from_id(policy_scope).ok_or_else(|| {
+                crate::B20PolicyType::from_id(policy_scope)
+                    .filter(|policy_type| policy_type.is_core())
+                    .ok_or_else(|| {
                     ::base_precompile_storage::BasePrecompileError::revert(
                         crate::IB20::UnsupportedPolicyType { policyScope: policy_scope },
                     )
@@ -291,6 +293,9 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                         self.b20.mint_policy_ids()?,
                         Self::__MINT_RECEIVER_POLICY_LANE,
                     )),
+                    crate::B20PolicyType::RedeemSender => ::core::unreachable!(
+                        "redeem policy is handled before __require_policy_type"
+                    ),
                 }
             }
 
@@ -320,6 +325,9 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                         self.b20.mint_policy_ids()?,
                         Self::__MINT_RECEIVER_POLICY_LANE,
                         true,
+                    ),
+                    crate::B20PolicyType::RedeemSender => ::core::unreachable!(
+                        "redeem policy is handled before __require_policy_type"
                     ),
                 };
                 let packed = Self::__write_policy_lane(packed, lane, policy_id);

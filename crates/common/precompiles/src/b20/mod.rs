@@ -8,8 +8,6 @@ mod dispatch;
 mod pausable;
 pub use pausable::B20PausableFeature;
 
-mod policies;
-pub use policies::B20PolicyType;
 
 mod precompile;
 pub use precompile::B20TokenPrecompile;

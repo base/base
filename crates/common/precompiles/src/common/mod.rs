@@ -2,12 +2,15 @@
 
 mod ops;
 pub use ops::{
-    B20Guards, B20TokenRole, Burnable, Configurable, Eip712Domain, Mintable, Pausable, PermitArgs,
-    Permittable, RoleManaged, Transferable,
+    B20Guards, B20TokenRole, Burnable, Configurable, Eip712Domain, Mintable, Pausable,
+    PermitArgs, Permittable, PolicyManaged, RoleManaged, Transferable,
 };
 
 mod policy;
 pub use policy::{Policy, PolicyRegistry};
+
+mod policy_type;
+pub use policy_type::B20PolicyType;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub(super) mod test_utils;

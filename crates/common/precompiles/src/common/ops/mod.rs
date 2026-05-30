@@ -22,6 +22,9 @@ pub use mintable::Mintable;
 mod pausable;
 pub use pausable::Pausable;
 
+mod policy_managed;
+pub use policy_managed::PolicyManaged;
+
 mod permittable;
 pub use permittable::{Eip712Domain, PermitArgs, Permittable};
 

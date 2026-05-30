@@ -1,4 +1,7 @@
-//! Policy traits — the outward-facing interfaces tokens and callers use for the policy registry.
+//! Policy traits for the policy registry precompile.
+//!
+//! [`Policy`] and [`PolicyRegistry`] are the outward-facing interfaces for the policy
+//! registry precompile.
 
 use alloy_primitives::Address;
 use base_precompile_storage::Result;

@@ -11,7 +11,8 @@ use base_action_harness::{
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_precompiles::{
-    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20SecurityStorage,
+    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20PolicyType,
+    B20SecurityStorage,
     B20Variant, IActivationRegistry, IB20, IB20Factory, IPolicyRegistry, PolicyRegistryStorage,
 };
 use base_precompile_storage::StorageKey;
@@ -594,7 +595,7 @@ impl BerylTestEnv {
                     .abi_encode()
                     .into(),
                 IB20::updatePolicyCall {
-                    policyScope: B20SecurityStorage::REDEEM_SENDER_POLICY,
+                    policyScope: B20PolicyType::RedeemSender.id(),
                     newPolicyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID,
                 }
                 .abi_encode()

@@ -3,8 +3,8 @@
 use alloy_primitives::Address;
 
 use crate::{
-    Burnable, Configurable, Mintable, Pausable, Permittable, Policy, RoleManaged, Token,
-    TokenAccounting, Transferable,
+    Burnable, Configurable, Mintable, Pausable, Permittable, Policy, PolicyManaged, RoleManaged,
+    Token, TokenAccounting, Transferable,
 };
 
 /// EVM precompile for the Default B-20 token variant.
@@ -69,3 +69,4 @@ impl<S: TokenAccounting, P: Policy> Pausable for B20Token<S, P> {}
 impl<S: TokenAccounting, P: Policy> Configurable for B20Token<S, P> {}
 impl<S: TokenAccounting, P: Policy> Permittable for B20Token<S, P> {}
 impl<S: TokenAccounting, P: Policy> RoleManaged for B20Token<S, P> {}
+impl<S: TokenAccounting, P: Policy> PolicyManaged for B20Token<S, P> {}

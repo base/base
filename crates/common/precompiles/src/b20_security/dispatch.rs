@@ -16,7 +16,7 @@ use crate::{
     B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Security::{self, IB20SecurityCalls as SC},
-    Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
+    Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy, PolicyManaged,
     PrecompileCallObserver, RoleManaged, SecurityAccounting, SecurityManagement, Token,
     Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
@@ -338,10 +338,10 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     ) -> base_precompile_storage::Result<Bytes> {
         let encoded: Bytes = match call {
             // --- Role / precision constants ---
-            SC::SECURITY_OPERATOR_ROLE(_) => Self::SECURITY_OPERATOR_ROLE.abi_encode().into(),
-            SC::BURN_FROM_ROLE(_) => Self::BURN_FROM_ROLE.abi_encode().into(),
+            SC::SECURITY_OPERATOR_ROLE(_) => B20TokenRole::SecurityOperator.id().abi_encode().into(),
+            SC::BURN_FROM_ROLE(_) => B20TokenRole::BurnFrom.id().abi_encode().into(),
             SC::WAD_PRECISION(_) => B20SecurityStorage::WAD.abi_encode().into(),
-            SC::REDEEM_SENDER_POLICY(_) => Self::REDEEM_SENDER_POLICY.abi_encode().into(),
+            SC::REDEEM_SENDER_POLICY(_) => Self::redeem_sender_policy().abi_encode().into(),
 
             // --- Share ratio reads ---
             SC::sharesToTokensRatio(_) => {
@@ -462,16 +462,16 @@ mod tests {
     };
 
     use crate::{
-        ActivationFeature, ActivationRegistryStorage, B20PausableFeature, B20SecurityStorage,
-        B20SecurityToken, B20TokenRole, IB20, IB20Security, InMemoryPolicy,
+        ActivationFeature, ActivationRegistryStorage, B20PausableFeature, B20PolicyType,
+        B20SecurityStorage, B20SecurityToken, B20TokenRole, IB20, IB20Security, InMemoryPolicy,
         InMemoryTokenAccounting, PolicyHandle, PolicyRegistryStorage, SecurityAccounting,
         SecurityManagement, Token, TokenAccounting,
     };
 
     type TestSecurityToken = B20SecurityToken<InMemoryTokenAccounting, InMemoryPolicy>;
 
-    const BURN_FROM_ROLE: B256 = TestSecurityToken::BURN_FROM_ROLE;
-    const REDEEM_SENDER_POLICY: B256 = TestSecurityToken::REDEEM_SENDER_POLICY;
+    const BURN_FROM_ROLE: B256 = B20TokenRole::BurnFrom.id();
+    const REDEEM_SENDER_POLICY: B256 = B20PolicyType::RedeemSender.id();
 
     const ALICE: Address = Address::repeat_byte(0xaa);
     const BOB: Address = Address::repeat_byte(0xbb);

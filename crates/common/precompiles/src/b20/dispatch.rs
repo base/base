@@ -6,7 +6,7 @@ use revm::precompile::PrecompileResult;
 use crate::{
     ActivationFeature, ActivationRegistryStorage, B20Token, B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
-    Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
+    Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy, PolicyManaged,
     PrecompileCallObserver, RoleManaged, Token, TokenAccounting, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
