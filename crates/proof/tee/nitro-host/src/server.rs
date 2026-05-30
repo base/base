@@ -1,5 +1,6 @@
 use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 
+use alloy_signer::utils::public_key_to_address;
 use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_contracts::TEEProverRegistryContractClient;
 use base_proof_host::{ProverConfig, ProverService};
@@ -9,6 +10,7 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     server::{Server, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
+use k256::ecdsa::VerifyingKey;
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
@@ -251,6 +253,22 @@ impl EnclaveApiServer for NitroSignerRpc {
                     .map_err(|e| NitroProverServer::rpc_err(-32001, e))?,
             );
         }
+        // Per-call signer log so an investigator can trace every signer
+        // the host has ever returned to the registrar. Makes a silent
+        // mid-run enclave re-key visible as a sequence of log lines
+        // with changing addresses.
+        let signers: Vec<String> = keys
+            .iter()
+            .map(|k| {
+                VerifyingKey::from_sec1_bytes(k)
+                    .map(|vk| format!("{}", public_key_to_address(&vk)))
+                    .unwrap_or_else(|e| {
+                        warn!(error = %e, "failed to parse enclave signer public key");
+                        "<unparseable>".to_string()
+                    })
+            })
+            .collect();
+        info!(signers = ?signers, "nitro_host.signer_public_key_rpc");
         Ok(keys)
     }
 

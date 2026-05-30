@@ -189,6 +189,50 @@ impl BoundlessProver {
         debug.to_ascii_lowercase().contains(NEEDLE)
     }
 
+    /// Checks whether an error from the Boundless SDK is the
+    /// [`MarketError::ProofNotFound`](boundless_market::contracts::boundless_market::MarketError::ProofNotFound)
+    /// variant, raised when an event-log scan for a fulfilled request
+    /// finishes without finding the `ProofDelivered` event.
+    ///
+    /// This is a **terminal** outcome of one event scan, not a
+    /// transient RPC blip: it means the SDK's default
+    /// `EventQueryConfig.block_range` × `max_iterations` window did
+    /// not reach the block where the request was fulfilled. Retrying
+    /// the same call with the same parameters will keep scanning the
+    /// same recent window and keep returning the same error, just with
+    /// the upper bound creeping forward as the chain head moves.
+    ///
+    /// In the registrar's recovery path this overwhelmingly means the
+    /// fulfilled proof is older than [`Self::max_attestation_age`] (and
+    /// would be rejected by [`Self::is_journal_fresh`] anyway). The
+    /// caller should short-circuit the receipt-fetch retry loop and
+    /// move on to the next deterministic slot or fall through to a
+    /// fresh submission.
+    ///
+    /// As with [`Self::is_request_not_locked_error`], we string-match
+    /// rather than pattern-match the typed variant so the SDK can
+    /// rewrap the error in opaque outer types (e.g.
+    /// `ClientError::MarketError`) without breaking detection. Both
+    /// `Display` (`"Proof not found for request 0x… in events logs
+    /// after searching from block N to block M …"`) and `Debug`
+    /// (`"ProofNotFound(0x…, N, M)"`) representations are searched
+    /// case-insensitively.
+    fn is_proof_not_found_error(e: &dyn std::error::Error) -> bool {
+        // Two needles cover both rendering paths: Display always
+        // includes the prose form via the SDK's `#[error("…")]` attr,
+        // Debug always includes the variant name via `thiserror`'s
+        // derive. Matching either is sufficient — both being present
+        // is the common case.
+        const DISPLAY_NEEDLE: &str = "proof not found for request";
+        const DEBUG_NEEDLE: &str = "proofnotfound";
+        let display = format!("{e}").to_ascii_lowercase();
+        if display.contains(DISPLAY_NEEDLE) {
+            return true;
+        }
+        let debug = format!("{e:?}").to_ascii_lowercase();
+        debug.contains(DEBUG_NEEDLE)
+    }
+
     /// Returns the current Unix timestamp in seconds, used to compute
     /// `Offer.rampUpStart` as `now + offer_bidding_start_delay_secs`
     /// immediately before each on-chain submission. Factored out so
@@ -265,10 +309,31 @@ impl BoundlessProver {
     /// Fetches and ABI-encodes the set inclusion receipt for a fulfilled
     /// Boundless request. Shared between the recovery and fresh-submission
     /// paths.
+    ///
+    /// `fail_fast_on_proof_not_found` controls how the SDK's
+    /// [`MarketError::ProofNotFound`] error is treated. This error
+    /// fires when the SDK's event-log scan finishes without finding
+    /// the `ProofDelivered` event in its default lookback window:
+    ///
+    /// - In the **direct recovery `Fulfilled` arm**, the slot is
+    ///   almost certainly stale (older than the SDK's lookback). The
+    ///   60-retry transient loop would burn ~5 min per attempt before
+    ///   inevitably returning the same error. Pass `true` here to
+    ///   short-circuit immediately and let the caller probe the next
+    ///   slot.
+    /// - In the **fresh-submission / `Locked` recovery path** (via
+    ///   [`Self::wait_and_fetch`]),
+    ///   [`Client::wait_for_request_fulfillment`] has just confirmed
+    ///   the `ProofDelivered` event moments earlier. A subsequent
+    ///   `ProofNotFound` here indicates transient RPC log-indexing
+    ///   inconsistency, not staleness. Pass `false` to keep the full
+    ///   retry budget so transient inconsistency can resolve before
+    ///   we give up.
     async fn fetch_and_encode_receipt(
         &self,
         client: &BoundlessClient,
         request_id: alloy_primitives::U256,
+        fail_fast_on_proof_not_found: bool,
     ) -> Result<AttestationProof> {
         let image_id_bytes: [u8; 32] = Digest::from(self.image_id).into();
         let image_id_b256 = B256::from(image_id_bytes);
@@ -282,6 +347,27 @@ impl BoundlessProver {
         let (journal, receipt) = loop {
             match client.fetch_set_inclusion_receipt(request_id, image_id_b256, None, None).await {
                 Ok(result) => break result,
+                // Stale-fulfillment short-circuit, recovery-context only.
+                // See the doc comment on this method and on
+                // [`Self::is_proof_not_found_error`] for the rationale.
+                // The wrapped error preserves the original Display
+                // string via the `{e}` interpolation, so callers can
+                // still re-classify with `is_proof_not_found_error`.
+                Err(e) if fail_fast_on_proof_not_found && Self::is_proof_not_found_error(&e) => {
+                    warn!(
+                        error = %e,
+                        error_debug = ?e,
+                        request_id = %request_id,
+                        image_id = ?self.image_id,
+                        retry = receipt_retries,
+                        max_retries = MAX_RECEIPT_FETCH_RETRIES,
+                        "fulfillment event outside SDK lookback window \
+                         (proof likely stale), skipping receipt fetch retries"
+                    );
+                    return Err(ProverError::Boundless(format!(
+                        "stale fulfilled proof (event outside SDK lookback): {e}"
+                    )));
+                }
                 Err(e) if receipt_retries < MAX_RECEIPT_FETCH_RETRIES => {
                     receipt_retries += 1;
                     warn!(
@@ -371,7 +457,11 @@ impl BoundlessProver {
 
         info!(request_id = %request_id, "fulfillment confirmed, fetching set inclusion receipt");
 
-        self.fetch_and_encode_receipt(client, request_id).await
+        // `wait_for_request_fulfillment` above just confirmed the
+        // `ProofDelivered` event. A subsequent `ProofNotFound` here is
+        // RPC log-indexing inconsistency, not staleness — keep the
+        // full retry budget so transient inconsistency can resolve.
+        self.fetch_and_encode_receipt(client, request_id, false).await
     }
 
     /// Builds the Boundless [`Client`] and [`RequestParams`] from the
@@ -574,17 +664,28 @@ impl AttestationProofProvider for BoundlessProver {
     /// Recovery outcomes per slot:
     /// - **`Locked`** — an in-flight proof is being worked on by a
     ///   Boundless prover. Resume polling for fulfillment.
-    /// - **`Fulfilled`** — a previous instance's proof completed. Fetch
-    ///   the receipt directly.
+    /// - **`Fulfilled`** — a previous instance's proof completed.
+    ///   Fetch the receipt directly. The receipt fetch is discriminated:
+    ///   - **Stale fulfillment** (the `ProofDelivered` event is
+    ///     outside the SDK's default event-log lookback — see
+    ///     [`Self::is_proof_not_found_error`]) → skip to the next
+    ///     attempt. The proof would almost certainly fail
+    ///     [`Self::is_journal_fresh`] anyway, and later slots may
+    ///     hold genuine in-flight work from a more recent instance.
+    ///   - **Any other receipt-fetch failure** → break out of
+    ///     recovery and fall through to fresh submission. Such
+    ///     failures are typically global infrastructure problems
+    ///     (already retried by the wrapper); continuing the scan
+    ///     would multiply the wait by `max_recovery_attempts`.
     /// - **`Expired`** — the slot was used but the proof expired. Skip
     ///   to the next attempt.
     /// - **`Unknown`** — the slot is unused. Submit a new request with
     ///   this deterministic ID.
     ///
-    /// If recovery fails for any reason (RPC errors, receipt fetch
-    /// failures, etc.), the method logs a warning and falls through to
-    /// submit a fresh proof — the same graceful degradation as the
-    /// non-recovery path.
+    /// If a probe fails with a transport/SDK error during status
+    /// query, the method logs a warning, breaks out of the recovery
+    /// loop and falls through to submit a fresh proof — the same
+    /// graceful degradation as the non-recovery path.
     async fn generate_proof_for_signer(
         &self,
         attestation_bytes: &[u8],
@@ -747,14 +848,62 @@ impl AttestationProofProvider for BoundlessProver {
                         target_signer = %signer_address,
                         "recovered fulfilled proof, fetching receipt"
                     );
-                    match self.fetch_and_encode_receipt(&client, request_id).await {
+                    match self.fetch_and_encode_receipt(&client, request_id, true).await {
                         Ok(proof) => {
                             if !self.is_journal_fresh(&proof) {
                                 continue;
                             }
                             return Ok(proof);
                         }
+                        Err(e) if Self::is_proof_not_found_error(&e) => {
+                            // Stale-fulfillment case: the slot is
+                            // genuinely `Fulfilled` on-chain but its
+                            // `ProofDelivered` event has scrolled past
+                            // the SDK's default event-log lookback.
+                            // The proof itself is almost certainly
+                            // older than [`Self::max_attestation_age`]
+                            // and would be rejected by
+                            // [`Self::is_journal_fresh`] anyway.
+                            //
+                            // Probe the next deterministic slot —
+                            // which may hold a recent in-flight proof
+                            // from a more recent instance — rather
+                            // than abandoning recovery on the first
+                            // stale slot. If no later slot is
+                            // recoverable either, the loop falls
+                            // through to a deterministic-ID fresh
+                            // submission (via `first_unknown_attempt`)
+                            // at the bottom of this method.
+                            //
+                            // We re-classify on the wrapped
+                            // [`ProverError`]: the wrapping in
+                            // [`Self::fetch_and_encode_receipt`] uses
+                            // `format!("...{e}")`, preserving the
+                            // SDK's original Display string and so the
+                            // `is_proof_not_found_error` needle still
+                            // matches.
+                            warn!(
+                                error = %e,
+                                attempt,
+                                request_id = %request_id,
+                                target_signer = %signer_address,
+                                "recovery receipt fetch hit stale fulfillment, \
+                                 trying next deterministic slot"
+                            );
+                            continue;
+                        }
                         Err(e) => {
+                            // Non-stale receipt-fetch failure (typically
+                            // a persistent infrastructure problem that
+                            // has already exhausted the 60-retry
+                            // transient loop inside
+                            // [`Self::fetch_and_encode_receipt`]).
+                            // Break out of the recovery scan rather
+                            // than retrying each remaining slot for
+                            // the same ~5-minute window — the failure
+                            // mode is global, not slot-local.
+                            // Fall-through behavior preserved from the
+                            // pre-fix code.
                             warn!(
                                 error = %e,
                                 attempt,
@@ -1303,6 +1452,188 @@ mod tests {
             assert!(
                 !BoundlessProver::is_request_not_locked_error(&err),
                 "should NOT match an unrelated I/O error"
+            );
+        }
+    }
+
+    // ── is_proof_not_found_error ────────────────────────────────────────
+    //
+    // These tests construct the *real* Boundless SDK error type that
+    // surfaces when the event-log scan for a fulfilled request finishes
+    // empty (i.e. the `ProofDelivered` event lives outside the SDK's
+    // default `EventQueryConfig` lookback window). The detection is
+    // string-based and must survive both the bare `MarketError` and the
+    // typical `ClientError::MarketError(...)` wrapping that
+    // `fetch_set_inclusion_receipt` returns. If a `boundless-market`
+    // upgrade changes the Display/Debug formatting of `MarketError` →
+    // `ProofNotFound`, these tests will fail and alert us that the
+    // string-matching needles need updating.
+
+    mod proof_not_found {
+        use alloy_primitives::{U256, uint};
+        use boundless_market::{client::ClientError, contracts::boundless_market::MarketError};
+
+        use super::*;
+
+        /// Arbitrary request ID used in error construction.
+        const TEST_REQUEST_ID: U256 = uint!(42_U256);
+        /// Arbitrary block range used in error construction.
+        const TEST_FROM_BLOCK: u64 = 46_617_070;
+        const TEST_TO_BLOCK: u64 = 46_367_571;
+
+        /// Build a bare [`MarketError::ProofNotFound`] as the SDK
+        /// returns from `query_fulfilled_event`.
+        fn bare_market_error() -> MarketError {
+            MarketError::ProofNotFound(TEST_REQUEST_ID, TEST_FROM_BLOCK, TEST_TO_BLOCK)
+        }
+
+        /// Build a [`ClientError::MarketError`] wrapping
+        /// `ProofNotFound`, matching the path that
+        /// `fetch_set_inclusion_receipt` returns to
+        /// `fetch_and_encode_receipt`.
+        fn client_error() -> ClientError {
+            ClientError::MarketError(bare_market_error())
+        }
+
+        /// Bare `MarketError::ProofNotFound` is detected.
+        #[rstest]
+        fn matches_bare_market_error() {
+            let err = bare_market_error();
+            assert!(
+                BoundlessProver::is_proof_not_found_error(&err),
+                "should detect bare MarketError::ProofNotFound. \
+                 Display: {err}, Debug: {err:?}"
+            );
+        }
+
+        /// `ClientError::MarketError(MarketError::ProofNotFound(..))`
+        /// — the actual error chain returned by
+        /// `fetch_set_inclusion_receipt` — is detected.
+        #[rstest]
+        fn matches_client_error_wrapping() {
+            let err = client_error();
+            assert!(
+                BoundlessProver::is_proof_not_found_error(&err),
+                "should detect ClientError-wrapped ProofNotFound. \
+                 Display: {err}, Debug: {err:?}"
+            );
+        }
+
+        /// The unique Display substring from the SDK's
+        /// `#[error("…")]` attr must be present in the Display output.
+        /// Guards against accidental needle drift if the SDK reformats
+        /// the message.
+        #[rstest]
+        fn display_includes_expected_substring() {
+            let err = client_error();
+            let display = format!("{err}").to_ascii_lowercase();
+            assert!(
+                display.contains("proof not found for request"),
+                "SDK Display string must still contain the expected needle. \
+                 Got: {display}"
+            );
+        }
+
+        /// A different `MarketError` variant (`RequestNotFound`) must
+        /// NOT match — it has an almost identical Display string but
+        /// covers a different scenario (the *request* itself was
+        /// never observed, not just its fulfillment event).
+        #[rstest]
+        fn rejects_request_not_found() {
+            let err = MarketError::RequestNotFound(TEST_REQUEST_ID, TEST_FROM_BLOCK, TEST_TO_BLOCK);
+            assert!(
+                !BoundlessProver::is_proof_not_found_error(&err),
+                "should NOT match RequestNotFound (different scenario). \
+                 Display: {err}, Debug: {err:?}"
+            );
+        }
+
+        /// Plain `std::io::Error` must NOT match.
+        #[rstest]
+        fn rejects_unrelated_error() {
+            let err = std::io::Error::new(std::io::ErrorKind::TimedOut, "connection timed out");
+            assert!(
+                !BoundlessProver::is_proof_not_found_error(&err),
+                "should NOT match an unrelated I/O error"
+            );
+        }
+
+        /// An error whose user-supplied message merely *contains* the
+        /// substring "proof not found" (without being the actual SDK
+        /// variant) must still match — false positives on similar
+        /// upstream errors are acceptable here because the
+        /// non-transient classification is also correct for any
+        /// hypothetical synonymous error. This test pins the
+        /// permissive matching behavior so a future tightening is an
+        /// intentional, reviewed change.
+        #[rstest]
+        fn matches_synonymous_message() {
+            let err =
+                std::io::Error::other("upstream said: Proof not found for request 0xdeadbeef");
+            assert!(
+                BoundlessProver::is_proof_not_found_error(&err),
+                "permissive match: any error whose Display contains the needle qualifies. \
+                 Display: {err}, Debug: {err:?}"
+            );
+        }
+
+        /// Case-insensitive Display matching is preserved when the
+        /// SDK or an upstream wrapper renders the message in non-
+        /// canonical casing. The classifier must still detect it.
+        #[rstest]
+        #[case::all_caps("PROOF NOT FOUND FOR REQUEST 0xabc")]
+        #[case::mixed_case("Proof Not Found For Request 0xabc")]
+        #[case::title_case("Proof not found for request 0xabc")]
+        fn matches_case_insensitive_display(#[case] msg: &'static str) {
+            let err = std::io::Error::other(msg);
+            assert!(
+                BoundlessProver::is_proof_not_found_error(&err),
+                "case-insensitive Display match should detect '{msg}'. Display: {err}, Debug: {err:?}"
+            );
+        }
+
+        /// The most critical regression guard: the wrapped
+        /// [`ProverError::Boundless`] string produced by
+        /// [`BoundlessProver::fetch_and_encode_receipt`] when it
+        /// short-circuits on `ProofNotFound` must still match the
+        /// classifier. The recovery loop's discrimination between
+        /// "stale → continue" and "other failure → break" depends on
+        /// this round-trip detection. If
+        /// `fetch_and_encode_receipt`'s wrapping prefix ever changes
+        /// in a way that obscures the original Display string, this
+        /// test will fail and alert us that the discrimination is
+        /// broken.
+        #[rstest]
+        fn matches_wrapped_prover_error_stale() {
+            let inner = client_error();
+            let wrapped = ProverError::Boundless(format!(
+                "stale fulfilled proof (event outside SDK lookback): {inner}"
+            ));
+            assert!(
+                BoundlessProver::is_proof_not_found_error(&wrapped),
+                "the wrapped ProverError from fetch_and_encode_receipt must still be detectable \
+                 as ProofNotFound so the recovery arm can choose 'continue' over 'break'. \
+                 Display: {wrapped}, Debug: {wrapped:?}"
+            );
+        }
+
+        /// Negative counterpart to the wrapped-stale test: a
+        /// non-`ProofNotFound` failure wrapped by
+        /// [`BoundlessProver::fetch_and_encode_receipt`]'s catch-all
+        /// arm must NOT be misclassified as stale. If it were, the
+        /// recovery loop would incorrectly `continue` to the next
+        /// slot on a persistent infrastructure failure, multiplying
+        /// the wait by `max_recovery_attempts`.
+        #[rstest]
+        fn rejects_wrapped_prover_error_non_stale() {
+            let wrapped = ProverError::Boundless(
+                "failed to fetch set inclusion receipt: connection timed out".into(),
+            );
+            assert!(
+                !BoundlessProver::is_proof_not_found_error(&wrapped),
+                "a wrapped non-PNF receipt-fetch failure must NOT be classified as stale; \
+                 misclassifying would defeat the recovery arm's defensive break. \
+                 Display: {wrapped}, Debug: {wrapped:?}"
             );
         }
     }

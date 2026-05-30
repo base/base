@@ -11,7 +11,8 @@ use anyhow::{Context, Result, bail};
 use base_common_network::Base;
 use base_prover_service_protocol::{
     GetProofRequest, ProofRequest, ProofRequestKind, ProofResult, ProofStatus,
-    ProverRequesterApiClient, SnarkGroth16ProofRequest, SubmitProofRequest, ZkProofRequest, ZkVm,
+    ProveBlockRangeRequest, ProverRequesterApiClient, SnarkGroth16ProofRequest, ZkProofRequest,
+    ZkVm,
 };
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use sp1_sdk::{
@@ -207,7 +208,7 @@ impl SnarkE2e {
         // heuristic.
         let client = Self::connect().await?;
         let prove_resp = client
-            .submit_proof(SubmitProofRequest {
+            .prove_block_range(ProveBlockRangeRequest {
                 proof: ProofRequest {
                     session_id: None,
                     request: ProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {

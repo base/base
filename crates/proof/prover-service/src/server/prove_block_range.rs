@@ -3,7 +3,8 @@ use base_prover_service_db::{
     CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, ProofType,
 };
 use base_prover_service_protocol::{
-    ProofRequest, ProofRequestKind, SubmitProofRequest, SubmitProofResponse, ZkProofRequest, ZkVm,
+    ProofRequest, ProofRequestKind, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    ZkProofRequest, ZkVm,
 };
 use jsonrpsee::core::RpcResult;
 use tracing::{info, warn};
@@ -16,23 +17,23 @@ use crate::server::{
 
 impl ProverServiceServer {
     /// Enqueues a new proof request and returns the generated `session_id=<uuid>`.
-    pub async fn submit_proof_impl(
+    pub async fn prove_block_range_impl(
         &self,
-        request: SubmitProofRequest,
-    ) -> RpcResult<SubmitProofResponse> {
+        request: ProveBlockRangeRequest,
+    ) -> RpcResult<ProveBlockRangeResponse> {
         let start = std::time::Instant::now();
-        let result = self.submit_proof_inner(request).await;
-        record_rpc_result("SubmitProof", start, &result);
+        let result = self.prove_block_range_inner(request).await;
+        record_rpc_result("ProveBlockRange", start, &result);
 
         result
     }
 
-    async fn submit_proof_inner(
+    async fn prove_block_range_inner(
         &self,
-        submit_request: SubmitProofRequest,
-    ) -> RpcResult<SubmitProofResponse> {
-        let session_id = parse_session_id(submit_request.proof.session_id.as_deref())?;
-        let (zk_request, proof_type, prover_address) = parse_zk_request(submit_request.proof)?;
+        request: ProveBlockRangeRequest,
+    ) -> RpcResult<ProveBlockRangeResponse> {
+        let session_id = parse_session_id(request.proof.session_id.as_deref())?;
+        let (zk_request, proof_type, prover_address) = parse_zk_request(request.proof)?;
         let l1_head = zk_request.l1_head.map(format_hash);
 
         info!(
@@ -78,7 +79,7 @@ impl ProverServiceServer {
                     warn!(
                         proof_request_id = %id,
                         mismatched_field = field,
-                        "rejected SubmitProof: session_id already bound to a different request"
+                        "rejected ProveBlockRange: session_id already bound to a different request"
                     );
                     failed_precondition(format!(
                         "session_id {id} already exists with a different {field}"
@@ -87,10 +88,10 @@ impl ProverServiceServer {
                 CreateProofRequestError::SessionRowMissingAfterConflict { id } => {
                     warn!(
                         proof_request_id = %id,
-                        "rejected SubmitProof: session_id row missing after insert conflict"
+                        "rejected ProveBlockRange: session_id row missing after insert conflict"
                     );
                     unavailable(format!(
-                        "session_id {id} is temporarily unavailable after conflict; retry submit_proof"
+                        "session_id {id} is temporarily unavailable after conflict; retry prove_block_range"
                     ))
                 }
                 CreateProofRequestError::Sqlx(e) => internal(format!("Database error: {e}")),
@@ -102,7 +103,7 @@ impl ProverServiceServer {
                 warn!(
                     proof_request_id = %id,
                     max_proof_retries = self.max_proof_retries,
-                    "rejected SubmitProof: proof request retry budget exhausted for this session_id",
+                    "rejected ProveBlockRange: proof request retry budget exhausted for this session_id",
                 );
                 return Err(resource_exhausted(format!(
                     "session_id {id}: proof request retry budget exhausted; use get_proof for the stored terminal failure",
@@ -128,7 +129,7 @@ impl ProverServiceServer {
             }
         }
 
-        Ok(SubmitProofResponse { session_id: proof_request_id.to_string() })
+        Ok(ProveBlockRangeResponse { session_id: proof_request_id.to_string() })
     }
 }
 

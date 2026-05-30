@@ -4,8 +4,8 @@ use jsonrpsee::proc_macros::rpc;
 
 use crate::{
     GetNextProofRequest, GetNextProofResponse, GetProofRequest, GetProofResponse, HeartbeatRequest,
-    HeartbeatResponse, ListProofsRequest, ListProofsResponse, SubmitProofRequest,
-    SubmitProofResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
+    HeartbeatResponse, ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest,
+    ProveBlockRangeResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
 
 #[cfg_attr(
@@ -22,12 +22,12 @@ use crate::{
 )]
 /// JSON-RPC interface for proof requesters.
 pub trait ProverRequesterApi {
-    /// Submit a proof request.
-    #[method(name = "submitProof")]
-    async fn submit_proof(
+    /// Submit a prove-block-range proof request.
+    #[method(name = "proveBlockRange")]
+    async fn prove_block_range(
         &self,
-        request: SubmitProofRequest,
-    ) -> jsonrpsee::core::RpcResult<SubmitProofResponse>;
+        request: ProveBlockRangeRequest,
+    ) -> jsonrpsee::core::RpcResult<ProveBlockRangeResponse>;
 
     /// Return proof status and result data for a submitted proof request.
     #[method(name = "getProof")]
