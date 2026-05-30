@@ -14,8 +14,8 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20Guards, B20PolicyType, B20SecurityStorage,
-    B20SecurityToken, B20TokenRole, Burnable, Configurable,
+    ActivationFeature, ActivationRegistryStorage, B20Guards, B20SecurityStorage, B20SecurityToken,
+    B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Security::{self, IB20SecurityCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
@@ -24,22 +24,6 @@ use crate::{
 };
 
 impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
-    /// Ensures `policy_scope` names either an inherited B-20 policy slot or the
-    /// security redeem slot.
-    fn is_supported_policy_scope(policy_scope: B256) -> bool {
-        policy_scope == Self::REDEEM_SENDER_POLICY || B20PolicyType::from_id(policy_scope).is_some()
-    }
-
-    fn ensure_supported_policy_type(policy_scope: B256) -> base_precompile_storage::Result<()> {
-        if Self::is_supported_policy_scope(policy_scope) {
-            Ok(())
-        } else {
-            Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
-                policyScope: policy_scope,
-            }))
-        }
-    }
-
     fn ensure_security_operator(
         &self,
         caller: Address,
@@ -48,55 +32,10 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         if privileged { Ok(()) } else { self.ensure_role(caller, Self::SECURITY_OPERATOR_ROLE) }
     }
 
-    fn ensure_default_admin(
-        &self,
-        caller: Address,
-        privileged: bool,
-    ) -> base_precompile_storage::Result<()> {
-        if privileged { Ok(()) } else { self.ensure_role(caller, Self::default_admin_role()) }
-    }
-
     fn ensure_burn_from_role(&self, caller: Address) -> base_precompile_storage::Result<()> {
         self.ensure_role(caller, Self::BURN_FROM_ROLE)
     }
 
-    /// Returns the configured policy ID for `policy_scope`.
-    fn policy_id_checked(&self, policy_scope: B256) -> base_precompile_storage::Result<u64> {
-        Self::ensure_supported_policy_type(policy_scope)?;
-        self.accounting().policy_id(policy_scope)
-    }
-
-    /// Updates the configured policy ID for `policy_scope`.
-    fn update_policy(
-        &mut self,
-        caller: Address,
-        policy_scope: B256,
-        new_policy_id: u64,
-        privileged: bool,
-    ) -> base_precompile_storage::Result<()> {
-        Self::ensure_supported_policy_type(policy_scope)?;
-        if !privileged {
-            self.ensure_role(caller, Self::default_admin_role())?;
-        }
-        let old_policy_id = self.accounting().policy_id(policy_scope)?;
-        if !self.policy().policy_exists(new_policy_id)? {
-            return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
-                policyId: new_policy_id,
-            }));
-        }
-        self.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
-        self.accounting_mut().emit_event(
-            IB20::PolicyUpdated {
-                policyScope: policy_scope,
-                oldPolicyId: old_policy_id,
-                newPolicyId: new_policy_id,
-            }
-            .encode_log_data(),
-        )
-    }
-}
-
-impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Security` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         self.dispatch_with_observer(ctx, calldata, NoopPrecompileCallObserver)
@@ -213,7 +152,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             C::contractURI(_) => self.accounting().contract_uri()?.abi_encode().into(),
 
             // --- Role identifiers ---
-            C::DEFAULT_ADMIN_ROLE(_) => Self::default_admin_role().abi_encode().into(),
+            C::DEFAULT_ADMIN_ROLE(_) => B20TokenRole::DefaultAdmin.id().abi_encode().into(),
             C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
             C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),
             C::BURN_BLOCKED_ROLE(_) => B20TokenRole::BurnBlocked.id().abi_encode().into(),
@@ -222,25 +161,21 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             C::METADATA_ROLE(_) => B20TokenRole::Metadata.id().abi_encode().into(),
 
             // --- Policy type identifiers ---
-            C::TRANSFER_SENDER_POLICY(_) => B20PolicyType::TransferSender.id().abi_encode().into(),
-            C::TRANSFER_RECEIVER_POLICY(_) => {
-                B20PolicyType::TransferReceiver.id().abi_encode().into()
-            }
-            C::TRANSFER_EXECUTOR_POLICY(_) => {
-                B20PolicyType::TransferExecutor.id().abi_encode().into()
-            }
-            C::MINT_RECEIVER_POLICY(_) => B20PolicyType::MintReceiver.id().abi_encode().into(),
+            C::TRANSFER_SENDER_POLICY(_) => Self::transfer_sender_policy().abi_encode().into(),
+            C::TRANSFER_RECEIVER_POLICY(_) => Self::transfer_receiver_policy().abi_encode().into(),
+            C::TRANSFER_EXECUTOR_POLICY(_) => Self::transfer_executor_policy().abi_encode().into(),
+            C::MINT_RECEIVER_POLICY(_) => Self::mint_receiver_policy().abi_encode().into(),
 
             // --- Role reads ---
-            C::hasRole(c) => self.accounting().has_role(c.role, c.account)?.abi_encode().into(),
-            C::getRoleAdmin(c) => self.accounting().role_admin(c.role)?.abi_encode().into(),
+            C::hasRole(c) => self.has_role(c.role, c.account)?.abi_encode().into(),
+            C::getRoleAdmin(c) => self.role_admin(c.role)?.abi_encode().into(),
 
             // --- Pause reads ---
             C::pausedFeatures(_) => self.paused_features()?.abi_encode().into(),
             C::isPaused(c) => self.is_paused(c.feature)?.abi_encode().into(),
 
             // --- Policy reads ---
-            C::policyId(c) => self.policy_id_checked(c.policyScope)?.abi_encode().into(),
+            C::policyId(c) => self.policy_id(c.policyScope)?.abi_encode().into(),
 
             // --- Domain reads ---
             C::DOMAIN_SEPARATOR(_) => self.domain_separator(ctx.chain_id())?.abi_encode().into(),
@@ -489,7 +424,9 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             SC::minimumRedeemable(_) => self.accounting().minimum_redeemable()?.abi_encode().into(),
             SC::updateMinimumRedeemable(c) => {
                 let caller = ctx.caller();
-                self.ensure_default_admin(caller, privileged)?;
+                if !privileged {
+                    B20Guards::ensure_token_role(self, caller, B20TokenRole::DefaultAdmin)?;
+                }
                 self.accounting_mut().set_minimum_redeemable(c.newMinimumRedeemable)?;
                 self.accounting_mut().emit_event(
                     IB20Security::MinimumRedeemableUpdated {
