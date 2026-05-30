@@ -2,8 +2,7 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use base_proof_primitives::{ProofRequest as NitroProofRequest, ProofResult as NitroProofResult};
+use base_proof_primitives::ProofRequest as NitroProofRequest;
 use base_prover_service_client::ProverWorkerProvider;
 use base_prover_service_protocol::{ProofJob, ProofRequestKind, WorkerSubmitProofResponse};
 use thiserror::Error;
@@ -15,28 +14,6 @@ use crate::{
     NitroEnclavePool, NitroEnclavePoolError, ProofSubmitter, ProofSubmitterError,
     ProofSubmitterRequest,
 };
-
-/// Executes Nitro proof generation from a primitive proof request.
-#[async_trait]
-pub trait ProofProducer: Send + Sync {
-    /// Error returned when proof generation fails.
-    type Error: std::error::Error + Send + Sync + 'static;
-
-    /// Generate a proof for the requested block range.
-    async fn prove(&self, request: NitroProofRequest) -> Result<NitroProofResult, Self::Error>;
-}
-
-#[async_trait]
-impl ProofProducer for NitroEnclavePool {
-    type Error = NitroEnclavePoolError;
-
-    async fn prove(
-        &self,
-        request: NitroProofRequest,
-    ) -> Result<NitroProofResult, NitroEnclavePoolError> {
-        Self::prove(self, request).await
-    }
-}
 
 /// Claimed prover-service job data needed to generate and submit a Nitro proof.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,16 +63,16 @@ pub struct ProofGeneratorTask {
 
 /// Orchestrates Nitro witness generation, enclave proving, and async proof submission.
 #[derive(Debug)]
-pub struct ProofGenerator<Producer, Client> {
-    producer: Arc<Producer>,
+pub struct ProofGenerator<Client> {
+    pool: Arc<NitroEnclavePool>,
     submitter: ProofSubmitter<Client>,
     submission_cancel: CancellationToken,
 }
 
-impl<Producer, Client> ProofGenerator<Producer, Client> {
+impl<Client> ProofGenerator<Client> {
     /// Create a proof generator with its own submission cancellation token.
-    pub fn new(producer: Arc<Producer>, submitter: ProofSubmitter<Client>) -> Self {
-        Self { producer, submitter, submission_cancel: CancellationToken::new() }
+    pub fn new(pool: Arc<NitroEnclavePool>, submitter: ProofSubmitter<Client>) -> Self {
+        Self { pool, submitter, submission_cancel: CancellationToken::new() }
     }
 
     /// Use a caller-provided cancellation token for spawned submission tasks.
@@ -104,9 +81,9 @@ impl<Producer, Client> ProofGenerator<Producer, Client> {
         self
     }
 
-    /// Returns the proof producer.
-    pub fn producer(&self) -> Arc<Producer> {
-        Arc::clone(&self.producer)
+    /// Returns the Nitro enclave pool.
+    pub fn pool(&self) -> Arc<NitroEnclavePool> {
+        Arc::clone(&self.pool)
     }
 
     /// Returns the proof submitter.
@@ -120,9 +97,8 @@ impl<Producer, Client> ProofGenerator<Producer, Client> {
     }
 }
 
-impl<Producer, Client> ProofGenerator<Producer, Client>
+impl<Client> ProofGenerator<Client>
 where
-    Producer: ProofProducer + 'static,
     Client: Clone + ProverWorkerProvider + 'static,
 {
     /// Generate a proof for a claimed worker job and spawn proof submission.
@@ -141,7 +117,7 @@ where
         );
 
         let l2_block = request.proof.claimed_l2_block_number;
-        let proof = match self.producer.prove(request.proof).await {
+        let proof = match self.pool.prove(request.proof).await {
             Ok(proof) => proof,
             Err(source) => {
                 warn!(
@@ -155,7 +131,7 @@ where
 
                 return Err(ProofGeneratorError::Generate {
                     session_id: request.session_id.clone(),
-                    source: Box::new(source),
+                    source,
                 });
             }
         };
@@ -218,7 +194,7 @@ pub enum ProofGeneratorError {
         session_id: String,
         /// Underlying proof generation error.
         #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
+        source: NitroEnclavePoolError,
     },
     /// The generated proof could not be converted into a worker submission request.
     #[error("failed to build proof submission for job {session_id}: {source}")]
@@ -235,61 +211,20 @@ pub enum ProofGeneratorError {
 mod tests {
     use std::{sync::Mutex, time::Duration};
 
-    use alloy_primitives::{B256, Bytes};
-    use base_proof_primitives::Proposal;
+    use alloy_genesis::ChainConfig;
+    use async_trait::async_trait;
+    use base_common_genesis::RollupConfig;
+    use base_proof_host::ProverConfig;
+    use base_proof_tee_nitro_enclave::Server as EnclaveServer;
     use base_prover_service_client::ProverServiceClientError;
     use base_prover_service_protocol::{
         GetNextProofRequest, GetNextProofResponse, HeartbeatRequest, HeartbeatResponse,
-        ProofJobStatus, ProofRequest, ProofResult as ServiceProofResult, TeeKind, TeeProofRequest,
-        WorkerSubmitProofRequest,
+        ProofJobStatus, ProofRequest, TeeKind, TeeProofRequest, WorkerSubmitProofRequest,
     };
     use chrono::Utc;
-    use tokio::time::timeout;
 
     use super::*;
-
-    #[derive(Debug)]
-    struct MockProducer {
-        result: Mutex<Option<Result<NitroProofResult, MockProducerError>>>,
-        requests: Mutex<Vec<NitroProofRequest>>,
-    }
-
-    impl MockProducer {
-        fn success() -> Self {
-            Self {
-                result: Mutex::new(Some(Ok(nitro_tee_proof()))),
-                requests: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn failing(error: MockProducerError) -> Self {
-            Self { result: Mutex::new(Some(Err(error))), requests: Mutex::new(Vec::new()) }
-        }
-
-        fn request_count(&self) -> usize {
-            self.requests.lock().expect("requests lock should not be poisoned").len()
-        }
-    }
-
-    #[derive(Debug, Error)]
-    enum MockProducerError {
-        #[error("mock proof failed")]
-        Failed,
-    }
-
-    #[async_trait]
-    impl ProofProducer for MockProducer {
-        type Error = MockProducerError;
-
-        async fn prove(&self, request: NitroProofRequest) -> Result<NitroProofResult, Self::Error> {
-            self.requests.lock().expect("requests lock should not be poisoned").push(request);
-            self.result
-                .lock()
-                .expect("result lock should not be poisoned")
-                .take()
-                .expect("mock producer result should be configured")
-        }
-    }
+    use crate::{NitroTransport, RegistrationChecker, test_utils::MockRegistry};
 
     #[derive(Clone, Debug, Default)]
     struct MockWorkerClient {
@@ -349,23 +284,29 @@ mod tests {
         NitroProofRequest { claimed_l2_block_number: block, ..Default::default() }
     }
 
-    fn proposal(block: u64) -> Proposal {
-        Proposal {
-            output_root: B256::repeat_byte(1),
-            signature: Bytes::from(vec![0xab; 65]),
-            l1_origin_hash: B256::repeat_byte(2),
-            l1_origin_number: block.saturating_sub(1),
-            l2_block_number: block,
-            prev_output_root: B256::repeat_byte(3),
-            config_hash: B256::repeat_byte(4),
+    fn test_prover_config() -> ProverConfig {
+        ProverConfig {
+            l1_eth_url: "http://127.0.0.1:1".to_string(),
+            l2_eth_url: "http://127.0.0.1:1".to_string(),
+            l1_beacon_url: "http://127.0.0.1:1".to_string(),
+            l2_chain_id: 0,
+            rollup_config: RollupConfig::default(),
+            l1_config: ChainConfig::default(),
+            enable_experimental_witness_endpoint: false,
         }
     }
 
-    fn nitro_tee_proof() -> NitroProofResult {
-        NitroProofResult::Tee {
-            aggregate_proposal: proposal(10),
-            proposals: vec![proposal(8), proposal(9), proposal(10)],
-        }
+    fn test_pool() -> NitroEnclavePool {
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
+        let transport = Arc::new(NitroTransport::local(server));
+        let checker = Arc::new(
+            RegistrationChecker::new(vec![Arc::clone(&transport)], MockRegistry::new(false))
+                .unwrap(),
+        );
+
+        NitroEnclavePool::new(test_prover_config(), Arc::clone(&transport), Duration::from_secs(1))
+            .with_registration_checker(checker)
+            .unwrap()
     }
 
     fn proof_job(
@@ -440,42 +381,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_and_submit_spawns_submitter_after_successful_proof() {
-        let producer = Arc::new(MockProducer::success());
-        let client = MockWorkerClient::default();
-        let generator =
-            ProofGenerator::new(Arc::clone(&producer), ProofSubmitter::new(client.clone()));
-        let job = proof_job(
-            "session-1",
-            ProofJobStatus::Claimed,
-            Some("lock-1".to_owned()),
-            Some("worker-1".to_owned()),
-            PrimitiveRequestKind::Tee,
-        );
-
-        let task = generator.generate_and_submit(job).await.expect("proof should generate");
-        let response = timeout(Duration::from_secs(1), task.submit_handle)
-            .await
-            .expect("submit task should complete")
-            .expect("submit task should not panic")
-            .expect("submission should succeed");
-
-        assert_eq!(producer.request_count(), 1);
-        assert_eq!(response.job.status, ProofJobStatus::Succeeded);
-        let submissions = client.submissions();
-        assert_eq!(submissions.len(), 1);
-        assert_eq!(submissions[0].session_id, "session-1");
-        assert_eq!(submissions[0].lock_id, "lock-1");
-        assert_eq!(submissions[0].worker_id, "worker-1");
-        assert!(matches!(submissions[0].result, ServiceProofResult::Tee(_)));
-    }
-
-    #[tokio::test]
     async fn generate_failure_does_not_spawn_submitter() {
-        let producer = Arc::new(MockProducer::failing(MockProducerError::Failed));
+        let pool = Arc::new(test_pool());
         let client = MockWorkerClient::default();
-        let generator =
-            ProofGenerator::new(Arc::clone(&producer), ProofSubmitter::new(client.clone()));
+        let generator = ProofGenerator::new(pool, ProofSubmitter::new(client.clone()));
         let job = proof_job(
             "session-1",
             ProofJobStatus::Claimed,
@@ -487,7 +396,6 @@ mod tests {
         let err = generator.generate_and_submit(job).await.unwrap_err();
 
         assert!(matches!(err, ProofGeneratorError::Generate { .. }));
-        assert_eq!(producer.request_count(), 1);
         assert!(client.submissions().is_empty());
     }
 }

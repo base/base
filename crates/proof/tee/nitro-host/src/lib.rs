@@ -21,7 +21,7 @@ pub use proof_submitter::{
 
 mod proof_generator;
 pub use proof_generator::{
-    ProofGenerator, ProofGeneratorError, ProofGeneratorRequest, ProofGeneratorTask, ProofProducer,
+    ProofGenerator, ProofGeneratorError, ProofGeneratorRequest, ProofGeneratorTask,
 };
 
 mod pool;
