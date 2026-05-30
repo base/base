@@ -533,7 +533,7 @@ impl HashedCursor for InMemoryAccountCursor {
     }
 
     fn reset(&mut self) {
-        // no reset needed
+        self.position = -1;
     }
 }
 
