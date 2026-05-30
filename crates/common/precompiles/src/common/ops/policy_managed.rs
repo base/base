@@ -42,11 +42,6 @@ where
         B20PolicyType::MintReceiver.id()
     }
 
-    /// Policy slot checked against redeem senders. Security variant only.
-    fn redeem_sender_policy() -> B256 {
-        B20PolicyType::RedeemSender.id()
-    }
-
     /// Ensures `policy_scope` names a supported policy slot for this variant.
     fn ensure_supported_policy_type(policy_scope: B256) -> Result<()> {
         if Self::supports_policy_scope(policy_scope) {

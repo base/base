@@ -26,6 +26,11 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     pub const fn with_storage_and_policy(accounting: S, policy: P) -> Self {
         Self { accounting, policy, in_announcement: false }
     }
+
+    /// Policy slot checked against redeem senders.
+    pub fn redeem_sender_policy() -> B256 {
+        B20PolicyType::RedeemSender.id()
+    }
 }
 
 impl<S: SecurityAccounting, P: Policy> Token for B20SecurityToken<S, P> {
