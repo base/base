@@ -256,16 +256,15 @@ where
                 );
                 Err(ProofSubmitterError::Submit(error))
             }
-            Err(error) => {
+            Err(ProofSubmitterError::UnsupportedProofResult) => {
                 warn!(
                     session_id = %request.session_id,
                     lock_id = %request.lock_id,
                     worker_id = %request.worker_id,
                     attempts = attempts.load(Ordering::Relaxed),
-                    error = %error,
-                    "proof submission failed permanently"
+                    "proof submission failed: unsupported proof result"
                 );
-                Err(error)
+                Err(ProofSubmitterError::UnsupportedProofResult)
             }
         }
     }
