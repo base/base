@@ -429,7 +429,7 @@ impl PolicyTransferScenario {
 
     fn token_params() -> IB20Factory::B20CreateParams {
         IB20Factory::B20CreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20FactoryStorage::CREATE_DEFAULT_TOKEN_VERSION,
             name: "Policy B20".to_string(),
             symbol: "PB20".to_string(),
             initialAdmin: BerylTestEnv::alice(),

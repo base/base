@@ -452,7 +452,7 @@ impl StablecoinScenario {
 
 fn create_stablecoin_with_currency_tx(env: &BerylTestEnv, currency: &str) -> BaseTxEnvelope {
     let params = IB20Factory::B20StablecoinCreateParams {
-        version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+        version: B20FactoryStorage::CREATE_STABLECOIN_TOKEN_VERSION,
         name: BerylTestEnv::B20_STABLECOIN_NAME.to_string(),
         symbol: BerylTestEnv::B20_STABLECOIN_SYMBOL.to_string(),
         initialAdmin: BerylTestEnv::alice(),

@@ -26,8 +26,14 @@ impl<'a> B20FactoryStorage<'a> {
     /// Singleton precompile address for the `B20Factory`.
     pub const ADDRESS: Address = address!("B20F000000000000000000000000000000000000");
 
-    /// Current token creation parameter version.
-    pub const CREATE_TOKEN_VERSION: u8 = 1;
+    /// Token creation parameter version for default B-20 tokens.
+    pub const CREATE_DEFAULT_TOKEN_VERSION: u8 = 1;
+
+    /// Token creation parameter version for stablecoin B-20 tokens.
+    pub const CREATE_STABLECOIN_TOKEN_VERSION: u8 = 1;
+
+    /// Token creation parameter version for security B-20 tokens.
+    pub const CREATE_SECURITY_TOKEN_VERSION: u8 = 1;
 
     /// Initial supply cap for newly created default B-20 tokens.
     pub const DEFAULT_SUPPLY_CAP: U256 = DEFAULT_SUPPLY_CAP;
@@ -41,7 +47,7 @@ impl<'a> B20FactoryStorage<'a> {
         let variant = B20Variant::from_abi(call.variant)
             .ok_or_else(|| BasePrecompileError::revert(IB20Factory::InvalidVariant {}))?;
         let params = TokenCreateParams::decode(variant, &call.params)?;
-        Self::check_version(params.version(), variant.abi())?;
+        Self::check_version(params.version(), variant)?;
         params.validate()?;
         let (token_address, _) = variant.compute_address(caller, call.salt);
 
@@ -218,11 +224,16 @@ impl<'a> B20FactoryStorage<'a> {
         Ok(())
     }
 
-    fn check_version(version: u8, variant: IB20Factory::B20Variant) -> Result<()> {
-        if version != Self::CREATE_TOKEN_VERSION {
+    fn check_version(version: u8, variant: B20Variant) -> Result<()> {
+        let expected = match variant {
+            B20Variant::B20 => Self::CREATE_DEFAULT_TOKEN_VERSION,
+            B20Variant::Stablecoin => Self::CREATE_STABLECOIN_TOKEN_VERSION,
+            B20Variant::Security => Self::CREATE_SECURITY_TOKEN_VERSION,
+        };
+        if version != expected {
             return Err(BasePrecompileError::revert(IB20Factory::UnsupportedVersion {
                 version,
-                variant,
+                variant: variant.abi(),
             }));
         }
         Ok(())
@@ -417,7 +428,7 @@ mod tests {
 
     fn token_params(name: &str, symbol: &str) -> IB20Factory::B20CreateParams {
         IB20Factory::B20CreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20FactoryStorage::CREATE_DEFAULT_TOKEN_VERSION,
             name: name.to_string(),
             symbol: symbol.to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
@@ -628,7 +639,7 @@ mod tests {
             let mut factory = B20FactoryStorage::new(ctx);
 
             let mut bad_params = token_params("Bad Version", "BAD");
-            bad_params.version = B20FactoryStorage::CREATE_TOKEN_VERSION + 1;
+            bad_params.version = B20FactoryStorage::CREATE_DEFAULT_TOKEN_VERSION + 1;
             let bad_version =
                 create_call(IB20Factory::B20Variant::DEFAULT, bad_params, B256::repeat_byte(0x01));
             assert!(factory.create_b20(caller, bad_version).is_err());
@@ -640,6 +651,28 @@ mod tests {
                 initCalls: Vec::new(),
             };
             assert!(factory.create_b20(caller, bad_variant).is_err());
+        });
+    }
+
+    #[test]
+    fn test_create_default_token_checks_version() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+
+        let mut params = token_params("Default Token", "DEF");
+        params.version = B20FactoryStorage::CREATE_DEFAULT_TOKEN_VERSION + 1;
+        let call =
+            create_call(IB20Factory::B20Variant::DEFAULT, params, B256::repeat_byte(0x55));
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_output(
+                dispatch_factory_revert(ctx, call),
+                IB20Factory::UnsupportedVersion {
+                    version: B20FactoryStorage::CREATE_DEFAULT_TOKEN_VERSION + 1,
+                    variant: IB20Factory::B20Variant::DEFAULT,
+                }
+                .abi_encode(),
+            );
         });
     }
 
@@ -682,7 +715,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
         let params = IB20Factory::B20StablecoinCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20FactoryStorage::CREATE_STABLECOIN_TOKEN_VERSION,
             name: "Stablecoin Token".to_string(),
             symbol: "USD".to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
@@ -708,7 +741,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
         let params = IB20Factory::B20StablecoinCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION + 1,
+            version: B20FactoryStorage::CREATE_STABLECOIN_TOKEN_VERSION + 1,
             name: "Stablecoin Token".to_string(),
             symbol: "USD".to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
@@ -725,7 +758,7 @@ mod tests {
             assert_output(
                 dispatch_factory_revert(ctx, call),
                 IB20Factory::UnsupportedVersion {
-                    version: B20FactoryStorage::CREATE_TOKEN_VERSION + 1,
+                    version: B20FactoryStorage::CREATE_STABLECOIN_TOKEN_VERSION + 1,
                     variant: IB20Factory::B20Variant::STABLECOIN,
                 }
                 .abi_encode(),
@@ -739,7 +772,7 @@ mod tests {
         activate_precompiles(&mut storage);
 
         let stablecoin_params = IB20Factory::B20StablecoinCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20FactoryStorage::CREATE_STABLECOIN_TOKEN_VERSION,
             name: "Stablecoin Token".to_string(),
             symbol: "USD".to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
@@ -774,7 +807,7 @@ mod tests {
         let (expected_addr, _) = B20Variant::Security.compute_address(caller, salt);
 
         let security_params = IB20Factory::B20SecurityCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20FactoryStorage::CREATE_SECURITY_TOKEN_VERSION,
             name: "Security Token".to_string(),
             symbol: "SEC".to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
@@ -1130,7 +1163,7 @@ mod tests {
         let initial_admin = Address::repeat_byte(0xAB);
 
         let params = IB20Factory::B20SecurityCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20FactoryStorage::CREATE_SECURITY_TOKEN_VERSION,
             name: "Security Token".to_string(),
             symbol: "SEC".to_string(),
             initialAdmin: initial_admin,
@@ -1158,7 +1191,7 @@ mod tests {
 
         // Zero initialAdmin grants no role.
         let params_no_admin = IB20Factory::B20SecurityCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20FactoryStorage::CREATE_SECURITY_TOKEN_VERSION,
             name: "No Admin".to_string(),
             symbol: "NA".to_string(),
             initialAdmin: Address::ZERO,
@@ -1191,7 +1224,7 @@ mod tests {
         activate_precompiles(&mut storage);
 
         let params = IB20Factory::B20SecurityCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20FactoryStorage::CREATE_SECURITY_TOKEN_VERSION,
             name: "Security Token".to_string(),
             symbol: "SEC".to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
@@ -1214,7 +1247,7 @@ mod tests {
 
         // Bad version with empty ISIN reverts with UnsupportedVersion, not MissingRequiredField.
         let params_bad_version = IB20Factory::B20SecurityCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION + 1,
+            version: B20FactoryStorage::CREATE_SECURITY_TOKEN_VERSION + 1,
             name: "Security Token".to_string(),
             symbol: "SEC".to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
@@ -1232,7 +1265,7 @@ mod tests {
             assert_output(
                 dispatch_factory_revert(ctx, call_bad_version),
                 IB20Factory::UnsupportedVersion {
-                    version: B20FactoryStorage::CREATE_TOKEN_VERSION + 1,
+                    version: B20FactoryStorage::CREATE_SECURITY_TOKEN_VERSION + 1,
                     variant: IB20Factory::B20Variant::SECURITY,
                 }
                 .abi_encode(),
