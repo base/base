@@ -114,7 +114,7 @@ impl ProofSubmitterRequest {
 }
 
 /// Submitter for delivering generated proofs to the prover-service worker API.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ProofSubmitter<Client> {
     client: Client,
     backoff: ProofSubmitterBackoffConfig,
@@ -149,6 +149,9 @@ where
     Client: ProverWorkerProvider,
 {
     /// Submits a generated proof, retrying retryable delivery failures until success.
+    ///
+    /// This method has no cancellation or retry limit. Use
+    /// [`Self::submit_until_delivered_or_cancelled`] when submission should stop during shutdown.
     pub async fn submit_until_delivered(
         &self,
         request: WorkerSubmitProofRequest,
@@ -272,17 +275,18 @@ where
 
 impl<Client> ProofSubmitter<Client>
 where
-    Client: ProverWorkerProvider + 'static,
+    Client: Clone + ProverWorkerProvider + 'static,
 {
     /// Spawns proof submission as an async Tokio task.
     pub fn spawn_until_delivered(
-        self,
+        &self,
         request: WorkerSubmitProofRequest,
         cancel: CancellationToken,
     ) -> JoinHandle<Result<WorkerSubmitProofResponse, ProofSubmitterError>> {
-        tokio::spawn(
-            async move { self.submit_until_delivered_or_cancelled(request, &cancel).await },
-        )
+        let submitter = self.clone();
+        tokio::spawn(async move {
+            submitter.submit_until_delivered_or_cancelled(request, &cancel).await
+        })
     }
 }
 
@@ -531,10 +535,19 @@ mod tests {
 
     #[tokio::test]
     async fn submitter_can_run_as_spawned_task() {
-        let client = MockWorkerClient::new(vec![retryable_error()]);
+        let client = MockWorkerClient::new(Vec::new());
         let submitter = ProofSubmitter::new(client.clone()).with_backoff_config(
             ProofSubmitterBackoffConfig::new(Duration::from_millis(1), Duration::from_millis(2)),
         );
+
+        let handle = submitter.spawn_until_delivered(submit_request(), CancellationToken::new());
+        let response = handle
+            .await
+            .expect("submission task should not panic")
+            .expect("submission should eventually succeed");
+
+        assert_eq!(response.job.status, ProofJobStatus::Succeeded);
+        assert_eq!(client.submission_count(), 1);
 
         let handle = submitter.spawn_until_delivered(submit_request(), CancellationToken::new());
         let response = handle
