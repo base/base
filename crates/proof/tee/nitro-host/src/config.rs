@@ -1,6 +1,15 @@
 //! Worker configuration for the nitro prover host.
 
 use base_prover_service_client::{ProverServiceClientConfig, ProverServiceClientError};
+use thiserror::Error;
+
+/// Errors that can occur during nitro worker configuration validation.
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum ConfigError {
+    /// Invalid prover-service client configuration.
+    #[error("invalid prover-service client config: {0}")]
+    InvalidProverService(String),
+}
 
 /// Configuration for a nitro prover worker.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -16,8 +25,13 @@ impl NitroWorkerConfig {
     }
 
     /// Validate the worker configuration.
-    pub fn validate(&self) -> Result<(), ProverServiceClientError> {
-        self.prover_service.validate()
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        self.prover_service.validate().map_err(|err| match err {
+            ProverServiceClientError::InvalidConfig(message) => {
+                ConfigError::InvalidProverService(message)
+            }
+            err => ConfigError::InvalidProverService(err.to_string()),
+        })
     }
 }
 
@@ -42,7 +56,7 @@ mod tests {
         let err = config.validate().expect_err("invalid endpoint should fail validation");
 
         assert!(
-            matches!(err, ProverServiceClientError::InvalidConfig(message) if message.contains("scheme"))
+            matches!(err, ConfigError::InvalidProverService(message) if message.contains("scheme"))
         );
     }
 }

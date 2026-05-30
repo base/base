@@ -4,7 +4,7 @@ mod error;
 pub use error::NitroHostError;
 
 mod config;
-pub use config::NitroWorkerConfig;
+pub use config::{ConfigError, NitroWorkerConfig};
 
 mod backend;
 pub use backend::NitroBackend;
