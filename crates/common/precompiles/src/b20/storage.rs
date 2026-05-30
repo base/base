@@ -71,11 +71,13 @@ pub struct B20CoreStorage {
     #[accessor]
     #[mutator]
     pub transfer_executor_policy_id: u64, // slot 9, offset 16
+    /// Reserved padding to close slot 9.
     pub transfer_reserved_0: u64, // slot 9, offset 24 (filler to close the slot)
     /// Mint receiver policy ID.
     #[accessor]
     #[mutator]
     pub mint_receiver_policy_id: u64, // slot 10, offset 0
+    /// Reserved padding to fill the remainder of slot 10.
     pub mint_reserved: FixedBytes<24>, // slot 10, offset 8 (fills remaining 24 bytes)
     /// Paused feature bitmask.
     #[accessor]

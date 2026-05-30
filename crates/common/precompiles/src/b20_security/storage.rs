@@ -34,6 +34,7 @@ pub struct B20RedeemStorage {
     #[accessor]
     #[mutator]
     pub redeem_sender_policy_id: u64, // slot 1, offset 0
+    /// Reserved padding to fill the remainder of slot 1.
     pub redeem_reserved: FixedBytes<24>, // slot 1, offset 8 (fills remaining 24 bytes)
 }
 
