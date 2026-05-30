@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, B256};
 use anyhow::{Context, Result, bail};
+use base_proof_primitives::ProofRequest as PrimitiveProofRequest;
 pub(crate) use base_prover_service::ProveBlockRequest;
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProveBlockRangeRequest, ProveBlockRangeResponse,
@@ -55,15 +56,17 @@ fn to_prove_block_range_request(request: ProveBlockRequest) -> Result<ProveBlock
             ProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest { proof, prover_address })
         }
         -1 => ProofRequestKind::Tee(TeeProofRequest {
-            l1_head: B256::ZERO,
-            agreed_l2_head_hash: B256::ZERO,
-            agreed_l2_output_root: B256::ZERO,
-            claimed_l2_output_root: B256::ZERO,
-            claimed_l2_block_number: 0,
-            proposer: Address::ZERO,
-            intermediate_block_interval: 0,
-            l1_head_number: 0,
-            image_hash: B256::ZERO,
+            proof: PrimitiveProofRequest {
+                l1_head: B256::ZERO,
+                agreed_l2_head_hash: B256::ZERO,
+                agreed_l2_output_root: B256::ZERO,
+                claimed_l2_output_root: B256::ZERO,
+                claimed_l2_block_number: 0,
+                proposer: Address::ZERO,
+                intermediate_block_interval: 0,
+                l1_head_number: 0,
+                image_hash: B256::ZERO,
+            },
             tee_kind: TeeKind::AwsNitro,
         }),
         proof_type => bail!("invalid proof_type {proof_type}"),

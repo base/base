@@ -13,6 +13,6 @@ pub use types::{
     HeartbeatResponse, ListProofsRequest, ListProofsResponse, ProofJob, ProofJobStatus,
     ProofRequest, ProofRequestKind, ProofResult, ProofStatus, ProofSummary, ProofType,
     ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkGroth16ProofRequest,
-    SnarkGroth16ProofResult, TeeKind, TeeProofRequest, TeeProofResult, TeeProposal,
-    WorkerSubmitProofRequest, WorkerSubmitProofResponse, ZkProofRequest, ZkProofResult, ZkVm,
+    SnarkGroth16ProofResult, TeeKind, TeeProofRequest, TeeProofResult, WorkerSubmitProofRequest,
+    WorkerSubmitProofResponse, ZkProofRequest, ZkProofResult, ZkVm,
 };

@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 # Primitive value types
 alloy-primitives = { workspace = true, features = ["serde"] }
+base-proof-primitives = { workspace = true, features = ["serde"] }
 
 # Serialization
 serde = { workspace = true, features = ["derive"] }

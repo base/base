@@ -5955,6 +5955,7 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "base-common-network",
+ "base-proof-primitives",
  "base-proof-rpc",
  "base-proof-succinct-client-utils",
  "base-proof-succinct-elfs",
@@ -6036,6 +6037,7 @@ name = "base-prover-service-protocol"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
+ "base-proof-primitives",
  "chrono",
  "jsonrpsee",
  "serde",
