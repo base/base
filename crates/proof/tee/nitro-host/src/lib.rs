@@ -21,7 +21,10 @@ pub use proof_submitter::{
 
 mod proof_generator;
 pub use proof_generator::{
-    ProofGenerator, ProofGeneratorError, ProofGeneratorRequest, ProofGeneratorTask,
+    DEFAULT_PROOF_GENERATOR_HEARTBEAT_INTERVAL,
+    DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS,
+    MIN_PROOF_GENERATOR_HEARTBEAT_INTERVAL, ProofGenerator, ProofGeneratorError,
+    ProofGeneratorHeartbeatConfig, ProofGeneratorRequest, ProofGeneratorTask,
 };
 
 mod pool;

@@ -12,8 +12,8 @@ use backon::{ExponentialBuilder, Retryable};
 use base_proof_primitives::ProofResult as NitroProofResult;
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{
-    ProofResult as ServiceProofResult, TeeKind, TeeProofResult, WorkerSubmitProofRequest,
-    WorkerSubmitProofResponse,
+    HeartbeatRequest, HeartbeatResponse, ProofResult as ServiceProofResult, TeeKind,
+    TeeProofResult, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
 use thiserror::Error;
 use tokio::{task::JoinHandle, time::sleep};
@@ -148,6 +148,14 @@ impl<Client> ProofSubmitter<Client>
 where
     Client: ProverWorkerProvider,
 {
+    /// Extend a claimed proof job lock through the worker API.
+    pub async fn heartbeat(
+        &self,
+        request: HeartbeatRequest,
+    ) -> Result<HeartbeatResponse, ProverServiceClientError> {
+        self.client.heartbeat(request).await
+    }
+
     /// Submits a generated proof, retrying retryable delivery failures until success.
     ///
     /// This method has no cancellation or retry limit. Use
