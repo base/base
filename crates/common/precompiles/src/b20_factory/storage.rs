@@ -647,8 +647,7 @@ mod tests {
 
         let mut params = token_params("Default Token", "DEF");
         params.version = B20Variant::B20.supported_version() + 1;
-        let call =
-            create_call(IB20Factory::B20Variant::DEFAULT, params, B256::repeat_byte(0x55));
+        let call = create_call(IB20Factory::B20Variant::DEFAULT, params, B256::repeat_byte(0x55));
 
         StorageCtx::enter(&mut storage, |ctx| {
             assert_output(
