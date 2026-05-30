@@ -188,6 +188,18 @@ where
 
                 return Err(ProofGeneratorError::Generate { session_id, source });
             }
+            Err(ProofGeneratorError::Heartbeat { session_id, source }) => {
+                warn!(
+                    session_id = %request.session_id,
+                    lock_id = %request.lock_id,
+                    worker_id = %request.worker_id,
+                    l2_block,
+                    error = %source,
+                    "aborting nitro proof generation due to heartbeat failure"
+                );
+
+                return Err(ProofGeneratorError::Heartbeat { session_id, source });
+            }
             Err(source) => {
                 return Err(source);
             }
