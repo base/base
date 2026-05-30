@@ -3,7 +3,7 @@ use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 use alloy_signer::utils::public_key_to_address;
 use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_contracts::TEEProverRegistryContractClient;
-use base_proof_host::{ProverConfig, ProverService};
+use base_proof_host::ProverConfig;
 use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
 use jsonrpsee::{
     RpcModule,
@@ -11,12 +11,11 @@ use jsonrpsee::{
     server::{Server, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
 use k256::ecdsa::VerifyingKey;
-use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use super::{
-    NitroBackend,
     health::{RegistrationHealthConfig, RegistrationHealthzRpc},
+    pool::{NitroEnclavePool, NitroEnclavePoolError},
     registration::RegistrationChecker,
     transport::NitroTransport,
 };
@@ -27,28 +26,13 @@ const MAX_USER_DATA_BYTES: usize = 512;
 /// Maximum allowed size for the `nonce` attestation field (NSM limit).
 const MAX_NONCE_BYTES: usize = 512;
 
-/// Maximum number of concurrent `prover_prove` requests per enclave.
-///
-/// Proving is CPU- and memory-intensive. The enclave does not reject concurrent requests itself;
-/// it would serialize them under load, adding queueing latency and resource pressure. We enforce
-/// the limit host-side and reject excess requests with `-32002` so callers can back off and retry
-/// instead of piling up.
-const MAX_CONCURRENT_PROOF_REQUESTS_PER_ENCLAVE: usize = 1;
-
-struct EnclaveService {
-    transport: Arc<NitroTransport>,
-    service: ProverService<NitroBackend>,
-    prove_permit: Arc<Semaphore>,
-}
-
 /// Host-side TEE prover server exposing a JSON-RPC interface.
 ///
 /// Implements two JSON-RPC namespaces:
 /// - `prover_*`: proving operations (forwarded to the enclave via transport)
 /// - `enclave_*`: signer info queries (also forwarded via transport)
 pub struct NitroProverServer {
-    enclaves: Vec<EnclaveService>,
-    proof_request_timeout: Duration,
+    pool: NitroEnclavePool,
     registration_health: Option<RegistrationHealthConfig>,
 }
 
@@ -61,6 +45,19 @@ impl fmt::Debug for NitroProverServer {
 impl NitroProverServer {
     fn rpc_err(code: i32, err: impl std::fmt::Display) -> jsonrpsee::types::ErrorObjectOwned {
         jsonrpsee::types::ErrorObjectOwned::owned(code, err.to_string(), None::<()>)
+    }
+
+    fn pool_err(err: NitroEnclavePoolError) -> jsonrpsee::types::ErrorObjectOwned {
+        match err {
+            NitroEnclavePoolError::Registration(e) => {
+                warn!(error = %e, "rejecting proof request: signer validation failed");
+                Self::rpc_err(-32001, e)
+            }
+            NitroEnclavePoolError::Busy => Self::rpc_err(-32002, err),
+            NitroEnclavePoolError::RegistrationCheckerMismatch { .. }
+            | NitroEnclavePoolError::Timeout { .. }
+            | NitroEnclavePoolError::Prover(_) => Self::rpc_err(-32000, err),
+        }
     }
 
     /// Create a server with the given prover config, enclave transport, and proof request timeout.
@@ -82,21 +79,8 @@ impl NitroProverServer {
         transports: Vec<Arc<NitroTransport>>,
         proof_request_timeout: Duration,
     ) -> Self {
-        assert!(!transports.is_empty(), "at least one transport is required");
-        let enclaves = transports
-            .into_iter()
-            .map(|transport| {
-                let backend = NitroBackend::new(Arc::clone(&transport));
-                EnclaveService {
-                    transport,
-                    service: ProverService::new(config.clone(), backend),
-                    prove_permit: Arc::new(Semaphore::new(
-                        MAX_CONCURRENT_PROOF_REQUESTS_PER_ENCLAVE,
-                    )),
-                }
-            })
-            .collect();
-        Self { enclaves, proof_request_timeout, registration_health: None }
+        let pool = NitroEnclavePool::new_multi(config, transports, proof_request_timeout);
+        Self { pool, registration_health: None }
     }
 
     /// Enables registration-gated health checks. When set, `/healthz` verifies
@@ -115,8 +99,8 @@ impl NitroProverServer {
         info!(addr = %addr, "nitro rpc server started");
 
         let mut module = RpcModule::new(());
-        let transports: Vec<Arc<NitroTransport>> =
-            self.enclaves.iter().map(|enclave| Arc::clone(&enclave.transport)).collect();
+        let transports = self.pool.transports();
+        let mut pool = self.pool;
 
         let checker = match self.registration_health {
             Some(config) => {
@@ -144,14 +128,12 @@ impl NitroProverServer {
             }
         };
 
-        module.merge(
-            NitroProverRpc {
-                enclaves: self.enclaves,
-                proof_request_timeout: self.proof_request_timeout,
-                checker,
-            }
-            .into_rpc(),
-        )?;
+        if let Some(checker) = checker {
+            pool = pool
+                .with_registration_checker(checker)
+                .map_err(|e| eyre::eyre!("registration checker init failed: {e}"))?;
+        }
+        module.merge(NitroProverRpc { pool: Arc::new(pool) }.into_rpc())?;
 
         module.merge(NitroSignerRpc { transports }.into_rpc())?;
 
@@ -161,73 +143,13 @@ impl NitroProverServer {
 
 /// Inner RPC handler for `prover_*` methods.
 struct NitroProverRpc {
-    enclaves: Vec<EnclaveService>,
-    proof_request_timeout: Duration,
-    checker: Option<Arc<RegistrationChecker>>,
-}
-
-impl NitroProverRpc {
-    /// Pick the first valid enclave with an available permit. Falling through busy enclaves
-    /// matters in dual-enclave deployments: without fall-through a single in-flight request
-    /// would make idle enclaves unreachable even though they are valid and available.
-    async fn acquire_enclave(
-        &self,
-        l2_block: u64,
-    ) -> RpcResult<(&EnclaveService, tokio::sync::OwnedSemaphorePermit)> {
-        let candidate_indices: Vec<usize> = match &self.checker {
-            Some(checker) => checker
-                .select_all_valid_enclaves()
-                .await
-                .map_err(|e| {
-                    warn!(error = %e, "rejecting proof request: signer validation failed");
-                    NitroProverServer::rpc_err(-32001, e)
-                })?
-                .into_iter()
-                .map(|v| v.index)
-                .collect(),
-            // Constructor guarantees at least one enclave.
-            None => vec![0],
-        };
-
-        candidate_indices
-            .iter()
-            .find_map(|&i| {
-                Arc::clone(&self.enclaves[i].prove_permit)
-                    .try_acquire_owned()
-                    .ok()
-                    .map(|permit| (&self.enclaves[i], permit))
-            })
-            .ok_or_else(|| {
-                warn!(l2_block, "rejecting proof request: all valid enclaves already proving");
-                NitroProverServer::rpc_err(
-                    -32002,
-                    "enclave busy: another proof request is already in flight",
-                )
-            })
-    }
+    pool: Arc<NitroEnclavePool>,
 }
 
 #[async_trait]
 impl ProverApiServer for NitroProverRpc {
     async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult> {
-        let l2_block = request.claimed_l2_block_number;
-        let timeout = self.proof_request_timeout;
-
-        let (enclave, _permit) = self.acquire_enclave(l2_block).await?;
-
-        match tokio::time::timeout(timeout, enclave.service.prove_block(request)).await {
-            Ok(result) => result.map_err(|e| NitroProverServer::rpc_err(-32000, e)),
-            Err(_elapsed) => {
-                warn!(l2_block, timeout_secs = timeout.as_secs(), "proof request timed out");
-                Err(NitroProverServer::rpc_err(
-                    -32000,
-                    format!(
-                        "proof request timed out after {}s for L2 block {l2_block}",
-                        timeout.as_secs()
-                    ),
-                ))
-            }
-        }
+        self.pool.prove(request).await.map_err(NitroProverServer::pool_err)
     }
 }
 
@@ -308,46 +230,10 @@ impl EnclaveApiServer for NitroSignerRpc {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
-    use alloy_genesis::ChainConfig;
-    use alloy_signer::utils::public_key_to_address;
-    use base_common_genesis::RollupConfig;
     use base_proof_primitives::EnclaveApiServer;
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
-    use k256::ecdsa::VerifyingKey;
 
     use super::*;
-    use crate::test_utils::AddressBasedMockRegistry;
-
-    fn test_prover_config() -> ProverConfig {
-        ProverConfig {
-            l1_eth_url: "http://127.0.0.1:1".to_string(),
-            l2_eth_url: "http://127.0.0.1:1".to_string(),
-            l1_beacon_url: "http://127.0.0.1:1".to_string(),
-            l2_chain_id: 0,
-            rollup_config: RollupConfig::default(),
-            l1_config: ChainConfig::default(),
-            enable_experimental_witness_endpoint: false,
-        }
-    }
-
-    fn test_prover_rpc() -> NitroProverRpc {
-        let server = Arc::new(EnclaveServer::new_local().unwrap());
-        let transport = Arc::new(NitroTransport::local(server));
-        let backend = NitroBackend::new(Arc::clone(&transport));
-        let service = ProverService::new(test_prover_config(), backend);
-        let enclave = EnclaveService {
-            transport,
-            service,
-            prove_permit: Arc::new(Semaphore::new(MAX_CONCURRENT_PROOF_REQUESTS_PER_ENCLAVE)),
-        };
-        NitroProverRpc {
-            enclaves: vec![enclave],
-            proof_request_timeout: Duration::from_secs(60),
-            checker: None,
-        }
-    }
 
     #[tokio::test]
     async fn signer_public_key_routed_to_transport() {
@@ -408,106 +294,10 @@ mod tests {
         assert!(err.message().contains("nonce"));
     }
 
-    #[tokio::test]
-    async fn prove_rejects_concurrent_request_when_permit_held() {
-        let rpc = test_prover_rpc();
-
-        let permit = Arc::clone(&rpc.enclaves[0].prove_permit)
-            .try_acquire_owned()
-            .expect("permit should be available before first acquire");
-
-        let err = rpc.prove(ProofRequest::default()).await.unwrap_err();
+    #[test]
+    fn pool_busy_error_maps_to_retryable_rpc_code() {
+        let err = NitroProverServer::pool_err(NitroEnclavePoolError::Busy);
         assert_eq!(err.code(), -32002);
         assert!(err.message().contains("enclave busy"));
-
-        drop(permit);
-        assert_eq!(rpc.enclaves[0].prove_permit.available_permits(), 1);
-    }
-
-    #[tokio::test]
-    async fn prove_permit_is_released_when_handle_dropped() {
-        let rpc = test_prover_rpc();
-
-        let (_enclave, permit) = rpc.acquire_enclave(0).await.unwrap();
-        assert_eq!(rpc.enclaves[0].prove_permit.available_permits(), 0);
-
-        drop(permit);
-        assert_eq!(
-            rpc.enclaves[0].prove_permit.available_permits(),
-            MAX_CONCURRENT_PROOF_REQUESTS_PER_ENCLAVE,
-            "permit must be released when the RAII handle is dropped"
-        );
-    }
-
-    #[tokio::test]
-    async fn prove_permit_is_per_enclave_in_multi_enclave_setup() {
-        let mut rpc = test_prover_rpc();
-        let second = Arc::new(EnclaveServer::new_local().unwrap());
-        let second_transport = Arc::new(NitroTransport::local(second));
-        let second_backend = NitroBackend::new(Arc::clone(&second_transport));
-        let second_service = ProverService::new(test_prover_config(), second_backend);
-        rpc.enclaves.push(EnclaveService {
-            transport: second_transport,
-            service: second_service,
-            prove_permit: Arc::new(Semaphore::new(MAX_CONCURRENT_PROOF_REQUESTS_PER_ENCLAVE)),
-        });
-
-        let _held = Arc::clone(&rpc.enclaves[0].prove_permit).try_acquire_owned().unwrap();
-
-        assert_eq!(rpc.enclaves[1].prove_permit.available_permits(), 1);
-    }
-
-    #[tokio::test]
-    async fn prove_falls_through_to_second_enclave_when_first_is_busy() {
-        async fn signer_for(transport: &NitroTransport) -> alloy_primitives::Address {
-            let pk = transport.signer_public_key().await.unwrap();
-            let vk = VerifyingKey::from_sec1_bytes(&pk).unwrap();
-            public_key_to_address(&vk)
-        }
-
-        let s1 = Arc::new(EnclaveServer::new_local().unwrap());
-        let s2 = Arc::new(EnclaveServer::new_local().unwrap());
-        let t1 = Arc::new(NitroTransport::local(s1));
-        let t2 = Arc::new(NitroTransport::local(s2));
-
-        let addr1 = signer_for(&t1).await;
-        let addr2 = signer_for(&t2).await;
-
-        let mut map = HashMap::new();
-        map.insert(addr1, true);
-        map.insert(addr2, true);
-        let registry = AddressBasedMockRegistry::new(map);
-
-        let checker = Arc::new(
-            RegistrationChecker::new(vec![Arc::clone(&t1), Arc::clone(&t2)], registry).unwrap(),
-        );
-
-        let enclave0 = EnclaveService {
-            transport: Arc::clone(&t1),
-            service: ProverService::new(test_prover_config(), NitroBackend::new(Arc::clone(&t1))),
-            prove_permit: Arc::new(Semaphore::new(MAX_CONCURRENT_PROOF_REQUESTS_PER_ENCLAVE)),
-        };
-        let enclave1 = EnclaveService {
-            transport: Arc::clone(&t2),
-            service: ProverService::new(test_prover_config(), NitroBackend::new(Arc::clone(&t2))),
-            prove_permit: Arc::new(Semaphore::new(MAX_CONCURRENT_PROOF_REQUESTS_PER_ENCLAVE)),
-        };
-        let rpc = NitroProverRpc {
-            enclaves: vec![enclave0, enclave1],
-            proof_request_timeout: Duration::from_secs(60),
-            checker: Some(checker),
-        };
-
-        // Saturate the first enclave; the second is still free.
-        let _held = Arc::clone(&rpc.enclaves[0].prove_permit).try_acquire_owned().unwrap();
-
-        // acquire_enclave must select enclave[1] since enclave[0] has no permits. We test the
-        // selection helper directly because prove_block requires a live beacon endpoint.
-        let (enclave, _permit) = rpc.acquire_enclave(0).await.expect("fall-through to enclave[1]");
-        assert!(
-            Arc::ptr_eq(&enclave.transport, &rpc.enclaves[1].transport),
-            "expected enclave[1] selected via fall-through"
-        );
-        assert_eq!(rpc.enclaves[1].prove_permit.available_permits(), 0);
     }
 }

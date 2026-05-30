@@ -19,6 +19,11 @@ pub use proof_submitter::{
     ProofSubmitterRequest,
 };
 
+mod pool;
+pub use pool::{
+    MAX_CONCURRENT_PROOF_REQUESTS_PER_ENCLAVE, NitroEnclavePool, NitroEnclavePoolError,
+};
+
 mod health;
 pub use health::{RegistrationHealthConfig, RegistrationHealthzRpc};
 

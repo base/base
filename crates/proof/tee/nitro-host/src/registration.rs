@@ -101,6 +101,11 @@ impl RegistrationChecker {
         Ok(Self { transports, registry: Box::new(registry), healthy: OnceCell::new() })
     }
 
+    /// Returns the configured enclave transports in checker index order.
+    pub fn transports(&self) -> Vec<Arc<NitroTransport>> {
+        self.transports.iter().map(Arc::clone).collect()
+    }
+
     async fn signer_address(transport: &NitroTransport) -> Result<Address, RegistrationError> {
         let public_key = transport
             .signer_public_key()
