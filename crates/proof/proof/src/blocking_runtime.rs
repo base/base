@@ -3,6 +3,11 @@
 
 use core::future::Future;
 
+#[cfg(not(feature = "std"))]
+use alloc::boxed::Box;
+#[cfg(not(feature = "std"))]
+use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
 /// This function blocks on a future in place until it is ready.
 #[cfg(feature = "std")]
 pub fn block_on<T>(f: impl Future<Output = T>) -> T {
