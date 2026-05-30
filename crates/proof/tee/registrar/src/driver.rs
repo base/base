@@ -190,15 +190,10 @@ pub struct DiscoveryResolution {
     /// when any instance resolution was inconclusive, or when too few
     /// instances responded for the quorum guard to clear.
     pub ok_to_dereg: bool,
-    /// Instance IDs whose `resolve_instance` call returned `Err` this
-    /// cycle (transient `signer_public_key` / `signer_attestation` / CRL
-    /// failure). Their signers are absent from `registerable` only
-    /// because we couldn't resolve them — not because we proved them
-    /// gone or ineligible — so `reconcile_proof_tasks` MUST skip the
-    /// cancel-pass for any in-flight task whose `instance_id` is in
-    /// this set. Otherwise a single transient hiccup during a long
-    /// (~70 min) Boundless proof would abandon the in-flight work and
-    /// force the next cycle to start over from scratch.
+    /// Instance IDs whose resolution was inconclusive this cycle, either
+    /// because `resolve_instance` returned `Err` or because it returned
+    /// `Ok` with `unresolved: true`. In-flight proof tasks for these
+    /// instances must be preserved until a later cycle reaches a verdict.
     pub unresolved_instance_ids: HashSet<String>,
 }
 
