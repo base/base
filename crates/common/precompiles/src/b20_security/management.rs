@@ -27,11 +27,6 @@ pub trait SecurityManagement: Token + Mintable + RoleManaged
 where
     Self::Accounting: SecurityAccounting,
 {
-    /// Policy slot checked against redeem senders.
-    fn redeem_sender_policy() -> B256 {
-        B20PolicyType::RedeemSender.id()
-    }
-
     /// Returns whether the token is currently executing an `announce` block.
     fn is_announcement_active(&self) -> bool;
 
@@ -163,7 +158,6 @@ where
         amounts: Vec<U256>,
     ) -> Result<()> {
         let caller = ctx.caller();
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         self.ensure_burn_from_role(caller)?;
         if accounts.len() != amounts.len() {
             return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
@@ -174,6 +168,7 @@ where
         if accounts.is_empty() {
             return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
         }
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         for (account, amount) in accounts.into_iter().zip(amounts) {
             let balance = self.accounting().balance_of(account)?;
             if balance < amount {
