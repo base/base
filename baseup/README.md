@@ -49,8 +49,8 @@ Use `--unsafe-skip-verify` only for local testing; checksum verification is stil
 
 `baseup` matches the release workflow in this repo:
 
-- Linux: `x86_64`, `arm64`
-- macOS: Apple Silicon (`arm64`)
+* Linux: `x86_64`, `arm64`
+* macOS: `x86_64` (Intel), `arm64` (Apple Silicon)
 
 ## Installation Directory
 
