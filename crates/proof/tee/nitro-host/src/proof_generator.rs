@@ -365,6 +365,11 @@ mod tests {
     use super::*;
     use crate::{NitroTransport, RegistrationChecker, test_utils::MockRegistry};
 
+    const TEST_SESSION_ID: &str = "session-1";
+    const TEST_LOCK_ID: &str = "lock-1";
+    const TEST_WORKER_ID: &str = "worker-1";
+    const TEST_HEARTBEAT_LOCK_DURATION_SECONDS: u32 = 123;
+
     #[derive(Clone, Debug, Default)]
     struct MockWorkerClient {
         state: Arc<Mutex<MockWorkerState>>,
@@ -540,13 +545,45 @@ mod tests {
         }
     }
 
+    fn claimed_tee_job() -> ProofJob {
+        proof_job(
+            TEST_SESSION_ID,
+            ProofJobStatus::Claimed,
+            Some(TEST_LOCK_ID.to_owned()),
+            Some(TEST_WORKER_ID.to_owned()),
+            PrimitiveRequestKind::Tee,
+        )
+    }
+
+    fn claimed_tee_request() -> ProofGeneratorRequest {
+        ProofGeneratorRequest::try_from(claimed_tee_job())
+            .expect("claimed tee job should build generator request")
+    }
+
+    fn generator_with_heartbeat(
+        client: MockWorkerClient,
+        heartbeat: ProofGeneratorHeartbeatConfig,
+    ) -> ProofGenerator<MockWorkerClient> {
+        ProofGenerator::new(Arc::new(test_pool()), ProofSubmitter::new(client), heartbeat)
+    }
+
+    fn generator_with_heartbeat_interval(
+        client: MockWorkerClient,
+        interval: Duration,
+    ) -> ProofGenerator<MockWorkerClient> {
+        generator_with_heartbeat(
+            client,
+            ProofGeneratorHeartbeatConfig::new(interval, TEST_HEARTBEAT_LOCK_DURATION_SECONDS),
+        )
+    }
+
     #[test]
     fn request_requires_claim_metadata() {
         let job = proof_job(
-            "session-1",
+            TEST_SESSION_ID,
             ProofJobStatus::Claimed,
             None,
-            Some("worker-1".to_owned()),
+            Some(TEST_WORKER_ID.to_owned()),
             PrimitiveRequestKind::Tee,
         );
 
@@ -558,10 +595,10 @@ mod tests {
     #[test]
     fn request_rejects_non_tee_jobs() {
         let job = proof_job(
-            "session-1",
+            TEST_SESSION_ID,
             ProofJobStatus::Claimed,
-            Some("lock-1".to_owned()),
-            Some("worker-1".to_owned()),
+            Some(TEST_LOCK_ID.to_owned()),
+            Some(TEST_WORKER_ID.to_owned()),
             PrimitiveRequestKind::Compressed,
         );
 
@@ -572,21 +609,9 @@ mod tests {
 
     #[tokio::test]
     async fn heartbeat_runs_while_generation_is_in_progress() {
-        let pool = Arc::new(test_pool());
         let client = MockWorkerClient::default();
-        let generator = ProofGenerator::new(
-            pool,
-            ProofSubmitter::new(client.clone()),
-            ProofGeneratorHeartbeatConfig::new(Duration::from_millis(5), 123),
-        );
-        let request = ProofGeneratorRequest::try_from(proof_job(
-            "session-1",
-            ProofJobStatus::Claimed,
-            Some("lock-1".to_owned()),
-            Some("worker-1".to_owned()),
-            PrimitiveRequestKind::Tee,
-        ))
-        .unwrap();
+        let generator = generator_with_heartbeat_interval(client.clone(), Duration::from_millis(5));
+        let request = claimed_tee_request();
 
         let err = generator
             .with_heartbeat_while_generating(&request, async {
@@ -601,30 +626,19 @@ mod tests {
         let heartbeats = client.heartbeats();
         assert!(heartbeats.len() >= 2);
         assert!(heartbeats.iter().all(|heartbeat| {
-            heartbeat.session_id == "session-1"
-                && heartbeat.lock_id == "lock-1"
-                && heartbeat.worker_id == "worker-1"
-                && heartbeat.lock_duration_seconds == 123
+            heartbeat.session_id == TEST_SESSION_ID
+                && heartbeat.lock_id == TEST_LOCK_ID
+                && heartbeat.worker_id == TEST_WORKER_ID
+                && heartbeat.lock_duration_seconds == TEST_HEARTBEAT_LOCK_DURATION_SECONDS
         }));
     }
 
     #[tokio::test]
     async fn short_generation_failure_does_not_heartbeat() {
-        let pool = Arc::new(test_pool());
         let client = MockWorkerClient::default();
-        let generator = ProofGenerator::new(
-            pool,
-            ProofSubmitter::new(client.clone()),
-            ProofGeneratorHeartbeatConfig::new(Duration::from_millis(50), 123),
-        );
-        let request = ProofGeneratorRequest::try_from(proof_job(
-            "session-1",
-            ProofJobStatus::Claimed,
-            Some("lock-1".to_owned()),
-            Some("worker-1".to_owned()),
-            PrimitiveRequestKind::Tee,
-        ))
-        .unwrap();
+        let generator =
+            generator_with_heartbeat_interval(client.clone(), Duration::from_millis(50));
+        let request = claimed_tee_request();
 
         let err = generator
             .with_heartbeat_while_generating(&request, async {
@@ -640,21 +654,9 @@ mod tests {
 
     #[tokio::test]
     async fn retryable_heartbeat_failure_does_not_abort_generation() {
-        let pool = Arc::new(test_pool());
         let client = MockWorkerClient::with_heartbeat_failure(MockHeartbeatFailure::Retryable);
-        let generator = ProofGenerator::new(
-            pool,
-            ProofSubmitter::new(client.clone()),
-            ProofGeneratorHeartbeatConfig::new(Duration::from_millis(5), 123),
-        );
-        let request = ProofGeneratorRequest::try_from(proof_job(
-            "session-1",
-            ProofJobStatus::Claimed,
-            Some("lock-1".to_owned()),
-            Some("worker-1".to_owned()),
-            PrimitiveRequestKind::Tee,
-        ))
-        .unwrap();
+        let generator = generator_with_heartbeat_interval(client.clone(), Duration::from_millis(5));
+        let request = claimed_tee_request();
 
         let err = generator
             .with_heartbeat_while_generating(&request, async {
@@ -670,21 +672,9 @@ mod tests {
 
     #[tokio::test]
     async fn non_retryable_heartbeat_failure_aborts_generation() {
-        let pool = Arc::new(test_pool());
         let client = MockWorkerClient::with_heartbeat_failure(MockHeartbeatFailure::NonRetryable);
-        let generator = ProofGenerator::new(
-            pool,
-            ProofSubmitter::new(client.clone()),
-            ProofGeneratorHeartbeatConfig::new(Duration::from_millis(5), 123),
-        );
-        let request = ProofGeneratorRequest::try_from(proof_job(
-            "session-1",
-            ProofJobStatus::Claimed,
-            Some("lock-1".to_owned()),
-            Some("worker-1".to_owned()),
-            PrimitiveRequestKind::Tee,
-        ))
-        .unwrap();
+        let generator = generator_with_heartbeat_interval(client.clone(), Duration::from_millis(5));
+        let request = claimed_tee_request();
 
         let err = generator
             .with_heartbeat_while_generating(&request, async {
@@ -700,22 +690,11 @@ mod tests {
 
     #[tokio::test]
     async fn generate_failure_does_not_spawn_submitter() {
-        let pool = Arc::new(test_pool());
         let client = MockWorkerClient::default();
-        let generator = ProofGenerator::new(
-            pool,
-            ProofSubmitter::new(client.clone()),
-            ProofGeneratorHeartbeatConfig::default(),
-        );
-        let job = proof_job(
-            "session-1",
-            ProofJobStatus::Claimed,
-            Some("lock-1".to_owned()),
-            Some("worker-1".to_owned()),
-            PrimitiveRequestKind::Tee,
-        );
+        let generator =
+            generator_with_heartbeat(client.clone(), ProofGeneratorHeartbeatConfig::default());
 
-        let err = generator.generate_and_submit(job).await.unwrap_err();
+        let err = generator.generate_and_submit(claimed_tee_job()).await.unwrap_err();
 
         assert!(matches!(err, ProofGeneratorError::Generate { .. }));
         assert!(client.submissions().is_empty());
