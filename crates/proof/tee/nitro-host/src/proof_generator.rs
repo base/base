@@ -276,14 +276,25 @@ where
                 source,
             }),
             source = &mut heartbeat => {
-                if let Err(error) = generate.await {
-                    warn!(
-                        session_id = %request.session_id,
-                        lock_id = %request.lock_id,
-                        worker_id = %request.worker_id,
-                        error = %error,
-                        "nitro proof generation finished with error after heartbeat failure"
-                    );
+                match generate.await {
+                    Ok(_) => {
+                        info!(
+                            session_id = %request.session_id,
+                            lock_id = %request.lock_id,
+                            worker_id = %request.worker_id,
+                            l2_block = request.proof.claimed_l2_block_number,
+                            "discarding nitro proof generated after heartbeat failure"
+                        );
+                    }
+                    Err(error) => {
+                        warn!(
+                            session_id = %request.session_id,
+                            lock_id = %request.lock_id,
+                            worker_id = %request.worker_id,
+                            error = %error,
+                            "nitro proof generation finished with error after heartbeat failure"
+                        );
+                    }
                 }
 
                 Err(ProofGeneratorError::Heartbeat {
