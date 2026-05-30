@@ -275,10 +275,22 @@ where
                 session_id: request.session_id.clone(),
                 source,
             }),
-            source = &mut heartbeat => Err(ProofGeneratorError::Heartbeat {
-                session_id: request.session_id.clone(),
-                source,
-            }),
+            source = &mut heartbeat => {
+                if let Err(error) = generate.await {
+                    warn!(
+                        session_id = %request.session_id,
+                        lock_id = %request.lock_id,
+                        worker_id = %request.worker_id,
+                        error = %error,
+                        "nitro proof generation finished with error after heartbeat failure"
+                    );
+                }
+
+                Err(ProofGeneratorError::Heartbeat {
+                    session_id: request.session_id.clone(),
+                    source,
+                })
+            },
         }
     }
 
@@ -742,7 +754,7 @@ mod tests {
 
         let err = generator
             .with_heartbeat_while_generating(&request, async {
-                sleep(Duration::from_secs(60)).await;
+                sleep(Duration::from_millis(50)).await;
                 Err::<(), NitroEnclavePoolError>(NitroEnclavePoolError::Busy)
             })
             .await
@@ -760,7 +772,7 @@ mod tests {
 
         let err = generator
             .with_heartbeat_while_generating(&request, async {
-                sleep(Duration::from_secs(60)).await;
+                sleep(Duration::from_millis(25)).await;
                 Err::<(), NitroEnclavePoolError>(NitroEnclavePoolError::Busy)
             })
             .await
@@ -768,6 +780,32 @@ mod tests {
 
         assert!(matches!(err, ProofGeneratorError::Heartbeat { .. }));
         assert_eq!(client.heartbeats().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_failure_waits_for_in_flight_generation() {
+        let client = MockWorkerClient::with_heartbeat_failure(MockHeartbeatFailure::NonRetryable);
+        let generator = generator_with_heartbeat_interval(client, Duration::from_millis(5));
+        let request = claimed_tee_request();
+        let generation_finished = Arc::new(Mutex::new(false));
+        let generation_finished_for_task = Arc::clone(&generation_finished);
+
+        let err = generator
+            .with_heartbeat_while_generating(&request, async move {
+                sleep(Duration::from_millis(25)).await;
+                *generation_finished_for_task
+                    .lock()
+                    .expect("generation completion flag should not be poisoned") = true;
+                Ok::<(), NitroEnclavePoolError>(())
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, ProofGeneratorError::Heartbeat { .. }));
+        assert!(
+            *generation_finished.lock().expect("generation completion flag should not be poisoned"),
+            "heartbeat failure must not return until in-flight generation finishes"
+        );
     }
 
     #[tokio::test]
