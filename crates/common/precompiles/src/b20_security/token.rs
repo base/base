@@ -1,12 +1,12 @@
 //! `B20SecurityToken` struct — the security B-20 token type.
 
-use alloy_primitives::{Address, B256, b256};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_sol_types::SolEvent;
-use base_precompile_storage::{BasePrecompileError, Result};
+use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
 
 use crate::{
-    B20Guards, B20PolicyType, B20SecurityStorage, B20TokenRole, Burnable, Configurable, IB20,
-    Mintable, Pausable, Permittable, Policy, RoleManaged, SecurityAccounting, Token, Transferable,
+    B20Guards, B20PolicyType, B20TokenRole, Burnable, Configurable, IB20, Mintable, Pausable,
+    Permittable, Policy, RoleManaged, SecurityAccounting, SecurityManagement, Token, Transferable,
 };
 
 /// EVM precompile for the security B-20 variant.
@@ -23,30 +23,9 @@ pub struct B20SecurityToken<S: SecurityAccounting, P: Policy> {
 }
 
 impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
-    /// Role identifier for security operators: `keccak256("SECURITY_OPERATOR_ROLE")`.
-    pub const SECURITY_OPERATOR_ROLE: B256 =
-        b256!("e63901dfe7775ace99fa3654743976eb0ab2009f5d19c4fc1ecd40aed27d59af");
-
-    /// Role identifier for delegated burns: `keccak256("BURN_FROM_ROLE")`.
-    pub const BURN_FROM_ROLE: B256 =
-        b256!("25400dba76bf0d00acf274c2b61ff56aa4ed19826e21e0186e3fecd6a6671875");
-
-    /// Policy scope identifier for redeem senders: `keccak256("REDEEM_SENDER_POLICY")`.
-    pub const REDEEM_SENDER_POLICY: B256 = B20SecurityStorage::REDEEM_SENDER_POLICY;
-
     /// Creates a `B20SecurityToken` backed by the provided storage and policy adapters.
     pub const fn with_storage_and_policy(accounting: S, policy: P) -> Self {
         Self { accounting, policy, in_announcement: false }
-    }
-
-    /// Returns whether this token is currently executing an announcement.
-    pub const fn is_announcement_active(&self) -> bool {
-        self.in_announcement
-    }
-
-    /// Marks this token as executing an announcement.
-    pub const fn begin_announcement(&mut self) {
-        self.in_announcement = true;
     }
 }
 
@@ -82,6 +61,25 @@ impl<S: SecurityAccounting, P: Policy> Pausable for B20SecurityToken<S, P> {}
 impl<S: SecurityAccounting, P: Policy> Configurable for B20SecurityToken<S, P> {}
 impl<S: SecurityAccounting, P: Policy> Permittable for B20SecurityToken<S, P> {}
 impl<S: SecurityAccounting, P: Policy> RoleManaged for B20SecurityToken<S, P> {}
+
+impl<S: SecurityAccounting, P: Policy> SecurityManagement for B20SecurityToken<S, P> {
+    fn is_announcement_active(&self) -> bool {
+        self.in_announcement
+    }
+
+    fn begin_announcement(&mut self) {
+        self.in_announcement = true;
+    }
+
+    fn dispatch_internal_call(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        privileged: bool,
+    ) -> Result<Bytes> {
+        self.inner_with_privilege(ctx, calldata, privileged)
+    }
+}
 
 impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// Policy slot checked against transfer senders.
@@ -157,7 +155,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 mod tests {
     use alloy_primitives::keccak256;
 
-    use crate::{B20SecurityToken, InMemoryPolicy, InMemoryTokenAccounting};
+    use crate::{B20SecurityToken, InMemoryPolicy, InMemoryTokenAccounting, SecurityManagement};
 
     type TestSecurityToken = B20SecurityToken<InMemoryTokenAccounting, InMemoryPolicy>;
 

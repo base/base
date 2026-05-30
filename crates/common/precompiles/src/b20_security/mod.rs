@@ -8,6 +8,9 @@ pub use accounting::SecurityAccounting;
 
 mod dispatch;
 
+mod management;
+pub use management::SecurityManagement;
+
 mod precompile;
 pub use precompile::B20SecurityPrecompile;
 
