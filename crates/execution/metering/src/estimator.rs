@@ -704,11 +704,25 @@ const fn cumulative_limit_for_flashblock(
 }
 
 const fn limit_at_block_end(total_limit: u128, total_flashblock_count: usize) -> u128 {
-    cumulative_limit_for_flashblock(
-        total_limit,
-        total_flashblock_count as u64,
-        total_flashblock_count,
-    )
+    // Return the full block budget directly instead of routing through
+    // cumulative_limit_for_flashblock(total_limit, N, N).
+    //
+    // The cumulative helper computes (total_limit / N) * N, which truncates
+    // whenever total_limit is not evenly divisible by total_flashblock_count.
+    // The discarded remainder (up to N-1 units) caused two downstream problems:
+    //
+    // 1. ensure_capacity rejected bundles whose demand fell in the gap
+    //    ((total_limit / N) * N, total_limit], even though the full block
+    //    budget was sufficient — an incorrect DemandExceedsCapacity error.
+    //
+    // 2. estimate_accumulating_resource used the under-reported limit as the
+    //    capacity for the whole-block fee estimate, producing fee suggestions
+    //    that were slightly too high.
+    //
+    // At the end of a block all of total_limit is available, so the correct
+    // return value is total_limit itself, not the truncated product.
+    let _ = total_flashblock_count; // kept for API symmetry with cumulative_limit_for_flashblock
+    total_limit
 }
 
 const fn estimate_competitiveness_key(
