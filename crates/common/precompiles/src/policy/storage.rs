@@ -202,8 +202,11 @@ impl PolicyRegistryStorage<'_> {
         self.write_builtins()?;
 
         let counter = self.next_counter()?;
-        let next = counter.checked_add(1).ok_or_else(BasePrecompileError::under_overflow)?;
-        self.next_counter.write(next)?;
+        let is_counter_overflowed = counter >= Self::COUNTER_MASK;
+        if is_counter_overflowed {
+            return Err(BasePrecompileError::under_overflow());
+        }
+        self.next_counter.write(counter + 1)?;
         let policy_id = Self::make_id(policy_type_u8, counter);
         self.policies.at_mut(&policy_id).write(PackedPolicy::new(admin).into_u256())?;
 
@@ -773,6 +776,49 @@ mod tests {
         assert_eq!((id2 >> 56) as u8, PolicyType::BLOCKLIST as u8);
         assert_eq!(id1 & PolicyRegistryStorage::COUNTER_MASK, 2);
         assert_eq!(id2 & PolicyRegistryStorage::COUNTER_MASK, 3);
+    }
+
+    #[test]
+    fn create_policy_at_counter_mask_reverts_with_under_overflow() {
+        // Seed next_counter at COUNTER_MASK. Any further create would produce a
+        // policy_id whose low 56 bits alias an existing ID, so the guard must fire.
+        let mut s = storage();
+        StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).next_counter.write(PolicyRegistryStorage::COUNTER_MASK)
+        })
+        .unwrap();
+        let err = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
+        })
+        .unwrap_err();
+        assert_eq!(err, BasePrecompileError::under_overflow());
+    }
+
+    #[test]
+    fn create_policy_at_counter_mask_minus_one_consumes_last_slot_then_reverts() {
+        // The last valid counter value is COUNTER_MASK - 1: it produces a policy_id
+        // whose low 56 bits equal COUNTER_MASK - 1 (no aliasing), and bumps next_counter
+        // to COUNTER_MASK. The very next create must then revert.
+        let mut s = storage();
+        StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx)
+                .next_counter
+                .write(PolicyRegistryStorage::COUNTER_MASK - 1)
+        })
+        .unwrap();
+        let id = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
+        })
+        .unwrap();
+        assert_eq!(
+            id & PolicyRegistryStorage::COUNTER_MASK,
+            PolicyRegistryStorage::COUNTER_MASK - 1
+        );
+        let err = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
+        })
+        .unwrap_err();
+        assert_eq!(err, BasePrecompileError::under_overflow());
     }
 
     #[test]
