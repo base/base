@@ -202,9 +202,8 @@ impl PolicyRegistryStorage<'_> {
         self.write_builtins()?;
 
         let counter = self.next_counter()?;
-        // Guard at COUNTER_MASK rather than u64::MAX: make_id masks the counter to 56 bits,
-        // so values above COUNTER_MASK would alias back to existing policy IDs.
-        if counter >= Self::COUNTER_MASK {
+        let is_counter_overflowed = counter >= Self::COUNTER_MASK;
+        if is_counter_overflowed {
             return Err(BasePrecompileError::under_overflow());
         }
         self.next_counter.write(counter + 1)?;
