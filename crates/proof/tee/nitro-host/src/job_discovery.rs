@@ -6,13 +6,13 @@ use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider}
 use base_prover_service_protocol::{GetNextProofRequest, ProofJob, ProofType, TeeKind};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
-    task::JoinHandle,
+    task::{JoinError, JoinHandle, JoinSet},
     time::{Instant, sleep_until},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::ProofGenerator;
+use crate::{ProofGenerator, ProofGeneratorTask};
 
 /// Minimum delay used by the discovery loop when no job is available or an error occurs.
 pub const MIN_JOB_DISCOVERY_POLL_INTERVAL: Duration = Duration::from_millis(1);
@@ -111,12 +111,15 @@ pub struct JobDiscovery<Client> {
 }
 
 /// Outcome of one job discovery poll.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum JobDiscoveryPollOutcome {
     /// No matching proof job was available.
     Empty,
     /// A proof job was claimed and its proof generator task was spawned.
-    Spawned,
+    Spawned {
+        /// Handle for the spawned proof generator task.
+        task: JoinHandle<()>,
+    },
 }
 
 impl<Client> JobDiscovery<Client> {
@@ -143,6 +146,8 @@ where
 {
     /// Runs the discovery loop until the cancellation token is cancelled.
     pub async fn run_until_cancelled(self, cancel: CancellationToken) {
+        let mut proof_tasks = JoinSet::new();
+
         info!(
             worker_id = %self.config.worker_id,
             poll_interval_ms = self.config.normalized_poll_interval().as_millis(),
@@ -156,12 +161,21 @@ where
             }
 
             let result = tokio::select! {
+                // Cancelling this branch can drop an in-flight claim RPC after the service has
+                // accepted it. Leases expire server-side, so the job becomes claimable again when
+                // the requested lock duration elapses.
                 () = cancel.cancelled() => break,
                 result = self.poll_once() => result,
+                result = proof_tasks.join_next(), if !proof_tasks.is_empty() => {
+                    Self::log_proof_task_join_result(result);
+                    continue;
+                }
             };
 
             match result {
-                Ok(JobDiscoveryPollOutcome::Spawned) => {}
+                Ok(JobDiscoveryPollOutcome::Spawned { task }) => {
+                    proof_tasks.spawn(async move { task.await });
+                }
                 Ok(JobDiscoveryPollOutcome::Empty) => {
                     self.sleep_until_next_poll(&cancel).await;
                 }
@@ -175,6 +189,11 @@ where
                     self.sleep_until_next_poll(&cancel).await;
                 }
             }
+        }
+
+        self.proof_generator.submission_cancel().cancel();
+        while let Some(result) = proof_tasks.join_next().await {
+            Self::log_proof_task_join_result(Some(result));
         }
 
         info!(worker_id = %self.config.worker_id, "nitro job discovery stopped");
@@ -202,27 +221,27 @@ where
             return Ok(JobDiscoveryPollOutcome::Empty);
         };
 
-        self.spawn_proof_generator(job, permit);
-        Ok(JobDiscoveryPollOutcome::Spawned)
+        let task = self.spawn_proof_generator(job, permit);
+        Ok(JobDiscoveryPollOutcome::Spawned { task })
     }
 
     /// Spawns a proof generator task for a claimed prover-service job.
-    pub fn spawn_proof_generator(&self, job: ProofJob, permit: OwnedSemaphorePermit) {
+    pub fn spawn_proof_generator(
+        &self,
+        job: ProofJob,
+        permit: OwnedSemaphorePermit,
+    ) -> JoinHandle<()> {
         let session_id = job.session_id.clone();
         let proof_generator = Arc::clone(&self.proof_generator);
 
-        let _handle = tokio::spawn(async move {
-            let _permit = permit;
+        tokio::spawn(async move {
             match proof_generator.generate_and_submit(job).await {
                 Ok(task) => {
-                    info!(
-                        session_id = %task.session_id,
-                        lock_id = %task.lock_id,
-                        worker_id = %task.worker_id,
-                        "nitro proof generator task completed"
-                    );
+                    drop(permit);
+                    Self::await_proof_submission(task).await;
                 }
                 Err(error) => {
+                    drop(permit);
                     warn!(
                         session_id = %session_id,
                         error = %error,
@@ -230,7 +249,7 @@ where
                     );
                 }
             }
-        });
+        })
     }
 
     /// Sleeps until the next discovery poll or cancellation, whichever happens first.
@@ -240,6 +259,56 @@ where
         tokio::select! {
             () = cancel.cancelled() => {}
             () = sleep_until(deadline) => {}
+        }
+    }
+
+    async fn await_proof_submission(task: ProofGeneratorTask) {
+        let ProofGeneratorTask { session_id, lock_id, worker_id, submit_handle } = task;
+
+        info!(
+            session_id = %session_id,
+            lock_id = %lock_id,
+            worker_id = %worker_id,
+            "nitro proof generation completed; awaiting proof submission"
+        );
+
+        match submit_handle.await {
+            Ok(Ok(response)) => {
+                info!(
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
+                    status = ?response.job.status,
+                    "nitro proof generator task completed"
+                );
+            }
+            Ok(Err(error)) => {
+                warn!(
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
+                    error = %error,
+                    "nitro proof submission task failed"
+                );
+            }
+            Err(error) => {
+                warn!(
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
+                    error = %error,
+                    "nitro proof submission task join failed"
+                );
+            }
+        }
+    }
+
+    fn log_proof_task_join_result(result: Option<Result<Result<(), JoinError>, JoinError>>) {
+        match result {
+            Some(Ok(Ok(()))) | None => {}
+            Some(Ok(Err(error)) | Err(error)) => {
+                warn!(error = %error, "nitro proof generator task join failed");
+            }
         }
     }
 }
@@ -405,7 +474,7 @@ mod tests {
 
         let outcome = discovery.poll_once().await.expect("poll should succeed");
 
-        assert_eq!(outcome, JobDiscoveryPollOutcome::Empty);
+        assert!(matches!(outcome, JobDiscoveryPollOutcome::Empty));
         let requests = client.get_next_requests();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].worker_id, "worker-a");
@@ -425,7 +494,13 @@ mod tests {
 
         let outcome = discovery.poll_once().await.expect("poll should succeed");
 
-        assert_eq!(outcome, JobDiscoveryPollOutcome::Spawned);
+        let JobDiscoveryPollOutcome::Spawned { task } = outcome else {
+            panic!("expected proof generator task to be spawned");
+        };
+        timeout(Duration::from_secs(1), task)
+            .await
+            .expect("proof generator task should finish")
+            .expect("proof generator task should not panic");
         assert_eq!(client.get_next_requests().len(), 1);
     }
 
@@ -456,7 +531,7 @@ mod tests {
             .expect("poll should proceed after permit is released")
             .expect("poll should succeed");
 
-        assert_eq!(outcome, JobDiscoveryPollOutcome::Empty);
+        assert!(matches!(outcome, JobDiscoveryPollOutcome::Empty));
         assert_eq!(client.get_next_requests().len(), 1);
     }
 }
