@@ -30,8 +30,8 @@ use base_proof_tee_nitro_host::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
     DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS,
     DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES, JobDiscovery, JobDiscoveryConfig,
-    NitroEnclavePool, NitroWorkerConfig, ProofGenerator, ProofGeneratorHeartbeatConfig,
-    ProofSubmitter, RegistrationChecker,
+    NitroEnclavePool, ProofGenerator, ProofGeneratorHeartbeatConfig, ProofSubmitter,
+    RegistrationChecker,
 };
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro_host::{NitroTransport, RegistrationHealthConfig};
@@ -241,14 +241,34 @@ impl Cli {
         base_cli_utils::MetricsConfig::from(metrics).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
-        RuntimeManager::new().with_thread_stack_size(8 * 1024 * 1024).run_until_ctrl_c(async move {
-            match command {
-                #[cfg(target_os = "linux")]
-                Command::Server(args) => args.run().await,
-                #[cfg(feature = "local")]
-                Command::Local(args) => args.run().await,
-            }
-        })
+        let runtime = RuntimeManager::new().with_thread_stack_size(8 * 1024 * 1024);
+
+        #[cfg(feature = "worker")]
+        {
+            runtime.run_until_shutdown(|cancel| async move {
+                #[cfg(not(any(target_os = "linux", feature = "local")))]
+                let _ = cancel;
+
+                match command {
+                    #[cfg(target_os = "linux")]
+                    Command::Server(args) => args.run(cancel).await,
+                    #[cfg(feature = "local")]
+                    Command::Local(args) => args.run(cancel).await,
+                }
+            })
+        }
+
+        #[cfg(not(feature = "worker"))]
+        {
+            runtime.run_until_ctrl_c(async move {
+                match command {
+                    #[cfg(target_os = "linux")]
+                    Command::Server(args) => args.run().await,
+                    #[cfg(feature = "local")]
+                    Command::Local(args) => args.run().await,
+                }
+            })
+        }
     }
 }
 
@@ -283,14 +303,14 @@ impl ServerArgs {
 
 #[cfg(all(target_os = "linux", feature = "worker"))]
 impl ServerArgs {
-    async fn run(self) -> eyre::Result<()> {
+    async fn run(self, cancel: CancellationToken) -> eyre::Result<()> {
         if self.vsock_cid.is_empty() {
             return Err(eyre!("at least one --vsock-cid is required"));
         }
         let transports = vsock_transports(&self.vsock_cid);
 
         info!(cids = ?self.vsock_cid, "configured vsock CIDs");
-        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Vsock).await
+        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Vsock, cancel).await
     }
 }
 
@@ -356,13 +376,13 @@ struct LocalArgs {
 
 #[cfg(all(feature = "local", feature = "worker"))]
 impl LocalArgs {
-    async fn run(self) -> eyre::Result<()> {
+    async fn run(self, cancel: CancellationToken) -> eyre::Result<()> {
         if self.local_enclave_count == 0 {
             return Err(eyre!("--local-enclave-count must be at least 1"));
         }
 
         let transports = local_transports(self.local_enclave_count)?;
-        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Local).await
+        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Local, cancel).await
     }
 }
 
@@ -387,6 +407,7 @@ async fn run_worker(
     worker: WorkerArgs,
     transports: Vec<Arc<NitroTransport>>,
     transport_mode: WorkerTransportMode,
+    cancel: CancellationToken,
 ) -> eyre::Result<()> {
     let registration_health = runtime.registration_health_config();
     let registry_configured = registration_health.is_some();
@@ -422,8 +443,7 @@ async fn run_worker(
 
     let prover_service = ProverServiceClientConfig::new(worker.prover_service_endpoint.clone())
         .with_request_timeout(Duration::from_secs(worker.prover_service_request_timeout_secs));
-    let worker_config = NitroWorkerConfig::new(prover_service.clone());
-    worker_config.validate()?;
+    prover_service.validate()?;
 
     let client = ProverWorkerClient::connect(&prover_service)?;
     let submitter = ProofSubmitter::new(client.clone());
@@ -459,7 +479,7 @@ async fn run_worker(
             );
         }
     }
-    discovery.run_until_cancelled(CancellationToken::new()).await;
+    discovery.run_until_cancelled(cancel).await;
     Ok(())
 }
 
