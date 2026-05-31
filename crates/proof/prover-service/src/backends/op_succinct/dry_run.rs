@@ -231,7 +231,11 @@ impl ProvingBackend for DryRunBackend {
         proof_request: &ProofRequest,
         repo: &ProofRequestRepo,
     ) -> anyhow::Result<ProofProcessingResult> {
-        if proof_request.proof_type == ProofType::OpSuccinctSp1ClusterSnarkGroth16 {
+        let proof_type = proof_request
+            .proof_type
+            .ok_or_else(|| anyhow::anyhow!("dry-run request has no backend proof_type"))?;
+
+        if proof_type == ProofType::OpSuccinctSp1ClusterSnarkGroth16 {
             return Ok(ProofProcessingResult {
                 status: ProofStatus::Failed,
                 error_message: Some(

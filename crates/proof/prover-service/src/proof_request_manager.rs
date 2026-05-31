@@ -36,10 +36,13 @@ impl ProofRequestManager {
     /// the same proof request.
     pub async fn sync_and_update_proof_status(&self, proof_request: &ProofRequest) -> Result<()> {
         let prev_status = proof_request.status;
-        let proof_type_label = metrics::proof_type_label(proof_request.proof_type);
+        let proof_type = proof_request
+            .proof_type
+            .ok_or_else(|| anyhow::anyhow!("Proof request has no backend proof_type"))?;
+        let proof_type_label = metrics::proof_type_label(proof_type);
 
         // 1. Get backend for this proof type
-        let backend = self.get_backend_for_proof_type(proof_request.proof_type)?;
+        let backend = self.get_backend_for_proof_type(proof_type)?;
 
         // 2. Let backend drive the proof request (sync sessions, create new sessions, determine
         //    status)

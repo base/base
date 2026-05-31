@@ -191,6 +191,10 @@ impl ProvingBackend for ClusterBackend {
         proof_request: &ProofRequest,
         repo: &ProofRequestRepo,
     ) -> anyhow::Result<ProofProcessingResult> {
+        let proof_type = proof_request
+            .proof_type
+            .ok_or_else(|| anyhow::anyhow!("OP Succinct request has no backend proof_type"))?;
+
         // 1. Get all sessions for this proof request.
         let sessions = repo.get_sessions_for_request(proof_request.id).await?;
 
@@ -214,7 +218,7 @@ impl ProvingBackend for ClusterBackend {
 
         // 4. If SNARK requested, check if STARK completed and SNARK session needs
         //    to be triggered.
-        if proof_request.proof_type == ProofType::OpSuccinctSp1ClusterSnarkGroth16 {
+        if proof_type == ProofType::OpSuccinctSp1ClusterSnarkGroth16 {
             let has_stark_completed = updated_sessions.iter().any(|s| {
                 s.session_type == SessionType::Stark && s.status == DbSessionStatus::Completed
             });
@@ -241,12 +245,12 @@ impl ProvingBackend for ClusterBackend {
                     });
                 }
                 let updated_sessions = repo.get_sessions_for_request(proof_request.id).await?;
-                return Ok(Self::determine_status(proof_request.proof_type, &updated_sessions));
+                return Ok(Self::determine_status(proof_type, &updated_sessions));
             }
         }
 
         // 5. Determine final status.
-        Ok(Self::determine_status(proof_request.proof_type, &updated_sessions))
+        Ok(Self::determine_status(proof_type, &updated_sessions))
     }
 
     async fn get_session_status(&self, session: &ProofSession) -> anyhow::Result<SessionStatus> {
