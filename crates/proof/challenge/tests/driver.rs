@@ -8,9 +8,9 @@ use std::{
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
-    BondManager, ChallengeSubmitter, DisputeIntent, Driver, DriverComponents, DriverConfig,
-    GameScanner, L1HeadProvider, OutputValidator, PendingProof, PendingProofs, ProofPhase,
-    ProofUpdate, TeeConfig,
+    BondManager, ChallengeSubmitter, ChallengerProofAdapter, DisputeIntent, Driver,
+    DriverComponents, DriverConfig, GameScanner, L1HeadProvider, OutputValidator, PendingProof,
+    PendingProofs, ProofPhase, ProofUpdate, TeeConfig,
     test_utils::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockBondTransactionSubmitter,
         MockDisputeGameFactory, MockGameState, MockL1HeadProvider, MockL2Provider,
@@ -611,17 +611,19 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
     let tx_manager = default_tx_manager();
     let mut driver = test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
 
+    let expected_session_id = ChallengerProofAdapter::snark_groth16_session_id(addr(0), 1);
+
     // Step 1: initial proveBlockRange call from initiate_zk_proof.
     driver.step().await.unwrap();
-    let expected_session_id = {
+    {
         let log = &zk.state.lock().unwrap().prove_block_range_log;
         assert_eq!(log.len(), 1, "exactly one prove_block_range call on initiation");
-        log[0]
-            .proof
-            .session_id
-            .clone()
-            .expect("proveBlockRange request should include a session_id")
-    };
+        assert_eq!(
+            log[0].proof.session_id.as_deref(),
+            Some(expected_session_id.as_str()),
+            "challenger must use game-address/invalid-index session_id on initiation",
+        );
+    }
 
     // Step 2: poll observes Failed → NeedsRetry → handle_proof_retry must
     // invoke proveBlockRange again, reusing the same deterministic session_id.

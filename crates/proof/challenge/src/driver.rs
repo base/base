@@ -653,7 +653,8 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         // checkpoint: [prior_checkpoint .. invalid_checkpoint].
         let proof_request = self.build_zk_request(&candidate, invalid_index)?;
         let request = crate::ChallengerProofAdapter::snark_groth16_prove_block_range_request(
-            expected_root,
+            game_address,
+            invalid_index,
             proof_request.clone(),
         );
 
@@ -836,7 +837,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         };
 
         let retry_count = pending.retry_count;
-        let expected_root = pending.expected_root;
+        let invalid_index = pending.invalid_index;
 
         if retry_count > Self::MAX_PROOF_RETRIES {
             warn!(
@@ -883,7 +884,8 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         ChallengerMetrics::proof_retries_total().increment(1);
 
         let prove_request = crate::ChallengerProofAdapter::snark_groth16_prove_block_range_request(
-            expected_root,
+            game_address,
+            invalid_index,
             request,
         );
 

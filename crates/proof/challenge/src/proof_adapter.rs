@@ -1,6 +1,6 @@
 //! Adapters between challenger proof types and the shared prover-service protocol.
 
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{PROOF_TYPE_ZK, ProofEncoder, ProofRequest as PrimitiveProofRequest};
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest,
@@ -29,29 +29,32 @@ impl ChallengerProofAdapter {
     }
 
     /// Derives an idempotent challenger SNARK proof session ID.
-    pub fn snark_groth16_session_id(disputed_root: B256) -> String {
-        ProofSessionId::derive(
+    pub fn snark_groth16_session_id(game_address: Address, invalid_index: u64) -> String {
+        let invalid_index = invalid_index.to_be_bytes();
+        ProofSessionId::derive_from_components(
             Self::SESSION_NAMESPACE,
             Self::snark_groth16_session_label(),
-            disputed_root,
+            &[game_address.as_slice(), &invalid_index],
         )
     }
 
     /// Derives an idempotent challenger TEE proof session ID.
-    pub fn tee_session_id(disputed_root: B256, tee_kind: TeeKind) -> String {
-        ProofSessionId::derive(
+    pub fn tee_session_id(game_address: Address, invalid_index: u64, tee_kind: TeeKind) -> String {
+        let invalid_index = invalid_index.to_be_bytes();
+        ProofSessionId::derive_from_components(
             Self::SESSION_NAMESPACE,
             Self::tee_session_label(tee_kind),
-            disputed_root,
+            &[game_address.as_slice(), &invalid_index],
         )
     }
 
     /// Builds a prover-service request for a challenger SNARK proof.
     pub fn snark_groth16_prove_block_range_request(
-        disputed_root: B256,
+        game_address: Address,
+        invalid_index: u64,
         request: SnarkGroth16ProofRequest,
     ) -> ProveBlockRangeRequest {
-        let session_id = Self::snark_groth16_session_id(disputed_root);
+        let session_id = Self::snark_groth16_session_id(game_address, invalid_index);
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: Some(session_id),
@@ -62,10 +65,12 @@ impl ChallengerProofAdapter {
 
     /// Builds a prover-service request for a challenger TEE proof.
     pub fn tee_prove_block_range_request(
+        game_address: Address,
+        invalid_index: u64,
         request: PrimitiveProofRequest,
         tee_kind: TeeKind,
     ) -> ProveBlockRangeRequest {
-        let session_id = Self::tee_session_id(request.claimed_l2_output_root, tee_kind);
+        let session_id = Self::tee_session_id(game_address, invalid_index, tee_kind);
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id: Some(session_id),
@@ -157,22 +162,39 @@ mod tests {
 
     #[test]
     fn challenger_session_ids_are_stable_and_type_separated() {
-        let root = B256::repeat_byte(0xaa);
+        let game_address = Address::repeat_byte(0xaa);
+        let invalid_index = 1;
 
         assert_eq!(
-            ChallengerProofAdapter::snark_groth16_session_id(root),
-            ChallengerProofAdapter::snark_groth16_session_id(root)
+            ChallengerProofAdapter::snark_groth16_session_id(game_address, invalid_index),
+            ChallengerProofAdapter::snark_groth16_session_id(game_address, invalid_index)
         );
         assert_ne!(
-            ChallengerProofAdapter::snark_groth16_session_id(root),
-            ChallengerProofAdapter::tee_session_id(root, TeeKind::AwsNitro)
+            ChallengerProofAdapter::snark_groth16_session_id(game_address, invalid_index),
+            ChallengerProofAdapter::tee_session_id(game_address, invalid_index, TeeKind::AwsNitro)
+        );
+    }
+
+    #[test]
+    fn challenger_session_ids_separate_game_address_and_invalid_index() {
+        let game_address = Address::repeat_byte(0xaa);
+
+        assert_ne!(
+            ChallengerProofAdapter::snark_groth16_session_id(game_address, 1),
+            ChallengerProofAdapter::snark_groth16_session_id(game_address, 2)
+        );
+        assert_ne!(
+            ChallengerProofAdapter::snark_groth16_session_id(game_address, 1),
+            ChallengerProofAdapter::snark_groth16_session_id(Address::repeat_byte(0xbb), 1)
         );
     }
 
     #[test]
     fn snark_groth16_prove_block_range_request_converts_zk_request() {
-        let root = B256::repeat_byte(0xaa);
-        let session_id = ChallengerProofAdapter::snark_groth16_session_id(root);
+        let game_address = Address::repeat_byte(0xaa);
+        let invalid_index = 1;
+        let session_id =
+            ChallengerProofAdapter::snark_groth16_session_id(game_address, invalid_index);
         let prover_address = Address::repeat_byte(0x11);
         let l1_head = B256::repeat_byte(0x22);
         let proof = ZkProofRequest {
@@ -185,8 +207,11 @@ mod tests {
         };
         let request = SnarkGroth16ProofRequest { proof, prover_address };
 
-        let wrapped =
-            ChallengerProofAdapter::snark_groth16_prove_block_range_request(root, request);
+        let wrapped = ChallengerProofAdapter::snark_groth16_prove_block_range_request(
+            game_address,
+            invalid_index,
+            request,
+        );
 
         assert_eq!(wrapped.proof.session_id.as_deref(), Some(session_id.as_str()));
         match wrapped.proof.request {
@@ -206,10 +231,15 @@ mod tests {
     #[test]
     fn tee_prove_block_range_request_wraps_primitive_request() {
         let root = B256::repeat_byte(0xaa);
+        let game_address = Address::repeat_byte(0xaa);
+        let invalid_index = 1;
         let request = test_primitive_request(root);
-        let session_id = ChallengerProofAdapter::tee_session_id(root, TeeKind::AwsNitro);
+        let session_id =
+            ChallengerProofAdapter::tee_session_id(game_address, invalid_index, TeeKind::AwsNitro);
 
         let wrapped = ChallengerProofAdapter::tee_prove_block_range_request(
+            game_address,
+            invalid_index,
             request.clone(),
             TeeKind::AwsNitro,
         );
