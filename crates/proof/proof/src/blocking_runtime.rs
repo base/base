@@ -24,9 +24,6 @@ pub fn block_on<T>(f: impl Future<Output = T>) -> T {
 /// in a thread-blocking loop.
 #[cfg(not(feature = "std"))]
 pub fn block_on<T>(f: impl Future<Output = T>) -> T {
-    use alloc::boxed::Box;
-    use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-
     let mut f = Box::pin(f);
 
     // Construct a no-op waker.
