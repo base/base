@@ -20,6 +20,7 @@ use alloy_consensus::{
 use alloy_eips::eip2718::Decodable2718;
 use alloy_evm::Evm;
 use alloy_primitives::B256;
+use base_common_chains::Upgrades;
 use base_common_consensus::{
     BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionSigned, OpTxType,
 };
@@ -58,7 +59,7 @@ use reth_node_builder::{
     rpc::{ChangesetCache, EngineValidatorBuilder, PayloadValidatorBuilder},
 };
 use reth_payload_primitives::{
-    BuiltPayload, InvalidPayloadAttributesError, NewPayloadError, PayloadTypes,
+    BuiltPayload, InvalidPayloadAttributesError, NewPayloadError, PayloadAttributes, PayloadTypes,
 };
 use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, GotExpected, NodePrimitives, RecoveredBlock, SealedBlock,
@@ -1531,6 +1532,23 @@ where
         attr: &Types::PayloadAttributes,
         header: &Header,
     ) -> Result<(), InvalidPayloadAttributesError> {
+        // Post-Subsecond, two consecutive blocks may share the seconds-denominated timestamp
+        // when separated by 200ms. The raw alloy [`Header`] does not carry the millisecond
+        // subsecond component (that lives on [`BaseHeader`] and is committed via the BaseTime
+        // predeploy state), so strict per-millisecond ordering is enforced at the consensus
+        // layer rather than here. Before Subsecond, we keep the upstream strict
+        // `child.timestamp > parent.timestamp` rule.
+        let child_seconds = PayloadAttributes::timestamp(attr);
+        let parent_seconds = header.timestamp;
+        if child_seconds < parent_seconds {
+            return Err(InvalidPayloadAttributesError::InvalidTimestamp);
+        }
+        if child_seconds == parent_seconds {
+            if !self.provider.chain_spec().is_subsecond_active_at_timestamp(child_seconds) {
+                return Err(InvalidPayloadAttributesError::InvalidTimestamp);
+            }
+            return Ok(());
+        }
         self.validator.validate_payload_attributes_against_header(attr, header)
     }
 

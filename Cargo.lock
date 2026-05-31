@@ -4300,6 +4300,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth 2.0.5",
+ "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
  "base-common-flashblocks",
