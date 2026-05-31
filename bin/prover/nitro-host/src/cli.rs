@@ -443,7 +443,6 @@ async fn run_worker(
 
     let prover_service = ProverServiceClientConfig::new(worker.prover_service_endpoint.clone())
         .with_request_timeout(Duration::from_secs(worker.prover_service_request_timeout_secs));
-    prover_service.validate()?;
 
     let client = ProverWorkerClient::connect(&prover_service)?;
     let submitter = ProofSubmitter::new(client.clone());
