@@ -129,6 +129,7 @@ pub struct DevnetBuilder {
     slot_duration: Option<u64>,
     base_azul_activation_block: Option<u64>,
     base_beryl_activation_block: Option<u64>,
+    base_subsecond_activation_block: Option<u64>,
     output_dir: Option<PathBuf>,
     stable_config: Option<StableDevnetConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
@@ -168,6 +169,12 @@ impl DevnetBuilder {
     /// Sets the L2 block number at which Base Beryl activates.
     pub const fn with_base_beryl_activation_block(mut self, block: u64) -> Self {
         self.base_beryl_activation_block = Some(block);
+        self
+    }
+
+    /// Sets the L2 block number at which Base Subsecond (200ms cadence) activates.
+    pub const fn with_base_subsecond_activation_block(mut self, block: u64) -> Self {
+        self.base_subsecond_activation_block = Some(block);
         self
     }
 
@@ -218,6 +225,10 @@ impl DevnetBuilder {
 
         if let Some(block) = self.base_beryl_activation_block {
             setup = setup.with_base_beryl_activation_block(block);
+        }
+
+        if let Some(block) = self.base_subsecond_activation_block {
+            setup = setup.with_base_subsecond_activation_block(block);
         }
 
         if let Some(ref config) = self.stable_config {
