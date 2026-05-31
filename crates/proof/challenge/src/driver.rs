@@ -684,7 +684,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     ///     submission.
     ///   - `Failed` → transitions to `NeedsRetry` so `proveBlockRange` is
     ///     re-initiated.
-    ///   - Intermediate (`Created`/`Pending`/`Running`) → returns early
+    ///   - Intermediate (`Queued`/`Running`) → returns early
     ///     without any contract calls.
     /// - **`ReadyToSubmit`** — submits the dispute tx based on the entry's
     ///   [`DisputeIntent`]:
