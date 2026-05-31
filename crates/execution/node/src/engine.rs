@@ -15,7 +15,8 @@ use base_execution_payload_builder::{
 };
 use reth_consensus::ConsensusError;
 use reth_node_api::{
-    BuiltPayload, EngineApiValidator, EngineTypes, NodePrimitives, PayloadValidator,
+    BuiltPayload, EngineApiValidator, EngineTypes, InvalidPayloadAttributesError, NodePrimitives,
+    PayloadAttributes, PayloadValidator,
     payload::{
         EngineApiMessageVersion, EngineObjectValidationError, MessageValidationKind,
         NewPayloadError, PayloadOrAttributes, PayloadTypes, VersionSpecificValidationError,
@@ -223,6 +224,35 @@ where
         payload: ExecutionData,
     ) -> Result<SealedBlock<Self::Block>, NewPayloadError> {
         self.inner.ensure_well_formed_payload(payload).map_err(NewPayloadError::other)
+    }
+
+    /// Allow post-Subsecond child headers to share the seconds-denominated timestamp of their
+    /// parent. The raw [`alloy_consensus::Header`] does not carry the millisecond component
+    /// (that lives on [`BaseHeader`] and is committed to the chain via the BaseTime predeploy
+    /// state), so the strict child-millis-after-parent ordering is enforced at the consensus
+    /// layer rather than here.
+    ///
+    /// Pre-Subsecond chains keep the upstream strict `child.timestamp > parent.timestamp`
+    /// invariant.
+    fn validate_payload_attributes_against_header(
+        &self,
+        attr: &Types::PayloadAttributes,
+        header: &<Self::Block as Block>::Header,
+    ) -> Result<(), InvalidPayloadAttributesError> {
+        let child_seconds = PayloadAttributes::timestamp(attr);
+        let parent_seconds = BlockHeader::timestamp(header);
+
+        if child_seconds < parent_seconds {
+            return Err(InvalidPayloadAttributesError::InvalidTimestamp);
+        }
+
+        if child_seconds == parent_seconds
+            && !self.chain_spec().is_subsecond_active_at_timestamp(child_seconds)
+        {
+            return Err(InvalidPayloadAttributesError::InvalidTimestamp);
+        }
+
+        Ok(())
     }
 }
 
