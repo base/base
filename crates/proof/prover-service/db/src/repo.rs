@@ -1348,7 +1348,7 @@ fn build_protocol_request_payload(
     l1_head: Option<&str>,
     intermediate_root_interval: Option<i64>,
 ) -> serde_json::Value {
-    let zk_payload = serde_json::json!({
+    let mut zk_payload = serde_json::json!({
         "start_block_number": start_block_number,
         "number_of_blocks_to_prove": number_of_blocks_to_prove,
         "sequence_window": sequence_window,
@@ -1356,6 +1356,7 @@ fn build_protocol_request_payload(
         "intermediate_root_interval": intermediate_root_interval,
         "zk_vm": ZkVmKind::Sp1.as_str(),
     });
+    strip_null_object_fields(&mut zk_payload);
 
     match proof_type {
         ProofType::OpSuccinctSp1ClusterCompressed => serde_json::json!({
@@ -1375,6 +1376,23 @@ fn build_protocol_request_payload(
                 },
             },
         }),
+    }
+}
+
+fn strip_null_object_fields(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.retain(|_, value| {
+                strip_null_object_fields(value);
+                !value.is_null()
+            });
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                strip_null_object_fields(value);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1536,8 +1554,10 @@ impl CreateOutboxRequestParams<'_> {
                 return Some("zk_vm");
             }
         }
-        if row.get::<Option<&str>, _>("tee_kind") != self.tee_kind {
-            return Some("tee_kind");
+        if let Some(tee_kind) = row.get::<Option<&str>, _>("tee_kind") {
+            if Some(tee_kind) != self.tee_kind {
+                return Some("tee_kind");
+            }
         }
         if let Some(request_payload) = row.get::<Option<serde_json::Value>, _>("request_payload") {
             if request_payload != *self.request_payload {
@@ -1628,5 +1648,31 @@ mod tests {
         assert_eq!(zk_request.sequence_window, Some(50));
         assert_eq!(zk_request.intermediate_root_interval, Some(5));
         assert_eq!(zk_request.zk_vm, ZkVm::Sp1);
+    }
+
+    #[test]
+    fn prepared_request_omits_absent_optional_protocol_payload_fields() {
+        let prepared = PreparedProofRequest::try_from(CreateProofRequest {
+            start_block_number: 100,
+            number_of_blocks_to_prove: 5,
+            sequence_window: None,
+            proof_type: ProofType::OpSuccinctSp1ClusterCompressed,
+            session_id: Some(Uuid::new_v4()),
+            request_payload: None,
+            prover_address: None,
+            l1_head: None,
+            intermediate_root_interval: None,
+        })
+        .expect("request should prepare");
+
+        let payload = prepared
+            .request_payload
+            .pointer("/request/payload")
+            .and_then(serde_json::Value::as_object)
+            .expect("compressed payload should be an object");
+
+        assert!(!payload.contains_key("sequence_window"));
+        assert!(!payload.contains_key("l1_head"));
+        assert!(!payload.contains_key("intermediate_root_interval"));
     }
 }
