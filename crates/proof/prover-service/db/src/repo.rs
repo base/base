@@ -99,7 +99,7 @@ impl ProofRequestRepo {
                 prover_address, l1_head, intermediate_root_interval
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-            ON CONFLICT DO NOTHING
+            ON CONFLICT ((COALESCE(session_id, id::text))) DO NOTHING
             "#,
         )
         .bind(prepared.id)

@@ -13,9 +13,9 @@ WHERE session_id IS NULL;
 
 ALTER TABLE proof_requests ENABLE TRIGGER update_proof_requests_updated_at;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_proof_requests_session_id
-ON proof_requests(session_id);
-
+-- Keep session_id nullable during the expand phase so legacy writers can keep
+-- inserting proof_requests. The effective id still remains unique: new protocol
+-- rows use session_id, while legacy rows fall back to id::text.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_proof_requests_effective_session_id
 ON proof_requests((COALESCE(session_id, id::text)));
 

@@ -1,7 +1,6 @@
 use alloy_primitives::B256;
 use base_prover_service_db::{
-    ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    ProofType, ZkVmKind,
+    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, ProofType,
 };
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProveBlockRangeRequest, ProveBlockRangeResponse,
@@ -64,20 +63,8 @@ impl ProverServiceServer {
             }
         }
 
-        let db_request = CreateProofRequest {
-            session_id: Some(session_id.clone()),
-            request_payload: proof_request,
-            api_proof_type: api_proof_type_for_backend(proof_type),
-            zk_vm: Some(ZkVmKind::Sp1),
-            tee_kind: None,
-            proof_type: Some(proof_type),
-            start_block_number: zk_request.start_block_number,
-            number_of_blocks_to_prove: zk_request.number_of_blocks_to_prove,
-            sequence_window: zk_request.sequence_window,
-            prover_address,
-            l1_head,
-            intermediate_root_interval: zk_request.intermediate_root_interval,
-        };
+        let db_request =
+            CreateProofRequest::new(proof_request).map_err(|e| invalid_argument(format!("{e}")))?;
 
         let outcome = self
             .repo
@@ -179,13 +166,6 @@ fn parse_zk_request(
 const fn validate_zk_vm(zk_vm: ZkVm) -> RpcResult<()> {
     match zk_vm {
         ZkVm::Sp1 => Ok(()),
-    }
-}
-
-const fn api_proof_type_for_backend(proof_type: ProofType) -> ApiProofType {
-    match proof_type {
-        ProofType::OpSuccinctSp1ClusterCompressed => ApiProofType::Compressed,
-        ProofType::OpSuccinctSp1ClusterSnarkGroth16 => ApiProofType::SnarkGroth16,
     }
 }
 

@@ -623,12 +623,12 @@ impl CreateProofRequest {
 
     /// Validate that explicit DB fields match the protocol payload and supported backends.
     pub fn validate(&self) -> Result<(), CreateProofRequestValidationError> {
-        let expected = Self::new(self.request_payload.clone())?;
+        let expected = DerivedProofRequestFields::from_protocol(&self.request_payload)?;
 
         if canonical_session_id_opt(self.session_id.as_deref())?
-            != canonical_session_id_opt(expected.session_id.as_deref())?
+            != canonical_session_id_opt(self.request_payload.session_id.as_deref())?
             && self.session_id.is_some()
-            && expected.session_id.is_some()
+            && self.request_payload.session_id.is_some()
         {
             return Err(CreateProofRequestValidationError::SessionIdMismatch);
         }
