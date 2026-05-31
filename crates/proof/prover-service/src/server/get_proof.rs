@@ -1,6 +1,6 @@
 use base_prover_service_db::{
     ProofRequest, ProofStatus as DbProofStatus, ProofType as DbProofType,
-    SessionStatus as DbSessionStatus,
+    SessionStatus as DbSessionStatus, canonical_session_id,
 };
 use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ProofResult, ProofStatus, SnarkGroth16ProofResult,
@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::{
     backends::{OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY},
-    server::{ProverServiceServer, internal, not_found, record_rpc_result},
+    server::{ProverServiceServer, internal, invalid_argument, not_found, record_rpc_result},
 };
 
 fn is_dry_run_metadata(metadata: &serde_json::Value) -> bool {
@@ -43,10 +43,6 @@ fn proof_result_for_request(proof_req: &ProofRequest) -> RpcResult<ProofResult> 
         }
         None => Err(not_found("proof result not available for request without backend proof_type")),
     }
-}
-
-fn canonical_session_id(session_id: &str) -> String {
-    Uuid::parse_str(session_id).map(|id| id.to_string()).unwrap_or_else(|_| session_id.to_owned())
 }
 
 impl ProverServiceServer {
@@ -88,7 +84,8 @@ impl ProverServiceServer {
     }
 
     async fn get_proof_inner(&self, request: GetProofRequest) -> RpcResult<GetProofResponse> {
-        let session_id = canonical_session_id(&request.session_id);
+        let session_id = canonical_session_id(&request.session_id)
+            .map_err(|e| invalid_argument(format!("{e}")))?;
         let proof_req = self
             .repo
             .get_by_session_id(&session_id)
@@ -253,13 +250,13 @@ mod tests {
     fn canonical_session_id_lowercases_uuid_values() {
         let id = Uuid::new_v4();
 
-        assert_eq!(canonical_session_id(&id.to_string().to_uppercase()), id.to_string());
+        assert_eq!(canonical_session_id(&id.to_string().to_uppercase()).unwrap(), id.to_string());
     }
 
     #[test]
     fn canonical_session_id_preserves_opaque_values() {
         let session_id = "Mock-SESSION-ABC123";
 
-        assert_eq!(canonical_session_id(session_id), session_id);
+        assert_eq!(canonical_session_id(session_id).unwrap(), session_id);
     }
 }

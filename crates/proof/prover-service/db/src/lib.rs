@@ -10,6 +10,7 @@ pub use models::{
     DerivedProofRequestFields, MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofRequest,
     ProofRequestListItem, ProofRequestPage, ProofSession, ProofStatus, ProofType, RetryOutcome,
     SessionStatus, SessionType, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
+    canonical_session_id,
 };
 
 mod repo;

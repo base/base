@@ -769,7 +769,8 @@ fn canonical_session_id_opt(
     session_id.map(canonical_session_id).transpose()
 }
 
-fn canonical_session_id(session_id: &str) -> Result<String, CreateProofRequestValidationError> {
+/// Canonicalize a public proof request session id.
+pub fn canonical_session_id(session_id: &str) -> Result<String, CreateProofRequestValidationError> {
     if session_id.is_empty() {
         return Err(CreateProofRequestValidationError::EmptySessionId);
     }

@@ -1,11 +1,7 @@
-use alloy_primitives::B256;
 use base_prover_service_db::{
-    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, ProofType,
+    ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
 };
-use base_prover_service_protocol::{
-    ProofRequest, ProofRequestKind, ProveBlockRangeRequest, ProveBlockRangeResponse,
-    ZkProofRequest, ZkVm,
-};
+use base_prover_service_protocol::{ProveBlockRangeRequest, ProveBlockRangeResponse};
 use jsonrpsee::core::RpcResult;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -37,34 +33,33 @@ impl ProverServiceServer {
         let session_id = proof_request_id.to_string();
         proof_request.session_id = Some(session_id.clone());
 
-        let (zk_request, proof_type, prover_address) = parse_zk_request(proof_request.clone())?;
-        let l1_head = zk_request.l1_head.map(format_hash);
+        let db_request =
+            CreateProofRequest::new(proof_request).map_err(|e| invalid_argument(format!("{e}")))?;
 
         info!(
-            start_block_number = zk_request.start_block_number,
-            num_blocks_to_prove = zk_request.number_of_blocks_to_prove,
-            proof_type = %proof_type,
-            prover_address = ?prover_address,
-            l1_head = ?l1_head,
+            start_block_number = db_request.start_block_number,
+            num_blocks_to_prove = db_request.number_of_blocks_to_prove,
+            proof_type = ?db_request.proof_type,
+            prover_address = ?db_request.prover_address.as_deref(),
+            l1_head = ?db_request.l1_head.as_deref(),
             "Attempting to prove base block(s)",
         );
 
-        if let Some(interval) = zk_request.intermediate_root_interval {
+        if let (Some(_), Some(interval)) =
+            (db_request.proof_type, db_request.intermediate_root_interval)
+        {
             if interval == 0 {
                 return Err(invalid_argument(
                     "Invalid intermediate_root_interval: must be greater than 0",
                 ));
             }
-            if !zk_request.number_of_blocks_to_prove.is_multiple_of(interval) {
+            if !db_request.number_of_blocks_to_prove.is_multiple_of(interval) {
                 return Err(invalid_argument(format!(
                     "Invalid number_of_blocks_to_prove ({}): must be a multiple of intermediate_root_interval ({})",
-                    zk_request.number_of_blocks_to_prove, interval,
+                    db_request.number_of_blocks_to_prove, interval,
                 )));
             }
         }
-
-        let db_request =
-            CreateProofRequest::new(proof_request).map_err(|e| invalid_argument(format!("{e}")))?;
 
         let outcome = self
             .repo
@@ -91,6 +86,9 @@ impl ProverServiceServer {
                     ))
                 }
                 CreateProofRequestError::Validation(e) => invalid_argument(format!("{e}")),
+                CreateProofRequestError::UnsupportedOutboxProofType {
+                    api_proof_type: ApiProofType::Tee,
+                } => invalid_argument("TEE proof requests are not supported by this ZK service"),
                 CreateProofRequestError::UnsupportedOutboxProofType { api_proof_type } => {
                     invalid_argument(format!(
                         "{api_proof_type} proof requests are not supported by this outbox service"
@@ -142,35 +140,6 @@ fn parse_session_id(session_id: Option<&str>) -> RpcResult<Uuid> {
         })
         .transpose()
         .map(|id| id.unwrap_or_else(Uuid::new_v4))
-}
-
-fn parse_zk_request(
-    proof_request: ProofRequest,
-) -> RpcResult<(ZkProofRequest, ProofType, Option<String>)> {
-    match proof_request.request {
-        ProofRequestKind::Compressed(request) => {
-            validate_zk_vm(request.zk_vm)?;
-            Ok((request, ProofType::OpSuccinctSp1ClusterCompressed, None))
-        }
-        ProofRequestKind::SnarkGroth16(request) => {
-            validate_zk_vm(request.proof.zk_vm)?;
-            let prover_address = Some(format!("{:#x}", request.prover_address));
-            Ok((request.proof, ProofType::OpSuccinctSp1ClusterSnarkGroth16, prover_address))
-        }
-        ProofRequestKind::Tee(_) => {
-            Err(invalid_argument("TEE proof requests are not supported by this ZK service"))
-        }
-    }
-}
-
-const fn validate_zk_vm(zk_vm: ZkVm) -> RpcResult<()> {
-    match zk_vm {
-        ZkVm::Sp1 => Ok(()),
-    }
-}
-
-fn format_hash(hash: B256) -> String {
-    format!("{hash:#x}")
 }
 
 #[cfg(test)]
