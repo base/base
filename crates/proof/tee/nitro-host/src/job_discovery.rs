@@ -173,16 +173,14 @@ where
                 break;
             }
 
+            Self::drain_finished_proof_tasks(&mut proof_tasks);
+
             let result = tokio::select! {
                 // Cancelling this branch can drop an in-flight claim RPC after the service has
                 // accepted it. Leases expire server-side, so the job becomes claimable again when
                 // the requested lock duration elapses.
                 () = cancel.cancelled() => break,
                 result = self.poll_once() => result,
-                result = proof_tasks.join_next(), if !proof_tasks.is_empty() => {
-                    Self::log_proof_task_join_result(result);
-                    continue;
-                }
             };
 
             match result {
@@ -282,6 +280,12 @@ where
             Some(Err(error)) => {
                 warn!(error = %error, "nitro proof generator task join failed");
             }
+        }
+    }
+
+    fn drain_finished_proof_tasks(proof_tasks: &mut JoinSet<()>) {
+        while let Some(result) = proof_tasks.try_join_next() {
+            Self::log_proof_task_join_result(Some(result));
         }
     }
 }
