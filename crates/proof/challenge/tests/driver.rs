@@ -958,6 +958,60 @@ async fn test_step_tee_submission_failure_falls_back_to_zk() {
 }
 
 #[tokio::test]
+async fn test_step_invalid_tee_result_falls_back_to_zk_without_timeout() {
+    let (l2, factory, root_15, _root_20) = base_game_mocks();
+
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: DEFAULT_TEE_PROVER,
+        intermediate_output_roots: vec![root_15, BOGUS_ROOT],
+        ..game_state(20)
+    });
+
+    let l1_head = Arc::new(MockL1HeadProvider::success(DEFAULT_L1_HEAD, 100));
+
+    let bad_aggregate_proposal = Proposal {
+        output_root: B256::repeat_byte(0x42),
+        signature: Bytes::from(vec![0u8; 65]),
+        l1_origin_hash: DEFAULT_L1_HEAD,
+        l1_origin_number: 1000,
+        l2_block_number: 20,
+        prev_output_root: root_15,
+        config_hash: B256::ZERO,
+    };
+    let proof_requester = Arc::new(MockZkProofProvider {
+        session_id: String::new(),
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofStatus::Succeeded,
+            result: Some(tee_api_result(bad_aggregate_proposal)),
+            ..Default::default()
+        }),
+    });
+
+    let mut driver = test_driver_with_tee(
+        factory,
+        verifier,
+        l2,
+        proof_requester,
+        default_tx_manager(),
+        Some(tee_config(l1_head)),
+    );
+
+    // Step 1: TEE proof job is initiated.
+    driver.step().await.unwrap();
+
+    // Step 2: completed TEE proof has the wrong root, so the driver should
+    // immediately transition to ZK fallback instead of waiting for timeout.
+    driver.step().await.unwrap();
+
+    let entry = driver
+        .pending_proofs
+        .get(&addr(0))
+        .expect("ZK fallback proof should be pending after invalid TEE result");
+    assert!(matches!(entry.kind, base_challenger::ProofKind::Zk { .. }));
+    assert!(matches!(entry.phase, ProofPhase::AwaitingProof { .. }));
+}
+
+#[tokio::test]
 async fn test_step_nullified_game_not_reprocessed() {
     // Both provers zeroed (post-nullification) → scanner filters it out.
     let (l2, factory, root_15, _root_20) = base_game_mocks();

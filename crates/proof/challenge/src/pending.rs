@@ -286,10 +286,22 @@ impl PendingProofs {
                         crate::ChallengerProofAdapter::snark_groth16_dispute_proof_bytes(result)?
                     }
                     ProofKind::Tee { .. } => {
-                        crate::ChallengerProofAdapter::tee_dispute_proof_bytes(
+                        match crate::ChallengerProofAdapter::tee_dispute_proof_bytes(
                             result,
                             pending.expected_root,
-                        )?
+                        ) {
+                            Ok(proof_bytes) => proof_bytes,
+                            Err(e) => {
+                                warn!(
+                                    game = %game,
+                                    error = %e,
+                                    "TEE proof validation failed, falling back to ZK"
+                                );
+                                pending.retry_count += 1;
+                                pending.phase = ProofPhase::NeedsRetry;
+                                return Ok(Some(ProofUpdate::NeedsRetry));
+                            }
+                        }
                     }
                 };
                 let update = ProofUpdate::Ready(proof_bytes.clone());
