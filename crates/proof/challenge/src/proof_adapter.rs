@@ -125,11 +125,11 @@ impl ChallengerProofAdapter {
     pub fn snark_groth16_dispute_proof_bytes(result: ProofResult) -> Result<Bytes> {
         let proof = match result {
             ProofResult::SnarkGroth16(result) => result.proof.proof,
-            ProofResult::Compressed(result) => {
-                bail!("expected SNARK_GROTH16 proof result, got {result:?}")
+            ProofResult::Compressed(_) => {
+                bail!("expected SNARK_GROTH16 proof result, got Compressed")
             }
-            ProofResult::Tee(result) => {
-                bail!("expected SNARK_GROTH16 proof result, got {result:?}")
+            ProofResult::Tee(_) => {
+                bail!("expected SNARK_GROTH16 proof result, got Tee")
             }
         };
 
@@ -143,11 +143,11 @@ impl ChallengerProofAdapter {
     pub fn tee_dispute_proof_bytes(result: ProofResult, expected_root: B256) -> Result<Bytes> {
         let aggregate_proposal = match result {
             ProofResult::Tee(result) => result.aggregate_proposal,
-            ProofResult::Compressed(result) => {
-                bail!("expected TEE proof result, got {result:?}")
+            ProofResult::Compressed(_) => {
+                bail!("expected TEE proof result, got Compressed")
             }
-            ProofResult::SnarkGroth16(result) => {
-                bail!("expected TEE proof result, got {result:?}")
+            ProofResult::SnarkGroth16(_) => {
+                bail!("expected TEE proof result, got SnarkGroth16")
             }
         };
 
