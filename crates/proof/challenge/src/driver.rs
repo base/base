@@ -513,6 +513,8 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                         };
 
                     let request = crate::ChallengerProofAdapter::tee_prove_block_range_request(
+                        game_address,
+                        invalid_index,
                         tee_request,
                         TeeKind::AwsNitro,
                     );
