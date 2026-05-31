@@ -3,8 +3,6 @@
 use std::net::SocketAddr;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use std::sync::Arc;
-#[cfg(any(target_os = "linux", feature = "local"))]
-use std::time::Duration;
 
 use alloy_primitives::Address;
 use base_cli_utils::{LogConfig, RuntimeManager};
@@ -89,10 +87,6 @@ struct ProverServerArgs {
     #[arg(long, env = "ENABLE_EXPERIMENTAL_WITNESS_ENDPOINT")]
     enable_experimental_witness_endpoint: bool,
 
-    /// Maximum seconds for a single proof request before it is aborted.
-    #[arg(long, env = "PROOF_REQUEST_TIMEOUT_SECS", default_value = "1740", value_parser = clap::value_parser!(u64).range(1..))]
-    proof_request_timeout_secs: u64,
-
     /// `TEEProverRegistry` contract address on L1. When set, `/healthz` returns
     /// healthy only if the enclave signer is registered on-chain.
     #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS")]
@@ -176,8 +170,7 @@ impl ServerArgs {
             .iter()
             .map(|&cid| Arc::new(NitroTransport::vsock(cid, VSOCK_PORT)))
             .collect();
-        let timeout = Duration::from_secs(self.server.proof_request_timeout_secs);
-        let mut server = NitroProverServer::new_multi(config, transports, timeout);
+        let mut server = NitroProverServer::new_multi(config, transports);
         if let Some(reg) = registration_health {
             server = server.with_registration_health(reg);
         }
@@ -240,8 +233,7 @@ impl LocalArgs {
                 Ok(Arc::new(NitroTransport::local(server)))
             })
             .collect::<eyre::Result<Vec<_>>>()?;
-        let timeout = Duration::from_secs(self.server.proof_request_timeout_secs);
-        let mut server = NitroProverServer::new_multi(prover_config, transports, timeout);
+        let mut server = NitroProverServer::new_multi(prover_config, transports);
         if let Some(reg) = registration_health {
             server = server.with_registration_health(reg);
         }

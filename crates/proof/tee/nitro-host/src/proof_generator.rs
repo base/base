@@ -586,7 +586,7 @@ mod tests {
                 .unwrap(),
         );
 
-        NitroEnclavePool::new(test_prover_config(), Arc::clone(&transport), Duration::from_secs(1))
+        NitroEnclavePool::new(test_prover_config(), Arc::clone(&transport))
             .with_registration_checker(checker)
             .unwrap()
     }

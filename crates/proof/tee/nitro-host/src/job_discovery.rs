@@ -383,7 +383,7 @@ mod tests {
     fn test_generator(client: MockWorkerClient) -> Arc<ProofGenerator<MockWorkerClient>> {
         let server = Arc::new(EnclaveServer::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(server));
-        let pool = NitroEnclavePool::new(test_prover_config(), transport, Duration::from_secs(1));
+        let pool = NitroEnclavePool::new(test_prover_config(), transport);
         let submitter = ProofSubmitter::new(client);
 
         Arc::new(ProofGenerator::new(
