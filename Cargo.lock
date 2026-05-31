@@ -5944,11 +5944,14 @@ dependencies = [
  "base-proof-host",
  "base-proof-tee-nitro-enclave",
  "base-proof-tee-nitro-host",
+ "base-prover-service-client",
  "clap",
  "eyre",
  "serde",
  "tokio",
+ "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

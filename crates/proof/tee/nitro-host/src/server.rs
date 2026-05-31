@@ -2,7 +2,6 @@ use std::{fmt, net::SocketAddr, sync::Arc};
 
 use alloy_signer::utils::public_key_to_address;
 use base_health::{HealthzApiServer, HealthzRpc};
-use base_proof_contracts::TEEProverRegistryContractClient;
 use base_proof_host::ProverConfig;
 use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
 use jsonrpsee::{
@@ -99,12 +98,8 @@ impl NitroProverServer {
                     registry = %config.registry_address,
                     "registration-gated health and proving guard enabled"
                 );
-                let l1_url = url::Url::parse(&config.l1_rpc_url)
-                    .map_err(|e| eyre::eyre!("invalid L1 RPC URL: {e}"))?;
-                let registry =
-                    TEEProverRegistryContractClient::new(config.registry_address, l1_url);
                 let checker = Arc::new(
-                    RegistrationChecker::new(transports.clone(), registry)
+                    RegistrationChecker::from_health_config(transports.clone(), &config)
                         .map_err(|e| eyre::eyre!("registration checker init failed: {e}"))?,
                 );
                 module.merge(

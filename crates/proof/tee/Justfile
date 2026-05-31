@@ -42,6 +42,20 @@ nitro-local *args:
         --logs.stdout.format json \
         {{ args }}
 
+# Run worker and enclave in a single process for local development
+nitro-local-worker *args:
+    RUST_LOG=info RUST_BACKTRACE=1 \
+        cargo run --package base-prover-nitro-host --bin base-prover-nitro-host --features local,worker -- local \
+        --l1-eth-url "${L1_ETH_URL:-http://localhost:8545}" \
+        --l2-eth-url "${L2_ETH_URL:-http://localhost:9545}" \
+        --l1-beacon-url "${L1_BEACON_URL:-http://localhost:5052}" \
+        --l2-chain-id "${L2_CHAIN_ID:-8453}" \
+        --prover-service-endpoint "${PROVER_SERVICE_ENDPOINT:?PROVER_SERVICE_ENDPOINT is required}" \
+        --enable-experimental-witness-endpoint \
+        --metrics.enabled \
+        --logs.stdout.format json \
+        {{ args }}
+
 # Build the nitro host Docker image (full runtime image)
 build-host *args="":
     #!/usr/bin/env bash
