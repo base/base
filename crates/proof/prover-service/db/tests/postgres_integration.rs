@@ -16,10 +16,12 @@
 use std::time::Duration;
 
 use base_prover_service_db::{
-    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, CreateProofSession,
-    MarkOutboxError, MarkOutboxProcessed, ProofRequestRepo, ProofStatus, ProofType, RetryOutcome,
-    SessionStatus, SessionType, UpdateProofSession, UpdateReceipt,
+    ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
+    CreateProofSession, MarkOutboxError, MarkOutboxProcessed, ProofRequestPage, ProofRequestRepo,
+    ProofStatus, ProofType, RetryOutcome, SessionStatus, SessionType, UpdateProofSession,
+    UpdateReceipt, ZkVmKind,
 };
+use base_prover_service_protocol::ProofRequest as ProtocolProofRequest;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
@@ -53,6 +55,7 @@ const fn compressed_request() -> CreateProofRequest {
         sequence_window: Some(50),
         proof_type: ProofType::OpSuccinctSp1ClusterCompressed,
         session_id: None,
+        request_payload: None,
         prover_address: None,
         l1_head: None,
         intermediate_root_interval: None,
@@ -66,6 +69,7 @@ fn snark_request() -> CreateProofRequest {
         sequence_window: Some(100),
         proof_type: ProofType::OpSuccinctSp1ClusterSnarkGroth16,
         session_id: None,
+        request_payload: None,
         prover_address: Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
         l1_head: Some(
             "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890".to_string(),
@@ -106,6 +110,12 @@ async fn test_create_and_get_compressed() {
     let req = repo.get(id).await.unwrap().expect("should find request");
 
     assert_eq!(req.id, id);
+    assert_eq!(req.session_id, id.to_string());
+    assert_eq!(req.api_proof_type, ApiProofType::Compressed);
+    assert_eq!(req.zk_vm, Some(ZkVmKind::Sp1));
+    assert!(req.tee_kind.is_none());
+    serde_json::from_value::<ProtocolProofRequest>(req.request_payload.clone())
+        .expect("stored protocol request payload should deserialize");
     assert_eq!(req.start_block_number, 100);
     assert_eq!(req.number_of_blocks_to_prove, 5);
     assert_eq!(req.sequence_window, Some(50));
@@ -154,6 +164,82 @@ async fn test_create_with_session_id() {
 
     let fetched = repo.get(id).await.unwrap().expect("should find request");
     assert_eq!(fetched.id, explicit_id);
+    assert_eq!(fetched.session_id, explicit_id.to_string());
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_create_with_uppercase_session_id_is_canonicalized() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    let explicit_id = Uuid::new_v4();
+    let mut req = compressed_request();
+    req.session_id = Some(Uuid::parse_str(&explicit_id.to_string().to_uppercase()).unwrap());
+
+    let id = repo.create(req).await.unwrap();
+    assert_eq!(id, explicit_id);
+
+    let fetched = repo.get(id).await.unwrap().expect("should find request by UUID session ID");
+    assert_eq!(fetched.id, explicit_id);
+    assert_eq!(fetched.session_id, explicit_id.to_string());
+
+    let (proofs, _) =
+        repo.list_with_offset(&[], ProofRequestPage::try_new(100, 0).unwrap()).await.unwrap();
+    assert!(proofs.iter().any(|proof| proof.session_id == fetched.session_id));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_replayable() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    let explicit_id = Uuid::new_v4();
+    let mut req = compressed_request();
+    req.session_id = Some(explicit_id);
+
+    sqlx::query(
+        r#"
+        INSERT INTO proof_requests (
+            id, start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
+            prover_address, l1_head, intermediate_root_interval
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        "#,
+    )
+    .bind(explicit_id)
+    .bind(i64::try_from(req.start_block_number).unwrap())
+    .bind(i64::try_from(req.number_of_blocks_to_prove).unwrap())
+    .bind(req.sequence_window.map(|value| i64::try_from(value).unwrap()))
+    .bind(req.proof_type.as_str())
+    .bind(ProofStatus::Created.as_str())
+    .bind(&req.prover_address)
+    .bind(&req.l1_head)
+    .bind(req.intermediate_root_interval.map(|value| i64::try_from(value).unwrap()))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let fetched = repo.get(explicit_id).await.unwrap().expect("should synthesize protocol fields");
+    assert_eq!(fetched.api_proof_type, ApiProofType::Compressed);
+    assert_eq!(fetched.zk_vm, Some(ZkVmKind::Sp1));
+    serde_json::from_value::<ProtocolProofRequest>(fetched.request_payload)
+        .expect("synthesized protocol request payload should deserialize");
+
+    let (proofs, _) = repo
+        .list_with_offset(&[ProofStatus::Created], ProofRequestPage::try_new(10_000, 0).unwrap())
+        .await
+        .unwrap();
+    let listed = proofs
+        .iter()
+        .find(|proof| proof.id == explicit_id)
+        .expect("list should synthesize protocol fields");
+    assert_eq!(listed.api_proof_type, ApiProofType::Compressed);
+    assert_eq!(listed.zk_vm, Some(ZkVmKind::Sp1));
+
+    let outcome = repo.create_with_outbox(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    assert_eq!(outcome, CreateProofRequestOutcome::Replayed(explicit_id));
 }
 
 #[tokio::test]

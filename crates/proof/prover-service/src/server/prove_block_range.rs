@@ -32,8 +32,14 @@ impl ProverServiceServer {
         &self,
         request: ProveBlockRangeRequest,
     ) -> RpcResult<ProveBlockRangeResponse> {
-        let session_id = parse_session_id(request.proof.session_id.as_deref())?;
-        let (zk_request, proof_type, prover_address) = parse_zk_request(request.proof)?;
+        let mut proof_request = request.proof;
+        let proof_request_id = parse_session_id(proof_request.session_id.as_deref())?;
+        let session_id = proof_request_id.to_string();
+        proof_request.session_id = Some(session_id.clone());
+
+        let request_payload = serde_json::to_value(&proof_request)
+            .map_err(|e| internal(format!("Failed to serialize proof request: {e}")))?;
+        let (zk_request, proof_type, prover_address) = parse_zk_request(proof_request)?;
         let l1_head = zk_request.l1_head.map(format_hash);
 
         info!(
@@ -64,7 +70,8 @@ impl ProverServiceServer {
             number_of_blocks_to_prove: zk_request.number_of_blocks_to_prove,
             sequence_window: zk_request.sequence_window,
             proof_type,
-            session_id,
+            session_id: Some(proof_request_id),
+            request_payload: Some(request_payload),
             prover_address,
             l1_head,
             intermediate_root_interval: zk_request.intermediate_root_interval,
@@ -97,16 +104,16 @@ impl ProverServiceServer {
                 CreateProofRequestError::Sqlx(e) => internal(format!("Database error: {e}")),
             })?;
 
-        let proof_request_id = outcome.id();
         match outcome {
             CreateProofRequestOutcome::RetryExhausted(id) => {
                 warn!(
                     proof_request_id = %id,
+                    session_id = %session_id,
                     max_proof_retries = self.max_proof_retries,
                     "rejected ProveBlockRange: proof request retry budget exhausted for this session_id",
                 );
                 return Err(resource_exhausted(format!(
-                    "session_id {id}: proof request retry budget exhausted; use get_proof for the stored terminal failure",
+                    "session_id {session_id}: proof request retry budget exhausted; use get_proof for the stored terminal failure",
                 )));
             }
             CreateProofRequestOutcome::Created(id) => {
@@ -129,16 +136,17 @@ impl ProverServiceServer {
             }
         }
 
-        Ok(ProveBlockRangeResponse { session_id: proof_request_id.to_string() })
+        Ok(ProveBlockRangeResponse { session_id })
     }
 }
 
-fn parse_session_id(session_id: Option<&str>) -> RpcResult<Option<Uuid>> {
+fn parse_session_id(session_id: Option<&str>) -> RpcResult<Uuid> {
     session_id
         .map(|id| {
             Uuid::parse_str(id).map_err(|e| invalid_argument(format!("Invalid session_id: {e}")))
         })
         .transpose()
+        .map(|id| id.unwrap_or_else(Uuid::new_v4))
 }
 
 fn parse_zk_request(
@@ -173,7 +181,9 @@ fn format_hash(hash: B256) -> String {
 #[cfg(test)]
 mod tests {
     use base_prover_service_db::ProofType;
+    use uuid::Uuid;
 
+    use super::parse_session_id;
     use crate::metrics;
 
     #[test]
@@ -190,5 +200,13 @@ mod tests {
             metrics::proof_type_label(ProofType::OpSuccinctSp1ClusterSnarkGroth16),
             "snark_groth16"
         );
+    }
+
+    #[test]
+    fn parse_session_id_accepts_uppercase_uuid() {
+        let id = Uuid::new_v4();
+        let parsed = parse_session_id(Some(&id.to_string().to_uppercase())).unwrap();
+
+        assert_eq!(parsed, id);
     }
 }

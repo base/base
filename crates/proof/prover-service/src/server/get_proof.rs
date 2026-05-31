@@ -45,7 +45,7 @@ fn proof_result_for_request(proof_req: &ProofRequest) -> RpcResult<ProofResult> 
 }
 
 impl ProverServiceServer {
-    /// Returns current proof status and proof bytes for `session_id=<uuid>`.
+    /// Returns current proof status and proof bytes for the public `session_id`.
     pub async fn get_proof_impl(&self, request: GetProofRequest) -> RpcResult<GetProofResponse> {
         let start = std::time::Instant::now();
         let result = self.get_proof_inner(request).await;
@@ -141,8 +141,9 @@ impl ProverServiceServer {
 mod tests {
     use std::collections::HashMap;
 
-    use base_prover_service_db::{ProofRequest, ProofType};
+    use base_prover_service_db::{ApiProofType, ProofRequest, ProofType, ZkVmKind};
     use chrono::Utc;
+    use uuid::Uuid;
 
     use super::*;
     use crate::OpSuccinctStoredExecutionStats;
@@ -161,8 +162,17 @@ mod tests {
         snark_receipt: Option<Vec<u8>>,
     ) -> ProofRequest {
         let now = Utc::now();
+        let id = Uuid::new_v4();
         ProofRequest {
-            id: Uuid::new_v4(),
+            id,
+            session_id: id.to_string(),
+            request_payload: serde_json::json!({}),
+            api_proof_type: match proof_type {
+                ProofType::OpSuccinctSp1ClusterCompressed => ApiProofType::Compressed,
+                ProofType::OpSuccinctSp1ClusterSnarkGroth16 => ApiProofType::SnarkGroth16,
+            },
+            zk_vm: Some(ZkVmKind::Sp1),
+            tee_kind: None,
             start_block_number: 1,
             number_of_blocks_to_prove: 1,
             sequence_window: None,
