@@ -1308,9 +1308,7 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
                 })
             })
             .transpose()?;
-        let api_proof_type = api_proof_type_for_backend(req.proof_type);
-        let zk_vm = Some(ZkVmKind::Sp1);
-        let tee_kind = None;
+        let (api_proof_type, zk_vm, tee_kind) = protocol_fields_for_backend(req.proof_type);
         let request_payload = req.request_payload.unwrap_or_else(|| {
             build_protocol_request_payload(
                 &session_id,
@@ -1344,16 +1342,22 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
 const fn api_proof_type_for_backend(proof_type: ProofType) -> ApiProofType {
-    match proof_type {
-        ProofType::OpSuccinctSp1ClusterCompressed => ApiProofType::Compressed,
-        ProofType::OpSuccinctSp1ClusterSnarkGroth16 => ApiProofType::SnarkGroth16,
-    }
+    protocol_fields_for_backend(proof_type).0
 }
 
 const fn zk_vm_for_backend(proof_type: ProofType) -> Option<ZkVmKind> {
+    protocol_fields_for_backend(proof_type).1
+}
+
+const fn protocol_fields_for_backend(
+    proof_type: ProofType,
+) -> (ApiProofType, Option<ZkVmKind>, Option<TeeKind>) {
     match proof_type {
-        ProofType::OpSuccinctSp1ClusterCompressed | ProofType::OpSuccinctSp1ClusterSnarkGroth16 => {
-            Some(ZkVmKind::Sp1)
+        ProofType::OpSuccinctSp1ClusterCompressed => {
+            (ApiProofType::Compressed, Some(ZkVmKind::Sp1), None)
+        }
+        ProofType::OpSuccinctSp1ClusterSnarkGroth16 => {
+            (ApiProofType::SnarkGroth16, Some(ZkVmKind::Sp1), None)
         }
     }
 }
