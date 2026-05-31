@@ -2,7 +2,7 @@
 
 use alloy_primitives::B256;
 use bytes::BufMut;
-use reth_codecs::{Compact, DecompressError};
+use reth_codecs::Compact;
 use reth_db::{
     DatabaseError,
     table::{Compress, Decompress},
@@ -49,9 +49,9 @@ impl Compress for HashedAccountBeforeTx {
 }
 
 impl Decompress for HashedAccountBeforeTx {
-    fn decompress(value: &[u8]) -> Result<Self, DecompressError> {
+    fn decompress(value: &[u8]) -> Result<Self, DatabaseError> {
         if value.len() < 32 {
-            return Err(DecompressError::new(DatabaseError::Decode));
+            return Err(DatabaseError::Decode);
         }
         let hashed_address = B256::from_slice(&value[..32]);
         let info = if value.len() > 32 { Some(Account::decompress(&value[32..])?) } else { None };
@@ -88,9 +88,9 @@ impl Compress for TrieChangeSetsEntry {
 }
 
 impl Decompress for TrieChangeSetsEntry {
-    fn decompress(value: &[u8]) -> Result<Self, DecompressError> {
+    fn decompress(value: &[u8]) -> Result<Self, DatabaseError> {
         if value.is_empty() {
-            return Err(DecompressError::new(DatabaseError::Decode));
+            return Err(DatabaseError::Decode);
         }
 
         let (nibbles, rest) = StoredNibblesSubKey::from_compact(value, NIBBLE_SUBKEY_LEN);
