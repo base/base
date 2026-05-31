@@ -204,7 +204,7 @@ where
 
         self.proof_generator.submission_cancel().cancel();
         while let Some(result) = proof_tasks.join_next().await {
-            Self::log_proof_task_join_result(Some(result));
+            Self::log_proof_task_join_result(result);
         }
 
         info!(worker_id = %self.config.worker_id, "nitro job discovery stopped");
@@ -274,10 +274,10 @@ where
         }
     }
 
-    fn log_proof_task_join_result(result: Option<Result<(), JoinError>>) {
+    fn log_proof_task_join_result(result: Result<(), JoinError>) {
         match result {
-            Some(Ok(())) | None => {}
-            Some(Err(error)) => {
+            Ok(()) => {}
+            Err(error) => {
                 warn!(error = %error, "nitro proof generator task join failed");
             }
         }
@@ -285,7 +285,7 @@ where
 
     fn drain_finished_proof_tasks(proof_tasks: &mut JoinSet<()>) {
         while let Some(result) = proof_tasks.try_join_next() {
-            Self::log_proof_task_join_result(Some(result));
+            Self::log_proof_task_join_result(result);
         }
     }
 }
