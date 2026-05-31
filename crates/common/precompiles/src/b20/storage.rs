@@ -156,6 +156,8 @@ mod tests {
         assert_eq!(__packing_b20_core_storage::TRANSFER_RECEIVER_POLICY_ID_LOC.offset_bytes, 8);
         assert_eq!(__packing_b20_core_storage::TRANSFER_EXECUTOR_POLICY_ID_LOC.offset_slots, 9);
         assert_eq!(__packing_b20_core_storage::TRANSFER_EXECUTOR_POLICY_ID_LOC.offset_bytes, 16);
+        assert_eq!(__packing_b20_core_storage::TRANSFER_RESERVED_0_LOC.offset_slots, 9);
+        assert_eq!(__packing_b20_core_storage::TRANSFER_RESERVED_0_LOC.offset_bytes, 24);
         assert_eq!(__packing_b20_core_storage::MINT_RECEIVER_POLICY_ID_LOC.offset_slots, 10);
         assert_eq!(__packing_b20_core_storage::MINT_RECEIVER_POLICY_ID_LOC.offset_bytes, 0);
         assert_eq!(__packing_b20_core_storage::PAUSED_LOC.offset_slots, 11);
