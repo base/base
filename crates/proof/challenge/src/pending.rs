@@ -17,6 +17,8 @@ use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{GetProofRequest, ProofStatus, SnarkGroth16ProofRequest};
 use tracing::warn;
 
+use crate::ChallengerProofAdapter;
+
 /// The kind of proof being generated.
 #[derive(Debug, Clone)]
 pub enum ProofKind {
@@ -283,10 +285,10 @@ impl PendingProofs {
                 };
                 let proof_bytes = match &pending.kind {
                     ProofKind::Zk { .. } => {
-                        crate::ChallengerProofAdapter::snark_groth16_dispute_proof_bytes(result)?
+                        ChallengerProofAdapter::snark_groth16_dispute_proof_bytes(result)?
                     }
                     ProofKind::Tee { .. } => {
-                        match crate::ChallengerProofAdapter::tee_dispute_proof_bytes(
+                        match ChallengerProofAdapter::tee_dispute_proof_bytes(
                             result,
                             pending.expected_root,
                         ) {
