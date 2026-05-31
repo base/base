@@ -21,19 +21,27 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_signer::utils::public_key_to_address;
-use base_proof_contracts::TEEProverRegistryClient;
+use base_proof_contracts::{TEEProverRegistryClient, TEEProverRegistryContractClient};
 use k256::ecdsa::VerifyingKey;
 use thiserror::Error;
 use tokio::sync::OnceCell;
 use tracing::warn;
 
-use super::transport::NitroTransport;
+use super::{health::RegistrationHealthConfig, transport::NitroTransport};
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Errors from signer-validity checks.
 #[derive(Debug, Error)]
 pub enum RegistrationError {
+    /// L1 RPC URL could not be parsed.
+    #[error("invalid L1 RPC URL {url}: {reason}")]
+    InvalidRpcUrl {
+        /// Invalid L1 RPC URL.
+        url: String,
+        /// Parse failure details.
+        reason: String,
+    },
     /// Enclave signer key could not be retrieved or parsed.
     #[error("signer setup failed: {0}")]
     Setup(String),
@@ -99,6 +107,22 @@ impl RegistrationChecker {
             return Err(RegistrationError::Setup("at least one transport is required".into()));
         }
         Ok(Self { transports, registry: Box::new(registry), healthy: OnceCell::new() })
+    }
+
+    /// Creates a checker from a deployed `TEEProverRegistry` configuration.
+    pub fn from_health_config(
+        transports: Vec<Arc<NitroTransport>>,
+        config: &RegistrationHealthConfig,
+    ) -> Result<Self, RegistrationError> {
+        let l1_url = url::Url::parse(&config.l1_rpc_url).map_err(|err| {
+            RegistrationError::InvalidRpcUrl {
+                url: config.l1_rpc_url.clone(),
+                reason: err.to_string(),
+            }
+        })?;
+        let registry = TEEProverRegistryContractClient::new(config.registry_address, l1_url);
+
+        Self::new(transports, registry)
     }
 
     /// Returns the configured enclave transports in checker index order.

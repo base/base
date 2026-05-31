@@ -1,10 +1,11 @@
 //! Implementation of the `ListProofs` JSON-RPC endpoint.
 
 use base_prover_service_db::{
-    ProofRequestPage, ProofStatus as DbProofStatus, ProofType as DbProofType,
+    ApiProofType as DbApiProofType, ProofRequestPage, ProofStatus as DbProofStatus,
+    TeeKind as DbTeeKind, ZkVmKind as DbZkVmKind,
 };
 use base_prover_service_protocol::{
-    ListProofsRequest, ListProofsResponse, ProofStatus, ProofSummary, ProofType, ZkVm,
+    ListProofsRequest, ListProofsResponse, ProofStatus, ProofSummary, ProofType, TeeKind, ZkVm,
 };
 use jsonrpsee::core::RpcResult;
 use tracing::debug;
@@ -48,15 +49,15 @@ impl ProverServiceServer {
         let summaries: Vec<ProofSummary> = proofs
             .into_iter()
             .map(|p| ProofSummary {
-                session_id: p.id.to_string(),
-                proof_type: api_proof_type(p.proof_type),
+                session_id: p.session_id,
+                proof_type: api_proof_type(p.api_proof_type),
                 status: api_status(p.status),
                 created_at: p.created_at,
                 updated_at: p.updated_at,
                 completed_at: p.completed_at,
                 error_message: p.error_message,
-                tee_kind: None,
-                zk_vm: Some(ZkVm::Sp1),
+                tee_kind: p.tee_kind.map(api_tee_kind),
+                zk_vm: p.zk_vm.map(api_zk_vm),
             })
             .collect();
 
@@ -85,10 +86,23 @@ fn parse_status_filter(status_filter: Option<ProofStatus>) -> Vec<DbProofStatus>
     }
 }
 
-const fn api_proof_type(proof_type: DbProofType) -> ProofType {
+const fn api_proof_type(proof_type: DbApiProofType) -> ProofType {
     match proof_type {
-        DbProofType::OpSuccinctSp1ClusterCompressed => ProofType::Compressed,
-        DbProofType::OpSuccinctSp1ClusterSnarkGroth16 => ProofType::SnarkGroth16,
+        DbApiProofType::Compressed => ProofType::Compressed,
+        DbApiProofType::SnarkGroth16 => ProofType::SnarkGroth16,
+        DbApiProofType::Tee => ProofType::Tee,
+    }
+}
+
+const fn api_zk_vm(zk_vm: DbZkVmKind) -> ZkVm {
+    match zk_vm {
+        DbZkVmKind::Sp1 => ZkVm::Sp1,
+    }
+}
+
+const fn api_tee_kind(tee_kind: DbTeeKind) -> TeeKind {
+    match tee_kind {
+        DbTeeKind::AwsNitro => TeeKind::AwsNitro,
     }
 }
 
@@ -116,14 +130,9 @@ mod tests {
 
     #[test]
     fn api_proof_type_maps_all_variants() {
-        assert_eq!(
-            api_proof_type(DbProofType::OpSuccinctSp1ClusterCompressed),
-            ProofType::Compressed
-        );
-        assert_eq!(
-            api_proof_type(DbProofType::OpSuccinctSp1ClusterSnarkGroth16),
-            ProofType::SnarkGroth16
-        );
+        assert_eq!(api_proof_type(DbApiProofType::Compressed), ProofType::Compressed);
+        assert_eq!(api_proof_type(DbApiProofType::SnarkGroth16), ProofType::SnarkGroth16);
+        assert_eq!(api_proof_type(DbApiProofType::Tee), ProofType::Tee);
     }
 
     #[test]

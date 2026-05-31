@@ -270,11 +270,136 @@ impl TryFrom<i32> for ProofType {
     }
 }
 
+/// Protocol-level proof type requested by API callers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "VARCHAR")]
+pub enum ApiProofType {
+    /// Compressed ZK proof.
+    #[sqlx(rename = "compressed")]
+    Compressed,
+    /// Groth16 SNARK proof.
+    #[sqlx(rename = "snark_groth16")]
+    SnarkGroth16,
+    /// Trusted execution environment proof.
+    #[sqlx(rename = "tee")]
+    Tee,
+}
+
+impl ApiProofType {
+    /// Convert enum to static string representation.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Compressed => "compressed",
+            Self::SnarkGroth16 => "snark_groth16",
+            Self::Tee => "tee",
+        }
+    }
+}
+
+impl std::fmt::Display for ApiProofType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl TryFrom<&str> for ApiProofType {
+    type Error = String;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "compressed" => Ok(Self::Compressed),
+            "snark_groth16" => Ok(Self::SnarkGroth16),
+            "tee" => Ok(Self::Tee),
+            other => Err(format!("Unknown API proof type: {other}")),
+        }
+    }
+}
+
+/// Protocol-level ZK virtual machine discriminator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "VARCHAR")]
+pub enum ZkVmKind {
+    /// Succinct SP1.
+    #[sqlx(rename = "sp1")]
+    Sp1,
+}
+
+impl ZkVmKind {
+    /// Convert enum to static string representation.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Sp1 => "sp1",
+        }
+    }
+}
+
+impl std::fmt::Display for ZkVmKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl TryFrom<&str> for ZkVmKind {
+    type Error = String;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "sp1" => Ok(Self::Sp1),
+            other => Err(format!("Unknown ZK VM: {other}")),
+        }
+    }
+}
+
+/// Protocol-level TEE implementation discriminator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "VARCHAR")]
+pub enum TeeKind {
+    /// AWS Nitro Enclaves.
+    #[sqlx(rename = "aws_nitro")]
+    AwsNitro,
+}
+
+impl TeeKind {
+    /// Convert enum to static string representation.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::AwsNitro => "aws_nitro",
+        }
+    }
+}
+
+impl std::fmt::Display for TeeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl TryFrom<&str> for TeeKind {
+    type Error = String;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "aws_nitro" => Ok(Self::AwsNitro),
+            other => Err(format!("Unknown TEE kind: {other}")),
+        }
+    }
+}
+
 /// A proof request record in the database
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofRequest {
     /// Unique identifier.
     pub id: Uuid,
+    /// Public protocol session identifier.
+    pub session_id: String,
+    /// Original protocol request payload serialized as JSON.
+    pub request_payload: serde_json::Value,
+    /// Protocol-level proof type requested by API callers.
+    pub api_proof_type: ApiProofType,
+    /// Protocol-level ZK VM discriminator for ZK proofs.
+    pub zk_vm: Option<ZkVmKind>,
+    /// Protocol-level TEE discriminator for TEE proofs.
+    pub tee_kind: Option<TeeKind>,
     /// Starting L2 block number.
     pub start_block_number: i64,
     /// Number of consecutive blocks to prove.
@@ -312,6 +437,14 @@ pub struct ProofRequest {
 pub struct ProofRequestListItem {
     /// Unique identifier.
     pub id: Uuid,
+    /// Public protocol session identifier.
+    pub session_id: String,
+    /// Protocol-level proof type requested by API callers.
+    pub api_proof_type: ApiProofType,
+    /// Protocol-level ZK VM discriminator for ZK proofs.
+    pub zk_vm: Option<ZkVmKind>,
+    /// Protocol-level TEE discriminator for TEE proofs.
+    pub tee_kind: Option<TeeKind>,
     /// Starting L2 block number.
     pub start_block_number: i64,
     /// Number of consecutive blocks to prove.
@@ -399,6 +532,8 @@ pub struct CreateProofRequest {
     pub proof_type: ProofType,
     /// Client-provided UUID for idempotent requests.
     pub session_id: Option<Uuid>,
+    /// Original protocol request payload serialized as JSON.
+    pub request_payload: Option<serde_json::Value>,
     /// Ethereum address of the on-chain prover (required for SNARK Groth16 proofs).
     pub prover_address: Option<String>,
     /// Explicit L1 head hash for witness generation.

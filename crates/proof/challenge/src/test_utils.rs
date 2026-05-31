@@ -751,7 +751,6 @@ impl ProofRequesterProvider for MockZkProofProvider {
             result,
         })
     }
-
     async fn list_proofs(
         &self,
         _request: base_prover_service_protocol::ListProofsRequest,

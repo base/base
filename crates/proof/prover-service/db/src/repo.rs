@@ -2,10 +2,11 @@ use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
-    CreateOutboxEntry, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    CreateProofSession, MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofRequest,
-    ProofRequestListItem, ProofRequestPage, ProofSession, ProofStatus, ProofType, RetryOutcome,
-    SessionStatus, SessionType, UpdateProofSession, UpdateReceipt,
+    ApiProofType, CreateOutboxEntry, CreateProofRequest, CreateProofRequestError,
+    CreateProofRequestOutcome, CreateProofSession, MarkOutboxError, MarkOutboxProcessed,
+    OutboxEntry, ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession, ProofStatus,
+    ProofType, RetryOutcome, SessionStatus, SessionType, TeeKind, UpdateProofSession,
+    UpdateReceipt, ZkVmKind,
 };
 
 /// Repository for proof request database operations
@@ -22,58 +23,40 @@ impl ProofRequestRepo {
 
     /// Create a new proof request and return its UUID
     pub async fn create(&self, req: CreateProofRequest) -> Result<Uuid> {
-        let id = req.session_id.unwrap_or_else(Uuid::new_v4);
+        let prepared = PreparedProofRequest::try_from(req)?;
 
         sqlx::query(
             r#"
             INSERT INTO proof_requests (
-                id, start_block_number, number_of_blocks_to_prove,
-                sequence_window, proof_type, status, prover_address, l1_head,
-                intermediate_root_interval
+                id, request_payload, api_proof_type, zk_vm, tee_kind, start_block_number,
+                number_of_blocks_to_prove, sequence_window, proof_type, status,
+                prover_address, l1_head, intermediate_root_interval
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             "#,
         )
-        .bind(id)
-        .bind(
-            i64::try_from(req.start_block_number)
-                .map_err(|_| sqlx::Error::Protocol("block number exceeds i64 range".into()))?,
-        )
-        .bind(
-            i64::try_from(req.number_of_blocks_to_prove)
-                .map_err(|_| sqlx::Error::Protocol("blocks to prove exceeds i64 range".into()))?,
-        )
-        .bind(
-            req.sequence_window
-                .map(|w| {
-                    i64::try_from(w).map_err(|_| {
-                        sqlx::Error::Protocol("sequence window exceeds i64 range".into())
-                    })
-                })
-                .transpose()?,
-        )
-        .bind(req.proof_type.as_str())
+        .bind(prepared.id)
+        .bind(&prepared.request_payload)
+        .bind(prepared.api_proof_type.as_str())
+        .bind(prepared.zk_vm.map(|zk_vm| zk_vm.as_str()))
+        .bind(prepared.tee_kind.map(|tee_kind| tee_kind.as_str()))
+        .bind(prepared.start_block_number)
+        .bind(prepared.number_of_blocks_to_prove)
+        .bind(prepared.sequence_window)
+        .bind(prepared.proof_type.as_str())
         .bind(ProofStatus::Created.as_str())
-        .bind(&req.prover_address)
-        .bind(&req.l1_head)
-        .bind(
-            req.intermediate_root_interval
-                .map(|v| {
-                    i64::try_from(v).map_err(|_| {
-                        sqlx::Error::Protocol("intermediate root interval exceeds i64 range".into())
-                    })
-                })
-                .transpose()?,
-        )
+        .bind(&prepared.prover_address)
+        .bind(&prepared.l1_head)
+        .bind(prepared.intermediate_root_interval)
         .execute(&self.pool)
         .await?;
 
-        Ok(id)
+        Ok(prepared.id)
     }
 
     /// Atomically create a proof request and outbox entry in a transaction.
     ///
-    /// On `session_id` conflict, lock the row `FOR UPDATE` and branch on state:
+    /// On `id` conflict, lock the row `FOR UPDATE` and branch on state:
     /// parameter mismatch → [`CreateProofRequestError::IdCollision`];
     /// `CREATED` / `PENDING` / `RUNNING` / `SUCCEEDED` → [`CreateProofRequestOutcome::Replayed`];
     /// `FAILED` with room under `max_retries` → reset, bump `retry_count`, new outbox row
@@ -85,36 +68,16 @@ impl ProofRequestRepo {
         req: CreateProofRequest,
         max_retries: i32,
     ) -> std::result::Result<CreateProofRequestOutcome, CreateProofRequestError> {
-        let id = req.session_id.unwrap_or_else(Uuid::new_v4);
-
-        let start_block_number = i64::try_from(req.start_block_number)
-            .map_err(|_| sqlx::Error::Protocol("block number exceeds i64 range".into()))?;
-        let number_of_blocks_to_prove = i64::try_from(req.number_of_blocks_to_prove)
-            .map_err(|_| sqlx::Error::Protocol("blocks to prove exceeds i64 range".into()))?;
-        let sequence_window = req
-            .sequence_window
-            .map(|w| {
-                i64::try_from(w)
-                    .map_err(|_| sqlx::Error::Protocol("sequence window exceeds i64 range".into()))
-            })
-            .transpose()?;
-        let intermediate_root_interval = req
-            .intermediate_root_interval
-            .map(|v| {
-                i64::try_from(v).map_err(|_| {
-                    sqlx::Error::Protocol("intermediate root interval exceeds i64 range".into())
-                })
-            })
-            .transpose()?;
+        let prepared = PreparedProofRequest::try_from(req)?;
 
         let request_params = build_outbox_params(
-            start_block_number,
-            number_of_blocks_to_prove,
-            sequence_window,
-            req.proof_type.as_str(),
-            req.prover_address.as_deref(),
-            req.l1_head.as_deref(),
-            intermediate_root_interval,
+            prepared.start_block_number,
+            prepared.number_of_blocks_to_prove,
+            prepared.sequence_window,
+            prepared.proof_type.as_str(),
+            prepared.prover_address.as_deref(),
+            prepared.l1_head.as_deref(),
+            prepared.intermediate_root_interval,
         );
 
         let mut tx = self.pool.begin().await?;
@@ -122,23 +85,27 @@ impl ProofRequestRepo {
         let insert_result = sqlx::query(
             r#"
             INSERT INTO proof_requests (
-                id, start_block_number, number_of_blocks_to_prove,
-                sequence_window, proof_type, status, prover_address, l1_head,
-                intermediate_root_interval
+                id, request_payload, api_proof_type, zk_vm, tee_kind, start_block_number,
+                number_of_blocks_to_prove, sequence_window, proof_type, status,
+                prover_address, l1_head, intermediate_root_interval
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             ON CONFLICT (id) DO NOTHING
             "#,
         )
-        .bind(id)
-        .bind(start_block_number)
-        .bind(number_of_blocks_to_prove)
-        .bind(sequence_window)
-        .bind(req.proof_type.as_str())
+        .bind(prepared.id)
+        .bind(&prepared.request_payload)
+        .bind(prepared.api_proof_type.as_str())
+        .bind(prepared.zk_vm.map(|zk_vm| zk_vm.as_str()))
+        .bind(prepared.tee_kind.map(|tee_kind| tee_kind.as_str()))
+        .bind(prepared.start_block_number)
+        .bind(prepared.number_of_blocks_to_prove)
+        .bind(prepared.sequence_window)
+        .bind(prepared.proof_type.as_str())
         .bind(ProofStatus::Created.as_str())
-        .bind(&req.prover_address)
-        .bind(&req.l1_head)
-        .bind(intermediate_root_interval)
+        .bind(&prepared.prover_address)
+        .bind(&prepared.l1_head)
+        .bind(prepared.intermediate_root_interval)
         .execute(&mut *tx)
         .await?;
 
@@ -149,19 +116,20 @@ impl ProofRequestRepo {
                 VALUES ($1, $2)
                 "#,
             )
-            .bind(id)
+            .bind(prepared.id)
             .bind(&request_params)
             .execute(&mut *tx)
             .await?;
 
             tx.commit().await?;
-            return Ok(CreateProofRequestOutcome::Created(id));
+            return Ok(CreateProofRequestOutcome::Created(prepared.id));
         }
 
         // Conflict path: `FOR UPDATE` serializes with stuck recovery and workers.
         let row = sqlx::query(
             r#"
-            SELECT start_block_number, number_of_blocks_to_prove, sequence_window,
+            SELECT id, id::text AS session_id, request_payload, api_proof_type, zk_vm, tee_kind,
+                   start_block_number, number_of_blocks_to_prove, sequence_window,
                    proof_type, status, prover_address, l1_head,
                    intermediate_root_interval, retry_count
             FROM proof_requests
@@ -169,27 +137,34 @@ impl ProofRequestRepo {
             FOR UPDATE
             "#,
         )
-        .bind(id)
+        .bind(prepared.id)
         .fetch_optional(&mut *tx)
         .await?;
 
         let Some(row) = row else {
             tx.rollback().await?;
-            return Err(CreateProofRequestError::SessionRowMissingAfterConflict { id });
+            return Err(CreateProofRequestError::SessionRowMissingAfterConflict {
+                id: prepared.id,
+            });
         };
 
+        let existing_id: Uuid = row.get("id");
         let params = CreateOutboxRequestParams {
-            start_block_number,
-            number_of_blocks_to_prove,
-            sequence_window,
-            proof_type: req.proof_type.as_str(),
-            prover_address: req.prover_address.as_deref(),
-            l1_head: req.l1_head.as_deref(),
-            intermediate_root_interval,
+            request_payload: &prepared.request_payload,
+            api_proof_type: prepared.api_proof_type.as_str(),
+            zk_vm: prepared.zk_vm.map(|zk_vm| zk_vm.as_str()),
+            tee_kind: prepared.tee_kind.map(|tee_kind| tee_kind.as_str()),
+            start_block_number: prepared.start_block_number,
+            number_of_blocks_to_prove: prepared.number_of_blocks_to_prove,
+            sequence_window: prepared.sequence_window,
+            proof_type: prepared.proof_type.as_str(),
+            prover_address: prepared.prover_address.as_deref(),
+            l1_head: prepared.l1_head.as_deref(),
+            intermediate_root_interval: prepared.intermediate_root_interval,
         };
         if let Some(field) = params.first_mismatch(&row) {
             tx.rollback().await?;
-            return Err(CreateProofRequestError::IdCollision { id, field });
+            return Err(CreateProofRequestError::IdCollision { id: existing_id, field });
         }
 
         let status_str: &str = row.get("status");
@@ -203,13 +178,13 @@ impl ProofRequestRepo {
             | ProofStatus::Running
             | ProofStatus::Succeeded => {
                 tx.rollback().await?;
-                Ok(CreateProofRequestOutcome::Replayed(id))
+                Ok(CreateProofRequestOutcome::Replayed(existing_id))
             }
             ProofStatus::Failed => {
                 let retry_count: i32 = row.get("retry_count");
                 if retry_count >= max_retries {
                     tx.rollback().await?;
-                    return Ok(CreateProofRequestOutcome::RetryExhausted(id));
+                    return Ok(CreateProofRequestOutcome::RetryExhausted(existing_id));
                 }
 
                 // Fail any active sessions before resetting so the requeued run cannot
@@ -226,7 +201,7 @@ impl ProofRequestRepo {
                 )
                 .bind(SessionStatus::Failed.as_str())
                 .bind("cleared during create_with_outbox requeue")
-                .bind(id)
+                .bind(existing_id)
                 .bind(SessionStatus::Submitting.as_str())
                 .bind(SessionStatus::Running.as_str())
                 .execute(&mut *tx)
@@ -245,7 +220,7 @@ impl ProofRequestRepo {
                     "#,
                 )
                 .bind(ProofStatus::Created.as_str())
-                .bind(id)
+                .bind(existing_id)
                 .execute(&mut *tx)
                 .await?;
 
@@ -255,13 +230,13 @@ impl ProofRequestRepo {
                     VALUES ($1, $2)
                     "#,
                 )
-                .bind(id)
+                .bind(existing_id)
                 .bind(&request_params)
                 .execute(&mut *tx)
                 .await?;
 
                 tx.commit().await?;
-                Ok(CreateProofRequestOutcome::Requeued(id))
+                Ok(CreateProofRequestOutcome::Requeued(existing_id))
             }
         }
     }
@@ -271,8 +246,8 @@ impl ProofRequestRepo {
         let row = sqlx::query(
             r#"
             SELECT
-                id, start_block_number, number_of_blocks_to_prove,
-                sequence_window, proof_type,
+                id, id::text AS session_id, request_payload, api_proof_type, zk_vm, tee_kind,
+                start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
                 stark_receipt, snark_receipt,
                 status, error_message,
                 prover_address, l1_head, intermediate_root_interval,
@@ -818,7 +793,8 @@ impl ProofRequestRepo {
     pub async fn get_running_proof_requests(&self) -> Result<Vec<ProofRequest>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, start_block_number, number_of_blocks_to_prove,
+            SELECT id, id::text AS session_id, request_payload, api_proof_type, zk_vm, tee_kind,
+                   start_block_number, number_of_blocks_to_prove,
                    sequence_window, proof_type, stark_receipt, snark_receipt,
                    status, error_message, prover_address, l1_head,
                    intermediate_root_interval,
@@ -843,7 +819,8 @@ impl ProofRequestRepo {
         let rows = sqlx::query(
             r#"
             SELECT
-                pr.id, pr.start_block_number, pr.number_of_blocks_to_prove,
+                pr.id, pr.id::text AS session_id, pr.request_payload, pr.api_proof_type, pr.zk_vm,
+                pr.tee_kind, pr.start_block_number, pr.number_of_blocks_to_prove,
                 pr.sequence_window, pr.proof_type, pr.stark_receipt, pr.snark_receipt,
                 pr.status, pr.error_message, pr.prover_address, pr.l1_head,
                 pr.intermediate_root_interval,
@@ -1046,8 +1023,8 @@ impl ProofRequestRepo {
             sqlx::query(
                 r#"
                 SELECT
-                    id, start_block_number, number_of_blocks_to_prove,
-                    sequence_window, proof_type,
+                    id, id::text AS session_id, request_payload, api_proof_type, zk_vm, tee_kind,
+                    start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
                     stark_receipt, snark_receipt,
                     status, error_message,
                     prover_address, l1_head, intermediate_root_interval,
@@ -1066,8 +1043,8 @@ impl ProofRequestRepo {
             sqlx::query(
                 r#"
                 SELECT
-                    id, start_block_number, number_of_blocks_to_prove,
-                    sequence_window, proof_type,
+                    id, id::text AS session_id, request_payload, api_proof_type, zk_vm, tee_kind,
+                    start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
                     stark_receipt, snark_receipt,
                     status, error_message,
                     prover_address, l1_head, intermediate_root_interval,
@@ -1097,8 +1074,29 @@ impl ProofRequestRepo {
             let rows = sqlx::query_as::<_, ProofRequestListItem>(
                 r#"
                 SELECT
-                    id, start_block_number, number_of_blocks_to_prove,
-                    proof_type, status, error_message,
+                    id,
+                    id::text AS session_id,
+                    COALESCE(
+                        api_proof_type,
+                        CASE proof_type
+                            WHEN 'op_succinct_sp1_cluster_snark_groth16' THEN 'snark_groth16'
+                            ELSE 'compressed'
+                        END
+                    ) AS api_proof_type,
+                    CASE
+                        WHEN zk_vm IS NOT NULL THEN zk_vm
+                        WHEN COALESCE(
+                            api_proof_type,
+                            CASE proof_type
+                                WHEN 'op_succinct_sp1_cluster_snark_groth16' THEN 'snark_groth16'
+                                ELSE 'compressed'
+                            END
+                        ) IN ('compressed', 'snark_groth16') THEN 'sp1'
+                        ELSE NULL
+                    END AS zk_vm,
+                    tee_kind,
+                    start_block_number, number_of_blocks_to_prove, proof_type,
+                    status, error_message,
                     created_at, updated_at, completed_at
                 FROM proof_requests
                 ORDER BY created_at DESC
@@ -1118,8 +1116,29 @@ impl ProofRequestRepo {
             let rows = sqlx::query_as::<_, ProofRequestListItem>(
                 r#"
                 SELECT
-                    id, start_block_number, number_of_blocks_to_prove,
-                    proof_type, status, error_message,
+                    id,
+                    id::text AS session_id,
+                    COALESCE(
+                        api_proof_type,
+                        CASE proof_type
+                            WHEN 'op_succinct_sp1_cluster_snark_groth16' THEN 'snark_groth16'
+                            ELSE 'compressed'
+                        END
+                    ) AS api_proof_type,
+                    CASE
+                        WHEN zk_vm IS NOT NULL THEN zk_vm
+                        WHEN COALESCE(
+                            api_proof_type,
+                            CASE proof_type
+                                WHEN 'op_succinct_sp1_cluster_snark_groth16' THEN 'snark_groth16'
+                                ELSE 'compressed'
+                            END
+                        ) IN ('compressed', 'snark_groth16') THEN 'sp1'
+                        ELSE NULL
+                    END AS zk_vm,
+                    tee_kind,
+                    start_block_number, number_of_blocks_to_prove, proof_type,
+                    status, error_message,
                     created_at, updated_at, completed_at
                 FROM proof_requests
                 WHERE status::text = ANY($1::text[])
@@ -1248,8 +1267,187 @@ impl ProofRequestRepo {
     }
 }
 
+#[derive(Debug, Clone)]
+struct PreparedProofRequest {
+    id: Uuid,
+    request_payload: serde_json::Value,
+    api_proof_type: ApiProofType,
+    zk_vm: Option<ZkVmKind>,
+    tee_kind: Option<TeeKind>,
+    start_block_number: i64,
+    number_of_blocks_to_prove: i64,
+    sequence_window: Option<i64>,
+    proof_type: ProofType,
+    prover_address: Option<String>,
+    l1_head: Option<String>,
+    intermediate_root_interval: Option<i64>,
+}
+
+impl TryFrom<CreateProofRequest> for PreparedProofRequest {
+    type Error = sqlx::Error;
+
+    fn try_from(req: CreateProofRequest) -> Result<Self> {
+        let id = req.session_id.unwrap_or_else(Uuid::new_v4);
+        let session_id = id.to_string();
+        let start_block_number = i64::try_from(req.start_block_number)
+            .map_err(|_| sqlx::Error::Protocol("block number exceeds i64 range".into()))?;
+        let number_of_blocks_to_prove = i64::try_from(req.number_of_blocks_to_prove)
+            .map_err(|_| sqlx::Error::Protocol("blocks to prove exceeds i64 range".into()))?;
+        let sequence_window = req
+            .sequence_window
+            .map(|w| {
+                i64::try_from(w)
+                    .map_err(|_| sqlx::Error::Protocol("sequence window exceeds i64 range".into()))
+            })
+            .transpose()?;
+        let intermediate_root_interval = req
+            .intermediate_root_interval
+            .map(|v| {
+                i64::try_from(v).map_err(|_| {
+                    sqlx::Error::Protocol("intermediate root interval exceeds i64 range".into())
+                })
+            })
+            .transpose()?;
+        let (api_proof_type, zk_vm, tee_kind) = protocol_fields_for_backend(req.proof_type);
+        let request_payload = req.request_payload.unwrap_or_else(|| {
+            ProtocolRequestPayloadParams {
+                session_id: &session_id,
+                start_block_number,
+                number_of_blocks_to_prove,
+                sequence_window,
+                proof_type: req.proof_type,
+                prover_address: req.prover_address.as_deref(),
+                l1_head: req.l1_head.as_deref(),
+                intermediate_root_interval,
+            }
+            .build()
+        });
+
+        Ok(Self {
+            id,
+            request_payload,
+            api_proof_type,
+            zk_vm,
+            tee_kind,
+            start_block_number,
+            number_of_blocks_to_prove,
+            sequence_window,
+            proof_type: req.proof_type,
+            prover_address: req.prover_address,
+            l1_head: req.l1_head,
+            intermediate_root_interval,
+        })
+    }
+}
+
+const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
+
+const fn api_proof_type_for_backend(proof_type: ProofType) -> ApiProofType {
+    protocol_fields_for_backend(proof_type).0
+}
+
+const fn zk_vm_for_backend(proof_type: ProofType) -> Option<ZkVmKind> {
+    protocol_fields_for_backend(proof_type).1
+}
+
+const fn fallback_zk_vm_for_request(
+    api_proof_type: ApiProofType,
+    proof_type: ProofType,
+) -> Option<ZkVmKind> {
+    match api_proof_type {
+        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => zk_vm_for_backend(proof_type),
+        ApiProofType::Tee => None,
+    }
+}
+
+const fn protocol_fields_for_backend(
+    proof_type: ProofType,
+) -> (ApiProofType, Option<ZkVmKind>, Option<TeeKind>) {
+    match proof_type {
+        ProofType::OpSuccinctSp1ClusterCompressed => {
+            (ApiProofType::Compressed, Some(ZkVmKind::Sp1), None)
+        }
+        ProofType::OpSuccinctSp1ClusterSnarkGroth16 => {
+            (ApiProofType::SnarkGroth16, Some(ZkVmKind::Sp1), None)
+        }
+    }
+}
+
+/// Fields needed to build the canonical protocol request payload.
+#[derive(Debug, Clone, Copy)]
+struct ProtocolRequestPayloadParams<'a> {
+    session_id: &'a str,
+    start_block_number: i64,
+    number_of_blocks_to_prove: i64,
+    sequence_window: Option<i64>,
+    proof_type: ProofType,
+    prover_address: Option<&'a str>,
+    l1_head: Option<&'a str>,
+    intermediate_root_interval: Option<i64>,
+}
+
+impl ProtocolRequestPayloadParams<'_> {
+    fn build(self) -> serde_json::Value {
+        let mut zk_payload = serde_json::json!({
+            "start_block_number": self.start_block_number,
+            "number_of_blocks_to_prove": self.number_of_blocks_to_prove,
+            "sequence_window": self.sequence_window,
+            "l1_head": self.l1_head,
+            "intermediate_root_interval": self.intermediate_root_interval,
+            "zk_vm": ZkVmKind::Sp1.as_str(),
+        });
+        strip_null_object_fields(&mut zk_payload);
+
+        match self.proof_type {
+            ProofType::OpSuccinctSp1ClusterCompressed => serde_json::json!({
+                "session_id": self.session_id,
+                "request": {
+                    "proof_type": ApiProofType::Compressed.as_str(),
+                    "payload": zk_payload,
+                },
+            }),
+            ProofType::OpSuccinctSp1ClusterSnarkGroth16 => serde_json::json!({
+                "session_id": self.session_id,
+                "request": {
+                    "proof_type": ApiProofType::SnarkGroth16.as_str(),
+                    "payload": {
+                        "proof": zk_payload,
+                        "prover_address": self.prover_address.unwrap_or(ZERO_ADDRESS),
+                    },
+                },
+            }),
+        }
+    }
+}
+
+fn strip_null_object_fields(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.retain(|_, value| {
+                strip_null_object_fields(value);
+                !value.is_null()
+            });
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                strip_null_object_fields(value);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Helper function to convert a database row to `ProofRequest`
 fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
+    let id = row.get("id");
+    let session_id = row.get::<String, _>("session_id");
+    let start_block_number = row.get("start_block_number");
+    let number_of_blocks_to_prove = row.get("number_of_blocks_to_prove");
+    let sequence_window = row.get("sequence_window");
+    let prover_address = row.get::<Option<String>, _>("prover_address");
+    let l1_head = row.get::<Option<String>, _>("l1_head");
+    let intermediate_root_interval = row.get("intermediate_root_interval");
+
     let status_str: &str = row.get("status");
     let status = ProofStatus::try_from(status_str)
         .map_err(|e| sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}")))?;
@@ -1259,24 +1457,66 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         sqlx::Error::Protocol(format!("Unknown proof_type '{proof_type_str}': {e}"))
     })?;
 
+    let api_proof_type = match row.get::<Option<&str>, _>("api_proof_type") {
+        Some(value) => ApiProofType::try_from(value)
+            .map_err(|e| sqlx::Error::Protocol(format!("Unknown api_proof_type '{value}': {e}")))?,
+        None => api_proof_type_for_backend(proof_type),
+    };
+
+    let zk_vm = row
+        .get::<Option<&str>, _>("zk_vm")
+        .map(parse_zk_vm_kind)
+        .transpose()?
+        .or_else(|| fallback_zk_vm_for_request(api_proof_type, proof_type));
+    let tee_kind = row.get::<Option<&str>, _>("tee_kind").map(parse_tee_kind).transpose()?;
+    let request_payload =
+        row.get::<Option<serde_json::Value>, _>("request_payload").unwrap_or_else(|| {
+            ProtocolRequestPayloadParams {
+                session_id: &session_id,
+                start_block_number,
+                number_of_blocks_to_prove,
+                sequence_window,
+                proof_type,
+                prover_address: prover_address.as_deref(),
+                l1_head: l1_head.as_deref(),
+                intermediate_root_interval,
+            }
+            .build()
+        });
+
     Ok(ProofRequest {
-        id: row.get("id"),
-        start_block_number: row.get("start_block_number"),
-        number_of_blocks_to_prove: row.get("number_of_blocks_to_prove"),
-        sequence_window: row.get("sequence_window"),
+        id,
+        session_id,
+        request_payload,
+        api_proof_type,
+        zk_vm,
+        tee_kind,
+        start_block_number,
+        number_of_blocks_to_prove,
+        sequence_window,
         proof_type,
         stark_receipt: row.get("stark_receipt"),
         snark_receipt: row.get("snark_receipt"),
         status,
         error_message: row.get("error_message"),
-        prover_address: row.get("prover_address"),
-        l1_head: row.get("l1_head"),
-        intermediate_root_interval: row.get("intermediate_root_interval"),
+        prover_address,
+        l1_head,
+        intermediate_root_interval,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         completed_at: row.get("completed_at"),
         retry_count: row.get("retry_count"),
     })
+}
+
+fn parse_zk_vm_kind(value: &str) -> Result<ZkVmKind> {
+    ZkVmKind::try_from(value)
+        .map_err(|e| sqlx::Error::Protocol(format!("Unknown zk_vm '{value}': {e}")))
+}
+
+fn parse_tee_kind(value: &str) -> Result<TeeKind> {
+    TeeKind::try_from(value)
+        .map_err(|e| sqlx::Error::Protocol(format!("Unknown tee_kind '{value}': {e}")))
 }
 
 /// Helper function to convert a database row to `ProofSession`
@@ -1307,6 +1547,10 @@ fn row_to_proof_session(row: &sqlx::postgres::PgRow) -> Result<ProofSession> {
 /// Incoming fields compared to a locked `proof_requests` row for idempotency checks.
 #[derive(Debug, Clone)]
 struct CreateOutboxRequestParams<'a> {
+    request_payload: &'a serde_json::Value,
+    api_proof_type: &'a str,
+    zk_vm: Option<&'a str>,
+    tee_kind: Option<&'a str>,
     start_block_number: i64,
     number_of_blocks_to_prove: i64,
     sequence_window: Option<i64>,
@@ -1341,6 +1585,26 @@ impl CreateOutboxRequestParams<'_> {
             != self.intermediate_root_interval
         {
             return Some("intermediate_root_interval");
+        }
+        if let Some(api_proof_type) = row.get::<Option<&str>, _>("api_proof_type")
+            && api_proof_type != self.api_proof_type
+        {
+            return Some("api_proof_type");
+        }
+        if let Some(zk_vm) = row.get::<Option<&str>, _>("zk_vm")
+            && Some(zk_vm) != self.zk_vm
+        {
+            return Some("zk_vm");
+        }
+        if let Some(tee_kind) = row.get::<Option<&str>, _>("tee_kind")
+            && Some(tee_kind) != self.tee_kind
+        {
+            return Some("tee_kind");
+        }
+        if let Some(request_payload) = row.get::<Option<serde_json::Value>, _>("request_payload")
+            && request_payload != *self.request_payload
+        {
+            return Some("request_payload");
         }
         None
     }
@@ -1382,5 +1646,85 @@ fn row_to_outbox_entry(row: &sqlx::postgres::PgRow) -> OutboxEntry {
         retry_count: row.get("retry_count"),
         last_error: row.get("last_error"),
         created_at: row.get("created_at"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base_prover_service_protocol::{
+        ProofRequest as ProtocolProofRequest, ProofRequestKind, ZkVm,
+    };
+
+    use super::*;
+
+    #[test]
+    fn prepared_request_uses_uuid_session_id_and_builds_protocol_payload() {
+        let session_id = Uuid::new_v4();
+        let prepared = PreparedProofRequest::try_from(CreateProofRequest {
+            start_block_number: 100,
+            number_of_blocks_to_prove: 5,
+            sequence_window: Some(50),
+            proof_type: ProofType::OpSuccinctSp1ClusterCompressed,
+            session_id: Some(session_id),
+            request_payload: None,
+            prover_address: None,
+            l1_head: None,
+            intermediate_root_interval: Some(5),
+        })
+        .expect("request should prepare");
+
+        assert_eq!(prepared.id, session_id);
+        assert_eq!(prepared.api_proof_type, ApiProofType::Compressed);
+        assert_eq!(prepared.zk_vm, Some(ZkVmKind::Sp1));
+        assert!(prepared.tee_kind.is_none());
+
+        let protocol_request: ProtocolProofRequest =
+            serde_json::from_value(prepared.request_payload).expect("payload should deserialize");
+        let session_id = session_id.to_string();
+        assert_eq!(protocol_request.session_id.as_deref(), Some(session_id.as_str()));
+        let ProofRequestKind::Compressed(zk_request) = protocol_request.request else {
+            panic!("expected compressed protocol request");
+        };
+        assert_eq!(zk_request.start_block_number, 100);
+        assert_eq!(zk_request.number_of_blocks_to_prove, 5);
+        assert_eq!(zk_request.sequence_window, Some(50));
+        assert_eq!(zk_request.intermediate_root_interval, Some(5));
+        assert_eq!(zk_request.zk_vm, ZkVm::Sp1);
+    }
+
+    #[test]
+    fn prepared_request_omits_absent_optional_protocol_payload_fields() {
+        let prepared = PreparedProofRequest::try_from(CreateProofRequest {
+            start_block_number: 100,
+            number_of_blocks_to_prove: 5,
+            sequence_window: None,
+            proof_type: ProofType::OpSuccinctSp1ClusterCompressed,
+            session_id: Some(Uuid::new_v4()),
+            request_payload: None,
+            prover_address: None,
+            l1_head: None,
+            intermediate_root_interval: None,
+        })
+        .expect("request should prepare");
+
+        let payload = prepared
+            .request_payload
+            .pointer("/request/payload")
+            .and_then(serde_json::Value::as_object)
+            .expect("compressed payload should be an object");
+
+        assert!(!payload.contains_key("sequence_window"));
+        assert!(!payload.contains_key("l1_head"));
+        assert!(!payload.contains_key("intermediate_root_interval"));
+    }
+
+    #[test]
+    fn tee_request_does_not_fallback_to_zk_vm() {
+        let zk_vm = fallback_zk_vm_for_request(
+            ApiProofType::Tee,
+            ProofType::OpSuccinctSp1ClusterCompressed,
+        );
+
+        assert!(zk_vm.is_none());
     }
 }
