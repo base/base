@@ -20,14 +20,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256};
 use base_proof_contracts::{AggregateVerifierClient, GameStatus};
-use base_proof_primitives::{
-    ProofEncoder, ProofRequest as TeeProofRequest, ProofResult, ProverClient,
-};
+use base_proof_primitives::ProofRequest as TeeProofRequest;
 use base_proof_rpc::L2Provider;
 use base_prover_service_client::ProofRequesterProvider;
-use base_prover_service_protocol::{SnarkGroth16ProofRequest, ZkProofRequest, ZkVm};
+use base_prover_service_protocol::{SnarkGroth16ProofRequest, TeeKind, ZkProofRequest, ZkVm};
 use base_runtime::{Clock, TokioRuntime};
 use base_tx_manager::TxManager;
 use tokio::select;
@@ -54,12 +52,8 @@ pub struct DriverConfig {
 /// TEE proof configuration, bundling the provider and L1 head provider.
 #[derive(Debug)]
 pub struct TeeConfig {
-    /// TEE proof provider.
-    pub provider: Arc<dyn ProverClient>,
     /// L1 head provider for fetching the finalized head hash.
     pub l1_head_provider: Arc<dyn L1HeadProvider>,
-    /// Timeout for individual TEE proof requests.
-    pub request_timeout: Duration,
 }
 
 /// Service-layer dependencies injected into the [`Driver`].
@@ -502,18 +496,8 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             && let Some(tee) = &self.tee
         {
             ChallengerMetrics::tee_proof_attempts_total().increment(1);
-            let tee_fut = self.attempt_tee_proof(&candidate, invalid_index, expected_root, tee);
-            match tokio::time::timeout(tee.request_timeout, tee_fut).await {
-                Err(_elapsed) => {
-                    warn!(
-                        game = %game_address,
-                        timeout = ?tee.request_timeout,
-                        "TEE proof request timed out, falling back to ZK"
-                    );
-                }
-                Ok(Ok(proof_bytes)) => {
-                    info!(game = %game_address, path = "tee", "TEE proof obtained");
-
+            match self.build_tee_request(&candidate, invalid_index, expected_root, tee).await {
+                Ok(tee_request) => {
                     let (zk_fallback_request, zk_fallback_intent) =
                         match self.build_zk_request(&candidate, invalid_index) {
                             Ok(req) => (Some(req), Some(intent)),
@@ -527,27 +511,45 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                                 (None, None)
                             }
                         };
-                    self.pending_proofs.insert(
-                        game_address,
-                        PendingProof::ready_tee(
-                            proof_bytes,
-                            invalid_index,
-                            expected_root,
-                            zk_fallback_request,
-                            zk_fallback_intent,
-                        ),
+
+                    let request = crate::ChallengerProofAdapter::tee_prove_block_range_request(
+                        tee_request,
+                        TeeKind::AwsNitro,
                     );
-                    if let Err(e) = self.poll_or_submit(game_address).await {
-                        warn!(error = %e, game = %game_address, "initial TEE submission failed");
+                    match self.proof_requester.prove_block_range(request).await {
+                        Ok(response) => {
+                            info!(
+                                game = %game_address,
+                                session_id = %response.session_id,
+                                path = "tee",
+                                "TEE proof job initiated"
+                            );
+                            self.pending_proofs.insert(
+                                game_address,
+                                PendingProof::awaiting_tee(
+                                    response.session_id,
+                                    invalid_index,
+                                    expected_root,
+                                    zk_fallback_request,
+                                    zk_fallback_intent,
+                                ),
+                            );
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                game = %game_address,
+                                "TEE proof request failed, falling back to ZK"
+                            );
+                        }
                     }
-                    ChallengerMetrics::tee_proof_obtained_total().increment(1);
-                    return Ok(());
                 }
-                Ok(Err(e)) => {
+                Err(e) => {
                     warn!(
                         error = %e,
                         game = %game_address,
-                        "TEE proof failed, falling back to ZK"
+                        "failed to build TEE proof request, falling back to ZK"
                     );
                 }
             }
@@ -558,14 +560,14 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         self.initiate_zk_proof(candidate, invalid_index, expected_root, intent).await
     }
 
-    /// Attempts to obtain a TEE proof for the given candidate game.
-    async fn attempt_tee_proof(
+    /// Builds a TEE proof request for the given candidate game.
+    async fn build_tee_request(
         &self,
         candidate: &CandidateGame,
         invalid_index: u64,
         expected_root: B256,
         tee: &TeeConfig,
-    ) -> eyre::Result<Bytes> {
+    ) -> eyre::Result<TeeProofRequest> {
         let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
 
         let claimed_l2_block_number = start_block_number
@@ -584,7 +586,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         let l1_head_number = l1_head_number_result?;
         let (agreed_l2_head_hash, agreed_l2_output_root) = output_root_result?;
 
-        let request = TeeProofRequest {
+        Ok(TeeProofRequest {
             l1_head,
             agreed_l2_head_hash,
             agreed_l2_output_root,
@@ -594,26 +596,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             intermediate_block_interval: candidate.intermediate_block_interval,
             l1_head_number,
             ..Default::default()
-        };
-
-        let result = tee.provider.prove(request).await.map_err(|e| eyre::eyre!(e))?;
-
-        // Validate that the TEE computed the expected output root and encode
-        // the proof in compact format (type + signature only, no L1 origin
-        // data — the contract already has it in CWIA).
-        match &result {
-            ProofResult::Tee { aggregate_proposal, .. } => {
-                if aggregate_proposal.output_root != expected_root {
-                    return Err(eyre::eyre!(
-                        "TEE computed unexpected output root: expected {expected_root}, got {}",
-                        aggregate_proposal.output_root
-                    ));
-                }
-                ProofEncoder::encode_dispute_proof_bytes(&aggregate_proposal.signature)
-                    .map_err(|e| eyre::eyre!("TEE proof encoding failed: {e}"))
-            }
-            ProofResult::Zk { .. } => Err(eyre::eyre!("TEE provider returned ZK result")),
-        }
+        })
     }
 
     /// Builds a [`SnarkGroth16ProofRequest`] for the given candidate and invalid index.
@@ -696,9 +679,15 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     ///   - If `retry_count > MAX_PROOF_RETRIES` → drops the entry.
     ///   - Otherwise → calls `proveBlockRange` and transitions to `AwaitingProof`.
     async fn poll_or_submit(&mut self, game_address: Address) -> eyre::Result<()> {
-        let (invalid_index, expected_root, intent, targets_tee) =
+        let (invalid_index, expected_root, intent, targets_tee, was_awaiting) =
             match self.pending_proofs.get(&game_address) {
-                Some(p) => (p.invalid_index, p.expected_root, p.intent, p.kind.is_tee()),
+                Some(p) => (
+                    p.invalid_index,
+                    p.expected_root,
+                    p.intent,
+                    p.kind.is_tee(),
+                    matches!(p.phase, ProofPhase::AwaitingProof { .. }),
+                ),
                 None => return Ok(()),
             };
 
@@ -768,6 +757,9 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                     action = intent.label(),
                     "proof ready, submitting dispute transaction"
                 );
+                if targets_tee && was_awaiting {
+                    ChallengerMetrics::tee_proof_obtained_total().increment(1);
+                }
                 proof_bytes
             }
             Some(ProofUpdate::NeedsRetry) => {

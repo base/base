@@ -38,9 +38,6 @@ base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 base-protocol.workspace = true
 base-common-consensus.workspace = true
 
-# JSON-RPC
-jsonrpsee.workspace = true
-
 # Async
 tokio.workspace = true
 futures.workspace = true

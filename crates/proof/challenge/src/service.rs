@@ -135,22 +135,11 @@ impl ChallengerService {
 
         // ── 6b. TEE proof client (optional) ─────────────────────────────────
         let tee = if let Some(ref tee_url) = config.tee_rpc_url {
-            let request_timeout = config.tee_request_timeout.ok_or_else(|| {
-                eyre::eyre!("tee_request_timeout must be set when tee_rpc_url is configured")
-            })?;
-            let client = jsonrpsee::http_client::HttpClientBuilder::default()
-                .request_timeout(request_timeout)
-                .build(tee_url.as_str())
-                .map_err(|e| eyre::eyre!("failed to create TEE RPC client: {e}"))?;
-            info!(endpoint = %tee_url, "TEE proof client initialized");
+            info!(endpoint = %tee_url, "TEE proof sourcing enabled");
             let l1_config = L1ClientConfig::new(l1_rpc_url.clone());
             let l1_client = L1Client::new(l1_config)
                 .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
-            Some(crate::TeeConfig {
-                provider: Arc::new(client),
-                l1_head_provider: Arc::new(l1_client),
-                request_timeout,
-            })
+            Some(crate::TeeConfig { l1_head_provider: Arc::new(l1_client) })
         } else {
             info!("TEE proof sourcing disabled (no --tee-rpc-url)");
             None

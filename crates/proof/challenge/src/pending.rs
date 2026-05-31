@@ -123,6 +123,24 @@ impl PendingProof {
         }
     }
 
+    /// Creates a new TEE `PendingProof` in the `AwaitingProof` phase.
+    pub fn awaiting_tee(
+        session_id: String,
+        invalid_index: u64,
+        expected_root: B256,
+        zk_fallback_request: Option<SnarkGroth16ProofRequest>,
+        zk_fallback_intent: Option<DisputeIntent>,
+    ) -> Self {
+        Self {
+            phase: ProofPhase::AwaitingProof { session_id, started_at: Instant::now() },
+            kind: ProofKind::Tee { zk_fallback_request, zk_fallback_intent },
+            invalid_index,
+            expected_root,
+            retry_count: 0,
+            intent: DisputeIntent::Nullify,
+        }
+    }
+
     /// Creates a new ZK `PendingProof` in the `ReadyToSubmit` phase.
     pub const fn ready(
         proof_bytes: Bytes,
@@ -286,8 +304,17 @@ impl PendingProofs {
                     pending.phase = ProofPhase::NeedsRetry;
                     return Ok(Some(ProofUpdate::NeedsRetry));
                 };
-                let proof_bytes =
-                    crate::ChallengerProofAdapter::snark_groth16_dispute_proof_bytes(result)?;
+                let proof_bytes = match &pending.kind {
+                    ProofKind::Zk { .. } => {
+                        crate::ChallengerProofAdapter::snark_groth16_dispute_proof_bytes(result)?
+                    }
+                    ProofKind::Tee { .. } => {
+                        crate::ChallengerProofAdapter::tee_dispute_proof_bytes(
+                            result,
+                            pending.expected_root,
+                        )?
+                    }
+                };
                 let update = ProofUpdate::Ready(proof_bytes.clone());
 
                 pending.phase = ProofPhase::ReadyToSubmit { proof_bytes };
