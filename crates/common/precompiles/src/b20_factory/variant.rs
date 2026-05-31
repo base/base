@@ -40,9 +40,7 @@ impl B20Variant {
     /// does not affect the others.
     pub const fn supported_version(self) -> u8 {
         match self {
-            Self::B20 => 1,
-            Self::Stablecoin => 1,
-            Self::Security => 1,
+            Self::B20 | Self::Stablecoin | Self::Security => 1,
         }
     }
 
