@@ -135,6 +135,7 @@ impl ChallengerService {
 
         // ── 6b. TEE proof client (optional) ─────────────────────────────────
         let tee = if let Some(ref tee_url) = config.tee_rpc_url {
+            // TODO(C4): consolidate proof-client config and replace tee_rpc_url as a feature gate.
             info!(endpoint = %tee_url, "TEE proof sourcing enabled");
             let l1_config = L1ClientConfig::new(l1_rpc_url.clone());
             let l1_client = L1Client::new(l1_config)

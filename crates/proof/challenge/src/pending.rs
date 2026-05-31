@@ -159,29 +159,6 @@ impl PendingProof {
         }
     }
 
-    /// Creates a new TEE `PendingProof` in the `ReadyToSubmit` phase.
-    ///
-    /// TEE proofs always target `nullify()`. If the TEE transaction
-    /// submission fails, the driver will fall back to a ZK proof using the
-    /// provided `zk_fallback_request` and `zk_fallback_intent`. When either
-    /// is `None` the driver drops the entry instead of falling back.
-    pub const fn ready_tee(
-        proof_bytes: Bytes,
-        invalid_index: u64,
-        expected_root: B256,
-        zk_fallback_request: Option<SnarkGroth16ProofRequest>,
-        zk_fallback_intent: Option<DisputeIntent>,
-    ) -> Self {
-        Self {
-            phase: ProofPhase::ReadyToSubmit { proof_bytes },
-            kind: ProofKind::Tee { zk_fallback_request, zk_fallback_intent },
-            invalid_index,
-            expected_root,
-            retry_count: 0,
-            intent: DisputeIntent::Nullify,
-        }
-    }
-
     /// Returns `true` if the proof is in the `ReadyToSubmit` phase.
     pub const fn is_ready(&self) -> bool {
         matches!(self.phase, ProofPhase::ReadyToSubmit { .. })
