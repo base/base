@@ -76,6 +76,11 @@ impl ChainUpgradesExt for ChainUpgrades {
             forks.push((BaseUpgrade::Beryl.boxed(), beryl));
         }
 
+        let subsecond = self[BaseUpgrade::Subsecond];
+        if !matches!(subsecond, ForkCondition::Never) {
+            forks.push((BaseUpgrade::Subsecond.boxed(), subsecond));
+        }
+
         ChainHardforks::new(forks)
     }
 }

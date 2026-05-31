@@ -34,6 +34,11 @@ hardfork!(
         Azul,
         /// Beryl: Second Base-specific network upgrade.
         Beryl,
+        /// Subsecond: Phantom upgrade gating sub-second (200ms) block production. Held
+        /// separate from a real protocol upgrade so its activation timestamp can move
+        /// independently while ms-cadence support is iterated on. Will be aliased to the
+        /// real activation hardfork (e.g. Beryl) once timing is finalized.
+        Subsecond,
     }
 );
 
@@ -48,8 +53,8 @@ impl BaseUpgrade {
             Self::Canyon => SpecId::SHANGHAI,
             Self::Ecotone | Self::Fjord | Self::Granite | Self::Holocene => SpecId::CANCUN,
             Self::Isthmus | Self::Jovian => SpecId::PRAGUE,
-            // Azul, Beryl, and newer Base upgrades inherit the latest known Ethereum spec until
-            // explicitly mapped.
+            // Azul, Beryl, Subsecond, and newer Base upgrades inherit the latest known
+            // Ethereum spec until explicitly mapped.
             _ => SpecId::OSAKA,
         }
     }
@@ -58,7 +63,9 @@ impl BaseUpgrade {
     ///
     /// This is intended for post-Bedrock timestamp-based fork resolution.
     pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> Self {
-        if chain_spec.is_beryl_active_at_timestamp(timestamp) {
+        if chain_spec.is_subsecond_active_at_timestamp(timestamp) {
+            Self::Subsecond
+        } else if chain_spec.is_beryl_active_at_timestamp(timestamp) {
             Self::Beryl
         } else if chain_spec.is_azul_active_at_timestamp(timestamp) {
             Self::Azul
@@ -84,12 +91,16 @@ impl BaseUpgrade {
     }
 
     /// Returns the list of upgrades with their activation conditions for the given chain config.
-    pub const fn forks_for(cfg: &ChainConfig) -> [(Self, ForkCondition); 11] {
+    pub const fn forks_for(cfg: &ChainConfig) -> [(Self, ForkCondition); 12] {
         let azul = match cfg.azul_timestamp {
             Some(ts) => ForkCondition::Timestamp(ts),
             None => ForkCondition::Never,
         };
         let beryl = match cfg.beryl_timestamp {
+            Some(ts) => ForkCondition::Timestamp(ts),
+            None => ForkCondition::Never,
+        };
+        let subsecond = match cfg.subsecond_timestamp {
             Some(ts) => ForkCondition::Timestamp(ts),
             None => ForkCondition::Never,
         };
@@ -105,26 +116,27 @@ impl BaseUpgrade {
             (Self::Jovian, ForkCondition::Timestamp(cfg.jovian_timestamp)),
             (Self::Azul, azul),
             (Self::Beryl, beryl),
+            (Self::Subsecond, subsecond),
         ]
     }
 
     /// Base mainnet list of upgrades.
-    pub const fn mainnet() -> [(Self, ForkCondition); 11] {
+    pub const fn mainnet() -> [(Self, ForkCondition); 12] {
         Self::forks_for(ChainConfig::mainnet())
     }
 
     /// Base Sepolia list of upgrades.
-    pub const fn sepolia() -> [(Self, ForkCondition); 11] {
+    pub const fn sepolia() -> [(Self, ForkCondition); 12] {
         Self::forks_for(ChainConfig::sepolia())
     }
 
     /// Devnet list of upgrades.
-    pub const fn devnet() -> [(Self, ForkCondition); 11] {
+    pub const fn devnet() -> [(Self, ForkCondition); 12] {
         Self::forks_for(ChainConfig::devnet())
     }
 
     /// Base Zeronet list of upgrades.
-    pub const fn zeronet() -> [(Self, ForkCondition); 11] {
+    pub const fn zeronet() -> [(Self, ForkCondition); 12] {
         Self::forks_for(ChainConfig::zeronet())
     }
 
@@ -148,7 +160,7 @@ mod tests {
     fn check_base_upgrade_from_str() {
         let upgrade_str = [
             "beDrOck", "rEgOlITH", "cAnYoN", "eCoToNe", "FJorD", "GRaNiTe", "hOlOcEnE", "isthMUS",
-            "jOvIaN", "aZuL", "bErYl",
+            "jOvIaN", "aZuL", "bErYl", "sUbSeCoND",
         ];
         let expected_upgrades = [
             BaseUpgrade::Bedrock,
@@ -162,6 +174,7 @@ mod tests {
             BaseUpgrade::Jovian,
             BaseUpgrade::Azul,
             BaseUpgrade::Beryl,
+            BaseUpgrade::Subsecond,
         ];
 
         let upgrades: alloc::vec::Vec<BaseUpgrade> =
@@ -195,6 +208,7 @@ mod tests {
             (BaseUpgrade::Jovian, SpecId::PRAGUE),
             (BaseUpgrade::Azul, SpecId::OSAKA),
             (BaseUpgrade::Beryl, SpecId::OSAKA),
+            (BaseUpgrade::Subsecond, SpecId::OSAKA),
         ];
 
         for (base_upgrade, eth_spec) in test_cases {

@@ -3,6 +3,7 @@ use core::ops::Index;
 
 use BaseUpgrade::{
     Azul, Bedrock, Beryl, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
+    Subsecond,
 };
 // Production imports for upgrade implementations
 use EthereumHardfork::{
@@ -106,6 +107,7 @@ impl Index<BaseUpgrade> for ChainUpgrades {
             Jovian => &self.forks[Jovian.idx()].1,
             Azul => &self.forks[Azul.idx()].1,
             Beryl => &self.forks[Beryl.idx()].1,
+            Subsecond => &self.forks[Subsecond.idx()].1,
         }
     }
 }
@@ -138,6 +140,7 @@ impl Index<EthereumHardfork> for ChainUpgrades {
 mod tests {
     use BaseUpgrade::{
         Azul, Bedrock, Beryl, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
+        Subsecond,
     };
     use alloy_hardforks::EthereumHardfork;
 
@@ -188,6 +191,7 @@ mod tests {
             ForkCondition::Timestamp(ChainConfig::mainnet().azul_timestamp.unwrap())
         );
         assert_eq!(base_mainnet_forks[Beryl], ForkCondition::Never);
+        assert_eq!(base_mainnet_forks[Subsecond], ForkCondition::Never);
     }
 
     #[test]
@@ -234,6 +238,7 @@ mod tests {
             ForkCondition::Timestamp(ChainConfig::sepolia().azul_timestamp.unwrap())
         );
         assert_eq!(base_sepolia_forks[Beryl], ForkCondition::Never);
+        assert_eq!(base_sepolia_forks[Subsecond], ForkCondition::Never);
     }
 
     #[test]

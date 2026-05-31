@@ -249,6 +249,11 @@ impl RollupConfig {
         is_first_beryl_block,
         [hardforks.base.beryl],
         "Beryl";
+
+        is_subsecond_active,
+        is_first_subsecond_block,
+        [hardforks.base.subsecond],
+        "Subsecond";
     }
 
     /// Returns the max sequencer drift for the given timestamp.
@@ -354,6 +359,8 @@ impl RollupConfig {
             tracing::info!(target: "upgrades", block_number, "Activating azul upgrade");
         } else if self.is_first_beryl_block(timestamp, parent_timestamp) {
             tracing::info!(target: "upgrades", block_number, "Activating beryl upgrade");
+        } else if self.is_first_subsecond_block(timestamp, parent_timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating subsecond upgrade");
         }
     }
 }
@@ -413,7 +420,7 @@ mod tests {
                 pectra_blob_schedule_time: Some(80),
                 isthmus_time: Some(90),
                 jovian_time: Some(100),
-                base: HardforkConfig { azul: Some(110), beryl: Some(120) },
+                base: HardforkConfig { azul: Some(110), beryl: Some(120), subsecond: None },
             },
             block_time: 2,
             ..Default::default()
@@ -763,7 +770,7 @@ mod tests {
 
         // Osaka↔Azul: azul drives Osaka activation; standalone (not cascaded from Jovian).
         let mut cfg = RollupConfig::default();
-        cfg.hardforks.base = HardforkConfig { azul: Some(700), beryl: None };
+        cfg.hardforks.base = HardforkConfig { azul: Some(700), beryl: None, subsecond: None };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(700)
@@ -771,7 +778,7 @@ mod tests {
 
         // Beryl follows Azul; Osaka still activates at Azul when both are configured.
         let mut cfg = RollupConfig::default();
-        cfg.hardforks.base = HardforkConfig { azul: Some(700), beryl: Some(800) };
+        cfg.hardforks.base = HardforkConfig { azul: Some(700), beryl: Some(800), subsecond: None };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(700)
@@ -781,7 +788,7 @@ mod tests {
 
         // Beryl requires Azul, and does not independently activate Osaka.
         let mut cfg = RollupConfig::default();
-        cfg.hardforks.base = HardforkConfig { azul: None, beryl: Some(800) };
+        cfg.hardforks.base = HardforkConfig { azul: None, beryl: Some(800), subsecond: None };
         assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);
 
         // Jovian set but Azul unset → Osaka is Never.

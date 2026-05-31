@@ -75,6 +75,15 @@ pub trait Upgrades: EthereumHardforks {
     fn is_beryl_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.upgrade_activation(BaseUpgrade::Beryl).active_at_timestamp(timestamp)
     }
+
+    /// Returns `true` if [`Subsecond`](BaseUpgrade::Subsecond) is active at given block timestamp.
+    ///
+    /// `Subsecond` is the phantom hardfork that gates 200ms block production. It is held
+    /// separate from real protocol upgrades so it can be tuned independently in devnet
+    /// without churning Beryl's mainnet activation timestamp.
+    fn is_subsecond_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.upgrade_activation(BaseUpgrade::Subsecond).active_at_timestamp(timestamp)
+    }
 }
 
 impl Upgrades for RollupConfig {
@@ -133,6 +142,12 @@ impl Upgrades for RollupConfig {
                 .beryl
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
+            BaseUpgrade::Subsecond => self
+                .hardforks
+                .base
+                .subsecond
+                .map(ForkCondition::Timestamp)
+                .unwrap_or(ForkCondition::Never),
         }
     }
 }
@@ -166,5 +181,6 @@ mod tests {
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Jovian), ForkCondition::Never);
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Azul), ForkCondition::Never);
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Beryl), ForkCondition::Never);
+        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Subsecond), ForkCondition::Never);
     }
 }

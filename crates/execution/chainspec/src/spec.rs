@@ -165,6 +165,7 @@ impl BaseChainSpec {
         // L1 hardforks are mapped to the activation timestamps of the corresponding Base hardforks
         let azul_time = genesis_info.base.azul;
         let beryl_time = genesis_info.base.beryl;
+        let subsecond_time = genesis_info.base.subsecond;
         let time_hardfork_opts = [
             (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
             (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
@@ -180,6 +181,7 @@ impl BaseChainSpec {
             (EthereumHardfork::Osaka.boxed(), azul_time),
             (BaseUpgrade::Azul.boxed(), azul_time),
             (BaseUpgrade::Beryl.boxed(), beryl_time),
+            (BaseUpgrade::Subsecond.boxed(), subsecond_time),
         ];
 
         let mut time_hardforks = time_hardfork_opts

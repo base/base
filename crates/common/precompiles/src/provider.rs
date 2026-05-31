@@ -41,7 +41,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             BaseUpgrade::Granite | BaseUpgrade::Holocene => Self::granite(),
             BaseUpgrade::Isthmus => Self::isthmus(),
             BaseUpgrade::Jovian => Self::jovian(),
-            BaseUpgrade::Azul | BaseUpgrade::Beryl => Self::azul(),
+            BaseUpgrade::Azul | BaseUpgrade::Beryl | BaseUpgrade::Subsecond => Self::azul(),
             upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
         };
 

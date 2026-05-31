@@ -17,12 +17,23 @@ pub struct HardforkConfig {
     /// Active if `beryl` != None && L2 block timestamp >= `Some(beryl)`, inactive otherwise.
     #[cfg_attr(feature = "serde", serde(alias = "v2", skip_serializing_if = "Option::is_none"))]
     pub beryl: Option<u64>,
+    /// `subsecond` sets the activation time for the Subsecond phantom upgrade, which gates
+    /// 200ms cadence and millisecond payload timestamps.
+    ///
+    /// Held separate from `beryl` so devnet and testnet can iterate on sub-second support
+    /// independently of the real Beryl mainnet activation timestamp. Once timing is
+    /// finalized this will be aliased to the real upgrade.
+    ///
+    /// Active if `subsecond` != None && L2 block timestamp >= `Some(subsecond)`, inactive
+    /// otherwise.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub subsecond: Option<u64>,
 }
 
 impl HardforkConfig {
     /// Returns true if no Base-specific hardforks are configured.
     pub const fn is_empty(&self) -> bool {
-        self.azul.is_none() && self.beryl.is_none()
+        self.azul.is_none() && self.beryl.is_none() && self.subsecond.is_none()
     }
 }
 
@@ -129,6 +140,7 @@ impl HardForkConfig {
             ("Jovian", self.jovian_time),
             ("Azul", self.base.azul),
             ("Beryl", self.base.beryl),
+            ("Subsecond", self.base.subsecond),
         ]
         .into_iter()
     }
@@ -244,7 +256,11 @@ mod tests {
             pectra_blob_schedule_time: Some(8),
             isthmus_time: Some(9),
             jovian_time: Some(10),
-            base: HardforkConfig { azul: Some(11), beryl: Some(12) },
+            base: HardforkConfig {
+                azul: Some(11),
+                beryl: Some(12),
+                subsecond: Some(13),
+            },
         };
 
         let mut iter = hardforks.iter();
@@ -260,6 +276,7 @@ mod tests {
         assert_eq!(iter.next(), Some(("Jovian", Some(10))));
         assert_eq!(iter.next(), Some(("Azul", Some(11))));
         assert_eq!(iter.next(), Some(("Beryl", Some(12))));
+        assert_eq!(iter.next(), Some(("Subsecond", Some(13))));
         assert_eq!(iter.next(), None);
     }
 }
