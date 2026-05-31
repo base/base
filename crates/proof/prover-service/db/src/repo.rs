@@ -6,7 +6,7 @@ use crate::{
     CreateProofRequestOutcome, CreateProofRequestValidationError, CreateProofSession,
     MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofRequest, ProofRequestListItem,
     ProofRequestPage, ProofSession, ProofStatus, ProofType, RetryOutcome, SessionStatus,
-    SessionType, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
+    SessionType, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind, canonical_session_id,
 };
 
 /// Repository for proof request database operations
@@ -277,6 +277,8 @@ impl ProofRequestRepo {
 
     /// Get a proof request by public protocol session ID.
     pub async fn get_by_session_id(&self, session_id: &str) -> Result<Option<ProofRequest>> {
+        let session_id = canonical_session_id(session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
         let row = sqlx::query(
             r#"
             SELECT
@@ -291,7 +293,7 @@ impl ProofRequestRepo {
             WHERE COALESCE(session_id, id::text) = $1
             "#,
         )
-        .bind(session_id)
+        .bind(&session_id)
         .fetch_optional(&self.pool)
         .await?;
 

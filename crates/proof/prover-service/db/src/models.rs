@@ -624,13 +624,14 @@ impl CreateProofRequest {
     /// Validate that explicit DB fields match the protocol payload and supported backends.
     pub fn validate(&self) -> Result<(), CreateProofRequestValidationError> {
         let expected = DerivedProofRequestFields::from_protocol(&self.request_payload)?;
+        let session_id = canonical_session_id_opt(self.session_id.as_deref())?;
+        let payload_session_id =
+            canonical_session_id_opt(self.request_payload.session_id.as_deref())?;
 
-        if canonical_session_id_opt(self.session_id.as_deref())?
-            != canonical_session_id_opt(self.request_payload.session_id.as_deref())?
-            && self.session_id.is_some()
-            && self.request_payload.session_id.is_some()
-        {
-            return Err(CreateProofRequestValidationError::SessionIdMismatch);
+        if let (Some(session_id), Some(payload_session_id)) = (&session_id, &payload_session_id) {
+            if session_id != payload_session_id {
+                return Err(CreateProofRequestValidationError::SessionIdMismatch);
+            }
         }
         if self.api_proof_type != expected.api_proof_type {
             return Err(CreateProofRequestValidationError::FieldMismatch {
@@ -869,7 +870,23 @@ pub struct MarkOutboxError {
 
 #[cfg(test)]
 mod tests {
+    use base_prover_service_protocol::{ZkProofRequest, ZkVm};
+
     use super::*;
+
+    fn compressed_protocol_request(session_id: Option<String>) -> ProtocolProofRequest {
+        ProtocolProofRequest {
+            session_id,
+            request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
+                start_block_number: 100,
+                number_of_blocks_to_prove: 5,
+                sequence_window: Some(50),
+                l1_head: None,
+                intermediate_root_interval: None,
+                zk_vm: ZkVm::Sp1,
+            }),
+        }
+    }
 
     #[test]
     fn test_proof_type_try_from_proto() {
@@ -880,5 +897,32 @@ mod tests {
         assert!(ProofType::try_from(1).is_err());
         assert!(ProofType::try_from(2).is_err());
         assert!(ProofType::try_from(5).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_empty_session_ids() {
+        let mut req = CreateProofRequest::new(compressed_protocol_request(None)).unwrap();
+        req.session_id = Some(String::new());
+
+        assert_eq!(req.validate(), Err(CreateProofRequestValidationError::EmptySessionId));
+
+        let mut req = CreateProofRequest::new(compressed_protocol_request(None)).unwrap();
+        req.request_payload.session_id = Some(String::new());
+
+        assert_eq!(req.validate(), Err(CreateProofRequestValidationError::EmptySessionId));
+    }
+
+    #[test]
+    fn validate_compares_canonical_session_ids_when_both_are_present() {
+        let id = Uuid::new_v4();
+        let mut req =
+            CreateProofRequest::new(compressed_protocol_request(Some(id.to_string()))).unwrap();
+        req.session_id = Some(id.to_string().to_uppercase());
+
+        assert_eq!(req.validate(), Ok(()));
+
+        req.session_id = Some("other-session".to_owned());
+
+        assert_eq!(req.validate(), Err(CreateProofRequestValidationError::SessionIdMismatch));
     }
 }
