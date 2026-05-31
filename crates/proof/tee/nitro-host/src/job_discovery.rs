@@ -223,6 +223,12 @@ where
             .acquire_owned()
             .await
             .expect("semaphore is not closed");
+
+        if !self.has_valid_registered_signer().await {
+            drop(permit);
+            return Ok(JobDiscoveryPollOutcome::Empty);
+        }
+
         let request = self.config.get_next_proof_request();
         let response = self.client.get_next_proof(request).await?;
 
@@ -234,6 +240,31 @@ where
 
         let task = self.proof_generator_task(job, permit);
         Ok(JobDiscoveryPollOutcome::Claimed { task })
+    }
+
+    async fn has_valid_registered_signer(&self) -> bool {
+        let Some(checker) = self.proof_generator.pool().registration_checker() else {
+            return true;
+        };
+
+        match checker.select_all_valid_enclaves().await {
+            Ok(valid) => {
+                debug!(
+                    worker_id = %self.config.worker_id,
+                    valid_signer_count = valid.len(),
+                    "registration gate passed for nitro job discovery"
+                );
+                true
+            }
+            Err(error) => {
+                warn!(
+                    worker_id = %self.config.worker_id,
+                    error = %error,
+                    "registration gate not ready; skipping nitro job discovery poll"
+                );
+                false
+            }
+        }
     }
 
     /// Builds a proof generator task for a claimed prover-service job.
@@ -292,7 +323,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, atomic::Ordering};
 
     use alloy_genesis::ChainConfig;
     use async_trait::async_trait;
@@ -308,7 +339,10 @@ mod tests {
     use tokio::time::timeout;
 
     use super::*;
-    use crate::{NitroEnclavePool, NitroTransport, ProofGeneratorHeartbeatConfig, ProofSubmitter};
+    use crate::{
+        NitroEnclavePool, NitroTransport, ProofGeneratorHeartbeatConfig, ProofSubmitter,
+        RegistrationChecker, test_utils::MockRegistry,
+    };
 
     #[derive(Clone, Debug)]
     struct MockWorkerClient {
@@ -384,6 +418,26 @@ mod tests {
         let server = Arc::new(EnclaveServer::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(server));
         let pool = NitroEnclavePool::new(test_prover_config(), transport);
+        let submitter = ProofSubmitter::new(client);
+
+        Arc::new(ProofGenerator::new(
+            Arc::new(pool),
+            submitter,
+            ProofGeneratorHeartbeatConfig::default(),
+        ))
+    }
+
+    fn test_generator_with_registry(
+        client: MockWorkerClient,
+        registry: MockRegistry,
+    ) -> Arc<ProofGenerator<MockWorkerClient>> {
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
+        let transport = Arc::new(NitroTransport::local(server));
+        let checker =
+            Arc::new(RegistrationChecker::new(vec![Arc::clone(&transport)], registry).unwrap());
+        let pool = NitroEnclavePool::new(test_prover_config(), transport)
+            .with_registration_checker(checker)
+            .unwrap();
         let submitter = ProofSubmitter::new(client);
 
         Arc::new(ProofGenerator::new(
@@ -476,6 +530,26 @@ mod tests {
         };
         timeout(Duration::from_secs(1), task).await.expect("proof generator task should finish");
         assert_eq!(client.get_next_requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn poll_once_skips_claim_when_registration_checker_has_no_valid_signer() {
+        let client = MockWorkerClient::new(Some(compressed_job()));
+        let registry = MockRegistry::new(false);
+        let discovery = JobDiscovery::new(
+            client.clone(),
+            test_generator_with_registry(client.clone(), registry.clone()),
+            JobDiscoveryConfig::new("worker-a"),
+        );
+
+        let outcome = discovery.poll_once().await.expect("poll should succeed");
+
+        assert!(matches!(outcome, JobDiscoveryPollOutcome::Empty));
+        assert!(
+            client.get_next_requests().is_empty(),
+            "discovery must not claim jobs until registration has a valid signer"
+        );
+        assert_eq!(registry.call_count.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]
