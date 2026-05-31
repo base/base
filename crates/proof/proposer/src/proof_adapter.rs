@@ -63,14 +63,29 @@ impl ProposerProofAdapter {
     }
 
     /// Converts a prover-service TEE proof result into the proposer proof result type.
-    pub fn tee_proof_result(result: ProofResult) -> Result<PrimitiveProofResult, ProposerError> {
+    pub fn tee_proof_result(
+        result: ProofResult,
+        expected_tee_kind: TeeKind,
+    ) -> Result<PrimitiveProofResult, ProposerError> {
         match result {
-            ProofResult::Tee(result) => Ok(PrimitiveProofResult::Tee {
-                aggregate_proposal: result.aggregate_proposal,
-                proposals: result.proposals,
-            }),
-            other => {
-                Err(ProposerError::Prover(format!("expected TEE proof result, got {other:?}")))
+            ProofResult::Tee(result) => {
+                let actual_tee_kind = result.tee_kind;
+                if actual_tee_kind != expected_tee_kind {
+                    return Err(ProposerError::Prover(format!(
+                        "expected TEE proof result from {expected_tee_kind:?}, got {actual_tee_kind:?}"
+                    )));
+                }
+
+                Ok(PrimitiveProofResult::Tee {
+                    aggregate_proposal: result.aggregate_proposal,
+                    proposals: result.proposals,
+                })
+            }
+            ProofResult::Compressed(_) => {
+                Err(ProposerError::Prover("expected TEE proof result, got Compressed".to_owned()))
+            }
+            ProofResult::SnarkGroth16(_) => {
+                Err(ProposerError::Prover("expected TEE proof result, got SnarkGroth16".to_owned()))
             }
         }
     }
@@ -159,7 +174,7 @@ mod tests {
             tee_kind: TeeKind::AwsNitro,
         });
 
-        let converted = ProposerProofAdapter::tee_proof_result(result).unwrap();
+        let converted = ProposerProofAdapter::tee_proof_result(result, TeeKind::AwsNitro).unwrap();
 
         assert_eq!(
             converted,
