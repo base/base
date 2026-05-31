@@ -1310,16 +1310,17 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
             .transpose()?;
         let (api_proof_type, zk_vm, tee_kind) = protocol_fields_for_backend(req.proof_type);
         let request_payload = req.request_payload.unwrap_or_else(|| {
-            build_protocol_request_payload(
-                &session_id,
+            ProtocolRequestPayloadParams {
+                session_id: &session_id,
                 start_block_number,
                 number_of_blocks_to_prove,
                 sequence_window,
-                req.proof_type,
-                req.prover_address.as_deref(),
-                req.l1_head.as_deref(),
+                proof_type: req.proof_type,
+                prover_address: req.prover_address.as_deref(),
+                l1_head: req.l1_head.as_deref(),
                 intermediate_root_interval,
-            )
+            }
+            .build()
         });
 
         Ok(Self {
@@ -1362,44 +1363,50 @@ const fn protocol_fields_for_backend(
     }
 }
 
-fn build_protocol_request_payload(
-    session_id: &str,
+/// Fields needed to build the canonical protocol request payload.
+#[derive(Debug, Clone, Copy)]
+struct ProtocolRequestPayloadParams<'a> {
+    session_id: &'a str,
     start_block_number: i64,
     number_of_blocks_to_prove: i64,
     sequence_window: Option<i64>,
     proof_type: ProofType,
-    prover_address: Option<&str>,
-    l1_head: Option<&str>,
+    prover_address: Option<&'a str>,
+    l1_head: Option<&'a str>,
     intermediate_root_interval: Option<i64>,
-) -> serde_json::Value {
-    let mut zk_payload = serde_json::json!({
-        "start_block_number": start_block_number,
-        "number_of_blocks_to_prove": number_of_blocks_to_prove,
-        "sequence_window": sequence_window,
-        "l1_head": l1_head,
-        "intermediate_root_interval": intermediate_root_interval,
-        "zk_vm": ZkVmKind::Sp1.as_str(),
-    });
-    strip_null_object_fields(&mut zk_payload);
+}
 
-    match proof_type {
-        ProofType::OpSuccinctSp1ClusterCompressed => serde_json::json!({
-            "session_id": session_id,
-            "request": {
-                "proof_type": ApiProofType::Compressed.as_str(),
-                "payload": zk_payload,
-            },
-        }),
-        ProofType::OpSuccinctSp1ClusterSnarkGroth16 => serde_json::json!({
-            "session_id": session_id,
-            "request": {
-                "proof_type": ApiProofType::SnarkGroth16.as_str(),
-                "payload": {
-                    "proof": zk_payload,
-                    "prover_address": prover_address.unwrap_or(ZERO_ADDRESS),
+impl ProtocolRequestPayloadParams<'_> {
+    fn build(self) -> serde_json::Value {
+        let mut zk_payload = serde_json::json!({
+            "start_block_number": self.start_block_number,
+            "number_of_blocks_to_prove": self.number_of_blocks_to_prove,
+            "sequence_window": self.sequence_window,
+            "l1_head": self.l1_head,
+            "intermediate_root_interval": self.intermediate_root_interval,
+            "zk_vm": ZkVmKind::Sp1.as_str(),
+        });
+        strip_null_object_fields(&mut zk_payload);
+
+        match self.proof_type {
+            ProofType::OpSuccinctSp1ClusterCompressed => serde_json::json!({
+                "session_id": self.session_id,
+                "request": {
+                    "proof_type": ApiProofType::Compressed.as_str(),
+                    "payload": zk_payload,
                 },
-            },
-        }),
+            }),
+            ProofType::OpSuccinctSp1ClusterSnarkGroth16 => serde_json::json!({
+                "session_id": self.session_id,
+                "request": {
+                    "proof_type": ApiProofType::SnarkGroth16.as_str(),
+                    "payload": {
+                        "proof": zk_payload,
+                        "prover_address": self.prover_address.unwrap_or(ZERO_ADDRESS),
+                    },
+                },
+            }),
+        }
     }
 }
 
@@ -1454,16 +1461,17 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
     let tee_kind = row.get::<Option<&str>, _>("tee_kind").map(parse_tee_kind).transpose()?;
     let request_payload =
         row.get::<Option<serde_json::Value>, _>("request_payload").unwrap_or_else(|| {
-            build_protocol_request_payload(
-                &session_id,
+            ProtocolRequestPayloadParams {
+                session_id: &session_id,
                 start_block_number,
                 number_of_blocks_to_prove,
                 sequence_window,
                 proof_type,
-                prover_address.as_deref(),
-                l1_head.as_deref(),
+                prover_address: prover_address.as_deref(),
+                l1_head: l1_head.as_deref(),
                 intermediate_root_interval,
-            )
+            }
+            .build()
         });
 
     Ok(ProofRequest {
@@ -1568,25 +1576,25 @@ impl CreateOutboxRequestParams<'_> {
         {
             return Some("intermediate_root_interval");
         }
-        if let Some(api_proof_type) = row.get::<Option<&str>, _>("api_proof_type") {
-            if api_proof_type != self.api_proof_type {
-                return Some("api_proof_type");
-            }
+        if let Some(api_proof_type) = row.get::<Option<&str>, _>("api_proof_type")
+            && api_proof_type != self.api_proof_type
+        {
+            return Some("api_proof_type");
         }
-        if let Some(zk_vm) = row.get::<Option<&str>, _>("zk_vm") {
-            if Some(zk_vm) != self.zk_vm {
-                return Some("zk_vm");
-            }
+        if let Some(zk_vm) = row.get::<Option<&str>, _>("zk_vm")
+            && Some(zk_vm) != self.zk_vm
+        {
+            return Some("zk_vm");
         }
-        if let Some(tee_kind) = row.get::<Option<&str>, _>("tee_kind") {
-            if Some(tee_kind) != self.tee_kind {
-                return Some("tee_kind");
-            }
+        if let Some(tee_kind) = row.get::<Option<&str>, _>("tee_kind")
+            && Some(tee_kind) != self.tee_kind
+        {
+            return Some("tee_kind");
         }
-        if let Some(request_payload) = row.get::<Option<serde_json::Value>, _>("request_payload") {
-            if request_payload != *self.request_payload {
-                return Some("request_payload");
-            }
+        if let Some(request_payload) = row.get::<Option<serde_json::Value>, _>("request_payload")
+            && request_payload != *self.request_payload
+        {
+            return Some("request_payload");
         }
         None
     }
