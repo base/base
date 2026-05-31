@@ -29,6 +29,10 @@ impl ProposerProofAdapter {
     }
 
     /// Derives an idempotent TEE proof session ID from proof subtype and claimed root.
+    ///
+    /// This intentionally follows the consolidation-plan derivation of
+    /// `proof type + root`. Other request fields are excluded so redeploys or
+    /// retries for the same proof identity re-use the same prover-service session.
     pub fn tee_session_id(request: &PrimitiveProofRequest, tee_kind: TeeKind) -> String {
         let label = Self::tee_session_label(tee_kind).as_bytes();
         let root = request.claimed_l2_output_root.as_slice();
@@ -141,6 +145,26 @@ mod tests {
         let second = test_request(B256::repeat_byte(0xbb));
 
         assert_ne!(
+            ProposerProofAdapter::tee_session_id(&first, TeeKind::AwsNitro),
+            ProposerProofAdapter::tee_session_id(&second, TeeKind::AwsNitro)
+        );
+    }
+
+    #[test]
+    fn tee_session_id_ignores_non_root_request_fields() {
+        let root = B256::repeat_byte(0xaa);
+        let first = test_request(root);
+        let mut second = test_request(root);
+        second.l1_head = B256::repeat_byte(0x10);
+        second.agreed_l2_head_hash = B256::repeat_byte(0x11);
+        second.agreed_l2_output_root = B256::repeat_byte(0x12);
+        second.claimed_l2_block_number = 1200;
+        second.proposer = Address::repeat_byte(0x13);
+        second.intermediate_block_interval = 150;
+        second.l1_head_number = 2400;
+        second.image_hash = B256::repeat_byte(0x14);
+
+        assert_eq!(
             ProposerProofAdapter::tee_session_id(&first, TeeKind::AwsNitro),
             ProposerProofAdapter::tee_session_id(&second, TeeKind::AwsNitro)
         );
