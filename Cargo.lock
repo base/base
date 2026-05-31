@@ -5858,6 +5858,7 @@ dependencies = [
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-rpc",
+ "base-prover-service-protocol",
  "base-tx-manager",
  "clap",
  "eyre",
@@ -5875,6 +5876,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]

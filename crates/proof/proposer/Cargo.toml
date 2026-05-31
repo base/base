@@ -27,6 +27,7 @@ base-balance-monitor.workspace = true
 # Proof
 base-proof-rpc.workspace = true
 base-proof-contracts.workspace = true
+base-prover-service-protocol.workspace = true
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
 # JSON-RPC
@@ -65,6 +66,7 @@ base-health = { workspace = true, features = ["axum-server"] }
 # Misc
 url.workspace = true
 humantime.workspace = true
+uuid = { workspace = true, features = ["v5"] }
 
 [dev-dependencies]
 rstest.workspace = true
