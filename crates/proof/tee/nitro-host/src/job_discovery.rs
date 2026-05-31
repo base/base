@@ -1,6 +1,6 @@
 //! Job discovery loop for prover-service worker claims.
 
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{GetNextProofRequest, ProofJob, ProofType, TeeKind};
@@ -31,6 +31,9 @@ pub const DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS: usize = 1;
 /// Default worker identifier used by generic nitro worker configs.
 pub const DEFAULT_JOB_DISCOVERY_WORKER_ID: &str = "nitro-host";
 
+/// Future that generates a claimed proof job and starts proof submission.
+pub type JobDiscoveryTask = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
 /// Settings used by the prover-service job discovery loop.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JobDiscoveryConfig {
@@ -41,6 +44,8 @@ pub struct JobDiscoveryConfig {
     /// Requested claim lock duration in seconds. Zero uses the server default.
     pub lock_duration_seconds: u32,
     /// Maximum number of claimed proof jobs being generated concurrently.
+    ///
+    /// This is worker-side backpressure for in-flight generation, not just claim RPCs.
     pub max_concurrent_jobs: usize,
 }
 
@@ -101,7 +106,7 @@ impl Default for JobDiscoveryConfig {
     }
 }
 
-/// Polls the prover service for Nitro TEE proof jobs and spawns proof generation tasks.
+/// Polls the prover service for Nitro TEE proof jobs and prepares proof generation tasks.
 #[derive(Debug)]
 pub struct JobDiscovery<Client> {
     client: Client,
@@ -111,15 +116,23 @@ pub struct JobDiscovery<Client> {
 }
 
 /// Outcome of one job discovery poll.
-#[derive(Debug)]
 pub enum JobDiscoveryPollOutcome {
     /// No matching proof job was available.
     Empty,
-    /// A proof job was claimed and its proof generator task was spawned.
-    Spawned {
-        /// Handle for the spawned proof generator task.
-        task: JoinHandle<()>,
+    /// A proof job was claimed and its proof generator task is ready to spawn.
+    Claimed {
+        /// Future for the proof generator task.
+        task: JobDiscoveryTask,
     },
+}
+
+impl std::fmt::Debug for JobDiscoveryPollOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.debug_tuple("Empty").finish(),
+            Self::Claimed { .. } => f.debug_struct("Claimed").finish_non_exhaustive(),
+        }
+    }
 }
 
 impl<Client> JobDiscovery<Client> {
@@ -173,7 +186,7 @@ where
             };
 
             match result {
-                Ok(JobDiscoveryPollOutcome::Spawned { task }) => {
+                Ok(JobDiscoveryPollOutcome::Claimed { task }) => {
                     proof_tasks.spawn(task);
                 }
                 Ok(JobDiscoveryPollOutcome::Empty) => {
@@ -206,7 +219,7 @@ where
         })
     }
 
-    /// Polls the prover service once, spawning proof generation when a job is claimed.
+    /// Polls the prover service once, returning a proof generation task when a job is claimed.
     pub async fn poll_once(&self) -> Result<JobDiscoveryPollOutcome, ProverServiceClientError> {
         let permit = Arc::clone(&self.generator_permits)
             .acquire_owned()
@@ -221,27 +234,28 @@ where
             return Ok(JobDiscoveryPollOutcome::Empty);
         };
 
-        let task = self.spawn_proof_generator(job, permit);
-        Ok(JobDiscoveryPollOutcome::Spawned { task })
+        let task = self.proof_generator_task(job, permit);
+        Ok(JobDiscoveryPollOutcome::Claimed { task })
     }
 
-    /// Spawns a proof generator task for a claimed prover-service job.
-    pub fn spawn_proof_generator(
+    /// Builds a proof generator task for a claimed prover-service job.
+    pub fn proof_generator_task(
         &self,
         job: ProofJob,
         permit: OwnedSemaphorePermit,
-    ) -> JoinHandle<()> {
+    ) -> JobDiscoveryTask {
         let session_id = job.session_id.clone();
         let proof_generator = Arc::clone(&self.proof_generator);
 
-        tokio::spawn(async move {
+        Box::pin(async move {
+            // Keep this permit until generation hands off to the submitter. This prevents the
+            // worker from over-claiming jobs that would only wait behind the enclave pool.
+            let _permit = permit;
             match proof_generator.generate_and_submit(job).await {
                 Ok(task) => {
-                    drop(permit);
                     drop(task);
                 }
                 Err(error) => {
-                    drop(permit);
                     warn!(
                         session_id = %session_id,
                         error = %error,
@@ -262,10 +276,10 @@ where
         }
     }
 
-    fn log_proof_task_join_result(result: Option<Result<Result<(), JoinError>, JoinError>>) {
+    fn log_proof_task_join_result(result: Option<Result<(), JoinError>>) {
         match result {
-            Some(Ok(Ok(()))) | None => {}
-            Some(Ok(Err(error)) | Err(error)) => {
+            Some(Ok(())) | None => {}
+            Some(Err(error)) => {
                 warn!(error = %error, "nitro proof generator task join failed");
             }
         }
@@ -453,13 +467,10 @@ mod tests {
 
         let outcome = discovery.poll_once().await.expect("poll should succeed");
 
-        let JobDiscoveryPollOutcome::Spawned { task } = outcome else {
-            panic!("expected proof generator task to be spawned");
+        let JobDiscoveryPollOutcome::Claimed { task } = outcome else {
+            panic!("expected proof generator task to be returned");
         };
-        timeout(Duration::from_secs(1), task)
-            .await
-            .expect("proof generator task should finish")
-            .expect("proof generator task should not panic");
+        timeout(Duration::from_secs(1), task).await.expect("proof generator task should finish");
         assert_eq!(client.get_next_requests().len(), 1);
     }
 
