@@ -1,14 +1,12 @@
 //! Adapters between challenger proof types and the shared prover-service protocol.
 
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{B256, Bytes};
 use base_proof_primitives::{PROOF_TYPE_ZK, ProofEncoder, ProofRequest as PrimitiveProofRequest};
 use base_prover_service_protocol::{
-    ProofRequest, ProofRequestKind, ProofResult, ProveBlockRangeRequest, SnarkGroth16ProofRequest,
-    TeeKind, TeeProofRequest, ZkProofRequest, ZkVm,
+    ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest,
+    SnarkGroth16ProofRequest, TeeKind, TeeProofRequest,
 };
-use base_zk_client::{ProofType as ZkServiceProofType, ProveBlockRequest};
-use eyre::{Result, WrapErr, bail, eyre};
-use uuid::Uuid;
+use eyre::{Result, WrapErr, bail};
 
 /// Conversion helpers for challenger proof requests and dispute proof bytes.
 #[derive(Debug)]
@@ -17,9 +15,6 @@ pub struct ChallengerProofAdapter;
 impl ChallengerProofAdapter {
     /// Namespace used to derive challenger proof session IDs.
     pub const SESSION_NAMESPACE: &'static [u8] = b"base/challenger/proof-session/v1";
-
-    /// Separator used between session ID components before `UUIDv5` hashing.
-    pub const SESSION_COMPONENT_SEPARATOR: &'static [u8] = b":";
 
     /// Returns the session-ID proof subtype label for challenger SNARK proofs.
     pub const fn snark_groth16_session_label() -> &'static str {
@@ -33,78 +28,36 @@ impl ChallengerProofAdapter {
         }
     }
 
-    /// Derives an idempotent proof session ID from proof subtype and disputed root.
-    pub fn session_id(proof_subtype: &str, disputed_root: B256) -> String {
-        let root = disputed_root.as_slice();
-        let mut name = Vec::with_capacity(
-            Self::SESSION_NAMESPACE.len()
-                + Self::SESSION_COMPONENT_SEPARATOR.len()
-                + proof_subtype.len()
-                + Self::SESSION_COMPONENT_SEPARATOR.len()
-                + root.len(),
-        );
-        name.extend_from_slice(Self::SESSION_NAMESPACE);
-        name.extend_from_slice(Self::SESSION_COMPONENT_SEPARATOR);
-        name.extend_from_slice(proof_subtype.as_bytes());
-        name.extend_from_slice(Self::SESSION_COMPONENT_SEPARATOR);
-        name.extend_from_slice(root);
-
-        Uuid::new_v5(&Uuid::NAMESPACE_OID, &name).to_string()
-    }
-
     /// Derives an idempotent challenger SNARK proof session ID.
     pub fn snark_groth16_session_id(disputed_root: B256) -> String {
-        Self::session_id(Self::snark_groth16_session_label(), disputed_root)
+        ProofSessionId::derive(
+            Self::SESSION_NAMESPACE,
+            Self::snark_groth16_session_label(),
+            disputed_root,
+        )
     }
 
     /// Derives an idempotent challenger TEE proof session ID.
     pub fn tee_session_id(disputed_root: B256, tee_kind: TeeKind) -> String {
-        Self::session_id(Self::tee_session_label(tee_kind), disputed_root)
+        ProofSessionId::derive(
+            Self::SESSION_NAMESPACE,
+            Self::tee_session_label(tee_kind),
+            disputed_root,
+        )
     }
 
     /// Builds a prover-service request for a challenger SNARK proof.
     pub fn snark_groth16_prove_block_range_request(
-        request: ProveBlockRequest,
-    ) -> Result<ProveBlockRangeRequest> {
-        let expected_proof_type: i32 = ZkServiceProofType::SnarkGroth16.into();
-        if request.proof_type != expected_proof_type {
-            bail!(
-                "expected SNARK_GROTH16 proof_type {}, got {}",
-                expected_proof_type,
-                request.proof_type
-            );
-        }
-
-        let l1_head = request
-            .l1_head
-            .as_deref()
-            .map(str::parse::<B256>)
-            .transpose()
-            .wrap_err("l1_head must be a 0x-prefixed 32-byte hash")?;
-        let prover_address = request
-            .prover_address
-            .as_deref()
-            .ok_or_else(|| eyre!("prover_address is required for SNARK_GROTH16 proofs"))?
-            .parse::<Address>()
-            .wrap_err("prover_address must be a valid Ethereum address")?;
-        let proof = ZkProofRequest {
-            start_block_number: request.start_block_number,
-            number_of_blocks_to_prove: request.number_of_blocks_to_prove,
-            sequence_window: request.sequence_window,
-            l1_head,
-            intermediate_root_interval: request.intermediate_root_interval,
-            zk_vm: ZkVm::Sp1,
-        };
-
-        Ok(ProveBlockRangeRequest {
+        disputed_root: B256,
+        request: SnarkGroth16ProofRequest,
+    ) -> ProveBlockRangeRequest {
+        let session_id = Self::snark_groth16_session_id(disputed_root);
+        ProveBlockRangeRequest {
             proof: ProofRequest {
-                session_id: request.session_id,
-                request: ProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
-                    proof,
-                    prover_address,
-                }),
+                session_id: Some(session_id),
+                request: ProofRequestKind::SnarkGroth16(request),
             },
-        })
+        }
     }
 
     /// Builds a prover-service request for a challenger TEE proof.
@@ -168,10 +121,9 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes};
     use base_proof_primitives::{PROOF_TYPE_TEE, Proposal};
     use base_prover_service_protocol::{
-        ProofRequestKind, ProofResult, SnarkGroth16ProofResult, TeeKind, TeeProofResult,
-        ZkProofResult, ZkVm,
+        ProofRequestKind, ProofResult, SnarkGroth16ProofRequest, SnarkGroth16ProofResult, TeeKind,
+        TeeProofResult, ZkProofRequest, ZkProofResult, ZkVm,
     };
-    use base_zk_client::{ProofType as ZkServiceProofType, ProveBlockRequest};
 
     use super::ChallengerProofAdapter;
 
@@ -219,22 +171,22 @@ mod tests {
 
     #[test]
     fn snark_groth16_prove_block_range_request_converts_zk_request() {
-        let session_id = "session-zk".to_owned();
+        let root = B256::repeat_byte(0xaa);
+        let session_id = ChallengerProofAdapter::snark_groth16_session_id(root);
         let prover_address = Address::repeat_byte(0x11);
         let l1_head = B256::repeat_byte(0x22);
-        let request = ProveBlockRequest {
+        let proof = ZkProofRequest {
             start_block_number: 100,
             number_of_blocks_to_prove: 300,
             sequence_window: Some(10),
-            proof_type: ZkServiceProofType::SnarkGroth16.into(),
-            session_id: Some(session_id.clone()),
-            prover_address: Some(format!("{prover_address:#x}")),
-            l1_head: Some(format!("{l1_head:#x}")),
+            l1_head: Some(l1_head),
             intermediate_root_interval: Some(150),
+            zk_vm: ZkVm::Sp1,
         };
+        let request = SnarkGroth16ProofRequest { proof, prover_address };
 
         let wrapped =
-            ChallengerProofAdapter::snark_groth16_prove_block_range_request(request).unwrap();
+            ChallengerProofAdapter::snark_groth16_prove_block_range_request(root, request);
 
         assert_eq!(wrapped.proof.session_id.as_deref(), Some(session_id.as_str()));
         match wrapped.proof.request {
@@ -249,20 +201,6 @@ mod tests {
             }
             other => panic!("unexpected proof request kind: {other:?}"),
         }
-    }
-
-    #[test]
-    fn snark_groth16_prove_block_range_request_rejects_non_snark_type() {
-        let request = ProveBlockRequest {
-            proof_type: ZkServiceProofType::Compressed.into(),
-            prover_address: Some(format!("{:#x}", Address::repeat_byte(0x11))),
-            ..Default::default()
-        };
-
-        let err = ChallengerProofAdapter::snark_groth16_prove_block_range_request(request)
-            .expect_err("compressed proof type should be rejected");
-
-        assert!(err.to_string().contains("SNARK_GROTH16"));
     }
 
     #[test]

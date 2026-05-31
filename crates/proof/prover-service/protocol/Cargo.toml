@@ -22,6 +22,9 @@ chrono = { workspace = true, features = ["serde"] }
 # RPC
 jsonrpsee = { workspace = true, optional = true }
 
+# Misc
+uuid = { workspace = true, features = ["v5"] }
+
 [dev-dependencies]
 serde_json = { workspace = true, features = ["std"] }
 

@@ -66,7 +66,6 @@ base-health = { workspace = true, features = ["axum-server"] }
 # Misc
 url.workspace = true
 humantime.workspace = true
-uuid = { workspace = true, features = ["v5"] }
 
 [dev-dependencies]
 rstest.workspace = true

@@ -4,9 +4,9 @@ use base_proof_primitives::{
     ProofRequest as PrimitiveProofRequest, ProofResult as PrimitiveProofResult,
 };
 use base_prover_service_protocol::{
-    ProofRequest, ProofRequestKind, ProofResult, ProveBlockRangeRequest, TeeKind, TeeProofRequest,
+    ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest, TeeKind,
+    TeeProofRequest,
 };
-use uuid::Uuid;
 
 use crate::ProposerError;
 
@@ -17,9 +17,6 @@ pub struct ProposerProofAdapter;
 impl ProposerProofAdapter {
     /// Namespace used to derive proposer proof session IDs.
     pub const SESSION_NAMESPACE: &'static [u8] = b"base/proposer/proof-session/v1";
-
-    /// Separator used between session ID components before `UUIDv5` hashing.
-    pub const SESSION_COMPONENT_SEPARATOR: &'static [u8] = b":";
 
     /// Returns the session-ID proof subtype label for a TEE implementation.
     pub const fn tee_session_label(tee_kind: TeeKind) -> &'static str {
@@ -34,22 +31,11 @@ impl ProposerProofAdapter {
     /// `proof type + root`. Other request fields are excluded so redeploys or
     /// retries for the same proof identity re-use the same prover-service session.
     pub fn tee_session_id(request: &PrimitiveProofRequest, tee_kind: TeeKind) -> String {
-        let label = Self::tee_session_label(tee_kind).as_bytes();
-        let root = request.claimed_l2_output_root.as_slice();
-        let mut name = Vec::with_capacity(
-            Self::SESSION_NAMESPACE.len()
-                + Self::SESSION_COMPONENT_SEPARATOR.len()
-                + label.len()
-                + Self::SESSION_COMPONENT_SEPARATOR.len()
-                + root.len(),
-        );
-        name.extend_from_slice(Self::SESSION_NAMESPACE);
-        name.extend_from_slice(Self::SESSION_COMPONENT_SEPARATOR);
-        name.extend_from_slice(label);
-        name.extend_from_slice(Self::SESSION_COMPONENT_SEPARATOR);
-        name.extend_from_slice(root);
-
-        Uuid::new_v5(&Uuid::NAMESPACE_OID, &name).to_string()
+        ProofSessionId::derive(
+            Self::SESSION_NAMESPACE,
+            Self::tee_session_label(tee_kind),
+            request.claimed_l2_output_root,
+        )
     }
 
     /// Builds a prover-service request for a TEE proposal proof.
