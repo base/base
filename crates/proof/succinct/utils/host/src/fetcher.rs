@@ -279,13 +279,13 @@ impl OPSuccinctDataFetcher {
 
     /// Fetch an L2 block header by ID.
     pub async fn get_l2_header(&self, block_number: BlockId) -> Result<Header> {
-        let block = self.l2_provider.get_block(block_number).await?;
+    let block = self.l2_provider.get_block(block_number).await?;
 
-        if let Some(block) = block {
-            Ok(block.header.inner)
-        } else {
-            bail!("Failed to get L1 header for block {block_number}");
-        }
+    if let Some(block) = block {
+        Ok(block.header.inner)
+    } else {
+        bail!("Failed to get L2 header for block {block_number}"); // ← corrected
+    }
     }
 
     /// Finds the L1 block at the provided timestamp.
@@ -316,22 +316,26 @@ impl OPSuccinctDataFetcher {
         };
 
         while low <= high {
-            let mid = (low + high) / 2;
-            let block = provider.get_block(mid.into()).await?;
-            if let Some(block) = block {
-                let block_timestamp = block.header().timestamp();
-
-                match block_timestamp.cmp(&target_timestamp) {
-                    Ordering::Equal => {
-                        return Ok((block.header().hash().0.into(), block.header().number()));
-                    }
-                    Ordering::Less => low = mid + 1,
-                    Ordering::Greater => high = mid - 1,
+        let mid = low + (high - low) / 2;     // ← no overflow
+        let block = provider.get_block(mid.into()).await?;
+        if let Some(block) = block {
+        let block_timestamp = block.header().timestamp();
+        match block_timestamp.cmp(&target_timestamp) {
+            Ordering::Equal => {
+                return Ok((block.header().hash().0.into(), block.header().number()));
+            }
+            Ordering::Less => low = mid + 1,
+            Ordering::Greater => {
+                if mid == 0 {
+                    break; // ← guard against underflow; low == 0, result is block 0
                 }
-            } else {
-                bail!("Failed to get block for block {mid}");
+                high = mid - 1;
             }
         }
+        } else {
+        bail!("Failed to get block for block {mid}");
+         }
+     }
 
         // Return the block hash of the closest block after the target timestamp
         let block = provider.get_block(low.into()).await?;
@@ -615,13 +619,14 @@ impl OPSuccinctDataFetcher {
             let l2_safe_head = result.safe_head.number;
 
             if l2_safe_head >= l2_end_block {
-                // Found a valid block, save it and keep searching lower.
-                first_valid = Some((result.l1_block.hash, result.l1_block.number));
-                high = mid - 1;
-            } else {
-                // Need to search higher
-                low = mid + 1;
+        // Found a valid block, save it and keep searching lower.
+            first_valid = Some((result.l1_block.hash, result.l1_block.number));
+            if mid == 0 {
+            break; // ← guard against underflow; no lower block to check
             }
+            high = mid - 1;
+        }     else {
+            low = mid + 1;
         }
 
         first_valid.ok_or_else(|| {
