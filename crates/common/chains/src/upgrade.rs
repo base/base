@@ -30,16 +30,16 @@ hardfork!(
         /// Jovian: Base network upgrade.
         Jovian,
         /// Azul: First Base-specific network upgrade.
-        #[default]
         Azul,
         /// Beryl: Second Base-specific network upgrade.
+        #[default]
         Beryl,
     }
 );
 
 impl BaseUpgrade {
     /// Latest Base upgrade used by default.
-    pub const LATEST: Self = Self::Azul;
+    pub const LATEST: Self = Self::Beryl;
 
     /// Converts the Base upgrade into its matching Ethereum execution spec.
     pub const fn into_eth_spec(self) -> SpecId {
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn latest_base_upgrade_matches_default() {
         assert_eq!(BaseUpgrade::default(), BaseUpgrade::LATEST);
-        assert_eq!(BaseUpgrade::LATEST, BaseUpgrade::Azul);
+        assert_eq!(BaseUpgrade::LATEST, BaseUpgrade::Beryl);
     }
 
     #[test]
