@@ -3594,10 +3594,10 @@ dependencies = [
  "base-proof-primitives",
  "base-proof-rpc",
  "base-protocol",
+ "base-prover-service-client",
  "base-prover-service-protocol",
  "base-runtime",
  "base-tx-manager",
- "base-zk-client",
  "clap",
  "derive_more 2.1.1",
  "eyre",
@@ -3614,7 +3614,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
- "uuid",
 ]
 
 [[package]]

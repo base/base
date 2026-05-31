@@ -26,9 +26,10 @@ use base_proof_primitives::{
     ProofEncoder, ProofRequest as TeeProofRequest, ProofResult, ProverClient,
 };
 use base_proof_rpc::L2Provider;
+use base_prover_service_client::ProofRequesterProvider;
+use base_prover_service_protocol::{SnarkGroth16ProofRequest, ZkProofRequest, ZkVm};
 use base_runtime::{Clock, TokioRuntime};
 use base_tx_manager::TxManager;
-use base_zk_client::{ProofType, ProveBlockRequest, ZkProofProvider};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -64,7 +65,7 @@ pub struct TeeConfig {
 /// Service-layer dependencies injected into the [`Driver`].
 pub struct DriverComponents<
     L2: L2Provider,
-    P: ZkProofProvider,
+    P: ProofRequesterProvider,
     T: TxManager,
     C: Clock = TokioRuntime,
 > {
@@ -72,8 +73,8 @@ pub struct DriverComponents<
     pub scanner: GameScanner,
     /// Validates L2 output roots against the local node.
     pub validator: OutputValidator<L2>,
-    /// ZK proof provider used to generate fault proofs.
-    pub zk_prover: Arc<P>,
+    /// Prover-service requester used to generate and poll ZK fault proofs.
+    pub proof_requester: Arc<P>,
     /// Submits challenge transactions to L1.
     pub submitter: ChallengeSubmitter<T>,
     /// Optional TEE proof configuration (provider + L1 RPC client).
@@ -84,7 +85,7 @@ pub struct DriverComponents<
     pub bond_manager: Option<BondManager<C>>,
 }
 
-impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> std::fmt::Debug
+impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> std::fmt::Debug
     for DriverComponents<L2, P, T, C>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -100,15 +101,15 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> std::fmt::Debug
 pub struct Driver<L2, P, T, C: Clock = TokioRuntime>
 where
     L2: L2Provider,
-    P: ZkProofProvider,
+    P: ProofRequesterProvider,
     T: TxManager,
 {
     /// Scans for new dispute games on L1.
     pub scanner: GameScanner,
     /// Validates L2 output roots against the local node.
     pub validator: OutputValidator<L2>,
-    /// ZK proof provider used to generate fault proofs.
-    pub zk_prover: Arc<P>,
+    /// Prover-service requester used to generate and poll ZK fault proofs.
+    pub proof_requester: Arc<P>,
     /// Submits challenge transactions to L1.
     pub submitter: ChallengeSubmitter<T>,
     /// Optional TEE proof configuration (provider + L1 RPC client).
@@ -127,7 +128,7 @@ where
     pub cancel: CancellationToken,
 }
 
-impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> std::fmt::Debug
+impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> std::fmt::Debug
     for Driver<L2, P, T, C>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -138,7 +139,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> std::fmt::Debug
     }
 }
 
-impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T, C> {
+impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L2, P, T, C> {
     /// Maximum number of times a failed proof job will be retried before being dropped.
     pub const MAX_PROOF_RETRIES: u32 = 3;
 
@@ -147,7 +148,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         Self {
             scanner: components.scanner,
             validator: components.validator,
-            zk_prover: components.zk_prover,
+            proof_requester: components.proof_requester,
             submitter: components.submitter,
             tee: components.tee,
             verifier_client: components.verifier_client,
@@ -615,26 +616,24 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         }
     }
 
-    /// Builds a [`ProveBlockRequest`] for the given candidate and invalid index.
+    /// Builds a [`SnarkGroth16ProofRequest`] for the given candidate and invalid index.
     fn build_zk_request(
         &self,
         candidate: &CandidateGame,
         invalid_index: u64,
-    ) -> eyre::Result<ProveBlockRequest> {
-        let game_address = candidate.factory.proxy;
+    ) -> eyre::Result<SnarkGroth16ProofRequest> {
         let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
-        let session_id = PendingProof::derive_session_id(game_address, invalid_index);
-        let prover_address = format!("{:#x}", self.submitter.sender_address());
 
-        Ok(ProveBlockRequest {
-            start_block_number,
-            number_of_blocks_to_prove: candidate.intermediate_block_interval,
-            sequence_window: None,
-            proof_type: ProofType::SnarkGroth16.into(),
-            session_id: Some(session_id),
-            prover_address: Some(prover_address),
-            l1_head: Some(format!("{:#x}", candidate.l1_head)),
-            intermediate_root_interval: Some(candidate.intermediate_block_interval),
+        Ok(SnarkGroth16ProofRequest {
+            proof: ZkProofRequest {
+                start_block_number,
+                number_of_blocks_to_prove: candidate.intermediate_block_interval,
+                sequence_window: None,
+                l1_head: Some(candidate.l1_head),
+                intermediate_root_interval: Some(candidate.intermediate_block_interval),
+                zk_vm: ZkVm::Sp1,
+            },
+            prover_address: self.submitter.sender_address(),
         })
     }
 
@@ -652,9 +651,13 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         // invalid_index == 0) is a trusted anchor, so the ZK proof only
         // needs to cover the single interval that contains the invalid
         // checkpoint: [prior_checkpoint .. invalid_checkpoint].
-        let request = self.build_zk_request(&candidate, invalid_index)?;
+        let proof_request = self.build_zk_request(&candidate, invalid_index)?;
+        let request = crate::ChallengerProofAdapter::snark_groth16_prove_block_range_request(
+            expected_root,
+            proof_request.clone(),
+        );
 
-        let prove_response = self.zk_prover.prove_block(request.clone()).await?;
+        let prove_response = self.proof_requester.prove_block_range(request).await?;
 
         info!(
             game = %game_address,
@@ -666,7 +669,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             prove_response.session_id,
             invalid_index,
             expected_root,
-            request,
+            proof_request,
             intent,
         );
         self.pending_proofs.insert(game_address, pending);
@@ -676,10 +679,10 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
 
     /// Advances a pending proof through its lifecycle.
     ///
-    /// - **`AwaitingProof`** — polls the ZK service:
+    /// - **`AwaitingProof`** — polls prover service:
     ///   - `Succeeded` → transitions to `ReadyToSubmit` and falls through to
     ///     submission.
-    ///   - `Failed` → transitions to `NeedsRetry` so `prove_block` is
+    ///   - `Failed` → transitions to `NeedsRetry` so `proveBlockRange` is
     ///     re-initiated.
     ///   - Intermediate (`Created`/`Pending`/`Running`) → returns early
     ///     without any contract calls.
@@ -689,9 +692,9 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
     ///   - [`DisputeIntent::Challenge`] → calls `challenge()`.
     ///   - On success → removes the entry.
     ///   - On failure → leaves the entry so it is retried next tick.
-    /// - **`NeedsRetry`** — re-initiates `prove_block`:
+    /// - **`NeedsRetry`** — re-initiates `proveBlockRange`:
     ///   - If `retry_count > MAX_PROOF_RETRIES` → drops the entry.
-    ///   - Otherwise → calls `prove_block` and transitions to `AwaitingProof`.
+    ///   - Otherwise → calls `proveBlockRange` and transitions to `AwaitingProof`.
     async fn poll_or_submit(&mut self, game_address: Address) -> eyre::Result<()> {
         let (invalid_index, expected_root, intent, targets_tee) =
             match self.pending_proofs.get(&game_address) {
@@ -704,7 +707,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         // per tick for proofs that are not yet ready.
         let proof_update = self
             .pending_proofs
-            .poll(game_address, &*self.zk_prover, self.max_proof_duration)
+            .poll(game_address, &*self.proof_requester, self.max_proof_duration)
             .await?;
         match &proof_update {
             Some(ProofUpdate::Pending) => {
@@ -824,7 +827,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
 
     /// Handles a proof that needs retrying after failure.
     ///
-    /// If retries are exhausted the entry is dropped; otherwise `prove_block`
+    /// If retries are exhausted the entry is dropped; otherwise `proveBlockRange`
     /// is called and the phase transitions back to `AwaitingProof`.
     async fn handle_proof_retry(&mut self, game_address: Address) -> eyre::Result<()> {
         let pending = match self.pending_proofs.get(&game_address) {
@@ -833,6 +836,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         };
 
         let retry_count = pending.retry_count;
+        let expected_root = pending.expected_root;
 
         if retry_count > Self::MAX_PROOF_RETRIES {
             warn!(
@@ -845,7 +849,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         }
 
         // If this was a TEE proof, eagerly transition to ZK *before*
-        // calling `prove_block` so that subsequent retries take the ZK branch
+        // calling `proveBlockRange` so that subsequent retries take the ZK branch
         // and the fallback metric is emitted exactly once per transition.
         let request = match &pending.kind {
             ProofKind::Tee { zk_fallback_request, zk_fallback_intent } => {
@@ -878,7 +882,12 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
 
         ChallengerMetrics::proof_retries_total().increment(1);
 
-        match self.zk_prover.prove_block(request).await {
+        let prove_request = crate::ChallengerProofAdapter::snark_groth16_prove_block_range_request(
+            expected_root,
+            request,
+        );
+
+        match self.proof_requester.prove_block_range(prove_request).await {
             Ok(response) => {
                 info!(
                     game = %game_address,
@@ -901,41 +910,12 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                     error = %e,
                     game = %game_address,
                     retry_count = retry_count,
-                    "prove_block failed on retry, will retry next tick"
+                    "proveBlockRange failed on retry, will retry next tick"
                 );
                 // Leave as NeedsRetry for next tick.
             }
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use alloy_primitives::Address;
-
-    use crate::PendingProof;
-
-    #[test]
-    fn session_id_is_deterministic() {
-        let addr = Address::repeat_byte(0xAA);
-        assert_eq!(
-            PendingProof::derive_session_id(addr, 42),
-            PendingProof::derive_session_id(addr, 42),
-        );
-    }
-
-    #[test]
-    fn session_id_differs_for_different_inputs() {
-        let addr = Address::repeat_byte(0xAA);
-        assert_ne!(
-            PendingProof::derive_session_id(addr, 1),
-            PendingProof::derive_session_id(addr, 2),
-        );
-        assert_ne!(
-            PendingProof::derive_session_id(Address::repeat_byte(0xBB), 1),
-            PendingProof::derive_session_id(Address::repeat_byte(0xCC), 1),
-        );
     }
 }

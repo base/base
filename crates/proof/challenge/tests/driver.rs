@@ -22,9 +22,9 @@ use base_challenger::{
 use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex, GameStatus};
 use base_proof_primitives::{ProofResult, Proposal, ProverClient};
 use base_protocol::OutputRoot;
+use base_prover_service_protocol::{ProofStatus, SnarkGroth16ProofRequest, ZkProofRequest, ZkVm};
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManagerError;
-use base_zk_client::{ProofJobStatus, ProofType, ProveBlockRequest};
 use tokio_util::sync::CancellationToken;
 
 const STORAGE_HASH: B256 = B256::repeat_byte(0xBB);
@@ -92,7 +92,7 @@ fn test_driver_with_tee(
         DriverComponents {
             scanner,
             validator,
-            zk_prover,
+            proof_requester: zk_prover,
             submitter,
             tee,
             verifier_client: verifier as Arc<dyn AggregateVerifierClient>,
@@ -129,17 +129,16 @@ fn tee_config(
 }
 
 fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
-    let session_id = PendingProof::derive_session_id(addr(0), 1);
-
-    let request = ProveBlockRequest {
-        start_block_number: 15,
-        number_of_blocks_to_prove: 5,
-        sequence_window: None,
-        proof_type: ProofType::SnarkGroth16.into(),
-        session_id: Some(session_id),
-        prover_address: Some(format!("{:#x}", addr(0))),
-        l1_head: Some(format!("{DEFAULT_L1_HEAD:#x}")),
-        intermediate_root_interval: None,
+    let request = SnarkGroth16ProofRequest {
+        proof: ZkProofRequest {
+            start_block_number: 15,
+            number_of_blocks_to_prove: 5,
+            sequence_window: None,
+            l1_head: Some(DEFAULT_L1_HEAD),
+            intermediate_root_interval: None,
+            zk_vm: ZkVm::Sp1,
+        },
+        prover_address: addr(0),
     };
 
     PendingProof::ready(
@@ -155,8 +154,8 @@ fn succeeded_zk_prover(session_id: &str, receipt: Vec<u8>) -> Arc<MockZkProofPro
     Arc::new(MockZkProofProvider {
         session_id: session_id.to_string(),
         state: Mutex::new(MockZkProofState {
-            proof_status: ProofJobStatus::Succeeded as i32,
-            receipt,
+            proof_status: ProofStatus::Succeeded,
+            proof: receipt,
             ..Default::default()
         }),
     })
@@ -166,7 +165,7 @@ fn failed_zk_prover(session_id: &str) -> Arc<MockZkProofProvider> {
     Arc::new(MockZkProofProvider {
         session_id: session_id.to_string(),
         state: Mutex::new(MockZkProofState {
-            proof_status: ProofJobStatus::Failed as i32,
+            proof_status: ProofStatus::Failed,
             ..Default::default()
         }),
     })
@@ -390,7 +389,7 @@ async fn test_step_scan_error_propagated() {
         DriverComponents {
             scanner,
             validator,
-            zk_prover: default_zk_prover(),
+            proof_requester: default_zk_prover(),
             submitter,
             tee: None,
             verifier_client: verifier as Arc<dyn AggregateVerifierClient>,
@@ -408,7 +407,7 @@ async fn test_step_pending_proof_skips_prove_block() {
 
     let zk = Arc::new(MockZkProofProvider {
         session_id: "pending-session".to_string(),
-        state: Mutex::new(MockZkProofState { receipt: vec![0xBE, 0xEF], ..Default::default() }),
+        state: Mutex::new(MockZkProofState { proof: vec![0xBE, 0xEF], ..Default::default() }),
     });
 
     let tx_manager = default_tx_manager();
@@ -424,7 +423,7 @@ async fn test_step_pending_proof_skips_prove_block() {
     );
 
     // Simulate the proof completing before the next poll.
-    zk.state.lock().unwrap().proof_status = ProofJobStatus::Succeeded as i32;
+    zk.state.lock().unwrap().proof_status = ProofStatus::Succeeded;
 
     // Simulate the on-chain effect: game is resolved after challenge tx.
     verifier.update_game(
@@ -547,8 +546,8 @@ async fn test_step_proof_retry_succeeds() {
     let zk = Arc::new(MockZkProofProvider {
         session_id: "retry-session".to_string(),
         state: Mutex::new(MockZkProofState {
-            proof_status: ProofJobStatus::Failed as i32,
-            receipt: vec![0xBE, 0xEF],
+            proof_status: ProofStatus::Failed,
+            proof: vec![0xBE, 0xEF],
             ..Default::default()
         }),
     });
@@ -575,7 +574,7 @@ async fn test_step_proof_retry_succeeds() {
     assert_eq!(entry.retry_count, 1);
 
     // Simulate proof succeeding on the retry session.
-    zk.state.lock().unwrap().proof_status = ProofJobStatus::Succeeded as i32;
+    zk.state.lock().unwrap().proof_status = ProofStatus::Succeeded;
 
     // Simulate the on-chain effect of a successful challenge: game is resolved.
     verifier.update_game(
@@ -592,21 +591,18 @@ async fn test_step_proof_retry_succeeds() {
 }
 
 // Regression test for CHAIN-4297 / Immunefi #75829: after a FAILED proof, the
-// driver must re-invoke `prove_block` with the same deterministic
+// driver must re-invoke `proveBlockRange` with the same deterministic
 // `session_id` so the service-side fix in `create_with_outbox` can requeue
 // the row. Independent of the DB layer; fails on a challenger-side regression
-// such as dropping the retry call or losing `derive_session_id` determinism.
+// such as dropping the retry call or losing proof-session determinism.
 #[tokio::test]
 async fn test_step_proof_retry_reuses_deterministic_session_id() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
-    // Invalid index is 1 (see `invalid_game_mocks`: `vec![root_15, BOGUS_ROOT]`).
-    let expected_session_id = PendingProof::derive_session_id(addr(0), 1);
-
     let zk = Arc::new(MockZkProofProvider {
-        session_id: expected_session_id.clone(),
+        session_id: String::new(),
         state: Mutex::new(MockZkProofState {
-            proof_status: ProofJobStatus::Failed as i32,
+            proof_status: ProofStatus::Failed,
             error_message: Some("transient backend error".into()),
             ..Default::default()
         }),
@@ -615,31 +611,31 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
     let tx_manager = default_tx_manager();
     let mut driver = test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
 
-    // Step 1: initial prove_block call from initiate_zk_proof.
+    // Step 1: initial proveBlockRange call from initiate_zk_proof.
     driver.step().await.unwrap();
-    {
-        let log = &zk.state.lock().unwrap().prove_block_log;
-        assert_eq!(log.len(), 1, "exactly one prove_block call on initiation");
-        assert_eq!(
-            log[0].session_id.as_deref(),
-            Some(expected_session_id.as_str()),
-            "challenger must use the deterministic session_id on initiation",
-        );
-    }
+    let expected_session_id = {
+        let log = &zk.state.lock().unwrap().prove_block_range_log;
+        assert_eq!(log.len(), 1, "exactly one prove_block_range call on initiation");
+        log[0]
+            .proof
+            .session_id
+            .clone()
+            .expect("proveBlockRange request should include a session_id")
+    };
 
     // Step 2: poll observes Failed → NeedsRetry → handle_proof_retry must
-    // invoke prove_block again, reusing the same deterministic session_id.
+    // invoke proveBlockRange again, reusing the same deterministic session_id.
     driver.step().await.unwrap();
     {
-        let log = &zk.state.lock().unwrap().prove_block_log;
-        assert_eq!(log.len(), 2, "retry must invoke prove_block a second time");
+        let log = &zk.state.lock().unwrap().prove_block_range_log;
+        assert_eq!(log.len(), 2, "retry must invoke prove_block_range a second time");
         assert_eq!(
-            log[1].session_id.as_deref(),
+            log[1].proof.session_id.as_deref(),
             Some(expected_session_id.as_str()),
             "retry must reuse the deterministic session_id so the service can requeue",
         );
         assert_eq!(
-            log[0].session_id, log[1].session_id,
+            log[0].proof.session_id, log[1].proof.session_id,
             "the deterministic session_id must be stable across retries",
         );
     }
@@ -655,8 +651,8 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
     // eventually succeeding on the retry session.
     {
         let mut state = zk.state.lock().unwrap();
-        state.proof_status = ProofJobStatus::Succeeded as i32;
-        state.receipt = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        state.proof_status = ProofStatus::Succeeded;
+        state.proof = vec![0xDE, 0xAD, 0xBE, 0xEF];
         state.error_message = None;
     }
     verifier.update_game(
@@ -1599,25 +1595,26 @@ async fn test_step_checkpoint_count_mismatch_surfaces_error() {
     );
 }
 
-fn minimal_prove_request(session_id: &str) -> base_zk_client::ProveBlockRequest {
-    base_zk_client::ProveBlockRequest {
-        start_block_number: 0,
-        number_of_blocks_to_prove: 1,
-        sequence_window: None,
-        proof_type: ProofType::SnarkGroth16.into(),
-        session_id: Some(session_id.to_string()),
-        prover_address: None,
-        l1_head: None,
-        intermediate_root_interval: None,
+const fn minimal_prove_request() -> SnarkGroth16ProofRequest {
+    SnarkGroth16ProofRequest {
+        proof: ZkProofRequest {
+            start_block_number: 0,
+            number_of_blocks_to_prove: 1,
+            sequence_window: None,
+            l1_head: None,
+            intermediate_root_interval: None,
+            zk_vm: ZkVm::Sp1,
+        },
+        prover_address: Address::ZERO,
     }
 }
 
 #[tokio::test]
-async fn test_poll_unspecified_status_triggers_retry() {
+async fn test_poll_failed_status_triggers_retry() {
     let zk = Arc::new(MockZkProofProvider {
-        session_id: "unspecified-session".to_string(),
+        session_id: "failed-session".to_string(),
         state: Mutex::new(MockZkProofState {
-            proof_status: ProofJobStatus::Unspecified as i32,
+            proof_status: ProofStatus::Failed,
             ..Default::default()
         }),
     });
@@ -1626,19 +1623,16 @@ async fn test_poll_unspecified_status_triggers_retry() {
     proofs.insert(
         addr(0),
         PendingProof::awaiting(
-            "unspecified-session".to_string(),
+            "failed-session".to_string(),
             0,
             B256::ZERO,
-            minimal_prove_request("unspecified-session"),
+            minimal_prove_request(),
             DisputeIntent::Challenge,
         ),
     );
 
     let update = proofs.poll(addr(0), &*zk, Duration::from_secs(3600)).await.unwrap();
-    assert!(
-        matches!(update, Some(ProofUpdate::NeedsRetry)),
-        "Unspecified should trigger NeedsRetry"
-    );
+    assert!(matches!(update, Some(ProofUpdate::NeedsRetry)), "Failed should trigger NeedsRetry");
     let entry = proofs.get(&addr(0)).unwrap();
     assert_eq!(entry.retry_count, 1);
     assert!(matches!(entry.phase, ProofPhase::NeedsRetry));
@@ -1649,7 +1643,7 @@ async fn test_poll_running_within_timeout_stays_pending() {
     let zk = Arc::new(MockZkProofProvider {
         session_id: "running-session".to_string(),
         state: Mutex::new(MockZkProofState {
-            proof_status: ProofJobStatus::Running as i32,
+            proof_status: ProofStatus::Running,
             ..Default::default()
         }),
     });
@@ -1661,7 +1655,7 @@ async fn test_poll_running_within_timeout_stays_pending() {
             "running-session".to_string(),
             0,
             B256::ZERO,
-            minimal_prove_request("running-session"),
+            minimal_prove_request(),
             DisputeIntent::Challenge,
         ),
     );
@@ -1681,7 +1675,7 @@ async fn test_poll_running_timeout_triggers_retry() {
     let zk = Arc::new(MockZkProofProvider {
         session_id: "stuck-session".to_string(),
         state: Mutex::new(MockZkProofState {
-            proof_status: ProofJobStatus::Running as i32,
+            proof_status: ProofStatus::Running,
             ..Default::default()
         }),
     });
@@ -1693,7 +1687,7 @@ async fn test_poll_running_timeout_triggers_retry() {
             "stuck-session".to_string(),
             0,
             B256::ZERO,
-            minimal_prove_request("stuck-session"),
+            minimal_prove_request(),
             DisputeIntent::Challenge,
         ),
     );

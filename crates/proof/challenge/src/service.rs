@@ -14,9 +14,9 @@ use base_proof_contracts::{
     DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
 use base_proof_rpc::{L1Client, L1ClientConfig, L2Client, L2ClientConfig};
+use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
-use base_zk_client::{ZkProofClient, ZkProofClientConfig};
 use eyre::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -127,14 +127,11 @@ impl ChallengerService {
         let l2_client = Arc::new(L2Client::new(l2_config)?);
         info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
 
-        // ── 6. ZK proof client ───────────────────────────────────────────────
-        let zk_config = ZkProofClientConfig {
-            endpoint: config.zk_rpc_url.as_ref().clone(),
-            connect_timeout: config.zk_connect_timeout,
-            request_timeout: config.zk_request_timeout,
-        };
-        let zk_client = Arc::new(ZkProofClient::new(&zk_config)?);
-        info!(endpoint = %config.zk_rpc_url, "ZK proof client initialized");
+        // ── 6. Prover-service requester client ───────────────────────────────
+        let proof_requester_config = ProverServiceClientConfig::new(config.zk_rpc_url.to_string())
+            .with_request_timeout(config.zk_request_timeout);
+        let proof_requester = Arc::new(ProofRequesterClient::connect(&proof_requester_config)?);
+        info!(endpoint = %config.zk_rpc_url, "Prover-service requester client initialized");
 
         // ── 6b. TEE proof client (optional) ─────────────────────────────────
         let tee = if let Some(ref tee_url) = config.tee_rpc_url {
@@ -212,7 +209,7 @@ impl ChallengerService {
             DriverComponents {
                 scanner,
                 validator,
-                zk_prover: zk_client,
+                proof_requester,
                 submitter,
                 tee,
                 verifier_client,
