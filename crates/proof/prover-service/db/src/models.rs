@@ -386,7 +386,7 @@ impl TryFrom<&str> for TeeKind {
 }
 
 /// A proof request record in the database
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofRequest {
     /// Unique identifier.
     pub id: Uuid,

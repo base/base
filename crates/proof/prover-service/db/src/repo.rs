@@ -1083,7 +1083,17 @@ impl ProofRequestRepo {
                             ELSE 'compressed'
                         END
                     ) AS api_proof_type,
-                    COALESCE(zk_vm, 'sp1') AS zk_vm,
+                    CASE
+                        WHEN zk_vm IS NOT NULL THEN zk_vm
+                        WHEN COALESCE(
+                            api_proof_type,
+                            CASE proof_type
+                                WHEN 'op_succinct_sp1_cluster_snark_groth16' THEN 'snark_groth16'
+                                ELSE 'compressed'
+                            END
+                        ) IN ('compressed', 'snark_groth16') THEN 'sp1'
+                        ELSE NULL
+                    END AS zk_vm,
                     tee_kind,
                     start_block_number, number_of_blocks_to_prove, proof_type,
                     status, error_message,
@@ -1115,7 +1125,17 @@ impl ProofRequestRepo {
                             ELSE 'compressed'
                         END
                     ) AS api_proof_type,
-                    COALESCE(zk_vm, 'sp1') AS zk_vm,
+                    CASE
+                        WHEN zk_vm IS NOT NULL THEN zk_vm
+                        WHEN COALESCE(
+                            api_proof_type,
+                            CASE proof_type
+                                WHEN 'op_succinct_sp1_cluster_snark_groth16' THEN 'snark_groth16'
+                                ELSE 'compressed'
+                            END
+                        ) IN ('compressed', 'snark_groth16') THEN 'sp1'
+                        ELSE NULL
+                    END AS zk_vm,
                     tee_kind,
                     start_block_number, number_of_blocks_to_prove, proof_type,
                     status, error_message,
