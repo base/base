@@ -430,10 +430,10 @@ async fn run_worker(
         );
     }
 
-    let mut pool = NitroEnclavePool::new_multi(config, transports.clone());
+    let mut pool = NitroEnclavePool::new_multi(config, transports);
     if let Some(registration_health) = registration_health {
         let checker = Arc::new(
-            RegistrationChecker::from_health_config(transports, &registration_health)
+            RegistrationChecker::from_health_config(pool.transports(), &registration_health)
                 .map_err(|e| eyre!("registration checker init failed: {e}"))?,
         );
         pool = pool
