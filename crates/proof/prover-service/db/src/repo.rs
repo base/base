@@ -1350,6 +1350,16 @@ const fn zk_vm_for_backend(proof_type: ProofType) -> Option<ZkVmKind> {
     protocol_fields_for_backend(proof_type).1
 }
 
+const fn fallback_zk_vm_for_request(
+    api_proof_type: ApiProofType,
+    proof_type: ProofType,
+) -> Option<ZkVmKind> {
+    match api_proof_type {
+        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => zk_vm_for_backend(proof_type),
+        ApiProofType::Tee => None,
+    }
+}
+
 const fn protocol_fields_for_backend(
     proof_type: ProofType,
 ) -> (ApiProofType, Option<ZkVmKind>, Option<TeeKind>) {
@@ -1457,7 +1467,7 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         .get::<Option<&str>, _>("zk_vm")
         .map(parse_zk_vm_kind)
         .transpose()?
-        .or_else(|| zk_vm_for_backend(proof_type));
+        .or_else(|| fallback_zk_vm_for_request(api_proof_type, proof_type));
     let tee_kind = row.get::<Option<&str>, _>("tee_kind").map(parse_tee_kind).transpose()?;
     let request_payload =
         row.get::<Option<serde_json::Value>, _>("request_payload").unwrap_or_else(|| {
@@ -1706,5 +1716,15 @@ mod tests {
         assert!(!payload.contains_key("sequence_window"));
         assert!(!payload.contains_key("l1_head"));
         assert!(!payload.contains_key("intermediate_root_interval"));
+    }
+
+    #[test]
+    fn tee_request_does_not_fallback_to_zk_vm() {
+        let zk_vm = fallback_zk_vm_for_request(
+            ApiProofType::Tee,
+            ProofType::OpSuccinctSp1ClusterCompressed,
+        );
+
+        assert!(zk_vm.is_none());
     }
 }

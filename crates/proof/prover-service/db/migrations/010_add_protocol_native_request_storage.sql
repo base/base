@@ -5,6 +5,9 @@ ALTER TABLE proof_requests ADD COLUMN IF NOT EXISTS api_proof_type VARCHAR(32);
 ALTER TABLE proof_requests ADD COLUMN IF NOT EXISTS zk_vm VARCHAR(32);
 ALTER TABLE proof_requests ADD COLUMN IF NOT EXISTS tee_kind VARCHAR(32);
 
+-- Preserve historical updated_at values while backfilling protocol fields.
+ALTER TABLE proof_requests DISABLE TRIGGER update_proof_requests_updated_at;
+
 UPDATE proof_requests
 SET
     api_proof_type = COALESCE(
@@ -54,6 +57,8 @@ SET
             )
         END
     );
+
+ALTER TABLE proof_requests ENABLE TRIGGER update_proof_requests_updated_at;
 
 -- Keep these columns nullable during the expand phase so old service binaries
 -- can continue inserting proof_requests during rolling deploys.
