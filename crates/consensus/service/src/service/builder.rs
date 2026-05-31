@@ -13,8 +13,8 @@ use base_consensus_rpc::RpcBuilder;
 use url::Url;
 
 use crate::{
-    EngineConfig, NetworkConfig, RollupNode, SequencerConfig, actors::DerivationDelegateClient,
-    service::node::L1Config,
+    EngineConfig, NetworkConfig, RollupNode, SequencerCadenceConfig, SequencerConfig,
+    actors::DerivationDelegateClient, service::node::L1Config,
 };
 
 /// Configuration for Derivation Delegate mode.
@@ -205,7 +205,19 @@ impl RollupNodeBuilder {
         });
 
         let p2p_config = self.p2p_config;
-        let sequencer_config = self.sequencer_config.unwrap_or_default();
+        let mut sequencer_config = self.sequencer_config.unwrap_or_default();
+
+        // Auto-select 200ms cadence if Subsecond has already activated at startup. This keeps
+        // pre-Subsecond chains on the legacy seconds cadence and lets devnet flip to 200ms by
+        // setting the Subsecond activation timestamp at or before genesis.
+        if rollup_config
+            .hardforks
+            .base
+            .subsecond
+            .is_some_and(|t| t <= rollup_config.genesis.l2_time)
+        {
+            sequencer_config.cadence = SequencerCadenceConfig::beryl_200ms();
+        }
 
         let derivation_delegate_provider = self.derivation_delegate_config.as_ref().map(|config| {
             DerivationDelegateClient::new(config.l2_cl_url.clone()).expect(

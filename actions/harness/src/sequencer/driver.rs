@@ -265,6 +265,7 @@ impl L2Sequencer {
             origin_selector,
             recovery_mode: RecoveryModeGuard::new(false),
             rollup_config: Arc::clone(&self.rollup_config),
+            last_planned_full_ms: None,
         };
 
         let (admin_api_tx, admin_api_rx) = mpsc::channel(8);

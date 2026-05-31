@@ -36,6 +36,7 @@ pub(super) fn test_actor() -> SequencerActor<
             origin_selector: MockOriginSelector::new(),
             recovery_mode: recovery_mode.clone(),
             rollup_config: Arc::clone(&rollup_config),
+            last_planned_full_ms: None,
         },
         cancellation_token: CancellationToken::new(),
         conductor: None,

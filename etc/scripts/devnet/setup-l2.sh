@@ -9,6 +9,7 @@ L2_DATA_DIR="${L2_DATA_DIR:-/data}"
 TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
 L2_BASE_AZUL_BLOCK="${L2_BASE_AZUL_BLOCK:-}"
 L2_BASE_BERYL_BLOCK="${L2_BASE_BERYL_BLOCK:-}"
+L2_BASE_SUBSECOND_BLOCK="${L2_BASE_SUBSECOND_BLOCK:-}"
 L2_ACTIVATION_ADMIN_ADDR="${L2_ACTIVATION_ADMIN_ADDR:-$SEQUENCER_ADDR}"
 L2_EL_BOOTNODE_P2P_KEY="${L2_EL_BOOTNODE_P2P_KEY:-1111111111111111111111111111111111111111111111111111111111111111}"
 L2_EL_BOOTNODE_ENODE_ID="${L2_EL_BOOTNODE_ENODE_ID:-4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1}"
@@ -22,6 +23,10 @@ if [ -n "$L2_BASE_AZUL_BLOCK" ] && ! [[ "$L2_BASE_AZUL_BLOCK" =~ ^[0-9]+$ ]]; th
 fi
 if [ -n "$L2_BASE_BERYL_BLOCK" ] && ! [[ "$L2_BASE_BERYL_BLOCK" =~ ^[0-9]+$ ]]; then
   echo "ERROR: L2_BASE_BERYL_BLOCK must be a non-negative integer when set, got: $L2_BASE_BERYL_BLOCK"
+  exit 1
+fi
+if [ -n "$L2_BASE_SUBSECOND_BLOCK" ] && ! [[ "$L2_BASE_SUBSECOND_BLOCK" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: L2_BASE_SUBSECOND_BLOCK must be a non-negative integer when set, got: $L2_BASE_SUBSECOND_BLOCK"
   exit 1
 fi
 
@@ -39,6 +44,11 @@ if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
   echo "Base Beryl activation block: $L2_BASE_BERYL_BLOCK"
 else
   echo "Base Beryl activation block: <unset>"
+fi
+if [ -n "$L2_BASE_SUBSECOND_BLOCK" ]; then
+  echo "Base Subsecond activation block: $L2_BASE_SUBSECOND_BLOCK"
+else
+  echo "Base Subsecond activation block: <unset>"
 fi
 echo "Output directory: $OUTPUT_DIR"
 
@@ -226,6 +236,41 @@ else
   echo "L2 genesis time: $L2_GENESIS_TIME"
   echo "L2 block time: $L2_BLOCK_TIME"
   echo "Base Beryl activation block is unset; leaving base.beryl unchanged"
+fi
+
+if [ -n "$L2_BASE_SUBSECOND_BLOCK" ]; then
+  L2_BASE_SUBSECOND_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_SUBSECOND_BLOCK))
+
+  echo ""
+  echo "=== Configuring Base Subsecond Activation ==="
+  echo "L2 genesis time: $L2_GENESIS_TIME"
+  echo "L2 block time: $L2_BLOCK_TIME"
+  echo "Base Subsecond activation block: $L2_BASE_SUBSECOND_BLOCK"
+  echo "Derived Base Subsecond activation timestamp: $L2_BASE_SUBSECOND_TIME"
+
+  TMP_ROLLUP=$(mktemp)
+  jq \
+    --argjson subsecond_time "$L2_BASE_SUBSECOND_TIME" \
+    '.base = ((.base // {}) + {subsecond: $subsecond_time})' \
+    "$OUTPUT_DIR/rollup.json" \
+    >"$TMP_ROLLUP"
+  mv "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
+
+  TMP_GENESIS=$(mktemp)
+  jq \
+    --argjson subsecond_time "$L2_BASE_SUBSECOND_TIME" \
+    '.config.base = ((.config.base // {}) + {subsecond: $subsecond_time})' \
+    "$OUTPUT_DIR/genesis.json" \
+    >"$TMP_GENESIS"
+  mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
+
+  echo "Patched Base Subsecond activation into rollup and genesis configs"
+else
+  echo ""
+  echo "=== Configuring Base Subsecond Activation ==="
+  echo "L2 genesis time: $L2_GENESIS_TIME"
+  echo "L2 block time: $L2_BLOCK_TIME"
+  echo "Base Subsecond activation block is unset; leaving base.subsecond unchanged"
 fi
 
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."

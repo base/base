@@ -188,6 +188,15 @@ L2_BASE_AZUL_BLOCK=20
 # Optional: set to a non-negative block number to schedule Base Beryl in devnet.
 # Leave unset to avoid setting base.beryl during genesis generation.
 L2_BASE_BERYL_BLOCK=21
+# Optional: set to a non-negative block number to schedule Base Subsecond in devnet.
+# Subsecond is a phantom hardfork that activates 200ms block production.
+# Held separate from Beryl so the activation can move without churning Beryl's
+# mainnet timestamp. Setting this to 0 activates Subsecond at the L2 genesis
+# timestamp, which auto-selects the 200ms sequencer cadence on startup; set to
+# a positive integer to activate at a later block (validators must be restarted
+# to pick up the 200ms cadence at that point). Leave unset to keep legacy 2s
+# cadence end-to-end.
+L2_BASE_SUBSECOND_BLOCK=0
 
 # Metering Resource Limits
 # Whole-block budgets for gas/state-root/DA, plus a per-flashblock execution budget.

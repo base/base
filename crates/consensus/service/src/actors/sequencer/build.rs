@@ -4,9 +4,13 @@
 //! preparation, and block build initiation, and [`UnsealedPayloadHandle`],
 //! which carries the resulting payload identifier forward to the seal stage.
 
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use alloy_rpc_types_engine::PayloadId;
+use base_common_consensus::TIMESTAMP_MILLIS_PER_SECOND;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{AttributesBuilder, PipelineErrorKind};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
@@ -51,6 +55,14 @@ pub struct PayloadBuilder<A: AttributesBuilder, O: OriginSelector, E: SequencerE
     pub recovery_mode: RecoveryModeGuard,
     /// The rollup configuration.
     pub rollup_config: Arc<RollupConfig>,
+    /// Cache of the most recently planned child block's full millisecond timestamp.
+    ///
+    /// Keyed by the child block number. Used to seed [`SequencerTimestampPlanner::beryl_timestamp`]
+    /// with an accurate parent millisecond timestamp when the parent itself was produced under
+    /// the Subsecond cadence. For the first Subsecond block, or after a cache miss caused by a
+    /// restart or reorg, we fall back to `parent.block_info.timestamp * 1000`, which is exact for
+    /// pre-Subsecond parents and a safe lower bound otherwise.
+    pub last_planned_full_ms: Option<(u64, u64)>,
 }
 
 impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadBuilder<A, O, E> {
@@ -164,10 +176,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         unsafe_head: L2BlockInfo,
         l1_origin: BlockInfo,
     ) -> Result<Option<AttributesWithParent>, SequencerActorError> {
-        let planned_timestamp: SequencerTimestamp = SequencerTimestampPlanner::legacy_timestamp(
-            unsafe_head.block_info.timestamp,
-            self.rollup_config.block_time,
-        )?;
+        let planned_timestamp = self.plan_next_timestamp(unsafe_head)?;
 
         let mut attributes = match self
             .attributes_builder
@@ -225,5 +234,53 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
 
         let attrs_with_parent = AttributesWithParent::new(attributes, unsafe_head, None, false);
         Ok(Some(attrs_with_parent))
+    }
+
+    /// Plans the next L2 block's timestamp.
+    ///
+    /// After the Subsecond hardfork the sequencer produces blocks every 200ms and the engine
+    /// requires a `timestamp_millis_part`. Before Subsecond, we keep the legacy seconds-only
+    /// cadence so derivation, batch encoding, and Engine API messaging remain unchanged.
+    fn plan_next_timestamp(
+        &mut self,
+        unsafe_head: L2BlockInfo,
+    ) -> Result<SequencerTimestamp, SequencerActorError> {
+        let candidate_legacy_ts =
+            unsafe_head.block_info.timestamp.saturating_add(self.rollup_config.block_time);
+        let use_subsecond = self
+            .rollup_config
+            .hardforks
+            .base
+            .subsecond
+            .is_some_and(|subsecond_ts| candidate_legacy_ts >= subsecond_ts);
+
+        let planned = if use_subsecond {
+            let parent_full_ms = match self.last_planned_full_ms {
+                Some((cached_number, cached_ms))
+                    if cached_number == unsafe_head.block_info.number =>
+                {
+                    cached_ms
+                }
+                _ => unsafe_head
+                    .block_info
+                    .timestamp
+                    .saturating_mul(TIMESTAMP_MILLIS_PER_SECOND as u64),
+            };
+            let wall_clock_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(parent_full_ms);
+            SequencerTimestampPlanner::beryl_timestamp(parent_full_ms, wall_clock_ms)?
+        } else {
+            SequencerTimestampPlanner::legacy_timestamp(
+                unsafe_head.block_info.timestamp,
+                self.rollup_config.block_time,
+            )?
+        };
+
+        self.last_planned_full_ms =
+            Some((unsafe_head.block_info.number.saturating_add(1), planned.timestamp_millis));
+
+        Ok(planned)
     }
 }

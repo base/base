@@ -331,7 +331,7 @@ fn validate_timestamp_millis_part_presence(
     timestamp: u64,
     timestamp_millis_part: Option<u16>,
 ) -> Result<(), EngineObjectValidationError> {
-    if chain_spec.is_beryl_active_at_timestamp(timestamp) {
+    if chain_spec.is_subsecond_active_at_timestamp(timestamp) {
         let part = timestamp_millis_part.ok_or_else(|| {
             EngineObjectValidationError::InvalidParams(
                 "MissingTimestampMillisPartInPayloadAttributes".to_string().into(),
@@ -345,7 +345,7 @@ fn validate_timestamp_millis_part_presence(
         })?;
     } else if timestamp_millis_part.is_some() {
         return Err(EngineObjectValidationError::InvalidParams(
-            "TimestampMillisPartNotAllowedBeforeBeryl".to_string().into(),
+            "TimestampMillisPartNotAllowedBeforeSubsecond".to_string().into(),
         ));
     }
 
@@ -420,11 +420,12 @@ mod tests {
         )
     }
 
-    fn validator_with_beryl_timestamp(
-        beryl_timestamp: u64,
+    fn validator_with_subsecond_timestamp(
+        subsecond_timestamp: u64,
     ) -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
         let mut chain_spec = BaseChainSpec::sepolia();
-        chain_spec.set_fork(BaseUpgrade::Beryl, ForkCondition::Timestamp(beryl_timestamp));
+        chain_spec
+            .set_fork(BaseUpgrade::Subsecond, ForkCondition::Timestamp(subsecond_timestamp));
         BaseEngineValidator::<NoopProvider, BaseTxEnvelope, BaseChainSpec>::new::<KeccakKeyHasher>(
             Arc::new(chain_spec),
             NoopProvider::default(),
@@ -622,13 +623,13 @@ mod tests {
     }
 
     #[test]
-    fn test_malformed_attributes_pre_beryl_with_timestamp_millis_part() {
-        let beryl_timestamp = ChainConfig::sepolia().jovian_timestamp + 20;
-        let validator = validator_with_beryl_timestamp(beryl_timestamp);
+    fn test_malformed_attributes_pre_subsecond_with_timestamp_millis_part() {
+        let subsecond_timestamp = ChainConfig::sepolia().jovian_timestamp + 20;
+        let validator = validator_with_subsecond_timestamp(subsecond_timestamp);
         let attributes = get_attributes_with_timestamp_millis_part(
             Some(b64!("0000000000000000")),
             Some(1),
-            beryl_timestamp - 1,
+            subsecond_timestamp - 1,
             Some(0),
         );
 
@@ -637,14 +638,15 @@ mod tests {
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
         );
-        assert_invalid_params_error!(result, "TimestampMillisPartNotAllowedBeforeBeryl");
+        assert_invalid_params_error!(result, "TimestampMillisPartNotAllowedBeforeSubsecond");
     }
 
     #[test]
-    fn test_malformed_attributes_post_beryl_missing_timestamp_millis_part() {
-        let beryl_timestamp = ChainConfig::sepolia().jovian_timestamp + 20;
-        let validator = validator_with_beryl_timestamp(beryl_timestamp);
-        let attributes = get_attributes(Some(b64!("0000000000000000")), Some(1), beryl_timestamp);
+    fn test_malformed_attributes_post_subsecond_missing_timestamp_millis_part() {
+        let subsecond_timestamp = ChainConfig::sepolia().jovian_timestamp + 20;
+        let validator = validator_with_subsecond_timestamp(subsecond_timestamp);
+        let attributes =
+            get_attributes(Some(b64!("0000000000000000")), Some(1), subsecond_timestamp);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
@@ -655,13 +657,13 @@ mod tests {
     }
 
     #[test]
-    fn test_malformed_attributes_post_beryl_invalid_timestamp_millis_part() {
-        let beryl_timestamp = ChainConfig::sepolia().jovian_timestamp + 20;
-        let validator = validator_with_beryl_timestamp(beryl_timestamp);
+    fn test_malformed_attributes_post_subsecond_invalid_timestamp_millis_part() {
+        let subsecond_timestamp = ChainConfig::sepolia().jovian_timestamp + 20;
+        let validator = validator_with_subsecond_timestamp(subsecond_timestamp);
         let attributes = get_attributes_with_timestamp_millis_part(
             Some(b64!("0000000000000000")),
             Some(1),
-            beryl_timestamp,
+            subsecond_timestamp,
             Some(100),
         );
 
@@ -674,13 +676,13 @@ mod tests {
     }
 
     #[test]
-    fn test_well_formed_attributes_post_beryl_valid_timestamp_millis_part() {
-        let beryl_timestamp = ChainConfig::sepolia().jovian_timestamp + 20;
-        let validator = validator_with_beryl_timestamp(beryl_timestamp);
+    fn test_well_formed_attributes_post_subsecond_valid_timestamp_millis_part() {
+        let subsecond_timestamp = ChainConfig::sepolia().jovian_timestamp + 20;
+        let validator = validator_with_subsecond_timestamp(subsecond_timestamp);
         let attributes = get_attributes_with_timestamp_millis_part(
             Some(b64!("0000000000000000")),
             Some(1),
-            beryl_timestamp,
+            subsecond_timestamp,
             Some(200),
         );
 

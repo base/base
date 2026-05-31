@@ -18,8 +18,8 @@ pub const VALID_TIMESTAMP_MILLIS_PARTS: [u16; 5] = [0, 200, 400, 600, 800];
 /// Error returned when a header millisecond timestamp component is invalid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TimestampMillisPartError {
-    /// Post-Beryl validation requires a millisecond component.
-    #[error("timestamp millisecond part is required after Beryl")]
+    /// Post-Subsecond validation requires a millisecond component.
+    #[error("timestamp millisecond part is required after Subsecond")]
     MissingPart,
 
     /// Millisecond component is not aligned to the 200ms cadence.

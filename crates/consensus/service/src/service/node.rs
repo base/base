@@ -554,6 +554,7 @@ impl RollupNode {
                         origin_selector: delayed_origin_selector,
                         recovery_mode: recovery_mode.clone(),
                         rollup_config: Arc::clone(&self.config),
+                        last_planned_full_ms: None,
                     },
                     cancellation_token: cancellation.clone(),
                     conductor,
