@@ -11,6 +11,11 @@ use base_proof_succinct_client_utils::{
     },
 };
 
+#[cfg(feature = "tracing-subscriber")]
+use anyhow::anyhow;
+#[cfg(feature = "tracing-subscriber")]
+use tracing::Level;
+
 /// Sets up tracing for the range program
 #[cfg(feature = "tracing-subscriber")]
 pub fn setup_tracing() {
