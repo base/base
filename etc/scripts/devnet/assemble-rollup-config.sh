@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # assemble-rollup-config.sh — Assembles rollup.json from multiple data sources.
 #
