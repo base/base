@@ -129,6 +129,7 @@ struct ProofPlan {
 struct PendingProofSession {
     plan: ProofPlan,
     session_id: String,
+    /// Original proof request retained for follow-up async dispatch/collection.
     request: ProofRequest,
     retry_count: u32,
     started_at: Instant,
@@ -710,14 +711,18 @@ where
                 state.retry_counts.remove(&target);
                 state.proved.insert(target, proof_result);
                 state.record_gauges();
-                info!(
-                    target_block = target,
-                    session_id = ?session.as_ref().map(|s| s.session_id.as_str()),
-                    from_block = ?session.as_ref().map(|s| s.plan.start_block),
-                    retry_count = ?session.as_ref().map(|s| s.retry_count),
-                    elapsed = ?session.as_ref().map(PendingProofSession::elapsed),
-                    "Proof completed successfully"
-                );
+                if let Some(session) = session {
+                    info!(
+                        target_block = target,
+                        session_id = %session.session_id,
+                        from_block = session.plan.start_block,
+                        retry_count = session.retry_count,
+                        elapsed = ?session.elapsed(),
+                        "Proof completed successfully"
+                    );
+                } else {
+                    info!(target_block = target, "Proof completed successfully");
+                }
             }
             Ok((target, Err(e))) => {
                 Metrics::errors_total(e.metric_label()).increment(1);
@@ -726,16 +731,25 @@ where
                 let count = state.retry_counts.entry(target).or_insert(0);
                 *count += 1;
                 if *count >= self.config.max_retries {
-                    error!(
-                        target_block = target,
-                        session_id = ?session.as_ref().map(|s| s.session_id.as_str()),
-                        from_block = ?session.as_ref().map(|s| s.plan.start_block),
-                        session_retry_count = ?session.as_ref().map(|s| s.retry_count),
-                        elapsed = ?session.as_ref().map(PendingProofSession::elapsed),
-                        attempts = *count,
-                        error = %e,
-                        "Proof failed after max retries, dropping cached recovery"
-                    );
+                    if let Some(session) = session.as_ref() {
+                        error!(
+                            target_block = target,
+                            session_id = %session.session_id,
+                            from_block = session.plan.start_block,
+                            session_retry_count = session.retry_count,
+                            elapsed = ?session.elapsed(),
+                            attempts = *count,
+                            error = %e,
+                            "Proof failed after max retries, dropping cached recovery"
+                        );
+                    } else {
+                        error!(
+                            target_block = target,
+                            attempts = *count,
+                            error = %e,
+                            "Proof failed after max retries, dropping cached recovery"
+                        );
+                    }
                     // Drop only this target's retry bookkeeping (inflight was
                     // already cleared above when the task finished). Other
                     // in-flight proofs and completed entries in `proved` are
@@ -745,13 +759,20 @@ where
                     // naturally.
                     state.retry_counts.remove(&target);
                     state.cached_recovery = None;
+                } else if let Some(session) = session.as_ref() {
+                    warn!(
+                        target_block = target,
+                        session_id = %session.session_id,
+                        from_block = session.plan.start_block,
+                        session_retry_count = session.retry_count,
+                        elapsed = ?session.elapsed(),
+                        attempt = *count,
+                        error = %e,
+                        "Proof failed, will retry next tick"
+                    );
                 } else {
                     warn!(
                         target_block = target,
-                        session_id = ?session.as_ref().map(|s| s.session_id.as_str()),
-                        from_block = ?session.as_ref().map(|s| s.plan.start_block),
-                        session_retry_count = ?session.as_ref().map(|s| s.retry_count),
-                        elapsed = ?session.as_ref().map(PendingProofSession::elapsed),
                         attempt = *count,
                         error = %e,
                         "Proof failed, will retry next tick"
