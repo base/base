@@ -20,7 +20,7 @@ on:
         required: false
         type: boolean
         default: false
-      run_devnet:
+      run_system_tests:
         required: false
         type: boolean
         default: false
@@ -282,9 +282,9 @@ jobs:
       - name: Run SIGSEGV tests under musl
         run: cargo test --locked -p base-cli-utils --test sigsegv_test --target x86_64-unknown-linux-musl
 
-  devnet-tests:
-    name: Devnet Tests
-    if: inputs.run_devnet
+  system-tests:
+    name: System Tests
+    if: inputs.run_system_tests
     runs-on:
       group: BasePerfRunnerGroup
     timeout-minutes: 60
@@ -312,7 +312,7 @@ jobs:
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
       - name: Pre-pull docker images
         run: just devnet pull-images
-      - name: Run devnet tests
+      - name: Run system tests
         run: just devnet tests-ci
       - name: Check for JUnit testcases
         if: always()
