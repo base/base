@@ -55,6 +55,54 @@ impl fmt::Debug for ProofRequesterProver {
     }
 }
 
+/// Proof request accepted by prover service for asynchronous collection.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct DispatchedProof {
+    /// Deterministic proof session identifier accepted by prover service.
+    pub session_id: String,
+}
+
+/// Async proof dispatcher backed by the prover-service requester API.
+#[derive(Clone)]
+pub struct ProofRequesterDispatcher {
+    requester: Arc<dyn ProofRequesterProvider>,
+    tee_kind: TeeKind,
+}
+
+impl ProofRequesterDispatcher {
+    /// Creates a dispatcher for AWS Nitro TEE proofs.
+    pub fn aws_nitro(requester: Arc<dyn ProofRequesterProvider>) -> Self {
+        Self { requester, tee_kind: TeeKind::AwsNitro }
+    }
+
+    /// Creates a dispatcher for the given TEE implementation.
+    pub const fn new(requester: Arc<dyn ProofRequesterProvider>, tee_kind: TeeKind) -> Self {
+        Self { requester, tee_kind }
+    }
+
+    /// Submits a TEE proof request to prover service without waiting for completion.
+    pub async fn dispatch_tee(
+        &self,
+        request: PrimitiveProofRequest,
+    ) -> Result<DispatchedProof, ProposerError> {
+        let request = ProposerProofAdapter::tee_prove_block_range_request(request, self.tee_kind);
+        let response = self
+            .requester
+            .prove_block_range(request)
+            .await
+            .map_err(|e| ProposerError::Prover(e.to_string()))?;
+        Ok(DispatchedProof { session_id: response.session_id })
+    }
+}
+
+impl fmt::Debug for ProofRequesterDispatcher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProofRequesterDispatcher")
+            .field("tee_kind", &self.tee_kind)
+            .finish_non_exhaustive()
+    }
+}
+
 #[async_trait]
 impl ProverClient for ProofRequesterProver {
     async fn prove(
@@ -193,7 +241,7 @@ mod tests {
         TeeProofResult,
     };
 
-    use super::{ProofRequesterProver, ProposerProofAdapter};
+    use super::{ProofRequesterDispatcher, ProofRequesterProver, ProposerProofAdapter};
 
     #[derive(Debug)]
     struct MockProofRequester {
@@ -399,6 +447,22 @@ mod tests {
             .expect_err("failed proof should return an error");
 
         assert!(err.to_string().contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn proof_requester_dispatcher_submits_without_polling() {
+        let requester = std::sync::Arc::new(MockProofRequester::new(Vec::new()));
+        let dispatcher = ProofRequesterDispatcher::aws_nitro(
+            std::sync::Arc::clone(&requester) as std::sync::Arc<dyn ProofRequesterProvider>
+        );
+        let request = test_request(B256::repeat_byte(0xaa));
+        let expected_session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
+
+        let dispatched = dispatcher.dispatch_tee(request).await.unwrap();
+
+        assert_eq!(dispatched.session_id, expected_session_id);
+        assert_eq!(requester.prove_requests.lock().unwrap().len(), 1);
+        assert!(requester.get_requests.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
