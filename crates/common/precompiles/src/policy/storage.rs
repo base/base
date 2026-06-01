@@ -153,14 +153,16 @@ impl PolicyRegistryStorage<'_> {
     /// Gated on `next_counter`, so all subsequent calls cost a single SLOAD and bail.
     /// The bytecode marker must precede any storage write because the EVM path can prune
     /// writes made under an empty native-precompile account.
+    /// Returns the next custom-policy counter after any first-touch setup.
     ///
     /// Consumes counters 0 and 1, leaving the counter at 2 so custom policies start there.
     /// Both built-ins have a renounced (zero) admin.
     /// - `ALWAYS_ALLOW_ID` (counter=0, BLOCKLIST): no members blocked — everyone is authorized.
     /// - `ALWAYS_BLOCK_ID` (counter=1, ALLOWLIST): no members allowed — nobody is authorized.
-    pub fn ensure_initialized(&mut self) -> Result<()> {
-        if self.next_counter.read()? >= Self::BUILTIN_POLICY_COUNT {
-            return Ok(());
+    pub fn ensure_initialized(&mut self) -> Result<u64> {
+        let counter = self.next_counter()?;
+        if counter >= Self::BUILTIN_POLICY_COUNT {
+            return Ok(counter);
         }
         // Assert that the ID constants match the enum discriminants and counter slots,
         // catching any future drift from enum reordering or constant changes.
@@ -177,7 +179,7 @@ impl PolicyRegistryStorage<'_> {
         self.policies.at_mut(&Self::ALWAYS_ALLOW_ID).write(builtin)?;
         self.policies.at_mut(&Self::ALWAYS_BLOCK_ID).write(builtin)?;
         self.next_counter.write(Self::BUILTIN_POLICY_COUNT)?;
-        Ok(())
+        Ok(Self::BUILTIN_POLICY_COUNT)
     }
 
     /// Creates a new ALLOWLIST or BLOCKLIST policy, returning its encoded ID.
@@ -192,9 +194,7 @@ impl PolicyRegistryStorage<'_> {
         policy_type: PolicyType,
         policy_type_u8: u8,
     ) -> Result<u64> {
-        self.ensure_initialized()?;
-
-        let counter = self.next_counter()?;
+        let counter = self.ensure_initialized()?;
         let is_counter_overflowed = counter >= Self::COUNTER_MASK;
         if is_counter_overflowed {
             return Err(BasePrecompileError::under_overflow());
