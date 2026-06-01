@@ -496,10 +496,10 @@ async fn diff_upload_reuploads_on_blake3_mismatch_even_when_size_matches() -> Re
         500_000,
         DIFF_TEST_COMPONENTS,
         "v2",
-        b"healthy-bytes-yy",
+        b"healthy-bytes-yyy",
     )?;
     assert_eq!(
-        b"healthy-bytes-yy".len(),
+        b"healthy-bytes-yyy".len(),
         b"corrupted-bytes-x".len(),
         "test fixture must hold size constant"
     );
@@ -519,7 +519,7 @@ async fn diff_upload_reuploads_on_blake3_mismatch_even_when_size_matches() -> Re
             let body = get_object_bytes(s3, bucket, &key).await?;
             assert_eq!(
                 body.as_slice(),
-                b"healthy-bytes-yy",
+                b"healthy-bytes-yyy",
                 "chunk {component} {chunk_idx} should have been re-uploaded despite size match"
             );
         }
