@@ -790,10 +790,31 @@ async fn test_complete_session_and_update_receipt_skips_non_running() {
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_retry_or_fail_stuck_request_retries() {
     let pool = test_pool().await;
-    let repo = test_repo(pool);
+    let repo = test_repo(pool.clone());
 
     let id = repo.create(compressed_request()).await.unwrap();
     repo.atomic_claim_task(id).await.unwrap();
+    sqlx::query(
+        r#"
+        UPDATE proof_requests
+        SET stark_receipt = $1,
+            snark_receipt = $2,
+            result_payload = $3,
+            submitted_by_worker_id = $4,
+            submitted_lock_id = $5,
+            completed_at = NOW()
+        WHERE id = $6
+        "#,
+    )
+    .bind(vec![0x01, 0x02])
+    .bind(vec![0x03, 0x04])
+    .bind(serde_json::json!({"proof_type": "compressed"}))
+    .bind("stale-worker")
+    .bind("stale-lock")
+    .bind(id)
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck in PENDING").await.unwrap();
     assert_eq!(outcome, RetryOutcome::Retried);
@@ -802,6 +823,12 @@ async fn test_retry_or_fail_stuck_request_retries() {
     assert_eq!(req.status, ProofStatus::Created);
     assert_eq!(req.retry_count, 1);
     assert!(req.error_message.is_none());
+    assert!(req.stark_receipt.is_none());
+    assert!(req.snark_receipt.is_none());
+    assert!(req.result_payload.is_none());
+    assert!(req.submitted_by_worker_id.is_none());
+    assert!(req.submitted_lock_id.is_none());
+    assert!(req.completed_at.is_none());
 }
 
 #[tokio::test]

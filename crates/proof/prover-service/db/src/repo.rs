@@ -638,9 +638,12 @@ impl ProofRequestRepo {
             SET status = $1,
                 retry_count = retry_count + 1,
                 error_message = NULL,
+                stark_receipt = NULL,
+                snark_receipt = NULL,
                 result_payload = NULL,
                 submitted_by_worker_id = NULL,
-                submitted_lock_id = NULL
+                submitted_lock_id = NULL,
+                completed_at = NULL
             WHERE id = $2
             "#,
         )
