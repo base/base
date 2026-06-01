@@ -31,10 +31,6 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     pub const SECURITY_OPERATOR_ROLE: B256 =
         b256!("e63901dfe7775ace99fa3654743976eb0ab2009f5d19c4fc1ecd40aed27d59af");
 
-    /// Role identifier for delegated burns: `keccak256("BURN_FROM_ROLE")`.
-    pub const BURN_FROM_ROLE: B256 =
-        b256!("25400dba76bf0d00acf274c2b61ff56aa4ed19826e21e0186e3fecd6a6671875");
-
     /// Policy scope identifier for redeem senders: `keccak256("REDEEM_SENDER_POLICY")`.
     pub const REDEEM_SENDER_POLICY: B256 = B20SecurityStorage::REDEEM_SENDER_POLICY;
 
@@ -119,11 +115,6 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     /// Ensures the caller has the default admin role.
     pub fn ensure_default_admin(&self, caller: Address, privileged: bool) -> Result<()> {
         if privileged { Ok(()) } else { self.ensure_role(caller, Self::default_admin_role()) }
-    }
-
-    /// Ensures the caller has the burn-from role.
-    pub fn ensure_burn_from_role(&self, caller: Address) -> Result<()> {
-        self.ensure_role(caller, Self::BURN_FROM_ROLE)
     }
 
     // --- Policy Operations ---
@@ -328,54 +319,6 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         }
         Ok(())
     }
-
-    /// Burns tokens from multiple accounts unconditionally. All-or-nothing.
-    ///
-    /// Unlike `burnBlocked`, this path has no policy precondition. The
-    /// `BURN_FROM_ROLE` authorization and burn pause check are the only gates.
-    ///
-    /// Check order: PAUSE → ROLE → INPUT → BUSINESS
-    pub fn batch_burn(
-        &mut self,
-        caller: Address,
-        accounts: Vec<Address>,
-        amounts: Vec<U256>,
-    ) -> Result<()> {
-        // 1. PAUSE (kill switch)
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
-        // 2. ROLE
-        self.ensure_burn_from_role(caller)?;
-        // 3. INPUT VALIDATION
-        if accounts.len() != amounts.len() {
-            return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
-                leftLen: U256::from(accounts.len()),
-                rightLen: U256::from(amounts.len()),
-            }));
-        }
-        if accounts.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
-        }
-        // 4. BUSINESS LOGIC (no allowance/policy for batch_burn)
-        for (account, amount) in accounts.into_iter().zip(amounts) {
-            let balance = self.accounting().balance_of(account)?;
-            if balance < amount {
-                return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
-                    sender: account,
-                    balance,
-                    needed: amount,
-                }));
-            }
-            self.accounting_mut().set_balance(account, balance - amount)?;
-            let supply = self.accounting().total_supply()?;
-            let new_supply =
-                supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-            self.accounting_mut().set_total_supply(new_supply)?;
-            self.accounting_mut().emit_event(
-                IB20::Transfer { from: account, to: Address::ZERO, amount }.encode_log_data(),
-            )?;
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -464,81 +407,6 @@ mod tests {
                 BasePrecompileError::revert(IB20Security::LengthMismatch {
                     leftLen: U256::from(2u64),
                     rightLen: U256::from(1u64),
-                })
-            }
-        }
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    enum BatchBurnSetup {
-        Paused,
-        NoRole,
-        EmptyBatch,
-        LengthMismatch,
-        InsufficientBalance,
-    }
-
-    fn setup_batch_burn(setup: BatchBurnSetup) -> (TestSecurityToken, Vec<Address>, Vec<U256>) {
-        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD;
-        let accounts;
-        let amounts;
-
-        match setup {
-            BatchBurnSetup::Paused => {
-                accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
-                accounts = vec![ALICE];
-                amounts = vec![U256::from(10u64)];
-            }
-            BatchBurnSetup::NoRole => {
-                accounts = vec![];
-                amounts = vec![];
-            }
-            BatchBurnSetup::EmptyBatch => {
-                accounting.roles.insert((TestSecurityToken::BURN_FROM_ROLE, CALLER), true);
-                accounts = vec![];
-                amounts = vec![];
-            }
-            BatchBurnSetup::LengthMismatch => {
-                accounting.roles.insert((TestSecurityToken::BURN_FROM_ROLE, CALLER), true);
-                accounts = vec![ALICE, BOB];
-                amounts = vec![U256::from(10u64)];
-            }
-            BatchBurnSetup::InsufficientBalance => {
-                accounting.roles.insert((TestSecurityToken::BURN_FROM_ROLE, CALLER), true);
-                accounting.balances.insert(ALICE, U256::from(5u64));
-                accounts = vec![ALICE];
-                amounts = vec![U256::from(10u64)];
-            }
-        }
-
-        let token = TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
-        (token, accounts, amounts)
-    }
-
-    fn expected_batch_burn_error(setup: BatchBurnSetup) -> BasePrecompileError {
-        match setup {
-            BatchBurnSetup::Paused => BasePrecompileError::revert(IB20::ContractPaused {
-                feature: IB20::PausableFeature::BURN,
-            }),
-            BatchBurnSetup::NoRole => {
-                BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                    account: CALLER,
-                    neededRole: TestSecurityToken::BURN_FROM_ROLE,
-                })
-            }
-            BatchBurnSetup::EmptyBatch => BasePrecompileError::revert(IB20Security::EmptyBatch {}),
-            BatchBurnSetup::LengthMismatch => {
-                BasePrecompileError::revert(IB20Security::LengthMismatch {
-                    leftLen: U256::from(2u64),
-                    rightLen: U256::from(1u64),
-                })
-            }
-            BatchBurnSetup::InsufficientBalance => {
-                BasePrecompileError::revert(IB20::InsufficientBalance {
-                    sender: ALICE,
-                    balance: U256::from(5u64),
-                    needed: U256::from(10u64),
                 })
             }
         }
@@ -637,7 +505,6 @@ mod tests {
     #[test]
     fn role_and_policy_ids_match_solidity_hashes() {
         assert_eq!(TestSecurityToken::SECURITY_OPERATOR_ROLE, keccak256("SECURITY_OPERATOR_ROLE"));
-        assert_eq!(TestSecurityToken::BURN_FROM_ROLE, keccak256("BURN_FROM_ROLE"));
         assert_eq!(TestSecurityToken::REDEEM_SENDER_POLICY, keccak256("REDEEM_SENDER_POLICY"));
     }
 
@@ -652,20 +519,6 @@ mod tests {
         let err = token.batch_mint(CALLER, recipients, amounts, false).unwrap_err();
 
         assert_eq!(err, expected_batch_mint_error(setup));
-    }
-
-    #[rstest]
-    #[case::paused_gets_pause_error(BatchBurnSetup::Paused)]
-    #[case::no_role_gets_role_error(BatchBurnSetup::NoRole)]
-    #[case::empty_batch_gets_input_error(BatchBurnSetup::EmptyBatch)]
-    #[case::length_mismatch_gets_input_error(BatchBurnSetup::LengthMismatch)]
-    #[case::insufficient_balance_gets_business_error(BatchBurnSetup::InsufficientBalance)]
-    fn batch_burn_check_order(#[case] setup: BatchBurnSetup) {
-        let (mut token, accounts, amounts) = setup_batch_burn(setup);
-
-        let err = token.batch_burn(CALLER, accounts, amounts).unwrap_err();
-
-        assert_eq!(err, expected_batch_burn_error(setup));
     }
 
     #[rstest]

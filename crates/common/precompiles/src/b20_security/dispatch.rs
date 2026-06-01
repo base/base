@@ -345,7 +345,6 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         let encoded: Bytes = match call {
             // --- Role / precision constants ---
             SC::SECURITY_OPERATOR_ROLE(_) => Self::SECURITY_OPERATOR_ROLE.abi_encode().into(),
-            SC::BURN_FROM_ROLE(_) => Self::BURN_FROM_ROLE.abi_encode().into(),
             SC::WAD_PRECISION(_) => B20SecurityStorage::WAD.abi_encode().into(),
             SC::REDEEM_SENDER_POLICY(_) => Self::REDEEM_SENDER_POLICY.abi_encode().into(),
 
@@ -383,10 +382,6 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
             // --- Batched mint / burn ---
             SC::batchMint(c) => {
                 self.batch_mint(caller, c.recipients, c.amounts, privileged)?;
-                Bytes::new()
-            }
-            SC::batchBurn(c) => {
-                self.batch_burn(caller, c.accounts, c.amounts)?;
                 Bytes::new()
             }
 
@@ -486,7 +481,6 @@ mod tests {
 
     type TestSecurityToken = B20SecurityToken<InMemoryTokenAccounting, InMemoryPolicy>;
 
-    const BURN_FROM_ROLE: B256 = TestSecurityToken::BURN_FROM_ROLE;
     const REDEEM_SENDER_POLICY: B256 = TestSecurityToken::REDEEM_SENDER_POLICY;
 
     const ALICE: Address = Address::repeat_byte(0xaa);
@@ -528,10 +522,6 @@ mod tests {
 
     fn batch_mint_calldata(recipients: Vec<Address>, amounts: Vec<U256>) -> Vec<u8> {
         IB20Security::batchMintCall { recipients, amounts }.abi_encode()
-    }
-
-    fn batch_burn_calldata(accounts: Vec<Address>, amounts: Vec<U256>) -> Vec<u8> {
-        IB20Security::batchBurnCall { accounts, amounts }.abi_encode()
     }
 
     #[test]
@@ -597,120 +587,6 @@ mod tests {
         );
         assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::ZERO);
         assert_eq!(token.accounting().total_supply().unwrap(), U256::ZERO);
-    }
-
-    #[test]
-    fn batch_burn_decrements_balances() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-        token.accounting_mut().balances.insert(ALICE, U256::from(500u64));
-        token.accounting_mut().total_supply = U256::from(500u64);
-
-        call_security(
-            &mut token,
-            ALICE,
-            batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::from(200u64)]),
-        )
-        .unwrap();
-
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(300u64));
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(300u64));
-        assert_eq!(
-            token.accounting().events,
-            alloc::vec![
-                IB20::Transfer { from: ALICE, to: Address::ZERO, amount: U256::from(200u64) }
-                    .encode_log_data()
-            ]
-        );
-    }
-
-    #[test]
-    fn batch_burn_rejects_insufficient_balance() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-        token.accounting_mut().balances.insert(ALICE, U256::from(10u64));
-
-        assert_eq!(
-            call_security(
-                &mut token,
-                ALICE,
-                batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::from(100u64)]),
-            )
-            .unwrap_err(),
-            BasePrecompileError::revert(IB20::InsufficientBalance {
-                sender: ALICE,
-                balance: U256::from(10u64),
-                needed: U256::from(100u64),
-            })
-        );
-    }
-
-    #[test]
-    fn batch_burn_requires_burn_from_role() {
-        let mut token = make_token();
-        token.accounting_mut().balances.insert(BOB, U256::from(50u64));
-        token.accounting_mut().total_supply = U256::from(50u64);
-
-        let err = call_security(
-            &mut token,
-            ALICE,
-            batch_burn_calldata(alloc::vec![BOB], alloc::vec![U256::from(10u64)]),
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: ALICE,
-                neededRole: BURN_FROM_ROLE,
-            })
-        );
-        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(50u64));
-    }
-
-    #[test]
-    fn batch_burn_with_role_decrements_balances() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-        token.accounting_mut().balances.insert(BOB, U256::from(50u64));
-        token.accounting_mut().total_supply = U256::from(50u64);
-
-        call_security(
-            &mut token,
-            ALICE,
-            batch_burn_calldata(alloc::vec![BOB], alloc::vec![U256::from(10u64)]),
-        )
-        .unwrap();
-
-        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(40u64));
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(40u64));
-        assert_eq!(token.accounting().events.len(), 1);
-    }
-
-    #[test]
-    fn batch_burn_respects_burn_pause() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-        token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
-        token.accounting_mut().balances.insert(BOB, U256::from(50u64));
-        token.accounting_mut().total_supply = U256::from(50u64);
-
-        let err = call_security(
-            &mut token,
-            ALICE,
-            batch_burn_calldata(alloc::vec![BOB], alloc::vec![U256::from(10u64)]),
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::ContractPaused {
-                feature: IB20::PausableFeature::BURN,
-            })
-        );
-        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(50u64));
     }
 
     #[test]
@@ -867,181 +743,6 @@ mod tests {
                 leftLen: U256::ZERO,
                 rightLen: U256::ONE,
             })
-        );
-    }
-
-    // --- batchBurn: EmptyBatch / LengthMismatch / multi-account Transfer events ---
-
-    #[test]
-    fn batch_burn_rejects_empty() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-
-        let err =
-            call_security(&mut token, ALICE, batch_burn_calldata(alloc::vec![], alloc::vec![]))
-                .unwrap_err();
-
-        assert_eq!(err, BasePrecompileError::revert(IB20Security::EmptyBatch {}));
-    }
-
-    #[test]
-    fn batch_burn_rejects_length_mismatch() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-
-        let err = call_security(
-            &mut token,
-            ALICE,
-            batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]),
-        )
-        .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20Security::LengthMismatch {
-                leftLen: U256::ONE,
-                rightLen: U256::from(2u64),
-            })
-        );
-
-        let err = call_security(
-            &mut token,
-            ALICE,
-            batch_burn_calldata(alloc::vec![], alloc::vec![U256::ONE]),
-        )
-        .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20Security::LengthMismatch {
-                leftLen: U256::ZERO,
-                rightLen: U256::ONE,
-            })
-        );
-    }
-
-    #[test]
-    fn batch_burn_pause_error_takes_precedence_over_input_validation() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-        token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
-
-        let err = call_security(
-            &mut token,
-            ALICE,
-            batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]),
-        )
-        .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::ContractPaused {
-                feature: IB20::PausableFeature::BURN,
-            })
-        );
-
-        let err =
-            call_security(&mut token, ALICE, batch_burn_calldata(alloc::vec![], alloc::vec![]))
-                .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::ContractPaused {
-                feature: IB20::PausableFeature::BURN,
-            })
-        );
-    }
-
-    #[test]
-    fn batch_burn_zero_amount_is_no_op() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(100u64);
-
-        call_security(
-            &mut token,
-            ALICE,
-            batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::ZERO]),
-        )
-        .unwrap();
-
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(100u64));
-        assert_eq!(token.accounting().events.len(), 1); // Transfer(ALICE, 0x0, 0) emitted
-    }
-
-    #[test]
-    fn batch_burn_does_not_revert_on_zero_value_transfer() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().balances.insert(BOB, U256::from(50u64));
-        token.accounting_mut().total_supply = U256::from(150u64);
-
-        call_security(
-            &mut token,
-            ALICE,
-            batch_burn_calldata(
-                alloc::vec![ALICE, BOB],
-                alloc::vec![U256::from(10u64), U256::ZERO],
-            ),
-        )
-        .unwrap();
-
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(90u64));
-        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(50u64));
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(140u64));
-        assert_eq!(token.accounting().events.len(), 2); // one Transfer per element
-    }
-
-    #[test]
-    fn batch_burn_multiple_accounts_emits_one_transfer_each() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().balances.insert(BOB, U256::from(200u64));
-        token.accounting_mut().total_supply = U256::from(300u64);
-
-        call_security(
-            &mut token,
-            ALICE,
-            batch_burn_calldata(
-                alloc::vec![ALICE, BOB],
-                alloc::vec![U256::from(100u64), U256::from(200u64)],
-            ),
-        )
-        .unwrap();
-
-        // IB20Security: "Emits Transfer(accounts[i], address(0), amounts[i]) per element"
-        assert_eq!(
-            token.accounting().events,
-            alloc::vec![
-                IB20::Transfer { from: ALICE, to: Address::ZERO, amount: U256::from(100u64) }
-                    .encode_log_data(),
-                IB20::Transfer { from: BOB, to: Address::ZERO, amount: U256::from(200u64) }
-                    .encode_log_data()
-            ]
-        );
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::ZERO);
-    }
-
-    #[test]
-    fn batch_burn_supply_underflow_is_under_overflow_panic() {
-        // Regression: before BOP-160, saturating_sub silently clamped supply to zero.
-        // If an accounting bug left total_supply < balance, the correct behavior is to
-        // revert with an arithmetic under/overflow panic rather than zeroing the supply.
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-        // Supply invariant violated: balance exceeds total supply.
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(50u64);
-
-        // amount=75 passes the balance check (100 >= 75) but underflows total_supply (50 - 75).
-        assert_eq!(
-            call_security(
-                &mut token,
-                ALICE,
-                batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::from(75u64)]),
-            )
-            .unwrap_err(),
-            BasePrecompileError::under_overflow()
         );
     }
 

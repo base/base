@@ -59,9 +59,6 @@ sol! {
         /// `keccak256("SECURITY_OPERATOR_ROLE")` — required for `announce`, `updateShareRatio`, `updateSecurityIdentifier`.
         function SECURITY_OPERATOR_ROLE() external view returns (bytes32);
 
-        /// `keccak256("BURN_FROM_ROLE")` — required for `batchBurn`.
-        function BURN_FROM_ROLE() external view returns (bytes32);
-
         /// Fixed-point precision for `sharesToTokensRatio`: `1e18` (one WAD).
         function WAD_PRECISION() external view returns (uint256);
 
@@ -100,9 +97,6 @@ sol! {
         /// Mints `amounts[i]` to `recipients[i]`. Requires `MINT_ROLE`. All-or-nothing.
         function batchMint(address[] calldata recipients, uint256[] calldata amounts) external;
 
-        /// Burns `amounts[i]` from `accounts[i]`. Requires `BURN_FROM_ROLE`. All-or-nothing.
-        function batchBurn(address[] calldata accounts, uint256[] calldata amounts) external;
-
         // ── Redemption ────────────────────────────────────────────────────────
 
         /// Burns `amount` from caller with a share-based minimum floor check.
@@ -135,7 +129,6 @@ impl IB20Security::IB20SecurityCalls {
     pub const fn as_label(&self) -> &'static str {
         match self {
             Self::SECURITY_OPERATOR_ROLE(_) => "precompile-b20-security-SECURITY_OPERATOR_ROLE",
-            Self::BURN_FROM_ROLE(_) => "precompile-b20-security-BURN_FROM_ROLE",
             Self::WAD_PRECISION(_) => "precompile-b20-security-WAD_PRECISION",
             Self::REDEEM_SENDER_POLICY(_) => "precompile-b20-security-REDEEM_SENDER_POLICY",
             Self::announce(_) => "precompile-b20-security-announce",
@@ -145,7 +138,6 @@ impl IB20Security::IB20SecurityCalls {
             Self::sharesOf(_) => "precompile-b20-security-sharesOf",
             Self::updateShareRatio(_) => "precompile-b20-security-updateShareRatio",
             Self::batchMint(_) => "precompile-b20-security-batchMint",
-            Self::batchBurn(_) => "precompile-b20-security-batchBurn",
             Self::redeem(_) => "precompile-b20-security-redeem",
             Self::redeemWithMemo(_) => "precompile-b20-security-redeemWithMemo",
             Self::updateMinimumRedeemable(_) => "precompile-b20-security-updateMinimumRedeemable",
