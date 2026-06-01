@@ -19,9 +19,6 @@ use tracing::Level;
 /// Sets up tracing for the range program
 #[cfg(feature = "tracing-subscriber")]
 pub fn setup_tracing() {
-    use anyhow::anyhow;
-    use tracing::Level;
-
     let subscriber = tracing_subscriber::fmt().with_max_level(Level::INFO).finish();
     tracing::subscriber::set_global_default(subscriber).map_err(|e| anyhow!(e)).unwrap();
 }
