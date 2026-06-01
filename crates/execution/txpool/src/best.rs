@@ -1,3 +1,5 @@
+//! Merged best-transaction iteration across the protocol pool and 2D nonce sidecar.
+
 use std::{cmp::Reverse, sync::Arc};
 
 use reth_transaction_pool::{

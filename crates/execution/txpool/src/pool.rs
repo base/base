@@ -1,3 +1,5 @@
+//! Base transaction-pool wrapper that combines the protocol pool with a 2D nonce sidecar.
+
 use std::{collections::HashMap, fmt, sync::Arc};
 
 use alloy_eips::{
@@ -137,6 +139,22 @@ where
 
     fn is_sidecar_transaction(&self, transaction: &T) -> bool {
         transaction.eip8130_nonce_channel_key().is_some()
+    }
+
+    fn partition_hashes_by_pool(&self, hashes: Vec<TxHash>) -> (Vec<TxHash>, Vec<TxHash>) {
+        let nonce_pool = self.nonce_pool.read();
+        let mut protocol_hashes = Vec::with_capacity(hashes.len());
+        let mut sidecar_hashes = Vec::new();
+
+        for hash in hashes {
+            if nonce_pool.contains(&hash) {
+                sidecar_hashes.push(hash);
+            } else {
+                protocol_hashes.push(hash);
+            }
+        }
+
+        (protocol_hashes, sidecar_hashes)
     }
 
     async fn add_sidecar_transaction(
@@ -566,8 +584,9 @@ where
         &self,
         hashes: Vec<TxHash>,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        let mut removed = self.protocol_pool.remove_transactions(hashes.clone());
-        removed.extend(self.nonce_pool.write().remove_transactions(&hashes));
+        let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
+        let mut removed = self.protocol_pool.remove_transactions(protocol_hashes);
+        removed.extend(self.nonce_pool.write().remove_transactions(&sidecar_hashes));
         removed
     }
 
@@ -575,8 +594,10 @@ where
         &self,
         hashes: Vec<TxHash>,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        let mut removed = self.protocol_pool.remove_transactions_and_descendants(hashes.clone());
-        removed.extend(self.nonce_pool.write().remove_transactions_and_descendants(&hashes));
+        let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
+        let mut removed = self.protocol_pool.remove_transactions_and_descendants(protocol_hashes);
+        removed
+            .extend(self.nonce_pool.write().remove_transactions_and_descendants(&sidecar_hashes));
         removed
     }
 
@@ -593,8 +614,9 @@ where
         &self,
         hashes: Vec<TxHash>,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        let mut removed = self.protocol_pool.prune_transactions(hashes.clone());
-        removed.extend(self.nonce_pool.write().prune_mined(&hashes));
+        let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
+        let mut removed = self.protocol_pool.prune_transactions(protocol_hashes);
+        removed.extend(self.nonce_pool.write().prune_mined(&sidecar_hashes));
         removed
     }
 
