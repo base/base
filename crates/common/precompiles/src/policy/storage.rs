@@ -349,9 +349,14 @@ impl PolicyRegistryStorage<'_> {
         add: bool,
         accounts: &[Address],
     ) -> Result<Address> {
-        let (_, caller) = self.require_admin(policy_id)?;
+        // Check order matches Solidity canonical: existence → type → admin → batch size.
+        let packed = self.require_custom(policy_id)?;
         if Self::policy_id_type(policy_id) != expected_type {
             return Err(BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
+        }
+        let caller = self.storage.caller();
+        if packed.admin() != caller {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
         }
         Self::require_account_batch_size(accounts)?;
         for account in accounts {
@@ -1014,6 +1019,30 @@ mod tests {
                 maxBatchSize: U256::from(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH),
             })
         );
+    }
+
+    #[test]
+    fn update_allowlist_on_blocklist_policy_by_non_admin_reverts_with_incompatible_type() {
+        let mut s = storage();
+        let id = create_blocklist(&mut s);
+        s.set_caller(ALICE);
+        let err = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, vec![BOB])
+        })
+        .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
+    }
+
+    #[test]
+    fn update_blocklist_on_allowlist_policy_by_non_admin_reverts_with_incompatible_type() {
+        let mut s = storage();
+        let id = create_allowlist(&mut s);
+        s.set_caller(ALICE);
+        let err = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).update_blocklist(id, true, vec![BOB])
+        })
+        .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
     }
 
     // --- createPolicyWithAccounts ---
