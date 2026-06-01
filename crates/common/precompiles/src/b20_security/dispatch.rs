@@ -902,31 +902,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn batch_burn_validates_batch_shape_before_pause() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
-        token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
 
-        let err = call_security(
-            &mut token,
-            ALICE,
-            batch_burn_calldata(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]),
-        )
-        .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20Security::LengthMismatch {
-                leftLen: U256::ONE,
-                rightLen: U256::from(2u64),
-            })
-        );
-
-        let err =
-            call_security(&mut token, ALICE, batch_burn_calldata(alloc::vec![], alloc::vec![]))
-                .unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IB20Security::EmptyBatch {}));
-    }
 
     #[test]
     fn batch_burn_zero_amount_is_no_op() {

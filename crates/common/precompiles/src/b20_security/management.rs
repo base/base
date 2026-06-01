@@ -124,6 +124,8 @@ where
     }
 
     /// Mints tokens to multiple recipients. All-or-nothing.
+    ///
+    /// Revert priority: PAUSE → ROLE → INPUT VALIDATION → POLICY → BUSINESS LOGIC.
     fn batch_mint(
         &mut self,
         ctx: StorageCtx<'_>,
@@ -131,6 +133,14 @@ where
         amounts: Vec<U256>,
         privileged: bool,
     ) -> Result<()> {
+        // 1. PAUSE (Kill Switch)
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::MINT)?;
+        // 2. ROLE
+        let caller = ctx.caller();
+        if !privileged {
+            B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Mint)?;
+        }
+        // 3. INPUT VALIDATION
         if recipients.len() != amounts.len() {
             return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
                 leftLen: U256::from(recipients.len()),
@@ -140,25 +150,56 @@ where
         if recipients.is_empty() {
             return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
         }
-        let caller = ctx.caller();
+        // Per-element checks: InvalidReceiver → POLICY → SupplyCapExceeded
         for (recipient, amount) in recipients.into_iter().zip(amounts) {
-            self.mint(caller, recipient, amount, privileged)?;
+            self.mint_inner(recipient, amount)?;
         }
         Ok(())
+    }
+
+    fn mint_inner(&mut self, to: Address, amount: U256) -> Result<()> {
+        use alloy_sol_types::SolEvent;
+        if to == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::MintReceiver, to)?;
+        let supply = self.accounting().total_supply()?;
+        let cap = self.accounting().supply_cap()?;
+        let new_supply =
+            supply.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        if new_supply > cap {
+            return Err(BasePrecompileError::revert(IB20::SupplyCapExceeded {
+                cap,
+                attempted: new_supply,
+            }));
+        }
+        self.accounting_mut().set_total_supply(new_supply)?;
+        let to_balance = self.accounting().balance_of(to)?;
+        let new_balance =
+            to_balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.accounting_mut().set_balance(to, new_balance)?;
+        self.accounting_mut()
+            .emit_event(IB20::Transfer { from: Address::ZERO, to, amount }.encode_log_data())
     }
 
     /// Burns tokens from multiple accounts unconditionally. All-or-nothing.
     ///
     /// Unlike `burnBlocked`, this path has no policy precondition. The
     /// `BURN_FROM_ROLE` authorization and burn pause check are the only gates.
+    ///
+    /// Revert priority: PAUSE → ROLE → INPUT VALIDATION → BUSINESS LOGIC.
     fn batch_burn(
         &mut self,
         ctx: StorageCtx<'_>,
         accounts: Vec<Address>,
         amounts: Vec<U256>,
     ) -> Result<()> {
+        // 1. PAUSE (Kill Switch)
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
+        // 2. ROLE
         let caller = ctx.caller();
         self.ensure_burn_from_role(caller)?;
+        // 3. INPUT VALIDATION
         if accounts.len() != amounts.len() {
             return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
                 leftLen: U256::from(accounts.len()),
@@ -168,7 +209,6 @@ where
         if accounts.is_empty() {
             return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
         }
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         for (account, amount) in accounts.into_iter().zip(amounts) {
             let balance = self.accounting().balance_of(account)?;
             if balance < amount {
@@ -238,5 +278,290 @@ where
         }
 
         self.accounting_mut().emit_event(IB20Security::EndAnnouncement { id }.encode_log_data())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use alloy_primitives::{Address, U256};
+    use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
+    use rstest::rstest;
+
+    use crate::{
+        B20PausableFeature, B20PolicyType, B20SecurityStorage, B20SecurityToken, B20TokenRole,
+        IB20, IB20Security, InMemoryPolicy, InMemoryTokenAccounting, PolicyRegistryStorage,
+        SecurityManagement, Token,
+    };
+
+    type TestSecurityToken = B20SecurityToken<InMemoryTokenAccounting, InMemoryPolicy>;
+
+    const ALICE: Address = Address::repeat_byte(0xaa);
+    const BOB: Address = Address::repeat_byte(0xbb);
+    const TOKEN: Address = Address::repeat_byte(0x01);
+    const BURN_FROM_ROLE: alloy_primitives::B256 = B20TokenRole::BurnFrom.id();
+    const MINT_ROLE: alloy_primitives::B256 = B20TokenRole::Mint.id();
+    const REDEEM_SENDER_POLICY: alloy_primitives::B256 = B20PolicyType::RedeemSender.id();
+
+    fn make_token() -> TestSecurityToken {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD;
+        accounting.policy_ids.insert(REDEEM_SENDER_POLICY, PolicyRegistryStorage::ALWAYS_ALLOW_ID);
+        TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+    }
+
+    fn storage_with_caller(caller: Address) -> HashMapStorageProvider {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(caller);
+        storage
+    }
+
+    #[rstest]
+    #[case::pause_before_role(
+        true,
+        false,
+        false,
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::BURN })
+    )]
+    #[case::role_before_length_mismatch(
+        false,
+        false,
+        true,
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: ALICE,
+            neededRole: BURN_FROM_ROLE,
+        })
+    )]
+    #[case::length_mismatch_before_balance(
+        false,
+        true,
+        true,
+        BasePrecompileError::revert(IB20Security::LengthMismatch {
+            leftLen: U256::ONE,
+            rightLen: U256::from(2u64),
+        })
+    )]
+    fn batch_burn_revert_ordering(
+        #[case] paused: bool,
+        #[case] has_role: bool,
+        #[case] length_mismatch: bool,
+        #[case] expected_error: BasePrecompileError,
+    ) {
+        let mut token = make_token();
+        if paused {
+            token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
+        }
+        if has_role {
+            token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
+        }
+        let mut storage = storage_with_caller(ALICE);
+        let (accounts, amounts) = if length_mismatch {
+            (vec![ALICE], vec![U256::ONE, U256::ONE])
+        } else {
+            (vec![ALICE], vec![U256::ONE])
+        };
+
+        let err = StorageCtx::enter(&mut storage, |ctx| token.batch_burn(ctx, accounts, amounts))
+            .unwrap_err();
+
+        assert_eq!(err, expected_error);
+    }
+
+    #[test]
+    fn batch_burn_empty_batch_before_business_logic() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
+        let mut storage = storage_with_caller(ALICE);
+
+        let err = StorageCtx::enter(&mut storage, |ctx| token.batch_burn(ctx, vec![], vec![]))
+            .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20Security::EmptyBatch {}));
+    }
+
+    #[rstest]
+    #[case::pause_before_role(
+        true,
+        false,
+        false,
+        false,
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::MINT })
+    )]
+    #[case::role_before_length_mismatch(
+        false,
+        false,
+        true,
+        false,
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: ALICE,
+            neededRole: MINT_ROLE,
+        })
+    )]
+    #[case::length_mismatch_before_policy(
+        false,
+        true,
+        true,
+        true,
+        BasePrecompileError::revert(IB20Security::LengthMismatch {
+            leftLen: U256::ONE,
+            rightLen: U256::from(2u64),
+        })
+    )]
+    fn batch_mint_revert_ordering(
+        #[case] paused: bool,
+        #[case] has_role: bool,
+        #[case] length_mismatch: bool,
+        #[case] policy_blocks: bool,
+        #[case] expected_error: BasePrecompileError,
+    ) {
+        let mut token = make_token();
+        if paused {
+            token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::MINT);
+        }
+        if has_role {
+            token.accounting_mut().roles.insert((MINT_ROLE, ALICE), true);
+        }
+        if policy_blocks {
+            token.accounting_mut().policy_ids.insert(
+                B20PolicyType::MintReceiver.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            );
+        }
+        let mut storage = storage_with_caller(ALICE);
+        let (recipients, amounts) = if length_mismatch {
+            (vec![BOB], vec![U256::ONE, U256::ONE])
+        } else {
+            (vec![BOB], vec![U256::ONE])
+        };
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            token.batch_mint(ctx, recipients, amounts, false)
+        })
+        .unwrap_err();
+
+        assert_eq!(err, expected_error);
+    }
+
+    #[test]
+    fn batch_mint_empty_batch_before_policy() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((MINT_ROLE, ALICE), true);
+        token.accounting_mut().policy_ids.insert(
+            B20PolicyType::MintReceiver.id(),
+            PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+        );
+        let mut storage = storage_with_caller(ALICE);
+
+        let err =
+            StorageCtx::enter(&mut storage, |ctx| token.batch_mint(ctx, vec![], vec![], false))
+                .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20Security::EmptyBatch {}));
+    }
+
+    #[test]
+    fn batch_mint_invalid_receiver_before_policy() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((MINT_ROLE, ALICE), true);
+        token.accounting_mut().policy_ids.insert(
+            B20PolicyType::MintReceiver.id(),
+            PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+        );
+        let mut storage = storage_with_caller(ALICE);
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            token.batch_mint(ctx, vec![Address::ZERO], vec![U256::ONE], false)
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+        );
+    }
+
+    #[test]
+    fn batch_mint_policy_before_supply_cap() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((MINT_ROLE, ALICE), true);
+        token.accounting_mut().supply_cap = U256::ZERO;
+        token.accounting_mut().policy_ids.insert(
+            B20PolicyType::MintReceiver.id(),
+            PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+        );
+        let mut storage = storage_with_caller(ALICE);
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            token.batch_mint(ctx, vec![BOB], vec![U256::ONE], false)
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::PolicyForbids {
+                policyScope: B20PolicyType::MintReceiver.id(),
+                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            })
+        );
+    }
+
+    #[rstest]
+    #[case::pause_before_policy(
+        true,
+        true,
+        false,
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::REDEEM })
+    )]
+    #[case::policy_before_minimum_check(
+        false,
+        true,
+        false,
+        BasePrecompileError::revert(IB20::PolicyForbids {
+            policyScope: REDEEM_SENDER_POLICY,
+            policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+        })
+    )]
+    #[case::minimum_check_before_balance(
+        false,
+        false,
+        true,
+        BasePrecompileError::revert(IB20Security::BelowMinimumRedeemable {
+            shares: U256::from(1u64),
+            minimum: U256::from(100u64),
+        })
+    )]
+    fn security_redeem_revert_ordering(
+        #[case] paused: bool,
+        #[case] policy_blocks: bool,
+        #[case] below_minimum: bool,
+        #[case] expected_error: BasePrecompileError,
+    ) {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD;
+        accounting.balances.insert(ALICE, U256::ZERO);
+        accounting.total_supply = U256::ZERO;
+        if paused {
+            accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::REDEEM);
+        }
+        if policy_blocks {
+            accounting
+                .policy_ids
+                .insert(REDEEM_SENDER_POLICY, PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+        } else {
+            accounting
+                .policy_ids
+                .insert(REDEEM_SENDER_POLICY, PolicyRegistryStorage::ALWAYS_ALLOW_ID);
+        }
+        if below_minimum {
+            accounting.minimum_redeemable = U256::from(100u64);
+        }
+        let mut token =
+            TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(
+            token.security_redeem(ALICE, U256::from(1u64)).unwrap_err(),
+            expected_error
+        );
     }
 }
