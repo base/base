@@ -414,7 +414,10 @@ where
                 let mut transactions = Vec::new();
                 while let Some(transaction) = lane.transactions.get(&next_nonce) {
                     transactions.push(Arc::clone(transaction));
-                    next_nonce += 1;
+                    let Some(incremented_nonce) = next_nonce.checked_add(1) else {
+                        break;
+                    };
+                    next_nonce = incremented_nonce;
                 }
                 (!transactions.is_empty()).then(|| LaneIterator {
                     id: *id,
@@ -722,6 +725,29 @@ mod tests {
             vec![*transaction.hash()]
         );
         assert!(lane.queued_transactions().next().is_none());
+    }
+
+    #[test]
+    fn best_transactions_snapshot_handles_u64_max_nonce_without_wrapping() {
+        let signer = signer();
+        let transaction = Arc::new(valid_pool_transaction(signed_channel_tx(
+            &signer,
+            U256::from(17),
+            u64::MAX,
+            1_000,
+        )));
+        let lane_id = (signer.address(), U256::from(17));
+        let lanes = HashMap::from([(
+            lane_id,
+            NonceLane {
+                next_nonce: u64::MAX,
+                transactions: BTreeMap::from([(u64::MAX, Arc::clone(&transaction))]),
+            },
+        )]);
+
+        let mut best = BestTwoDTransactions::new(&lanes, BaseOrdering::coinbase_tip(), 0);
+        assert_eq!(best.next().map(|transaction| *transaction.hash()), Some(*transaction.hash()));
+        assert!(best.next().is_none());
     }
 
     #[test]
