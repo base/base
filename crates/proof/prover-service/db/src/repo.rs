@@ -1345,18 +1345,18 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
         req.request_payload.session_id = Some(session_id.clone());
 
         let start_block_number = i64::try_from(req.start_block_number).map_err(|_| {
-            CreateProofRequestValidationError::FieldMismatch { field: "start_block_number" }
+            CreateProofRequestValidationError::ValueOutOfRange { field: "start_block_number" }
         })?;
         let number_of_blocks_to_prove =
             i64::try_from(req.number_of_blocks_to_prove).map_err(|_| {
-                CreateProofRequestValidationError::FieldMismatch {
+                CreateProofRequestValidationError::ValueOutOfRange {
                     field: "number_of_blocks_to_prove",
                 }
             })?;
         let sequence_window = req
             .sequence_window
             .map(|w| {
-                i64::try_from(w).map_err(|_| CreateProofRequestValidationError::FieldMismatch {
+                i64::try_from(w).map_err(|_| CreateProofRequestValidationError::ValueOutOfRange {
                     field: "sequence_window",
                 })
             })
@@ -1364,15 +1364,14 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
         let intermediate_root_interval = req
             .intermediate_root_interval
             .map(|v| {
-                i64::try_from(v).map_err(|_| CreateProofRequestValidationError::FieldMismatch {
+                i64::try_from(v).map_err(|_| CreateProofRequestValidationError::ValueOutOfRange {
                     field: "intermediate_root_interval",
                 })
             })
             .transpose()?;
         validate_backend_proof_type(req.api_proof_type, req.proof_type)?;
-        let request_payload = serde_json::to_value(&req.request_payload).map_err(|_| {
-            CreateProofRequestValidationError::FieldMismatch { field: "request_payload" }
-        })?;
+        let request_payload = serde_json::to_value(&req.request_payload)
+            .map_err(|_| CreateProofRequestValidationError::RequestPayloadSerialization)?;
 
         Ok(Self {
             id,
@@ -1866,5 +1865,29 @@ mod tests {
             PreparedProofRequest::try_from(create).expect_err("invalid TEE request should fail");
 
         assert_eq!(err, CreateProofRequestValidationError::FieldMismatch { field: "zk_vm" });
+    }
+
+    #[test]
+    fn prepared_request_rejects_database_range_overflow() {
+        let create = CreateProofRequest::new(ProtocolProofRequest {
+            session_id: Some(Uuid::new_v4().to_string()),
+            request: ProofRequestKind::Compressed(ZkProofRequest {
+                start_block_number: (i64::MAX as u64) + 1,
+                number_of_blocks_to_prove: 5,
+                sequence_window: None,
+                l1_head: None,
+                intermediate_root_interval: None,
+                zk_vm: ZkVm::Sp1,
+            }),
+        })
+        .expect("request should validate");
+
+        let err = PreparedProofRequest::try_from(create)
+            .expect_err("out-of-range request should fail preparation");
+
+        assert_eq!(
+            err,
+            CreateProofRequestValidationError::ValueOutOfRange { field: "start_block_number" }
+        );
     }
 }

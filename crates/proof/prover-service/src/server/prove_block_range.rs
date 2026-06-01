@@ -1,5 +1,6 @@
 use base_prover_service_db::{
     ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
+    canonical_session_id,
 };
 use base_prover_service_protocol::{ProveBlockRangeRequest, ProveBlockRangeResponse};
 use jsonrpsee::core::RpcResult;
@@ -12,7 +13,7 @@ use crate::server::{
 };
 
 impl ProverServiceServer {
-    /// Enqueues a new proof request and returns the generated `session_id=<uuid>`.
+    /// Enqueues a new proof request and returns the accepted session ID.
     pub async fn prove_block_range_impl(
         &self,
         request: ProveBlockRangeRequest,
@@ -29,8 +30,7 @@ impl ProverServiceServer {
         request: ProveBlockRangeRequest,
     ) -> RpcResult<ProveBlockRangeResponse> {
         let mut proof_request = request.proof;
-        let proof_request_id = parse_session_id(proof_request.session_id.as_deref())?;
-        let session_id = proof_request_id.to_string();
+        let session_id = parse_session_id(proof_request.session_id.as_deref())?;
         proof_request.session_id = Some(session_id.clone());
 
         let db_request =
@@ -131,13 +131,12 @@ impl ProverServiceServer {
     }
 }
 
-fn parse_session_id(session_id: Option<&str>) -> RpcResult<Uuid> {
+fn parse_session_id(session_id: Option<&str>) -> RpcResult<String> {
     session_id
-        .map(|id| {
-            Uuid::parse_str(id).map_err(|e| invalid_argument(format!("Invalid session_id: {e}")))
-        })
+        .map(canonical_session_id)
         .transpose()
-        .map(|id| id.unwrap_or_else(Uuid::new_v4))
+        .map_err(|e| invalid_argument(format!("{e}")))
+        .map(|id| id.unwrap_or_else(|| Uuid::new_v4().to_string()))
 }
 
 #[cfg(test)]
@@ -169,6 +168,14 @@ mod tests {
         let id = Uuid::new_v4();
         let parsed = parse_session_id(Some(&id.to_string().to_uppercase())).unwrap();
 
-        assert_eq!(parsed, id);
+        assert_eq!(parsed, id.to_string());
+    }
+
+    #[test]
+    fn parse_session_id_accepts_opaque_values() {
+        let session_id = "tee/aws_nitro/claimed-root";
+        let parsed = parse_session_id(Some(session_id)).unwrap();
+
+        assert_eq!(parsed, session_id);
     }
 }

@@ -234,6 +234,15 @@ pub enum CreateProofRequestValidationError {
         /// Name of the mismatched field.
         field: &'static str,
     },
+    /// A numeric request field cannot fit in the database representation.
+    #[error("field {field} exceeds database range")]
+    ValueOutOfRange {
+        /// Name of the out-of-range field.
+        field: &'static str,
+    },
+    /// The protocol request payload could not be serialized for storage.
+    #[error("failed to serialize request_payload")]
+    RequestPayloadSerialization,
     /// A backend proof type is required for the requested protocol proof type.
     #[error("missing backend proof_type for {api_proof_type}")]
     MissingBackendProofType {
