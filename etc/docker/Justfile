@@ -116,27 +116,27 @@ build-image target='client' profile='dev':
     esac
     PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
 
-# Prepares Docker images needed for devnet tests
+# Prepares Docker images needed for system tests
 pull-images:
     docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
     docker pull ghcr.io/paradigmxyz/reth:v1.11.4
     docker pull sigp/lighthouse:v8.0.1
 
-# Runs devnet tests (requires Docker)
+# Runs system tests (requires Docker)
 tests: _install-nextest _build-contracts
-    cargo nextest run -p devnet
+    cargo nextest run -p base-system-tests
 
-# Runs devnet tests with ci profile for minimal disk usage
+# Runs system tests with ci profile for minimal disk usage
 tests-ci: _install-nextest _build-contracts
-    cargo nextest run -P ci --locked -p devnet --cargo-profile ci
+    cargo nextest run -P ci --locked -p base-system-tests --cargo-profile ci
 
-# Runs devnet benchmarks
+# Runs system test benchmarks
 bench name:
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{ name }}" in
-      b20-zk-proving) cargo bench -p devnet --bench b20_zk_proving ;;
-      *) echo "unknown devnet bench: {{ name }}" >&2; exit 1 ;;
+      b20-zk-proving) cargo bench -p base-system-tests --bench b20_zk_proving ;;
+      *) echo "unknown system test bench: {{ name }}" >&2; exit 1 ;;
     esac
 
 [private]

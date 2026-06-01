@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Address, U256, address};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, ContractStorage, Handler, Mapping, Result};
+use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
 
 use crate::{IPolicyRegistry, IPolicyRegistry::PolicyType};
 
@@ -90,7 +90,8 @@ impl PolicyRegistryStorage<'_> {
     const BLOCKLIST_TYPE: u8 = PolicyType::BLOCKLIST as u8;
     const COUNTER_MASK: u64 = (1u64 << 56) - 1;
     const POLICY_ID_TYPE_SHIFT: usize = 56;
-    /// Number of built-in policies; the counter is set to this value after `write_builtins`.
+    /// Number of built-in policies; the counter is set to this value after
+    /// `ensure_initialized_and_get_counter`.
     const BUILTIN_POLICY_COUNT: u64 = 2;
     /// Maximum number of accounts per membership batch (`createPolicyWithAccounts`,
     /// `updateAllowlist`, `updateBlocklist`).
@@ -147,16 +148,22 @@ impl PolicyRegistryStorage<'_> {
         Ok((packed, caller))
     }
 
-    /// Writes the two built-in policies into the `policies` mapping.
+    /// First-touch setup for the registry: sets the bytecode marker and writes the two
+    /// built-in policies into the `policies` mapping.
     ///
-    /// Consumes counters 0 and 1, leaving the counter at 2 so custom policies
-    /// start there. Both built-ins have a renounced (zero) admin. Idempotent:
-    /// if the counter is already past 0 the builtins were already written.
+    /// Gated on `next_counter`, so all subsequent calls cost a single SLOAD and bail.
+    /// The bytecode marker must precede any storage write because the EVM path can prune
+    /// writes made under an empty native-precompile account.
+    /// Returns the next custom-policy counter after any first-touch setup.
+    ///
+    /// Consumes counters 0 and 1, leaving the counter at 2 so custom policies start there.
+    /// Both built-ins have a renounced (zero) admin.
     /// - `ALWAYS_ALLOW_ID` (counter=0, BLOCKLIST): no members blocked — everyone is authorized.
     /// - `ALWAYS_BLOCK_ID` (counter=1, ALLOWLIST): no members allowed — nobody is authorized.
-    pub fn write_builtins(&mut self) -> Result<()> {
-        if self.next_counter.read()? >= Self::BUILTIN_POLICY_COUNT {
-            return Ok(());
+    pub fn ensure_initialized_and_get_counter(&mut self) -> Result<u64> {
+        let counter = self.next_counter()?;
+        if counter >= Self::BUILTIN_POLICY_COUNT {
+            return Ok(counter);
         }
         // Assert that the ID constants match the enum discriminants and counter slots,
         // catching any future drift from enum reordering or constant changes.
@@ -168,11 +175,12 @@ impl PolicyRegistryStorage<'_> {
             Self::make_id(PolicyType::ALLOWLIST.as_discriminant(), 1),
             Self::ALWAYS_BLOCK_ID
         );
+        self.__initialize()?;
         let builtin = PackedPolicy::new(Address::ZERO).into_u256();
         self.policies.at_mut(&Self::ALWAYS_ALLOW_ID).write(builtin)?;
         self.policies.at_mut(&Self::ALWAYS_BLOCK_ID).write(builtin)?;
         self.next_counter.write(Self::BUILTIN_POLICY_COUNT)?;
-        Ok(())
+        Ok(Self::BUILTIN_POLICY_COUNT)
     }
 
     /// Creates a new ALLOWLIST or BLOCKLIST policy, returning its encoded ID.
@@ -187,21 +195,7 @@ impl PolicyRegistryStorage<'_> {
         policy_type: PolicyType,
         policy_type_u8: u8,
     ) -> Result<u64> {
-        // The registry account must be non-empty before the first policy storage write; otherwise
-        // the EVM path can prune writes made under an empty native-precompile account.
-        // TODO: Revisit this guard against the finalized Beryl gas model, since `is_initialized`
-        // charges warm/cold account-read gas before skipping repeated `set_code`.
-        if !self.is_initialized()? {
-            self.__initialize()?;
-        }
-        // Seed built-ins independently of bytecode presence: harnesses (e.g., anvil/foundry forks)
-        // may pre-warm precompile bytecode to satisfy Solidity's `EXTCODESIZE` check, which would
-        // otherwise short-circuit the lazy init above and leave `policies[ALWAYS_ALLOW_ID]` /
-        // `policies[ALWAYS_BLOCK_ID]` unset. `write_builtins` self-gates via `next_counter`, so
-        // the extra SLOAD on every subsequent `create_policy` is a no-op cost.
-        self.write_builtins()?;
-
-        let counter = self.next_counter()?;
+        let counter = self.ensure_initialized_and_get_counter()?;
         let is_counter_overflowed = counter >= Self::COUNTER_MASK;
         if is_counter_overflowed {
             return Err(BasePrecompileError::under_overflow());
@@ -349,9 +343,14 @@ impl PolicyRegistryStorage<'_> {
         add: bool,
         accounts: &[Address],
     ) -> Result<Address> {
-        let (_, caller) = self.require_admin(policy_id)?;
+        // Check order matches Solidity canonical: existence → type → admin → batch size.
+        let packed = self.require_custom(policy_id)?;
         if Self::policy_id_type(policy_id) != expected_type {
             return Err(BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
+        }
+        let caller = self.storage.caller();
+        if packed.admin() != caller {
+            return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
         }
         Self::require_account_batch_size(accounts)?;
         for account in accounts {
@@ -377,7 +376,7 @@ impl PolicyRegistryStorage<'_> {
             return Ok(false);
         }
         // Fast-paths for built-in IDs: ALWAYS_ALLOW_ID = 0 is the EVM default for any
-        // uninitialized policy field, so this must work before write_builtins() has run.
+        // uninitialized policy field, so this must work before initialization has run.
         if policy_id == Self::ALWAYS_ALLOW_ID {
             return Ok(true);
         }
@@ -402,7 +401,7 @@ impl PolicyRegistryStorage<'_> {
     /// Built-in IDs always return `true` via a fast-path, without reading storage.
     /// This is necessary because `ALWAYS_ALLOW_ID = 0` is the EVM default for any
     /// uninitialized policy field, so it must be recognized as valid before
-    /// `write_builtins` has run.
+    /// `ensure_initialized_and_get_counter` has run.
     pub fn policy_exists(&self, policy_id: u64) -> Result<bool> {
         // Malformed IDs (type byte > 1) are not well-formed, so they do not exist.
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
@@ -511,11 +510,13 @@ impl crate::PolicyRegistry for PolicyRegistryStorage<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256, address, uint};
+    use alloy_primitives::{Address, Bytes, U256, address, uint};
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{
-        BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx, StorageKey,
+        BasePrecompileError, Handler, HashMapStorageProvider, PrecompileStorageProvider,
+        StorageCtx, StorageKey,
     };
+    use revm::state::Bytecode;
 
     use crate::{
         IPolicyRegistry,
@@ -600,7 +601,10 @@ mod tests {
     fn storage() -> HashMapStorageProvider {
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
-        StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).write_builtins()).unwrap();
+        StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).ensure_initialized_and_get_counter()
+        })
+        .unwrap();
         s
     }
 
@@ -715,11 +719,11 @@ mod tests {
         assert!(!result);
     }
 
-    // --- write_builtins initialization ---
+    // --- ensure_initialized_and_get_counter ---
 
     #[test]
     fn first_create_policy_initializes_builtins_and_starts_counter_at_two() {
-        // Start from bare storage — write_builtins has NOT been called yet.
+        // Start from bare storage — initialization has NOT been called yet.
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
         let id = StorageCtx::enter(&mut s, |ctx| {
@@ -742,17 +746,51 @@ mod tests {
     }
 
     #[test]
-    fn write_builtins_is_idempotent() {
+    fn ensure_initialized_and_get_counter_is_idempotent() {
         let mut s = HashMapStorageProvider::new(1);
         for _ in 0..3 {
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).write_builtins())
-                .unwrap();
+            StorageCtx::enter(&mut s, |ctx| {
+                PolicyRegistryStorage::new(ctx).ensure_initialized_and_get_counter()
+            })
+            .unwrap();
         }
         // Counter must be exactly BUILTIN_POLICY_COUNT regardless of how many times called.
         let counter =
             StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).next_counter.read())
                 .unwrap();
         assert_eq!(counter, PolicyRegistryStorage::BUILTIN_POLICY_COUNT);
+    }
+
+    #[test]
+    fn ensure_initialized_and_get_counter_seeds_builtins_when_bytecode_is_pre_warmed() {
+        // Harnesses (anvil/foundry forks) may pre-warm precompile bytecode to satisfy Solidity's
+        // EXTCODESIZE check before any policy is created. The gate keys on next_counter, not on
+        // bytecode presence, so seeding still runs and the counter still lands at 2.
+        let mut s = HashMapStorageProvider::new(1);
+        s.set_caller(ADMIN);
+        PrecompileStorageProvider::set_code(
+            &mut s,
+            PolicyRegistryStorage::ADDRESS,
+            Bytecode::new_legacy(Bytes::from_static(&[0xef])),
+        )
+        .unwrap();
+
+        let id = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
+        })
+        .unwrap();
+
+        assert_eq!(id & PolicyRegistryStorage::COUNTER_MASK, 2);
+        assert!(
+            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx)
+                .policy_exists(PolicyRegistryStorage::ALWAYS_ALLOW_ID))
+            .unwrap()
+        );
+        assert!(
+            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx)
+                .policy_exists(PolicyRegistryStorage::ALWAYS_BLOCK_ID))
+            .unwrap()
+        );
     }
 
     // --- createPolicy ---
@@ -1014,6 +1052,30 @@ mod tests {
                 maxBatchSize: U256::from(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH),
             })
         );
+    }
+
+    #[test]
+    fn update_allowlist_on_blocklist_policy_by_non_admin_reverts_with_incompatible_type() {
+        let mut s = storage();
+        let id = create_blocklist(&mut s);
+        s.set_caller(ALICE);
+        let err = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, vec![BOB])
+        })
+        .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
+    }
+
+    #[test]
+    fn update_blocklist_on_allowlist_policy_by_non_admin_reverts_with_incompatible_type() {
+        let mut s = storage();
+        let id = create_allowlist(&mut s);
+        s.set_caller(ALICE);
+        let err = StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).update_blocklist(id, true, vec![BOB])
+        })
+        .unwrap_err();
+        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
     }
 
     // --- createPolicyWithAccounts ---
