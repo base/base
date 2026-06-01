@@ -224,6 +224,7 @@ mod tests {
 
     use super::*;
 
+    #[allow(clippy::result_large_err)]
     fn with_cleared_env(test: impl FnOnce(&mut Jail) -> figment::Result<()>) {
         Jail::expect_with(|jail| {
             jail.clear_env();
@@ -232,6 +233,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::result_large_err)]
     fn resolves_mainnet_builtin() {
         with_cleared_env(|_| {
             let resolved =
@@ -247,6 +249,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::result_large_err)]
     fn resolves_sepolia_builtin() {
         with_cleared_env(|_| {
             let resolved =
@@ -261,6 +264,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::result_large_err)]
     fn resolves_zeronet_builtin() {
         with_cleared_env(|_| {
             let resolved =
@@ -275,6 +279,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::result_large_err)]
     fn resolves_custom_toml_file() {
         with_cleared_env(|jail| {
             let path = jail.directory().join("chain.toml");

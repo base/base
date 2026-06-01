@@ -1,5 +1,7 @@
 //! Contains driver-related error types.
 
+use alloc::boxed::Box;
+
 use base_consensus_derive::PipelineErrorKind;
 use base_protocol::FromBlockError;
 use thiserror::Error;
@@ -15,7 +17,7 @@ where
 {
     /// Pipeline error.
     #[error("Pipeline error: {0}")]
-    Pipeline(#[from] PipelineErrorKind),
+    Pipeline(#[source] Box<PipelineErrorKind>),
     /// An error returned by the executor.
     #[error("Executor error: {0}")]
     Executor(E),
@@ -25,4 +27,13 @@ where
     /// Error decoding or encoding RLP.
     #[error("RLP error: {0}")]
     Rlp(alloy_rlp::Error),
+}
+
+impl<E> From<PipelineErrorKind> for DriverError<E>
+where
+    E: core::error::Error,
+{
+    fn from(e: PipelineErrorKind) -> Self {
+        Self::Pipeline(Box::new(e))
+    }
 }

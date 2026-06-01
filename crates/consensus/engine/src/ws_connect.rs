@@ -102,6 +102,7 @@ mod tests {
 
     /// Like [`capture_auth_header`] but borrows the listener, allowing it to
     /// be reused for subsequent accepts.
+    #[allow(clippy::result_large_err)]
     async fn capture_auth_header_from_listener(listener: &TcpListener) -> String {
         let (stream, _) = listener.accept().await.unwrap();
         let (tx, rx) = oneshot::channel::<String>();

@@ -126,7 +126,6 @@ explicit-iter-loop = "warn"
 iter-with-drain = "warn"
 needless-pass-by-ref-mut = "warn"
 string-lit-as-bytes = "warn"
-result-large-err = "allow"
 
 [profile.dev]
 debug = "line-tables-only"
