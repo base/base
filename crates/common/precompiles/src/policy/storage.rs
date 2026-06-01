@@ -90,7 +90,8 @@ impl PolicyRegistryStorage<'_> {
     const BLOCKLIST_TYPE: u8 = PolicyType::BLOCKLIST as u8;
     const COUNTER_MASK: u64 = (1u64 << 56) - 1;
     const POLICY_ID_TYPE_SHIFT: usize = 56;
-    /// Number of built-in policies; the counter is set to this value after `ensure_initialized`.
+    /// Number of built-in policies; the counter is set to this value after
+    /// `ensure_initialized_and_get_counter`.
     const BUILTIN_POLICY_COUNT: u64 = 2;
     /// Maximum number of accounts per membership batch (`createPolicyWithAccounts`,
     /// `updateAllowlist`, `updateBlocklist`).
@@ -159,7 +160,7 @@ impl PolicyRegistryStorage<'_> {
     /// Both built-ins have a renounced (zero) admin.
     /// - `ALWAYS_ALLOW_ID` (counter=0, BLOCKLIST): no members blocked — everyone is authorized.
     /// - `ALWAYS_BLOCK_ID` (counter=1, ALLOWLIST): no members allowed — nobody is authorized.
-    pub fn ensure_initialized(&mut self) -> Result<u64> {
+    pub fn ensure_initialized_and_get_counter(&mut self) -> Result<u64> {
         let counter = self.next_counter()?;
         if counter >= Self::BUILTIN_POLICY_COUNT {
             return Ok(counter);
@@ -194,7 +195,7 @@ impl PolicyRegistryStorage<'_> {
         policy_type: PolicyType,
         policy_type_u8: u8,
     ) -> Result<u64> {
-        let counter = self.ensure_initialized()?;
+        let counter = self.ensure_initialized_and_get_counter()?;
         let is_counter_overflowed = counter >= Self::COUNTER_MASK;
         if is_counter_overflowed {
             return Err(BasePrecompileError::under_overflow());
@@ -370,7 +371,7 @@ impl PolicyRegistryStorage<'_> {
             return Ok(false);
         }
         // Fast-paths for built-in IDs: ALWAYS_ALLOW_ID = 0 is the EVM default for any
-        // uninitialized policy field, so this must work before ensure_initialized() has run.
+        // uninitialized policy field, so this must work before initialization has run.
         if policy_id == Self::ALWAYS_ALLOW_ID {
             return Ok(true);
         }
@@ -395,7 +396,7 @@ impl PolicyRegistryStorage<'_> {
     /// Built-in IDs always return `true` via a fast-path, without reading storage.
     /// This is necessary because `ALWAYS_ALLOW_ID = 0` is the EVM default for any
     /// uninitialized policy field, so it must be recognized as valid before
-    /// `ensure_initialized` has run.
+    /// `ensure_initialized_and_get_counter` has run.
     pub fn policy_exists(&self, policy_id: u64) -> Result<bool> {
         // Malformed IDs (type byte > 1) are not well-formed, so they do not exist.
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
@@ -595,8 +596,10 @@ mod tests {
     fn storage() -> HashMapStorageProvider {
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
-        StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).ensure_initialized())
-            .unwrap();
+        StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).ensure_initialized_and_get_counter()
+        })
+        .unwrap();
         s
     }
 
@@ -711,11 +714,11 @@ mod tests {
         assert!(!result);
     }
 
-    // --- ensure_initialized ---
+    // --- ensure_initialized_and_get_counter ---
 
     #[test]
     fn first_create_policy_initializes_builtins_and_starts_counter_at_two() {
-        // Start from bare storage — ensure_initialized has NOT been called yet.
+        // Start from bare storage — initialization has NOT been called yet.
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
         let id = StorageCtx::enter(&mut s, |ctx| {
@@ -738,11 +741,13 @@ mod tests {
     }
 
     #[test]
-    fn ensure_initialized_is_idempotent() {
+    fn ensure_initialized_and_get_counter_is_idempotent() {
         let mut s = HashMapStorageProvider::new(1);
         for _ in 0..3 {
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).ensure_initialized())
-                .unwrap();
+            StorageCtx::enter(&mut s, |ctx| {
+                PolicyRegistryStorage::new(ctx).ensure_initialized_and_get_counter()
+            })
+            .unwrap();
         }
         // Counter must be exactly BUILTIN_POLICY_COUNT regardless of how many times called.
         let counter =
@@ -752,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn ensure_initialized_seeds_builtins_when_bytecode_is_pre_warmed() {
+    fn ensure_initialized_and_get_counter_seeds_builtins_when_bytecode_is_pre_warmed() {
         // Harnesses (anvil/foundry forks) may pre-warm precompile bytecode to satisfy Solidity's
         // EXTCODESIZE check before any policy is created. The gate keys on next_counter, not on
         // bytecode presence, so seeding still runs and the counter still lands at 2.
