@@ -54,7 +54,7 @@ fn proof_result_for_request(proof_req: &ProofRequest) -> RpcResult<ProofResult> 
     }
 }
 
-fn should_use_dry_run_result(proof_req: &ProofRequest) -> bool {
+const fn should_use_dry_run_result(proof_req: &ProofRequest) -> bool {
     proof_req.result_payload.is_none()
         && proof_req.stark_receipt.is_none()
         && proof_req.snark_receipt.is_none()
