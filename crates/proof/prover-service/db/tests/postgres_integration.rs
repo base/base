@@ -23,7 +23,8 @@ use base_prover_service_db::{
 };
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
-    SnarkGroth16ProofRequest, TeeKind as ProtocolTeeKind, TeeProofRequest, ZkProofRequest, ZkVm,
+    ProofResult as ProtocolProofResult, SnarkGroth16ProofRequest, SnarkGroth16ProofResult,
+    TeeKind as ProtocolTeeKind, TeeProofRequest, ZkProofRequest, ZkProofResult, ZkVm,
 };
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
@@ -1301,6 +1302,7 @@ async fn test_full_snark_pipeline() {
     assert_eq!(req.status, ProofStatus::Running);
     assert_eq!(req.stark_receipt.as_deref(), Some(stark_receipt.as_slice()));
     assert!(req.snark_receipt.is_none());
+    assert!(req.result_payload.is_none());
 
     // 5. Submit SNARK session
     let snark_backend_id = format!("snark-pipeline-{}", Uuid::new_v4());
@@ -1333,6 +1335,15 @@ async fn test_full_snark_pipeline() {
     assert_eq!(req.status, ProofStatus::Succeeded);
     assert_eq!(req.stark_receipt.as_deref(), Some(stark_receipt.as_slice())); // preserved
     assert_eq!(req.snark_receipt.as_deref(), Some(snark_receipt.as_slice()));
+    let result_payload = req.result_payload.expect("SNARK result payload should be stored");
+    let result: ProtocolProofResult =
+        serde_json::from_value(result_payload).expect("SNARK result payload should deserialize");
+    assert_eq!(
+        result,
+        ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: snark_receipt.into() }
+        })
+    );
     assert!(req.completed_at.is_some());
 
     let sessions = repo.get_sessions_for_request(req_id).await.unwrap();

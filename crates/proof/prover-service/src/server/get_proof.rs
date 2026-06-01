@@ -24,6 +24,15 @@ fn is_dry_run_metadata(metadata: &serde_json::Value) -> bool {
 }
 
 fn proof_result_for_request(proof_req: &ProofRequest) -> RpcResult<ProofResult> {
+    if let Some(result_payload) = &proof_req.result_payload {
+        return serde_json::from_value(result_payload.clone()).map_err(|e| {
+            internal(format!(
+                "stored proof result payload for session_id {} is invalid: {e}",
+                proof_req.session_id
+            ))
+        });
+    }
+
     match proof_req.proof_type {
         Some(DbProofType::OpSuccinctSp1ClusterCompressed) => {
             let proof = proof_req
@@ -184,6 +193,9 @@ mod tests {
             proof_type: Some(proof_type),
             stark_receipt,
             snark_receipt,
+            result_payload: None,
+            submitted_by_worker_id: None,
+            submitted_lock_id: None,
             status: DbProofStatus::Succeeded,
             error_message: None,
             prover_address: None,
@@ -244,6 +256,50 @@ mod tests {
                 proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: snark_bytes.into() },
             })
         );
+    }
+
+    #[test]
+    fn proof_result_prefers_stored_result_payload() {
+        let stored_result = ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: vec![0xAA, 0xBB].into(),
+        });
+        let mut req = make_proof_request(
+            ProofType::OpSuccinctSp1ClusterCompressed,
+            Some(vec![0xDE, 0xAD]),
+            None,
+        );
+        req.result_payload =
+            Some(serde_json::to_value(&stored_result).expect("proof result should serialize"));
+
+        let result = proof_result_for_request(&req).unwrap();
+        assert_eq!(result, stored_result);
+    }
+
+    #[test]
+    fn proof_result_for_tee_returns_stored_result_payload() {
+        let stored_result = serde_json::json!({
+            "proof_type": "tee",
+            "payload": {
+                "aggregate_proposal": {
+                    "output_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    "signature": "0x",
+                    "l1_origin_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    "l1_origin_number": 0,
+                    "l2_block_number": 0,
+                    "prev_output_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                    "config_hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+                },
+                "proposals": [],
+                "tee_kind": "aws_nitro"
+            }
+        });
+        let mut req = make_proof_request(ProofType::OpSuccinctSp1ClusterCompressed, None, None);
+        req.proof_type = None;
+        req.result_payload = Some(stored_result);
+
+        let result = proof_result_for_request(&req).unwrap();
+        assert!(matches!(result, ProofResult::Tee(_)));
     }
 
     #[test]
