@@ -8,6 +8,9 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+# protocol
+base-prover-service-protocol.workspace = true
+
 # database
 futures.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "derive", "tls-native-tls"] }
@@ -26,7 +29,6 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-base-prover-service-protocol.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]

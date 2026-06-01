@@ -8,7 +8,8 @@ use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_precompiles::{
-    B20FactoryStorage, B20PolicyType, IB20, IB20Factory, IPolicyRegistry, PolicyRegistryStorage,
+    B20FactoryStorage, B20PolicyType, B20Variant, IB20, IB20Factory, IPolicyRegistry,
+    PolicyRegistryStorage,
 };
 
 use crate::env::BerylTestEnv;
@@ -429,7 +430,7 @@ impl PolicyTransferScenario {
 
     fn token_params() -> IB20Factory::B20CreateParams {
         IB20Factory::B20CreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20Variant::B20.supported_version(),
             name: "Policy B20".to_string(),
             symbol: "PB20".to_string(),
             initialAdmin: BerylTestEnv::alice(),

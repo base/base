@@ -4,7 +4,9 @@ use alloy_consensus::TxReceipt;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
-use base_common_precompiles::{B20FactoryStorage, B20TokenRole, IB20, IB20Factory, IB20Stablecoin};
+use base_common_precompiles::{
+    B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory, IB20Stablecoin,
+};
 
 use crate::{
     env::BerylTestEnv,
@@ -452,7 +454,7 @@ impl StablecoinScenario {
 
 fn create_stablecoin_with_currency_tx(env: &BerylTestEnv, currency: &str) -> BaseTxEnvelope {
     let params = IB20Factory::B20StablecoinCreateParams {
-        version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+        version: B20Variant::Stablecoin.supported_version(),
         name: BerylTestEnv::B20_STABLECOIN_NAME.to_string(),
         symbol: BerylTestEnv::B20_STABLECOIN_SYMBOL.to_string(),
         initialAdmin: BerylTestEnv::alice(),

@@ -1,6 +1,6 @@
 use base_prover_service_db::{
     ProofRequest, ProofStatus as DbProofStatus, ProofType as DbProofType,
-    SessionStatus as DbSessionStatus,
+    SessionStatus as DbSessionStatus, canonical_session_id,
 };
 use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ProofResult, ProofStatus, SnarkGroth16ProofResult,
@@ -25,14 +25,14 @@ fn is_dry_run_metadata(metadata: &serde_json::Value) -> bool {
 
 fn proof_result_for_request(proof_req: &ProofRequest) -> RpcResult<ProofResult> {
     match proof_req.proof_type {
-        DbProofType::OpSuccinctSp1ClusterCompressed => {
+        Some(DbProofType::OpSuccinctSp1ClusterCompressed) => {
             let proof = proof_req
                 .stark_receipt
                 .clone()
                 .ok_or_else(|| not_found("compressed proof receipt not available"))?;
             Ok(ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into() }))
         }
-        DbProofType::OpSuccinctSp1ClusterSnarkGroth16 => {
+        Some(DbProofType::OpSuccinctSp1ClusterSnarkGroth16) => {
             let proof = proof_req
                 .snark_receipt
                 .clone()
@@ -41,6 +41,7 @@ fn proof_result_for_request(proof_req: &ProofRequest) -> RpcResult<ProofResult> 
                 proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into() },
             }))
         }
+        None => Err(not_found("proof result not available for request without backend proof_type")),
     }
 }
 
@@ -83,17 +84,21 @@ impl ProverServiceServer {
     }
 
     async fn get_proof_inner(&self, request: GetProofRequest) -> RpcResult<GetProofResponse> {
-        let proof_request_id =
-            Uuid::parse_str(&request.session_id).map_err(|_| invalid_argument("Invalid UUID"))?;
-
-        info!(proof_request_id = %proof_request_id, "Getting proof status");
-
+        let session_id = canonical_session_id(&request.session_id)
+            .map_err(|e| invalid_argument(format!("{e}")))?;
         let proof_req = self
             .repo
-            .get(proof_request_id)
+            .get_by_session_id(&session_id)
             .await
             .map_err(|e| internal(format!("Database error: {e}")))?
             .ok_or_else(|| not_found("Proof request not found"))?;
+        let proof_request_id = proof_req.id;
+
+        info!(
+            proof_request_id = %proof_request_id,
+            session_id = %proof_req.session_id,
+            "Getting proof status"
+        );
 
         let (status, result, error_message) = match proof_req.status {
             DbProofStatus::Created | DbProofStatus::Pending => (ProofStatus::Queued, None, None),
@@ -176,7 +181,7 @@ mod tests {
             start_block_number: 1,
             number_of_blocks_to_prove: 1,
             sequence_window: None,
-            proof_type,
+            proof_type: Some(proof_type),
             stark_receipt,
             snark_receipt,
             status: DbProofStatus::Succeeded,
@@ -239,5 +244,19 @@ mod tests {
                 proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: snark_bytes.into() },
             })
         );
+    }
+
+    #[test]
+    fn canonical_session_id_lowercases_uuid_values() {
+        let id = Uuid::new_v4();
+
+        assert_eq!(canonical_session_id(&id.to_string().to_uppercase()).unwrap(), id.to_string());
+    }
+
+    #[test]
+    fn canonical_session_id_preserves_opaque_values() {
+        let session_id = "Mock-SESSION-ABC123";
+
+        assert_eq!(canonical_session_id(session_id).unwrap(), session_id);
     }
 }

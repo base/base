@@ -93,7 +93,8 @@ impl StatusPoller {
             );
 
             for request in stuck_requests {
-                let proof_type_label = metrics::proof_type_label(request.proof_type);
+                let proof_type_label =
+                    request.proof_type.map(metrics::proof_type_label).unwrap_or("unknown");
 
                 let error_msg = format!(
                     "Request stuck in {} state without active session for {}+ minutes",
@@ -110,7 +111,7 @@ impl StatusPoller {
                             proof_request_id = %request.id,
                             retry_count = request.retry_count + 1,
                             max_retries = self.max_proof_retries,
-                            "Retrying stuck request — reset to CREATED with new outbox entry"
+                            "Retrying stuck request"
                         );
                         metrics::inc_retried_requests(proof_type_label);
                     }
@@ -122,6 +123,12 @@ impl StatusPoller {
                         );
                         metrics::inc_stuck_requests(proof_type_label);
                         metrics::inc_proof_requests_completed("failed", proof_type_label);
+                    }
+                    Ok(RetryOutcome::Unsupported) => {
+                        warn!(
+                            proof_request_id = %request.id,
+                            "Stuck request cannot be retried by the legacy outbox flow"
+                        );
                     }
                     Ok(RetryOutcome::Skipped) => {
                         warn!(

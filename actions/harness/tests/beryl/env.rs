@@ -635,7 +635,7 @@ impl BerylTestEnv {
 
     fn b20_token_params(&self) -> IB20Factory::B20CreateParams {
         IB20Factory::B20CreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20Variant::B20.supported_version(),
             name: Self::B20_NAME.to_string(),
             symbol: Self::B20_SYMBOL.to_string(),
             initialAdmin: Self::alice(),
@@ -644,7 +644,7 @@ impl BerylTestEnv {
 
     fn b20_stablecoin_params(&self) -> IB20Factory::B20StablecoinCreateParams {
         IB20Factory::B20StablecoinCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20Variant::Stablecoin.supported_version(),
             name: Self::B20_STABLECOIN_NAME.to_string(),
             symbol: Self::B20_STABLECOIN_SYMBOL.to_string(),
             initialAdmin: Self::alice(),
@@ -654,7 +654,7 @@ impl BerylTestEnv {
 
     fn b20_security_params(&self) -> IB20Factory::B20SecurityCreateParams {
         IB20Factory::B20SecurityCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20Variant::Security.supported_version(),
             name: Self::B20_SECURITY_NAME.to_string(),
             symbol: Self::B20_SECURITY_SYMBOL.to_string(),
             initialAdmin: Self::alice(),

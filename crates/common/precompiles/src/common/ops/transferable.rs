@@ -62,9 +62,6 @@ pub trait Transferable: Token {
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
-        if from == Address::ZERO {
-            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
-        }
         let allowance = self.accounting().allowance(from, spender)?;
         if allowance == U256::MAX {
             return self.transfer(from, to, amount, privileged);

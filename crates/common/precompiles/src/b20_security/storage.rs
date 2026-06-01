@@ -2,7 +2,7 @@
 
 use alloc::string::String;
 
-use alloy_primitives::{Address, B256, U256, b256};
+use alloy_primitives::{Address, B256, FixedBytes, U256, b256};
 use base_precompile_macros::{SecurityAccounting, Storable, TokenAccounting, contract};
 use base_precompile_storage::{Handler, Mapping, Result, StorageCtx};
 
@@ -30,10 +30,12 @@ pub struct B20RedeemStorage {
     #[accessor]
     #[mutator]
     pub minimum_redeemable: U256, // offset 0
-    /// Packed redeem-side policy IDs.
+    /// Redeem sender policy ID.
     #[accessor]
     #[mutator]
-    pub redeem_policy_ids: U256, // offset 1
+    pub redeem_sender_policy_id: u64, // slot 1, offset 0
+    /// Reserved padding to fill the remainder of slot 1.
+    pub redeem_reserved: FixedBytes<24>, // slot 1, offset 8 (fills remaining 24 bytes)
 }
 
 /// EVM-backed storage for a security B-20 token.
@@ -100,15 +102,10 @@ impl B20SecurityStorage<'_> {
     /// WAD precision for share ratio arithmetic: 1e18.
     pub const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
-    /// Writes the initial packed `redeem_policy_ids` word with `REDEEM_SENDER_POLICY`
-    /// set to `ALWAYS_BLOCK_ID`. Called once from [`initialize`].
+    /// Writes the default `redeem_sender_policy_id` to `ALWAYS_BLOCK_ID`.
+    /// Called once from [`initialize`].
     fn write_redeem_policy_ids_default(&mut self) -> Result<()> {
-        let packed = Self::__write_policy_lane(
-            U256::ZERO,
-            Self::__REDEEM_SENDER_POLICY_LANE,
-            PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-        );
-        self.redeem.set_redeem_policy_ids(packed)
+        self.redeem.set_redeem_sender_policy_id(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
     }
 }
 
@@ -167,7 +164,8 @@ mod tests {
         );
         assert_eq!(__packing_b20_security_extension_storage::IDENTIFIERS_LOC.offset_slots, 2);
         assert_eq!(__packing_b20_redeem_storage::MINIMUM_REDEEMABLE_LOC.offset_slots, 0);
-        assert_eq!(__packing_b20_redeem_storage::REDEEM_POLICY_IDS_LOC.offset_slots, 1);
+        assert_eq!(__packing_b20_redeem_storage::REDEEM_SENDER_POLICY_ID_LOC.offset_slots, 1);
+        assert_eq!(__packing_b20_redeem_storage::REDEEM_SENDER_POLICY_ID_LOC.offset_bytes, 0);
     }
 
     #[test]
@@ -265,7 +263,9 @@ mod tests {
             }
 
             let redeem_policy_slot = REDEEM_ROOT
-                + U256::from(__packing_b20_redeem_storage::REDEEM_POLICY_IDS_LOC.offset_slots);
+                + U256::from(
+                    __packing_b20_redeem_storage::REDEEM_SENDER_POLICY_ID_LOC.offset_slots,
+                );
             assert_eq!(ctx.sload(TOKEN, redeem_policy_slot).unwrap(), U256::from(policy_id));
         });
     }

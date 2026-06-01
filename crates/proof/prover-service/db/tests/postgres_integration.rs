@@ -21,7 +21,10 @@ use base_prover_service_db::{
     ProofStatus, ProofType, RetryOutcome, SessionStatus, SessionType, UpdateProofSession,
     UpdateReceipt, ZkVmKind,
 };
-use base_prover_service_protocol::ProofRequest as ProtocolProofRequest;
+use base_prover_service_protocol::{
+    ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
+    SnarkGroth16ProofRequest, TeeKind as ProtocolTeeKind, TeeProofRequest, ZkProofRequest, ZkVm,
+};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
@@ -48,34 +51,54 @@ const fn test_repo(pool: PgPool) -> ProofRequestRepo {
     ProofRequestRepo::new(pool)
 }
 
-const fn compressed_request() -> CreateProofRequest {
-    CreateProofRequest {
-        start_block_number: 100,
-        number_of_blocks_to_prove: 5,
-        sequence_window: Some(50),
-        proof_type: ProofType::OpSuccinctSp1ClusterCompressed,
+fn compressed_request() -> CreateProofRequest {
+    CreateProofRequest::new(ProtocolProofRequest {
         session_id: None,
-        request_payload: None,
-        prover_address: None,
-        l1_head: None,
-        intermediate_root_interval: None,
-    }
+        request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
+            start_block_number: 100,
+            number_of_blocks_to_prove: 5,
+            sequence_window: Some(50),
+            l1_head: None,
+            intermediate_root_interval: None,
+            zk_vm: ZkVm::Sp1,
+        }),
+    })
+    .expect("compressed request should validate")
 }
 
 fn snark_request() -> CreateProofRequest {
-    CreateProofRequest {
-        start_block_number: 200,
-        number_of_blocks_to_prove: 10,
-        sequence_window: Some(100),
-        proof_type: ProofType::OpSuccinctSp1ClusterSnarkGroth16,
+    CreateProofRequest::new(ProtocolProofRequest {
         session_id: None,
-        request_payload: None,
-        prover_address: Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
-        l1_head: Some(
-            "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890".to_string(),
-        ),
-        intermediate_root_interval: None,
-    }
+        request: ProtocolProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
+            proof: ZkProofRequest {
+                start_block_number: 200,
+                number_of_blocks_to_prove: 10,
+                sequence_window: Some(100),
+                l1_head: Some(
+                    "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+                        .parse()
+                        .expect("valid hash"),
+                ),
+                intermediate_root_interval: None,
+                zk_vm: ZkVm::Sp1,
+            },
+            prover_address: "0x1234567890abcdef1234567890abcdef12345678"
+                .parse()
+                .expect("valid address"),
+        }),
+    })
+    .expect("snark request should validate")
+}
+
+fn tee_request() -> CreateProofRequest {
+    CreateProofRequest::new(ProtocolProofRequest {
+        session_id: None,
+        request: ProtocolProofRequestKind::Tee(TeeProofRequest {
+            proof: Default::default(),
+            tee_kind: ProtocolTeeKind::AwsNitro,
+        }),
+    })
+    .expect("TEE request should validate")
 }
 
 /// Create a request in RUNNING state with an associated proof session.
@@ -119,7 +142,7 @@ async fn test_create_and_get_compressed() {
     assert_eq!(req.start_block_number, 100);
     assert_eq!(req.number_of_blocks_to_prove, 5);
     assert_eq!(req.sequence_window, Some(50));
-    assert_eq!(req.proof_type, ProofType::OpSuccinctSp1ClusterCompressed);
+    assert_eq!(req.proof_type, Some(ProofType::OpSuccinctSp1ClusterCompressed));
     assert_eq!(req.status, ProofStatus::Created);
     assert!(req.stark_receipt.is_none());
     assert!(req.snark_receipt.is_none());
@@ -141,7 +164,7 @@ async fn test_create_and_get_snark() {
 
     assert_eq!(req.start_block_number, 200);
     assert_eq!(req.number_of_blocks_to_prove, 10);
-    assert_eq!(req.proof_type, ProofType::OpSuccinctSp1ClusterSnarkGroth16);
+    assert_eq!(req.proof_type, Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16));
     assert_eq!(req.prover_address.as_deref(), Some("0x1234567890abcdef1234567890abcdef12345678"));
     assert_eq!(
         req.l1_head.as_deref(),
@@ -157,7 +180,7 @@ async fn test_create_with_session_id() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id);
+    req.session_id = Some(explicit_id.to_string());
 
     let id = repo.create(req).await.unwrap();
     assert_eq!(id, explicit_id);
@@ -175,7 +198,7 @@ async fn test_create_with_uppercase_session_id_is_canonicalized() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(Uuid::parse_str(&explicit_id.to_string().to_uppercase()).unwrap());
+    req.session_id = Some(explicit_id.to_string().to_uppercase());
 
     let id = repo.create(req).await.unwrap();
     assert_eq!(id, explicit_id);
@@ -197,7 +220,7 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id);
+    req.session_id = Some(explicit_id.to_string());
 
     sqlx::query(
         r#"
@@ -212,7 +235,7 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
     .bind(i64::try_from(req.start_block_number).unwrap())
     .bind(i64::try_from(req.number_of_blocks_to_prove).unwrap())
     .bind(req.sequence_window.map(|value| i64::try_from(value).unwrap()))
-    .bind(req.proof_type.as_str())
+    .bind(req.proof_type.expect("compressed request has proof_type").as_str())
     .bind(ProofStatus::Created.as_str())
     .bind(&req.prover_address)
     .bind(&req.l1_head)
@@ -782,6 +805,34 @@ async fn test_retry_or_fail_stuck_request_retries() {
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_retry_or_fail_stuck_request_skips_null_proof_type() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    let id = repo.create(tee_request()).await.unwrap();
+    repo.atomic_claim_task(id).await.unwrap();
+
+    let stuck_requests = repo.get_stuck_requests(-1).await.unwrap();
+    assert!(
+        stuck_requests.iter().all(|request| request.id != id),
+        "NULL proof_type requests must not enter legacy stuck retry detection"
+    );
+
+    let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck in PENDING").await.unwrap();
+    assert_eq!(outcome, RetryOutcome::Unsupported);
+
+    let req = repo.get(id).await.unwrap().unwrap();
+    assert_eq!(req.status, ProofStatus::Pending);
+    assert_eq!(req.retry_count, 0);
+    assert!(req.proof_type.is_none());
+
+    let entries = repo.get_unprocessed_outbox_entries(100, 3).await.unwrap();
+    let outbox_count = entries.iter().filter(|entry| entry.proof_request_id == id).count();
+    assert_eq!(outbox_count, 0, "NULL proof_type requests must not enter the legacy outbox");
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_retry_or_fail_stuck_request_exhausted() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -859,7 +910,7 @@ async fn test_create_with_outbox_idempotent() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id);
+    req.session_id = Some(explicit_id.to_string());
 
     let first = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
     let second = repo.create_with_outbox(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
@@ -953,7 +1004,7 @@ async fn test_create_with_outbox_requeues_failed_row() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id);
+    req.session_id = Some(explicit_id.to_string());
 
     // First attempt: create the row, then fail it via the same path the worker uses.
     let first = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
@@ -1001,12 +1052,18 @@ async fn test_create_with_outbox_rejects_param_mismatch() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id);
+    req.session_id = Some(explicit_id.to_string());
     let _ = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
 
     // Same id, different start_block_number — must be rejected, not silently masked.
-    let mut mismatched = req.clone();
-    mismatched.start_block_number = req.start_block_number + 1;
+    let mut mismatched_payload = req.request_payload.clone();
+    let ProtocolProofRequestKind::Compressed(proof) = &mut mismatched_payload.request else {
+        panic!("expected compressed request");
+    };
+    proof.start_block_number += 1;
+    let mut mismatched =
+        CreateProofRequest::new(mismatched_payload).expect("mismatched request should validate");
+    mismatched.session_id = Some(explicit_id.to_string());
 
     let err = repo
         .create_with_outbox(mismatched, TEST_MAX_PROOF_RETRIES)
@@ -1035,7 +1092,7 @@ async fn test_create_with_outbox_retry_cap() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id);
+    req.session_id = Some(explicit_id.to_string());
 
     let first = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
     assert!(matches!(first, CreateProofRequestOutcome::Created(_)));
@@ -1080,7 +1137,7 @@ async fn test_create_with_outbox_idempotent_in_flight() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id);
+    req.session_id = Some(explicit_id.to_string());
     let _ = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
 
     // CREATED: replay must not insert another outbox row.
