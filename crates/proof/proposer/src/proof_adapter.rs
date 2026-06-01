@@ -1,14 +1,104 @@
 //! Adapters between proposer proof types and the shared prover-service protocol.
 
+use std::{fmt, sync::Arc, time::Duration};
+
+use async_trait::async_trait;
 use base_proof_primitives::{
-    ProofRequest as PrimitiveProofRequest, ProofResult as PrimitiveProofResult,
+    ProofRequest as PrimitiveProofRequest, ProofResult as PrimitiveProofResult, ProverClient,
 };
+use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{
-    ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest, TeeKind,
-    TeeProofRequest,
+    GetProofRequest, ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProofStatus,
+    ProveBlockRangeRequest, TeeKind, TeeProofRequest,
 };
 
 use crate::ProposerError;
+
+/// [`ProverClient`] implementation backed by the prover-service requester API.
+#[derive(Clone)]
+pub struct ProofRequesterProver {
+    requester: Arc<dyn ProofRequesterProvider>,
+    tee_kind: TeeKind,
+    poll_interval: Duration,
+    max_wait: Duration,
+}
+
+impl ProofRequesterProver {
+    /// Creates a prover adapter for AWS Nitro TEE proofs.
+    pub fn aws_nitro(
+        requester: Arc<dyn ProofRequesterProvider>,
+        poll_interval: Duration,
+        max_wait: Duration,
+    ) -> Self {
+        Self { requester, tee_kind: TeeKind::AwsNitro, poll_interval, max_wait }
+    }
+
+    /// Creates a prover adapter for the given TEE implementation.
+    pub const fn new(
+        requester: Arc<dyn ProofRequesterProvider>,
+        tee_kind: TeeKind,
+        poll_interval: Duration,
+        max_wait: Duration,
+    ) -> Self {
+        Self { requester, tee_kind, poll_interval, max_wait }
+    }
+}
+
+impl fmt::Debug for ProofRequesterProver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProofRequesterProver")
+            .field("tee_kind", &self.tee_kind)
+            .field("poll_interval", &self.poll_interval)
+            .field("max_wait", &self.max_wait)
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+impl ProverClient for ProofRequesterProver {
+    async fn prove(
+        &self,
+        request: PrimitiveProofRequest,
+    ) -> Result<PrimitiveProofResult, Box<dyn std::error::Error + Send + Sync>> {
+        let request = ProposerProofAdapter::tee_prove_block_range_request(request, self.tee_kind);
+        let session_id = self.requester.prove_block_range(request).await?.session_id;
+        let started_at = tokio::time::Instant::now();
+
+        loop {
+            let response = self
+                .requester
+                .get_proof(GetProofRequest { session_id: session_id.clone() })
+                .await?;
+
+            match response.status {
+                ProofStatus::Succeeded => {
+                    let result = response.result.ok_or_else(|| {
+                        ProposerError::Prover(format!(
+                            "TEE proof session {session_id} succeeded without a result"
+                        ))
+                    })?;
+                    return Ok(ProposerProofAdapter::tee_proof_result(result, self.tee_kind)?);
+                }
+                ProofStatus::Failed => {
+                    let message = response.error_message.unwrap_or_else(|| {
+                        format!("TEE proof session {session_id} failed without an error message")
+                    });
+                    return Err(Box::new(ProposerError::Prover(message)));
+                }
+                ProofStatus::Queued | ProofStatus::Running => {}
+            }
+
+            if started_at.elapsed() >= self.max_wait {
+                return Err(Box::new(ProposerError::Prover(format!(
+                    "timed out waiting for TEE proof session {session_id} after {:?}",
+                    self.max_wait
+                ))));
+            }
+
+            tokio::time::sleep(self.poll_interval).await;
+        }
+    }
+}
 
 /// Conversion helpers for proposer proof requests and results.
 #[derive(Debug)]
@@ -83,11 +173,64 @@ impl ProposerProofAdapter {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, Bytes};
-    use base_proof_primitives::Proposal;
-    use base_prover_service_protocol::{ProofRequestKind, ProofResult, TeeKind, TeeProofResult};
+    use std::{collections::VecDeque, sync::Mutex, time::Duration};
 
-    use super::ProposerProofAdapter;
+    use alloy_primitives::{Address, B256, Bytes};
+    use async_trait::async_trait;
+    use base_proof_primitives::{Proposal, ProverClient};
+    use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
+    use base_prover_service_protocol::{
+        GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequestKind,
+        ProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind,
+        TeeProofResult,
+    };
+
+    use super::{ProofRequesterProver, ProposerProofAdapter};
+
+    #[derive(Debug)]
+    struct MockProofRequester {
+        prove_requests: Mutex<Vec<ProveBlockRangeRequest>>,
+        get_requests: Mutex<Vec<GetProofRequest>>,
+        proof_responses: Mutex<VecDeque<GetProofResponse>>,
+    }
+
+    impl MockProofRequester {
+        fn new(proof_responses: Vec<GetProofResponse>) -> Self {
+            Self {
+                prove_requests: Mutex::new(Vec::new()),
+                get_requests: Mutex::new(Vec::new()),
+                proof_responses: Mutex::new(proof_responses.into()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ProofRequesterProvider for MockProofRequester {
+        async fn prove_block_range(
+            &self,
+            request: ProveBlockRangeRequest,
+        ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
+            let session_id =
+                request.proof.session_id.clone().expect("request should set session_id");
+            self.prove_requests.lock().unwrap().push(request);
+            Ok(ProveBlockRangeResponse { session_id })
+        }
+
+        async fn get_proof(
+            &self,
+            request: GetProofRequest,
+        ) -> Result<GetProofResponse, ProverServiceClientError> {
+            self.get_requests.lock().unwrap().push(request);
+            Ok(self.proof_responses.lock().unwrap().pop_front().expect("missing proof response"))
+        }
+
+        async fn list_proofs(
+            &self,
+            _request: ListProofsRequest,
+        ) -> Result<ListProofsResponse, ProverServiceClientError> {
+            unimplemented!("tests do not list proofs")
+        }
+    }
 
     fn test_request(root: B256) -> base_proof_primitives::ProofRequest {
         base_proof_primitives::ProofRequest {
@@ -193,5 +336,60 @@ mod tests {
                 proposals: vec![proposal]
             }
         );
+    }
+
+    #[tokio::test]
+    async fn proof_requester_prover_submits_and_polls_tee_result() {
+        let aggregate = test_proposal(600);
+        let proposal = test_proposal(300);
+        let response = GetProofResponse {
+            status: ProofStatus::Succeeded,
+            error_message: None,
+            result: Some(ProofResult::Tee(TeeProofResult {
+                aggregate_proposal: aggregate.clone(),
+                proposals: vec![proposal.clone()],
+                tee_kind: TeeKind::AwsNitro,
+            })),
+        };
+        let requester = std::sync::Arc::new(MockProofRequester::new(vec![response]));
+        let prover = ProofRequesterProver::aws_nitro(
+            std::sync::Arc::clone(&requester) as std::sync::Arc<dyn ProofRequesterProvider>,
+            Duration::from_millis(1),
+            Duration::from_secs(1),
+        );
+
+        let result = prover.prove(test_request(B256::repeat_byte(0xaa))).await.unwrap();
+
+        assert_eq!(
+            result,
+            base_proof_primitives::ProofResult::Tee {
+                aggregate_proposal: aggregate,
+                proposals: vec![proposal]
+            }
+        );
+        assert_eq!(requester.prove_requests.lock().unwrap().len(), 1);
+        assert_eq!(requester.get_requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn proof_requester_prover_returns_failed_proof_error() {
+        let response = GetProofResponse {
+            status: ProofStatus::Failed,
+            error_message: Some("boom".to_owned()),
+            result: None,
+        };
+        let requester = std::sync::Arc::new(MockProofRequester::new(vec![response]));
+        let prover = ProofRequesterProver::aws_nitro(
+            requester,
+            Duration::from_millis(1),
+            Duration::from_secs(1),
+        );
+
+        let err = prover
+            .prove(test_request(B256::repeat_byte(0xaa)))
+            .await
+            .expect_err("failed proof should return an error");
+
+        assert!(err.to_string().contains("boom"));
     }
 }

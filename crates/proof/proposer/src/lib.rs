@@ -21,7 +21,7 @@ mod output_proposer;
 pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter};
 
 mod proof_adapter;
-pub use proof_adapter::ProposerProofAdapter;
+pub use proof_adapter::{ProofRequesterProver, ProposerProofAdapter};
 
 mod driver;
 pub use driver::{DriverConfig, PipelineHandle, ProposerDriverControl, RecoveredState};
