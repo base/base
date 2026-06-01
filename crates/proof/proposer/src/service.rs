@@ -92,7 +92,6 @@ impl ProposerService {
         info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
 
         let prover_service_config = ProverServiceClientConfig::new(config.prover_rpc.to_string())
-            .with_request_timeout(config.prover_timeout)
             .with_max_wait(config.prover_timeout);
         let proof_requester = ProofRequesterClient::connect(&prover_service_config)
             .wrap_err("failed to create prover-service requester client")?;

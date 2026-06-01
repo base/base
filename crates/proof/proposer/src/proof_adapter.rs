@@ -66,6 +66,13 @@ impl ProverClient for ProofRequesterProver {
         let started_at = tokio::time::Instant::now();
 
         loop {
+            if started_at.elapsed() >= self.max_wait {
+                return Err(Box::new(ProposerError::Prover(format!(
+                    "timed out waiting for TEE proof session {session_id} after {:?}",
+                    self.max_wait
+                ))));
+            }
+
             let response = self
                 .requester
                 .get_proof(GetProofRequest { session_id: session_id.clone() })
@@ -94,13 +101,6 @@ impl ProverClient for ProofRequesterProver {
                         "waiting for TEE proof"
                     );
                 }
-            }
-
-            if started_at.elapsed() >= self.max_wait {
-                return Err(Box::new(ProposerError::Prover(format!(
-                    "timed out waiting for TEE proof session {session_id} after {:?}",
-                    self.max_wait
-                ))));
             }
 
             tokio::time::sleep(self.poll_interval).await;
