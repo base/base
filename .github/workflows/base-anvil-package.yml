@@ -169,7 +169,7 @@ jobs:
           mkdir -p "$workdir"
 
           gh auth setup-git
-          gh repo clone base/base-std "$base_std_dir" -- --depth 1 --single-branch --no-checkout
+          gh repo clone base/base-std "$base_std_dir" -- --filter=blob:none --no-checkout
           git -C "$base_std_dir" fetch --depth 1 origin "$BASE_STD_SHA"
           git -C "$base_std_dir" checkout --detach FETCH_HEAD
           git -C "$base_std_dir" submodule update --init --recursive --depth 1
