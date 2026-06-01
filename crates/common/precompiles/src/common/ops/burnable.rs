@@ -21,6 +21,14 @@ pub trait Burnable: Token {
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Burn)?;
         }
+        self.burn_inner(from, amount)
+    }
+
+    /// Internal burn implementation that skips pause and role checks.
+    ///
+    /// Called by [`Self::burn`] after guards, and by [`Self::burn_blocked`]
+    /// which does its own pause and role checks first.
+    fn burn_inner(&mut self, from: Address, amount: U256) -> Result<()> {
         let balance = self.accounting().balance_of(from)?;
         if balance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
@@ -64,9 +72,7 @@ pub trait Burnable: Token {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::BurnBlocked)?;
         }
         B20Guards::ensure_blocked::<Self>(self, from)?;
-        // Intentional asymmetry: BURN_BLOCKED_ROLE replaces BURN_ROLE, but emergency burn pauses
-        // still halt every burn path, including burnBlocked.
-        self.burn(caller, from, amount, true)?;
+        self.burn_inner(from, amount)?;
         self.accounting_mut()
             .emit_event(IB20::BurnedBlocked { caller, from, amount }.encode_log_data())
     }

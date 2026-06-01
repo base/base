@@ -22,6 +22,20 @@ pub trait Transferable: Token {
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::TRANSFER)?;
+        self.transfer_inner(from, to, amount, privileged)
+    }
+
+    /// Internal transfer implementation that skips the pause check.
+    ///
+    /// Called by [`Self::transfer`] after the pause check, and by
+    /// [`Self::transfer_from`] which does its own pause check first.
+    fn transfer_inner(
+        &mut self,
+        from: Address,
+        to: Address,
+        amount: U256,
+        privileged: bool,
+    ) -> Result<()> {
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
@@ -54,8 +68,8 @@ pub trait Transferable: Token {
     /// Emits `Transfer`. Skips allowance decrement when allowance is `U256::MAX`.
     ///
     /// The pause check is always enforced first. When `privileged` is true the
-    /// executor policy check is skipped; the inner `transfer` call also
-    /// receives `privileged`.
+    /// executor policy check is skipped; the inner transfer also receives
+    /// `privileged`.
     fn transfer_from(
         &mut self,
         spender: Address,
@@ -67,7 +81,7 @@ pub trait Transferable: Token {
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::TRANSFER)?;
         let allowance = self.accounting().allowance(from, spender)?;
         if allowance == U256::MAX {
-            return self.transfer(from, to, amount, privileged);
+            return self.transfer_inner(from, to, amount, privileged);
         }
         if allowance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientAllowance {
@@ -79,7 +93,7 @@ pub trait Transferable: Token {
         if !privileged && spender != from {
             B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferExecutor, spender)?;
         }
-        self.transfer(from, to, amount, privileged)?;
+        self.transfer_inner(from, to, amount, privileged)?;
         self.accounting_mut().set_allowance(from, spender, allowance - amount)
     }
 
