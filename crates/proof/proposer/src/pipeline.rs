@@ -380,7 +380,7 @@ where
         for (plan, request) in requests {
             let retry_count = state.retry_counts.get(&plan.target_block).copied().unwrap_or(0);
             let session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
-            let session = PendingProofSession::new(plan, session_id.clone(), retry_count);
+            let session = PendingProofSession::new(plan, session_id, retry_count);
             let session_id = session.session_id.clone();
             let prover = Arc::clone(&self.prover);
             let cancel = self.cancel.child_token();
