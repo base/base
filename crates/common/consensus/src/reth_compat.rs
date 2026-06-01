@@ -10,7 +10,7 @@ use alloy_consensus::{
     Header, Receipt, Sealed, Signed, TxEip1559, TxEip2930, TxEip7702, TxLegacy, TxReceipt,
     constants::EIP7702_TX_TYPE_ID,
 };
-use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
+use alloy_primitives::{Address, B256, BlockNumber, Bloom, Bytes, Signature, TxKind, U256};
 use bytes::{Buf, BufMut};
 use reth_codecs::{
     Compact, CompactZstd, DecompressError,
@@ -21,7 +21,7 @@ use reth_codecs::{
 };
 
 use crate::{
-    BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, DEPOSIT_TX_TYPE_ID,
+    BaseBlock, BaseHeader, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, DEPOSIT_TX_TYPE_ID,
     DepositReceipt, EIP8130_TX_TYPE_ID, OpTxType, TxDeposit,
 };
 
@@ -443,6 +443,177 @@ impl DepositReceiptExt for BaseReceipt {
 }
 
 // ---------------------------------------------------------------------------
+// Compact – BaseHeader
+// ---------------------------------------------------------------------------
+
+/// Helper struct used to derive [`Compact`] for [`BaseHeader`].
+///
+/// Notice: field layout is byte-compatible with the upstream reth helper used for
+/// [`alloy_consensus::Header`]. The only Base-specific addition lives in [`BaseHeaderExt`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Compact)]
+#[reth_codecs(crate = "reth_codecs")]
+pub struct BaseHeaderCompact {
+    /// Parent block hash.
+    pub parent_hash: B256,
+    /// Ommers list hash.
+    pub ommers_hash: B256,
+    /// Block proposer / fee recipient.
+    pub beneficiary: Address,
+    /// State root after applying the block's transactions.
+    pub state_root: B256,
+    /// Transactions Merkle Patricia trie root.
+    pub transactions_root: B256,
+    /// Receipts trie root.
+    pub receipts_root: B256,
+    /// Withdrawals root (Shanghai).
+    pub withdrawals_root: Option<B256>,
+    /// Bloom filter for the block's logs.
+    pub logs_bloom: Bloom,
+    /// Block difficulty (Pre-PoS only).
+    pub difficulty: U256,
+    /// Block number.
+    pub number: BlockNumber,
+    /// Block gas limit.
+    pub gas_limit: u64,
+    /// Block gas used.
+    pub gas_used: u64,
+    /// Unix seconds timestamp.
+    pub timestamp: u64,
+    /// Post-PoS mixHash field.
+    pub mix_hash: B256,
+    /// Block nonce.
+    pub nonce: u64,
+    /// EIP-1559 base fee per gas.
+    pub base_fee_per_gas: Option<u64>,
+    /// EIP-4844 blob gas used.
+    pub blob_gas_used: Option<u64>,
+    /// EIP-4844 excess blob gas.
+    pub excess_blob_gas: Option<u64>,
+    /// EIP-4788 parent beacon block root.
+    pub parent_beacon_block_root: Option<B256>,
+    /// Optional newly-added header fields, including the Base millisecond trailer.
+    pub extra_fields: Option<BaseHeaderExt>,
+    /// Free-form extra data.
+    pub extra_data: Bytes,
+}
+
+/// Optional extension fields appended to [`BaseHeaderCompact`].
+///
+/// New fields must always be `Option<T>` and appended at the end of this struct so older
+/// compact-encoded headers continue to decode.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Compact)]
+#[reth_codecs(crate = "reth_codecs")]
+pub struct BaseHeaderExt {
+    /// EIP-7685 execution requests hash.
+    pub requests_hash: Option<B256>,
+    /// EIP-7928 block access list hash.
+    pub block_access_list_hash: Option<B256>,
+    /// EIP-7843 slot number.
+    pub slot_number: Option<u64>,
+    /// Post-Beryl millisecond subsecond component (Base-specific).
+    ///
+    /// Stored as `u64` because reth-codecs only implements [`Compact`] for `u8`/`u64`/`u128`;
+    /// the value is always in the range `0..1000` and is converted to/from `u16` at the
+    /// [`BaseHeader`] boundary.
+    pub timestamp_millis_part: Option<u64>,
+}
+
+impl BaseHeaderExt {
+    /// Returns `Some(self)` if any field is populated, `None` otherwise.
+    ///
+    /// Used to keep the `extra_fields` bucket absent (and therefore byte-compatible with
+    /// pre-extension stored headers) when no extension data is present.
+    pub const fn into_option(self) -> Option<Self> {
+        if self.requests_hash.is_some()
+            || self.block_access_list_hash.is_some()
+            || self.slot_number.is_some()
+            || self.timestamp_millis_part.is_some()
+        {
+            Some(self)
+        } else {
+            None
+        }
+    }
+}
+
+impl Compact for BaseHeader {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: BufMut + AsMut<[u8]>,
+    {
+        let extra_fields = BaseHeaderExt {
+            requests_hash: self.inner.requests_hash,
+            block_access_list_hash: self.inner.block_access_list_hash,
+            slot_number: self.inner.slot_number,
+            timestamp_millis_part: self.timestamp_millis_part.map(u64::from),
+        };
+
+        let helper = BaseHeaderCompact {
+            parent_hash: self.inner.parent_hash,
+            ommers_hash: self.inner.ommers_hash,
+            beneficiary: self.inner.beneficiary,
+            state_root: self.inner.state_root,
+            transactions_root: self.inner.transactions_root,
+            receipts_root: self.inner.receipts_root,
+            withdrawals_root: self.inner.withdrawals_root,
+            logs_bloom: self.inner.logs_bloom,
+            difficulty: self.inner.difficulty,
+            number: self.inner.number,
+            gas_limit: self.inner.gas_limit,
+            gas_used: self.inner.gas_used,
+            timestamp: self.inner.timestamp,
+            mix_hash: self.inner.mix_hash,
+            nonce: self.inner.nonce.into(),
+            base_fee_per_gas: self.inner.base_fee_per_gas,
+            blob_gas_used: self.inner.blob_gas_used,
+            excess_blob_gas: self.inner.excess_blob_gas,
+            parent_beacon_block_root: self.inner.parent_beacon_block_root,
+            extra_fields: extra_fields.into_option(),
+            extra_data: self.inner.extra_data.clone(),
+        };
+        helper.to_compact(buf)
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        let (helper, buf) = BaseHeaderCompact::from_compact(buf, len);
+        let timestamp_millis_part = helper
+            .extra_fields
+            .as_ref()
+            .and_then(|h| h.timestamp_millis_part)
+            .map(|v| u16::try_from(v).unwrap_or(0));
+        let inner = Header {
+            parent_hash: helper.parent_hash,
+            ommers_hash: helper.ommers_hash,
+            beneficiary: helper.beneficiary,
+            state_root: helper.state_root,
+            transactions_root: helper.transactions_root,
+            receipts_root: helper.receipts_root,
+            withdrawals_root: helper.withdrawals_root,
+            logs_bloom: helper.logs_bloom,
+            difficulty: helper.difficulty,
+            number: helper.number,
+            gas_limit: helper.gas_limit,
+            gas_used: helper.gas_used,
+            timestamp: helper.timestamp,
+            mix_hash: helper.mix_hash,
+            nonce: helper.nonce.into(),
+            base_fee_per_gas: helper.base_fee_per_gas,
+            blob_gas_used: helper.blob_gas_used,
+            excess_blob_gas: helper.excess_blob_gas,
+            parent_beacon_block_root: helper.parent_beacon_block_root,
+            requests_hash: helper.extra_fields.as_ref().and_then(|h| h.requests_hash),
+            block_access_list_hash: helper
+                .extra_fields
+                .as_ref()
+                .and_then(|h| h.block_access_list_hash),
+            slot_number: helper.extra_fields.as_ref().and_then(|h| h.slot_number),
+            extra_data: helper.extra_data,
+        };
+        (Self { inner, timestamp_millis_part }, buf)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // BaseBlockBody / BasePrimitives
 // ---------------------------------------------------------------------------
 
@@ -460,4 +631,87 @@ impl reth_primitives_traits::NodePrimitives for BasePrimitives {
     type BlockBody = BaseBlockBody;
     type SignedTx = BaseTxEnvelope;
     type Receipt = BaseReceipt;
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::Header;
+    use alloy_primitives::B256;
+
+    use super::*;
+    use crate::VALID_TIMESTAMP_MILLIS_PARTS;
+
+    fn sample_inner_header() -> Header {
+        Header {
+            timestamp: 1_780_334_562,
+            number: 42_000,
+            gas_limit: 30_000_000,
+            gas_used: 1_234,
+            base_fee_per_gas: Some(1_000_000_000),
+            withdrawals_root: Some(B256::repeat_byte(0x11)),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(B256::repeat_byte(0x22)),
+            requests_hash: Some(B256::repeat_byte(0x33)),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn base_header_compact_round_trip_with_none_millis_part() {
+        let base_header = BaseHeader::from(sample_inner_header());
+        let mut encoded = Vec::new();
+        let len = base_header.to_compact(&mut encoded);
+        assert_eq!(len, encoded.len());
+
+        let (decoded, rest) = BaseHeader::from_compact(&encoded, len);
+        assert!(rest.is_empty());
+        assert_eq!(decoded, base_header);
+    }
+
+    #[test]
+    fn base_header_compact_round_trip_with_some_millis_part() {
+        for part in VALID_TIMESTAMP_MILLIS_PARTS {
+            let base_header = BaseHeader::new(sample_inner_header(), Some(part)).unwrap();
+            let mut encoded = Vec::new();
+            let len = base_header.to_compact(&mut encoded);
+            assert_eq!(len, encoded.len());
+
+            let (decoded, rest) = BaseHeader::from_compact(&encoded, len);
+            assert!(rest.is_empty(), "decoder must consume all bytes for part={part}");
+            assert_eq!(decoded, base_header);
+        }
+    }
+
+    #[test]
+    fn base_header_compact_with_none_matches_alloy_header_bytes() {
+        // For headers without the Base millisecond trailer, the compact encoding must be
+        // byte-identical to the upstream `alloy_consensus::Header` compact encoding so
+        // pre-Subsecond stored bytes continue to decode (and re-encode) unchanged.
+        let inner = sample_inner_header();
+        let base_header = BaseHeader::from(inner.clone());
+
+        let mut base_encoding = Vec::new();
+        let base_len = base_header.to_compact(&mut base_encoding);
+
+        let mut alloy_encoding = Vec::new();
+        let alloy_len = inner.to_compact(&mut alloy_encoding);
+
+        assert_eq!(base_len, alloy_len);
+        assert_eq!(base_encoding, alloy_encoding);
+    }
+
+    #[test]
+    fn base_header_compact_decodes_alloy_header_bytes_as_none_millis_part() {
+        // Old compact bytes (produced before the Base millisecond trailer existed) must
+        // decode cleanly as `timestamp_millis_part = None`.
+        let inner = sample_inner_header();
+        let mut alloy_encoding = Vec::new();
+        let alloy_len = inner.to_compact(&mut alloy_encoding);
+
+        let (decoded, rest) = BaseHeader::from_compact(&alloy_encoding, alloy_len);
+        assert!(rest.is_empty());
+        assert_eq!(decoded.timestamp_millis_part, None);
+        assert_eq!(decoded.inner, inner);
+    }
 }
