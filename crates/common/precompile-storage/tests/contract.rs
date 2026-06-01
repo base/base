@@ -640,6 +640,26 @@ mod packed_slot_layout {
                 "mid_short must survive mid_int write"
             );
             assert_eq!((raw >> 24) & U256::from(0xFFFF_FFFF_u32), U256::from(0x1234_5678_u32));
+
+            // Write high_long; all lower fields must be preserved exactly.
+            layout.high_long.write(0xDEAD_BEEF_DEAD_BEEF_u64).unwrap();
+            let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
+            assert_eq!(
+                raw & U256::from(0xFF_u32),
+                U256::from(0x42_u32),
+                "low_byte must survive high_long write"
+            );
+            assert_eq!(
+                (raw >> 8) & U256::from(0xFFFF_u32),
+                U256::from(0xABCD_u32),
+                "mid_short must survive high_long write"
+            );
+            assert_eq!(
+                (raw >> 24) & U256::from(0xFFFF_FFFF_u32),
+                U256::from(0x1234_5678_u32),
+                "mid_int must survive high_long write"
+            );
+            assert_eq!((raw >> 56) & U256::from(u64::MAX), U256::from(0xDEAD_BEEF_DEAD_BEEF_u64));
         });
     }
 }
