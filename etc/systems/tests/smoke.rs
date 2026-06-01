@@ -24,7 +24,7 @@ const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 static SMOKE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
-async fn smoke_test_devnet_block_production_and_transactions() -> Result<()> {
+async fn smoke_test_system_block_production_and_transactions() -> Result<()> {
     let _guard = SMOKE_TEST_LOCK.lock().await;
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)

@@ -4,10 +4,10 @@ use std::process::Command;
 
 use eyre::{Result, ensure};
 
-use crate::containers::{L1_BEACON_NAME, L1_RETH_NAME, L1_VALIDATOR_NAME};
-
-/// Docker network name for system tests.
-pub const SYSTEM_TEST_NETWORK: &str = "system-tests-network";
+use crate::{
+    containers::{L1_BEACON_NAME, L1_RETH_NAME, L1_VALIDATOR_NAME},
+    network_name,
+};
 
 const SYSTEM_TEST_CONTAINER_NAMES: &[&str] = &[L1_RETH_NAME, L1_BEACON_NAME, L1_VALIDATOR_NAME];
 
@@ -89,7 +89,7 @@ pub fn stop_system_test_containers() -> Result<()> {
 
 /// Removes the system test Docker network.
 pub fn cleanup_system_test_network() -> Result<()> {
-    let output = Command::new("docker").args(["network", "rm", SYSTEM_TEST_NETWORK]).output()?;
+    let output = Command::new("docker").args(["network", "rm", network_name()]).output()?;
 
     if output.status.success() {
         return Ok(());

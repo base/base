@@ -11,7 +11,7 @@ use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 
 /// RPC client for querying system test L1 and L2 nodes.
 #[derive(Debug)]
-pub struct DevnetRpcClient {
+pub struct SystemTestRpcClient {
     l1_provider: RootProvider,
     l2_builder_provider: RootProvider<Base>,
     l2_client_provider: RootProvider<Base>,
@@ -19,8 +19,8 @@ pub struct DevnetRpcClient {
     l2_client_consensus_client: HttpClient,
 }
 
-impl DevnetRpcClient {
-    /// Create a new `DevnetRpcClient` with L1, L2 builder, and L2 client endpoints.
+impl SystemTestRpcClient {
+    /// Create a new `SystemTestRpcClient` with L1, L2 builder, and L2 client endpoints.
     pub fn new(
         l1_url: &str,
         l2_builder_url: &str,
