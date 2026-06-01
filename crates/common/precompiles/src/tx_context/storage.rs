@@ -19,9 +19,9 @@ impl<'a> TxContextStorage<'a> {
     /// Transaction context precompile address.
     ///
     /// Provisional: the EIP-8130 `TX_CONTEXT_ADDRESS` is not finalized upstream.
-    /// This follows the Base singleton convention (`0x8453…`) and can be
-    /// renumbered when the spec pins a concrete value.
-    pub const ADDRESS: Address = address!("8453000000000000000000000000000000000003");
+    /// Uses the `0xaa00…` namespace reserved for EIP-8130 system precompiles and
+    /// can be renumbered when the spec pins a concrete value.
+    pub const ADDRESS: Address = address!("aa0000000000000000000000000000000000aa01");
 
     /// Transient slot holding the resolved sender address.
     const SENDER_SLOT: U256 = U256::ZERO;
