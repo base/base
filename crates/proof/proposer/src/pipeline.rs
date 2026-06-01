@@ -32,7 +32,6 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     panic::AssertUnwindSafe,
     sync::Arc,
-    time::{Duration, Instant},
 };
 
 use alloy_primitives::{Address, B256, Signature, keccak256};
@@ -43,7 +42,6 @@ use base_proof_contracts::{
 };
 use base_proof_primitives::{ProofJournal, ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider, RpcError};
-use base_prover_service_protocol::TeeKind;
 use eyre::Result;
 use futures::{FutureExt, StreamExt, stream};
 use tokio::task::JoinSet;
@@ -55,7 +53,6 @@ use crate::{
     driver::{DriverConfig, RecoveredState},
     error::ProposerError,
     output_proposer::OutputProposer,
-    proof_adapter::ProposerProofAdapter,
 };
 
 /// Configuration for the parallel proving pipeline.
@@ -109,8 +106,6 @@ struct PipelineState {
     proved: BTreeMap<u64, ProofResult>,
     /// Target blocks currently being proved.
     inflight: BTreeSet<u64>,
-    /// Prover-service proof sessions currently being proved.
-    pending_proofs: BTreeMap<u64, PendingProofSession>,
     /// Target block currently being submitted (at most one).
     submitting: Option<u64>,
     /// Per-target-block retry counts; exceeding `max_retries` triggers a full reset.
@@ -125,24 +120,6 @@ struct ProofPlan {
     target_block: u64,
 }
 
-#[derive(Debug, Clone)]
-struct PendingProofSession {
-    plan: ProofPlan,
-    session_id: String,
-    retry_count: u32,
-    started_at: Instant,
-}
-
-impl PendingProofSession {
-    fn new(plan: ProofPlan, session_id: String, retry_count: u32) -> Self {
-        Self { plan, session_id, retry_count, started_at: Instant::now() }
-    }
-
-    fn elapsed(&self) -> Duration {
-        self.started_at.elapsed()
-    }
-}
-
 impl PipelineState {
     fn new() -> Self {
         Self {
@@ -150,7 +127,6 @@ impl PipelineState {
             submit_tasks: JoinSet::new(),
             proved: BTreeMap::new(),
             inflight: BTreeSet::new(),
-            pending_proofs: BTreeMap::new(),
             submitting: None,
             retry_counts: BTreeMap::new(),
             cached_recovery: None,
@@ -166,7 +142,6 @@ impl PipelineState {
     fn prune_stale(&mut self, recovered_block: u64) {
         self.proved.retain(|&target, _| target > recovered_block);
         self.inflight.retain(|&target| target > recovered_block);
-        self.pending_proofs.retain(|&target, _| target > recovered_block);
         self.retry_counts.retain(|&target, _| target > recovered_block);
         // NOTE: we intentionally do NOT abort in-flight submit tasks here.
         // When the recovered block advances past the submitting block, it
@@ -378,23 +353,16 @@ where
         };
 
         for (plan, request) in requests {
-            let retry_count = state.retry_counts.get(&plan.target_block).copied().unwrap_or(0);
-            let session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
-            let session = PendingProofSession::new(plan, session_id, retry_count);
-            let session_id = session.session_id.clone();
             let prover = Arc::clone(&self.prover);
             let cancel = self.cancel.child_token();
 
             info!(
-                session_id = %session_id,
                 from_block = plan.start_block,
                 to_block = plan.target_block,
                 blocks = plan.target_block.saturating_sub(plan.start_block),
-                retry_count,
                 "Dispatching proof task"
             );
             state.inflight.insert(plan.target_block);
-            state.pending_proofs.insert(plan.target_block, session);
             state.prove_tasks.spawn(async move {
                 let target = plan.target_block;
                 let inner = async move {
@@ -704,49 +672,23 @@ where
         match join_result {
             Ok((target, Ok(proof_result))) => {
                 state.inflight.remove(&target);
-                let session = state.pending_proofs.remove(&target);
                 state.retry_counts.remove(&target);
                 state.proved.insert(target, proof_result);
                 state.record_gauges();
-                if let Some(session) = session {
-                    info!(
-                        target_block = target,
-                        session_id = %session.session_id,
-                        from_block = session.plan.start_block,
-                        retry_count = session.retry_count,
-                        elapsed = ?session.elapsed(),
-                        "Proof completed successfully"
-                    );
-                } else {
-                    info!(target_block = target, "Proof completed successfully");
-                }
+                info!(target_block = target, "Proof completed successfully");
             }
             Ok((target, Err(e))) => {
                 Metrics::errors_total(e.metric_label()).increment(1);
                 state.inflight.remove(&target);
-                let session = state.pending_proofs.remove(&target);
                 let count = state.retry_counts.entry(target).or_insert(0);
                 *count += 1;
                 if *count >= self.config.max_retries {
-                    if let Some(session) = session.as_ref() {
-                        error!(
-                            target_block = target,
-                            session_id = %session.session_id,
-                            from_block = session.plan.start_block,
-                            retry_count = session.retry_count,
-                            elapsed = ?session.elapsed(),
-                            attempts = *count,
-                            error = %e,
-                            "Proof failed after max retries, dropping cached recovery"
-                        );
-                    } else {
-                        error!(
-                            target_block = target,
-                            attempts = *count,
-                            error = %e,
-                            "Proof failed after max retries, dropping cached recovery"
-                        );
-                    }
+                    error!(
+                        target_block = target,
+                        attempts = *count,
+                        error = %e,
+                        "Proof failed after max retries, dropping cached recovery"
+                    );
                     // Drop only this target's retry bookkeeping (inflight was
                     // already cleared above when the task finished). Other
                     // in-flight proofs and completed entries in `proved` are
@@ -756,17 +698,6 @@ where
                     // naturally.
                     state.retry_counts.remove(&target);
                     state.cached_recovery = None;
-                } else if let Some(session) = session.as_ref() {
-                    warn!(
-                        target_block = target,
-                        session_id = %session.session_id,
-                        from_block = session.plan.start_block,
-                        retry_count = session.retry_count,
-                        elapsed = ?session.elapsed(),
-                        attempt = *count,
-                        error = %e,
-                        "Proof failed, will retry next tick"
-                    );
                 } else {
                     warn!(
                         target_block = target,
