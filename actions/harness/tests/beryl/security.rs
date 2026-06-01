@@ -19,8 +19,6 @@ const UPDATED_RATIO: U256 = U256::from_limbs([2_000_000_000_000_000_000, 0, 0, 0
 const UPDATED_MINIMUM_REDEEMABLE: U256 = U256::from_limbs([20, 0, 0, 0]);
 const BOB_MINT_AMOUNT: u64 = 100;
 const CAROL_MINT_AMOUNT: u64 = 200;
-const BOB_BURN_AMOUNT: u64 = 10;
-const CAROL_BURN_AMOUNT: u64 = 20;
 const REDEEM_AMOUNT: u64 = 20;
 const REDEEM_WITH_MEMO_AMOUNT: u64 = 30;
 const REDEEM_MEMO: B256 = B256::repeat_byte(0x61);
@@ -135,11 +133,6 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                     security_operator_role(),
                 ),
                 StaticcallCase::bytes32(
-                    "BURN_FROM_ROLE",
-                    IB20Security::BURN_FROM_ROLECall {}.abi_encode(),
-                    burn_from_role(),
-                ),
-                StaticcallCase::bytes32(
                     "REDEEM_SENDER_POLICY",
                     IB20Security::REDEEM_SENDER_POLICYCall {}.abi_encode(),
                     B20SecurityStorage::REDEEM_SENDER_POLICY,
@@ -165,9 +158,7 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
 #[tokio::test]
 async fn security_mutations_update_state_and_emit_events() {
     let mut scenario = B20SecurityScenario::new().await;
-    scenario
-        .grant_roles([security_operator_role(), burn_from_role(), B20TokenRole::Mint.id()])
-        .await;
+    scenario.grant_roles([security_operator_role(), B20TokenRole::Mint.id()]).await;
 
     let update_ratio = scenario
         .call_tx(IB20Security::updateShareRatioCall { newSharesToTokensRatio: UPDATED_RATIO });
@@ -181,10 +172,6 @@ async fn security_mutations_update_state_and_emit_events() {
     let batch_mint = scenario.call_tx(IB20Security::batchMintCall {
         recipients: vec![BerylTestEnv::bob(), BerylTestEnv::carol()],
         amounts: vec![U256::from(BOB_MINT_AMOUNT), U256::from(CAROL_MINT_AMOUNT)],
-    });
-    let batch_burn = scenario.call_tx(IB20Security::batchBurnCall {
-        accounts: vec![BerylTestEnv::bob(), BerylTestEnv::carol()],
-        amounts: vec![U256::from(BOB_BURN_AMOUNT), U256::from(CAROL_BURN_AMOUNT)],
     });
     let redeem = scenario.call_tx(IB20Security::redeemCall { amount: U256::from(REDEEM_AMOUNT) });
     let redeem_with_memo = scenario.call_tx(IB20Security::redeemWithMemoCall {
@@ -207,14 +194,13 @@ async fn security_mutations_update_state_and_emit_events() {
             update_minimum,
             update_cusip,
             batch_mint,
-            batch_burn,
             redeem,
             redeem_with_memo,
             announce,
         ])
         .await;
 
-    for index in 0..8 {
+    for index in 0..7 {
         assert!(
             scenario.env.user_tx_succeeded(&block, index),
             "security mutation {index} must succeed"
@@ -267,26 +253,6 @@ async fn security_mutations_update_state_and_emit_events() {
     scenario.assert_log(
         &block,
         4,
-        IB20::Transfer {
-            from: BerylTestEnv::bob(),
-            to: Address::ZERO,
-            amount: U256::from(BOB_BURN_AMOUNT),
-        }
-        .encode_log_data(),
-    );
-    scenario.assert_log(
-        &block,
-        4,
-        IB20::Transfer {
-            from: BerylTestEnv::carol(),
-            to: Address::ZERO,
-            amount: U256::from(CAROL_BURN_AMOUNT),
-        }
-        .encode_log_data(),
-    );
-    scenario.assert_log(
-        &block,
-        5,
         IB20Security::Redeemed {
             from: BerylTestEnv::alice(),
             amt: U256::from(REDEEM_AMOUNT),
@@ -296,12 +262,12 @@ async fn security_mutations_update_state_and_emit_events() {
     );
     scenario.assert_log(
         &block,
-        6,
+        5,
         IB20::Memo { caller: BerylTestEnv::alice(), memo: REDEEM_MEMO }.encode_log_data(),
     );
     scenario.assert_log(
         &block,
-        6,
+        5,
         IB20Security::Redeemed {
             from: BerylTestEnv::alice(),
             amt: U256::from(REDEEM_WITH_MEMO_AMOUNT),
@@ -311,7 +277,7 @@ async fn security_mutations_update_state_and_emit_events() {
     );
     scenario.assert_log(
         &block,
-        7,
+        6,
         IB20Security::Announcement {
             caller: BerylTestEnv::alice(),
             id: ANNOUNCEMENT_ID.to_string(),
@@ -322,7 +288,7 @@ async fn security_mutations_update_state_and_emit_events() {
     );
     scenario.assert_log(
         &block,
-        7,
+        6,
         IB20Security::SecurityIdentifierUpdated {
             identifierType: "FIGI".to_string(),
             value: FIGI.to_string(),
@@ -331,21 +297,19 @@ async fn security_mutations_update_state_and_emit_events() {
     );
     scenario.assert_log(
         &block,
-        7,
+        6,
         IB20Security::EndAnnouncement { id: ANNOUNCEMENT_ID.to_string() }.encode_log_data(),
     );
 
     scenario.assert_total_supply(
         BerylTestEnv::B20_INITIAL_SUPPLY + BOB_MINT_AMOUNT + CAROL_MINT_AMOUNT
-            - BOB_BURN_AMOUNT
-            - CAROL_BURN_AMOUNT
             - REDEEM_AMOUNT
             - REDEEM_WITH_MEMO_AMOUNT,
     );
     scenario.assert_balances(
         BerylTestEnv::B20_INITIAL_SUPPLY - REDEEM_AMOUNT - REDEEM_WITH_MEMO_AMOUNT,
-        BOB_MINT_AMOUNT - BOB_BURN_AMOUNT,
-        CAROL_MINT_AMOUNT - CAROL_BURN_AMOUNT,
+        BOB_MINT_AMOUNT,
+        CAROL_MINT_AMOUNT,
     );
 
     scenario
@@ -393,7 +357,7 @@ async fn security_mutations_update_state_and_emit_events() {
                 StaticcallCase::word(
                     "totalSupply after security mutations",
                     IB20::totalSupplyCall {}.abi_encode(),
-                    U256::from(1_000_220),
+                    U256::from(1_000_250),
                 ),
             ],
         )
@@ -405,9 +369,7 @@ async fn security_mutations_update_state_and_emit_events() {
 #[tokio::test]
 async fn security_mutations_revert_on_invalid_inputs() {
     let mut scenario = B20SecurityScenario::new().await;
-    scenario
-        .grant_roles([security_operator_role(), burn_from_role(), B20TokenRole::Mint.id()])
-        .await;
+    scenario.grant_roles([security_operator_role(), B20TokenRole::Mint.id()]).await;
 
     let first_announcement = scenario.call_tx(IB20Security::announceCall {
         internalCalls: Vec::new(),
@@ -419,10 +381,6 @@ async fn security_mutations_revert_on_invalid_inputs() {
         .call_tx(IB20Security::batchMintCall { recipients: Vec::new(), amounts: Vec::new() });
     let mismatched_batch_mint = scenario.call_tx(IB20Security::batchMintCall {
         recipients: vec![BerylTestEnv::bob()],
-        amounts: vec![U256::from(1), U256::from(2)],
-    });
-    let mismatched_batch_burn = scenario.call_tx(IB20Security::batchBurnCall {
-        accounts: vec![BerylTestEnv::bob()],
         amounts: vec![U256::from(1), U256::from(2)],
     });
     let below_minimum_redeem = scenario.call_tx(IB20Security::redeemCall { amount: U256::from(1) });
@@ -459,7 +417,6 @@ async fn security_mutations_revert_on_invalid_inputs() {
             first_announcement,
             empty_batch_mint,
             mismatched_batch_mint,
-            mismatched_batch_burn,
             below_minimum_redeem,
             empty_identifier_type,
             duplicate_announcement,
@@ -469,7 +426,7 @@ async fn security_mutations_revert_on_invalid_inputs() {
         .await;
 
     assert!(scenario.env.user_tx_succeeded(&block, 0), "first announce() must succeed");
-    for index in 1..9 {
+    for index in 1..8 {
         assert!(
             !scenario.env.user_tx_succeeded(&block, index),
             "invalid security mutation {index} must revert"
@@ -706,8 +663,4 @@ impl B20SecurityScenario {
 
 fn security_operator_role() -> B256 {
     keccak256("SECURITY_OPERATOR_ROLE")
-}
-
-fn burn_from_role() -> B256 {
-    keccak256("BURN_FROM_ROLE")
 }
