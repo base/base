@@ -375,12 +375,8 @@ impl TokenCreateParams {
     }
 
     /// Validates security-token initialization fields.
-    pub fn validate_security(init: &B20SecurityInit) -> Result<()> {
-        if init.isin.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Factory::MissingRequiredField {
-                field: "isin".to_string(),
-            }));
-        }
+    pub const fn validate_security(_init: &B20SecurityInit) -> Result<()> {
+        // isin is optional — empty string is accepted.
         Ok(())
     }
 
@@ -1248,22 +1244,6 @@ mod tests {
             assert!(!token.has_role(B20TokenRole::DefaultAdmin.id(), Address::ZERO).unwrap());
         });
     }
-
-    #[test]
-    fn test_create_security_token_reverts_for_empty_isin() {
-        let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
-
-        let params = IB20Factory::B20SecurityCreateParams {
-            version: B20Variant::Security.supported_version(),
-            name: "Security Token".to_string(),
-            symbol: "SEC".to_string(),
-            initialAdmin: Address::repeat_byte(0xAB),
-            isin: String::new(),
-            minimumRedeemable: U256::ZERO,
-        };
-        let call = IB20Factory::createB20Call {
-            variant: IB20Factory::B20Variant::SECURITY,
             salt: B256::repeat_byte(0x52),
             params: params.abi_encode().into(),
             initCalls: Vec::new(),
