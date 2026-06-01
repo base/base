@@ -122,7 +122,8 @@ impl DeployerContainer {
 
         let output_dir = self.output_dir.to_string_lossy().to_string();
         let mut request = image
-            .with_cmd(["setup-l2.sh"])
+            .with_entrypoint("/bin/bash")
+            .with_cmd(["/usr/local/bin/setup-l2.sh"])
             .with_env_var("L1_RPC_URL", self.l1_rpc_url.to_string())
             .with_env_var("L1_CHAIN_ID", self.l1_chain_id.to_string())
             .with_env_var("L2_CHAIN_ID", self.l2_chain_id.to_string())
