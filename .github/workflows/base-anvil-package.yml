@@ -116,17 +116,19 @@ jobs:
       - name: Resolve base-std ref
         id: base-std
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
         run: |
           set -euo pipefail
 
-          if base_std_sha="$(git ls-remote https://github.com/base/base-std.git "refs/heads/$BASE_STD_REF" | awk '{print $1}' | head -1)" \
+          if base_std_sha="$(gh api repos/base/base-std/git/ref/heads/"$BASE_STD_REF" --jq '.object.sha' 2>/dev/null)" \
             && [[ -n "$base_std_sha" ]]; then
             :
-          elif base_std_sha="$(git ls-remote https://github.com/base/base-std.git "refs/tags/$BASE_STD_REF" | awk '{print $1}' | head -1)" \
+          elif base_std_sha="$(gh api repos/base/base-std/git/ref/tags/"$BASE_STD_REF" --jq '.object.sha' 2>/dev/null)" \
             && [[ -n "$base_std_sha" ]]; then
             :
           else
-            base_std_sha="$(git ls-remote https://github.com/base/base-std.git "$BASE_STD_REF" | awk '{print $1}' | head -1)"
+            base_std_sha="$(gh api "repos/base/base-std/git/ref/$BASE_STD_REF" --jq '.object.sha')"
           fi
 
           if [[ -z "$base_std_sha" ]]; then
@@ -157,6 +159,7 @@ jobs:
         if: matrix.settings.smoke_test
         shell: bash
         env:
+          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
           BASE_STD_SHA: ${{ steps.base-std.outputs.sha }}
         run: |
           set -euo pipefail
@@ -165,8 +168,8 @@ jobs:
           base_std_dir="$workdir/base-std"
           mkdir -p "$workdir"
 
-          git init "$base_std_dir"
-          git -C "$base_std_dir" remote add origin https://github.com/base/base-std.git
+          gh auth setup-git
+          gh repo clone base/base-std "$base_std_dir" -- --filter=blob:none --no-checkout
           git -C "$base_std_dir" fetch --depth 1 origin "$BASE_STD_SHA"
           git -C "$base_std_dir" checkout --detach FETCH_HEAD
           git -C "$base_std_dir" submodule update --init --recursive --depth 1
