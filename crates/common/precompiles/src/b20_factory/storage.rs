@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
-pub const B20_STABLECOIN_EVENT_PARAMS_VERSION: u8 = 1;
+const B20_STABLECOIN_EVENT_PARAMS_VERSION: u8 = 1;
 
 /// ABI-encodes `B20StablecoinEventParams` for the `variantParams` field of `B20Created`.
 ///
