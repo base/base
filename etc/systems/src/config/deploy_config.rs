@@ -6,6 +6,10 @@ use super::accounts;
 
 /// Generates the L2 deploy configuration as JSON.
 ///
+/// NOTE: This produces the same JSON structure as
+/// `etc/scripts/devnet/templates/deploy-config.json.template`.
+/// If the schema changes, both must be updated in lockstep.
+///
 /// The output matches the field schema expected by `base/contracts` forge scripts
 /// (i.e. `DeployConfig.s.sol` / `deploy-config/local.json`).
 pub fn deploy_config_json(l1_chain_id: u64, l2_chain_id: u64) -> String {

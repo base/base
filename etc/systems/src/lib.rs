@@ -37,7 +37,7 @@ mod host;
 pub use host::{host_address, with_host_port_if_needed};
 
 mod images;
-pub use images::{OP_DEPLOYER_IMAGE, RETH_IMAGE};
+pub use images::RETH_IMAGE;
 
 mod l1;
 pub use l1::{

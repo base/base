@@ -13,10 +13,9 @@ use testcontainers::{
 use url::Url;
 
 use super::artifacts::DeploymentArtifacts;
-use crate::config::{self, BATCHER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER};
+use crate::config::{BATCHER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER};
 
 const OUTPUT_DIR: &str = "/output/l2";
-const DEPLOY_CONFIG_PATH: &str = "/config/deploy-config.json";
 
 /// Role address configuration for the deployment.
 #[derive(Debug, Clone, Copy)]
@@ -117,7 +116,6 @@ impl DeployerContainer {
 
         std::fs::create_dir_all(&self.output_dir).wrap_err("failed to create output directory")?;
 
-        let deploy_config = self.deploy_config()?;
 
         let image = GenericImage::new("devnet-setup", "local")
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)));
@@ -136,7 +134,6 @@ impl DeployerContainer {
             .with_env_var("CHALLENGER_ADDR", format_address(self.roles.challenger))
             .with_env_var("OUTPUT_DIR", OUTPUT_DIR)
             .with_env_var("TEMPLATE_DIR", "/templates")
-            .with_copy_to(DEPLOY_CONFIG_PATH, deploy_config.into_bytes())
             .with_mount(Mount::bind_mount(output_dir, OUTPUT_DIR));
 
         if let Some(network) = &self.network {
@@ -153,20 +150,6 @@ impl DeployerContainer {
         DeploymentArtifacts::load_from_dir(&self.output_dir)
     }
 
-    fn deploy_config(&self) -> Result<String> {
-        let mut config_json =
-            config::deploy_config_json(self.l1_chain_id, self.l2_chain_id);
-        let deployer_address = self.deployer_address()?;
-
-        config_json = replace_address(config_json, DEPLOYER.address, deployer_address);
-        config_json = replace_address(config_json, SEQUENCER.address, self.roles.sequencer);
-        config_json = replace_address(config_json, BATCHER.address, self.roles.batcher);
-        config_json = replace_address(config_json, PROPOSER.address, self.roles.proposer);
-        config_json = replace_address(config_json, CHALLENGER.address, self.roles.challenger);
-
-        Ok(config_json)
-    }
-
     fn deployer_address(&self) -> Result<Address> {
         let signer = PrivateKeySigner::from_bytes(&self.deployer_private_key)
             .wrap_err("failed to derive deployer address from private key")?;
@@ -176,10 +159,6 @@ impl DeployerContainer {
     fn deployer_key_hex(&self) -> String {
         format!("0x{}", hex::encode(self.deployer_private_key))
     }
-}
-
-fn replace_address(input: String, from: Address, to: Address) -> String {
-    input.replace(&format_address(from), &format_address(to))
 }
 
 fn format_address(address: Address) -> String {
