@@ -110,15 +110,15 @@ zepter-fix:
 install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest --locked
 
-# Runs tests across workspace with all features enabled (excludes devnet)
+# Runs tests across workspace with all features enabled (excludes system tests)
 test: install-nextest build::contracts build::elfs
-    cargo nextest run --workspace --all-features --exclude devnet --no-fail-fast
+    cargo nextest run --workspace --all-features --exclude base-system-tests --no-fail-fast
 
-# Runs tests only for crates affected by changes vs main (excludes devnet)
+# Runs tests only for crates affected by changes vs main (excludes system tests)
 test-affected base="main": install-nextest build::contracts build::elfs
     #!/usr/bin/env bash
     set -euo pipefail
-    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet --cargo-args)"
+    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude base-system-tests --cargo-args)"
     pkg_args=()
     while IFS= read -r line; do
         [ -n "$line" ] && pkg_args+=("$line")
@@ -132,13 +132,13 @@ test-affected base="main": install-nextest build::contracts build::elfs
 
 # Runs tests with ci profile for minimal disk usage
 test-ci: install-nextest build::contracts
-    cargo nextest run -P ci --locked --workspace --all-features --exclude devnet --cargo-profile ci
+    cargo nextest run -P ci --locked --workspace --all-features --exclude base-system-tests --cargo-profile ci
 
 # Runs tests only for affected crates with ci profile (for PRs)
 test-affected-ci base="main": install-nextest build::contracts
     #!/usr/bin/env bash
     set -euo pipefail
-    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet --cargo-args)"
+    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude base-system-tests --cargo-args)"
     pkg_args=()
     while IFS= read -r line; do
         [ -n "$line" ] && pkg_args+=("$line")

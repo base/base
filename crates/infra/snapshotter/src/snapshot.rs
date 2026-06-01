@@ -56,6 +56,44 @@ pub struct SnapshotManifest {
     pub components: BTreeMap<String, serde_json::Value>,
 }
 
+/// Minimal projection of a chunked component's manifest entry for hash lookup.
+#[derive(Deserialize)]
+struct ChunkedComponentMeta {
+    blocks_per_file: u64,
+    chunk_output_files: Vec<Vec<OutputFileChecksum>>,
+}
+
+impl SnapshotManifest {
+    /// Returns the per-file BLAKE3 hashes for a static-file chunk archive,
+    /// sorted by file path, or `None` if the chunk has no recorded hashes.
+    ///
+    /// Returns `None` when:
+    /// - `filename` does not match the `{component}-{start}-{end}.tar.zst` pattern,
+    /// - the component is not present in the manifest or is not a chunked component,
+    /// - the chunk index is out of range, or
+    /// - the chunk's hash list is empty (which happens for chunks that were skipped
+    ///   at generation time — see the tip+buffer invariant in `compute_skip_ranges`).
+    ///
+    /// Callers should treat `None` as "no comparable hash available" and fall
+    /// through to re-upload.
+    pub fn chunk_hashes_for_file(&self, filename: &str) -> Option<Vec<String>> {
+        let (component, start, _end) = ChunkFilename::parse(filename)?;
+        let value = self.components.get(&component)?;
+        let meta: ChunkedComponentMeta = serde_json::from_value(value.clone()).ok()?;
+        if meta.blocks_per_file == 0 {
+            return None;
+        }
+        let chunk_index = usize::try_from(start / meta.blocks_per_file).ok()?;
+        let entries = meta.chunk_output_files.get(chunk_index)?;
+        if entries.is_empty() {
+            return None;
+        }
+        let mut sorted = entries.clone();
+        sorted.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+        Some(sorted.into_iter().map(|e| e.blake3).collect())
+    }
+}
+
 /// Checksum metadata for an extracted file within an archive.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputFileChecksum {
@@ -154,7 +192,7 @@ impl SnapshotGenerator {
 
                 planned.push(PlannedChunk {
                     chunk_idx: i,
-                    archive_path: output_dir.join(chunk_filename(key, start, end)),
+                    archive_path: output_dir.join(ChunkFilename::format(key, start, end)),
                     source_files,
                 });
             }
@@ -271,7 +309,7 @@ impl SnapshotGenerator {
                 .context("block range overflow in skip computation")?;
 
             let dominated_by_remote = CHUNKED_COMPONENTS.iter().all(|&(key, _)| {
-                let filename = chunk_filename(key, start, end);
+                let filename = ChunkFilename::format(key, start, end);
                 remote_filenames.contains(filename.as_str())
             });
 
@@ -284,8 +322,29 @@ impl SnapshotGenerator {
     }
 }
 
-fn chunk_filename(component_key: &str, start: u64, end: u64) -> String {
-    format!("{component_key}-{start}-{end}.tar.zst")
+/// Parser/formatter for chunked static-file archive names of the form
+/// `{component}-{start}-{end}.tar.zst` (e.g. `headers-0-499999.tar.zst`).
+#[derive(Debug)]
+pub struct ChunkFilename;
+
+impl ChunkFilename {
+    /// Formats a chunk archive filename.
+    pub fn format(component: &str, start: u64, end: u64) -> String {
+        format!("{component}-{start}-{end}.tar.zst")
+    }
+
+    /// Parses a chunk archive filename into `(component, start, end)`.
+    /// Returns `None` if the filename does not match the expected pattern.
+    pub fn parse(filename: &str) -> Option<(String, u64, u64)> {
+        let stem = filename.strip_suffix(".tar.zst")?;
+        let parts: Vec<&str> = stem.rsplitn(3, '-').collect();
+        if parts.len() < 3 {
+            return None;
+        }
+        let end = parts[0].parse::<u64>().ok()?;
+        let start = parts[1].parse::<u64>().ok()?;
+        Some((parts[2].to_string(), start, end))
+    }
 }
 
 /// Infers the snapshot block from the highest header static file range.
@@ -605,10 +664,10 @@ mod tests {
     fn compute_skip_ranges_skips_finalized_chunks() {
         let mut remote = HashSet::new();
         for &(key, _) in CHUNKED_COMPONENTS {
-            remote.insert(chunk_filename(key, 0, 499_999));
-            remote.insert(chunk_filename(key, 500_000, 999_999));
-            remote.insert(chunk_filename(key, 1_000_000, 1_499_999));
-            remote.insert(chunk_filename(key, 1_500_000, 1_999_999));
+            remote.insert(ChunkFilename::format(key, 0, 499_999));
+            remote.insert(ChunkFilename::format(key, 500_000, 999_999));
+            remote.insert(ChunkFilename::format(key, 1_000_000, 1_499_999));
+            remote.insert(ChunkFilename::format(key, 1_500_000, 1_999_999));
         }
 
         // block=2_000_000, blocks_per_file=500_000 → 4 chunks (indices 0-3)
@@ -629,8 +688,8 @@ mod tests {
     fn compute_skip_ranges_keeps_all_when_few_chunks() {
         let mut remote = HashSet::new();
         for &(key, _) in CHUNKED_COMPONENTS {
-            remote.insert(chunk_filename(key, 0, 499_999));
-            remote.insert(chunk_filename(key, 500_000, 999_999));
+            remote.insert(ChunkFilename::format(key, 0, 499_999));
+            remote.insert(ChunkFilename::format(key, 500_000, 999_999));
         }
 
         // block=1_000_000 → 2 chunks, tip + buffer(2) = 3 → keep all
@@ -651,7 +710,7 @@ mod tests {
     fn compute_skip_ranges_requires_all_components_present() {
         let mut remote = HashSet::new();
         // Only add headers, not other components
-        remote.insert(chunk_filename("headers", 0, 499_999));
+        remote.insert(ChunkFilename::format("headers", 0, 499_999));
 
         let refs: HashSet<&str> = remote.iter().map(String::as_str).collect();
         let skip = SnapshotGenerator::compute_skip_ranges(&refs, 5_000_000, 500_000).unwrap();
@@ -712,7 +771,7 @@ mod tests {
         // Simulate all chunked components existing remotely for range 0-499999
         let mut remote = HashMap::new();
         for &(key, _) in CHUNKED_COMPONENTS {
-            remote.insert(chunk_filename(key, 0, 499_999), 0u64);
+            remote.insert(ChunkFilename::format(key, 0, 499_999), 0u64);
         }
 
         let files = SnapshotGenerator::generate_manifest(
@@ -764,7 +823,7 @@ mod tests {
 
         let mut remote = HashMap::new();
         for &(key, _) in CHUNKED_COMPONENTS {
-            remote.insert(chunk_filename(key, 0, 499_999), 0u64);
+            remote.insert(ChunkFilename::format(key, 0, 499_999), 0u64);
         }
 
         SnapshotGenerator::generate_manifest(

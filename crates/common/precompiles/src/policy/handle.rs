@@ -107,7 +107,10 @@ mod tests {
     fn storage() -> HashMapStorageProvider {
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
-        StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).write_builtins()).unwrap();
+        StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).ensure_initialized_and_get_counter()
+        })
+        .unwrap();
         s
     }
 
