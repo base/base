@@ -17,7 +17,6 @@ use crate::config::{self, BATCHER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER};
 
 const OUTPUT_DIR: &str = "/output/l2";
 const DEPLOY_CONFIG_PATH: &str = "/config/deploy-config.json";
-const SETUP_IMAGE: &str = "devnet-setup:local";
 
 /// Role address configuration for the deployment.
 #[derive(Debug, Clone, Copy)]
