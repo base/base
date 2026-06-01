@@ -248,6 +248,13 @@ where
         };
 
         match checker.select_all_valid_enclaves().await {
+            Ok(valid) if valid.is_empty() => {
+                warn!(
+                    worker_id = %self.config.worker_id,
+                    "no valid enclave signers registered; skipping nitro job discovery poll"
+                );
+                false
+            }
             Ok(valid) => {
                 debug!(
                     worker_id = %self.config.worker_id,
