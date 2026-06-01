@@ -129,7 +129,7 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
     // --- Policy Operations ---
 
     /// Returns the configured policy ID for `policy_scope`.
-    pub fn policy_id_checked(&self, policy_scope: B256) -> Result<u64> {
+    pub fn policy_id(&self, policy_scope: B256) -> Result<u64> {
         Self::ensure_supported_policy_type(policy_scope)?;
         self.accounting().policy_id(policy_scope)
     }

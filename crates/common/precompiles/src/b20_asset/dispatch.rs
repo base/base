@@ -163,7 +163,7 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
             C::isPaused(c) => self.is_paused(c.feature)?.abi_encode().into(),
 
             // --- Policy reads ---
-            C::policyId(c) => self.policy_id_checked(c.policyScope)?.abi_encode().into(),
+            C::policyId(c) => self.policy_id(c.policyScope)?.abi_encode().into(),
 
             // --- Domain reads ---
             C::DOMAIN_SEPARATOR(_) => self.domain_separator(ctx.chain_id())?.abi_encode().into(),
