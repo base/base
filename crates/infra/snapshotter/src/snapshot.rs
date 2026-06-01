@@ -83,6 +83,9 @@ impl SnapshotManifest {
         if meta.blocks_per_file == 0 {
             return None;
         }
+        if start % meta.blocks_per_file != 0 {
+            return None;
+        }
         let chunk_index = usize::try_from(start / meta.blocks_per_file).ok()?;
         let entries = meta.chunk_output_files.get(chunk_index)?;
         if entries.is_empty() {
