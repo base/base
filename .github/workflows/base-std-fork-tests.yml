@@ -104,8 +104,14 @@ jobs:
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           output="$RUNNER_TEMP/fork-test-output.txt"
-          passed=$(grep -c '\[PASS\]' "$output" 2>/dev/null || echo 0)
-          failed=$(grep -c '\[FAIL' "$output" 2>/dev/null || echo 0)
+          # `grep -c` prints the count (0 when there are no matches) and exits
+          # non-zero on no match, so `|| echo 0` would append a second line and
+          # break the arithmetic below. Use `|| true` and default any
+          # empty/missing value (e.g. when the output file is absent) to 0.
+          passed=$(grep -c '\[PASS\]' "$output" 2>/dev/null || true)
+          failed=$(grep -c '\[FAIL' "$output" 2>/dev/null || true)
+          passed=${passed:-0}
+          failed=${failed:-0}
           marker="<!-- fork-test-results -->"
 
           if [ ! -s "$output" ] || [ "$((passed + failed))" -eq 0 ]; then
