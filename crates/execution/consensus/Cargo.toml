@@ -46,6 +46,7 @@ reth-db-common.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 
 alloy-chains.workspace = true
+alloy-hardforks.workspace = true
 
 [features]
 default = [ "std" ]

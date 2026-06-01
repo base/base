@@ -213,7 +213,26 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
         validate_against_parent_hash_number(header.header(), parent)?;
 
         if self.chain_spec.is_bedrock_active_at_block(header.number()) {
-            validate_against_parent_timestamp(header.header(), parent.header())?;
+            // Post-Subsecond, two consecutive blocks may share the seconds-denominated
+            // timestamp when separated by sub-second cadences (e.g. 200ms). The raw
+            // [`alloy_consensus::Header`] does not carry the millisecond component (that
+            // lives on [`BaseHeader`] and is committed via the BaseTime predeploy state),
+            // so strict per-millisecond ordering is enforced at the consensus layer rather
+            // than here. Before Subsecond, the upstream strict
+            // `child.timestamp > parent.timestamp` rule is preserved.
+            let child_ts = header.timestamp();
+            let parent_ts = parent.timestamp();
+            if child_ts < parent_ts {
+                return Err(ConsensusError::TimestampIsInPast {
+                    parent_timestamp: parent_ts,
+                    timestamp: child_ts,
+                });
+            }
+            if child_ts > parent_ts
+                || !self.chain_spec.is_subsecond_active_at_timestamp(child_ts)
+            {
+                validate_against_parent_timestamp(header.header(), parent.header())?;
+            }
         }
 
         validate_against_parent_eip1559_base_fee(
@@ -864,5 +883,96 @@ mod tests {
             beacon_consensus.validate_header(&header).unwrap_err(),
             ConsensusError::RequestsHashUnexpected,
         ));
+    }
+
+    mod parent_timestamp {
+        use std::sync::Arc;
+
+        use alloy_consensus::Header;
+        use alloy_hardforks::ForkCondition;
+        use base_common_chains::BaseUpgrade;
+        use reth_consensus::{ConsensusError, HeaderValidator};
+        use reth_primitives_traits::SealedHeader;
+
+        use crate::BaseBeaconConsensus;
+        use crate::tests::base_mainnet_builder;
+
+        // Two sealed headers with consecutive block numbers and the requested timestamps. The
+        // child's `parent_hash` references the parent's seal so the upstream
+        // `validate_against_parent_hash_number` check passes.
+        fn sealed_pair(
+            parent_ts: u64,
+            child_ts: u64,
+        ) -> (SealedHeader<Header>, SealedHeader<Header>) {
+            let parent = SealedHeader::seal_slow(Header {
+                number: 1,
+                timestamp: parent_ts,
+                base_fee_per_gas: Some(1_000_000_000),
+                blob_gas_used: Some(0),
+                excess_blob_gas: Some(0),
+                ..Default::default()
+            });
+            let child = SealedHeader::seal_slow(Header {
+                number: 2,
+                parent_hash: parent.hash(),
+                timestamp: child_ts,
+                base_fee_per_gas: Some(1_000_000_000),
+                blob_gas_used: Some(0),
+                excess_blob_gas: Some(0),
+                ..Default::default()
+            });
+            (parent, child)
+        }
+
+        #[test]
+        fn pre_subsecond_rejects_same_second_child() {
+            let chain_spec = base_mainnet_builder().jovian_activated().build();
+            // Subsecond is `ForkCondition::Never` for mainnet/sepolia, so it is *not* active
+            // at any timestamp -> upstream strict `child > parent` rule applies.
+            let consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+
+            let (parent, child) = sealed_pair(1_780_334_562, 1_780_334_562);
+            let err = consensus
+                .validate_header_against_parent(&child, &parent)
+                .expect_err("same-second child must be rejected pre-Subsecond");
+            assert!(matches!(err, ConsensusError::TimestampIsInPast { .. }));
+        }
+
+        #[test]
+        fn post_subsecond_allows_same_second_child() {
+            let chain_spec = base_mainnet_builder()
+                .jovian_activated()
+                .with_fork(BaseUpgrade::Subsecond, ForkCondition::Timestamp(0))
+                .build();
+            let consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+
+            let (parent, child) = sealed_pair(1_780_334_562, 1_780_334_562);
+            match consensus.validate_header_against_parent(&child, &parent) {
+                Ok(()) => {}
+                // The downstream EIP-1559 / blob-gas checks operate on synthetic headers
+                // that don't carry consistent gas-target metadata, so they may surface
+                // unrelated `ConsensusError` variants. The invariant we care about is that
+                // a same-second child does NOT trip `TimestampIsInPast`.
+                Err(ConsensusError::TimestampIsInPast { .. }) => {
+                    panic!("same-second child must be accepted post-Subsecond")
+                }
+                Err(_) => {}
+            }
+        }
+
+        #[test]
+        fn post_subsecond_still_rejects_past_child() {
+            let chain_spec = base_mainnet_builder()
+                .jovian_activated()
+                .with_fork(BaseUpgrade::Subsecond, ForkCondition::Timestamp(0))
+                .build();
+            let consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+
+            let (parent, child) = sealed_pair(1_780_334_562, 1_780_334_561);
+            let err = consensus
+                .validate_header_against_parent(&child, &parent)
+                .expect_err("strictly earlier child must always be rejected");
+            assert!(matches!(err, ConsensusError::TimestampIsInPast { .. }));
+        }
     }
 }

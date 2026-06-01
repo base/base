@@ -4422,6 +4422,7 @@ dependencies = [
  "alloy-chains",
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-trie",
  "base-common-chains",
