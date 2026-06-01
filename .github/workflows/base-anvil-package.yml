@@ -168,8 +168,10 @@ jobs:
           base_std_dir="$workdir/base-std"
           mkdir -p "$workdir"
 
-          gh repo clone base/base-std "$base_std_dir" -- --depth 1 --single-branch
-          git -C "$base_std_dir" checkout --detach "$BASE_STD_SHA"
+          gh auth setup-git
+          gh repo clone base/base-std "$base_std_dir" -- --depth 1 --single-branch --no-checkout
+          git -C "$base_std_dir" fetch --depth 1 origin "$BASE_STD_SHA"
+          git -C "$base_std_dir" checkout --detach FETCH_HEAD
           git -C "$base_std_dir" submodule update --init --recursive --depth 1
 
           echo "BASE_STD_DIR=$base_std_dir" >> "$GITHUB_ENV"
