@@ -126,10 +126,9 @@ bench name:
 _install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
 
-[private]
-# Env var: CONTRACTS_COMMIT overrides the base/contracts commit SHA (default in Dockerfile).
 # Ensures SP1 toolchain is installed and ELF artifacts are cached.
 # Installs SP1 automatically if cargo-prove is not found.
+[private]
 _ensure-sp1-elfs:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -141,6 +140,8 @@ _ensure-sp1-elfs:
     cd "$(git rev-parse --show-toplevel)"
     just succinct ensure-elfs
 
+# Env var: CONTRACTS_COMMIT overrides the base/contracts commit SHA (default in Dockerfile).
+[private]
 _build-setup-image:
     docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet \
         $(if [ -n "$CONTRACTS_COMMIT" ]; then echo "--build-arg CONTRACTS_COMMIT=$CONTRACTS_COMMIT"; fi) .
