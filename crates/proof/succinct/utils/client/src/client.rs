@@ -109,7 +109,7 @@ where
                 continue;
             }
             Err(e) => {
-                error!(target: "client", "Failed to produce payload: {:?}", e);
+                error!(target: "client", error = ?e, "Failed to produce payload");
                 return Err(e.into());
             }
         };
