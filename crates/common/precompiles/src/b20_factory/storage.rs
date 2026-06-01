@@ -7,9 +7,9 @@ use base_precompile_storage::{BasePrecompileError, Result};
 use revm::state::Bytecode;
 
 use crate::{
-    ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20AssetToken, B20StablecoinInit,
-    B20StablecoinStorage, B20StablecoinToken, B20Token, B20TokenInit, B20TokenRole,
-    B20TokenStorage, B20Variant, IB20Factory, PolicyHandle, RoleManaged, Token,
+    B20AssetInit, B20AssetStorage, B20AssetToken, B20StablecoinInit, B20StablecoinStorage,
+    B20StablecoinToken, B20Token, B20TokenInit, B20TokenRole, B20TokenStorage, B20Variant,
+    IB20Factory, PolicyHandle, RoleManaged, Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -51,8 +51,6 @@ impl<'a> B20FactoryStorage<'a> {
     ) -> Result<Address> {
         let variant = B20Variant::from_abi(call.variant)
             .ok_or_else(|| BasePrecompileError::revert(IB20Factory::InvalidVariant {}))?;
-        ActivationRegistryStorage::new(self.storage)
-            .ensure_activated(variant.activation_feature().id())?;
         let params = TokenCreateParams::decode(variant, &call.params)?;
         Self::check_version(params.version(), variant)?;
         params.validate()?;
@@ -402,8 +400,8 @@ mod tests {
     use crate::{
         ActivationFeature, ActivationRegistryStorage, B20AssetStorage, B20AssetToken,
         B20FactoryStorage, B20StablecoinStorage, B20Token, B20TokenRole, B20TokenStorage,
-        B20Variant, IB20, IB20Factory, Mintable, Permittable, PolicyHandle, RoleManaged,
-        StablecoinAccounting, Token, TokenAccounting, Transferable,
+        B20Variant, IB20, IB20Factory, Mintable, Permittable, PolicyHandle, RoleManaged, Token,
+        TokenAccounting, Transferable,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -534,7 +532,6 @@ mod tests {
     #[test]
     fn test_create_token_deploys_ef_stub() {
         let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0xAA);
         let (expected_addr, _) = B20Variant::B20.compute_address(caller, salt);
@@ -551,7 +548,6 @@ mod tests {
     #[test]
     fn test_create_token_stores_metadata_and_uses_variant_decimals() {
         let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0xBB);
         let call =
@@ -625,7 +621,6 @@ mod tests {
     #[test]
     fn test_create_token_reverts_if_salt_reused() {
         let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0xEE);
 
@@ -702,7 +697,6 @@ mod tests {
     #[test]
     fn test_create_token_allows_empty_default_name_and_symbol() {
         let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0x05);
         let call = create_call(IB20Factory::B20Variant::DEFAULT, token_params("", ""), salt);
@@ -898,7 +892,6 @@ mod tests {
     #[test]
     fn test_is_b20_and_variant_prefix_before_and_after_create() {
         let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0x11);
         let (addr, _) = B20Variant::B20.compute_address(caller, salt);
@@ -941,7 +934,6 @@ mod tests {
     #[test]
     fn test_transfer_and_mint_lifecycle() {
         let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
             let params = token_params("Lifecycle", "LIFE");
@@ -969,7 +961,6 @@ mod tests {
     #[test]
     fn test_token_identity_uses_dynamic_address() {
         let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
             let first = factory
@@ -1346,257 +1337,5 @@ mod tests {
             .find_map(|l| IB20Factory::B20Created::decode_log_data(l).ok())
             .expect("B20Created must be emitted");
         assert!(event.variantParams.is_empty(), "SECURITY variantParams must be empty");
-    }
-
-    fn deactivate_feature(storage: &mut HashMapStorageProvider, feature: ActivationFeature) {
-        storage.set_caller(ACTIVATION_ADMIN);
-        StorageCtx::enter(storage, |ctx| {
-            ActivationRegistryStorage::new(ctx)
-                .deactivate(feature.id(), Some(ACTIVATION_ADMIN))
-                .unwrap()
-        });
-    }
-
-    #[test]
-    fn create_b20_reverts_when_b20_token_variant_deactivated() {
-        let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
-        deactivate_feature(&mut storage, ActivationFeature::B20Token);
-
-        let caller = Address::repeat_byte(0x55);
-        let salt = B256::repeat_byte(0xD1);
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mut factory = B20FactoryStorage::new(ctx);
-            let result = factory.create_b20(caller, b20_call(salt));
-            assert!(result.is_err(), "create_b20 must revert when B20Token is deactivated");
-        });
-    }
-
-    #[test]
-    fn create_b20_reverts_when_stablecoin_variant_deactivated() {
-        let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
-        deactivate_feature(&mut storage, ActivationFeature::B20Stablecoin);
-
-        let caller = Address::repeat_byte(0x55);
-        let salt = B256::repeat_byte(0xD2);
-        let call = IB20Factory::createB20Call {
-            variant: IB20Factory::B20Variant::STABLECOIN,
-            salt,
-            params: IB20Factory::B20StablecoinCreateParams {
-                version: 1,
-                name: "Stable".to_string(),
-                symbol: "STB".to_string(),
-                initialAdmin: Address::repeat_byte(0xAB),
-                currency: "USD".to_string(),
-            }
-            .abi_encode()
-            .into(),
-            initCalls: Vec::new(),
-        };
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mut factory = B20FactoryStorage::new(ctx);
-            let result = factory.create_b20(caller, call);
-            assert!(result.is_err(), "create_b20 must revert when B20Stablecoin is deactivated");
-        });
-    }
-
-    #[test]
-    fn create_b20_reverts_when_security_variant_deactivated() {
-        let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
-        deactivate_feature(&mut storage, ActivationFeature::B20Asset);
-
-        let caller = Address::repeat_byte(0x55);
-        let salt = B256::repeat_byte(0xD3);
-        let call = IB20Factory::createB20Call {
-            variant: IB20Factory::B20Variant::SECURITY,
-            salt,
-            params: IB20Factory::B20AssetCreateParams {
-                version: 1,
-                name: "Security".to_string(),
-                symbol: "SEC".to_string(),
-                initialAdmin: Address::repeat_byte(0xAB),
-                isin: "US0000000001".to_string(),
-                minimumRedeemable: U256::ONE,
-            }
-            .abi_encode()
-            .into(),
-            initCalls: Vec::new(),
-        };
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mut factory = B20FactoryStorage::new(ctx);
-            let result = factory.create_b20(caller, call);
-            assert!(result.is_err(), "create_b20 must revert when B20Security is deactivated");
-        });
-    }
-
-    #[test]
-    fn existing_b20_token_operations_succeed_when_variant_deactivated() {
-        let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
-
-        let caller = Address::repeat_byte(0x55);
-        let salt = B256::repeat_byte(0xE1);
-        let alice = Address::repeat_byte(0xAA);
-        let bob = Address::repeat_byte(0xBB);
-
-        let token_addr = StorageCtx::enter(&mut storage, |ctx| {
-            let mut factory = B20FactoryStorage::new(ctx);
-            let addr = factory.create_b20(caller, b20_call(salt)).unwrap();
-            let mut token = token_at(addr, ctx);
-            token.mint(alice, alice, U256::from(1000u64), true).unwrap();
-            addr
-        });
-
-        deactivate_feature(&mut storage, ActivationFeature::B20Token);
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mut token = token_at(token_addr, ctx);
-
-            let balance = token.accounting().balance_of(alice).unwrap();
-            assert_eq!(balance, U256::from(1000u64), "balance read must work when deactivated");
-
-            token.transfer(alice, bob, U256::from(100u64), false).unwrap();
-            assert_eq!(
-                token.accounting().balance_of(alice).unwrap(),
-                U256::from(900u64),
-                "transfer must work when deactivated"
-            );
-            assert_eq!(
-                token.accounting().balance_of(bob).unwrap(),
-                U256::from(100u64),
-                "transfer must update recipient balance when deactivated"
-            );
-
-            token.mint(alice, alice, U256::from(50u64), true).unwrap();
-            assert_eq!(
-                token.accounting().balance_of(alice).unwrap(),
-                U256::from(950u64),
-                "mint must work when deactivated"
-            );
-        });
-    }
-
-    #[test]
-    fn existing_stablecoin_operations_succeed_when_variant_deactivated() {
-        let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
-
-        let caller = Address::repeat_byte(0x55);
-        let salt = B256::repeat_byte(0xE2);
-        let alice = Address::repeat_byte(0xAA);
-        let bob = Address::repeat_byte(0xBB);
-
-        let call = IB20Factory::createB20Call {
-            variant: IB20Factory::B20Variant::STABLECOIN,
-            salt,
-            params: IB20Factory::B20StablecoinCreateParams {
-                version: 1,
-                name: "Stable".to_string(),
-                symbol: "STB".to_string(),
-                initialAdmin: Address::repeat_byte(0xAB),
-                currency: "USD".to_string(),
-            }
-            .abi_encode()
-            .into(),
-            initCalls: Vec::new(),
-        };
-
-        let token_addr = StorageCtx::enter(&mut storage, |ctx| {
-            let mut factory = B20FactoryStorage::new(ctx);
-            let addr = factory.create_b20(caller, call).unwrap();
-            let mut token = B20Token::with_storage_and_policy(
-                B20StablecoinStorage::from_address(addr, ctx),
-                PolicyHandle::new(ctx),
-            );
-            token.mint(alice, alice, U256::from(1000u64), true).unwrap();
-            addr
-        });
-
-        deactivate_feature(&mut storage, ActivationFeature::B20Stablecoin);
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mut token = B20Token::with_storage_and_policy(
-                B20StablecoinStorage::from_address(token_addr, ctx),
-                PolicyHandle::new(ctx),
-            );
-
-            let balance = token.accounting().balance_of(alice).unwrap();
-            assert_eq!(balance, U256::from(1000u64), "balance read must work when deactivated");
-
-            token.transfer(alice, bob, U256::from(100u64), false).unwrap();
-            assert_eq!(
-                token.accounting().balance_of(bob).unwrap(),
-                U256::from(100u64),
-                "transfer must work when stablecoin deactivated"
-            );
-
-            let currency = B20StablecoinStorage::from_address(token_addr, ctx).currency().unwrap();
-            assert_eq!(currency, "USD", "currency read must work when deactivated");
-        });
-    }
-
-    #[test]
-    fn existing_security_operations_succeed_when_variant_deactivated() {
-        let mut storage = HashMapStorageProvider::new(1);
-        activate_precompiles(&mut storage);
-
-        let caller = Address::repeat_byte(0x55);
-        let salt = B256::repeat_byte(0xE3);
-        let alice = Address::repeat_byte(0xAA);
-        let bob = Address::repeat_byte(0xBB);
-
-        let call = IB20Factory::createB20Call {
-            variant: IB20Factory::B20Variant::SECURITY,
-            salt,
-            params: IB20Factory::B20AssetCreateParams {
-                version: 1,
-                name: "Security".to_string(),
-                symbol: "SEC".to_string(),
-                initialAdmin: Address::repeat_byte(0xAB),
-                isin: "US0000000001".to_string(),
-                minimumRedeemable: U256::ONE,
-            }
-            .abi_encode()
-            .into(),
-            initCalls: Vec::new(),
-        };
-
-        let token_addr = StorageCtx::enter(&mut storage, |ctx| {
-            let mut factory = B20FactoryStorage::new(ctx);
-            let addr = factory.create_b20(caller, call).unwrap();
-            let mut token = B20AssetToken::with_storage_and_policy(
-                B20AssetStorage::from_address(addr, ctx),
-                PolicyHandle::new(ctx),
-            );
-            token.mint(alice, alice, U256::from(1000u64), true).unwrap();
-            addr
-        });
-
-        deactivate_feature(&mut storage, ActivationFeature::B20Asset);
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mut token = B20AssetToken::with_storage_and_policy(
-                B20AssetStorage::from_address(token_addr, ctx),
-                PolicyHandle::new(ctx),
-            );
-
-            let balance = token.accounting().balance_of(alice).unwrap();
-            assert_eq!(balance, U256::from(1000u64), "balance read must work when deactivated");
-
-            token.transfer(alice, bob, U256::from(100u64), false).unwrap();
-            assert_eq!(
-                token.accounting().balance_of(bob).unwrap(),
-                U256::from(100u64),
-                "transfer must work when security deactivated"
-            );
-
-            let name = token.accounting().name().unwrap();
-            assert_eq!(name, "Security", "name read must work when deactivated");
-        });
     }
 }
