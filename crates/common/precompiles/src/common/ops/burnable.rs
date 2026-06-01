@@ -221,6 +221,12 @@ mod tests {
         false, // privileged
         BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::BURN })
     )]
+    #[case::paused_privileged_still_gets_pause_error(
+        true,  // paused
+        true,  // has_role
+        true,  // privileged
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::BURN })
+    )]
     #[case::role_before_balance_for_non_privileged(
         false, // paused
         false, // has_role
@@ -259,6 +265,13 @@ mod tests {
         false, // has_role
         false, // is_blocked
         false, // privileged
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::BURN })
+    )]
+    #[case::paused_privileged_still_gets_pause_error(
+        true,  // paused
+        true,  // has_role
+        true,  // is_blocked
+        true,  // privileged
         BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::BURN })
     )]
     #[case::role_before_blocked_check(
