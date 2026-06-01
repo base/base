@@ -973,6 +973,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn meter_bundle_opcode_gas_subtracts_nested_call_gas() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+
+        let (factory_deployment_tx, factory_address, _) =
+            Account::Deployer.create_deployment_tx(ContractFactory::BYTECODE.clone(), 0)?;
+        harness.build_block_from_transactions(vec![factory_deployment_tx]).await?;
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(factory_address)
+            .gas_limit(1_000_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(
+                ContractFactory::deployAndCallCall {
+                    bytecode: SimpleStorage::BYTECODE.clone(),
+                    callData: SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode().into(),
+                }
+                .abi_encode(),
+            )
+            .into_eip1559();
+
+        let tx = BaseTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+        let metered = MeteredOpcodes::parse(&["CALL".to_string(), "SSTORE".to_string()]).unwrap();
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: parsed_bundle,
+            header: header.clone(),
+            parent_beacon_block_root: header.parent_beacon_block_root(),
+            pending_state: None,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(metered),
+        })?;
+
+        assert_eq!(output.results.len(), 1);
+        let tx_opcodes = &output.results[0].opcode_gas;
+        let call = tx_opcodes
+            .iter()
+            .find(|entry| entry.opcode == "CALL" && entry.contract_address == factory_address)
+            .expect("factory should report CALL gas");
+        let sstore = tx_opcodes
+            .iter()
+            .find(|entry| entry.opcode == "SSTORE" && entry.contract_address != factory_address)
+            .expect("callee should report SSTORE gas");
+
+        assert_eq!(call.count, 1, "factory should execute one CALL into SimpleStorage");
+        assert_eq!(sstore.count, 1, "callee should execute one SSTORE");
+        assert!(call.gas_used > 0, "CALL gas_used should be non-zero");
+        assert!(sstore.gas_used > 0, "SSTORE gas_used should be non-zero");
+        assert!(
+            call.gas_used < sstore.gas_used,
+            "CALL gas should exclude nested callee gas: CALL={} SSTORE={}",
+            call.gas_used,
+            sstore.gas_used
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn meter_bundle_opcode_gas_empty_when_disabled() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
         let latest = harness.latest_block();

@@ -90,30 +90,24 @@ impl MeteringInspector {
         std::mem::take(&mut self.precompile_gas)
     }
 
-    /// Records nested call/create gas so the parent opcode is charged only its own overhead.
+    /// Subtracts forwarded call/create gas so the parent opcode is charged only its own overhead.
     ///
-    /// The parent opcode's `step_end` sees overhead plus callee execution gas. Nested opcode
-    /// execution is already metered in the callee frame, so subtract it from the parent opcode
-    /// when CALL/CREATE-family opcodes are explicitly metered.
-    fn record_nested_gas_used(
+    /// The parent opcode's `step_end` runs before revm refunds unused child-frame gas, so it sees
+    /// overhead plus the full forwarded frame gas limit. By `call_end`/`create_end`, the parent
+    /// opcode frame has already been popped, so subtract from the accumulated opcode entry.
+    fn subtract_forwarded_gas(
         &mut self,
         contract_address: Address,
         opcode_value: u8,
-        gas_used: u64,
+        gas_limit: u64,
     ) {
         let Some(opcode) = OpCode::new(opcode_value) else { return };
         if !self.metered_opcodes.contains(&opcode) {
             return;
         }
 
-        if let Some(frame) = self
-            .opcode_frames
-            .iter_mut()
-            .rev()
-            .find(|frame| frame.contract_address == contract_address && frame.opcode == opcode)
-        {
-            frame.nested_gas_used = frame.nested_gas_used.saturating_add(gas_used);
-        }
+        let entry = self.opcode_gas.entry((contract_address, opcode)).or_default();
+        entry.gas_used = entry.gas_used.saturating_sub(gas_limit);
     }
 }
 
@@ -177,7 +171,7 @@ where
             CallScheme::Call | CallScheme::StaticCall => inputs.caller,
             CallScheme::CallCode | CallScheme::DelegateCall => inputs.target_address,
         };
-        self.record_nested_gas_used(contract_address, opcode, outcome.result.gas.total_gas_spent());
+        self.subtract_forwarded_gas(contract_address, opcode, inputs.gas_limit);
 
         let target = inputs.bytecode_address;
         if self.metered_precompiles.contains(&target) {
@@ -197,7 +191,7 @@ where
         &mut self,
         context: &mut CTX,
         inputs: &CreateInputs,
-        outcome: &mut CreateOutcome,
+        _outcome: &mut CreateOutcome,
     ) {
         let _ = context;
 
@@ -206,6 +200,6 @@ where
             CreateScheme::Create2 { .. } => opcode::CREATE2,
             CreateScheme::Custom { .. } => return,
         };
-        self.record_nested_gas_used(inputs.caller(), opcode, outcome.result.gas.total_gas_spent());
+        self.subtract_forwarded_gas(inputs.caller(), opcode, inputs.gas_limit());
     }
 }
