@@ -497,6 +497,117 @@ mod namespaced_fields {
     }
 }
 
+mod packed_slot_layout {
+    //! End-to-end bit-level verification of multi-field packed storage slots.
+    //!
+    //! These tests write known sentinel values to each field of a packed slot and
+    //! inspect the raw storage word to confirm:
+    //! 1. Every field lands at its declared byte offset.
+    //! 2. Writing to one field does not bleed into any adjacent field's bit range.
+    use alloy_primitives::{Address, U256, address};
+    use base_precompile_macros::contract;
+    use base_precompile_storage::{Handler, StorageCtx, setup_storage};
+
+    const PACKED_ADDR: Address = address!("0000000000000000000000000000000000009999");
+
+    /// A layout where four sub-word primitives share a single storage slot.
+    ///
+    /// Packing order (low-to-high bytes within the slot):
+    /// - `low_byte`  : u8  → offset_bytes 0, bits  [0..7]
+    /// - `mid_short` : u16 → offset_bytes 1, bits  [8..23]
+    /// - `mid_int`   : u32 → offset_bytes 3, bits  [24..55]
+    /// - `high_long` : u64 → offset_bytes 7, bits  [56..119]
+    ///
+    /// Total: 15 bytes → all packed into slot 0.
+    /// `big_val` (U256, full slot) goes to slot 1.
+    #[contract(addr = PACKED_ADDR)]
+    pub struct PackedFieldsStorage {
+        pub low_byte: u8,
+        pub mid_short: u16,
+        pub mid_int: u32,
+        pub high_long: u64,
+        pub big_val: U256,
+    }
+
+    #[test]
+    fn packed_slot_bit_positions_match_declared_offsets() {
+        // Slot constants: all four small fields share slot 0; big_val is slot 1.
+        assert_eq!(slots::LOW_BYTE, U256::ZERO);
+        assert_eq!(slots::LOW_BYTE_OFFSET, 0);
+        assert_eq!(slots::MID_SHORT, U256::ZERO);
+        assert_eq!(slots::MID_SHORT_OFFSET, 1);
+        assert_eq!(slots::MID_INT, U256::ZERO);
+        assert_eq!(slots::MID_INT_OFFSET, 3);
+        assert_eq!(slots::HIGH_LONG, U256::ZERO);
+        assert_eq!(slots::HIGH_LONG_OFFSET, 7);
+        assert_eq!(slots::BIG_VAL, U256::ONE);
+
+        let (mut storage, _) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut layout = PackedFieldsStorage::new(ctx);
+            layout.low_byte.write(0xAB_u8).unwrap();
+            layout.mid_short.write(0x1234_u16).unwrap();
+            layout.mid_int.write(0xDEAD_BEEF_u32).unwrap();
+            layout.high_long.write(0xCAFE_BABE_CAFE_BABE_u64).unwrap();
+
+            let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
+
+            // offset_bytes=0 → bits [0..7]
+            assert_eq!(raw & U256::from(0xFF_u32), U256::from(0xAB_u32), "low_byte at bits [0..7]");
+            // offset_bytes=1 → bits [8..23]
+            assert_eq!((raw >> 8) & U256::from(0xFFFF_u32), U256::from(0x1234_u32), "mid_short at bits [8..23]");
+            // offset_bytes=3 → bits [24..55]
+            assert_eq!((raw >> 24) & U256::from(0xFFFF_FFFF_u32), U256::from(0xDEAD_BEEF_u32), "mid_int at bits [24..55]");
+            // offset_bytes=7 → bits [56..119]
+            assert_eq!(
+                (raw >> 56) & U256::from(u64::MAX),
+                U256::from(0xCAFE_BABE_CAFE_BABE_u64),
+                "high_long at bits [56..119]"
+            );
+            // Bits above high_long (120..255) must be untouched.
+            assert_eq!(raw >> 120, U256::ZERO, "bits above high_long must be zero");
+        });
+    }
+
+    #[test]
+    fn packed_slot_write_one_field_does_not_bleed_into_adjacent_fields() {
+        let (mut storage, _) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut layout = PackedFieldsStorage::new(ctx);
+
+            // Write only low_byte; all other packed fields must stay zero.
+            layout.low_byte.write(0xFF_u8).unwrap();
+            let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
+            assert_eq!(raw & U256::from(0xFF_u32), U256::from(0xFF_u32));
+            assert_eq!((raw >> 8) & U256::from(0xFFFF_u32), U256::ZERO, "mid_short must be zero after writing only low_byte");
+            assert_eq!((raw >> 24) & U256::from(0xFFFF_FFFF_u32), U256::ZERO, "mid_int must be zero");
+            assert_eq!((raw >> 56) & U256::from(u64::MAX), U256::ZERO, "high_long must be zero");
+
+            // Write mid_short; low_byte must be preserved exactly.
+            layout.mid_short.write(0xABCD_u16).unwrap();
+            let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
+            assert_eq!(raw & U256::from(0xFF_u32), U256::from(0xFF_u32), "low_byte must survive mid_short write");
+            assert_eq!((raw >> 8) & U256::from(0xFFFF_u32), U256::from(0xABCD_u32));
+            assert_eq!((raw >> 24) & U256::from(0xFFFF_FFFF_u32), U256::ZERO, "mid_int must still be zero");
+
+            // Overwrite low_byte; mid_short must be preserved exactly.
+            layout.low_byte.write(0x42_u8).unwrap();
+            let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
+            assert_eq!(raw & U256::from(0xFF_u32), U256::from(0x42_u32));
+            assert_eq!((raw >> 8) & U256::from(0xFFFF_u32), U256::from(0xABCD_u32), "mid_short must survive low_byte overwrite");
+
+            // Write mid_int; previously written fields must be unchanged.
+            layout.mid_int.write(0x1234_5678_u32).unwrap();
+            let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
+            assert_eq!(raw & U256::from(0xFF_u32), U256::from(0x42_u32), "low_byte must survive mid_int write");
+            assert_eq!((raw >> 8) & U256::from(0xFFFF_u32), U256::from(0xABCD_u32), "mid_short must survive mid_int write");
+            assert_eq!((raw >> 24) & U256::from(0xFFFF_FFFF_u32), U256::from(0x1234_5678_u32));
+        });
+    }
+}
+
 mod namespace_outer_order {
     use alloy_primitives::{Address, U256, address, uint};
     use base_precompile_macros::{contract, namespace};
