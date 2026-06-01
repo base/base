@@ -32,6 +32,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     panic::AssertUnwindSafe,
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use alloy_primitives::{Address, B256, Signature, keccak256};
@@ -42,6 +43,7 @@ use base_proof_contracts::{
 };
 use base_proof_primitives::{ProofJournal, ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider, RpcError};
+use base_prover_service_protocol::TeeKind;
 use eyre::Result;
 use futures::{FutureExt, StreamExt, stream};
 use tokio::task::JoinSet;
@@ -53,6 +55,7 @@ use crate::{
     driver::{DriverConfig, RecoveredState},
     error::ProposerError,
     output_proposer::OutputProposer,
+    proof_adapter::ProposerProofAdapter,
 };
 
 /// Configuration for the parallel proving pipeline.
@@ -106,6 +109,8 @@ struct PipelineState {
     proved: BTreeMap<u64, ProofResult>,
     /// Target blocks currently being proved.
     inflight: BTreeSet<u64>,
+    /// Prover-service proof sessions currently being proved.
+    pending_proofs: BTreeMap<u64, PendingProofSession>,
     /// Target block currently being submitted (at most one).
     submitting: Option<u64>,
     /// Per-target-block retry counts; exceeding `max_retries` triggers a full reset.
@@ -120,6 +125,26 @@ struct ProofPlan {
     target_block: u64,
 }
 
+#[derive(Debug, Clone)]
+struct PendingProofSession {
+    plan: ProofPlan,
+    session_id: String,
+    request: ProofRequest,
+    retry_count: u32,
+    started_at: Instant,
+}
+
+impl PendingProofSession {
+    fn new(plan: ProofPlan, request: ProofRequest, retry_count: u32) -> Self {
+        let session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
+        Self { plan, session_id, request, retry_count, started_at: Instant::now() }
+    }
+
+    fn elapsed(&self) -> Duration {
+        self.started_at.elapsed()
+    }
+}
+
 impl PipelineState {
     fn new() -> Self {
         Self {
@@ -127,6 +152,7 @@ impl PipelineState {
             submit_tasks: JoinSet::new(),
             proved: BTreeMap::new(),
             inflight: BTreeSet::new(),
+            pending_proofs: BTreeMap::new(),
             submitting: None,
             retry_counts: BTreeMap::new(),
             cached_recovery: None,
@@ -142,6 +168,7 @@ impl PipelineState {
     fn prune_stale(&mut self, recovered_block: u64) {
         self.proved.retain(|&target, _| target > recovered_block);
         self.inflight.retain(|&target| target > recovered_block);
+        self.pending_proofs.retain(|&target, _| target > recovered_block);
         self.retry_counts.retain(|&target, _| target > recovered_block);
         // NOTE: we intentionally do NOT abort in-flight submit tasks here.
         // When the recovered block advances past the submitting block, it
@@ -332,59 +359,7 @@ where
         safe_head: u64,
         state: &mut PipelineState,
     ) -> Result<()> {
-        let mut cursor = recovered
-            .l2_block_number
-            .checked_add(self.config.driver.block_interval)
-            .ok_or_else(|| {
-            eyre::eyre!(
-                "overflow: l2_block_number {} + block_interval {}",
-                recovered.l2_block_number,
-                self.config.driver.block_interval
-            )
-        })?;
-
-        let mut start_block = recovered.l2_block_number;
-        let mut plans = Vec::new();
-        let mut output_blocks = BTreeSet::new();
-
-        while cursor <= safe_head
-            && state.inflight.len() + plans.len() < self.config.max_parallel_proofs
-        {
-            let mut last_skipped = None;
-            while cursor <= safe_head
-                && (state.inflight.contains(&cursor)
-                    || state.proved.contains_key(&cursor)
-                    || state.submitting == Some(cursor))
-            {
-                last_skipped = Some(cursor);
-                cursor = match cursor.checked_add(self.config.driver.block_interval) {
-                    Some(c) => c,
-                    None => return Ok(()),
-                };
-            }
-
-            if cursor > safe_head {
-                break;
-            }
-
-            if state.inflight.len() + plans.len() >= self.config.max_parallel_proofs {
-                break;
-            }
-
-            if let Some(skipped) = last_skipped {
-                start_block = skipped;
-                output_blocks.insert(skipped);
-            }
-
-            plans.push(ProofPlan { start_block, target_block: cursor });
-            output_blocks.insert(cursor);
-            start_block = cursor;
-
-            cursor = match cursor.checked_add(self.config.driver.block_interval) {
-                Some(c) => c,
-                None => break,
-            };
-        }
+        let (plans, output_blocks) = self.plan_proofs(recovered, safe_head, state)?;
 
         if plans.is_empty() {
             state.record_gauges();
@@ -404,16 +379,23 @@ where
         };
 
         for (plan, request) in requests {
+            let retry_count = state.retry_counts.get(&plan.target_block).copied().unwrap_or(0);
+            let session = PendingProofSession::new(plan, request, retry_count);
+            let request = session.request.clone();
+            let session_id = session.session_id.clone();
             let prover = Arc::clone(&self.prover);
             let cancel = self.cancel.child_token();
 
             info!(
+                session_id = %session_id,
                 from_block = plan.start_block,
                 to_block = plan.target_block,
                 blocks = plan.target_block.saturating_sub(plan.start_block),
+                retry_count,
                 "Dispatching proof task"
             );
             state.inflight.insert(plan.target_block);
+            state.pending_proofs.insert(plan.target_block, session);
             state.prove_tasks.spawn(async move {
                 let target = plan.target_block;
                 let inner = async move {
@@ -445,6 +427,68 @@ where
 
         state.record_gauges();
         Ok(())
+    }
+
+    fn plan_proofs(
+        &self,
+        recovered: &RecoveredState,
+        safe_head: u64,
+        state: &PipelineState,
+    ) -> Result<(Vec<ProofPlan>, BTreeSet<u64>)> {
+        let mut cursor = recovered
+            .l2_block_number
+            .checked_add(self.config.driver.block_interval)
+            .ok_or_else(|| {
+            eyre::eyre!(
+                "overflow: l2_block_number {} + block_interval {}",
+                recovered.l2_block_number,
+                self.config.driver.block_interval
+            )
+        })?;
+
+        let mut start_block = recovered.l2_block_number;
+        let mut plans = Vec::new();
+        let mut output_blocks = BTreeSet::new();
+
+        while cursor <= safe_head
+            && state.inflight.len() + plans.len() < self.config.max_parallel_proofs
+        {
+            let mut last_skipped = None;
+            while cursor <= safe_head
+                && (state.inflight.contains(&cursor)
+                    || state.proved.contains_key(&cursor)
+                    || state.submitting == Some(cursor))
+            {
+                last_skipped = Some(cursor);
+                cursor = match cursor.checked_add(self.config.driver.block_interval) {
+                    Some(c) => c,
+                    None => return Ok((plans, output_blocks)),
+                };
+            }
+
+            if cursor > safe_head {
+                break;
+            }
+
+            if state.inflight.len() + plans.len() >= self.config.max_parallel_proofs {
+                break;
+            }
+
+            if let Some(skipped) = last_skipped {
+                start_block = skipped;
+                output_blocks.insert(skipped);
+            }
+
+            plans.push(ProofPlan { start_block, target_block: cursor });
+            output_blocks.insert(cursor);
+            start_block = cursor;
+
+            cursor = match cursor.checked_add(self.config.driver.block_interval) {
+                Some(c) => c,
+                None => break,
+            };
+        }
+        Ok((plans, output_blocks))
     }
 
     fn try_submit(&self, state: &mut PipelineState) {
@@ -661,19 +705,32 @@ where
         match join_result {
             Ok((target, Ok(proof_result))) => {
                 state.inflight.remove(&target);
+                let session = state.pending_proofs.remove(&target);
                 state.retry_counts.remove(&target);
                 state.proved.insert(target, proof_result);
                 state.record_gauges();
-                info!(target_block = target, "Proof completed successfully");
+                info!(
+                    target_block = target,
+                    session_id = ?session.as_ref().map(|s| s.session_id.as_str()),
+                    from_block = ?session.as_ref().map(|s| s.plan.start_block),
+                    retry_count = ?session.as_ref().map(|s| s.retry_count),
+                    elapsed = ?session.as_ref().map(PendingProofSession::elapsed),
+                    "Proof completed successfully"
+                );
             }
             Ok((target, Err(e))) => {
                 Metrics::errors_total(e.metric_label()).increment(1);
                 state.inflight.remove(&target);
+                let session = state.pending_proofs.remove(&target);
                 let count = state.retry_counts.entry(target).or_insert(0);
                 *count += 1;
                 if *count >= self.config.max_retries {
                     error!(
                         target_block = target,
+                        session_id = ?session.as_ref().map(|s| s.session_id.as_str()),
+                        from_block = ?session.as_ref().map(|s| s.plan.start_block),
+                        session_retry_count = ?session.as_ref().map(|s| s.retry_count),
+                        elapsed = ?session.as_ref().map(PendingProofSession::elapsed),
                         attempts = *count,
                         error = %e,
                         "Proof failed after max retries, dropping cached recovery"
@@ -690,6 +747,10 @@ where
                 } else {
                     warn!(
                         target_block = target,
+                        session_id = ?session.as_ref().map(|s| s.session_id.as_str()),
+                        from_block = ?session.as_ref().map(|s| s.plan.start_block),
+                        session_retry_count = ?session.as_ref().map(|s| s.retry_count),
+                        elapsed = ?session.as_ref().map(PendingProofSession::elapsed),
                         attempt = *count,
                         error = %e,
                         "Proof failed, will retry next tick"
