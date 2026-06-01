@@ -15,20 +15,17 @@ use crate::{
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
 pub const B20_STABLECOIN_EVENT_PARAMS_VERSION: u8 = 1;
 
-/// Encodes the `variantParams` field for a `B20Created` event.
+/// ABI-encodes `B20StablecoinEventParams` for the `variantParams` field of `B20Created`.
 ///
-/// The exhaustive match ensures every variant is handled at compile time — adding a new
-/// `B20Variant` arm without updating this function is a compile error.
-pub fn encode_variant_params(variant: B20Variant, currency: Option<&str>) -> Bytes {
-    match variant {
-        B20Variant::B20 | B20Variant::Security => Bytes::new(),
-        B20Variant::Stablecoin => IB20Factory::B20StablecoinEventParams {
-            version: B20_STABLECOIN_EVENT_PARAMS_VERSION,
-            currency: currency.unwrap_or("").to_string(),
-        }
-        .abi_encode()
-        .into(),
+/// Only call this from the stablecoin init path. DEFAULT and SECURITY emit `Bytes::new()` directly
+/// so each init function's call site is self-documenting and invalid combinations are impossible.
+fn encode_stablecoin_variant_params(currency: &str) -> Bytes {
+    IB20Factory::B20StablecoinEventParams {
+        version: B20_STABLECOIN_EVENT_PARAMS_VERSION,
+        currency: currency.to_string(),
     }
+    .abi_encode()
+    .into()
 }
 
 /// Maximum total supply for all newly-created B-20 tokens.
@@ -127,7 +124,7 @@ impl<'a> B20FactoryStorage<'a> {
             name,
             symbol,
             decimals: B20Variant::B20.decimals(),
-            variantParams: encode_variant_params(B20Variant::B20, None),
+            variantParams: Bytes::new(),
         })?;
 
         if !common.initial_admin.is_zero() {
@@ -170,7 +167,7 @@ impl<'a> B20FactoryStorage<'a> {
             name,
             symbol,
             decimals: B20Variant::Stablecoin.decimals(),
-            variantParams: encode_variant_params(B20Variant::Stablecoin, Some(&currency)),
+            variantParams: encode_stablecoin_variant_params(&currency),
         })?;
 
         if !common.initial_admin.is_zero() {
@@ -209,7 +206,7 @@ impl<'a> B20FactoryStorage<'a> {
             name,
             symbol,
             decimals: B20Variant::Security.decimals(),
-            variantParams: encode_variant_params(B20Variant::Security, None),
+            variantParams: Bytes::new(),
         })?;
 
         if !common.initial_admin.is_zero() {
