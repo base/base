@@ -26,7 +26,7 @@ RUN go build -o /go/bin/eth2-val-tools .
 
 # Build contracts using Foundry
 # The foundry image is Ubuntu-based and multi-arch (amd64/arm64)
-FROM ghcr.io/foundry-rs/foundry:latest AS contracts-builder
+FROM ghcr.io/foundry-rs/foundry:v1.7.1 AS contracts-builder
 
 ARG CONTRACTS_COMMIT=c8f0238ec570a446e01b6290bd2413ef7704fafd
 
@@ -47,7 +47,7 @@ RUN forge install \
     github.com/risc0/risc0-ethereum@a78ac4a52fe9cfa14120c3b496430f0d42e1d8d3
 RUN forge build
 
-FROM ghcr.io/foundry-rs/foundry:latest
+FROM ghcr.io/foundry-rs/foundry:v1.7.1
 
 USER root
 RUN git config --global --add safe.directory /contracts

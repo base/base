@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # patch-genesis-hash.sh — Patches rollup.json and rollup-conductor.json with the
 # real L2 genesis block hash, queried from the L2 EL node after it initializes.
