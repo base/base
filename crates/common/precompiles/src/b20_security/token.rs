@@ -7,7 +7,7 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    B20Guards, B20PolicyType, B20SecurityStorage, Burnable, Configurable,
+    B20Guards, B20PolicyType, B20SecurityStorage, B20TokenRole, Burnable, Configurable,
     IB20::{self},
     IB20Security, Mintable, Pausable, Permittable, Policy, RoleManaged, SecurityAccounting, Token,
     Transferable,
@@ -297,6 +297,8 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     // --- Batch Operations ---
 
     /// Mints tokens to multiple recipients. All-or-nothing.
+    ///
+    /// Check order: PAUSE → ROLE → INPUT → BUSINESS
     pub fn batch_mint(
         &mut self,
         caller: Address,
@@ -304,6 +306,13 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         amounts: Vec<U256>,
         privileged: bool,
     ) -> Result<()> {
+        // 1. PAUSE (kill switch)
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::MINT)?;
+        // 2. ROLE (unless privileged)
+        if !privileged {
+            B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Mint)?;
+        }
+        // 3. INPUT VALIDATION
         if recipients.len() != amounts.len() {
             return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
                 leftLen: U256::from(recipients.len()),
@@ -313,8 +322,9 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         if recipients.is_empty() {
             return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
         }
+        // 4. BUSINESS LOGIC (privileged=true to skip redundant pause/role checks in mint)
         for (recipient, amount) in recipients.into_iter().zip(amounts) {
-            self.mint(caller, recipient, amount, privileged)?;
+            self.mint(caller, recipient, amount, true)?;
         }
         Ok(())
     }
@@ -396,6 +406,67 @@ mod tests {
             PolicyRegistryStorage::ALWAYS_ALLOW_ID,
         );
         TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum BatchMintSetup {
+        Paused,
+        NoRole,
+        EmptyBatch,
+        LengthMismatch,
+    }
+
+    fn setup_batch_mint(setup: BatchMintSetup) -> (TestSecurityToken, Vec<Address>, Vec<U256>) {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD;
+        let recipients;
+        let amounts;
+
+        match setup {
+            BatchMintSetup::Paused => {
+                accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::MINT);
+                recipients = vec![ALICE, BOB];
+                amounts = vec![U256::from(10u64)];
+            }
+            BatchMintSetup::NoRole => {
+                recipients = vec![];
+                amounts = vec![];
+            }
+            BatchMintSetup::EmptyBatch => {
+                accounting.roles.insert((B20TokenRole::Mint.id(), CALLER), true);
+                recipients = vec![];
+                amounts = vec![];
+            }
+            BatchMintSetup::LengthMismatch => {
+                accounting.roles.insert((B20TokenRole::Mint.id(), CALLER), true);
+                recipients = vec![ALICE, BOB];
+                amounts = vec![U256::from(10u64)];
+            }
+        }
+
+        let token = TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        (token, recipients, amounts)
+    }
+
+    fn expected_batch_mint_error(setup: BatchMintSetup) -> BasePrecompileError {
+        match setup {
+            BatchMintSetup::Paused => BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::MINT,
+            }),
+            BatchMintSetup::NoRole => {
+                BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                    account: CALLER,
+                    neededRole: B20TokenRole::Mint.id(),
+                })
+            }
+            BatchMintSetup::EmptyBatch => BasePrecompileError::revert(IB20Security::EmptyBatch {}),
+            BatchMintSetup::LengthMismatch => {
+                BasePrecompileError::revert(IB20Security::LengthMismatch {
+                    leftLen: U256::from(2u64),
+                    rightLen: U256::from(1u64),
+                })
+            }
+        }
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -568,6 +639,19 @@ mod tests {
         assert_eq!(TestSecurityToken::SECURITY_OPERATOR_ROLE, keccak256("SECURITY_OPERATOR_ROLE"));
         assert_eq!(TestSecurityToken::BURN_FROM_ROLE, keccak256("BURN_FROM_ROLE"));
         assert_eq!(TestSecurityToken::REDEEM_SENDER_POLICY, keccak256("REDEEM_SENDER_POLICY"));
+    }
+
+    #[rstest]
+    #[case::paused_gets_pause_error(BatchMintSetup::Paused)]
+    #[case::no_role_gets_role_error(BatchMintSetup::NoRole)]
+    #[case::empty_batch_gets_input_error(BatchMintSetup::EmptyBatch)]
+    #[case::length_mismatch_gets_input_error(BatchMintSetup::LengthMismatch)]
+    fn batch_mint_check_order(#[case] setup: BatchMintSetup) {
+        let (mut token, recipients, amounts) = setup_batch_mint(setup);
+
+        let err = token.batch_mint(CALLER, recipients, amounts, false).unwrap_err();
+
+        assert_eq!(err, expected_batch_mint_error(setup));
     }
 
     #[rstest]
