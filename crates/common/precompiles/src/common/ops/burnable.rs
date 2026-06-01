@@ -17,10 +17,18 @@ pub trait Burnable: Token {
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Burn)?;
         }
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
+        self.burn_inner(from, amount)
+    }
+
+    /// Internal burn implementation that skips pause and role checks.
+    ///
+    /// Called by [`Self::burn`] after guards, and by [`Self::burn_blocked`]
+    /// which does its own pause and role checks first.
+    fn burn_inner(&mut self, from: Address, amount: U256) -> Result<()> {
         let balance = self.accounting().balance_of(from)?;
         if balance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
@@ -59,14 +67,12 @@ pub trait Burnable: Token {
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::BurnBlocked)?;
         }
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
         B20Guards::ensure_blocked::<Self>(self, from)?;
-        // Intentional asymmetry: BURN_BLOCKED_ROLE replaces BURN_ROLE, but emergency burn pauses
-        // still halt every burn path, including burnBlocked.
-        self.burn(caller, from, amount, true)?;
+        self.burn_inner(from, amount)?;
         self.accounting_mut()
             .emit_event(IB20::BurnedBlocked { caller, from, amount }.encode_log_data())
     }
@@ -76,6 +82,7 @@ pub trait Burnable: Token {
 mod tests {
     use alloy_primitives::{Address, U256};
     use base_precompile_storage::BasePrecompileError;
+    use rstest::rstest;
 
     use crate::{
         B20PausableFeature, B20PolicyType, B20TokenRole, Burnable, IB20, InMemoryPolicy,
@@ -122,51 +129,6 @@ mod tests {
                 sender: ALICE,
                 balance: U256::from(10u64),
                 needed: U256::from(11u64),
-            })
-        );
-    }
-
-    #[test]
-    fn non_privileged_burn_without_role_reverts() {
-        let mut token = token_with_balance(U256::from(10u64));
-
-        assert_eq!(
-            token.burn(CALLER, ALICE, U256::ONE, false).unwrap_err(),
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: CALLER,
-                neededRole: B20TokenRole::Burn.id(),
-            })
-        );
-    }
-
-    #[test]
-    fn burn_unauthorized_caller_gets_role_error_not_balance_error() {
-        let mut token = TestToken::with_storage_and_policy(
-            InMemoryTokenAccounting::new(TOKEN_ADDR),
-            InMemoryPolicy::new(),
-        );
-
-        assert_eq!(
-            token.burn(CALLER, ALICE, U256::ONE, false).unwrap_err(),
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: CALLER,
-                neededRole: B20TokenRole::Burn.id(),
-            })
-        );
-    }
-
-    #[test]
-    fn burn_blocked_unauthorized_caller_gets_role_error_not_blocked_error() {
-        let mut token = TestToken::with_storage_and_policy(
-            InMemoryTokenAccounting::new(TOKEN_ADDR),
-            InMemoryPolicy::new(),
-        );
-
-        assert_eq!(
-            token.burn_blocked(CALLER, ALICE, U256::ONE, false).unwrap_err(),
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: CALLER,
-                neededRole: B20TokenRole::BurnBlocked.id(),
             })
         );
     }
@@ -253,6 +215,111 @@ mod tests {
                 account: CALLER,
                 neededRole: B20TokenRole::BurnBlocked.id(),
             })
+        );
+    }
+
+    // ---- Guard ordering tests ----
+
+    #[rstest]
+    #[case::paused_without_role_gets_pause_error(
+        true,  // paused
+        false, // has_role
+        false, // privileged
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::BURN })
+    )]
+    #[case::paused_privileged_still_gets_pause_error(
+        true,  // paused
+        true,  // has_role
+        true,  // privileged
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::BURN })
+    )]
+    #[case::role_before_balance_for_non_privileged(
+        false, // paused
+        false, // has_role
+        false, // privileged
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: CALLER,
+            neededRole: B20TokenRole::Burn.id(),
+        })
+    )]
+    fn burn_guard_ordering(
+        #[case] paused: bool,
+        #[case] has_role: bool,
+        #[case] privileged: bool,
+        #[case] expected_error: BasePrecompileError,
+    ) {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        accounting.total_supply = U256::from(10u64);
+        if paused {
+            accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
+        }
+        if has_role {
+            accounting.roles.insert((B20TokenRole::Burn.id(), CALLER), true);
+        }
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(token.burn(CALLER, ALICE, U256::ONE, privileged).unwrap_err(), expected_error);
+    }
+
+    #[rstest]
+    #[case::paused_without_role_gets_pause_error(
+        true,  // paused
+        false, // has_role
+        false, // is_blocked
+        false, // privileged
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::BURN })
+    )]
+    #[case::paused_privileged_still_gets_pause_error(
+        true,  // paused
+        true,  // has_role
+        true,  // is_blocked
+        true,  // privileged
+        BasePrecompileError::revert(IB20::ContractPaused { feature: IB20::PausableFeature::BURN })
+    )]
+    #[case::role_before_blocked_check(
+        false, // paused
+        false, // has_role
+        true,  // is_blocked
+        false, // privileged
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: CALLER,
+            neededRole: B20TokenRole::BurnBlocked.id(),
+        })
+    )]
+    #[case::blocked_check_before_burn_for_privileged(
+        false, // paused
+        true,  // has_role (not used when privileged, but keep consistent)
+        false, // is_blocked
+        true,  // privileged
+        BasePrecompileError::revert(IB20::AccountNotBlocked { account: ALICE })
+    )]
+    fn burn_blocked_guard_ordering(
+        #[case] paused: bool,
+        #[case] has_role: bool,
+        #[case] is_blocked: bool,
+        #[case] privileged: bool,
+        #[case] expected_error: BasePrecompileError,
+    ) {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
+        accounting.balances.insert(ALICE, U256::from(10u64));
+        accounting.total_supply = U256::from(10u64);
+        if paused {
+            accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
+        }
+        if has_role {
+            accounting.roles.insert((B20TokenRole::BurnBlocked.id(), CALLER), true);
+        }
+        if is_blocked {
+            accounting
+                .policy_ids
+                .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+        }
+        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+
+        assert_eq!(
+            token.burn_blocked(CALLER, ALICE, U256::ONE, privileged).unwrap_err(),
+            expected_error
         );
     }
 }

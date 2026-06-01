@@ -101,6 +101,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           output="$RUNNER_TEMP/fork-test-output.txt"
           passed=$(grep -c '\[PASS\]' "$output" 2>/dev/null || echo 0)
@@ -108,29 +109,25 @@ jobs:
           marker="<!-- fork-test-results -->"
 
           if [ ! -s "$output" ] || [ "$((passed + failed))" -eq 0 ]; then
-            body="${marker}
-### ❌ base-std fork tests did not run
-The build or setup step failed before any tests could execute. Check the [workflow logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+            body=$(printf '%s\n\n%s\n\n%s' \
+              "${marker}" \
+              "### ❌ base-std fork tests did not run" \
+              "The build or setup step failed before any tests could execute. Check the [workflow logs](${WORKFLOW_RUN_URL}) for details.")
           elif [ "$failed" -eq 0 ]; then
-            body="${marker}
-### ✅ base-std fork tests: all ${passed} passed
-base/base is fully in sync with the base-std spec."
+            body=$(printf '%s\n\n%s\n\n%s' \
+              "${marker}" \
+              "### ✅ base-std fork tests: all ${passed} passed" \
+              "base/base is fully in sync with the base-std spec.")
           else
             failing=$(grep '\[FAIL' "$output" \
               | sed 's/\x1B\[[0-9;]*m//g' \
               | sed 's/^\[FAIL: \(.*\)\] \(.*\) (runs.*$/- **\2**: `\1`/' \
               | sort -u || true)
-            body="${marker}
-### ❌ base-std fork tests: ${failed} failed, ${passed} passed
-
-base/base diverges from the base-std spec.
-
-<details>
-<summary>Failing tests</summary>
-
-${failing}
-
-</details>"
+            body=$(printf '%s\n\n%s\n\n%s\n\n<details>\n<summary>Failing tests</summary>\n\n%s\n\n</details>' \
+              "${marker}" \
+              "### ❌ base-std fork tests: ${failed} failed, ${passed} passed" \
+              "base/base diverges from the base-std spec." \
+              "${failing}")
           fi
 
           pr="${{ github.event.pull_request.number }}"
