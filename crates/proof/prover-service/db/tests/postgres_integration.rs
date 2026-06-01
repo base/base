@@ -805,19 +805,25 @@ async fn test_retry_or_fail_stuck_request_retries() {
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_retry_or_fail_stuck_request_skips_outbox_for_null_proof_type() {
+async fn test_retry_or_fail_stuck_request_skips_null_proof_type() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
 
     let id = repo.create(tee_request()).await.unwrap();
     repo.atomic_claim_task(id).await.unwrap();
 
+    let stuck_requests = repo.get_stuck_requests(-1).await.unwrap();
+    assert!(
+        stuck_requests.iter().all(|request| request.id != id),
+        "NULL proof_type requests must not enter legacy stuck retry detection"
+    );
+
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck in PENDING").await.unwrap();
-    assert_eq!(outcome, RetryOutcome::Retried);
+    assert_eq!(outcome, RetryOutcome::Unsupported);
 
     let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Created);
-    assert_eq!(req.retry_count, 1);
+    assert_eq!(req.status, ProofStatus::Pending);
+    assert_eq!(req.retry_count, 0);
     assert!(req.proof_type.is_none());
 
     let entries = repo.get_unprocessed_outbox_entries(100, 3).await.unwrap();

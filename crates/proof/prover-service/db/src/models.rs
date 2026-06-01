@@ -152,6 +152,8 @@ pub enum RetryOutcome {
     Retried,
     /// Request was permanently marked FAILED (max retries exceeded).
     PermanentlyFailed,
+    /// Request cannot be retried by the legacy outbox flow.
+    Unsupported,
     /// Request was no longer in PENDING state (already claimed or transitioned).
     Skipped,
 }
@@ -628,10 +630,10 @@ impl CreateProofRequest {
         let payload_session_id =
             canonical_session_id_opt(self.request_payload.session_id.as_deref())?;
 
-        if let (Some(session_id), Some(payload_session_id)) = (&session_id, &payload_session_id) {
-            if session_id != payload_session_id {
-                return Err(CreateProofRequestValidationError::SessionIdMismatch);
-            }
+        if let (Some(session_id), Some(payload_session_id)) = (&session_id, &payload_session_id)
+            && session_id != payload_session_id
+        {
+            return Err(CreateProofRequestValidationError::SessionIdMismatch);
         }
         if self.api_proof_type != expected.api_proof_type {
             return Err(CreateProofRequestValidationError::FieldMismatch {

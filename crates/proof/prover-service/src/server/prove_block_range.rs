@@ -45,9 +45,7 @@ impl ProverServiceServer {
             "Attempting to prove base block(s)",
         );
 
-        if let (Some(_), Some(interval)) =
-            (db_request.proof_type, db_request.intermediate_root_interval)
-        {
+        if let Some(interval) = db_request.intermediate_root_interval {
             if interval == 0 {
                 return Err(invalid_argument(
                     "Invalid intermediate_root_interval: must be greater than 0",

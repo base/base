@@ -498,7 +498,8 @@ impl ProofRequestRepo {
     ///
     /// If `retry_count < max_retries`: atomically resets to CREATED, increments `retry_count`,
     /// and creates a new outbox entry for backend-backed requests so a worker picks it up again.
-    /// Requests without a backend `proof_type` are reset without using the legacy outbox.
+    /// Requests without a backend `proof_type` are left unchanged because the legacy outbox cannot
+    /// make progress on them.
     /// If `retry_count >= max_retries`: transitions to FAILED.
     pub async fn retry_or_fail_stuck_request(
         &self,
@@ -534,6 +535,11 @@ impl ProofRequestRepo {
         }
 
         let retry_count: i32 = row.get("retry_count");
+        let proof_type = row.get::<Option<&str>, _>("proof_type");
+        if proof_type.is_none() {
+            tx.rollback().await?;
+            return Ok(RetryOutcome::Unsupported);
+        }
 
         // Fail any active sessions before resetting so the retried run cannot collide with
         // `idx_proof_sessions_request_type_active_unique`. No-op on the normal reaper path,
@@ -588,12 +594,6 @@ impl ProofRequestRepo {
         .bind(id)
         .execute(&mut *tx)
         .await?;
-
-        let proof_type = row.get::<Option<&str>, _>("proof_type");
-        if proof_type.is_none() {
-            tx.commit().await?;
-            return Ok(RetryOutcome::Retried);
-        }
 
         // Copy the most recent outbox entry for this request. If the outbox was
         // already cleaned up (0 rows), reconstruct request_params from the
@@ -873,6 +873,7 @@ impl ProofRequestRepo {
                 pr.created_at, pr.updated_at, pr.completed_at, pr.retry_count
             FROM proof_requests pr
             WHERE pr.status = 'PENDING'
+              AND pr.proof_type IS NOT NULL
               AND pr.updated_at < NOW() - INTERVAL '1 minute' * $1
               AND NOT EXISTS (
                   SELECT 1 FROM proof_sessions ps
@@ -1430,6 +1431,8 @@ const fn validate_backend_proof_type(
 
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
+// Legacy rows predate `api_proof_type`; valid legacy ZK rows always have `proof_type`.
+// Treat `None` as compressed only to keep reads tolerant of inconsistent pre-migration data.
 const fn api_proof_type_for_backend(proof_type: Option<ProofType>) -> ApiProofType {
     match proof_type {
         Some(ProofType::OpSuccinctSp1ClusterCompressed) | None => ApiProofType::Compressed,
