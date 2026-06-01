@@ -61,7 +61,7 @@ members = [
   "crates/common/*",
   "crates/execution/*",
   "etc/tools/*",
-  "devnet",
+  "etc/systems",
   "actions/*",
 ]
 default-members = [
