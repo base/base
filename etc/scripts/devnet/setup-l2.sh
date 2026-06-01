@@ -137,7 +137,6 @@ OUTPUT_DIR="$OUTPUT_DIR" \
 L1_RPC_URL="$L1_RPC_URL" \
 L1_CHAIN_ID="$L1_CHAIN_ID" \
 L2_CHAIN_ID="$L2_CHAIN_ID" \
-FOUNDRY_SCRIPT_EXECUTION_PROTECTION=false \
     DEPLOY_CONFIG_PATH="$WORKDIR/deploy-config/devnet.json" \
   /usr/local/bin/extract-artifacts.sh
 
@@ -233,6 +232,8 @@ else
   echo "Base Beryl activation block is unset; leaving base.beryl unchanged"
 fi
 
+# Strip fields that op-conductor's RollupConfig does not recognize.
+# granite_channel_timeout is a base/base extension not present in op-conductor's schema.
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."
 jq 'del(.base, .granite_channel_timeout)' "$OUTPUT_DIR/rollup.json" >"$OUTPUT_DIR/rollup-conductor.json"
 echo "rollup-conductor.json written to $OUTPUT_DIR/rollup-conductor.json"
