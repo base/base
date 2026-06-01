@@ -154,7 +154,11 @@ impl EncoderConfig {
                 max_blob_frame_size: Self::MAX_BLOB_FRAME_SIZE,
             });
         }
-        if self.approx_compr_ratio <= 0.0 || self.approx_compr_ratio > 1.0 {
+        // Use the positive-range idiom (!(in_range)) so that NaN — which
+        // compares false with both operands — is correctly rejected. The
+        // `<= 0.0 || > 1.0` form returns false for NaN on both branches,
+        // silently treating it as valid and later producing NaN estimates.
+        if !(self.approx_compr_ratio > 0.0 && self.approx_compr_ratio <= 1.0) {
             return Err(EncoderConfigError::InvalidApproxComprRatio {
                 approx_compr_ratio: self.approx_compr_ratio,
             });
@@ -389,6 +393,7 @@ mod tests {
     #[case(-1.0)] // negative: nonsensical ratio
     #[case(1.1)] // above 1: overestimates compressed size
     #[case(f64::INFINITY)]
+    #[case(f64::NAN)]  // NaN: silently passes old `<= || >` check but must be rejected
     fn validate_approx_compr_ratio_err(#[case] approx_compr_ratio: f64) {
         let cfg = EncoderConfig { approx_compr_ratio, ..EncoderConfig::default() };
         let err = cfg.validate().unwrap_err();
