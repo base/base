@@ -1,10 +1,10 @@
-//! op-deployer container wrapper.
+//! Base-deployer container wrapper.
 
 use std::path::{Path, PathBuf};
 
 use alloy_primitives::{Address, B256};
 use alloy_signer_local::PrivateKeySigner;
-use eyre::{Result, WrapErr, eyre};
+use eyre::{Result, WrapErr};
 use testcontainers::{
     GenericImage, ImageExt,
     core::{Mount, WaitFor, wait::ExitWaitStrategy},
@@ -13,14 +13,11 @@ use testcontainers::{
 use url::Url;
 
 use super::artifacts::DeploymentArtifacts;
-use crate::{
-    config::{self, BATCHER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER},
-    images::OP_DEPLOYER_IMAGE,
-};
+use crate::config::{self, BATCHER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER};
 
-const OUTPUT_DIR: &str = "/output";
-const WORKDIR: &str = "/op-deployer";
-const INTENT_PATH: &str = "/config/intent.toml";
+const OUTPUT_DIR: &str = "/output/l2";
+const DEPLOY_CONFIG_PATH: &str = "/config/deploy-config.json";
+const SETUP_IMAGE: &str = "devnet-setup:local";
 
 /// Role address configuration for the deployment.
 #[derive(Debug, Clone, Copy)]
@@ -58,7 +55,10 @@ impl Default for RoleAddresses {
     }
 }
 
-/// Container wrapper for L2 contract deployment via op-deployer.
+/// Container wrapper for L2 contract deployment via base-deployer.
+///
+/// Runs `setup-l2.sh` inside the `devnet-setup:local` Docker image to deploy
+/// L2 contracts using forge scripts and collect deployment artifacts.
 #[derive(Debug)]
 pub struct DeployerContainer {
     l1_rpc_url: Url,
@@ -107,45 +107,46 @@ impl DeployerContainer {
         &self.output_dir
     }
 
-    /// Runs op-deployer against the configured L1 and returns deployment artifacts.
+    /// Runs `setup-l2.sh` against the configured L1 and returns deployment artifacts.
     ///
-    /// This is a blocking call that waits for op-deployer to finish. The deployment will
-    /// only succeed when the L1 node is running and producing blocks.
+    /// This is a blocking call that waits for the deployment to finish. The deployment
+    /// will only succeed when the L1 node is running and producing blocks.
     pub fn deploy(&self) -> Result<DeploymentArtifacts> {
         if DeploymentArtifacts::exists_in(&self.output_dir) {
-            return self.artifacts().wrap_err("Existing deployment artifacts failed to load");
+            return self.artifacts().wrap_err("existing deployment artifacts failed to load");
         }
 
-        std::fs::create_dir_all(&self.output_dir).wrap_err("Failed to create output directory")?;
+        std::fs::create_dir_all(&self.output_dir).wrap_err("failed to create output directory")?;
 
-        let intent_toml = self.intent_toml()?;
-        let script = deploy_script();
-        let (image_name, image_tag) = OP_DEPLOYER_IMAGE
-            .rsplit_once(':')
-            .ok_or_else(|| eyre!("op-deployer image tag is missing"))?;
+        let deploy_config = self.deploy_config()?;
 
-        let image = GenericImage::new(image_name, image_tag)
-            .with_entrypoint("sh")
+        let image = GenericImage::new("devnet-setup", "local")
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)));
 
-        let cmd = vec!["-c".to_string(), script];
         let output_dir = self.output_dir.to_string_lossy().to_string();
         let mut request = image
-            .with_cmd(cmd)
+            .with_cmd(["setup-l2.sh"])
             .with_env_var("L1_RPC_URL", self.l1_rpc_url.to_string())
             .with_env_var("L1_CHAIN_ID", self.l1_chain_id.to_string())
             .with_env_var("L2_CHAIN_ID", self.l2_chain_id.to_string())
             .with_env_var("DEPLOYER_KEY", self.deployer_key_hex())
-            .with_copy_to(INTENT_PATH, intent_toml.into_bytes())
+            .with_env_var("DEPLOYER_ADDR", format_address(self.deployer_address()?))
+            .with_env_var("SEQUENCER_ADDR", format_address(self.roles.sequencer))
+            .with_env_var("BATCHER_ADDR", format_address(self.roles.batcher))
+            .with_env_var("PROPOSER_ADDR", format_address(self.roles.proposer))
+            .with_env_var("CHALLENGER_ADDR", format_address(self.roles.challenger))
+            .with_env_var("OUTPUT_DIR", OUTPUT_DIR)
+            .with_env_var("TEMPLATE_DIR", "/templates")
+            .with_copy_to(DEPLOY_CONFIG_PATH, deploy_config.into_bytes())
             .with_mount(Mount::bind_mount(output_dir, OUTPUT_DIR));
 
         if let Some(network) = &self.network {
             request = request.with_network(network.clone());
         }
 
-        let _container = request.start().wrap_err("Failed to run op-deployer container")?;
+        let _container = request.start().wrap_err("failed to run base-deployer container")?;
 
-        self.artifacts().wrap_err("Failed to load deployment artifacts")
+        self.artifacts().wrap_err("failed to load deployment artifacts")
     }
 
     /// Loads deployment artifacts from the output directory.
@@ -153,75 +154,29 @@ impl DeployerContainer {
         DeploymentArtifacts::load_from_dir(&self.output_dir)
     }
 
-    fn intent_toml(&self) -> Result<String> {
-        let mut intent = config::l2_intent_toml(self.l1_chain_id, self.l2_chain_id);
+    fn deploy_config(&self) -> Result<String> {
+        let mut config_json =
+            config::deploy_config_json(self.l1_chain_id, self.l2_chain_id);
         let deployer_address = self.deployer_address()?;
 
-        intent = replace_address(intent, DEPLOYER.address, deployer_address);
-        intent = replace_address(intent, SEQUENCER.address, self.roles.sequencer);
-        intent = replace_address(intent, BATCHER.address, self.roles.batcher);
-        intent = replace_address(intent, PROPOSER.address, self.roles.proposer);
-        intent = replace_address(intent, CHALLENGER.address, self.roles.challenger);
+        config_json = replace_address(config_json, DEPLOYER.address, deployer_address);
+        config_json = replace_address(config_json, SEQUENCER.address, self.roles.sequencer);
+        config_json = replace_address(config_json, BATCHER.address, self.roles.batcher);
+        config_json = replace_address(config_json, PROPOSER.address, self.roles.proposer);
+        config_json = replace_address(config_json, CHALLENGER.address, self.roles.challenger);
 
-        Ok(intent)
+        Ok(config_json)
     }
 
     fn deployer_address(&self) -> Result<Address> {
         let signer = PrivateKeySigner::from_bytes(&self.deployer_private_key)
-            .wrap_err("Failed to derive deployer address from private key")?;
+            .wrap_err("failed to derive deployer address from private key")?;
         Ok(signer.address())
     }
 
     fn deployer_key_hex(&self) -> String {
         format!("0x{}", hex::encode(self.deployer_private_key))
     }
-}
-
-fn deploy_script() -> String {
-    format!(
-        r#"set -e
-
-WORKDIR=\"{WORKDIR}\"
-OUTPUT_DIR=\"{OUTPUT_DIR}\"
-INTENT_PATH=\"{INTENT_PATH}\"
-
-mkdir -p \"$WORKDIR\" \"$OUTPUT_DIR\"
-
-if [ -f \"$OUTPUT_DIR/genesis.json\" ] && [ -f \"$OUTPUT_DIR/rollup.json\" ] && [ -f \"$OUTPUT_DIR/l1-addresses.json\" ]; then
-  echo \"Deployment artifacts already exist, skipping op-deployer\"
-  exit 0
-fi
-
-op-deployer init \
-  --l1-chain-id \"$L1_CHAIN_ID\" \
-  --l2-chain-ids \"$L2_CHAIN_ID\" \
-  --intent-type custom \
-  --workdir \"$WORKDIR\"
-
-cp \"$INTENT_PATH\" \"$WORKDIR/intent.toml\"
-
-op-deployer apply \
-  --workdir \"$WORKDIR\" \
-  --deployment-target live \
-  --l1-rpc-url \"$L1_RPC_URL\" \
-  --private-key \"$DEPLOYER_KEY\"
-
-op-deployer inspect genesis \
-  --workdir \"$WORKDIR\" \
-  \"$L2_CHAIN_ID\" \
-  > \"$OUTPUT_DIR/genesis.json\"
-
-op-deployer inspect rollup \
-  --workdir \"$WORKDIR\" \
-  \"$L2_CHAIN_ID\" \
-  > \"$OUTPUT_DIR/rollup.json\"
-
-op-deployer inspect l1 \
-  --workdir \"$WORKDIR\" \
-  \"$L2_CHAIN_ID\" \
-  > \"$OUTPUT_DIR/l1-addresses.json\"
-"#,
-    )
 }
 
 fn replace_address(input: String, from: Address, to: Address) -> String {
@@ -234,5 +189,5 @@ fn format_address(address: Address) -> String {
 
 fn default_output_dir() -> PathBuf {
     let suffix: u64 = rand::random();
-    std::env::temp_dir().join(format!("op-deployer-{suffix}"))
+    std::env::temp_dir().join(format!("base-deployer-{suffix}"))
 }

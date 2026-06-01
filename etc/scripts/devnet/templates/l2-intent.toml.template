@@ -1,3 +1,6 @@
+# DEPRECATED: This file is no longer used. See deploy-config.json.template instead.
+# Kept for historical reference only.
+
 configType = "custom"
 l1ChainID = ${L1_CHAIN_ID}
 fundDevAccounts = true

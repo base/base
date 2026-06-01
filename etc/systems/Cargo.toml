@@ -38,7 +38,7 @@ base-consensus-peers.workspace = true
 base-consensus-gossip.workspace = true
 base-consensus-sources.workspace = true
 base-consensus-providers.workspace = true
-base-common-genesis.workspace = true
+base-common-genesis = { workspace = true, features = ["serde"] }
 
 # reth
 reth-db.workspace = true
