@@ -5,9 +5,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::{Address, B256, hex};
-use alloy_sol_types::SolCall;
+use alloy_primitives::{Address, B256, U256, hex};
+use alloy_sol_types::{SolCall, sol};
 use base_common_chains::ChainConfig;
+use base_common_consensus::{BASE_BLOCK_TIME_MILLIS, Predeploys, TIMESTAMP_MILLIS_PER_SECOND};
 use base_common_genesis::HardForkConfig;
 use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 use chrono::{DateTime, Utc};
@@ -93,6 +94,7 @@ impl ChainUpgrades {
         self.set_timestamp("Jovian", hardforks.jovian_time);
         self.set_timestamp("Azul", hardforks.base.azul);
         self.set_timestamp("Beryl", hardforks.base.beryl);
+        self.set_timestamp("Subsecond", hardforks.base.subsecond);
     }
 }
 
@@ -108,6 +110,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
         UpgradeSpec { name: "Jovian", timestamp: Some(cfg.jovian_timestamp) },
         UpgradeSpec { name: "Azul", timestamp: cfg.azul_timestamp },
         UpgradeSpec { name: "Beryl", timestamp: cfg.beryl_timestamp },
+        UpgradeSpec { name: "Subsecond", timestamp: cfg.subsecond_timestamp },
     ]
 }
 
@@ -203,11 +206,24 @@ const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
     ("B-20 security feature", ActivationFeature::B20Security),
 ];
 
+/// Expected check names for Subsecond, in execution order.
+const SUBSECOND_CHECK_NAMES: &[&str] = &[
+    "BaseTime predeploy code",
+    "BaseTime.timestampMs()",
+    "BaseTime matches header",
+    "header timestampMs field",
+    "200ms per block",
+    "wall-clock cadence",
+    "historical timestampMsAtBlock",
+    "BaseTime storage layout",
+];
+
 fn check_names_for(hardfork: &str) -> &'static [&'static str] {
     match hardfork {
         "Beryl" => BERYL_CHECK_NAMES,
         "Azul" => AZUL_CHECK_NAMES,
         "Jovian" => JOVIAN_CHECK_NAMES,
+        "Subsecond" => SUBSECOND_CHECK_NAMES,
         _ => &[],
     }
 }
@@ -1227,6 +1243,7 @@ async fn run_checks_streaming(
         "Beryl" => run_beryl_checks_streaming(rpc_url, mode, tx).await,
         "Azul" => run_azul_checks_streaming(rpc_url, tx).await,
         "Jovian" => run_jovian_checks_streaming(rpc_url, mode, tx).await,
+        "Subsecond" => run_subsecond_checks_streaming(rpc_url, mode, tx).await,
         _ => {}
     }
 }
@@ -1806,6 +1823,692 @@ async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate
     send_result!("eth_config", eth_config_check);
 }
 
+// ── Subsecond activation checks ───────────────────────────────────────────────
+
+sol! {
+    /// Local copy of the `BaseTime` predeploy ABI (avoids a heavyweight dep on
+    /// `base-common-evm` from the basectl CLI).
+    interface IBaseTime {
+        function timestampMs() external view returns (uint256);
+        function timestampMillisPart() external view returns (uint256);
+        function timestampMsAtBlock(uint256 blockNumber) external view returns (uint256);
+    }
+}
+
+/// Number of blocks to sample for the strict 200ms-per-block cadence check.
+const SUBSECOND_CADENCE_SAMPLE_BLOCKS: u64 = 16;
+
+/// Number of wall-clock cadence samples to collect.
+const SUBSECOND_WALL_SAMPLE_COUNT: usize = 12;
+
+/// Tolerance for wall-clock cadence (±ms) around 200ms.
+const SUBSECOND_WALL_TOLERANCE_MS: u128 = 150;
+
+/// Wall-clock poll interval while sampling block cadence (ms).
+const SUBSECOND_WALL_POLL_MS: u64 = 25;
+
+/// Max wall-clock sampling window (ms) before bailing out.
+const SUBSECOND_WALL_MAX_MS: u128 = 6_000;
+
+/// Storage slot 0 of `BaseTime`: latest Unix millisecond timestamp.
+const BASE_TIME_LATEST_TIMESTAMP_MS_SLOT: &str =
+    "0x0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Storage slot 1 of `BaseTime`: latest L2 block number with a timestamp commit.
+const BASE_TIME_LATEST_BLOCK_NUMBER_SLOT: &str =
+    "0x0000000000000000000000000000000000000000000000000000000000000001";
+
+fn base_time_address_string() -> String {
+    Predeploys::BASE_TIME.to_string()
+}
+
+fn parse_hex_quantity(value: &str) -> Result<u64, String> {
+    let trimmed = value.trim().trim_matches('"').trim_start_matches("0x");
+    u64::from_str_radix(trimmed, 16).map_err(|e| format!("invalid hex quantity {value}: {e}"))
+}
+
+fn parse_hex_u256_low_u64(value: &str) -> Result<u64, String> {
+    let trimmed = value.trim().trim_matches('"').trim_start_matches("0x");
+    if trimmed.is_empty() {
+        return Ok(0);
+    }
+    // Storage slots are 32 bytes; the low 8 bytes fit a u64.
+    let start = trimmed.len().saturating_sub(16);
+    u64::from_str_radix(&trimmed[start..], 16).map_err(|e| format!("invalid hex u256 {value}: {e}"))
+}
+
+async fn rpc_block_number(client: &HttpClient) -> Result<u64, String> {
+    let raw = ClientT::request::<String, _>(client, "eth_blockNumber", rpc_params![])
+        .await
+        .map_err(|e| e.to_string())?;
+    parse_hex_quantity(&raw)
+}
+
+async fn rpc_get_block(
+    client: &HttpClient,
+    block_number: u64,
+) -> Result<serde_json::Value, String> {
+    let n_hex = format!("0x{block_number:x}");
+    ClientT::request::<serde_json::Value, _>(
+        client,
+        "eth_getBlockByNumber",
+        rpc_params![n_hex, false],
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+async fn rpc_get_latest_block(client: &HttpClient) -> Result<serde_json::Value, String> {
+    eth_get_block_by_number_latest(client).await
+}
+
+/// Returns `(timestamp_seconds, Option<timestamp_ms>, Option<millis_part>)` for a block JSON.
+fn read_block_timestamp_fields(
+    block: &serde_json::Value,
+) -> Result<(u64, Option<u64>, Option<u16>), String> {
+    let ts_secs = block["timestamp"]
+        .as_str()
+        .ok_or_else(|| "missing timestamp field".to_string())
+        .and_then(parse_hex_quantity)?;
+    let timestamp_ms = block.get("timestampMs").and_then(|v| v.as_str()).map(parse_hex_quantity);
+    let timestamp_millis_part = block
+        .get("timestampMillisPart")
+        .and_then(|v| v.as_str())
+        .map(parse_hex_quantity);
+
+    let timestamp_ms = match timestamp_ms {
+        Some(Ok(v)) => Some(v),
+        Some(Err(e)) => return Err(e),
+        None => None,
+    };
+    let timestamp_millis_part = match timestamp_millis_part {
+        Some(Ok(v)) => Some(u16::try_from(v).map_err(|_| "millis part too large".to_string())?),
+        Some(Err(e)) => return Err(e),
+        None => None,
+    };
+
+    Ok((ts_secs, timestamp_ms, timestamp_millis_part))
+}
+
+/// Computes the canonical millisecond timestamp from header fields. Returns the
+/// explicit `timestampMs` when present, otherwise reconstructs it from
+/// `timestamp * 1000 + timestampMillisPart` if the part is set.
+fn header_timestamp_ms(
+    ts_secs: u64,
+    timestamp_ms: Option<u64>,
+    timestamp_millis_part: Option<u16>,
+) -> Option<u64> {
+    if let Some(ms) = timestamp_ms {
+        return Some(ms);
+    }
+    let part = timestamp_millis_part?;
+    ts_secs
+        .checked_mul(u64::from(TIMESTAMP_MILLIS_PER_SECOND))
+        .and_then(|ms| ms.checked_add(u64::from(part)))
+}
+
+async fn eth_get_code(client: &HttpClient, addr: &str) -> Result<String, String> {
+    ClientT::request::<String, _>(client, "eth_getCode", rpc_params![addr, "latest"])
+        .await
+        .map_err(|e| e.to_string())
+}
+
+fn evaluate_predeploy_code(mode: CheckMode, result: &Result<String, String>) -> CheckResult {
+    let code = match result {
+        Ok(v) => norm(v),
+        Err(e) => return CheckResult { passed: Some(false), detail: format!("RPC error: {e}") },
+    };
+    let installed = !code.is_empty() && code != "0x" && code != "0x0";
+    match (mode, installed) {
+        (CheckMode::Before, false) => {
+            CheckResult { passed: Some(true), detail: "no code (expected before)".into() }
+        }
+        (CheckMode::Before | CheckMode::After, true) => CheckResult {
+            passed: Some(true),
+            detail: format!("code present ({} bytes)", code.len().saturating_sub(2) / 2),
+        },
+        (CheckMode::After, false) => CheckResult {
+            passed: Some(false),
+            detail: "no code at BaseTime predeploy after Subsecond".into(),
+        },
+    }
+}
+
+fn evaluate_timestamp_ms_call(mode: CheckMode, result: &Result<u64, String>) -> CheckResult {
+    match (mode, result) {
+        (CheckMode::Before, Err(_)) => {
+            CheckResult { passed: Some(true), detail: "reverts before Subsecond".into() }
+        }
+        (CheckMode::Before, Ok(v)) if *v == 0 => {
+            CheckResult { passed: Some(true), detail: "returns 0 before Subsecond".into() }
+        }
+        (CheckMode::Before, Ok(v)) => CheckResult {
+            passed: Some(false),
+            detail: format!("unexpectedly returned {v} before Subsecond"),
+        },
+        (CheckMode::After, Ok(v)) if *v > 0 => {
+            CheckResult { passed: Some(true), detail: format!("{v} ms") }
+        }
+        (CheckMode::After, Ok(_)) => CheckResult {
+            passed: Some(false),
+            detail: "returned 0 after Subsecond".into(),
+        },
+        (CheckMode::After, Err(e)) => CheckResult {
+            passed: Some(false),
+            detail: format!("call failed after Subsecond: {e}"),
+        },
+    }
+}
+
+fn evaluate_header_timestamp_ms_field(
+    mode: CheckMode,
+    block: &serde_json::Value,
+) -> CheckResult {
+    let (ts_secs, timestamp_ms, millis_part) = match read_block_timestamp_fields(block) {
+        Ok(v) => v,
+        Err(e) => return CheckResult { passed: Some(false), detail: e },
+    };
+
+    match mode {
+        CheckMode::Before => {
+            if timestamp_ms.is_none() && millis_part.is_none() {
+                CheckResult { passed: Some(true), detail: "no ms fields (expected)".into() }
+            } else {
+                CheckResult {
+                    passed: Some(false),
+                    detail: format!(
+                        "unexpected ms fields: timestampMs={timestamp_ms:?} part={millis_part:?}"
+                    ),
+                }
+            }
+        }
+        CheckMode::After => {
+            let Some(ms) = timestamp_ms else {
+                return CheckResult {
+                    passed: Some(false),
+                    detail: "missing timestampMs after Subsecond".into(),
+                };
+            };
+            let Some(part) = millis_part else {
+                return CheckResult {
+                    passed: Some(false),
+                    detail: "missing timestampMillisPart after Subsecond".into(),
+                };
+            };
+            let derived = ts_secs
+                .checked_mul(u64::from(TIMESTAMP_MILLIS_PER_SECOND))
+                .and_then(|v| v.checked_add(u64::from(part)));
+            if derived != Some(ms) {
+                return CheckResult {
+                    passed: Some(false),
+                    detail: format!(
+                        "timestampMs={ms} != timestamp*1000+part={derived:?}"
+                    ),
+                };
+            }
+            if part >= TIMESTAMP_MILLIS_PER_SECOND
+                || !part.is_multiple_of(BASE_BLOCK_TIME_MILLIS)
+            {
+                return CheckResult {
+                    passed: Some(false),
+                    detail: format!("part {part} not on 200ms grid"),
+                };
+            }
+            CheckResult {
+                passed: Some(true),
+                detail: format!("timestampMs={ms} part={part}"),
+            }
+        }
+    }
+}
+
+fn evaluate_basetime_matches_header(
+    mode: CheckMode,
+    rpc_value: &Result<u64, String>,
+    block: &serde_json::Value,
+) -> CheckResult {
+    if mode == CheckMode::Before {
+        return CheckResult { passed: None, detail: "skipped before Subsecond".into() };
+    }
+    let basetime_ms = match rpc_value {
+        Ok(v) => *v,
+        Err(e) => {
+            return CheckResult {
+                passed: Some(false),
+                detail: format!("BaseTime call failed: {e}"),
+            };
+        }
+    };
+    let (ts_secs, timestamp_ms, millis_part) = match read_block_timestamp_fields(block) {
+        Ok(v) => v,
+        Err(e) => return CheckResult { passed: Some(false), detail: e },
+    };
+    let Some(header_ms) = header_timestamp_ms(ts_secs, timestamp_ms, millis_part) else {
+        return CheckResult {
+            passed: Some(false),
+            detail: "header has no ms timestamp to compare".into(),
+        };
+    };
+    if header_ms == basetime_ms {
+        CheckResult { passed: Some(true), detail: format!("{header_ms} ms") }
+    } else {
+        CheckResult {
+            passed: Some(false),
+            detail: format!("BaseTime={basetime_ms} ms, header={header_ms} ms"),
+        }
+    }
+}
+
+/// Strict-equality cadence check: walks the last N blocks and asserts that
+/// every consecutive pair's millisecond timestamp delta is exactly 200ms.
+async fn evaluate_two_hundred_ms_per_block(
+    client: &HttpClient,
+    mode: CheckMode,
+    head: u64,
+) -> CheckResult {
+    if mode == CheckMode::Before {
+        return CheckResult { passed: None, detail: "skipped before Subsecond".into() };
+    }
+    if head < SUBSECOND_CADENCE_SAMPLE_BLOCKS {
+        return CheckResult {
+            passed: None,
+            detail: format!("need at least {SUBSECOND_CADENCE_SAMPLE_BLOCKS} blocks, have {head}"),
+        };
+    }
+    let start = head + 1 - SUBSECOND_CADENCE_SAMPLE_BLOCKS;
+    let mut previous: Option<(u64, u64)> = None; // (block_number, timestamp_ms)
+    for n in start..=head {
+        let block = match rpc_get_block(client, n).await {
+            Ok(b) => b,
+            Err(e) => {
+                return CheckResult {
+                    passed: Some(false),
+                    detail: format!("block {n} fetch failed: {e}"),
+                };
+            }
+        };
+        let (ts_secs, ts_ms, part) = match read_block_timestamp_fields(&block) {
+            Ok(v) => v,
+            Err(e) => {
+                return CheckResult {
+                    passed: Some(false),
+                    detail: format!("block {n}: {e}"),
+                };
+            }
+        };
+        let Some(current_ms) = header_timestamp_ms(ts_secs, ts_ms, part) else {
+            return CheckResult {
+                passed: Some(false),
+                detail: format!("block {n} has no ms timestamp"),
+            };
+        };
+        if let Some((prev_n, prev_ms)) = previous {
+            let delta = current_ms.wrapping_sub(prev_ms) as i128;
+            if delta != i128::from(BASE_BLOCK_TIME_MILLIS) {
+                return CheckResult {
+                    passed: Some(false),
+                    detail: format!(
+                        "block {n} - {prev_n}: Δ={delta}ms (expected {BASE_BLOCK_TIME_MILLIS})"
+                    ),
+                };
+            }
+        }
+        previous = Some((n, current_ms));
+    }
+    CheckResult {
+        passed: Some(true),
+        detail: format!("{SUBSECOND_CADENCE_SAMPLE_BLOCKS} blocks all at 200ms"),
+    }
+}
+
+/// Wall-clock cadence sampler: polls `eth_blockNumber` for up to
+/// `SUBSECOND_WALL_MAX_MS` ms, collecting per-block wall-clock deltas, and
+/// returns the median.
+async fn evaluate_wall_clock_cadence(client: &HttpClient, mode: CheckMode) -> CheckResult {
+    let poll = Duration::from_millis(SUBSECOND_WALL_POLL_MS);
+    let mut last_block = match rpc_block_number(client).await {
+        Ok(n) => n,
+        Err(e) => {
+            return CheckResult { passed: Some(false), detail: format!("RPC error: {e}") };
+        }
+    };
+    let mut last_wall = Instant::now();
+    let start = last_wall;
+    let mut deltas: Vec<u128> = Vec::new();
+
+    while deltas.len() < SUBSECOND_WALL_SAMPLE_COUNT {
+        if start.elapsed().as_millis() > SUBSECOND_WALL_MAX_MS {
+            break;
+        }
+        tokio::time::sleep(poll).await;
+        let now_block = match rpc_block_number(client).await {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        if now_block > last_block {
+            let now_wall = Instant::now();
+            let total_delta = now_wall.duration_since(last_wall).as_millis();
+            let advanced = u128::from(now_block - last_block);
+            // Apportion delta evenly across blocks if more than one landed in
+            // the same poll. Only the most recent block delta is truly
+            // observed at this poll, but the average is still informative.
+            let per_block = total_delta / advanced;
+            for _ in 0..advanced {
+                deltas.push(per_block);
+                if deltas.len() >= SUBSECOND_WALL_SAMPLE_COUNT {
+                    break;
+                }
+            }
+            last_block = now_block;
+            last_wall = now_wall;
+        }
+    }
+
+    if deltas.is_empty() {
+        return CheckResult {
+            passed: Some(false),
+            detail: format!("no new blocks in {}ms", start.elapsed().as_millis()),
+        };
+    }
+    deltas.sort_unstable();
+    let median = deltas[deltas.len() / 2];
+
+    let target = u128::from(BASE_BLOCK_TIME_MILLIS);
+    let (lo, hi) = match mode {
+        CheckMode::After => {
+            (target.saturating_sub(SUBSECOND_WALL_TOLERANCE_MS), target + SUBSECOND_WALL_TOLERANCE_MS)
+        }
+        CheckMode::Before => {
+            // Pre-Subsecond cadence is the legacy seconds-denominated block time.
+            // Accept anything ≥ 1s as "not subsecond".
+            (1_000, u128::MAX)
+        }
+    };
+
+    if median >= lo && median <= hi {
+        CheckResult {
+            passed: Some(true),
+            detail: format!(
+                "median {median}ms over {} samples (target {target}ms)",
+                deltas.len()
+            ),
+        }
+    } else {
+        CheckResult {
+            passed: Some(false),
+            detail: format!(
+                "median {median}ms over {} samples (expected {lo}-{hi}ms)",
+                deltas.len()
+            ),
+        }
+    }
+}
+
+async fn evaluate_historical_timestamp_ms_at_block(
+    client: &HttpClient,
+    mode: CheckMode,
+    head: u64,
+) -> CheckResult {
+    if mode == CheckMode::Before {
+        return CheckResult { passed: None, detail: "skipped before Subsecond".into() };
+    }
+    if head == 0 {
+        return CheckResult { passed: None, detail: "no parent block to query".into() };
+    }
+    let target = head.saturating_sub(1);
+
+    let to = base_time_address_string();
+    let call = IBaseTime::timestampMsAtBlockCall { blockNumber: U256::from(target) };
+    let data = calldata_hex(call.abi_encode());
+    let basetime_ms = match eth_call(client, &to, &data).await {
+        Ok(v) => {
+            let bytes = match decode_rpc_bytes(&v) {
+                Ok(b) => b,
+                Err(e) => {
+                    return CheckResult {
+                        passed: Some(false),
+                        detail: format!("decode failed: {e}"),
+                    };
+                }
+            };
+            match IBaseTime::timestampMsAtBlockCall::abi_decode_returns(bytes.as_ref()) {
+                Ok(v) => u64::try_from(v).unwrap_or(0),
+                Err(e) => {
+                    return CheckResult {
+                        passed: Some(false),
+                        detail: format!("abi decode failed: {e}"),
+                    };
+                }
+            }
+        }
+        Err(e) => {
+            return CheckResult {
+                passed: Some(false),
+                detail: format!("call failed: {e}"),
+            };
+        }
+    };
+
+    let block = match rpc_get_block(client, target).await {
+        Ok(b) => b,
+        Err(e) => {
+            return CheckResult {
+                passed: Some(false),
+                detail: format!("block {target} fetch failed: {e}"),
+            };
+        }
+    };
+    let (ts_secs, ts_ms, part) = match read_block_timestamp_fields(&block) {
+        Ok(v) => v,
+        Err(e) => {
+            return CheckResult {
+                passed: Some(false),
+                detail: format!("block {target}: {e}"),
+            };
+        }
+    };
+    let Some(header_ms) = header_timestamp_ms(ts_secs, ts_ms, part) else {
+        return CheckResult {
+            passed: Some(false),
+            detail: format!("block {target} has no ms timestamp"),
+        };
+    };
+
+    if header_ms == basetime_ms {
+        CheckResult {
+            passed: Some(true),
+            detail: format!("block {target} = {header_ms} ms"),
+        }
+    } else {
+        CheckResult {
+            passed: Some(false),
+            detail: format!(
+                "block {target}: BaseTime={basetime_ms}, header={header_ms}"
+            ),
+        }
+    }
+}
+
+async fn evaluate_basetime_storage(
+    client: &HttpClient,
+    mode: CheckMode,
+    head: u64,
+    head_block: &serde_json::Value,
+) -> CheckResult {
+    if mode == CheckMode::Before {
+        return CheckResult { passed: None, detail: "skipped before Subsecond".into() };
+    }
+    let to = base_time_address_string();
+
+    let slot0 = match eth_get_storage_at(client, &to, BASE_TIME_LATEST_TIMESTAMP_MS_SLOT).await {
+        Ok(v) => parse_hex_u256_low_u64(&v),
+        Err(e) => return CheckResult { passed: Some(false), detail: format!("slot0 RPC: {e}") },
+    };
+    let slot1 = match eth_get_storage_at(client, &to, BASE_TIME_LATEST_BLOCK_NUMBER_SLOT).await {
+        Ok(v) => parse_hex_u256_low_u64(&v),
+        Err(e) => return CheckResult { passed: Some(false), detail: format!("slot1 RPC: {e}") },
+    };
+
+    let slot0 = match slot0 {
+        Ok(v) => v,
+        Err(e) => return CheckResult { passed: Some(false), detail: e },
+    };
+    let slot1 = match slot1 {
+        Ok(v) => v,
+        Err(e) => return CheckResult { passed: Some(false), detail: e },
+    };
+
+    let (ts_secs, ts_ms, part) = match read_block_timestamp_fields(head_block) {
+        Ok(v) => v,
+        Err(e) => return CheckResult { passed: Some(false), detail: e },
+    };
+    let Some(header_ms) = header_timestamp_ms(ts_secs, ts_ms, part) else {
+        return CheckResult {
+            passed: Some(false),
+            detail: "head has no ms timestamp".into(),
+        };
+    };
+
+    if slot0 != header_ms {
+        return CheckResult {
+            passed: Some(false),
+            detail: format!("slot0={slot0} ms, head={header_ms} ms"),
+        };
+    }
+    // Slot 1 may lag by 1 block when the head was just produced but BaseTime
+    // is updated by the sequencer at block start; accept head or head-1.
+    if slot1 != head && slot1 + 1 != head {
+        return CheckResult {
+            passed: Some(false),
+            detail: format!("slot1={slot1}, head={head}"),
+        };
+    }
+    CheckResult {
+        passed: Some(true),
+        detail: format!("slot0={header_ms}ms, slot1={slot1}"),
+    }
+}
+
+async fn run_subsecond_checks_streaming(
+    rpc_url: String,
+    mode: CheckMode,
+    tx: mpsc::Sender<CheckUpdate>,
+) {
+    macro_rules! send_start {
+        ($name:expr) => {
+            if tx.send(CheckUpdate::Starting($name.to_string())).await.is_err() {
+                return;
+            }
+        };
+    }
+    macro_rules! send_result {
+        ($name:expr, $result:expr) => {
+            if tx
+                .send(CheckUpdate::Completed { name: $name.to_string(), result: $result })
+                .await
+                .is_err()
+            {
+                return;
+            }
+        };
+    }
+
+    let client = match make_rpc_client(&rpc_url) {
+        Ok(c) => c,
+        Err(e) => {
+            let conn = CheckResult {
+                passed: Some(false),
+                detail: format!("cannot build client for {rpc_url}: {e}"),
+            };
+            send_result!(SUBSECOND_CHECK_NAMES[0], conn);
+            for &name in &SUBSECOND_CHECK_NAMES[1..] {
+                send_result!(
+                    name,
+                    CheckResult { passed: None, detail: "skipped (no connection)".into() }
+                );
+            }
+            return;
+        }
+    };
+
+    let head = match rpc_block_number(&client).await {
+        Ok(n) => n,
+        Err(e) => {
+            let conn = CheckResult {
+                passed: Some(false),
+                detail: format!("cannot reach {rpc_url}: {e}"),
+            };
+            send_result!(SUBSECOND_CHECK_NAMES[0], conn);
+            for &name in &SUBSECOND_CHECK_NAMES[1..] {
+                send_result!(
+                    name,
+                    CheckResult { passed: None, detail: "skipped (no connection)".into() }
+                );
+            }
+            return;
+        }
+    };
+
+    let head_block = rpc_get_latest_block(&client).await;
+
+    // ── BaseTime predeploy code ──────────────────────────────────────────────
+    send_start!("BaseTime predeploy code");
+    let code = eth_get_code(&client, &base_time_address_string()).await;
+    send_result!("BaseTime predeploy code", evaluate_predeploy_code(mode, &code));
+
+    // ── BaseTime.timestampMs() ───────────────────────────────────────────────
+    send_start!("BaseTime.timestampMs()");
+    let to = base_time_address_string();
+    let data = calldata_hex(IBaseTime::timestampMsCall {}.abi_encode());
+    let raw = eth_call(&client, &to, &data).await;
+    let basetime_call = raw.and_then(|v| {
+        let bytes = decode_rpc_bytes(&v)?;
+        IBaseTime::timestampMsCall::abi_decode_returns(bytes.as_ref())
+            .map_err(|e| e.to_string())
+            .and_then(|u| u64::try_from(u).map_err(|e| e.to_string()))
+    });
+    send_result!("BaseTime.timestampMs()", evaluate_timestamp_ms_call(mode, &basetime_call));
+
+    // ── BaseTime matches header ──────────────────────────────────────────────
+    send_start!("BaseTime matches header");
+    let basetime_vs_header = match &head_block {
+        Ok(b) => evaluate_basetime_matches_header(mode, &basetime_call, b),
+        Err(e) => CheckResult { passed: Some(false), detail: format!("head fetch failed: {e}") },
+    };
+    send_result!("BaseTime matches header", basetime_vs_header);
+
+    // ── header timestampMs field ─────────────────────────────────────────────
+    send_start!("header timestampMs field");
+    let header_field = match &head_block {
+        Ok(b) => evaluate_header_timestamp_ms_field(mode, b),
+        Err(e) => CheckResult { passed: Some(false), detail: format!("head fetch failed: {e}") },
+    };
+    send_result!("header timestampMs field", header_field);
+
+    // ── 200ms per block (strict equality across recent blocks) ───────────────
+    send_start!("200ms per block");
+    let cadence = evaluate_two_hundred_ms_per_block(&client, mode, head).await;
+    send_result!("200ms per block", cadence);
+
+    // ── wall-clock cadence ───────────────────────────────────────────────────
+    send_start!("wall-clock cadence");
+    let wall = evaluate_wall_clock_cadence(&client, mode).await;
+    send_result!("wall-clock cadence", wall);
+
+    // ── historical timestampMsAtBlock ───────────────────────────────────────
+    send_start!("historical timestampMsAtBlock");
+    let history = evaluate_historical_timestamp_ms_at_block(&client, mode, head).await;
+    send_result!("historical timestampMsAtBlock", history);
+
+    // ── BaseTime storage layout ─────────────────────────────────────────────
+    send_start!("BaseTime storage layout");
+    let storage = match &head_block {
+        Ok(b) => evaluate_basetime_storage(&client, mode, head, b).await,
+        Err(e) => CheckResult { passed: Some(false), detail: format!("head fetch failed: {e}") },
+    };
+    send_result!("BaseTime storage layout", storage);
+}
+
 #[cfg(test)]
 mod tests {
     use base_common_genesis::HardforkConfig;
@@ -1890,7 +2593,7 @@ mod tests {
         let names: Vec<_> =
             checkable_specs_display(&chain).into_iter().map(|spec| spec.name).collect();
 
-        assert_eq!(names, vec!["Beryl", "Azul", "Jovian"]);
+        assert_eq!(names, vec!["Subsecond", "Beryl", "Azul", "Jovian"]);
     }
 
     #[test]
@@ -1939,5 +2642,140 @@ mod tests {
 
         assert_eq!(tenths, 1000);
         assert_eq!(fmt_progress_percent(tenths), "100.0%");
+    }
+
+    // ── Subsecond check helpers ───────────────────────────────────────────────
+
+    #[test]
+    fn subsecond_appears_in_check_names() {
+        assert_eq!(check_names_for("Subsecond"), SUBSECOND_CHECK_NAMES);
+        assert!(check_names_for("Subsecond").contains(&"200ms per block"));
+    }
+
+    #[test]
+    fn parse_hex_quantity_handles_prefixed_values() {
+        assert_eq!(parse_hex_quantity("0x10").unwrap(), 16);
+        assert_eq!(parse_hex_quantity("\"0x10\"").unwrap(), 16);
+        assert!(parse_hex_quantity("0xZZ").is_err());
+    }
+
+    #[test]
+    fn parse_hex_u256_low_u64_truncates_to_low_8_bytes() {
+        let full = format!("0x{:0>64}", "1234567890abcdef");
+        assert_eq!(parse_hex_u256_low_u64(&full).unwrap(), 0x1234_5678_90ab_cdef);
+        assert_eq!(parse_hex_u256_low_u64("0x").unwrap(), 0);
+    }
+
+    #[test]
+    fn header_timestamp_ms_prefers_explicit_field() {
+        assert_eq!(header_timestamp_ms(100, Some(100_400), Some(400)), Some(100_400));
+        assert_eq!(header_timestamp_ms(100, None, Some(400)), Some(100_400));
+        assert_eq!(header_timestamp_ms(100, None, None), None);
+    }
+
+    #[test]
+    fn evaluate_predeploy_code_passes_when_code_present_after() {
+        let r = evaluate_predeploy_code(CheckMode::After, &Ok("0xdeadbeef".to_string()));
+        assert_eq!(r.passed, Some(true));
+
+        let r = evaluate_predeploy_code(CheckMode::After, &Ok("0x".to_string()));
+        assert_eq!(r.passed, Some(false));
+    }
+
+    #[test]
+    fn evaluate_predeploy_code_accepts_missing_before() {
+        let r = evaluate_predeploy_code(CheckMode::Before, &Ok("0x".to_string()));
+        assert_eq!(r.passed, Some(true));
+    }
+
+    #[test]
+    fn evaluate_timestamp_ms_call_passes_after_with_value() {
+        let r = evaluate_timestamp_ms_call(CheckMode::After, &Ok(1_762_425_600_200));
+        assert_eq!(r.passed, Some(true));
+
+        let r = evaluate_timestamp_ms_call(CheckMode::After, &Ok(0));
+        assert_eq!(r.passed, Some(false));
+
+        let r = evaluate_timestamp_ms_call(CheckMode::After, &Err("revert".into()));
+        assert_eq!(r.passed, Some(false));
+    }
+
+    #[test]
+    fn evaluate_timestamp_ms_call_passes_before_with_revert_or_zero() {
+        let r = evaluate_timestamp_ms_call(CheckMode::Before, &Err("revert".into()));
+        assert_eq!(r.passed, Some(true));
+
+        let r = evaluate_timestamp_ms_call(CheckMode::Before, &Ok(0));
+        assert_eq!(r.passed, Some(true));
+
+        let r = evaluate_timestamp_ms_call(CheckMode::Before, &Ok(123));
+        assert_eq!(r.passed, Some(false));
+    }
+
+    #[test]
+    fn evaluate_header_timestamp_ms_field_after_validates_grid() {
+        // 0x64 = 100s, 0xc8 = 200ms part, 100*1000+200 = 100_200 = 0x18768.
+        let block = serde_json::json!({
+            "timestamp": "0x64",
+            "timestampMs": "0x18768",
+            "timestampMillisPart": "0xc8",
+        });
+        let r = evaluate_header_timestamp_ms_field(CheckMode::After, &block);
+        assert_eq!(r.passed, Some(true), "{}", r.detail);
+
+        // Inconsistent: timestampMs doesn't match seconds*1000 + part (100_201 = 0x18769).
+        let block = serde_json::json!({
+            "timestamp": "0x64",
+            "timestampMs": "0x18769",
+            "timestampMillisPart": "0xc8",
+        });
+        let r = evaluate_header_timestamp_ms_field(CheckMode::After, &block);
+        assert_eq!(r.passed, Some(false), "{}", r.detail);
+
+        // Bad grid alignment (part=100 isn't a multiple of 200), 100_100 = 0x18704.
+        let block = serde_json::json!({
+            "timestamp": "0x64",
+            "timestampMs": "0x18704",
+            "timestampMillisPart": "0x64",
+        });
+        let r = evaluate_header_timestamp_ms_field(CheckMode::After, &block);
+        assert_eq!(r.passed, Some(false), "{}", r.detail);
+    }
+
+    #[test]
+    fn evaluate_header_timestamp_ms_field_before_rejects_present_fields() {
+        let block = serde_json::json!({ "timestamp": "0x64" });
+        let r = evaluate_header_timestamp_ms_field(CheckMode::Before, &block);
+        assert_eq!(r.passed, Some(true), "{}", r.detail);
+
+        let block = serde_json::json!({
+            "timestamp": "0x64",
+            "timestampMs": "0x18768",
+            "timestampMillisPart": "0xc8",
+        });
+        let r = evaluate_header_timestamp_ms_field(CheckMode::Before, &block);
+        assert_eq!(r.passed, Some(false), "{}", r.detail);
+    }
+
+    #[test]
+    fn evaluate_basetime_matches_header_skips_before() {
+        let block = serde_json::json!({ "timestamp": "0x64" });
+        let r = evaluate_basetime_matches_header(CheckMode::Before, &Err("n/a".into()), &block);
+        assert_eq!(r.passed, None);
+    }
+
+    #[test]
+    fn evaluate_basetime_matches_header_compares_after() {
+        // 100*1000+200 = 100_200 = 0x18768.
+        let block = serde_json::json!({
+            "timestamp": "0x64",
+            "timestampMs": "0x18768",
+            "timestampMillisPart": "0xc8",
+        });
+        let r = evaluate_basetime_matches_header(CheckMode::After, &Ok(100_200), &block);
+        assert_eq!(r.passed, Some(true), "{}", r.detail);
+
+        let r = evaluate_basetime_matches_header(CheckMode::After, &Ok(100_400), &block);
+        assert_eq!(r.passed, Some(false), "{}", r.detail);
     }
 }
