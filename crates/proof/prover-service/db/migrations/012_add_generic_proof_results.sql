@@ -8,6 +8,8 @@ ALTER TABLE proof_requests ADD COLUMN IF NOT EXISTS submitted_by_worker_id TEXT;
 ALTER TABLE proof_requests ADD COLUMN IF NOT EXISTS submitted_lock_id TEXT;
 
 -- Preserve historical updated_at values while backfilling protocol results.
+BEGIN;
+
 ALTER TABLE proof_requests DISABLE TRIGGER update_proof_requests_updated_at;
 
 UPDATE proof_requests
@@ -46,6 +48,8 @@ WHERE result_payload IS NULL
   AND (stark_receipt IS NOT NULL OR snark_receipt IS NOT NULL);
 
 ALTER TABLE proof_requests ENABLE TRIGGER update_proof_requests_updated_at;
+
+COMMIT;
 
 COMMENT ON COLUMN proof_requests.result_payload IS 'Protocol ProofResult payload serialized as JSONB.';
 COMMENT ON COLUMN proof_requests.submitted_by_worker_id IS 'Worker id that submitted result_payload, when completed through the worker API.';
