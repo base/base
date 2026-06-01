@@ -86,6 +86,8 @@ echo "Working directory: $WORKDIR"
 
 # Step 1: Generate deploy-config.json from template
 echo ""
+# NOTE: deploy-config.json.template must stay valid JSON (no comments).
+# Its structure mirrors deploy_config_json() in etc/systems/src/config/deploy_config.rs.
 echo "--- Step 1: Generating deploy-config.json ---"
 envsubst <"$TEMPLATE_DIR/deploy-config.json.template" >"$WORKDIR/deploy-config/devnet.json"
 echo "Deploy config written to $WORKDIR/deploy-config/devnet.json"
