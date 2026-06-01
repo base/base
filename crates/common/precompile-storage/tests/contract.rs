@@ -556,9 +556,17 @@ mod packed_slot_layout {
             // offset_bytes=0 → bits [0..7]
             assert_eq!(raw & U256::from(0xFF_u32), U256::from(0xAB_u32), "low_byte at bits [0..7]");
             // offset_bytes=1 → bits [8..23]
-            assert_eq!((raw >> 8) & U256::from(0xFFFF_u32), U256::from(0x1234_u32), "mid_short at bits [8..23]");
+            assert_eq!(
+                (raw >> 8) & U256::from(0xFFFF_u32),
+                U256::from(0x1234_u32),
+                "mid_short at bits [8..23]"
+            );
             // offset_bytes=3 → bits [24..55]
-            assert_eq!((raw >> 24) & U256::from(0xFFFF_FFFF_u32), U256::from(0xDEAD_BEEF_u32), "mid_int at bits [24..55]");
+            assert_eq!(
+                (raw >> 24) & U256::from(0xFFFF_FFFF_u32),
+                U256::from(0xDEAD_BEEF_u32),
+                "mid_int at bits [24..55]"
+            );
             // offset_bytes=7 → bits [56..119]
             assert_eq!(
                 (raw >> 56) & U256::from(u64::MAX),
@@ -581,28 +589,56 @@ mod packed_slot_layout {
             layout.low_byte.write(0xFF_u8).unwrap();
             let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
             assert_eq!(raw & U256::from(0xFF_u32), U256::from(0xFF_u32));
-            assert_eq!((raw >> 8) & U256::from(0xFFFF_u32), U256::ZERO, "mid_short must be zero after writing only low_byte");
-            assert_eq!((raw >> 24) & U256::from(0xFFFF_FFFF_u32), U256::ZERO, "mid_int must be zero");
+            assert_eq!(
+                (raw >> 8) & U256::from(0xFFFF_u32),
+                U256::ZERO,
+                "mid_short must be zero after writing only low_byte"
+            );
+            assert_eq!(
+                (raw >> 24) & U256::from(0xFFFF_FFFF_u32),
+                U256::ZERO,
+                "mid_int must be zero"
+            );
             assert_eq!((raw >> 56) & U256::from(u64::MAX), U256::ZERO, "high_long must be zero");
 
             // Write mid_short; low_byte must be preserved exactly.
             layout.mid_short.write(0xABCD_u16).unwrap();
             let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
-            assert_eq!(raw & U256::from(0xFF_u32), U256::from(0xFF_u32), "low_byte must survive mid_short write");
+            assert_eq!(
+                raw & U256::from(0xFF_u32),
+                U256::from(0xFF_u32),
+                "low_byte must survive mid_short write"
+            );
             assert_eq!((raw >> 8) & U256::from(0xFFFF_u32), U256::from(0xABCD_u32));
-            assert_eq!((raw >> 24) & U256::from(0xFFFF_FFFF_u32), U256::ZERO, "mid_int must still be zero");
+            assert_eq!(
+                (raw >> 24) & U256::from(0xFFFF_FFFF_u32),
+                U256::ZERO,
+                "mid_int must still be zero"
+            );
 
             // Overwrite low_byte; mid_short must be preserved exactly.
             layout.low_byte.write(0x42_u8).unwrap();
             let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
             assert_eq!(raw & U256::from(0xFF_u32), U256::from(0x42_u32));
-            assert_eq!((raw >> 8) & U256::from(0xFFFF_u32), U256::from(0xABCD_u32), "mid_short must survive low_byte overwrite");
+            assert_eq!(
+                (raw >> 8) & U256::from(0xFFFF_u32),
+                U256::from(0xABCD_u32),
+                "mid_short must survive low_byte overwrite"
+            );
 
             // Write mid_int; previously written fields must be unchanged.
             layout.mid_int.write(0x1234_5678_u32).unwrap();
             let raw = ctx.sload(PACKED_ADDR, U256::ZERO).unwrap();
-            assert_eq!(raw & U256::from(0xFF_u32), U256::from(0x42_u32), "low_byte must survive mid_int write");
-            assert_eq!((raw >> 8) & U256::from(0xFFFF_u32), U256::from(0xABCD_u32), "mid_short must survive mid_int write");
+            assert_eq!(
+                raw & U256::from(0xFF_u32),
+                U256::from(0x42_u32),
+                "low_byte must survive mid_int write"
+            );
+            assert_eq!(
+                (raw >> 8) & U256::from(0xFFFF_u32),
+                U256::from(0xABCD_u32),
+                "mid_short must survive mid_int write"
+            );
             assert_eq!((raw >> 24) & U256::from(0xFFFF_FFFF_u32), U256::from(0x1234_5678_u32));
         });
     }
