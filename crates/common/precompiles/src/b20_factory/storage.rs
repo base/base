@@ -742,7 +742,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
         let params = IB20Factory::B20StablecoinCreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20Variant::Stablecoin.supported_version(),
             name: "Stablecoin Token".to_string(),
             symbol: "STB".to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
@@ -1242,45 +1242,6 @@ mod tests {
             );
             assert!(!token.has_role(B20TokenRole::DefaultAdmin.id(), initial_admin).unwrap());
             assert!(!token.has_role(B20TokenRole::DefaultAdmin.id(), Address::ZERO).unwrap());
-        });
-    }
-            salt: B256::repeat_byte(0x52),
-            params: params.abi_encode().into(),
-            initCalls: Vec::new(),
-        };
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            assert_output(
-                dispatch_factory_revert(ctx, call),
-                IB20Factory::MissingRequiredField { field: "isin".to_string() }.abi_encode(),
-            );
-        });
-
-        // Bad version with empty ISIN reverts with UnsupportedVersion, not MissingRequiredField.
-        let params_bad_version = IB20Factory::B20SecurityCreateParams {
-            version: B20Variant::Security.supported_version() + 1,
-            name: "Security Token".to_string(),
-            symbol: "SEC".to_string(),
-            initialAdmin: Address::repeat_byte(0xAB),
-            isin: String::new(),
-            minimumRedeemable: U256::ZERO,
-        };
-        let call_bad_version = IB20Factory::createB20Call {
-            variant: IB20Factory::B20Variant::SECURITY,
-            salt: B256::repeat_byte(0x53),
-            params: params_bad_version.abi_encode().into(),
-            initCalls: Vec::new(),
-        };
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            assert_output(
-                dispatch_factory_revert(ctx, call_bad_version),
-                IB20Factory::UnsupportedVersion {
-                    version: B20Variant::Security.supported_version() + 1,
-                    variant: IB20Factory::B20Variant::SECURITY,
-                }
-                .abi_encode(),
-            );
         });
     }
 
