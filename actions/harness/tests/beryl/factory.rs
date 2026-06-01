@@ -142,8 +142,7 @@ async fn b20_creation_reverts_while_variant_feature_is_deactivated() {
     assert!(env.user_tx_succeeded(&block2, 0), "first B-20 creation must succeed");
 
     let deactivate_b20_token = env.deactivate_feature_tx(BerylTestEnv::b20_token_feature());
-    let block3 =
-        env.sequencer.build_next_block_with_transactions(vec![deactivate_b20_token]).await;
+    let block3 = env.sequencer.build_next_block_with_transactions(vec![deactivate_b20_token]).await;
     assert!(env.user_tx_succeeded(&block3, 0), "B20_TOKEN deactivation must succeed");
 
     let create_while_deactivated = env.create_b20_token_with_salt_tx(BerylTestEnv::ALT_SALT);
@@ -155,8 +154,7 @@ async fn b20_creation_reverts_while_variant_feature_is_deactivated() {
     );
 
     let reactivate_b20_token = env.activate_feature_tx(BerylTestEnv::b20_token_feature());
-    let block5 =
-        env.sequencer.build_next_block_with_transactions(vec![reactivate_b20_token]).await;
+    let block5 = env.sequencer.build_next_block_with_transactions(vec![reactivate_b20_token]).await;
     assert!(env.user_tx_succeeded(&block5, 0), "B20_TOKEN re-activation must succeed");
 
     let create_after_reactivate = env.create_b20_token_with_salt_tx(BerylTestEnv::ALT_SALT);
