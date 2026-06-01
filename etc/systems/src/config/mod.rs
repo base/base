@@ -15,6 +15,6 @@ mod l1_genesis;
 /// L1 execution layer genesis configuration generators.
 pub use l1_genesis::{l1_el_genesis, l1_el_genesis_json};
 
-mod l2_intent;
-/// L2 intent configuration generator for op-deployer.
-pub use l2_intent::l2_intent_toml;
+mod deploy_config;
+/// L1 deploy configuration generator for base/contracts forge scripts.
+pub use deploy_config::deploy_config_json;
