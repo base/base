@@ -136,6 +136,7 @@ _install-nextest:
 
 # Env var: CONTRACTS_COMMIT overrides the base/contracts commit SHA (default in Dockerfile).
 [private]
+# Env var: CONTRACTS_COMMIT overrides the base/contracts commit SHA (default in Dockerfile).
 _build-setup-image:
     docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet \
         $(if [ -n "$CONTRACTS_COMMIT" ]; then echo "--build-arg CONTRACTS_COMMIT=$CONTRACTS_COMMIT"; fi) .
