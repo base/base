@@ -4,6 +4,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
+use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ValueEnum, builder::ArgPredicate};
 
 /// Transaction ordering strategy for the mempool.
@@ -140,6 +141,14 @@ pub struct RollupArgs {
     /// allowing it to find and connect to other Base nodes more efficiently.
     #[arg(long = "rollup.discovery.v5.base", default_value_t = true, action = clap::ArgAction::Set)]
     pub base_protocol: bool,
+
+    /// L1 upgrade signal observer arguments.
+    #[command(flatten)]
+    pub upgrade_signal: UpgradeSignalArgs,
+
+    /// Standalone execution-node L1 RPC argument for the upgrade signal observer.
+    #[command(flatten)]
+    pub upgrade_signal_l1_rpc: UpgradeSignalL1RpcArgs,
 }
 
 impl Default for RollupArgs {
@@ -159,12 +168,15 @@ impl Default for RollupArgs {
             proofs_history_prune_interval: Duration::from_secs(15),
             proofs_history_verification_interval: 0,
             base_protocol: true,
+            upgrade_signal: UpgradeSignalArgs::default(),
+            upgrade_signal_l1_rpc: UpgradeSignalL1RpcArgs::default(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::address;
     use clap::{Args, Parser};
 
     use super::*;
@@ -295,5 +307,27 @@ mod tests {
         ])
         .args;
         assert!(!args.base_protocol);
+    }
+
+    #[test]
+    fn test_parse_upgrade_signal_args() {
+        let contract = address!("0000000000000000000000000000000000000001");
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--upgrade-signal.contract",
+            "0x0000000000000000000000000000000000000001",
+            "--upgrade-signal.hardfork-id",
+            "azul",
+            "--upgrade-signal.l1-rpc",
+            "http://localhost:8545",
+        ])
+        .args;
+
+        assert_eq!(args.upgrade_signal.contract_address, Some(contract));
+        assert_eq!(args.upgrade_signal.hardfork_id.as_deref(), Some("azul"));
+        assert_eq!(
+            args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.as_ref().map(|url| url.as_str()),
+            Some("http://localhost:8545/")
+        );
     }
 }

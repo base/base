@@ -61,6 +61,7 @@ revm = { workspace = true, features = [
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 base-common-chains.workspace = true
+base-upgrade-signal.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }

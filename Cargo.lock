@@ -4366,6 +4366,7 @@ name = "base-execution-cli"
 version = "0.0.0"
 dependencies = [
  "alloy-eips 2.0.5",
+ "alloy-provider 2.0.5",
  "backon",
  "base-bundle-extension",
  "base-cli-utils",
@@ -4384,10 +4385,12 @@ dependencies = [
  "base-tx-forwarding",
  "base-txpool-rpc",
  "base-txpool-tracing",
+ "base-upgrade-signal",
  "clap",
  "eyre",
  "futures",
  "proptest",
+ "reth-chain-state",
  "reth-chainspec",
  "reth-cli",
  "reth-cli-commands",
@@ -4991,6 +4994,7 @@ dependencies = [
  "base-execution-trie",
  "base-execution-txpool",
  "base-node-core",
+ "base-upgrade-signal",
  "clap",
  "eyre",
  "futures",

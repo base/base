@@ -18,6 +18,7 @@ reth-discv5.workspace = true
 reth-net-nat.workspace = true
 reth-provider.workspace = true
 reth-network.workspace = true
+reth-chain-state.workspace = true
 reth-cli-util.workspace = true
 reth-node-core.workspace = true
 reth-chainspec.workspace = true
@@ -49,6 +50,7 @@ base-bundle-extension.workspace = true
 base-proofs-extension.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
+base-upgrade-signal = { workspace = true, features = ["metrics"] }
 
 # misc
 futures.workspace = true
@@ -60,6 +62,7 @@ tokio.workspace = true
 backon.workspace = true
 tracing.workspace = true
 alloy-eips.workspace = true
+alloy-provider.workspace = true
 secp256k1.workspace = true
 tokio-stream.workspace = true
 

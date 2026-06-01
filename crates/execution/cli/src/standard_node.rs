@@ -15,6 +15,8 @@ use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use url::Url;
 
+use crate::upgrade_signal::{ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalExtension};
+
 /// CLI arguments for a standard Base execution node.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Rollup")]
@@ -199,6 +201,9 @@ impl StandardBaseRethNode {
     /// Builds a runner with the standard Base execution-node extensions installed.
     pub fn runner(args: StandardNodeArgs) -> eyre::Result<BaseNodeRunner> {
         let mut runner = BaseNodeRunner::new(args.rpc.rollup_args.clone());
+        let upgrade_signal_config = args.rpc.rollup_args.upgrade_signal.config()?;
+        let upgrade_signal_l1_rpc =
+            args.rpc.rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
 
         // Create flashblocks config first so we can share its state with metering.
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
@@ -244,6 +249,17 @@ impl StandardBaseRethNode {
         runner.install_ext::<TxForwardingExtension>((&args).into());
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<ProofsHistoryExtension>(args.rpc.rollup_args);
+        if let Some(signal_config) = upgrade_signal_config {
+            let Some(l1_rpc) = upgrade_signal_l1_rpc else {
+                eyre::bail!(
+                    "--upgrade-signal.contract requires --upgrade-signal.l1-rpc for base-reth-node"
+                );
+            };
+            runner.install_ext::<ExecutionUpgradeSignalExtension>(ExecutionUpgradeSignalConfig {
+                signal_config,
+                l1_rpc,
+            });
+        }
 
         Ok(runner)
     }
