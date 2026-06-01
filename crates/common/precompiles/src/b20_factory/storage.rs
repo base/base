@@ -8,8 +8,8 @@ use revm::state::Bytecode;
 
 use crate::{
     ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20AssetToken, B20StablecoinInit,
-    B20StablecoinStorage, B20StablecoinToken, B20Token, B20TokenInit, B20TokenRole,
-    B20TokenStorage, B20Variant, IB20Factory, PolicyHandle, RoleManaged, Token,
+    B20StablecoinStorage, B20StablecoinToken, B20Token, B20TokenInit, B20TokenRole, B20TokenStorage,
+    B20Variant, IB20Factory, PolicyHandle, RoleManaged, Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -402,8 +402,8 @@ mod tests {
     use crate::{
         ActivationFeature, ActivationRegistryStorage, B20AssetStorage, B20AssetToken,
         B20FactoryStorage, B20StablecoinStorage, B20Token, B20TokenRole, B20TokenStorage,
-        B20Variant, IB20, IB20Factory, Mintable, Permittable, PolicyHandle, RoleManaged,
-        StablecoinAccounting, Token, TokenAccounting, Transferable,
+        B20Variant, IB20, IB20Factory, Mintable, Permittable, PolicyHandle, RoleManaged, Token,
+        TokenAccounting, Transferable,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -1407,14 +1407,14 @@ mod tests {
     fn create_b20_reverts_when_security_variant_deactivated() {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
-        deactivate_feature(&mut storage, ActivationFeature::B20Asset);
+        deactivate_feature(&mut storage, ActivationFeature::B20Security);
 
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0xD3);
         let call = IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::SECURITY,
             salt,
-            params: IB20Factory::B20AssetCreateParams {
+            params: IB20Factory::B20SecurityCreateParams {
                 version: 1,
                 name: "Security".to_string(),
                 symbol: "SEC".to_string(),
@@ -1430,7 +1430,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
             let result = factory.create_b20(caller, call);
-            assert!(result.is_err(), "create_b20 must revert when B20Asset is deactivated");
+            assert!(result.is_err(), "create_b20 must revert when B20Security is deactivated");
         });
     }
 
@@ -1553,7 +1553,7 @@ mod tests {
         let call = IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::SECURITY,
             salt,
-            params: IB20Factory::B20AssetCreateParams {
+            params: IB20Factory::B20SecurityCreateParams {
                 version: 1,
                 name: "Security".to_string(),
                 symbol: "SEC".to_string(),
@@ -1569,19 +1569,19 @@ mod tests {
         let token_addr = StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
             let addr = factory.create_b20(caller, call).unwrap();
-            let mut token = B20AssetToken::with_storage_and_policy(
-                B20AssetStorage::from_address(addr, ctx),
+            let mut token = B20SecurityToken::with_storage_and_policy(
+                B20SecurityStorage::from_address(addr, ctx),
                 PolicyHandle::new(ctx),
             );
             token.mint(alice, alice, U256::from(1000u64), true).unwrap();
             addr
         });
 
-        deactivate_feature(&mut storage, ActivationFeature::B20Asset);
+        deactivate_feature(&mut storage, ActivationFeature::B20Security);
 
         StorageCtx::enter(&mut storage, |ctx| {
-            let mut token = B20AssetToken::with_storage_and_policy(
-                B20AssetStorage::from_address(token_addr, ctx),
+            let mut token = B20SecurityToken::with_storage_and_policy(
+                B20SecurityStorage::from_address(token_addr, ctx),
                 PolicyHandle::new(ctx),
             );
 

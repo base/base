@@ -1,4 +1,4 @@
-//! `B20AssetToken` struct — the asset B-20 token type.
+//! `B20AssetToken` struct — the security B-20 token type.
 
 use alloc::{string::String, vec::Vec};
 
@@ -13,7 +13,7 @@ use crate::{
     Transferable,
 };
 
-/// EVM precompile for the asset B-20 variant.
+/// EVM precompile for the security B-20 variant.
 ///
 /// Mirrors the structure of [`crate::B20Token`] but requires `S: SecurityAccounting`
 /// so the dispatch layer can read and write security-specific storage (share ratio,

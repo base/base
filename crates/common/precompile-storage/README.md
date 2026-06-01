@@ -39,7 +39,7 @@ field with that type is automatically mounted at the type's namespace root:
 
 ```rust,ignore
 #[derive(Debug, Clone, Storable)]
-#[namespace("b20.asset")]
+#[namespace("b20.security")]
 pub struct B20AssetStorage {
     pub shares_to_tokens_ratio: U256,
 }
