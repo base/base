@@ -23,7 +23,7 @@ use alloy_primitives::{B256, BlockNumber};
 pub use change_set::*;
 pub use kv::*;
 use reth_db::{
-    BlockNumberList, TableSet, TableType, TableViewer,
+    TableSet, TableType, TableViewer,
     table::{DupSort, TableInfo},
     tables,
 };
@@ -93,10 +93,15 @@ tables! {
       type Value = BlockNumberHash;
     }
 
-    /// V2 hashed account history bitmap shards.
+    /// V2 hashed account history: per-row `(hashed_address, block_number)` membership.
+    ///
+    /// Replaces the previous bitmap-shard schema: each row records that the
+    /// account was touched at `block_number`. The row value carries only the
+    /// 8-byte block number subkey.
     table V2HashedAccountsHistory {
-        type Key = HashedAccountShardedKey;
-        type Value = BlockNumberList;
+        type Key = B256;
+        type Value = BlockNumberSubKey;
+        type SubKey = u64;
     }
 
     /// V2 hashed account old-value changesets.
@@ -112,10 +117,14 @@ tables! {
         type Value = Account;
     }
 
-    /// V2 hashed storage history bitmap shards.
+    /// V2 hashed storage history: per-row `((address, slot), block_number)` membership.
+    ///
+    /// Replaces the previous bitmap-shard schema. See [`V2HashedAccountsHistory`]
+    /// for the row encoding rationale.
     table V2HashedStoragesHistory {
-        type Key = HashedStorageShardedKey;
-        type Value = BlockNumberList;
+        type Key = HashedStorageKey;
+        type Value = BlockNumberSubKey;
+        type SubKey = u64;
     }
 
     /// V2 hashed storage old-value changesets.
@@ -132,10 +141,14 @@ tables! {
         type SubKey = B256;
     }
 
-    /// V2 account trie history bitmap shards.
+    /// V2 account trie history: per-row `(trie_path, block_number)` membership.
+    ///
+    /// Replaces the previous bitmap-shard schema. See [`V2HashedAccountsHistory`]
+    /// for the row encoding rationale.
     table V2AccountsTrieHistory {
-        type Key = AccountTrieShardedKey;
-        type Value = BlockNumberList;
+        type Key = StoredNibbles;
+        type Value = BlockNumberSubKey;
+        type SubKey = u64;
     }
 
     /// V2 account trie old-value changesets.
@@ -151,10 +164,14 @@ tables! {
         type Value = BranchNodeCompact;
     }
 
-    /// V2 storage trie history bitmap shards.
+    /// V2 storage trie history: per-row `((address, path), block_number)` membership.
+    ///
+    /// Replaces the previous bitmap-shard schema. See [`V2HashedAccountsHistory`]
+    /// for the row encoding rationale.
     table V2StoragesTrieHistory {
-        type Key = StorageTrieShardedKey;
-        type Value = BlockNumberList;
+        type Key = StorageTrieKey;
+        type Value = BlockNumberSubKey;
+        type SubKey = u64;
     }
 
     /// V2 storage trie old-value changesets.

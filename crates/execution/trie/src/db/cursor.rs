@@ -17,9 +17,8 @@ use reth_trie_common::{BranchNodeCompact, Nibbles, StoredNibbles, StoredNibblesS
 use crate::{
     BaseProofsStorageResult,
     db::{
-        AccountTrieHistory, AccountTrieShardedKey, BlockNumberHashedAddress, HashedAccountHistory,
-        HashedAccountShardedKey, HashedStorageHistory, HashedStorageKey, HashedStorageShardedKey,
-        MaybeDeleted, StorageTrieHistory, StorageTrieKey, StorageTrieShardedKey,
+        AccountTrieHistory, BlockNumberHashedAddress, BlockNumberSubKey, HashedAccountHistory,
+        HashedStorageHistory, HashedStorageKey, MaybeDeleted, StorageTrieHistory, StorageTrieKey,
         V2AccountTrieChangeSets, V2AccountsTrie, V2AccountsTrieHistory, V2HashedAccountChangeSets,
         V2HashedAccounts, V2HashedAccountsHistory, V2HashedStorageChangeSets, V2HashedStorages,
         V2HashedStoragesHistory, V2StorageTrieChangeSets, V2StoragesTrie, V2StoragesTrieHistory,
@@ -452,16 +451,23 @@ impl<K: Ord + Clone, V: Clone> MaterializedCursor<K, V> {
     }
 }
 
-fn first_change_after(list: impl Iterator<Item = u64>, block_number: u64) -> Option<u64> {
-    list.into_iter().find(|changed_at| *changed_at > block_number)
-}
-
-fn min_change_after(current: &mut Option<u64>, list: impl Iterator<Item = u64>, block_number: u64) {
-    // History shards are read in order. `None` means no future change was found for this key, so
-    // the materialized current-state value is already valid at `block_number`.
-    if let Some(changed_at) = first_change_after(list, block_number) {
-        *current = current.map_or(Some(changed_at), |existing| Some(existing.min(changed_at)));
-    }
+/// Returns the smallest block number > `max_block_number` at which `key`
+/// changed in history table `T`, or `None` if no later change exists.
+///
+/// With per-row `DupSort` history the lookup is O(log n) per key: a single
+/// `seek_by_key_subkey` to the first dup with subkey >= `max + 1`.
+fn first_change_after_max<T>(
+    cursor: &mut impl DbDupCursorRO<T>,
+    key: T::Key,
+    max_block_number: u64,
+) -> Result<Option<u64>, DatabaseError>
+where
+    T: Table<Value = BlockNumberSubKey> + DupSort<SubKey = u64>,
+{
+    let Some(next) = max_block_number.checked_add(1) else {
+        return Ok(None);
+    };
+    Ok(cursor.seek_by_key_subkey(key, next)?.map(|value| value.0))
 }
 
 fn trie_changeset_subkey(path: &StoredNibbles) -> StoredNibblesSubKey {
@@ -485,18 +491,22 @@ impl MdbxV2AccountCursor {
             current_row = current.next()?;
         }
 
+        // Walk distinct logical keys in the per-row history table with
+        // `next_no_dup` and use a second cursor to point-query the first dup
+        // strictly after `max_block_number` per key.
+        let mut history = tx.cursor_dup_read::<V2HashedAccountsHistory>()?;
+        let mut history_lookup = tx.cursor_dup_read::<V2HashedAccountsHistory>()?;
         let mut future_changes: BTreeMap<B256, Option<u64>> = BTreeMap::new();
-        let mut history = tx.cursor_read::<V2HashedAccountsHistory>()?;
-        let mut history_row = history.seek(HashedAccountShardedKey::new(B256::ZERO, 0))?;
-        while let Some((key, list)) = history_row {
-            let account_key = key.0.key;
-            min_change_after(
-                future_changes.entry(account_key).or_default(),
-                list.iter(),
+        let mut history_row = history.first()?;
+        while let Some((key, _)) = history_row {
+            let changed_at = first_change_after_max::<V2HashedAccountsHistory>(
+                &mut history_lookup,
+                key,
                 max_block_number,
-            );
-            rows.entry(account_key).or_insert(None);
-            history_row = history.next()?;
+            )?;
+            future_changes.insert(key, changed_at);
+            rows.entry(key).or_insert(None);
+            history_row = history.next_no_dup()?;
         }
 
         let mut changeset = tx.cursor_dup_read::<V2HashedAccountChangeSets>()?;
@@ -553,18 +563,19 @@ impl MdbxV2AccountTrieCursor {
             current_row = current.next()?;
         }
 
+        let mut history = tx.cursor_dup_read::<V2AccountsTrieHistory>()?;
+        let mut history_lookup = tx.cursor_dup_read::<V2AccountsTrieHistory>()?;
         let mut future_changes: BTreeMap<StoredNibbles, Option<u64>> = BTreeMap::new();
-        let mut history = tx.cursor_read::<V2AccountsTrieHistory>()?;
-        let mut history_row =
-            history.seek(AccountTrieShardedKey::new(StoredNibbles::default(), 0))?;
-        while let Some((key, list)) = history_row {
-            min_change_after(
-                future_changes.entry(key.key.clone()).or_default(),
-                list.iter(),
+        let mut history_row = history.first()?;
+        while let Some((key, _)) = history_row {
+            let changed_at = first_change_after_max::<V2AccountsTrieHistory>(
+                &mut history_lookup,
+                key.clone(),
                 max_block_number,
-            );
-            rows.entry(key.key).or_insert(None);
-            history_row = history.next()?;
+            )?;
+            future_changes.insert(key.clone(), changed_at);
+            rows.entry(key).or_insert(None);
+            history_row = history.next_no_dup()?;
         }
 
         let mut changeset = tx.cursor_dup_read::<V2AccountTrieChangeSets>()?;
@@ -645,19 +656,20 @@ impl MdbxV2StorageCursor {
             current_row = current.next()?;
         }
 
+        let mut history = tx.cursor_dup_read::<V2HashedStoragesHistory>()?;
+        let mut history_lookup = tx.cursor_dup_read::<V2HashedStoragesHistory>()?;
         let mut future_changes: BTreeMap<(B256, B256), Option<u64>> = BTreeMap::new();
-        let mut history = tx.cursor_read::<V2HashedStoragesHistory>()?;
-        let mut history_row =
-            history.seek(HashedStorageShardedKey::new(B256::ZERO, B256::ZERO, 0))?;
-        while let Some((key, list)) = history_row {
-            let storage_key = (key.hashed_address, key.sharded_key.key);
-            min_change_after(
-                future_changes.entry(storage_key).or_default(),
-                list.iter(),
+        let mut history_row = history.first()?;
+        while let Some((key, _)) = history_row {
+            let storage_key = (key.hashed_address, key.hashed_storage_key);
+            let changed_at = first_change_after_max::<V2HashedStoragesHistory>(
+                &mut history_lookup,
+                key.clone(),
                 max_block_number,
-            );
+            )?;
+            future_changes.insert(storage_key, changed_at);
             rows.entry(storage_key).or_insert(None);
-            history_row = history.next()?;
+            history_row = history.next_no_dup()?;
         }
 
         let mut changeset = tx.cursor_dup_read::<V2HashedStorageChangeSets>()?;
@@ -754,19 +766,20 @@ impl MdbxV2StorageTrieCursor {
             current_row = current.next()?;
         }
 
+        let mut history = tx.cursor_dup_read::<V2StoragesTrieHistory>()?;
+        let mut history_lookup = tx.cursor_dup_read::<V2StoragesTrieHistory>()?;
         let mut future_changes: BTreeMap<(B256, StoredNibbles), Option<u64>> = BTreeMap::new();
-        let mut history = tx.cursor_read::<V2StoragesTrieHistory>()?;
-        let mut history_row =
-            history.seek(StorageTrieShardedKey::new(B256::ZERO, StoredNibbles::default(), 0))?;
-        while let Some((key, list)) = history_row {
-            let storage_key = (key.hashed_address, key.key.clone());
-            min_change_after(
-                future_changes.entry(storage_key.clone()).or_default(),
-                list.iter(),
+        let mut history_row = history.first()?;
+        while let Some((key, _)) = history_row {
+            let storage_key = (key.hashed_address, key.path.clone());
+            let changed_at = first_change_after_max::<V2StoragesTrieHistory>(
+                &mut history_lookup,
+                key.clone(),
                 max_block_number,
-            );
+            )?;
+            future_changes.insert(storage_key.clone(), changed_at);
             rows.entry(storage_key).or_insert(None);
-            history_row = history.next()?;
+            history_row = history.next_no_dup()?;
         }
 
         let mut changeset = tx.cursor_dup_read::<V2StorageTrieChangeSets>()?;

@@ -1,7 +1,7 @@
 //! V2 proof storage table values.
 
 use alloy_primitives::B256;
-use bytes::BufMut;
+use bytes::{Buf, BufMut};
 use reth_codecs::Compact;
 use reth_db::{
     DatabaseError,
@@ -12,6 +12,54 @@ use reth_trie_common::{BranchNodeCompact, StoredNibblesSubKey};
 use serde::{Deserialize, Serialize};
 
 use super::key::NIBBLE_SUBKEY_LEN;
+
+/// `DupSort` row value that encodes only the block-number subkey.
+///
+/// V2 history tables map a logical key to the set of block numbers at which it
+/// changed. MDBX `DUPSORT` requires the value bytes to begin with the
+/// [`reth_db::table::DupSort::SubKey`] bytes so duplicates can be sorted; for
+/// these membership-only rows the value carries exactly the block number and
+/// nothing else, keeping each row to 8 bytes.
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub struct BlockNumberSubKey(pub u64);
+
+impl From<u64> for BlockNumberSubKey {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+impl From<BlockNumberSubKey> for u64 {
+    fn from(value: BlockNumberSubKey) -> Self {
+        value.0
+    }
+}
+
+impl ValueWithSubKey for BlockNumberSubKey {
+    type SubKey = u64;
+
+    fn get_subkey(&self) -> Self::SubKey {
+        self.0
+    }
+}
+
+impl Compress for BlockNumberSubKey {
+    type Compressed = Vec<u8>;
+
+    fn compress_to_buf<B: BufMut + AsMut<[u8]>>(&self, buf: &mut B) {
+        buf.put_u64(self.0);
+    }
+}
+
+impl Decompress for BlockNumberSubKey {
+    fn decompress(value: &[u8]) -> Result<Self, DatabaseError> {
+        if value.len() != 8 {
+            return Err(DatabaseError::Decode);
+        }
+        let mut buf: &[u8] = value;
+        Ok(Self(buf.get_u64()))
+    }
+}
 
 /// Previous account value stored in V2 hashed account changesets.
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]

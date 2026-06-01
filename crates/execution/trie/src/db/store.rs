@@ -7,8 +7,8 @@ use eyre::WrapErr;
 #[cfg(feature = "metrics")]
 use metrics::{Label, gauge};
 use reth_db::{
-    BlockNumberList, Database, DatabaseEnv, DatabaseError,
-    cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO},
+    Database, DatabaseEnv, DatabaseError,
+    cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW},
     mdbx::{DatabaseArguments, init_db_for},
     table::{DupSort, Table},
     transaction::{DbTx, DbTxMut},
@@ -36,17 +36,24 @@ use crate::{
         MdbxBatchSession, MdbxV2AccountCursor, MdbxV2AccountTrieCursor, MdbxV2StorageCursor,
         MdbxV2StorageTrieCursor,
         models::{
-            AccountTrieHistory, AccountTrieShardedKey, BlockChangeSet, BlockNumberHashedAddress,
-            ChangeSet, HashedAccountBeforeTx, HashedAccountHistory, HashedAccountShardedKey,
-            HashedStorageHistory, HashedStorageKey, HashedStorageShardedKey, StorageTrieHistory,
-            StorageTrieKey, StorageTrieShardedKey, TrieChangeSetsEntry, V2AccountTrieChangeSets,
-            V2AccountsTrie, V2AccountsTrieHistory, V2HashedAccountChangeSets, V2HashedAccounts,
-            V2HashedAccountsHistory, V2HashedStorageChangeSets, V2HashedStorages,
-            V2HashedStoragesHistory, V2ProofWindow, V2StorageTrieChangeSets, V2StoragesTrie,
-            V2StoragesTrieHistory,
+            AccountTrieHistory, BlockChangeSet, BlockNumberHashedAddress, BlockNumberSubKey,
+            ChangeSet, HashedAccountBeforeTx, HashedAccountHistory, HashedStorageHistory,
+            HashedStorageKey, StorageTrieHistory, StorageTrieKey, TrieChangeSetsEntry,
+            V2AccountTrieChangeSets, V2AccountsTrie, V2AccountsTrieHistory,
+            V2HashedAccountChangeSets, V2HashedAccounts, V2HashedAccountsHistory,
+            V2HashedStorageChangeSets, V2HashedStorages, V2HashedStoragesHistory, V2ProofWindow,
+            V2StorageTrieChangeSets, V2StoragesTrie, V2StoragesTrieHistory,
         },
     },
 };
+
+/// Current on-disk version of the V2 proof storage schema.
+///
+/// Bumped when an incompatible change is made to the V2 tables. Existing
+/// databases with an older marker are rejected so the node forces a clean
+/// re-sync. Version 3 introduced per-row `DupSort` history tables in place of
+/// the bitmap-shard layout used by version 2.
+const V2_SCHEMA_VERSION: u64 = 3;
 
 /// MDBX implementation of [`BaseProofsStore`].
 #[derive(Debug)]
@@ -68,64 +75,6 @@ struct HistoryDeleteBatch {
     hashed_storage: Vec<(<HashedStorageHistory as Table>::Key, u64)>,
 }
 
-const NUM_OF_INDICES_IN_SHARD: usize = 2_000;
-
-trait V2HistoryShardKey: Clone + Ord {
-    type LogicalKey: Eq;
-
-    fn logical_key(&self) -> Self::LogicalKey;
-
-    fn with_highest_block(&self, highest_block_number: u64) -> Self;
-}
-
-impl V2HistoryShardKey for HashedAccountShardedKey {
-    type LogicalKey = B256;
-
-    fn logical_key(&self) -> Self::LogicalKey {
-        self.0.key
-    }
-
-    fn with_highest_block(&self, highest_block_number: u64) -> Self {
-        Self::new(self.0.key, highest_block_number)
-    }
-}
-
-impl V2HistoryShardKey for HashedStorageShardedKey {
-    type LogicalKey = (B256, B256);
-
-    fn logical_key(&self) -> Self::LogicalKey {
-        (self.hashed_address, self.sharded_key.key)
-    }
-
-    fn with_highest_block(&self, highest_block_number: u64) -> Self {
-        Self::new(self.hashed_address, self.sharded_key.key, highest_block_number)
-    }
-}
-
-impl V2HistoryShardKey for AccountTrieShardedKey {
-    type LogicalKey = StoredNibbles;
-
-    fn logical_key(&self) -> Self::LogicalKey {
-        self.key.clone()
-    }
-
-    fn with_highest_block(&self, highest_block_number: u64) -> Self {
-        Self::new(self.key.clone(), highest_block_number)
-    }
-}
-
-impl V2HistoryShardKey for StorageTrieShardedKey {
-    type LogicalKey = (B256, StoredNibbles);
-
-    fn logical_key(&self) -> Self::LogicalKey {
-        (self.hashed_address, self.key.clone())
-    }
-
-    fn with_highest_block(&self, highest_block_number: u64) -> Self {
-        Self::new(self.hashed_address, self.key.clone(), highest_block_number)
-    }
-}
-
 impl MdbxProofsStorage {
     /// Creates a new [`MdbxProofsStorage`] instance with the given path.
     pub fn new(path: &Path) -> Result<Self, BaseProofsStorageError> {
@@ -138,7 +87,7 @@ impl MdbxProofsStorage {
     fn validate_v2_schema(tx: &impl DbTx) -> BaseProofsStorageResult<()> {
         let mut cursor = tx.cursor_read::<V2ProofWindow>()?;
         if let Some((_, marker)) = cursor.seek_exact(ProofWindowKey::SchemaVersion)? {
-            if marker.number() == 2 {
+            if marker.number() == V2_SCHEMA_VERSION {
                 return Ok(());
             }
             return Err(BaseProofsStorageError::UnsupportedSchemaVersion {
@@ -251,7 +200,7 @@ impl MdbxProofsStorage {
         let mut v2_cursor = tx.cursor_write::<V2ProofWindow>()?;
         v2_cursor
             .upsert(ProofWindowKey::EarliestBlock, &BlockNumberHash::new(block_number, hash))?;
-        v2_cursor.upsert(ProofWindowKey::SchemaVersion, &BlockNumberHash::new(2, B256::ZERO))?;
+        v2_cursor.upsert(ProofWindowKey::SchemaVersion, &BlockNumberHash::new(V2_SCHEMA_VERSION, B256::ZERO))?;
         Ok(())
     }
 
@@ -263,7 +212,7 @@ impl MdbxProofsStorage {
     ) -> BaseProofsStorageResult<()> {
         let mut v2_cursor = tx.cursor_write::<V2ProofWindow>()?;
         v2_cursor.upsert(ProofWindowKey::LatestBlock, &BlockNumberHash::new(block_number, hash))?;
-        v2_cursor.upsert(ProofWindowKey::SchemaVersion, &BlockNumberHash::new(2, B256::ZERO))?;
+        v2_cursor.upsert(ProofWindowKey::SchemaVersion, &BlockNumberHash::new(V2_SCHEMA_VERSION, B256::ZERO))?;
         Ok(())
     }
 
@@ -306,17 +255,19 @@ impl MdbxProofsStorage {
     fn delete_history_ranged(
         &self,
         tx: &(impl DbTxMut + DbTx),
-        block_range: impl RangeBounds<u64>,
+        block_range: impl RangeBounds<u64> + Clone,
         history: HistoryDeleteBatch,
     ) -> BaseProofsStorageResult<WriteCounts> {
         let mut change_set_cursor = tx.cursor_write::<BlockChangeSet>()?;
-        let mut walker = change_set_cursor.walk_range(block_range)?;
+        let mut walker = change_set_cursor.walk_range(block_range.clone())?;
 
         while let Some(Ok((_, _))) = walker.next() {
             walker.delete_current()?;
         }
+        drop(walker);
 
-        Self::delete_v2_history_batch(tx, &history)?;
+        Self::delete_v2_history_rows(tx, &history)?;
+        Self::delete_v2_change_sets_in_range(tx, block_range)?;
 
         Ok(WriteCounts {
             account_trie_updates_written_total: history.account_trie.len() as u64,
@@ -326,56 +277,134 @@ impl MdbxProofsStorage {
         })
     }
 
-    fn delete_v2_history_batch(
+    /// Delete the per-row `(key, block_number)` entries from each V2 history
+    /// table.
+    fn delete_v2_history_rows(
         tx: &(impl DbTxMut + DbTx),
         history: &HistoryDeleteBatch,
     ) -> BaseProofsStorageResult<()> {
+        // Sorted-by-(key, block_number) inputs let MDBX walk each B-tree leaf
+        // page once instead of bouncing between distant pages.
+        let mut cursor = tx.cursor_dup_write::<V2AccountsTrieHistory>()?;
         for (key, block_number) in &history.account_trie {
-            let subkey = StoredNibblesSubKey::from(key.0);
-            Self::delete_dup_current::<V2AccountTrieChangeSets>(tx, *block_number, subkey)?;
-            Self::remove_v2_history::<V2AccountsTrieHistory>(
-                tx,
-                AccountTrieShardedKey::new(key.clone(), u64::MAX),
-                *block_number,
-            )?;
+            Self::delete_history_row(&mut cursor, key.clone(), *block_number)?;
         }
 
+        let mut cursor = tx.cursor_dup_write::<V2StoragesTrieHistory>()?;
         for (key, block_number) in &history.storage_trie {
-            let subkey = StoredNibblesSubKey::from(key.path.0);
-            Self::delete_dup_current::<V2StorageTrieChangeSets>(
-                tx,
-                BlockNumberHashedAddress((*block_number, key.hashed_address)),
-                subkey,
-            )?;
-            Self::remove_v2_history::<V2StoragesTrieHistory>(
-                tx,
-                StorageTrieShardedKey::new(key.hashed_address, key.path.clone(), u64::MAX),
-                *block_number,
-            )?;
+            Self::delete_history_row(&mut cursor, key.clone(), *block_number)?;
         }
 
+        let mut cursor = tx.cursor_dup_write::<V2HashedAccountsHistory>()?;
         for (key, block_number) in &history.hashed_account {
-            Self::delete_dup_current::<V2HashedAccountChangeSets>(tx, *block_number, *key)?;
-            Self::remove_v2_history::<V2HashedAccountsHistory>(
-                tx,
-                HashedAccountShardedKey::new(*key, u64::MAX),
-                *block_number,
-            )?;
+            Self::delete_history_row(&mut cursor, *key, *block_number)?;
         }
 
+        let mut cursor = tx.cursor_dup_write::<V2HashedStoragesHistory>()?;
         for (key, block_number) in &history.hashed_storage {
-            Self::delete_dup_current::<V2HashedStorageChangeSets>(
-                tx,
-                BlockNumberHashedAddress((*block_number, key.hashed_address)),
-                key.hashed_storage_key,
-            )?;
-            Self::remove_v2_history::<V2HashedStoragesHistory>(
-                tx,
-                HashedStorageShardedKey::new(key.hashed_address, key.hashed_storage_key, u64::MAX),
-                *block_number,
-            )?;
+            Self::delete_history_row(&mut cursor, key.clone(), *block_number)?;
         }
 
+        Ok(())
+    }
+
+    /// Drop every changeset entry whose block is contained in `block_range`.
+    ///
+    /// Uses MDBX's `MDBX_NODUPDATA` primitive (`delete_current_duplicates`) to
+    /// remove every duplicate under a key in one operation instead of
+    /// iterating and deleting per dup.
+    fn delete_v2_change_sets_in_range(
+        tx: &(impl DbTxMut + DbTx),
+        block_range: impl RangeBounds<u64> + Clone,
+    ) -> BaseProofsStorageResult<()> {
+        // Block-keyed changesets: the key IS the block number, so seek_exact +
+        // delete_current_duplicates drops the whole block in a single call.
+        Self::drop_block_keyed_changesets::<V2AccountTrieChangeSets, _>(tx, block_range.clone())?;
+        Self::drop_block_keyed_changesets::<V2HashedAccountChangeSets, _>(tx, block_range.clone())?;
+
+        // (block, address)-keyed changesets: walk distinct keys with
+        // `next_no_dup` and bulk-drop each via `delete_current_duplicates`.
+        Self::drop_block_address_keyed_changesets::<V2StorageTrieChangeSets, _>(
+            tx,
+            block_range.clone(),
+        )?;
+        Self::drop_block_address_keyed_changesets::<V2HashedStorageChangeSets, _>(
+            tx,
+            block_range,
+        )?;
+        Ok(())
+    }
+
+    fn drop_block_keyed_changesets<T, R>(
+        tx: &(impl DbTxMut + DbTx),
+        block_range: R,
+    ) -> BaseProofsStorageResult<()>
+    where
+        T: Table<Key = u64> + DupSort,
+        R: RangeBounds<u64>,
+    {
+        let mut cursor = tx.cursor_dup_write::<T>()?;
+        let mut walker = cursor.walk_range(block_range)?;
+        while let Some(row) = walker.next() {
+            row?;
+            walker.delete_current_duplicates()?;
+        }
+        Ok(())
+    }
+
+    fn drop_block_address_keyed_changesets<T, R>(
+        tx: &(impl DbTxMut + DbTx),
+        block_range: R,
+    ) -> BaseProofsStorageResult<()>
+    where
+        T: Table<Key = BlockNumberHashedAddress> + DupSort,
+        R: RangeBounds<u64>,
+    {
+        let lo = match block_range.start_bound() {
+            std::ops::Bound::Included(n) => BlockNumberHashedAddress((*n, B256::ZERO)),
+            std::ops::Bound::Excluded(n) => {
+                let Some(next) = n.checked_add(1) else {
+                    return Ok(());
+                };
+                BlockNumberHashedAddress((next, B256::ZERO))
+            }
+            std::ops::Bound::Unbounded => BlockNumberHashedAddress((0, B256::ZERO)),
+        };
+        let hi = match block_range.end_bound() {
+            std::ops::Bound::Included(n) => Some(*n),
+            std::ops::Bound::Excluded(n) => n.checked_sub(1),
+            std::ops::Bound::Unbounded => Some(u64::MAX),
+        };
+        let Some(hi) = hi else {
+            return Ok(());
+        };
+
+        let mut cursor = tx.cursor_dup_write::<T>()?;
+        let mut row = cursor.seek(lo)?;
+        while let Some((BlockNumberHashedAddress((block, _)), _)) = &row {
+            if *block > hi {
+                break;
+            }
+            cursor.delete_current_duplicates()?;
+            row = cursor.next_no_dup()?;
+        }
+        Ok(())
+    }
+
+    fn delete_history_row<T, C>(
+        cursor: &mut C,
+        key: T::Key,
+        block_number: u64,
+    ) -> BaseProofsStorageResult<()>
+    where
+        T: Table<Value = BlockNumberSubKey> + DupSort<SubKey = u64>,
+        C: DbCursorRW<T> + DbDupCursorRO<T>,
+    {
+        if let Some(value) = cursor.seek_by_key_subkey(key, block_number)?
+            && value.0 == block_number
+        {
+            cursor.delete_current()?;
+        }
         Ok(())
     }
 
@@ -533,7 +562,7 @@ impl MdbxProofsStorage {
             )?;
             Self::append_v2_history::<V2AccountsTrieHistory>(
                 tx,
-                AccountTrieShardedKey::new(current_key.clone(), u64::MAX),
+                current_key.clone(),
                 block_number,
             )?;
 
@@ -552,7 +581,7 @@ impl MdbxProofsStorage {
                 .upsert(block_number, &HashedAccountBeforeTx::new(*hashed_address, old))?;
             Self::append_v2_history::<V2HashedAccountsHistory>(
                 tx,
-                HashedAccountShardedKey::new(*hashed_address, u64::MAX),
+                *hashed_address,
                 block_number,
             )?;
 
@@ -590,11 +619,7 @@ impl MdbxProofsStorage {
                     )?;
                     Self::append_v2_history::<V2StoragesTrieHistory>(
                         tx,
-                        StorageTrieShardedKey::new(
-                            *hashed_address,
-                            StoredNibbles(entry.nibbles.0),
-                            u64::MAX,
-                        ),
+                        StorageTrieKey::new(*hashed_address, StoredNibbles(entry.nibbles.0)),
                         block_number,
                     )?;
                     Self::delete_dup_current::<V2StoragesTrie>(tx, *hashed_address, entry.nibbles)?;
@@ -618,7 +643,7 @@ impl MdbxProofsStorage {
                     )?;
                     Self::append_v2_history::<V2StoragesTrieHistory>(
                         tx,
-                        StorageTrieShardedKey::new(*hashed_address, StoredNibbles(*path), u64::MAX),
+                        StorageTrieKey::new(*hashed_address, StoredNibbles(*path)),
                         block_number,
                     )?;
                 }
@@ -658,7 +683,7 @@ impl MdbxProofsStorage {
                     )?;
                     Self::append_v2_history::<V2HashedStoragesHistory>(
                         tx,
-                        HashedStorageShardedKey::new(*hashed_address, entry.key, u64::MAX),
+                        HashedStorageKey::new(*hashed_address, entry.key),
                         block_number,
                     )?;
                     Self::delete_dup_current::<V2HashedStorages>(tx, *hashed_address, entry.key)?;
@@ -682,11 +707,7 @@ impl MdbxProofsStorage {
                     )?;
                     Self::append_v2_history::<V2HashedStoragesHistory>(
                         tx,
-                        HashedStorageShardedKey::new(
-                            *hashed_address,
-                            *hashed_storage_key,
-                            u64::MAX,
-                        ),
+                        HashedStorageKey::new(*hashed_address, *hashed_storage_key),
                         block_number,
                     )?;
                 }
@@ -709,126 +730,38 @@ impl MdbxProofsStorage {
         Ok(change_set)
     }
 
+    /// Record that `key` was touched at `block_number` in history table `T`.
+    ///
+    /// With the per-row schema this is a single `upsert` against the `DupSort`
+    /// table — no shard read-modify-write loop.
     fn append_v2_history<T>(
         tx: &(impl DbTxMut + DbTx),
         key: T::Key,
         block_number: u64,
     ) -> BaseProofsStorageResult<()>
     where
-        T: Table<Value = BlockNumberList>,
-        T::Key: V2HistoryShardKey,
+        T: Table<Value = BlockNumberSubKey> + DupSort<SubKey = u64>,
     {
-        let mut cursor = tx.cursor_write::<T>()?;
-        let logical_key = key.logical_key();
-        let first_key = key.with_highest_block(0);
-        let mut row = cursor.seek(first_key)?;
-        let mut old_keys = Vec::new();
-        let mut block_numbers = BTreeSet::new();
-
-        while let Some((history_key, list)) = row {
-            if history_key.logical_key() != logical_key {
-                break;
-            }
-            old_keys.push(history_key);
-            block_numbers.extend(list.iter());
-            row = cursor.next()?;
-        }
-
-        block_numbers.insert(block_number);
-        for old_key in old_keys {
-            if cursor.seek_exact(old_key)?.is_some() {
-                cursor.delete_current()?;
-            }
-        }
-
-        let blocks = block_numbers.into_iter().collect::<Vec<_>>();
-        if blocks.is_empty() {
-            return Ok(());
-        }
-        let chunk_count = blocks.len().div_ceil(NUM_OF_INDICES_IN_SHARD);
-        for (index, chunk) in blocks.chunks(NUM_OF_INDICES_IN_SHARD).enumerate() {
-            let highest_block_number = if index + 1 == chunk_count {
-                u64::MAX
-            } else {
-                *chunk.last().expect("non-empty history shard")
-            };
-            cursor.upsert(
-                key.with_highest_block(highest_block_number),
-                &BlockNumberList::new_pre_sorted(chunk.iter().copied()),
-            )?;
-        }
+        let mut cursor = tx.cursor_dup_write::<T>()?;
+        // `upsert` is idempotent against `(key, block_number)`: if the row
+        // already exists MDBX will overwrite it with the same bytes.
+        cursor.upsert(key, &BlockNumberSubKey(block_number))?;
         Ok(())
     }
 
-    fn remove_v2_history<T>(
-        tx: &(impl DbTxMut + DbTx),
-        key: T::Key,
-        block_number: u64,
-    ) -> BaseProofsStorageResult<()>
-    where
-        T: Table<Value = BlockNumberList>,
-        T::Key: V2HistoryShardKey,
-    {
-        let mut cursor = tx.cursor_write::<T>()?;
-        let logical_key = key.logical_key();
-        let first_key = key.with_highest_block(0);
-        let mut row = cursor.seek(first_key)?;
-        let mut old_keys = Vec::new();
-        let mut block_numbers = BTreeSet::new();
-
-        while let Some((history_key, list)) = row {
-            if history_key.logical_key() != logical_key {
-                break;
-            }
-            old_keys.push(history_key);
-            block_numbers.extend(list.iter().filter(|changed_at| *changed_at != block_number));
-            row = cursor.next()?;
-        }
-
-        for old_key in old_keys {
-            if cursor.seek_exact(old_key)?.is_some() {
-                cursor.delete_current()?;
-            }
-        }
-
-        let blocks = block_numbers.into_iter().collect::<Vec<_>>();
-        let chunk_count = blocks.len().div_ceil(NUM_OF_INDICES_IN_SHARD);
-        for (index, chunk) in blocks.chunks(NUM_OF_INDICES_IN_SHARD).enumerate() {
-            let highest_block_number = if index + 1 == chunk_count {
-                u64::MAX
-            } else {
-                *chunk.last().expect("non-empty history shard")
-            };
-            cursor.upsert(
-                key.with_highest_block(highest_block_number),
-                &BlockNumberList::new_pre_sorted(chunk.iter().copied()),
-            )?;
-        }
-        Ok(())
-    }
-
+    /// Return true iff `key` has a history entry at exactly `block_number`.
     fn v2_history_contains<T>(
         tx: &impl DbTx,
         key: T::Key,
         block_number: u64,
     ) -> BaseProofsStorageResult<bool>
     where
-        T: Table<Value = BlockNumberList>,
-        T::Key: V2HistoryShardKey,
+        T: Table<Value = BlockNumberSubKey> + DupSort<SubKey = u64>,
     {
-        let logical_key = key.logical_key();
-        let mut cursor = tx.cursor_read::<T>()?;
-        let mut row = cursor.seek(key.with_highest_block(0))?;
-        while let Some((history_key, list)) = row {
-            if history_key.logical_key() != logical_key {
-                return Ok(false);
-            }
-            if list.contains(block_number) {
-                return Ok(true);
-            }
-            row = cursor.next()?;
-        }
-        Ok(false)
+        let mut cursor = tx.cursor_dup_read::<T>()?;
+        Ok(cursor
+            .seek_by_key_subkey(key, block_number)?
+            .is_some_and(|value| value.0 == block_number))
     }
 
     /// Append-only writer for a block: validates parent, persists diff (soft-delete=true),
@@ -1045,7 +978,7 @@ impl BaseProofsStore for MdbxProofsStorage {
             for key in change_set.account_trie_keys {
                 if !Self::v2_history_contains::<V2AccountsTrieHistory>(
                     tx,
-                    AccountTrieShardedKey::new(key.clone(), u64::MAX),
+                    key.clone(),
                     block_number,
                 )? {
                     return Err(BaseProofsStorageError::MissingAccountTrieHistory(
@@ -1064,7 +997,7 @@ impl BaseProofsStore for MdbxProofsStorage {
             for key in change_set.storage_trie_keys {
                 if !Self::v2_history_contains::<V2StoragesTrieHistory>(
                     tx,
-                    StorageTrieShardedKey::new(key.hashed_address, key.path.clone(), u64::MAX),
+                    StorageTrieKey::new(key.hashed_address, key.path.clone()),
                     block_number,
                 )? {
                     return Err(BaseProofsStorageError::MissingStorageTrieHistory(
@@ -1102,7 +1035,7 @@ impl BaseProofsStore for MdbxProofsStorage {
             for key in change_set.hashed_account_keys {
                 if !Self::v2_history_contains::<V2HashedAccountsHistory>(
                     tx,
-                    HashedAccountShardedKey::new(key, u64::MAX),
+                    key,
                     block_number,
                 )? {
                     return Err(BaseProofsStorageError::MissingHashedAccountHistory(
@@ -1120,11 +1053,7 @@ impl BaseProofsStore for MdbxProofsStorage {
             for key in change_set.hashed_storage_keys {
                 if !Self::v2_history_contains::<V2HashedStoragesHistory>(
                     tx,
-                    HashedStorageShardedKey::new(
-                        key.hashed_address,
-                        key.hashed_storage_key,
-                        u64::MAX,
-                    ),
+                    HashedStorageKey::new(key.hashed_address, key.hashed_storage_key),
                     block_number,
                 )? {
                     return Err(BaseProofsStorageError::MissingHashedStorageHistory {
@@ -1328,7 +1257,7 @@ impl BaseProofsInitialStateStore for MdbxProofsStorage {
         self.env.update(|tx| {
             let mut v2_cur = tx.cursor_write::<V2ProofWindow>()?;
             v2_cur.insert(ProofWindowKey::InitialStateAnchor, &anchor.into())?;
-            v2_cur.upsert(ProofWindowKey::SchemaVersion, &BlockNumberHash::new(2, B256::ZERO))?;
+            v2_cur.upsert(ProofWindowKey::SchemaVersion, &BlockNumberHash::new(V2_SCHEMA_VERSION, B256::ZERO))?;
             Ok(())
         })?
     }
@@ -1714,9 +1643,11 @@ mod tests {
     fn schema_validation_rejects_wrong_v2_version() {
         let dir = TempDir::new().unwrap();
         let env = init_db_for::<_, Tables>(dir.path(), DatabaseArguments::default()).expect("env");
+        // Write the previous schema version (2) — the per-row history schema
+        // bump should reject it and force a clean re-sync.
         env.update(|tx| {
             tx.cursor_write::<V2ProofWindow>()?
-                .upsert(ProofWindowKey::SchemaVersion, &BlockNumberHash::new(3, B256::ZERO))?;
+                .upsert(ProofWindowKey::SchemaVersion, &BlockNumberHash::new(2, B256::ZERO))?;
             Ok::<(), DatabaseError>(())
         })
         .unwrap()
@@ -1726,7 +1657,7 @@ mod tests {
         let err = MdbxProofsStorage::new(dir.path()).expect_err("wrong schema must fail");
         assert!(matches!(
             err,
-            BaseProofsStorageError::UnsupportedSchemaVersion { actual: Some(3) }
+            BaseProofsStorageError::UnsupportedSchemaVersion { actual: Some(2) }
         ));
     }
 
@@ -1793,15 +1724,15 @@ mod tests {
             .expect("changeset entry");
         assert_eq!(old.info, Some(first));
 
-        let blocks = tx
-            .cursor_read::<V2HashedAccountsHistory>()
-            .unwrap()
-            .seek_exact(HashedAccountShardedKey::new(address, u64::MAX))
-            .unwrap()
-            .expect("history entry")
-            .1;
-        assert!(blocks.contains(1));
-        assert!(blocks.contains(2));
+        let mut history_cursor = tx.cursor_dup_read::<V2HashedAccountsHistory>().unwrap();
+        let mut blocks = Vec::new();
+        let mut row = history_cursor.seek_by_key_subkey(address, 0).unwrap();
+        while let Some(value) = row {
+            blocks.push(value.0);
+            row = history_cursor.next_dup_val().unwrap();
+        }
+        assert!(blocks.contains(&1));
+        assert!(blocks.contains(&2));
 
         let change_set = tx.cursor_read::<BlockChangeSet>().unwrap().seek_exact(2).unwrap();
         assert!(change_set.expect("block index").1.hashed_account_keys.contains(&address));
@@ -2081,25 +2012,17 @@ mod tests {
         assert!(tx.cursor_read::<BlockChangeSet>().unwrap().seek_exact(1).unwrap().is_none());
         assert!(tx.cursor_read::<BlockChangeSet>().unwrap().seek_exact(2).unwrap().is_none());
         assert!(
-            !MdbxProofsStorage::v2_history_contains::<V2HashedAccountsHistory>(
-                &tx,
-                HashedAccountShardedKey::new(address, u64::MAX),
-                1,
-            )
-            .unwrap()
+            !MdbxProofsStorage::v2_history_contains::<V2HashedAccountsHistory>(&tx, address, 1)
+                .unwrap()
         );
         assert!(
-            !MdbxProofsStorage::v2_history_contains::<V2HashedAccountsHistory>(
-                &tx,
-                HashedAccountShardedKey::new(address, u64::MAX),
-                2,
-            )
-            .unwrap()
+            !MdbxProofsStorage::v2_history_contains::<V2HashedAccountsHistory>(&tx, address, 2)
+                .unwrap()
         );
     }
 
     #[test]
-    fn prune_deletes_all_v2_history_shards() {
+    fn prune_deletes_all_v2_history_rows() {
         let dir = TempDir::new().unwrap();
         let store = MdbxProofsStorage::new(dir.path()).expect("env");
         let address = B256::from([0x33; 32]);
@@ -2135,7 +2058,7 @@ mod tests {
         assert!(
             !MdbxProofsStorage::v2_history_contains::<V2AccountsTrieHistory>(
                 &tx,
-                AccountTrieShardedKey::new(StoredNibbles::from(account_path), u64::MAX),
+                StoredNibbles::from(account_path),
                 1,
             )
             .unwrap()
@@ -2143,23 +2066,19 @@ mod tests {
         assert!(
             !MdbxProofsStorage::v2_history_contains::<V2StoragesTrieHistory>(
                 &tx,
-                StorageTrieShardedKey::new(address, StoredNibbles::from(storage_path), u64::MAX),
+                StorageTrieKey::new(address, StoredNibbles::from(storage_path)),
                 1,
             )
             .unwrap()
         );
         assert!(
-            !MdbxProofsStorage::v2_history_contains::<V2HashedAccountsHistory>(
-                &tx,
-                HashedAccountShardedKey::new(address, u64::MAX),
-                1,
-            )
-            .unwrap()
+            !MdbxProofsStorage::v2_history_contains::<V2HashedAccountsHistory>(&tx, address, 1)
+                .unwrap()
         );
         assert!(
             !MdbxProofsStorage::v2_history_contains::<V2HashedStoragesHistory>(
                 &tx,
-                HashedStorageShardedKey::new(address, slot, u64::MAX),
+                HashedStorageKey::new(address, slot),
                 1,
             )
             .unwrap()
