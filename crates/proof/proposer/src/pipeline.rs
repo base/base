@@ -129,16 +129,13 @@ struct ProofPlan {
 struct PendingProofSession {
     plan: ProofPlan,
     session_id: String,
-    /// Original proof request retained for follow-up async dispatch/collection.
-    request: ProofRequest,
     retry_count: u32,
     started_at: Instant,
 }
 
 impl PendingProofSession {
-    fn new(plan: ProofPlan, request: ProofRequest, retry_count: u32) -> Self {
-        let session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
-        Self { plan, session_id, request, retry_count, started_at: Instant::now() }
+    fn new(plan: ProofPlan, session_id: String, retry_count: u32) -> Self {
+        Self { plan, session_id, retry_count, started_at: Instant::now() }
     }
 
     fn elapsed(&self) -> Duration {
@@ -382,8 +379,8 @@ where
 
         for (plan, request) in requests {
             let retry_count = state.retry_counts.get(&plan.target_block).copied().unwrap_or(0);
-            let session = PendingProofSession::new(plan, request, retry_count);
-            let request = session.request.clone();
+            let session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
+            let session = PendingProofSession::new(plan, session_id.clone(), retry_count);
             let session_id = session.session_id.clone();
             let prover = Arc::clone(&self.prover);
             let cancel = self.cancel.child_token();
