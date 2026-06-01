@@ -79,6 +79,12 @@ pub trait Transferable: Token {
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::TRANSFER)?;
+        if to == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        if from == Address::ZERO {
+            return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
+        }
         let allowance = self.accounting().allowance(from, spender)?;
         if allowance == U256::MAX {
             return self.transfer_inner(from, to, amount, privileged);
