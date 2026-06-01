@@ -74,77 +74,82 @@ echo "L1 genesis timestamp: $L1_TIMESTAMP"
 mkdir -p "$OUTPUT_DIR"
 
 # =============================================================================
-# Run op-deployer in Live Mode
+# Deploy L1 contracts and generate L2 genesis using forge scripts
+# (Uses base/contracts forge scripts instead of op-deployer)
 # =============================================================================
 echo ""
-echo "=== Running op-deployer (Live Mode) ==="
+echo "=== Deploying via forge scripts (base/contracts) ==="
 
-# Create working directory for op-deployer
-OP_DEPLOYER_WORKDIR=$(mktemp -d)
-echo "op-deployer working directory: $OP_DEPLOYER_WORKDIR"
+# Create working directory
+WORKDIR=/contracts
+echo "Working directory: $WORKDIR"
 
-# Initialize op-deployer with custom intent type
-echo "Running op-deployer init..."
-op-deployer init \
-  --l1-chain-id "$L1_CHAIN_ID" \
-  --l2-chain-ids "$L2_CHAIN_ID" \
-  --intent-type custom \
-  --workdir "$OP_DEPLOYER_WORKDIR"
-
-# Configure intent.toml for devnet using template
-INTENT_FILE="$OP_DEPLOYER_WORKDIR/intent.toml"
-echo "Configuring intent.toml for devnet..."
-
-# Convert L2 chain ID to hex (0x prefixed, 32 bytes padded)
-L2_CHAIN_ID_HEX=$(printf "0x%064x" $L2_CHAIN_ID)
-
-# Export variables for envsubst
-export L1_CHAIN_ID L2_CHAIN_ID_HEX DEPLOYER_ADDR SEQUENCER_ADDR BATCHER_ADDR PROPOSER_ADDR CHALLENGER_ADDR SEQ1_P2P_KEY SEQ2_P2P_KEY
-
-envsubst <"$TEMPLATE_DIR/l2-intent.toml.template" >"$INTENT_FILE"
-
-echo "Intent configured:"
-cat "$INTENT_FILE"
-
-# Run op-deployer apply with LIVE deployment target
-# This deploys contracts to the running L1
+# Step 1: Generate deploy-config.json from template
 echo ""
-echo "Running op-deployer apply (live mode)..."
-op-deployer apply \
-  --workdir "$OP_DEPLOYER_WORKDIR" \
-  --deployment-target live \
-  --l1-rpc-url "$L1_RPC_URL" \
-  --private-key "$DEPLOYER_KEY"
+echo "--- Step 1: Generating deploy-config.json ---"
+envsubst <"$TEMPLATE_DIR/deploy-config.json.template" >"$WORKDIR/deploy-config/devnet.json"
+echo "Deploy config written to $WORKDIR/deploy-config/devnet.json"
+cat "$WORKDIR/deploy-config/devnet.json"
 
-# Check for output files
-if [ ! -f "$OP_DEPLOYER_WORKDIR/state.json" ]; then
-  echo "ERROR: op-deployer did not create state.json"
-  ls -la "$OP_DEPLOYER_WORKDIR"
-  exit 1
-fi
-
-echo "op-deployer state.json created successfully"
-
-# =============================================================================
-# Extract L2 Genesis and Rollup Config
-# =============================================================================
+# Step 2: Deploy L1 contracts via forge script
+# Contracts are pre-compiled at /contracts/ (from Dockerfile.devnet).
+# --slow flag sends transactions one at a time for devnet reliability.
 echo ""
-echo "=== Extracting L2 Configs ==="
+echo "--- Step 2: Deploying L1 contracts ---"
+(
+  cd /contracts
+  FOUNDRY_SCRIPT_EXECUTION_PROTECTION=false \
+    DEPLOY_CONFIG_PATH="$WORKDIR/deploy-config/devnet.json" \
+    forge script scripts/deploy/SystemDeploy.s.sol:SystemDeploy \
+    --sender "$DEPLOYER_ADDR" \
+    --rpc-url "$L1_RPC_URL" \
+    --private-key "$DEPLOYER_KEY" \
+    --broadcast \
+    --slow
+)
 
-# Use op-deployer inspect commands to extract the data
-echo "Extracting L2 genesis..."
-op-deployer inspect genesis \
-  --workdir "$OP_DEPLOYER_WORKDIR" \
-  "$L2_CHAIN_ID" \
-  >"$OUTPUT_DIR/genesis.json"
-echo "L2 genesis written to $OUTPUT_DIR/genesis.json"
+# Step 3: Generate L2 genesis allocs via forge script
+# Uses L2GenesisDevnet.s.sol wrapper that reads deploy-config + L1 addresses,
+# constructs the L2Genesis.Input struct, runs L2Genesis, and dumps state.
+echo ""
+echo "--- Step 3: Generating L2 genesis allocs ---"
 
-echo "Extracting rollup config..."
-op-deployer inspect rollup \
-  --workdir "$OP_DEPLOYER_WORKDIR" \
-  "$L2_CHAIN_ID" \
-  >"$OUTPUT_DIR/rollup.json"
-echo "Rollup config written to $OUTPUT_DIR/rollup.json"
+L2_STATE_DUMP="/contracts/state-dump-${L2_CHAIN_ID}.json"
+
+(
+  cd /contracts
+  FOUNDRY_SCRIPT_EXECUTION_PROTECTION=false \
+    DEPLOY_CONFIG_PATH="$WORKDIR/deploy-config/devnet.json" \
+    L1_DEPLOY_ARTIFACT="$WORKDIR/deployments/${L1_CHAIN_ID}-deploy.json" \
+    L2_GENESIS_STATE_DUMP="$L2_STATE_DUMP" \
+    forge script scripts/L2GenesisDevnet.s.sol:L2GenesisDevnet \
+    --sender "$DEPLOYER_ADDR"
+)
+
+echo "L2 genesis state dump: $L2_STATE_DUMP"
+
+# Step 4: Extract l1-addresses.json and genesis.json
+echo ""
+echo "--- Step 4: Extracting artifacts ---"
+L2_GENESIS_TIMESTAMP="$L1_TIMESTAMP" \
+CONTRACTS_DIR=/contracts \
+OUTPUT_DIR="$OUTPUT_DIR" \
+L1_RPC_URL="$L1_RPC_URL" \
+L1_CHAIN_ID="$L1_CHAIN_ID" \
+L2_CHAIN_ID="$L2_CHAIN_ID" \
+FOUNDRY_SCRIPT_EXECUTION_PROTECTION=false \
+    DEPLOY_CONFIG_PATH="$WORKDIR/deploy-config/devnet.json" \
+  /usr/local/bin/extract-artifacts.sh
+
+# Step 5: Assemble rollup.json
+# L2_GENESIS_HASH is not yet known (reth must init from genesis.json first).
+# assemble-rollup-config.sh uses a zero placeholder; patch after reth init.
+echo ""
+echo "--- Step 5: Assembling rollup config ---"
+OUTPUT_DIR="$OUTPUT_DIR" \
+L1_RPC_URL="$L1_RPC_URL" \
+L2_CHAIN_ID="$L2_CHAIN_ID" \
+  /usr/local/bin/assemble-rollup-config.sh
 
 TMP_GENESIS=$(mktemp)
 jq \
@@ -229,15 +234,8 @@ else
 fi
 
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."
-jq 'del(.base)' "$OUTPUT_DIR/rollup.json" >"$OUTPUT_DIR/rollup-conductor.json"
+jq 'del(.base, .granite_channel_timeout)' "$OUTPUT_DIR/rollup.json" >"$OUTPUT_DIR/rollup-conductor.json"
 echo "rollup-conductor.json written to $OUTPUT_DIR/rollup-conductor.json"
-
-echo "Extracting L1 addresses..."
-op-deployer inspect l1 \
-  --workdir "$OP_DEPLOYER_WORKDIR" \
-  "$L2_CHAIN_ID" \
-  >"$OUTPUT_DIR/l1-addresses.json"
-echo "L1 addresses written to $OUTPUT_DIR/l1-addresses.json"
 
 # Verify the rollup.json has the correct L1 genesis hash
 ROLLUP_L1_HASH=$(jq -r '.genesis.l1.hash' "$OUTPUT_DIR/rollup.json")
@@ -279,7 +277,7 @@ echo "Sequencer-1 P2P key written to $OUTPUT_DIR/sequencer-1-p2p-key.txt"
 echo "Sequencer-2 P2P key written to $OUTPUT_DIR/sequencer-2-p2p-key.txt"
 
 # Cleanup
-rm -rf "$OP_DEPLOYER_WORKDIR"
+# Workdir is /contracts, no cleanup needed
 
 echo ""
 echo "=== L2 Genesis Generation Complete ==="

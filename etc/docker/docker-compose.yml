@@ -170,6 +170,20 @@ services:
       - L2_CL_BOOTNODE_ENR_PATH=${L2_CL_BOOTNODE_ENR_PATH}
     entrypoint: ["/usr/local/bin/setup-l2.sh"]
 
+
+  patch-genesis-hash:
+    image: devnet-setup:local
+    container_name: patch-genesis-hash
+    depends_on:
+      base-builder:
+        condition: service_healthy
+    volumes:
+      - ../../.devnet/l2/configs:/configs
+    environment:
+      - L2_RPC_URL=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - CONFIG_DIR=/configs
+    entrypoint: ["/usr/local/bin/patch-genesis-hash.sh"]
+
   base-el-bootnode:
     image: base-reth-node:local
     build:
@@ -347,6 +361,8 @@ services:
         condition: service_healthy
       base-cl-bootnode:
         condition: service_healthy
+      patch-genesis-hash:
+        condition: service_completed_successfully
     ports:
       - "${L2_BUILDER_CL_RPC_PORT}:${L2_BUILDER_CL_RPC_PORT}"       # RPC
       - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}"       # P2P TCP
@@ -542,6 +558,8 @@ services:
         condition: service_healthy
       base-cl-bootnode:
         condition: service_healthy
+      patch-genesis-hash:
+        condition: service_completed_successfully
     ports:
       - "${L2_CLIENT_CL_RPC_PORT}:${L2_CLIENT_CL_RPC_PORT}"     # RPC
       - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}"     # P2P TCP

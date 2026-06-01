@@ -1,22 +1,13 @@
-FROM public.ecr.aws/docker/library/golang:1.26-alpine AS builder
+FROM public.ecr.aws/docker/library/golang:1.26 AS builder
 
 # Install build dependencies for CGO (required for BLS library)
-RUN apk add --no-cache git make gcc g++ musl-dev linux-headers curl ca-certificates
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git make gcc g++ libc6-dev curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Download op-deployer binary
-# URL format: op-deployer-{version_no_v}-linux-{arch}.tar.gz
-# Tarball contains: op-deployer-{version}-linux-{arch}/op-deployer
-ARG OP_DEPLOYER_VERSION=0.6.0-rc.3
 ARG ETH_BEACON_GENESIS_COMMIT=f57c0fb4606f9a28e5eecb61546efa9b658183b2
 ARG ETH2_VAL_TOOLS_TAG=v0.2.0
 ARG ETH2_VAL_TOOLS_COMMIT=db4f5fa6b8a6096a5f22c0a60f6494bf489c407b
-RUN ARCH=$(uname -m | sed 's/x86_64/amd64/g' | sed 's/aarch64/arm64/g') && \
-    curl -L -o /tmp/op-deployer.tar.gz \
-    "https://github.com/ethereum-optimism/optimism/releases/download/op-deployer/v${OP_DEPLOYER_VERSION}/op-deployer-${OP_DEPLOYER_VERSION}-linux-${ARCH}.tar.gz" && \
-    tar -xzf /tmp/op-deployer.tar.gz -C /tmp/ && \
-    mv /tmp/op-deployer-${OP_DEPLOYER_VERSION}-linux-${ARCH}/op-deployer /go/bin/ && \
-    chmod +x /go/bin/op-deployer && \
-    rm -rf /tmp/op-deployer*
 
 # Build eth-beacon-genesis from source (has replace directives, can't use go install)
 WORKDIR /build
@@ -33,14 +24,48 @@ RUN git clone https://github.com/protolambda/eth2-val-tools.git --branch "${ETH2
     test "$(git rev-parse HEAD)" = "${ETH2_VAL_TOOLS_COMMIT}"
 RUN go build -o /go/bin/eth2-val-tools .
 
-FROM public.ecr.aws/docker/library/alpine:3.21.3
+# Build contracts using Foundry
+# The foundry image is Ubuntu-based and multi-arch (amd64/arm64)
+FROM ghcr.io/foundry-rs/foundry:latest AS contracts-builder
 
-RUN apk add --no-cache bash jq openssl curl gettext
+ARG CONTRACTS_COMMIT=c8f0238ec570a446e01b6290bd2413ef7704fafd
 
-# Copy the built binaries
+# git is pre-installed in the foundry image (Ubuntu 22.04)
+RUN git config --global user.email "docker@build" && \
+    git config --global user.name "docker"
+
+WORKDIR /contracts
+RUN git clone https://github.com/base/contracts.git . && \
+    git checkout "${CONTRACTS_COMMIT}"
+
+RUN forge install \
+    github.com/foundry-rs/forge-std@6853b9ec7df5dc0c213b05ae67785ad4f4baa0ea \
+    github.com/OpenZeppelin/openzeppelin-contracts@ecd2ca2cd7cac116f7a37d0e474bbb3d7d5e1c4d \
+    github.com/OpenZeppelin/openzeppelin-contracts-upgradeable@0a2cb9a445c365870ed7a8ab461b12acf3e27d63 \
+    github.com/transmissions11/solmate@8f9b23f8838670afda0fd8983f2c41e8037ae6bc \
+    github.com/Vectorized/solady@502cc1ea718e6fa73b380635ee0868b0740595f0 \
+    github.com/risc0/risc0-ethereum@a78ac4a52fe9cfa14120c3b496430f0d42e1d8d3
+RUN forge build
+
+FROM ghcr.io/foundry-rs/foundry:latest
+
+USER root
+RUN git config --global --add safe.directory /contracts
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    jq gettext-base curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Go tools from builder stage
 COPY --from=builder /go/bin/eth-genesis-state-generator /usr/local/bin/
 COPY --from=builder /go/bin/eth2-val-tools /usr/local/bin/
-COPY --from=builder /go/bin/op-deployer /usr/local/bin/
+
+# forge and cast are already present in the foundry image
+
+# Copy contracts source + compiled artifacts (forge script needs both)
+COPY --from=contracts-builder /contracts/ /contracts/
+
+# Copy devnet L2Genesis wrapper script into contracts
+COPY etc/scripts/devnet/L2GenesisDevnet.s.sol /contracts/scripts/L2GenesisDevnet.s.sol
 
 # Create working directories
 RUN mkdir -p /config /output /shared /templates
