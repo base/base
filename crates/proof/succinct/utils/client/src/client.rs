@@ -110,7 +110,7 @@ where
             }
             Err(e) => {
                 error!(target: "client", "Failed to produce payload: {:?}", e);
-                return Err(DriverError::Pipeline(e));
+                return Err(e.into());
             }
         };
         #[cfg(target_os = "zkvm")]
