@@ -1429,6 +1429,7 @@ const fn validate_backend_proof_type(
 }
 
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
+const ZERO_HASH: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 // Legacy rows predate `api_proof_type`; valid legacy ZK rows always have `proof_type`.
 // Treat `None` as compressed only to keep reads tolerant of inconsistent pre-migration data.
@@ -1439,10 +1440,7 @@ const fn api_proof_type_for_backend(proof_type: Option<ProofType>) -> ApiProofTy
     }
 }
 
-const fn fallback_zk_vm_for_request(
-    api_proof_type: ApiProofType,
-    _proof_type: Option<ProofType>,
-) -> Option<ZkVmKind> {
+const fn fallback_zk_vm_for_request(api_proof_type: ApiProofType) -> Option<ZkVmKind> {
     match api_proof_type {
         ApiProofType::Compressed | ApiProofType::SnarkGroth16 => Some(ZkVmKind::Sp1),
         ApiProofType::Tee => None,
@@ -1456,7 +1454,8 @@ struct ProtocolRequestPayloadParams<'a> {
     start_block_number: i64,
     number_of_blocks_to_prove: i64,
     sequence_window: Option<i64>,
-    proof_type: ProofType,
+    api_proof_type: ApiProofType,
+    tee_kind: Option<TeeKind>,
     prover_address: Option<&'a str>,
     l1_head: Option<&'a str>,
     intermediate_root_interval: Option<i64>,
@@ -1474,21 +1473,43 @@ impl ProtocolRequestPayloadParams<'_> {
         });
         strip_null_object_fields(&mut zk_payload);
 
-        match self.proof_type {
-            ProofType::OpSuccinctSp1ClusterCompressed => serde_json::json!({
+        match self.api_proof_type {
+            ApiProofType::Compressed => serde_json::json!({
                 "session_id": self.session_id,
                 "request": {
                     "proof_type": ApiProofType::Compressed.as_str(),
                     "payload": zk_payload,
                 },
             }),
-            ProofType::OpSuccinctSp1ClusterSnarkGroth16 => serde_json::json!({
+            ApiProofType::SnarkGroth16 => serde_json::json!({
                 "session_id": self.session_id,
                 "request": {
                     "proof_type": ApiProofType::SnarkGroth16.as_str(),
                     "payload": {
                         "proof": zk_payload,
                         "prover_address": self.prover_address.unwrap_or(ZERO_ADDRESS),
+                    },
+                },
+            }),
+            ApiProofType::Tee => serde_json::json!({
+                "session_id": self.session_id,
+                "request": {
+                    "proof_type": ApiProofType::Tee.as_str(),
+                    "payload": {
+                        "proof": {
+                            "l1_head": self.l1_head.unwrap_or(ZERO_HASH),
+                            "agreed_l2_head_hash": ZERO_HASH,
+                            "agreed_l2_output_root": ZERO_HASH,
+                            "claimed_l2_output_root": ZERO_HASH,
+                            "claimed_l2_block_number": self.start_block_number,
+                            "proposer": ZERO_ADDRESS,
+                            "intermediate_block_interval": self
+                                .intermediate_root_interval
+                                .unwrap_or_default(),
+                            "l1_head_number": 0,
+                            "image_hash": ZERO_HASH,
+                        },
+                        "tee_kind": self.tee_kind.unwrap_or(TeeKind::AwsNitro).as_str(),
                     },
                 },
             }),
@@ -1547,34 +1568,22 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         .get::<Option<&str>, _>("zk_vm")
         .map(parse_zk_vm_kind)
         .transpose()?
-        .or_else(|| fallback_zk_vm_for_request(api_proof_type, proof_type));
+        .or_else(|| fallback_zk_vm_for_request(api_proof_type));
     let tee_kind = row.get::<Option<&str>, _>("tee_kind").map(parse_tee_kind).transpose()?;
     let request_payload =
         row.get::<Option<serde_json::Value>, _>("request_payload").unwrap_or_else(|| {
-            proof_type.map_or_else(
-                || {
-                    serde_json::json!({
-                        "session_id": &session_id,
-                        "request": {
-                            "proof_type": api_proof_type.as_str(),
-                            "payload": {},
-                        },
-                    })
-                },
-                |proof_type| {
-                    ProtocolRequestPayloadParams {
-                        session_id: &session_id,
-                        start_block_number,
-                        number_of_blocks_to_prove,
-                        sequence_window,
-                        proof_type,
-                        prover_address: prover_address.as_deref(),
-                        l1_head: l1_head.as_deref(),
-                        intermediate_root_interval,
-                    }
-                    .build()
-                },
-            )
+            ProtocolRequestPayloadParams {
+                session_id: &session_id,
+                start_block_number,
+                number_of_blocks_to_prove,
+                sequence_window,
+                api_proof_type,
+                tee_kind,
+                prover_address: prover_address.as_deref(),
+                l1_head: l1_head.as_deref(),
+                intermediate_root_interval,
+            }
+            .build()
         });
 
     Ok(ProofRequest {
@@ -1816,12 +1825,36 @@ mod tests {
 
     #[test]
     fn tee_request_does_not_fallback_to_zk_vm() {
-        let zk_vm = fallback_zk_vm_for_request(
-            ApiProofType::Tee,
-            Some(ProofType::OpSuccinctSp1ClusterCompressed),
-        );
+        let zk_vm = fallback_zk_vm_for_request(ApiProofType::Tee);
 
         assert!(zk_vm.is_none());
+    }
+
+    #[test]
+    fn fallback_tee_protocol_payload_deserializes() {
+        let payload = ProtocolRequestPayloadParams {
+            session_id: "tee-session",
+            start_block_number: 100,
+            number_of_blocks_to_prove: 1,
+            sequence_window: None,
+            api_proof_type: ApiProofType::Tee,
+            tee_kind: Some(TeeKind::AwsNitro),
+            prover_address: None,
+            l1_head: Some(ZERO_HASH),
+            intermediate_root_interval: Some(10),
+        }
+        .build();
+
+        let protocol_request: ProtocolProofRequest =
+            serde_json::from_value(payload).expect("fallback TEE payload should deserialize");
+
+        assert_eq!(protocol_request.session_id.as_deref(), Some("tee-session"));
+        let ProofRequestKind::Tee(request) = protocol_request.request else {
+            panic!("expected TEE protocol request");
+        };
+        assert_eq!(request.tee_kind, ProtocolTeeKind::AwsNitro);
+        assert_eq!(request.proof.claimed_l2_block_number, 100);
+        assert_eq!(request.proof.intermediate_block_interval, 10);
     }
 
     #[test]
