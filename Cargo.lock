@@ -6266,6 +6266,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-upgrade-signal"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-rpc-types-eth 2.0.5",
+ "alloy-sol-types",
+ "async-trait",
+ "base-metrics",
+ "clap",
+ "metrics",
+ "metrics-util",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-witness-diff"
 version = "0.0.0"
 dependencies = [
