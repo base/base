@@ -354,7 +354,7 @@ impl TokenCreateParams {
     ///
     /// Each arm owns its own rules. Version is checked first by the caller (`check_version`)
     /// so that version errors always take precedence over field-level errors.
-    pub fn validate(&self) -> Result<()> {
+    pub const fn validate(&self) -> Result<()> {
         match self {
             Self::B20 { init, .. } => Self::validate_b20(init),
             Self::Stablecoin { init, .. } => Self::validate_stablecoin(init),
