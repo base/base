@@ -298,13 +298,6 @@ where
             Event::Ping(libp2p::ping::Event { peer, result, .. }) => {
                 trace!(target: "gossip", ?peer, ?result, "Ping received");
 
-                // If the peer is connected to gossip, record the connection duration.
-                if let Some(start_time) = self.peer_connection_start.get(&peer) {
-                    let _ping_duration = start_time.elapsed();
-                    Metrics::gossip_peer_connection_duration_seconds()
-                        .record(_ping_duration.as_secs_f64());
-                }
-
                 // Record the peer score in the metrics if available.
                 if let Some(_peer_score) = self.behaviour_mut().gossipsub.peer_score(&peer) {
                     Metrics::peer_scores().record(_peer_score);
