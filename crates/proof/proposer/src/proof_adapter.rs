@@ -11,6 +11,7 @@ use base_prover_service_protocol::{
     GetProofRequest, ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProofStatus,
     ProveBlockRangeRequest, TeeKind, TeeProofRequest,
 };
+use tracing::debug;
 
 use crate::ProposerError;
 
@@ -85,7 +86,14 @@ impl ProverClient for ProofRequesterProver {
                     });
                     return Err(Box::new(ProposerError::Prover(message)));
                 }
-                ProofStatus::Queued | ProofStatus::Running => {}
+                ProofStatus::Queued | ProofStatus::Running => {
+                    debug!(
+                        session_id = %session_id,
+                        status = ?response.status,
+                        elapsed = ?started_at.elapsed(),
+                        "waiting for TEE proof"
+                    );
+                }
             }
 
             if started_at.elapsed() >= self.max_wait {
@@ -391,5 +399,21 @@ mod tests {
             .expect_err("failed proof should return an error");
 
         assert!(err.to_string().contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn proof_requester_prover_times_out_waiting_for_terminal_status() {
+        let response =
+            GetProofResponse { status: ProofStatus::Running, error_message: None, result: None };
+        let requester = std::sync::Arc::new(MockProofRequester::new(vec![response]));
+        let prover =
+            ProofRequesterProver::aws_nitro(requester, Duration::from_millis(1), Duration::ZERO);
+
+        let err = prover
+            .prove(test_request(B256::repeat_byte(0xaa)))
+            .await
+            .expect_err("non-terminal proof should time out");
+
+        assert!(err.to_string().contains("timed out waiting for TEE proof session"));
     }
 }
