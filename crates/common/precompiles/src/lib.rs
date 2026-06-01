@@ -76,3 +76,6 @@ mod policy;
 pub use policy::{
     IPolicyRegistry, PackedPolicy, PolicyHandle, PolicyRegistryPrecompile, PolicyRegistryStorage,
 };
+
+mod tx_context;
+pub use tx_context::{ITxContext, TxContext, TxContextStorage};
