@@ -138,7 +138,7 @@ where
     }
 
     fn is_sidecar_transaction(&self, transaction: &T) -> bool {
-        transaction.eip8130_nonce_channel_key().is_some()
+        transaction.eip8130_nonce_channel_key().is_some() || transaction.is_eip8130_nonce_free()
     }
 
     fn partition_hashes_by_pool(&self, hashes: Vec<TxHash>) -> (Vec<TxHash>, Vec<TxHash>) {
@@ -831,11 +831,21 @@ where
         update: reth_transaction_pool::CanonicalStateUpdate<'_, Self::Block>,
     ) {
         let block_hash = update.hash();
+        let block_timestamp = update.timestamp();
         let mined_transactions = update.mined_transactions.clone();
         self.protocol_pool.on_canonical_state_change(update);
-        let removed = self.nonce_pool.write().prune_mined(&mined_transactions);
-        if !removed.is_empty() {
-            self.listeners.write().on_mined(&removed, block_hash);
+
+        let (mined, expired) = {
+            let mut nonce_pool = self.nonce_pool.write();
+            let mined = nonce_pool.prune_mined(&mined_transactions);
+            let expired = nonce_pool.evict_expired(block_timestamp);
+            (mined, expired)
+        };
+        if !mined.is_empty() {
+            self.listeners.write().on_mined(&mined, block_hash);
+        }
+        if !expired.is_empty() {
+            self.listeners.write().on_discarded(&expired);
         }
     }
 
@@ -967,6 +977,14 @@ impl<T: BasePooledTx> SidecarListeners<T> {
             let hash = *transaction.hash();
             self.broadcast_hash_event(&hash, TransactionEvent::Mined(block_hash));
             self.broadcast_all(FullTransactionEvent::Mined { tx_hash: hash, block_hash });
+        }
+    }
+
+    fn on_discarded(&mut self, transactions: &[Arc<ValidPoolTransaction<T>>]) {
+        for transaction in transactions {
+            let hash = *transaction.hash();
+            self.broadcast_hash_event(&hash, TransactionEvent::Discarded);
+            self.broadcast_all(FullTransactionEvent::Discarded(hash));
         }
     }
 

@@ -108,7 +108,9 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: &InvalidPoolTransactionError) {
-        if transaction.transaction.eip8130_nonce_channel_key().is_some() {
+        if transaction.transaction.eip8130_nonce_channel_key().is_some()
+            || transaction.transaction.is_eip8130_nonce_free()
+        {
             self.sidecar.mark_invalid(transaction, kind);
         } else {
             self.protocol.mark_invalid(transaction, kind);

@@ -204,7 +204,7 @@ where
     }
 
     fn requires_nonce_check(&self) -> bool {
-        self.eip8130_nonce_channel_key().is_none()
+        self.eip8130_nonce_channel_key().is_none() && !self.is_eip8130_nonce_free()
     }
 }
 
@@ -347,6 +347,27 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     fn eip8130_nonce_channel_key(&self) -> Option<U256> {
         None
     }
+
+    /// Returns true when this is an EIP-8130 nonce-free (`NONCE_KEY_MAX`)
+    /// transaction handled by the 2D nonce pool's nonce-free lane.
+    ///
+    /// Nonce-free transactions carry `nonce_sequence == 0` and rely on
+    /// `expiry` plus replay-id deduplication instead of sequential nonces.
+    fn is_eip8130_nonce_free(&self) -> bool {
+        false
+    }
+
+    /// Returns the signature-invariant nonce-free replay identifier when this
+    /// transaction is an EIP-8130 nonce-free (`NONCE_KEY_MAX`) transaction,
+    /// otherwise `None`.
+    ///
+    /// The mempool uses this identifier (see
+    /// [`Eip8130Signed::nonce_free_replay_id`]) to deduplicate nonce-free
+    /// transactions; it excludes `sender_auth` and `payer_auth` and binds the
+    /// resolved sender.
+    fn eip8130_nonce_free_replay_id(&self) -> Option<B256> {
+        None
+    }
 }
 
 impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
@@ -367,6 +388,17 @@ where
         let signed = self.as_eip8130()?;
         let nonce_key = signed.tx().nonce_key;
         (!nonce_key.is_zero() && nonce_key != Eip8130Constants::NONCE_KEY_MAX).then_some(nonce_key)
+    }
+
+    fn is_eip8130_nonce_free(&self) -> bool {
+        self.as_eip8130()
+            .is_some_and(|signed| signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX)
+    }
+
+    fn eip8130_nonce_free_replay_id(&self) -> Option<B256> {
+        let signed = self.as_eip8130()?;
+        (signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX)
+            .then(|| signed.nonce_free_replay_id(self.inner.transaction.signer()))
     }
 }
 

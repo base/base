@@ -180,6 +180,27 @@ impl Eip8130Signed {
         Ok(())
     }
 
+    /// Computes the signature-invariant nonce-free replay identifier per
+    /// [EIP-8130], `keccak256(resolved_sender || sender_signature_hash)`.
+    ///
+    /// The mempool uses this to deduplicate `NONCE_KEY_MAX` (nonce-free)
+    /// transactions. Unlike the EIP-2718 transaction hash, it excludes both
+    /// `sender_auth` and `payer_auth`, so a re-signed `payer_auth` or a
+    /// malleated `sender_auth` for the same logical transaction maps to the
+    /// same identifier. Binding `resolved_sender` keeps the identifier unique
+    /// per sender on the EOA path, where two distinct EOAs can sign identical
+    /// transaction bodies (whose [`TxEip8130::sender_signature_hash`] encodes
+    /// an empty `sender` field).
+    ///
+    /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
+    pub fn nonce_free_replay_id(&self, resolved_sender: Address) -> B256 {
+        let sender_signature_hash = self.tx.sender_signature_hash();
+        let mut buf = [0u8; 52];
+        buf[..20].copy_from_slice(resolved_sender.as_slice());
+        buf[20..].copy_from_slice(sender_signature_hash.as_slice());
+        keccak256(buf)
+    }
+
     fn recompute_hash(&self) -> B256 {
         let mut buf = Vec::with_capacity(self.encode_2718_len());
         self.encode_2718(&mut buf);
@@ -682,5 +703,42 @@ mod tests {
         let decoded: Eip8130Signed = serde_json::from_value(value).unwrap();
         assert_eq!(*decoded.hash(), *signed.hash());
         assert_ne!(*decoded.hash(), B256::ZERO);
+    }
+
+    #[test]
+    fn nonce_free_replay_id_excludes_auth_blobs() {
+        let resolved = address!("0x00000000000000000000000000000000000000aa");
+        let tx = sample_signed(true).into_tx();
+
+        let a = Eip8130Signed::new(tx.clone(), bytes!("deadbeef"), bytes!("cafebabe"));
+        // Same body, different sender_auth and payer_auth bytes.
+        let b = Eip8130Signed::new(tx, bytes!("11111111"), bytes!("99999999"));
+
+        // The full tx hash differs because it commits to the auth blobs...
+        assert_ne!(a.hash(), b.hash());
+        // ...but the replay id is invariant to them.
+        assert_eq!(a.nonce_free_replay_id(resolved), b.nonce_free_replay_id(resolved));
+    }
+
+    #[test]
+    fn nonce_free_replay_id_is_per_sender() {
+        let tx = sample_signed(false).into_tx();
+        let signed = Eip8130Signed::new(tx, bytes!("deadbeef"), Bytes::new());
+
+        let sender_a = address!("0x00000000000000000000000000000000000000a1");
+        let sender_b = address!("0x00000000000000000000000000000000000000b2");
+        assert_ne!(signed.nonce_free_replay_id(sender_a), signed.nonce_free_replay_id(sender_b));
+    }
+
+    #[test]
+    fn nonce_free_replay_id_changes_with_body() {
+        let resolved = address!("0x00000000000000000000000000000000000000aa");
+        let base = sample_signed(false).into_tx();
+        let mut modified = base.clone();
+        modified.expiry += 1;
+
+        let a = Eip8130Signed::new(base, bytes!("deadbeef"), Bytes::new());
+        let b = Eip8130Signed::new(modified, bytes!("deadbeef"), Bytes::new());
+        assert_ne!(a.nonce_free_replay_id(resolved), b.nonce_free_replay_id(resolved));
     }
 }
