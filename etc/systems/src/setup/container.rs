@@ -32,7 +32,7 @@ pub const EL_BOOTNODE_P2P_KEY: &str =
     "1111111111111111111111111111111111111111111111111111111111111111";
 /// Execution-layer bootnode enode ID.
 pub const EL_BOOTNODE_ENODE_ID: &str = "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1";
-/// Execution-layer bootnode enode URL used by Docker devnet.
+/// Execution-layer bootnode enode URL used by setup templates.
 pub const EL_BOOTNODE_ENODE: &str = "enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303";
 /// Consensus-layer bootnode private key.
 pub const CL_BOOTNODE_P2P_KEY: &str =
@@ -122,7 +122,7 @@ impl L2DeploymentOutput {
 }
 
 #[derive(Debug, Clone)]
-/// A container for running devnet setup scripts.
+/// A container for running stack setup scripts.
 pub struct SetupContainer {
     output_dir: PathBuf,
     chain_id: u64,
@@ -309,13 +309,13 @@ impl SetupContainer {
                     }
                     ensure!(
                         lock_started.elapsed() < SETUP_IMAGE_BUILD_LOCK_TIMEOUT,
-                        "timed out waiting for devnet setup image build lock at {}",
+                        "timed out waiting for setup image build lock at {}",
                         lock_dir.display(),
                     );
                     thread::sleep(SETUP_IMAGE_BUILD_LOCK_POLL_INTERVAL);
                 }
                 Err(error) => {
-                    return Err(error).wrap_err("Failed to acquire devnet setup image build lock");
+                    return Err(error).wrap_err("Failed to acquire setup image build lock");
                 }
             }
         }
@@ -342,7 +342,7 @@ impl SetupContainer {
         })();
 
         let cleanup_result =
-            fs::remove_dir(&lock_dir).wrap_err("Failed to release devnet setup image build lock");
+            fs::remove_dir(&lock_dir).wrap_err("Failed to release setup image build lock");
 
         match build_result {
             Ok(()) => cleanup_result,

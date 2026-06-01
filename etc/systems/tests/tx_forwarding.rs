@@ -146,7 +146,7 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
     Ok(())
 }
 
-/// Full end-to-end test for the transaction forwarding pipeline.
+/// Full system test for the transaction forwarding pipeline.
 ///
 /// This test verifies the complete flow:
 /// 1. Client node receives a transaction

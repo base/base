@@ -1,4 +1,4 @@
-//! Progress display helpers for devnet benchmarks.
+//! Progress display helpers for system benchmarks.
 
 use std::time::{Duration, Instant};
 
@@ -8,7 +8,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use super::{CycleReport, OperationReport};
 
-/// Multi-line terminal progress display for long-running devnet benchmarks.
+/// Multi-line terminal progress display for long-running system benchmarks.
 #[derive(Debug)]
 pub struct BenchDisplay {
     benchmark_name: &'static str,
@@ -34,7 +34,7 @@ impl BenchDisplay {
 
         let spinner_style =
             ProgressStyle::with_template("  {spinner:.cyan} {msg}").expect("template is valid");
-        let setup = Self::spinner(&multi, &spinner_style, "setup waiting for devnet accounts");
+        let setup = Self::spinner(&multi, &spinner_style, "setup waiting for benchmark accounts");
         let safe_l2 = Self::spinner(&multi, &spinner_style, "safe L2 waiting for workload blocks");
         let proof = Self::spinner(&multi, &spinner_style, "prover waiting for dry-run job");
 

@@ -1,4 +1,4 @@
-//! Shared utilities for devnet benchmark targets.
+//! Shared utilities for system benchmark targets.
 
 mod display;
 pub use display::BenchDisplay;

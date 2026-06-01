@@ -1,4 +1,4 @@
-//! Provider setup helpers for devnet benchmarks.
+//! Provider setup helpers for system benchmarks.
 
 use std::time::Duration;
 
@@ -9,7 +9,7 @@ use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 use url::Url;
 
-/// Provider setup helpers for devnet benchmarks.
+/// Provider setup helpers for system benchmarks.
 #[derive(Debug)]
 pub struct BenchProvider;
 
@@ -19,7 +19,7 @@ impl BenchProvider {
         ProviderBuilder::<Identity, Identity, Base>::default().connect_http(url)
     }
 
-    /// Waits until all provided devnet accounts are funded.
+    /// Waits until all provided benchmark accounts are funded.
     pub async fn wait_for_balances(
         provider: &RootProvider<Base>,
         addresses: impl IntoIterator<Item = Address>,
@@ -39,10 +39,10 @@ impl BenchProvider {
             Ok::<_, eyre::Error>(())
         })
         .await
-        .wrap_err("timed out waiting for funded devnet accounts")?
+        .wrap_err("timed out waiting for funded benchmark accounts")?
     }
 
-    /// Waits until a devnet account is funded.
+    /// Waits until a benchmark account is funded.
     pub async fn wait_for_balance(
         provider: &RootProvider<Base>,
         address: Address,
@@ -59,6 +59,6 @@ impl BenchProvider {
             }
         })
         .await
-        .wrap_err("timed out waiting for funded devnet account")?
+        .wrap_err("timed out waiting for funded benchmark account")?
     }
 }

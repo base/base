@@ -1,4 +1,4 @@
-//! Reporting helpers for devnet benchmark cycle output.
+//! Reporting helpers for system benchmark cycle output.
 
 use std::collections::HashSet;
 
@@ -52,7 +52,7 @@ impl OperationReport {
     }
 }
 
-/// Cycle report formatting helpers for devnet benchmarks.
+/// Cycle report formatting helpers for system benchmarks.
 #[derive(Debug)]
 pub struct CycleReport;
 

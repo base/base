@@ -1,4 +1,4 @@
-//! Local devnet benchmark for B-20 precompile ZK proving cycles.
+//! Local system benchmark for B-20 precompile ZK proving cycles.
 //!
 //! Run with:
 //!
@@ -6,7 +6,7 @@
 //! cargo bench -p base-system-tests --bench b20_zk_proving
 //! ```
 //!
-//! Requires a full local devnet with `base-prover-zk` running in `SP1_PROVER=dry-run` mode.
+//! Requires local L2, rollup, and ZK prover RPC endpoints with `SP1_PROVER=dry-run` mode.
 
 use std::time::Duration;
 
@@ -65,7 +65,7 @@ pub struct B20ZkProvingConfig {
     /// ZK prover RPC URL.
     #[arg(long, default_value = "http://localhost:9000")]
     pub zk_prover_url: Url,
-    /// Local devnet L2 chain ID.
+    /// Local benchmark L2 chain ID.
     #[arg(long, default_value_t = 84538453)]
     pub l2_chain_id: u64,
     /// Polling interval in milliseconds for block, receipt, and account funding waits.
@@ -114,19 +114,19 @@ pub struct B20CallSender<'a> {
 }
 
 impl B20ZkProvingBench {
-    /// Runs the B-20 ZK proving benchmark against a local devnet and dry-run prover.
+    /// Runs the B-20 ZK proving benchmark against local RPC endpoints and a dry-run prover.
     pub async fn run(config: B20ZkProvingConfig) -> Result<()> {
         let display = BenchDisplay::new("B-20 zk dry-run benchmark", WORKLOAD_TXS);
 
-        display.setup_message("setup connecting to devnet RPCs");
+        display.setup_message("setup connecting to benchmark RPCs");
         let l2_provider = BenchProvider::connect_base(config.l2_rpc_url.clone());
         let rollup_provider = BenchProvider::connect_base(config.rollup_rpc_url.clone());
 
         let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
-            .wrap_err("failed to parse devnet admin private key")?;
+            .wrap_err("failed to parse benchmark admin private key")?;
         let spender = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_7.private_key)
-            .wrap_err("failed to parse devnet spender private key")?;
-        display.setup_message("setup waiting for funded devnet accounts");
+            .wrap_err("failed to parse benchmark spender private key")?;
+        display.setup_message("setup waiting for funded benchmark accounts");
         BenchProvider::wait_for_balances(
             &l2_provider,
             [admin.address(), spender.address()],

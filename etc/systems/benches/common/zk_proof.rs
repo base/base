@@ -1,4 +1,4 @@
-//! ZK proof request helpers for devnet benchmarks.
+//! ZK proof request helpers for system benchmarks.
 
 use std::time::{Duration, Instant};
 
@@ -17,7 +17,7 @@ use url::Url;
 
 use super::BenchDisplay;
 
-/// ZK proof helpers for devnet benchmarks.
+/// ZK proof helpers for system benchmarks.
 #[derive(Debug)]
 pub struct ZkProofBench;
 
