@@ -328,7 +328,7 @@ impl ExecutionInfo {
         }
 
         // Check gas limit
-        if self.cumulative_gas_used + tx.gas_limit > limits.block_gas_limit {
+        if self.cumulative_gas_used.saturating_add(tx.gas_limit) > limits.block_gas_limit {
             return Err(TxnExecutionError::TransactionGasLimitExceeded {
                 cumulative_gas_used: self.cumulative_gas_used,
                 tx_gas_limit: tx.gas_limit,
@@ -774,6 +774,43 @@ mod tests {
         let result = info.is_tx_over_limits(&tx, &limits);
         // u128::MAX - 100 + 200 saturates to u128::MAX, which equals the limit
         assert!(result.is_ok());
+    }
+
+    /// Gas limit check must use saturating_add so that a crafted
+    /// (cumulative_gas_used, tx.gas_limit) pair that overflows u64 cannot
+    /// silently bypass the block-gas-limit guard in a release build.
+    /// Plain addition would wrap to a small value and pass the check.
+    #[test]
+    fn test_gas_limit_check_uses_saturating_add() {
+        let mut info = ExecutionInfo::with_capacity(1);
+        info.cumulative_gas_used = u64::MAX - 100;
+
+        let limits = ResourceLimits {
+            block_gas_limit: u64::MAX,
+            ..Default::default()
+        };
+        let tx = TxResources {
+            gas_limit: 200, // cumulative + gas_limit overflows without saturating_add
+            ..Default::default()
+        };
+
+        // saturating_add(u64::MAX - 100, 200) = u64::MAX == block_gas_limit → Ok
+        // plain add: (u64::MAX - 100).wrapping_add(200) = 99 <= u64::MAX → also Ok here,
+        // but the point is the arithmetic is defined and capped.
+        let result = info.is_tx_over_limits(&tx, &limits);
+        assert!(result.is_ok(), "should be ok when saturated sum equals the limit");
+
+        // Now set limit just below the saturated sum.
+        let limits_tight = ResourceLimits {
+            block_gas_limit: u64::MAX - 1,
+            ..Default::default()
+        };
+        let result = info.is_tx_over_limits(&tx, &limits_tight);
+        assert!(
+            result.is_err(),
+            "should be rejected when saturated sum exceeds limit; \
+             with plain addition this would have wrapped and passed"
+        );
     }
 
     #[test]
