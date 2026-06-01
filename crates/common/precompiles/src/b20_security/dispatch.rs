@@ -8,7 +8,7 @@
 
 use alloc::{string::String, vec::Vec};
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolInterface, SolValue};
 use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
@@ -471,7 +471,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 mod tests {
     use alloc::vec::Vec;
 
-use alloy_primitives::{Bytes, U256};
+    use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_sol_types::{SolCall, SolEvent};
     use base_precompile_storage::{
         BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, setup_storage,
@@ -919,7 +919,7 @@ use alloy_primitives::{Bytes, U256};
     }
 
     #[test]
-    fn batch_burn_validates_batch_shape_before_pause() {
+    fn batch_burn_pause_error_takes_precedence_over_input_validation() {
         let mut token = make_token();
         token.accounting_mut().roles.insert((BURN_FROM_ROLE, ALICE), true);
         token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
@@ -932,16 +932,20 @@ use alloy_primitives::{Bytes, U256};
         .unwrap_err();
         assert_eq!(
             err,
-            BasePrecompileError::revert(IB20Security::LengthMismatch {
-                leftLen: U256::ONE,
-                rightLen: U256::from(2u64),
+            BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::BURN,
             })
         );
 
         let err =
             call_security(&mut token, ALICE, batch_burn_calldata(alloc::vec![], alloc::vec![]))
                 .unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IB20Security::EmptyBatch {}));
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::BURN,
+            })
+        );
     }
 
     #[test]

@@ -113,20 +113,12 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
     /// Ensures the caller has the security operator role.
     pub fn ensure_security_operator(&self, caller: Address, privileged: bool) -> Result<()> {
-        if privileged {
-            Ok(())
-        } else {
-            self.ensure_role(caller, Self::SECURITY_OPERATOR_ROLE)
-        }
+        if privileged { Ok(()) } else { self.ensure_role(caller, Self::SECURITY_OPERATOR_ROLE) }
     }
 
     /// Ensures the caller has the default admin role.
     pub fn ensure_default_admin(&self, caller: Address, privileged: bool) -> Result<()> {
-        if privileged {
-            Ok(())
-        } else {
-            self.ensure_role(caller, Self::default_admin_role())
-        }
+        if privileged { Ok(()) } else { self.ensure_role(caller, Self::default_admin_role()) }
     }
 
     /// Ensures the caller has the burn-from role.
@@ -150,16 +142,16 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         new_policy_id: u64,
         privileged: bool,
     ) -> Result<()> {
-        Self::ensure_supported_policy_type(policy_scope)?;
         if !privileged {
             self.ensure_role(caller, Self::default_admin_role())?;
         }
-        let old_policy_id = self.accounting().policy_id(policy_scope)?;
+        Self::ensure_supported_policy_type(policy_scope)?;
         if !self.policy().policy_exists(new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
         }
+        let old_policy_id = self.accounting().policy_id(policy_scope)?;
         self.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
         self.accounting_mut().emit_event(
             IB20::PolicyUpdated {
@@ -231,7 +223,8 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         if identifier_type.is_empty() {
             return Err(BasePrecompileError::revert(IB20Security::InvalidIdentifierType {}));
         }
-        self.accounting_mut().set_security_identifier_value(identifier_type.as_str(), value.clone())?;
+        self.accounting_mut()
+            .set_security_identifier_value(identifier_type.as_str(), value.clone())?;
         self.accounting_mut().emit_event(
             IB20Security::SecurityIdentifierUpdated { identifierType: identifier_type, value }
                 .encode_log_data(),
@@ -330,13 +323,19 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     ///
     /// Unlike `burnBlocked`, this path has no policy precondition. The
     /// `BURN_FROM_ROLE` authorization and burn pause check are the only gates.
+    ///
+    /// Check order: PAUSE → ROLE → INPUT → BUSINESS
     pub fn batch_burn(
         &mut self,
         caller: Address,
         accounts: Vec<Address>,
         amounts: Vec<U256>,
     ) -> Result<()> {
+        // 1. PAUSE (kill switch)
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
+        // 2. ROLE
         self.ensure_burn_from_role(caller)?;
+        // 3. INPUT VALIDATION
         if accounts.len() != amounts.len() {
             return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
                 leftLen: U256::from(accounts.len()),
@@ -346,7 +345,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         if accounts.is_empty() {
             return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
         }
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
+        // 4. BUSINESS LOGIC (no allowance/policy for batch_burn)
         for (account, amount) in accounts.into_iter().zip(amounts) {
             let balance = self.accounting().balance_of(account)?;
             if balance < amount {
@@ -367,21 +366,244 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         }
         Ok(())
     }
-
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::keccak256;
+    use alloc::vec;
 
-    use crate::{B20SecurityToken, InMemoryPolicy, InMemoryTokenAccounting};
+    use alloy_primitives::{Address, B256, U256, keccak256};
+    use base_precompile_storage::BasePrecompileError;
+    use rstest::rstest;
+
+    use crate::{
+        B20PausableFeature, B20SecurityStorage, B20SecurityToken, B20TokenRole, IB20, IB20Security,
+        InMemoryPolicy, InMemoryTokenAccounting, PolicyRegistryStorage, Token,
+    };
 
     type TestSecurityToken = B20SecurityToken<InMemoryTokenAccounting, InMemoryPolicy>;
+
+    const CALLER: Address = Address::repeat_byte(0xcc);
+    const ALICE: Address = Address::repeat_byte(0xaa);
+    const BOB: Address = Address::repeat_byte(0xbb);
+    const TOKEN: Address = Address::repeat_byte(0x01);
+
+    fn make_token() -> TestSecurityToken {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD;
+        accounting.policy_ids.insert(
+            TestSecurityToken::REDEEM_SENDER_POLICY,
+            PolicyRegistryStorage::ALWAYS_ALLOW_ID,
+        );
+        TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum BatchBurnSetup {
+        Paused,
+        NoRole,
+        EmptyBatch,
+        LengthMismatch,
+        InsufficientBalance,
+    }
+
+    fn setup_batch_burn(setup: BatchBurnSetup) -> (TestSecurityToken, Vec<Address>, Vec<U256>) {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD;
+        let accounts;
+        let amounts;
+
+        match setup {
+            BatchBurnSetup::Paused => {
+                accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
+                accounts = vec![ALICE];
+                amounts = vec![U256::from(10u64)];
+            }
+            BatchBurnSetup::NoRole => {
+                accounts = vec![];
+                amounts = vec![];
+            }
+            BatchBurnSetup::EmptyBatch => {
+                accounting.roles.insert((TestSecurityToken::BURN_FROM_ROLE, CALLER), true);
+                accounts = vec![];
+                amounts = vec![];
+            }
+            BatchBurnSetup::LengthMismatch => {
+                accounting.roles.insert((TestSecurityToken::BURN_FROM_ROLE, CALLER), true);
+                accounts = vec![ALICE, BOB];
+                amounts = vec![U256::from(10u64)];
+            }
+            BatchBurnSetup::InsufficientBalance => {
+                accounting.roles.insert((TestSecurityToken::BURN_FROM_ROLE, CALLER), true);
+                accounting.balances.insert(ALICE, U256::from(5u64));
+                accounts = vec![ALICE];
+                amounts = vec![U256::from(10u64)];
+            }
+        }
+
+        let token = TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        (token, accounts, amounts)
+    }
+
+    fn expected_batch_burn_error(setup: BatchBurnSetup) -> BasePrecompileError {
+        match setup {
+            BatchBurnSetup::Paused => BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::BURN,
+            }),
+            BatchBurnSetup::NoRole => {
+                BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                    account: CALLER,
+                    neededRole: TestSecurityToken::BURN_FROM_ROLE,
+                })
+            }
+            BatchBurnSetup::EmptyBatch => BasePrecompileError::revert(IB20Security::EmptyBatch {}),
+            BatchBurnSetup::LengthMismatch => {
+                BasePrecompileError::revert(IB20Security::LengthMismatch {
+                    leftLen: U256::from(2u64),
+                    rightLen: U256::from(1u64),
+                })
+            }
+            BatchBurnSetup::InsufficientBalance => {
+                BasePrecompileError::revert(IB20::InsufficientBalance {
+                    sender: ALICE,
+                    balance: U256::from(5u64),
+                    needed: U256::from(10u64),
+                })
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum SecurityRedeemSetup {
+        Paused,
+        PolicyBlocked,
+        InsufficientBalance,
+    }
+
+    fn setup_security_redeem(setup: SecurityRedeemSetup) -> TestSecurityToken {
+        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
+        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD;
+
+        match setup {
+            SecurityRedeemSetup::Paused => {
+                accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::REDEEM);
+                accounting.policy_ids.insert(
+                    TestSecurityToken::REDEEM_SENDER_POLICY,
+                    PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+                );
+            }
+            SecurityRedeemSetup::PolicyBlocked => {
+                accounting.policy_ids.insert(
+                    TestSecurityToken::REDEEM_SENDER_POLICY,
+                    PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+                );
+            }
+            SecurityRedeemSetup::InsufficientBalance => {
+                accounting.policy_ids.insert(
+                    TestSecurityToken::REDEEM_SENDER_POLICY,
+                    PolicyRegistryStorage::ALWAYS_ALLOW_ID,
+                );
+                accounting.minimum_redeemable = U256::from(1u64);
+                accounting.balances.insert(CALLER, U256::from(5u64));
+            }
+        }
+
+        TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+    }
+
+    fn expected_security_redeem_error(setup: SecurityRedeemSetup) -> BasePrecompileError {
+        match setup {
+            SecurityRedeemSetup::Paused => BasePrecompileError::revert(IB20::ContractPaused {
+                feature: IB20::PausableFeature::REDEEM,
+            }),
+            SecurityRedeemSetup::PolicyBlocked => {
+                BasePrecompileError::revert(IB20::PolicyForbids {
+                    policyScope: TestSecurityToken::REDEEM_SENDER_POLICY,
+                    policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+                })
+            }
+            SecurityRedeemSetup::InsufficientBalance => {
+                BasePrecompileError::revert(IB20::InsufficientBalance {
+                    sender: CALLER,
+                    balance: U256::from(5u64),
+                    needed: U256::from(10u64),
+                })
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum UpdatePolicySetup {
+        NoRole,
+        InvalidScope,
+    }
+
+    fn setup_update_policy(setup: UpdatePolicySetup) -> (TestSecurityToken, B256) {
+        let mut token = make_token();
+        let invalid_scope = B256::repeat_byte(0xff);
+
+        if let UpdatePolicySetup::InvalidScope = setup {
+            token.accounting_mut().roles.insert((B20TokenRole::DefaultAdmin.id(), CALLER), true);
+        }
+
+        (token, invalid_scope)
+    }
+
+    fn expected_update_policy_error(setup: UpdatePolicySetup, scope: B256) -> BasePrecompileError {
+        match setup {
+            UpdatePolicySetup::NoRole => {
+                BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                    account: CALLER,
+                    neededRole: B20TokenRole::DefaultAdmin.id(),
+                })
+            }
+            UpdatePolicySetup::InvalidScope => {
+                BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: scope })
+            }
+        }
+    }
 
     #[test]
     fn role_and_policy_ids_match_solidity_hashes() {
         assert_eq!(TestSecurityToken::SECURITY_OPERATOR_ROLE, keccak256("SECURITY_OPERATOR_ROLE"));
         assert_eq!(TestSecurityToken::BURN_FROM_ROLE, keccak256("BURN_FROM_ROLE"));
         assert_eq!(TestSecurityToken::REDEEM_SENDER_POLICY, keccak256("REDEEM_SENDER_POLICY"));
+    }
+
+    #[rstest]
+    #[case::paused_gets_pause_error(BatchBurnSetup::Paused)]
+    #[case::no_role_gets_role_error(BatchBurnSetup::NoRole)]
+    #[case::empty_batch_gets_input_error(BatchBurnSetup::EmptyBatch)]
+    #[case::length_mismatch_gets_input_error(BatchBurnSetup::LengthMismatch)]
+    #[case::insufficient_balance_gets_business_error(BatchBurnSetup::InsufficientBalance)]
+    fn batch_burn_check_order(#[case] setup: BatchBurnSetup) {
+        let (mut token, accounts, amounts) = setup_batch_burn(setup);
+
+        let err = token.batch_burn(CALLER, accounts, amounts).unwrap_err();
+
+        assert_eq!(err, expected_batch_burn_error(setup));
+    }
+
+    #[rstest]
+    #[case::paused_gets_pause_error(SecurityRedeemSetup::Paused)]
+    #[case::policy_blocked_gets_policy_error(SecurityRedeemSetup::PolicyBlocked)]
+    #[case::insufficient_balance_gets_business_error(SecurityRedeemSetup::InsufficientBalance)]
+    fn security_redeem_check_order(#[case] setup: SecurityRedeemSetup) {
+        let mut token = setup_security_redeem(setup);
+
+        let err = token.security_redeem(CALLER, U256::from(10u64)).unwrap_err();
+
+        assert_eq!(err, expected_security_redeem_error(setup));
+    }
+
+    #[rstest]
+    #[case::no_role_gets_role_error(UpdatePolicySetup::NoRole)]
+    #[case::invalid_scope_gets_input_error(UpdatePolicySetup::InvalidScope)]
+    fn update_policy_check_order(#[case] setup: UpdatePolicySetup) {
+        let (mut token, invalid_scope) = setup_update_policy(setup);
+
+        let err = token.update_policy(CALLER, invalid_scope, 999, false).unwrap_err();
+
+        assert_eq!(err, expected_update_policy_error(setup, invalid_scope));
     }
 }
