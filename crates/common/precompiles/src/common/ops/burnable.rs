@@ -253,10 +253,7 @@ mod tests {
         }
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
-        assert_eq!(
-            token.burn(CALLER, ALICE, U256::ONE, privileged).unwrap_err(),
-            expected_error
-        );
+        assert_eq!(token.burn(CALLER, ALICE, U256::ONE, privileged).unwrap_err(), expected_error);
     }
 
     #[rstest]

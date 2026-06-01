@@ -630,10 +630,7 @@ mod tests {
         }
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
-        assert_eq!(
-            token.transfer(from, to, U256::ONE, privileged).unwrap_err(),
-            expected_error
-        );
+        assert_eq!(token.transfer(from, to, U256::ONE, privileged).unwrap_err(), expected_error);
     }
 
     #[rstest]
@@ -678,9 +675,10 @@ mod tests {
             accounting.allowances.insert((ALICE, SPENDER), U256::from(10u64));
         }
         if executor_blocked {
-            accounting
-                .policy_ids
-                .insert(B20PolicyType::TransferExecutor.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
+            accounting.policy_ids.insert(
+                B20PolicyType::TransferExecutor.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            );
         }
         let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
