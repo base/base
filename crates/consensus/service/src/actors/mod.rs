@@ -43,6 +43,9 @@ pub use l1_watcher::{
     QueuedL1WatcherDerivationClient,
 };
 
+mod upgrade_signal;
+pub use upgrade_signal::{ConsensusL2TimestampSource, UpgradeSignalActor};
+
 mod network;
 #[cfg(test)]
 pub use network::MockUnsafePayloadGossipClient;

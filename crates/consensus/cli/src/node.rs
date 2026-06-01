@@ -8,6 +8,7 @@ use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder};
+use base_upgrade_signal::UpgradeSignalArgs;
 use clap::Args;
 use eyre::Context;
 use strum::IntoEnumIterator;
@@ -141,6 +142,10 @@ pub struct ConsensusNodeConfigArgs {
     /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
     #[arg(long = "checkpoint.path", env = "BASE_NODE_CHECKPOINT_PATH")]
     pub checkpoint_path: Option<PathBuf>,
+
+    /// L1 upgrade signal observer arguments.
+    #[command(flatten)]
+    pub upgrade_signal: UpgradeSignalArgs,
 }
 
 /// Consensus node configuration arguments for embedded callers.
@@ -177,6 +182,10 @@ pub struct EmbeddedConsensusNodeConfigArgs {
     /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
     #[arg(long = "checkpoint.path", env = "BASE_NODE_CHECKPOINT_PATH")]
     pub checkpoint_path: Option<PathBuf>,
+
+    /// L1 upgrade signal observer arguments.
+    #[command(flatten)]
+    pub upgrade_signal: UpgradeSignalArgs,
 }
 
 impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
@@ -192,6 +201,7 @@ impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
             sequencer_flags: SequencerArgs::default(),
             safedb_path: args.safedb_path,
             checkpoint_path: args.checkpoint_path,
+            upgrade_signal: args.upgrade_signal,
         }
     }
 }
@@ -281,6 +291,7 @@ impl ConsensusNodeArgs {
             )
             .await?;
         let rpc_config = self.config.rpc_flags.clone().into();
+        let upgrade_signal_config = self.config.upgrade_signal.config()?;
 
         let engine_config = EngineConfig {
             config: Arc::new(cfg.clone()),
@@ -298,7 +309,8 @@ impl ConsensusNodeArgs {
             p2p_config,
             rpc_config,
         )
-        .with_sequencer_config(self.config.sequencer_flags.config());
+        .with_sequencer_config(self.config.sequencer_flags.config())
+        .with_upgrade_signal_config(upgrade_signal_config);
 
         if let Some(path) = self.config.checkpoint_path.clone() {
             builder = builder.with_checkpoint_path(path);
@@ -356,8 +368,8 @@ mod tests {
     use std::{path::PathBuf, process::Command};
 
     use alloy_chains::Chain;
-    use alloy_primitives::B256;
-    use clap::Parser;
+    use alloy_primitives::{B256, address};
+    use clap::{Args, Parser};
     use rstest::rstest;
 
     use super::*;
@@ -383,7 +395,38 @@ mod tests {
             sequencer_flags: SequencerArgs::default(),
             safedb_path: None,
             checkpoint_path: None,
+            upgrade_signal: UpgradeSignalArgs::default(),
         }
+    }
+
+    #[derive(Parser)]
+    struct CommandParser<T: Args> {
+        #[command(flatten)]
+        args: T,
+    }
+
+    #[test]
+    fn parses_upgrade_signal_args() {
+        let args = CommandParser::<ConsensusNodeConfigArgs>::parse_from([
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l2-engine-rpc",
+            "http://localhost:8551",
+            "--upgrade-signal.contract",
+            "0x0000000000000000000000000000000000000001",
+            "--upgrade-signal.hardfork-id",
+            "azul",
+        ])
+        .args;
+
+        assert_eq!(
+            args.upgrade_signal.contract_address,
+            Some(address!("0000000000000000000000000000000000000001"))
+        );
+        assert_eq!(args.upgrade_signal.hardfork_id.as_deref(), Some("azul"));
     }
 
     #[rstest]

@@ -10,6 +10,7 @@ use base_common_network::Base;
 use base_consensus_engine::BaseEngineClient;
 use base_consensus_providers::OnlineBeaconClient;
 use base_consensus_rpc::RpcBuilder;
+use base_upgrade_signal::UpgradeSignalConfig;
 use url::Url;
 
 use crate::{
@@ -83,6 +84,8 @@ pub struct RollupNodeBuilder {
     /// When set, enables persistent safe head tracking via redb and serves
     /// `optimism_safeHeadAtL1Block` RPC requests from the database.
     pub safedb_path: Option<PathBuf>,
+    /// Optional L1 upgrade signal observer configuration.
+    pub upgrade_signal_config: Option<UpgradeSignalConfig>,
 }
 
 impl RollupNodeBuilder {
@@ -121,6 +124,7 @@ impl RollupNodeBuilder {
             finalized_poll_interval: None,
             checkpoint_path: None,
             safedb_path: None,
+            upgrade_signal_config: None,
         }
     }
 
@@ -165,6 +169,11 @@ impl RollupNodeBuilder {
     /// Sets the checkpoint database path.
     pub fn with_checkpoint_path(self, path: PathBuf) -> Self {
         Self { checkpoint_path: Some(path), ..self }
+    }
+
+    /// Sets the optional L1 upgrade signal observer configuration.
+    pub fn with_upgrade_signal_config(self, config: Option<UpgradeSignalConfig>) -> Self {
+        Self { upgrade_signal_config: config, ..self }
     }
 
     /// Assembles the [`RollupNode`] service.
@@ -225,6 +234,7 @@ impl RollupNodeBuilder {
             derivation_delegate_provider,
             checkpoint_path,
             safedb_path: self.safedb_path,
+            upgrade_signal_config: self.upgrade_signal_config,
         })
     }
 
