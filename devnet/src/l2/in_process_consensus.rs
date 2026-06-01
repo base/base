@@ -17,6 +17,7 @@ use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::test_utils::get_available_port;
 use base_common_genesis::RollupConfig;
+use nanoid::nanoid;
 use base_consensus_disc::LocalNode;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
@@ -182,6 +183,10 @@ impl InProcessConsensus {
                 ..Default::default()
             });
         }
+
+        let checkpoint_path =
+            std::env::temp_dir().join(format!("consensus-checkpoint.{}.redb", nanoid!()));
+        builder = builder.with_checkpoint_path(checkpoint_path);
 
         let node = builder.build().await.wrap_err("Failed to build consensus node")?;
 
