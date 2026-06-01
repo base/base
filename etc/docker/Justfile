@@ -168,7 +168,8 @@ build-image target='base' profile='dev':
 
 # Prepares Docker images needed for system tests
 pull-images:
-    docker build --load -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
+    docker build --load -t devnet-setup:local -f etc/docker/Dockerfile.devnet \
+        $(if [ -n "$CONTRACTS_COMMIT" ]; then echo "--build-arg CONTRACTS_COMMIT=$CONTRACTS_COMMIT"; fi) .
     docker pull ghcr.io/paradigmxyz/reth:v1.11.4
     docker pull sigp/lighthouse:v8.0.1
 
@@ -194,8 +195,10 @@ _install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
 
 [private]
+# Env var: CONTRACTS_COMMIT overrides the base/contracts commit SHA (default in Dockerfile).
 _build-setup-image:
-    docker build --load -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
+    docker build --load -t devnet-setup:local -f etc/docker/Dockerfile.devnet \
+        $(if [ -n "$CONTRACTS_COMMIT" ]; then echo "--build-arg CONTRACTS_COMMIT=$CONTRACTS_COMMIT"; fi) .
 
 [private]
 _build-rust-images group profile='dev':
