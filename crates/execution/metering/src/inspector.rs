@@ -38,9 +38,7 @@ pub(crate) struct PrecompileGasUsage {
 struct OpcodeFrame {
     contract_address: Address,
     opcode: OpCode,
-    metered: bool,
     gas_remaining: u64,
-    nested_gas_used: u64,
 }
 
 /// EVM inspector that tracks per-contract opcode gas usage and precompile call costs.
@@ -57,7 +55,7 @@ pub(crate) struct MeteringInspector {
     precompile_gas: HashMap<Address, PrecompileGasUsage>,
     metered_precompiles: HashSet<Address>,
     metered_opcodes: HashSet<OpCode>,
-    opcode_frames: Vec<OpcodeFrame>,
+    opcode_frame: Option<OpcodeFrame>,
 }
 
 impl MeteringInspector {
@@ -71,7 +69,7 @@ impl MeteringInspector {
             precompile_gas: HashMap::default(),
             metered_precompiles,
             metered_opcodes,
-            opcode_frames: Vec::new(),
+            opcode_frame: None,
         }
     }
 
@@ -79,7 +77,7 @@ impl MeteringInspector {
     ///
     /// Call this after each transaction to get per-transaction opcode data.
     pub(crate) fn take_opcode_gas(&mut self) -> HashMap<(Address, OpCode), OpcodeGasUsage> {
-        self.opcode_frames.clear();
+        self.opcode_frame = None;
         std::mem::take(&mut self.opcode_gas)
     }
 
@@ -124,30 +122,21 @@ where
 
         let Some(opcode) = OpCode::new(interp.bytecode.opcode()) else { return };
         let contract_address = interp.input.target_address();
-        let metered = self.metered_opcodes.contains(&opcode);
-        if metered {
-            let entry = self.opcode_gas.entry((contract_address, opcode)).or_default();
-            entry.count = entry.count.saturating_add(1);
+        if !self.metered_opcodes.contains(&opcode) {
+            return;
         }
-        self.opcode_frames.push(OpcodeFrame {
-            contract_address,
-            opcode,
-            metered,
-            gas_remaining: interp.gas.remaining(),
-            nested_gas_used: 0,
-        });
+
+        let entry = self.opcode_gas.entry((contract_address, opcode)).or_default();
+        entry.count = entry.count.saturating_add(1);
+        self.opcode_frame =
+            Some(OpcodeFrame { contract_address, opcode, gas_remaining: interp.gas.remaining() });
     }
 
     fn step_end(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         let _ = context;
 
-        if let Some(frame) = self.opcode_frames.pop()
-            && frame.metered
-        {
-            let gas_cost = frame
-                .gas_remaining
-                .saturating_sub(interp.gas.remaining())
-                .saturating_sub(frame.nested_gas_used);
+        if let Some(frame) = self.opcode_frame.take() {
+            let gas_cost = frame.gas_remaining.saturating_sub(interp.gas.remaining());
             let entry = self.opcode_gas.entry((frame.contract_address, frame.opcode)).or_default();
             entry.gas_used = entry.gas_used.saturating_add(gas_cost);
         }
