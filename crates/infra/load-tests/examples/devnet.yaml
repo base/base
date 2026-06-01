@@ -55,7 +55,6 @@ transactions:
   - weight: 20
     type: calldata
     max_size: 256
-    repeat_count: 1
   - weight: 10
     type: precompile
     target: sha256

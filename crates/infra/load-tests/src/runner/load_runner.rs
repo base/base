@@ -14,7 +14,10 @@ use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use base_common_network::Base;
-use base_common_precompiles::{B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory};
+use base_common_precompiles::{
+    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20TokenRole, B20Variant,
+    IActivationRegistry, IB20, IB20Factory,
+};
 use base_tx_manager::NonceManager;
 use futures::{StreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -214,17 +217,12 @@ impl LoadRunner {
                     generator = generator.with_payload(payload, weight_pct);
                 }
                 TxType::B20 { contract } => {
-                    let token = contract.ok_or_else(|| {
-                        BaselineError::Config(
-                            "b20 contract must be resolved before run; \
-                             call setup_b20_tokens first"
-                                .into(),
-                        )
-                    })?;
-                    generator = generator.with_payload(
-                        B20TransferPayload::new(token, U256::from(1000), U256::from(10000)),
-                        weight_pct,
-                    );
+                    if let Some(token) = contract {
+                        generator = generator.with_payload(
+                            B20TransferPayload::new(*token, U256::from(1000), U256::from(10000)),
+                            weight_pct,
+                        );
+                    }
                 }
                 TxType::Osaka { target } => {
                     generator =
@@ -521,8 +519,7 @@ impl LoadRunner {
                     }
                 });
 
-                let mut retry_stream =
-                    stream::iter(retry_futs).buffer_unordered(BATCH_SIZE);
+                let mut retry_stream = stream::iter(retry_futs).buffer_unordered(BATCH_SIZE);
 
                 while let Some((result, address, nonce)) = retry_stream.next().await {
                     match result {
@@ -570,8 +567,7 @@ impl LoadRunner {
                         }
                     });
 
-                let mut nonce_retry_stream =
-                    stream::iter(nonce_retry_futs).buffered(BATCH_SIZE);
+                let mut nonce_retry_stream = stream::iter(nonce_retry_futs).buffered(BATCH_SIZE);
 
                 let mut nonce_retry_pending: Vec<Address> = Vec::new();
                 while let Some((result, address, retry_nonce)) = nonce_retry_stream.next().await {
@@ -990,13 +986,71 @@ impl LoadRunner {
         }
 
         if token_address.is_none() {
+            // Activate B-20 features if not already active. Activation is idempotent on
+            // already-active features but reverts if the funder is not the activation admin.
+            let features = [ActivationFeature::B20Factory.id(), ActivationFeature::B20Token.id()];
+            for feature in &features {
+                let is_activated_call = IActivationRegistry::isActivatedCall { feature: *feature };
+                let check_result = self
+                    .client
+                    .call(
+                        TransactionRequest::default()
+                            .with_to(ActivationRegistryStorage::ADDRESS)
+                            .with_input(Bytes::from(is_activated_call.abi_encode()))
+                            .into(),
+                    )
+                    .await;
+
+                let already_active = check_result
+                    .ok()
+                    .and_then(|bytes| {
+                        IActivationRegistry::isActivatedCall::abi_decode_returns(bytes.as_ref())
+                            .ok()
+                    })
+                    .unwrap_or(false);
+
+                if !already_active {
+                    info!(feature = %feature, "activating B-20 feature");
+                    let activate_call = IActivationRegistry::activateCall { feature: *feature };
+                    let tx = TransactionRequest::default()
+                        .with_to(ActivationRegistryStorage::ADDRESS)
+                        .with_input(Bytes::from(activate_call.abi_encode()))
+                        .with_nonce(nonce)
+                        .with_chain_id(chain_id)
+                        .with_gas_limit(b20_gas_limit)
+                        .with_max_fee_per_gas(max_fee)
+                        .with_max_priority_fee_per_gas(max_priority_fee);
+                    nonce += 1;
+
+                    let pending = funder_provider.send_transaction(tx).await.map_err(|e| {
+                        BaselineError::Transaction(format!(
+                            "failed to activate B-20 feature {feature}: {e}. \
+                             The funder must be the activation admin (sequencer key on devnet)"
+                        ))
+                    })?;
+
+                    let receipt = pending.get_receipt().await.map_err(|e| {
+                        BaselineError::Transaction(format!(
+                            "B-20 feature activation receipt failed: {e}"
+                        ))
+                    })?;
+
+                    if !receipt.status() {
+                        return Err(BaselineError::Transaction(format!(
+                            "B-20 feature {feature} activation reverted. \
+                             The funder must be the activation admin (sequencer key on devnet)"
+                        )));
+                    }
+                }
+            }
+
             info!("creating new B-20 token via factory");
 
             let salt = B256::from(rand::random::<[u8; 32]>());
             let predicted = B20Variant::B20.compute_address(funder_address, salt).0;
 
             let params = IB20Factory::B20CreateParams {
-                version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+                version: 1,
                 name: "Load Test B20".to_string(),
                 symbol: "LTB20".to_string(),
                 initialAdmin: funder_address,
@@ -1201,6 +1255,10 @@ impl LoadRunner {
             )));
         }
 
+        // Rebuild the workload generator now that the B-20 contract address is resolved.
+        let workload_config = WorkloadConfig::new("load-test").with_seed(self.config.seed);
+        self.generator = Self::create_generator(workload_config, &self.config)?;
+
         info!(
             token = %token,
             senders = total_mints,
@@ -1262,15 +1320,11 @@ impl LoadRunner {
             })
             .collect();
 
-        let balances: Vec<_> = stream::iter(balance_futs)
-            .buffer_unordered(FUNDING_CONCURRENCY)
-            .collect()
-            .await;
+        let balances: Vec<_> =
+            stream::iter(balance_futs).buffer_unordered(FUNDING_CONCURRENCY).collect().await;
 
-        let senders_with_balance: Vec<_> = balances
-            .into_iter()
-            .filter(|(_, balance)| !balance.is_zero())
-            .collect();
+        let senders_with_balance: Vec<_> =
+            balances.into_iter().filter(|(_, balance)| !balance.is_zero()).collect();
 
         if senders_with_balance.is_empty() {
             info!("all B-20 balances are zero, skipping teardown");
@@ -1288,15 +1342,25 @@ impl LoadRunner {
                 let signer = signers.get(&sender)?.clone();
                 let wallet = EthereumWallet::from(signer);
                 let provider = create_wallet_provider(rpc_url.clone(), wallet);
-                let burn_call = IB20::burnCall { amount: balance };
-                let tx = TransactionRequest::default()
-                    .with_to(token)
-                    .with_input(Bytes::from(burn_call.abi_encode()))
-                    .with_chain_id(chain_id)
-                    .with_gas_limit(burn_gas_limit)
-                    .with_max_fee_per_gas(max_fee)
-                    .with_max_priority_fee_per_gas(max_priority_fee);
                 Some(async move {
+                    let sender_nonce = match provider.get_transaction_count(sender).pending().await
+                    {
+                        Ok(n) => n,
+                        Err(e) => {
+                            return Err((sender, eyre::eyre!("nonce fetch failed: {e}")));
+                        }
+                    };
+
+                    let burn_call = IB20::burnCall { amount: balance };
+                    let tx = TransactionRequest::default()
+                        .with_to(token)
+                        .with_input(Bytes::from(burn_call.abi_encode()))
+                        .with_nonce(sender_nonce)
+                        .with_chain_id(chain_id)
+                        .with_gas_limit(burn_gas_limit)
+                        .with_max_fee_per_gas(max_fee)
+                        .with_max_priority_fee_per_gas(max_priority_fee);
+
                     match provider.send_transaction(tx).await {
                         Ok(pending) => match pending.get_receipt().await {
                             Ok(receipt) => Ok((sender, balance, receipt)),
@@ -1340,6 +1404,14 @@ impl LoadRunner {
     /// Runs the load test and returns metrics summary.
     #[instrument(skip(self), fields(target_gps = self.config.target_gps, continuous = self.config.duration.is_none(), duration = ?self.config.duration))]
     pub async fn run(&mut self) -> Result<MetricsSummary> {
+        for tx_config in &self.config.transactions {
+            if let TxType::B20 { contract: None } = &tx_config.tx_type {
+                return Err(BaselineError::Config(
+                    "b20 contract address not resolved; call setup_b20_tokens first".into(),
+                ));
+            }
+        }
+
         self.collector.reset();
         self.stop_flag.store(false, Ordering::SeqCst);
         self.cancel_token = CancellationToken::new();
