@@ -23,7 +23,8 @@ use base_prover_service_db::{
 };
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
-    SnarkGroth16ProofRequest, TeeKind as ProtocolTeeKind, TeeProofRequest, ZkProofRequest, ZkVm,
+    ProofResult as ProtocolProofResult, SnarkGroth16ProofRequest, SnarkGroth16ProofResult,
+    TeeKind as ProtocolTeeKind, TeeProofRequest, ZkProofRequest, ZkProofResult, ZkVm,
 };
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
@@ -789,10 +790,31 @@ async fn test_complete_session_and_update_receipt_skips_non_running() {
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_retry_or_fail_stuck_request_retries() {
     let pool = test_pool().await;
-    let repo = test_repo(pool);
+    let repo = test_repo(pool.clone());
 
     let id = repo.create(compressed_request()).await.unwrap();
     repo.atomic_claim_task(id).await.unwrap();
+    sqlx::query(
+        r#"
+        UPDATE proof_requests
+        SET stark_receipt = $1,
+            snark_receipt = $2,
+            result_payload = $3,
+            submitted_by_worker_id = $4,
+            submitted_lock_id = $5,
+            completed_at = NOW()
+        WHERE id = $6
+        "#,
+    )
+    .bind(vec![0x01, 0x02])
+    .bind(vec![0x03, 0x04])
+    .bind(serde_json::json!({"proof_type": "compressed"}))
+    .bind("stale-worker")
+    .bind("stale-lock")
+    .bind(id)
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck in PENDING").await.unwrap();
     assert_eq!(outcome, RetryOutcome::Retried);
@@ -801,6 +823,12 @@ async fn test_retry_or_fail_stuck_request_retries() {
     assert_eq!(req.status, ProofStatus::Created);
     assert_eq!(req.retry_count, 1);
     assert!(req.error_message.is_none());
+    assert!(req.stark_receipt.is_none());
+    assert!(req.snark_receipt.is_none());
+    assert!(req.result_payload.is_none());
+    assert!(req.submitted_by_worker_id.is_none());
+    assert!(req.submitted_lock_id.is_none());
+    assert!(req.completed_at.is_none());
 }
 
 #[tokio::test]
@@ -1301,6 +1329,7 @@ async fn test_full_snark_pipeline() {
     assert_eq!(req.status, ProofStatus::Running);
     assert_eq!(req.stark_receipt.as_deref(), Some(stark_receipt.as_slice()));
     assert!(req.snark_receipt.is_none());
+    assert!(req.result_payload.is_none());
 
     // 5. Submit SNARK session
     let snark_backend_id = format!("snark-pipeline-{}", Uuid::new_v4());
@@ -1333,6 +1362,15 @@ async fn test_full_snark_pipeline() {
     assert_eq!(req.status, ProofStatus::Succeeded);
     assert_eq!(req.stark_receipt.as_deref(), Some(stark_receipt.as_slice())); // preserved
     assert_eq!(req.snark_receipt.as_deref(), Some(snark_receipt.as_slice()));
+    let result_payload = req.result_payload.expect("SNARK result payload should be stored");
+    let result: ProtocolProofResult =
+        serde_json::from_value(result_payload).expect("SNARK result payload should deserialize");
+    assert_eq!(
+        result,
+        ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: snark_receipt.into() }
+        })
+    );
     assert!(req.completed_at.is_some());
 
     let sessions = repo.get_sessions_for_request(req_id).await.unwrap();

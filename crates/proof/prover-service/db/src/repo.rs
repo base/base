@@ -1,12 +1,16 @@
+use base_prover_service_protocol::{
+    ProofResult as ProtocolProofResult, SnarkGroth16ProofResult, ZkProofResult, ZkVm,
+};
 use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
-    ApiProofType, CreateOutboxEntry, CreateProofRequest, CreateProofRequestError,
-    CreateProofRequestOutcome, CreateProofRequestValidationError, CreateProofSession,
-    MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofRequest, ProofRequestListItem,
-    ProofRequestPage, ProofSession, ProofStatus, ProofType, RetryOutcome, SessionStatus,
-    SessionType, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind, canonical_session_id,
+    ApiProofType, CompleteProofResult, CreateOutboxEntry, CreateProofRequest,
+    CreateProofRequestError, CreateProofRequestOutcome, CreateProofRequestValidationError,
+    CreateProofSession, MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofRequest,
+    ProofRequestListItem, ProofRequestPage, ProofSession, ProofStatus, ProofType, RetryOutcome,
+    SessionStatus, SessionType, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
+    canonical_session_id,
 };
 
 /// Repository for proof request database operations
@@ -226,6 +230,9 @@ impl ProofRequestRepo {
                         error_message = NULL,
                         stark_receipt = NULL,
                         snark_receipt = NULL,
+                        result_payload = NULL,
+                        submitted_by_worker_id = NULL,
+                        submitted_lock_id = NULL,
                         completed_at = NULL
                     WHERE id = $2
                     "#,
@@ -260,7 +267,8 @@ impl ProofRequestRepo {
                 id, COALESCE(session_id, id::text) AS session_id,
                 request_payload, api_proof_type, zk_vm, tee_kind,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
-                stark_receipt, snark_receipt,
+                stark_receipt, snark_receipt, result_payload,
+                submitted_by_worker_id, submitted_lock_id,
                 status, error_message,
                 prover_address, l1_head, intermediate_root_interval,
                 created_at, updated_at, completed_at, retry_count
@@ -285,7 +293,8 @@ impl ProofRequestRepo {
                 id, COALESCE(session_id, id::text) AS session_id,
                 request_payload, api_proof_type, zk_vm, tee_kind,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
-                stark_receipt, snark_receipt,
+                stark_receipt, snark_receipt, result_payload,
+                submitted_by_worker_id, submitted_lock_id,
                 status, error_message,
                 prover_address, l1_head, intermediate_root_interval,
                 created_at, updated_at, completed_at, retry_count
@@ -471,19 +480,61 @@ impl ProofRequestRepo {
             update.status,
         );
 
+        let result_payload = result_payload_from_receipt_update(&update)?;
+
         let result = sqlx::query(
             r#"
             UPDATE proof_requests
             SET stark_receipt = COALESCE($1, stark_receipt),
                 snark_receipt = COALESCE($2, snark_receipt),
-                status = $3,
-                error_message = $4,
+                result_payload = COALESCE($3, result_payload),
+                status = $4,
+                error_message = $5,
                 completed_at = NOW()
-            WHERE id = $5 AND status = $6
+            WHERE id = $6 AND status = $7
             "#,
         )
         .bind(&update.stark_receipt)
         .bind(&update.snark_receipt)
+        .bind(&result_payload)
+        .bind(ProofStatus::Succeeded.as_str())
+        .bind(&update.error_message)
+        .bind(update.id)
+        .bind(ProofStatus::Running.as_str())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Transition proof request RUNNING → SUCCEEDED with a protocol-native result payload.
+    ///
+    /// ZK results are also mirrored into `stark_receipt` or `snark_receipt` for legacy
+    /// compatibility. TEE results are stored only in `result_payload`.
+    pub async fn complete_running_proof_result(&self, update: CompleteProofResult) -> Result<bool> {
+        let result_payload =
+            serde_json::to_value(&update.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+        let (stark_receipt, snark_receipt) = compatibility_receipts_for_result(&update.result);
+
+        let result = sqlx::query(
+            r#"
+            UPDATE proof_requests
+            SET result_payload = $1,
+                submitted_by_worker_id = $2,
+                submitted_lock_id = $3,
+                stark_receipt = COALESCE($4, stark_receipt),
+                snark_receipt = COALESCE($5, snark_receipt),
+                status = $6,
+                error_message = $7,
+                completed_at = NOW()
+            WHERE id = $8 AND status = $9
+            "#,
+        )
+        .bind(&result_payload)
+        .bind(&update.submitted_by_worker_id)
+        .bind(&update.submitted_lock_id)
+        .bind(&stark_receipt)
+        .bind(&snark_receipt)
         .bind(ProofStatus::Succeeded.as_str())
         .bind(&update.error_message)
         .bind(update.id)
@@ -586,7 +637,13 @@ impl ProofRequestRepo {
             UPDATE proof_requests
             SET status = $1,
                 retry_count = retry_count + 1,
-                error_message = NULL
+                error_message = NULL,
+                stark_receipt = NULL,
+                snark_receipt = NULL,
+                result_payload = NULL,
+                submitted_by_worker_id = NULL,
+                submitted_lock_id = NULL,
+                completed_at = NULL
             WHERE id = $2
             "#,
         )
@@ -841,6 +898,7 @@ impl ProofRequestRepo {
                    request_payload, api_proof_type, zk_vm, tee_kind,
                    start_block_number, number_of_blocks_to_prove,
                    sequence_window, proof_type, stark_receipt, snark_receipt,
+                   result_payload, submitted_by_worker_id, submitted_lock_id,
                    status, error_message, prover_address, l1_head,
                    intermediate_root_interval,
                    created_at, updated_at, completed_at, retry_count
@@ -868,6 +926,7 @@ impl ProofRequestRepo {
                 pr.request_payload, pr.api_proof_type, pr.zk_vm,
                 pr.tee_kind, pr.start_block_number, pr.number_of_blocks_to_prove,
                 pr.sequence_window, pr.proof_type, pr.stark_receipt, pr.snark_receipt,
+                pr.result_payload, pr.submitted_by_worker_id, pr.submitted_lock_id,
                 pr.status, pr.error_message, pr.prover_address, pr.l1_head,
                 pr.intermediate_root_interval,
                 pr.created_at, pr.updated_at, pr.completed_at, pr.retry_count
@@ -1015,6 +1074,7 @@ impl ProofRequestRepo {
         update_receipt: UpdateReceipt,
     ) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
+        let result_payload = result_payload_from_receipt_update(&update_receipt)?;
 
         let result = sqlx::query(
             r#"
@@ -1022,15 +1082,17 @@ impl ProofRequestRepo {
             SET
                 stark_receipt = COALESCE($1, stark_receipt),
                 snark_receipt = COALESCE($2, snark_receipt),
-                status = $3,
-                error_message = $4,
-                completed_at = CASE WHEN $3 IN ('SUCCEEDED', 'FAILED') THEN NOW() ELSE completed_at END
-            WHERE id = $5
+                result_payload = COALESCE($3, result_payload),
+                status = $4,
+                error_message = $5,
+                completed_at = CASE WHEN $4 IN ('SUCCEEDED', 'FAILED') THEN NOW() ELSE completed_at END
+            WHERE id = $6
               AND status = 'RUNNING'
             "#,
         )
         .bind(&update_receipt.stark_receipt)
         .bind(&update_receipt.snark_receipt)
+        .bind(&result_payload)
         .bind(update_receipt.status.as_str())
         .bind(&update_receipt.error_message)
         .bind(update_receipt.id)
@@ -1073,7 +1135,8 @@ impl ProofRequestRepo {
                     id, COALESCE(session_id, id::text) AS session_id,
                     request_payload, api_proof_type, zk_vm, tee_kind,
                     start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
-                    stark_receipt, snark_receipt,
+                    stark_receipt, snark_receipt, result_payload,
+                    submitted_by_worker_id, submitted_lock_id,
                     status, error_message,
                     prover_address, l1_head, intermediate_root_interval,
                     created_at, updated_at, completed_at, retry_count
@@ -1094,7 +1157,8 @@ impl ProofRequestRepo {
                     id, COALESCE(session_id, id::text) AS session_id,
                     request_payload, api_proof_type, zk_vm, tee_kind,
                     start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
-                    stark_receipt, snark_receipt,
+                    stark_receipt, snark_receipt, result_payload,
+                    submitted_by_worker_id, submitted_lock_id,
                     status, error_message,
                     prover_address, l1_head, intermediate_root_interval,
                     created_at, updated_at, completed_at, retry_count
@@ -1428,6 +1492,45 @@ const fn validate_backend_proof_type(
     }
 }
 
+fn result_payload_from_receipt_update(update: &UpdateReceipt) -> Result<Option<serde_json::Value>> {
+    if update.status != ProofStatus::Succeeded {
+        return Ok(None);
+    }
+
+    let Some(result) = proof_result_from_receipt_update(update) else {
+        return Ok(None);
+    };
+
+    serde_json::to_value(result).map(Some).map_err(|e| sqlx::Error::Encode(Box::new(e)))
+}
+
+fn proof_result_from_receipt_update(update: &UpdateReceipt) -> Option<ProtocolProofResult> {
+    // `UpdateReceipt` is the legacy OP Succinct receipt path, which currently only
+    // stores SP1 receipts. Protocol-native completions carry their own ZK VM.
+    if let Some(snark_receipt) = &update.snark_receipt {
+        return Some(ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: snark_receipt.clone().into() },
+        }));
+    }
+
+    update.stark_receipt.as_ref().map(|stark_receipt| {
+        ProtocolProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: stark_receipt.clone().into(),
+        })
+    })
+}
+
+fn compatibility_receipts_for_result(
+    result: &ProtocolProofResult,
+) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+    match result {
+        ProtocolProofResult::Compressed(proof) => (Some(proof.proof.to_vec()), None),
+        ProtocolProofResult::SnarkGroth16(proof) => (None, Some(proof.proof.proof.to_vec())),
+        ProtocolProofResult::Tee(_) => (None, None),
+    }
+}
+
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 const ZERO_HASH: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -1599,6 +1702,9 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         proof_type,
         stark_receipt: row.get("stark_receipt"),
         snark_receipt: row.get("snark_receipt"),
+        result_payload: row.get("result_payload"),
+        submitted_by_worker_id: row.get("submitted_by_worker_id"),
+        submitted_lock_id: row.get("submitted_lock_id"),
         status,
         error_message: row.get("error_message"),
         prover_address,
@@ -1921,6 +2027,72 @@ mod tests {
         assert_eq!(
             err,
             CreateProofRequestValidationError::ValueOutOfRange { field: "start_block_number" }
+        );
+    }
+
+    #[test]
+    fn receipt_update_builds_compressed_result_payload() {
+        let update = UpdateReceipt {
+            id: Uuid::new_v4(),
+            stark_receipt: Some(vec![1, 2, 3]),
+            snark_receipt: None,
+            status: ProofStatus::Succeeded,
+            error_message: None,
+        };
+
+        let payload = result_payload_from_receipt_update(&update)
+            .expect("payload should serialize")
+            .expect("stark receipt should produce payload");
+        let result: ProtocolProofResult =
+            serde_json::from_value(payload).expect("payload should deserialize");
+
+        assert_eq!(
+            result,
+            ProtocolProofResult::Compressed(ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: vec![1, 2, 3].into()
+            })
+        );
+    }
+
+    #[test]
+    fn receipt_update_skips_non_terminal_result_payload() {
+        let update = UpdateReceipt {
+            id: Uuid::new_v4(),
+            stark_receipt: Some(vec![1, 2, 3]),
+            snark_receipt: None,
+            status: ProofStatus::Running,
+            error_message: None,
+        };
+
+        assert!(
+            result_payload_from_receipt_update(&update)
+                .expect("payload check should not fail")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn receipt_update_prefers_snark_result_payload() {
+        let update = UpdateReceipt {
+            id: Uuid::new_v4(),
+            stark_receipt: Some(vec![1, 2, 3]),
+            snark_receipt: Some(vec![4, 5, 6]),
+            status: ProofStatus::Succeeded,
+            error_message: None,
+        };
+
+        let payload = result_payload_from_receipt_update(&update)
+            .expect("payload should serialize")
+            .expect("snark receipt should produce payload");
+        let result: ProtocolProofResult =
+            serde_json::from_value(payload).expect("payload should deserialize");
+
+        assert_eq!(
+            result,
+            ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: vec![4, 5, 6].into() }
+            })
         );
     }
 }

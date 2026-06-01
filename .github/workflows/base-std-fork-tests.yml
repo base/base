@@ -1,4 +1,4 @@
-name: Base Std Fork Tests
+name: Base Std Interface Tests
 
 on:
   pull_request:
@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   fork-tests:
-    name: Base Std Fork Tests
+    name: Base Std Interface Tests
     runs-on:
       group: BasePerfRunnerGroup
     timeout-minutes: 120

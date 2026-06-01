@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
-    TeeKind as ProtocolTeeKind, ZkVm as ProtocolZkVm,
+    ProofResult as ProtocolProofResult, TeeKind as ProtocolTeeKind, ZkVm as ProtocolZkVm,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -473,6 +473,12 @@ pub struct ProofRequest {
     pub stark_receipt: Option<Vec<u8>>,
     /// Raw SNARK receipt bytes, if available.
     pub snark_receipt: Option<Vec<u8>>,
+    /// Protocol-level proof result payload, if available.
+    pub result_payload: Option<serde_json::Value>,
+    /// Worker id that submitted the result, if completed through the worker API.
+    pub submitted_by_worker_id: Option<String>,
+    /// Worker lock token that submitted the result, if completed through the worker API.
+    pub submitted_lock_id: Option<String>,
     /// Current proof status.
     pub status: ProofStatus,
     /// Error message if the proof failed.
@@ -830,6 +836,21 @@ pub struct UpdateReceipt {
     /// New proof status.
     pub status: ProofStatus,
     /// Error message, if the proof failed.
+    pub error_message: Option<String>,
+}
+
+/// Parameters for completing a proof request with a protocol-native result payload.
+#[derive(Debug, Clone)]
+pub struct CompleteProofResult {
+    /// Proof request identifier.
+    pub id: Uuid,
+    /// Protocol result to store in `result_payload`.
+    pub result: ProtocolProofResult,
+    /// Worker id that submitted the proof, if completed through the worker API.
+    pub submitted_by_worker_id: Option<String>,
+    /// Worker lock token that submitted the proof, if completed through the worker API.
+    pub submitted_lock_id: Option<String>,
+    /// Error message to store with the completion. Usually `None`.
     pub error_message: Option<String>,
 }
 
