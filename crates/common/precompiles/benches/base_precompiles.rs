@@ -28,7 +28,7 @@ impl BaseTokenBenchSetup {
 
     fn token_params(name: &str, symbol: &str) -> IB20Factory::B20CreateParams {
         IB20Factory::B20CreateParams {
-            version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+            version: B20Variant::B20.supported_version(),
             name: name.to_string(),
             symbol: symbol.to_string(),
             initialAdmin: Self::admin(),

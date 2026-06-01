@@ -1,8 +1,7 @@
-use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
+use std::{fmt, net::SocketAddr, sync::Arc};
 
 use alloy_signer::utils::public_key_to_address;
 use base_health::{HealthzApiServer, HealthzRpc};
-use base_proof_contracts::TEEProverRegistryContractClient;
 use base_proof_host::ProverConfig;
 use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
 use jsonrpsee::{
@@ -55,18 +54,13 @@ impl NitroProverServer {
             }
             NitroEnclavePoolError::Busy => Self::rpc_err(-32002, err),
             NitroEnclavePoolError::RegistrationCheckerMismatch { .. }
-            | NitroEnclavePoolError::Timeout { .. }
             | NitroEnclavePoolError::Prover(_) => Self::rpc_err(-32000, err),
         }
     }
 
-    /// Create a server with the given prover config, enclave transport, and proof request timeout.
-    pub fn new(
-        config: ProverConfig,
-        transport: Arc<NitroTransport>,
-        proof_request_timeout: Duration,
-    ) -> Self {
-        Self::new_multi(config, vec![transport], proof_request_timeout)
+    /// Create a server with the given prover config and enclave transport.
+    pub fn new(config: ProverConfig, transport: Arc<NitroTransport>) -> Self {
+        Self::new_multi(config, vec![transport])
     }
 
     /// Create a server with multiple enclave transports for dual-enclave deployments.
@@ -74,12 +68,8 @@ impl NitroProverServer {
     /// # Panics
     ///
     /// Panics if `transports` is empty.
-    pub fn new_multi(
-        config: ProverConfig,
-        transports: Vec<Arc<NitroTransport>>,
-        proof_request_timeout: Duration,
-    ) -> Self {
-        let pool = NitroEnclavePool::new_multi(config, transports, proof_request_timeout);
+    pub fn new_multi(config: ProverConfig, transports: Vec<Arc<NitroTransport>>) -> Self {
+        let pool = NitroEnclavePool::new_multi(config, transports);
         Self { pool, registration_health: None }
     }
 
@@ -108,12 +98,8 @@ impl NitroProverServer {
                     registry = %config.registry_address,
                     "registration-gated health and proving guard enabled"
                 );
-                let l1_url = url::Url::parse(&config.l1_rpc_url)
-                    .map_err(|e| eyre::eyre!("invalid L1 RPC URL: {e}"))?;
-                let registry =
-                    TEEProverRegistryContractClient::new(config.registry_address, l1_url);
                 let checker = Arc::new(
-                    RegistrationChecker::new(transports.clone(), registry)
+                    RegistrationChecker::from_health_config(transports.clone(), &config)
                         .map_err(|e| eyre::eyre!("registration checker init failed: {e}"))?,
                 );
                 module.merge(

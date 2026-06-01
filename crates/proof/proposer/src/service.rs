@@ -18,15 +18,17 @@ use base_proof_primitives::ProverClient;
 use base_proof_rpc::{
     L1Client, L1ClientConfig, L2Client, L2ClientConfig, RollupClient, RollupClientConfig,
 };
+use base_prover_service_client::{
+    ProofRequesterClient, ProofRequesterProvider, ProverServiceClientConfig,
+};
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use eyre::{Result, WrapErr};
-use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    Metrics,
+    Metrics, ProofRequesterProver,
     config::ProposerConfig,
     constants::MAX_PROOF_RETRIES,
     driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
@@ -89,11 +91,17 @@ impl ProposerService {
         let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
         info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
 
-        let prover_client = HttpClientBuilder::default()
-            .request_timeout(config.prover_timeout)
-            .build(config.prover_rpc.as_str())
-            .wrap_err("failed to create prover RPC client")?;
-        info!(endpoint = %config.prover_rpc, "Prover RPC client initialized");
+        let prover_service_config = ProverServiceClientConfig::new(config.prover_rpc.to_string())
+            .with_max_wait(config.prover_timeout);
+        let proof_requester = ProofRequesterClient::connect(&prover_service_config)
+            .wrap_err("failed to create prover-service requester client")?;
+        let proof_requester: Arc<dyn ProofRequesterProvider> = Arc::new(proof_requester);
+        let prover_client: Arc<dyn ProverClient> = Arc::new(ProofRequesterProver::aws_nitro(
+            proof_requester,
+            prover_service_config.poll_interval(),
+            prover_service_config.max_wait(),
+        ));
+        info!(endpoint = %config.prover_rpc, "Prover-service requester client initialized");
 
         let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
             config.anchor_state_registry_addr,
@@ -142,8 +150,6 @@ impl ProposerService {
 
         let factory_client = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
-
-        let prover_client: Arc<dyn ProverClient> = Arc::new(prover_client);
 
         let (output_proposer, proposer_address): (Arc<dyn crate::OutputProposer>, Option<Address>) =
             if config.dry_run {

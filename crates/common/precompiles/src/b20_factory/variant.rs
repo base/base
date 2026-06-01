@@ -34,6 +34,16 @@ impl B20Variant {
     /// Variant discriminant for security B-20 tokens.
     pub const SECURITY_DISCRIMINANT: u8 = Self::Security as u8;
 
+    /// Returns the currently supported creation-parameter version for this variant.
+    ///
+    /// Each variant owns its version independently so that one variant advancing to v2
+    /// does not affect the others.
+    pub const fn supported_version(self) -> u8 {
+        match self {
+            Self::B20 | Self::Stablecoin | Self::Security => 1,
+        }
+    }
+
     /// Returns the supported token variant for `variant`, if any.
     pub const fn from_discriminant(variant: u8) -> Option<Self> {
         match variant {

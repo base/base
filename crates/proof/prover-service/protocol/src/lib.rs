@@ -7,6 +7,9 @@ pub use api::{ProverRequesterApiClient, ProverWorkerApiClient};
 #[cfg(feature = "rpc-server")]
 pub use api::{ProverRequesterApiServer, ProverWorkerApiServer};
 
+mod session;
+pub use session::ProofSessionId;
+
 mod types;
 pub use types::{
     GetNextProofRequest, GetNextProofResponse, GetProofRequest, GetProofResponse, HeartbeatRequest,

@@ -182,22 +182,18 @@ pub struct DiscoveryResolution {
     /// Total instances returned by discovery (reachable + unreachable).
     pub total_count: usize,
     /// Whether orphan deregistration is safe to run this cycle. `true`
-    /// when the cancellation token has not fired **and either**
-    /// `total_count` is zero (legitimate fleet drain) **or** a strict
-    /// majority of discovered instances were reachable
-    /// (`reachable * 2 > total`). `false` during shutdown (to avoid
-    /// acquiring nonces we don't intend to broadcast) or when too few
+    /// when the cancellation token has not fired, no discovered instance
+    /// had an inconclusive resolution, **and either** `total_count` is zero
+    /// (legitimate fleet drain) **or** a strict majority of discovered
+    /// instances were reachable (`reachable * 2 > total`). `false` during
+    /// shutdown (to avoid acquiring nonces we don't intend to broadcast),
+    /// when any instance resolution was inconclusive, or when too few
     /// instances responded for the quorum guard to clear.
     pub ok_to_dereg: bool,
-    /// Instance IDs whose `resolve_instance` call returned `Err` this
-    /// cycle (transient `signer_public_key` / `signer_attestation` / CRL
-    /// failure). Their signers are absent from `registerable` only
-    /// because we couldn't resolve them — not because we proved them
-    /// gone or ineligible — so `reconcile_proof_tasks` MUST skip the
-    /// cancel-pass for any in-flight task whose `instance_id` is in
-    /// this set. Otherwise a single transient hiccup during a long
-    /// (~70 min) Boundless proof would abandon the in-flight work and
-    /// force the next cycle to start over from scratch.
+    /// Instance IDs whose resolution was inconclusive this cycle, either
+    /// because `resolve_instance` returned `Err` or because it returned
+    /// `Ok` with `unresolved: true`. In-flight proof tasks for these
+    /// instances must be preserved until a later cycle reaches a verdict.
     pub unresolved_instance_ids: HashSet<String>,
 }
 
@@ -205,7 +201,9 @@ pub struct DiscoveryResolution {
 /// gating. `attestations` is `Some` only when the instance is registerable
 /// and its CRL check did not flag revocation; otherwise it is `None` and
 /// the caller skips registration but still uses `addresses` for the
-/// active-signer set.
+/// active-signer set. `unresolved` distinguishes intentional skips
+/// (draining, old unhealthy, revoked, shutdown) from partial failures after
+/// signer addresses were known (for example, attestation RPC failure).
 #[derive(Debug)]
 pub struct ResolveOutcome {
     /// Signer addresses derived from the instance's enclave public keys.
@@ -214,6 +212,15 @@ pub struct ResolveOutcome {
     /// this cycle; `None` when registration is being skipped (health
     /// status, CRL revocation, shutdown).
     pub attestations: Option<Vec<Vec<u8>>>,
+    /// Whether resolution reached an inconclusive state after signer
+    /// addresses were already known.
+    ///
+    /// The caller should still add [`Self::addresses`] to the active set,
+    /// because the instance proved it is reachable and advertising those
+    /// signers, but should also preserve any in-flight proof task tied to
+    /// the instance because registration eligibility could not be decided
+    /// this cycle.
+    pub unresolved: bool,
 }
 
 /// Core registration loop tying together discovery, attestation polling,
@@ -1086,7 +1093,11 @@ where
     /// `futs.next()` in a cancel-select.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<ResolveOutcome> {
         if self.config.cancel.is_cancelled() {
-            return Ok(ResolveOutcome { addresses: Vec::new(), attestations: None });
+            return Ok(ResolveOutcome {
+                addresses: Vec::new(),
+                attestations: None,
+                unresolved: false,
+            });
         }
 
         let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
@@ -1096,7 +1107,7 @@ where
         }
 
         if addresses.is_empty() {
-            return Ok(ResolveOutcome { addresses, attestations: None });
+            return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
         }
 
         if !instance.health_status.should_register() {
@@ -1106,7 +1117,7 @@ where
                     instance = %instance.instance_id,
                     "instance not registerable, skipping registration"
                 );
-                return Ok(ResolveOutcome { addresses, attestations: None });
+                return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
             }
             info!(
                 instance = %instance.instance_id,
@@ -1117,7 +1128,7 @@ where
         }
 
         if self.config.cancel.is_cancelled() {
-            return Ok(ResolveOutcome { addresses, attestations: None });
+            return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
         }
 
         let nonce: [u8; 32] = random();
@@ -1126,21 +1137,32 @@ where
             instance = %instance.instance_id,
             "requesting attestations with nonce"
         );
-        let all_attestations = self
+        let all_attestations = match self
             .signer_client
             .signer_attestation(&instance.endpoint, None, Some(nonce.to_vec()))
-            .await?;
+            .await
+        {
+            Ok(attestations) => attestations,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    instance = %instance.instance_id,
+                    "failed to fetch signer attestations after resolving signer addresses"
+                );
+                RegistrarMetrics::processing_errors_total().increment(1);
+                return Ok(ResolveOutcome { addresses, attestations: None, unresolved: true });
+            }
+        };
 
         if all_attestations.len() < addresses.len() {
-            return Err(RegistrarError::ProverClient {
-                instance: instance.endpoint.to_string(),
-                source: format!(
-                    "expected {} attestations but got {}",
-                    addresses.len(),
-                    all_attestations.len()
-                )
-                .into(),
-            });
+            warn!(
+                expected = addresses.len(),
+                actual = all_attestations.len(),
+                instance = %instance.instance_id,
+                "signer attestation count was lower than signer public key count"
+            );
+            RegistrarMetrics::processing_errors_total().increment(1);
+            return Ok(ResolveOutcome { addresses, attestations: None, unresolved: true });
         }
 
         if self.config.crl.enabled {
@@ -1158,7 +1180,7 @@ where
             // non-local dependence on that re-check and matches the
             // CRL-revoked branch below.
             if self.config.cancel.is_cancelled() {
-                return Ok(ResolveOutcome { addresses, attestations: None });
+                return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
             }
             // Use `.first()` rather than `[0]` so the non-empty
             // invariant is locally visible: the `addresses.is_empty()`
@@ -1179,7 +1201,7 @@ where
                         instance = %instance.instance_id,
                         "certificate revoked, skipping registration for this instance"
                     );
-                    return Ok(ResolveOutcome { addresses, attestations: None });
+                    return Ok(ResolveOutcome { addresses, attestations: None, unresolved: false });
                 }
                 Ok(false) => {}
                 Err(e) => {
@@ -1192,7 +1214,7 @@ where
             }
         }
 
-        Ok(ResolveOutcome { addresses, attestations: Some(all_attestations) })
+        Ok(ResolveOutcome { addresses, attestations: Some(all_attestations), unresolved: false })
     }
 
     /// Runs one discovery cycle and resolves every instance into the
@@ -1215,12 +1237,13 @@ where
     /// the slowest signer-RPC / CRL-fetch timeout, not by long proof work
     /// (which lives in the spawned proof tasks).
     ///
-    /// The returned `ok_to_dereg` flag bakes in both the majority guard
-    /// (`reachable * 2 > total`) and the cancellation policy (token not
-    /// cancelled). The empty-discovery case sets it to `true` so legitimate
-    /// fleet drains still let orphan cleanup proceed — except when the
-    /// driver is cancelled, in which case the orphan dereg pass is skipped
-    /// so we don't acquire nonces during shutdown.
+    /// The returned `ok_to_dereg` flag bakes in the cancellation policy
+    /// (token not cancelled), the inconclusive-resolution guard (no
+    /// `unresolved_instance_ids`), and the majority guard
+    /// (`reachable * 2 > total`). The empty-discovery case sets it to
+    /// `true` so legitimate fleet drains still let orphan cleanup proceed —
+    /// except when the driver is cancelled, in which case the orphan dereg
+    /// pass is skipped so we don't acquire nonces during shutdown.
     async fn discover_and_resolve(self: &Arc<Self>) -> Result<DiscoveryResolution> {
         let instances = self.discovery.discover_instances().await?;
         RegistrarMetrics::discovery_success_total().increment(1);
@@ -1269,6 +1292,9 @@ where
                     reachable_count += 1;
                     for addr in &outcome.addresses {
                         active_signers.insert(*addr);
+                    }
+                    if outcome.unresolved {
+                        unresolved_instance_ids.insert(instance.instance_id.clone());
                     }
                     // Record signer -> instance attribution before the
                     // `instance` is moved into `RegisterableSigner` below.
@@ -1321,17 +1347,18 @@ where
             }
         }
 
-        let ok_to_dereg = if self.config.cancel.is_cancelled() {
-            false
-        } else if total_count == 0 {
-            true
-        } else {
-            // Plain `* 2` (rather than `saturating_mul`) — `reachable_count`
-            // is bounded above by `total_count = instances.len()`, so the
-            // doubling can only overflow on a list with `usize::MAX / 2`
-            // entries, which is physically impossible.
-            reachable_count * 2 > total_count
-        };
+        let ok_to_dereg =
+            if self.config.cancel.is_cancelled() || !unresolved_instance_ids.is_empty() {
+                false
+            } else if total_count == 0 {
+                true
+            } else {
+                // Plain `* 2` (rather than `saturating_mul`) — `reachable_count`
+                // is bounded above by `total_count = instances.len()`, so the
+                // doubling can only overflow on a list with `usize::MAX / 2`
+                // entries, which is physically impossible.
+                reachable_count * 2 > total_count
+            };
 
         Ok(DiscoveryResolution {
             registerable,
@@ -2273,6 +2300,8 @@ mod tests {
         /// Maps endpoint URL → list of attestation blobs (one per enclave).
         /// Falls back to `b"mock-attestation"` if not configured.
         attestations: HashMap<Url, Vec<Vec<u8>>>,
+        /// Endpoints whose attestation RPC should fail.
+        fail_attestation: HashSet<Url>,
     }
 
     impl MockSignerClient {
@@ -2288,7 +2317,7 @@ mod tests {
                     (url, vec![public_key_from_private(pk)])
                 })
                 .collect();
-            Self { keys, attestations: HashMap::new() }
+            Self { keys, attestations: HashMap::new(), fail_attestation: HashSet::new() }
         }
 
         /// Creates a mock that returns multiple public keys for a single endpoint,
@@ -2296,13 +2325,24 @@ mod tests {
         fn multi_enclave(host_port: &str, private_keys: &[&[u8; 32]]) -> Self {
             let url = Url::parse(&format!("http://{host_port}")).unwrap();
             let pubs = private_keys.iter().map(|pk| public_key_from_private(pk)).collect();
-            Self { keys: HashMap::from([(url, pubs)]), attestations: HashMap::new() }
+            Self {
+                keys: HashMap::from([(url, pubs)]),
+                attestations: HashMap::new(),
+                fail_attestation: HashSet::new(),
+            }
         }
 
         /// Configures attestation blobs for a given endpoint.
         fn with_attestations(mut self, host_port: &str, attestations: Vec<Vec<u8>>) -> Self {
             let url = Url::parse(&format!("http://{host_port}")).unwrap();
             self.attestations.insert(url, attestations);
+            self
+        }
+
+        /// Configures the attestation RPC for a given endpoint to fail.
+        fn with_attestation_failure(mut self, host_port: &str) -> Self {
+            let url = Url::parse(&format!("http://{host_port}")).unwrap();
+            self.fail_attestation.insert(url);
             self
         }
     }
@@ -2322,6 +2362,12 @@ mod tests {
             _user_data: Option<Vec<u8>>,
             _nonce: Option<Vec<u8>>,
         ) -> Result<Vec<Vec<u8>>> {
+            if self.fail_attestation.contains(endpoint) {
+                return Err(RegistrarError::ProverClient {
+                    instance: endpoint.to_string(),
+                    source: "attestation unavailable".into(),
+                });
+            }
             if let Some(atts) = self.attestations.get(endpoint) {
                 return Ok(atts.clone());
             }
@@ -3649,7 +3695,7 @@ mod tests {
     // These tests verify the exact boundary and surrounding values:
     //   - 1/4 reachable → 1*2 <= 4 → true  → deregistration skipped
     //   - 2/4 reachable → 2*2 <= 4 → true  → deregistration skipped
-    //   - 3/4 reachable → 3*2 <= 4 → false → deregistration proceeds
+    //   - 3/4 reachable → majority clears, but unresolved instance skips deregistration
     //   - 4/4 reachable → 4*2 <= 4 → false → deregistration proceeds
 
     /// All 4 endpoints and corresponding private keys, indexed for
@@ -3661,7 +3707,7 @@ mod tests {
     #[rstest]
     #[case::one_of_four(1, true)]
     #[case::two_of_four(2, true)]
-    #[case::three_of_four(3, false)]
+    #[case::three_of_four(3, true)]
     #[case::four_of_four(4, false)]
     #[tokio::test]
     async fn discover_and_resolve_reachability_guard_boundary(
@@ -3670,9 +3716,10 @@ mod tests {
     ) {
         // All 4 instances are discovered; only `reachable_count` have keys
         // in the MockSignerClient (the rest will fail signer_public_key).
-        // Verify `ok_to_dereg` flips at the strict-majority boundary and
-        // that the downstream `run_orphan_dereg` pass emits the expected
-        // calldata only when the guard clears.
+        // Verify `ok_to_dereg` remains false while any discovered instance
+        // is unresolved, and that the downstream `run_orphan_dereg` pass
+        // emits calldata only when every instance resolves and the majority
+        // guard clears.
         let instances: Vec<_> =
             ALL_ENDPOINTS.iter().map(|ep| instance(ep, InstanceHealthStatus::Healthy)).collect();
 
@@ -3763,7 +3810,10 @@ mod tests {
             resolution.unresolved_instance_ids.contains(&unreachable.instance_id),
             "unreachable instance must be marked as unresolved so reconcile skips its cancel-pass",
         );
-        assert!(resolution.ok_to_dereg, "3/4 reachable: majority guard clears (strict majority)",);
+        assert!(
+            !resolution.ok_to_dereg,
+            "unresolved instance must block orphan-dereg even when reachable majority clears",
+        );
 
         // Drive the legacy registration path per reachable instance to
         // confirm registration works in isolation (the spawn pipeline is
@@ -4142,6 +4192,88 @@ mod tests {
         assert_eq!(sent.len(), 1, "only the healthy instance should be registered");
         let register_selector = ITEEProverRegistry::registerSignerCall::SELECTOR;
         assert_eq!(&sent[0][..4], register_selector, "the only tx should be a registration");
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_attestation_mismatch_keeps_signer_active_and_unresolved() {
+        // If the registrar reaches signer_public_key successfully but
+        // then cannot pair an attestation with the signer, the instance
+        // is still reachable and advertising that signer. The signer
+        // must remain protected from orphan deregistration, while the
+        // instance is marked unresolved so any in-flight proof task is
+        // preserved for a later conclusive cycle.
+        let signer_addr =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
+        let signer_client =
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestations(EP1, vec![]);
+
+        let tx = SharedTxManager::new();
+        let driver = cycle_driver(
+            vec![inst.clone()],
+            signer_client,
+            MockRegistry::with_signers(vec![signer_addr]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let resolution = driver.discover_and_resolve().await.unwrap();
+
+        assert!(
+            resolution.active_signers.contains(&signer_addr),
+            "partial resolution must keep the signer in the active set",
+        );
+        assert!(
+            resolution.registerable.is_empty(),
+            "without a matching attestation the signer must not be registerable",
+        );
+        assert!(
+            resolution.unresolved_instance_ids.contains(&inst.instance_id),
+            "partial resolution must preserve in-flight tasks for the instance",
+        );
+        assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
+
+        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+
+        assert!(
+            tx.sent_calldata().is_empty(),
+            "orphan pass must not deregister a signer advertised by a partially resolved instance",
+        );
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_attestation_error_keeps_signer_active_and_unresolved() {
+        // This is the production-shaped variant of the previous test:
+        // public key resolution succeeds, but the attestation RPC itself
+        // fails. The signer must still be protected from orphan dereg.
+        let signer_addr =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
+        let signer_client =
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]).with_attestation_failure(EP1);
+
+        let tx = SharedTxManager::new();
+        let driver = cycle_driver(
+            vec![inst.clone()],
+            signer_client,
+            MockRegistry::with_signers(vec![signer_addr]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let resolution = driver.discover_and_resolve().await.unwrap();
+
+        assert!(resolution.active_signers.contains(&signer_addr));
+        assert!(resolution.registerable.is_empty());
+        assert!(resolution.unresolved_instance_ids.contains(&inst.instance_id));
+        assert!(!resolution.ok_to_dereg, "unresolved attestation state must block orphan-dereg",);
+
+        driver.run_orphan_dereg(&resolution.active_signers).await.unwrap();
+
+        assert!(
+            tx.sent_calldata().is_empty(),
+            "attestation RPC failures must not orphan a signer whose public key resolved",
+        );
     }
 
     #[tokio::test]

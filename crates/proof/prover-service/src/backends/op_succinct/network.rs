@@ -194,6 +194,9 @@ impl ProvingBackend for NetworkBackend {
         proof_request: &ProofRequest,
         repo: &ProofRequestRepo,
     ) -> anyhow::Result<ProofProcessingResult> {
+        let proof_type = proof_request
+            .proof_type
+            .ok_or_else(|| anyhow::anyhow!("OP Succinct request has no backend proof_type"))?;
         let sessions = repo.get_sessions_for_request(proof_request.id).await?;
 
         // Sync all RUNNING sessions with the SP1 Network.
@@ -214,7 +217,7 @@ impl ProvingBackend for NetworkBackend {
         let updated_sessions = repo.get_sessions_for_request(proof_request.id).await?;
 
         // If SNARK requested, check if STARK completed and SNARK session needs triggering.
-        if proof_request.proof_type == ProofType::OpSuccinctSp1ClusterSnarkGroth16 {
+        if proof_type == ProofType::OpSuccinctSp1ClusterSnarkGroth16 {
             let has_stark_completed = updated_sessions.iter().any(|s| {
                 s.session_type == SessionType::Stark && s.status == DbSessionStatus::Completed
             });
@@ -241,11 +244,11 @@ impl ProvingBackend for NetworkBackend {
                     });
                 }
                 let updated_sessions = repo.get_sessions_for_request(proof_request.id).await?;
-                return Ok(Self::determine_status(proof_request.proof_type, &updated_sessions));
+                return Ok(Self::determine_status(proof_type, &updated_sessions));
             }
         }
 
-        Ok(Self::determine_status(proof_request.proof_type, &updated_sessions))
+        Ok(Self::determine_status(proof_type, &updated_sessions))
     }
 
     async fn get_session_status(&self, session: &ProofSession) -> anyhow::Result<SessionStatus> {

@@ -3594,15 +3594,15 @@ dependencies = [
  "base-proof-primitives",
  "base-proof-rpc",
  "base-protocol",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
  "base-runtime",
  "base-tx-manager",
- "base-zk-client",
  "clap",
  "derive_more 2.1.1",
  "eyre",
  "futures",
  "humantime",
- "jsonrpsee",
  "metrics",
  "rstest",
  "rustls 0.23.40",
@@ -3613,7 +3613,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
- "uuid",
 ]
 
 [[package]]
@@ -5711,6 +5710,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-signer 2.0.5",
  "async-trait",
+ "backon",
  "base-common-genesis",
  "base-health",
  "base-proof-contracts",
@@ -5719,11 +5719,14 @@ dependencies = [
  "base-proof-primitives",
  "base-proof-tee-nitro-enclave",
  "base-prover-service-client",
+ "base-prover-service-protocol",
+ "chrono",
  "eyre",
  "jsonrpsee",
  "k256",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tokio-vsock",
  "tower 0.5.3",
  "tracing",
@@ -5853,6 +5856,8 @@ dependencies = [
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-rpc",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
  "base-tx-manager",
  "clap",
  "eyre",
@@ -5938,11 +5943,14 @@ dependencies = [
  "base-proof-host",
  "base-proof-tee-nitro-enclave",
  "base-proof-tee-nitro-host",
+ "base-prover-service-client",
  "clap",
  "eyre",
  "serde",
  "tokio",
+ "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -6008,6 +6016,7 @@ name = "base-prover-service-db"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "base-prover-service-protocol",
  "chrono",
  "futures",
  "serde",
@@ -6043,6 +6052,7 @@ dependencies = [
  "jsonrpsee",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]

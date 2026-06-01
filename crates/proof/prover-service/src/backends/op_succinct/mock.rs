@@ -135,6 +135,9 @@ impl ProvingBackend for MockBackend {
         proof_request: &ProofRequest,
         repo: &ProofRequestRepo,
     ) -> anyhow::Result<ProofProcessingResult> {
+        let proof_type = proof_request
+            .proof_type
+            .ok_or_else(|| anyhow::anyhow!("mock OP Succinct request has no backend proof_type"))?;
         let sessions = repo.get_sessions_for_request(proof_request.id).await?;
 
         if sessions.is_empty() {
@@ -161,7 +164,7 @@ impl ProvingBackend for MockBackend {
                             number_of_blocks_to_prove: proof_request.number_of_blocks_to_prove
                                 as u64,
                             sequence_window: proof_request.sequence_window.map(|w| w as u64),
-                            proof_type: match proof_request.proof_type {
+                            proof_type: match proof_type {
                                 ProofType::OpSuccinctSp1ClusterCompressed => 3,
                                 ProofType::OpSuccinctSp1ClusterSnarkGroth16 => 4,
                             },
@@ -213,7 +216,7 @@ impl ProvingBackend for MockBackend {
         let updated_sessions = repo.get_sessions_for_request(proof_request.id).await?;
 
         // For SNARK_GROTH16, check if STARK is done and SNARK session needs creation.
-        if proof_request.proof_type == ProofType::OpSuccinctSp1ClusterSnarkGroth16 {
+        if proof_type == ProofType::OpSuccinctSp1ClusterSnarkGroth16 {
             let has_stark_completed = updated_sessions.iter().any(|s| {
                 s.session_type == SessionType::Stark && s.status == DbSessionStatus::Completed
             });
@@ -244,11 +247,11 @@ impl ProvingBackend for MockBackend {
                 repo.create_proof_session(session).await?;
 
                 let final_sessions = repo.get_sessions_for_request(proof_request.id).await?;
-                return Ok(determine_mock_status(proof_request.proof_type, &final_sessions));
+                return Ok(determine_mock_status(proof_type, &final_sessions));
             }
         }
 
-        Ok(determine_mock_status(proof_request.proof_type, &updated_sessions))
+        Ok(determine_mock_status(proof_type, &updated_sessions))
     }
 
     async fn get_session_status(&self, _session: &ProofSession) -> anyhow::Result<SessionStatus> {

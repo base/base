@@ -1,11 +1,11 @@
 //! Reusable Nitro enclave proof pool.
 
-use std::{fmt, sync::Arc, time::Duration};
+use std::{fmt, sync::Arc};
 
 use base_proof_host::{ProverConfig, ProverError, ProverService};
 use base_proof_primitives::{ProofRequest, ProofResult};
 use thiserror::Error;
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::warn;
 
 use super::{
@@ -35,7 +35,6 @@ struct EnclaveService {
 /// selection.
 pub struct NitroEnclavePool {
     enclaves: Vec<EnclaveService>,
-    proof_request_timeout: Duration,
     checker: Option<Arc<RegistrationChecker>>,
 }
 
@@ -43,7 +42,6 @@ impl fmt::Debug for NitroEnclavePool {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NitroEnclavePool")
             .field("enclave_count", &self.enclaves.len())
-            .field("proof_request_timeout", &self.proof_request_timeout)
             .field("has_registration_checker", &self.checker.is_some())
             .finish()
     }
@@ -51,12 +49,8 @@ impl fmt::Debug for NitroEnclavePool {
 
 impl NitroEnclavePool {
     /// Create a pool with one enclave transport.
-    pub fn new(
-        config: ProverConfig,
-        transport: Arc<NitroTransport>,
-        proof_request_timeout: Duration,
-    ) -> Self {
-        Self::new_multi(config, vec![transport], proof_request_timeout)
+    pub fn new(config: ProverConfig, transport: Arc<NitroTransport>) -> Self {
+        Self::new_multi(config, vec![transport])
     }
 
     /// Create a pool with multiple enclave transports.
@@ -64,11 +58,7 @@ impl NitroEnclavePool {
     /// # Panics
     ///
     /// Panics if `transports` is empty.
-    pub fn new_multi(
-        config: ProverConfig,
-        transports: Vec<Arc<NitroTransport>>,
-        proof_request_timeout: Duration,
-    ) -> Self {
+    pub fn new_multi(config: ProverConfig, transports: Vec<Arc<NitroTransport>>) -> Self {
         assert!(!transports.is_empty(), "at least one transport is required");
         let enclaves = transports
             .into_iter()
@@ -84,7 +74,7 @@ impl NitroEnclavePool {
             })
             .collect();
 
-        Self { enclaves, proof_request_timeout, checker: None }
+        Self { enclaves, checker: None }
     }
 
     /// Attach a registration checker used to select valid enclave signers.
@@ -112,25 +102,18 @@ impl NitroEnclavePool {
         self.checker.as_ref().map(Arc::clone)
     }
 
-    /// Proves one request using the configured timeout and busy-enclave policy.
+    /// Proves one request using the busy-enclave policy.
     pub async fn prove(&self, request: ProofRequest) -> Result<ProofResult, NitroEnclavePoolError> {
         let l2_block = request.claimed_l2_block_number;
-        let timeout = self.proof_request_timeout;
         let (enclave, _permit) = self.acquire_enclave(l2_block).await?;
 
-        match tokio::time::timeout(timeout, enclave.service.prove_block(request)).await {
-            Ok(result) => result.map_err(NitroEnclavePoolError::Prover),
-            Err(_elapsed) => {
-                warn!(l2_block, timeout_secs = timeout.as_secs(), "proof request timed out");
-                Err(NitroEnclavePoolError::Timeout { l2_block, timeout_secs: timeout.as_secs() })
-            }
-        }
+        enclave.service.prove_block(request).await.map_err(NitroEnclavePoolError::Prover)
     }
 
     async fn acquire_enclave(
         &self,
         l2_block: u64,
-    ) -> Result<(&EnclaveService, tokio::sync::OwnedSemaphorePermit), NitroEnclavePoolError> {
+    ) -> Result<(&EnclaveService, OwnedSemaphorePermit), NitroEnclavePoolError> {
         let candidate_indices: Vec<usize> = match &self.checker {
             Some(checker) => checker
                 .select_all_valid_enclaves()
@@ -207,14 +190,6 @@ pub enum NitroEnclavePoolError {
     /// Every valid enclave is already proving.
     #[error("enclave busy: another proof request is already in flight")]
     Busy,
-    /// The proof request exceeded its configured timeout.
-    #[error("proof request timed out after {timeout_secs}s for L2 block {l2_block}")]
-    Timeout {
-        /// L2 block number from the proof request.
-        l2_block: u64,
-        /// Configured timeout in seconds.
-        timeout_secs: u64,
-    },
     /// Witness generation or enclave proving failed.
     #[error(transparent)]
     Prover(#[from] ProverError<NitroBackend>),
@@ -255,7 +230,7 @@ mod tests {
     fn test_pool() -> NitroEnclavePool {
         let server = Arc::new(EnclaveServer::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(server));
-        NitroEnclavePool::new(test_prover_config(), transport, Duration::from_secs(60))
+        NitroEnclavePool::new(test_prover_config(), transport)
     }
 
     async fn signer_for(transport: &NitroTransport) -> alloy_primitives::Address {
@@ -304,7 +279,6 @@ mod tests {
         let pool = NitroEnclavePool::new_multi(
             test_prover_config(),
             vec![first_transport, second_transport],
-            Duration::from_secs(60),
         );
 
         let _held = Arc::clone(&pool.enclaves[0].prove_permit).try_acquire_owned().unwrap();
@@ -334,7 +308,6 @@ mod tests {
         let pool = NitroEnclavePool::new_multi(
             test_prover_config(),
             vec![Arc::clone(&t1), Arc::clone(&t2)],
-            Duration::from_secs(60),
         )
         .with_registration_checker(checker)
         .unwrap();
@@ -358,7 +331,6 @@ mod tests {
         let pool = NitroEnclavePool::new_multi(
             test_prover_config(),
             vec![Arc::clone(&t1), Arc::clone(&t2)],
-            Duration::from_secs(60),
         );
 
         let _held = Arc::clone(&pool.enclaves[0].prove_permit).try_acquire_owned().unwrap();
@@ -381,8 +353,7 @@ mod tests {
         let checker = Arc::new(
             RegistrationChecker::new(vec![Arc::clone(&t1), Arc::clone(&t2)], registry).unwrap(),
         );
-        let pool =
-            NitroEnclavePool::new(test_prover_config(), Arc::clone(&t1), Duration::from_secs(60));
+        let pool = NitroEnclavePool::new(test_prover_config(), Arc::clone(&t1));
 
         let err = pool.with_registration_checker(checker).unwrap_err();
         assert!(matches!(
@@ -408,7 +379,6 @@ mod tests {
         let pool = NitroEnclavePool::new_multi(
             test_prover_config(),
             vec![Arc::clone(&t1), Arc::clone(&t2)],
-            Duration::from_secs(60),
         );
 
         let err = pool.with_registration_checker(checker).unwrap_err();

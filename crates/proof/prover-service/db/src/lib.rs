@@ -5,10 +5,12 @@ pub use config::DatabaseConfig;
 
 mod models;
 pub use models::{
-    CreateOutboxEntry, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    CreateProofSession, MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofRequest,
+    ApiProofType, CreateOutboxEntry, CreateProofRequest, CreateProofRequestError,
+    CreateProofRequestOutcome, CreateProofRequestValidationError, CreateProofSession,
+    DerivedProofRequestFields, MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofRequest,
     ProofRequestListItem, ProofRequestPage, ProofSession, ProofStatus, ProofType, RetryOutcome,
-    SessionStatus, SessionType, UpdateProofSession, UpdateReceipt,
+    SessionStatus, SessionType, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
+    canonical_session_id,
 };
 
 mod repo;
