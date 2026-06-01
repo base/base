@@ -671,6 +671,7 @@ impl B20SecurityScenario {
             name: BerylTestEnv::B20_SECURITY_NAME.to_string(),
             symbol: BerylTestEnv::B20_SECURITY_SYMBOL.to_string(),
             decimals: BerylTestEnv::B20_SECURITY_DECIMALS,
+            variantParams: Bytes::new(),
         }
         .encode_log_data();
         self.assert_receipt_log(block, 0, B20FactoryStorage::ADDRESS, expected);

@@ -12,6 +12,20 @@ use crate::{
     IB20Factory, PolicyHandle, RoleManaged, Token,
 };
 
+/// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
+const B20_STABLECOIN_EVENT_PARAMS_VERSION: u8 = 1;
+
+/// ABI-encodes stablecoin-specific `variantParams` for `B20Created`.
+/// DEFAULT and SECURITY call sites use `Bytes::new()` directly.
+fn encode_stablecoin_variant_params(currency: &str) -> Bytes {
+    IB20Factory::B20StablecoinEventParams {
+        version: B20_STABLECOIN_EVENT_PARAMS_VERSION,
+        currency: currency.to_string(),
+    }
+    .abi_encode()
+    .into()
+}
+
 /// Maximum total supply for all newly-created B-20 tokens.
 const DEFAULT_SUPPLY_CAP: U256 = U256::MAX;
 
@@ -108,6 +122,7 @@ impl<'a> B20FactoryStorage<'a> {
             name,
             symbol,
             decimals: B20Variant::B20.decimals(),
+            variantParams: Bytes::new(),
         })?;
 
         if !common.initial_admin.is_zero() {
@@ -140,7 +155,8 @@ impl<'a> B20FactoryStorage<'a> {
             B20StablecoinStorage::from_address(token_address, self.storage),
             PolicyHandle::new(self.storage),
         );
-        let (name, symbol) = (init.name.clone(), init.symbol.clone());
+        let (name, symbol, currency) =
+            (init.name.clone(), init.symbol.clone(), init.currency.clone());
         token.accounting_mut().initialize(init)?;
 
         self.emit_event(IB20Factory::B20Created {
@@ -149,6 +165,7 @@ impl<'a> B20FactoryStorage<'a> {
             name,
             symbol,
             decimals: B20Variant::Stablecoin.decimals(),
+            variantParams: encode_stablecoin_variant_params(&currency),
         })?;
 
         if !common.initial_admin.is_zero() {
@@ -187,6 +204,7 @@ impl<'a> B20FactoryStorage<'a> {
             name,
             symbol,
             decimals: B20Variant::Security.decimals(),
+            variantParams: Bytes::new(),
         })?;
 
         if !common.initial_admin.is_zero() {
@@ -378,7 +396,7 @@ mod tests {
     use alloc::string::ToString;
 
     use alloy_primitives::{Address, B256, Bytes, U256, address};
-    use alloy_sol_types::{SolCall, SolError, SolValue};
+    use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
 
     use crate::{
@@ -1256,5 +1274,99 @@ mod tests {
                 .abi_encode(),
             );
         });
+    }
+
+    #[test]
+    fn b20created_default_variant_emits_empty_variant_params() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let call = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::DEFAULT,
+            salt: B256::repeat_byte(0x70),
+            params: IB20Factory::B20CreateParams {
+                version: 1,
+                name: "T".to_string(),
+                symbol: "T".to_string(),
+                initialAdmin: Address::repeat_byte(0xAB),
+            }
+            .abi_encode()
+            .into(),
+            initCalls: Vec::new(),
+        };
+        storage.set_caller(Address::repeat_byte(0x01));
+        StorageCtx::enter(&mut storage, |ctx| {
+            dispatch_factory_success(ctx, call);
+        });
+        let event = storage
+            .get_events(B20FactoryStorage::ADDRESS)
+            .iter()
+            .find_map(|l| IB20Factory::B20Created::decode_log_data(l).ok())
+            .expect("B20Created must be emitted");
+        assert!(event.variantParams.is_empty(), "DEFAULT variantParams must be empty");
+    }
+
+    #[test]
+    fn b20created_stablecoin_variant_emits_encoded_currency() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let call = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::STABLECOIN,
+            salt: B256::repeat_byte(0x71),
+            params: IB20Factory::B20StablecoinCreateParams {
+                version: 1,
+                name: "Stable".to_string(),
+                symbol: "STB".to_string(),
+                initialAdmin: Address::repeat_byte(0xAB),
+                currency: "USD".to_string(),
+            }
+            .abi_encode()
+            .into(),
+            initCalls: Vec::new(),
+        };
+        storage.set_caller(Address::repeat_byte(0x01));
+        StorageCtx::enter(&mut storage, |ctx| {
+            dispatch_factory_success(ctx, call);
+        });
+        let event = storage
+            .get_events(B20FactoryStorage::ADDRESS)
+            .iter()
+            .find_map(|l| IB20Factory::B20Created::decode_log_data(l).ok())
+            .expect("B20Created must be emitted");
+        assert!(!event.variantParams.is_empty(), "STABLECOIN variantParams must not be empty");
+        let params = IB20Factory::B20StablecoinEventParams::abi_decode(&event.variantParams)
+            .expect("variantParams must decode as B20StablecoinEventParams");
+        assert_eq!(params.version, super::B20_STABLECOIN_EVENT_PARAMS_VERSION);
+        assert_eq!(params.currency, "USD");
+    }
+
+    #[test]
+    fn b20created_security_variant_emits_empty_variant_params() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let call = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::SECURITY,
+            salt: B256::repeat_byte(0x72),
+            params: IB20Factory::B20SecurityCreateParams {
+                version: 1,
+                name: "Sec".to_string(),
+                symbol: "SEC".to_string(),
+                initialAdmin: Address::repeat_byte(0xAB),
+                isin: "US0000000001".to_string(),
+                minimumRedeemable: U256::ONE,
+            }
+            .abi_encode()
+            .into(),
+            initCalls: Vec::new(),
+        };
+        storage.set_caller(Address::repeat_byte(0x01));
+        StorageCtx::enter(&mut storage, |ctx| {
+            dispatch_factory_success(ctx, call);
+        });
+        let event = storage
+            .get_events(B20FactoryStorage::ADDRESS)
+            .iter()
+            .find_map(|l| IB20Factory::B20Created::decode_log_data(l).ok())
+            .expect("B20Created must be emitted");
+        assert!(event.variantParams.is_empty(), "SECURITY variantParams must be empty");
     }
 }
