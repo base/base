@@ -165,6 +165,7 @@ impl BaseChainSpec {
         // L1 hardforks are mapped to the activation timestamps of the corresponding Base hardforks
         let azul_time = genesis_info.base.azul;
         let beryl_time = genesis_info.base.beryl;
+        let cobalt_time = genesis_info.base.cobalt;
         let time_hardfork_opts = [
             (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
             (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
@@ -180,6 +181,7 @@ impl BaseChainSpec {
             (EthereumHardfork::Osaka.boxed(), azul_time),
             (BaseUpgrade::Azul.boxed(), azul_time),
             (BaseUpgrade::Beryl.boxed(), beryl_time),
+            (BaseUpgrade::Cobalt.boxed(), cobalt_time),
         ];
 
         let mut time_hardforks = time_hardfork_opts
@@ -1076,7 +1078,7 @@ mod tests {
                     (String::from("holoceneTime"), 0.into()),
                     (String::from("isthmusTime"), 0.into()),
                     (String::from("jovianTime"), 0.into()),
-                    (String::from("base"), serde_json::json!({ "v1": 0, "v2": 0 })),
+                    (String::from("base"), serde_json::json!({ "v1": 0, "v2": 0, "v3": 0 })),
                     (
                         String::from("activationAdminAddress"),
                         serde_json::json!(address!("0xcb00000000000000000000000000000000000000")),
@@ -1122,6 +1124,7 @@ mod tests {
             EthereumHardfork::Osaka.boxed(),
             BaseUpgrade::Azul.boxed(),
             BaseUpgrade::Beryl.boxed(),
+            BaseUpgrade::Cobalt.boxed(),
         ];
 
         for (expected, actual) in expected_hardforks.iter().zip(hardforks.iter()) {
