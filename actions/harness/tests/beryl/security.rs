@@ -508,7 +508,7 @@ async fn security_mutations_revert_on_invalid_inputs() {
 }
 
 #[tokio::test]
-async fn security_calls_revert_while_security_feature_is_deactivated() {
+async fn security_calls_succeed_while_security_feature_is_deactivated() {
     let mut scenario = B20SecurityScenario::new().await;
 
     let deactivate_security =
@@ -520,9 +520,10 @@ async fn security_calls_revert_while_security_feature_is_deactivated() {
         scenario.call_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: U256::from(1) });
     let block = scenario.build_block_with_transactions(vec![transfer_while_deactivated]).await;
     assert!(
-        !scenario.env.user_tx_succeeded(&block, 0),
-        "security token call must revert while B20_SECURITY is deactivated"
+        scenario.env.user_tx_succeeded(&block, 0),
+        "existing security token call must succeed even when B20_SECURITY is deactivated"
     );
+    scenario.assert_balances(BerylTestEnv::B20_INITIAL_SUPPLY - 1, 1, 0);
 
     let (probe, deploy_probe) = scenario.env.deploy_staticcall_probe_tx(scenario.token);
     let block = scenario.build_block_with_transactions(vec![deploy_probe]).await;
@@ -536,23 +537,9 @@ async fn security_calls_revert_while_security_feature_is_deactivated() {
     let block = scenario.build_block_with_transactions(vec![probe_call]).await;
     assert!(scenario.env.user_tx_succeeded(&block, 0), "probe transaction must succeed");
     assert!(
-        !scenario.env.probe_call_succeeded(probe),
-        "security staticcall must fail while B20_SECURITY is deactivated"
+        scenario.env.probe_call_succeeded(probe),
+        "existing security staticcall must succeed even when B20_SECURITY is deactivated"
     );
-
-    let reactivate_security =
-        scenario.env.activate_feature_tx(BerylTestEnv::b20_security_feature());
-    let block = scenario.build_block_with_transactions(vec![reactivate_security]).await;
-    assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_SECURITY re-activation must succeed");
-
-    let transfer_after_reactivate =
-        scenario.call_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: U256::from(1) });
-    let block = scenario.build_block_with_transactions(vec![transfer_after_reactivate]).await;
-    assert!(
-        scenario.env.user_tx_succeeded(&block, 0),
-        "security token call must succeed after B20_SECURITY is re-activated"
-    );
-    scenario.assert_balances(BerylTestEnv::B20_INITIAL_SUPPLY - 1, 1, 0);
 
     scenario.derive().await;
 }

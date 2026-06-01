@@ -216,7 +216,7 @@ async fn b20_staticcall_abi_returns_storage_values() {
 }
 
 #[tokio::test]
-async fn b20_transfer_reverts_while_token_feature_is_deactivated() {
+async fn b20_transfer_succeeds_while_token_feature_is_deactivated() {
     let mut scenario = B20TokenScenario::new().await;
 
     let deactivate_b20 = scenario.env.deactivate_feature_tx(BerylTestEnv::b20_token_feature());
@@ -229,24 +229,8 @@ async fn b20_transfer_reverts_while_token_feature_is_deactivated() {
     let block = scenario.build_block_with_transactions(vec![transfer_while_deactivated]).await;
 
     assert!(
-        !scenario.env.user_tx_succeeded(&block, 0),
-        "token transfer must revert when B20_TOKEN is deactivated"
-    );
-    scenario.assert_balances(BerylTestEnv::B20_INITIAL_SUPPLY, 0, 0);
-    scenario.assert_total_supply(BerylTestEnv::B20_INITIAL_SUPPLY);
-
-    let reactivate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_token_feature());
-    let block = scenario.build_block_with_transactions(vec![reactivate_b20]).await;
-
-    assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_TOKEN re-activation must succeed");
-
-    let transfer_after_reactivate =
-        scenario.env.transfer_b20_tx(scenario.token, BerylTestEnv::bob(), U256::from(1));
-    let block = scenario.build_block_with_transactions(vec![transfer_after_reactivate]).await;
-
-    assert!(
         scenario.env.user_tx_succeeded(&block, 0),
-        "token transfer must succeed after B20_TOKEN is re-activated"
+        "existing token transfer must succeed even when B20_TOKEN is deactivated"
     );
     scenario.assert_transfer_log(&block, BerylTestEnv::alice(), BerylTestEnv::bob(), 1);
     scenario.assert_balances(BerylTestEnv::B20_INITIAL_SUPPLY - 1, 1, 0);

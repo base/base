@@ -131,6 +131,58 @@ async fn b20_creation_reverts_while_factory_feature_is_deactivated() {
 }
 
 #[tokio::test]
+async fn b20_creation_reverts_while_variant_feature_is_deactivated() {
+    let mut env = BerylTestEnv::new();
+
+    let block1 = env.sequencer.build_empty_block().await;
+    let activation_block = B20FactoryPrecompiles::activate(&mut env).await;
+
+    let create_first_token = env.create_b20_token_tx();
+    let block2 = env.sequencer.build_next_block_with_transactions(vec![create_first_token]).await;
+    assert!(env.user_tx_succeeded(&block2, 0), "first B-20 creation must succeed");
+
+    let deactivate_b20_token = env.deactivate_feature_tx(BerylTestEnv::b20_token_feature());
+    let block3 =
+        env.sequencer.build_next_block_with_transactions(vec![deactivate_b20_token]).await;
+    assert!(env.user_tx_succeeded(&block3, 0), "B20_TOKEN deactivation must succeed");
+
+    let create_while_deactivated = env.create_b20_token_with_salt_tx(BerylTestEnv::ALT_SALT);
+    let block4 =
+        env.sequencer.build_next_block_with_transactions(vec![create_while_deactivated]).await;
+    assert!(
+        !env.user_tx_succeeded(&block4, 0),
+        "B-20 creation must revert when B20_TOKEN variant is deactivated"
+    );
+
+    let reactivate_b20_token = env.activate_feature_tx(BerylTestEnv::b20_token_feature());
+    let block5 =
+        env.sequencer.build_next_block_with_transactions(vec![reactivate_b20_token]).await;
+    assert!(env.user_tx_succeeded(&block5, 0), "B20_TOKEN re-activation must succeed");
+
+    let create_after_reactivate = env.create_b20_token_with_salt_tx(BerylTestEnv::ALT_SALT);
+    let block6 =
+        env.sequencer.build_next_block_with_transactions(vec![create_after_reactivate]).await;
+    assert!(
+        env.user_tx_succeeded(&block6, 0),
+        "B-20 creation must succeed after B20_TOKEN variant is re-activated"
+    );
+
+    env.derive_blocks(
+        [
+            (block1, 1),
+            (activation_block, 2),
+            (block2, 3),
+            (block3, 4),
+            (block4, 5),
+            (block5, 6),
+            (block6, 7),
+        ],
+        7,
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn b20_factory_views_and_events_are_available_after_beryl_activation() {
     let mut env = BerylTestEnv::new();
     let token = env.b20_token_address();

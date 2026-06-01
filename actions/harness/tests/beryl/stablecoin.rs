@@ -195,7 +195,7 @@ async fn stablecoin_inherited_b20_operations_update_state_and_emit_events() {
 }
 
 #[tokio::test]
-async fn stablecoin_calls_revert_while_stablecoin_feature_is_deactivated() {
+async fn stablecoin_calls_succeed_while_stablecoin_feature_is_deactivated() {
     let mut scenario = StablecoinScenario::new().await;
 
     let (probe, deploy_probe) = scenario.env.deploy_staticcall_probe_tx(scenario.token);
@@ -213,51 +213,18 @@ async fn stablecoin_calls_revert_while_stablecoin_feature_is_deactivated() {
         BerylTestEnv::B20_PROBE_GAS_LIMIT,
     );
     let block = scenario.build_block_with_transactions(vec![probe_while_deactivated]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "probe transaction must succeed");
     assert!(
-        scenario.env.user_tx_succeeded(&block, 0),
-        "probe transaction must succeed even when the inner staticcall reverts"
-    );
-    assert!(
-        !scenario.env.probe_call_succeeded(probe),
-        "currency() staticcall must fail when B20_STABLECOIN is deactivated"
+        scenario.env.probe_call_succeeded(probe),
+        "currency() staticcall must succeed on existing token even when B20_STABLECOIN is deactivated"
     );
 
     let transfer_while_deactivated =
         scenario.env.transfer_b20_tx(scenario.token, BerylTestEnv::bob(), U256::ONE);
     let block = scenario.build_block_with_transactions(vec![transfer_while_deactivated]).await;
     assert!(
-        !scenario.env.user_tx_succeeded(&block, 0),
-        "stablecoin transfer must revert when B20_STABLECOIN is deactivated"
-    );
-    scenario.assert_total_supply(BerylTestEnv::B20_INITIAL_SUPPLY);
-    scenario.assert_balances(BerylTestEnv::B20_INITIAL_SUPPLY, 0, 0);
-
-    let reactivate_stablecoin =
-        scenario.env.activate_feature_tx(BerylTestEnv::b20_stablecoin_feature());
-    let block = scenario.build_block_with_transactions(vec![reactivate_stablecoin]).await;
-    assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_STABLECOIN re-activation must succeed");
-
-    let probe_after_reactivate = scenario.env.call_staticcall_probe_tx(
-        probe,
-        Bytes::from(IB20Stablecoin::currencyCall {}.abi_encode()),
-        BerylTestEnv::B20_PROBE_GAS_LIMIT,
-    );
-    let block = scenario.build_block_with_transactions(vec![probe_after_reactivate]).await;
-    assert!(scenario.env.user_tx_succeeded(&block, 0), "probe transaction must succeed");
-    assert!(scenario.env.probe_call_succeeded(probe), "currency() staticcall must succeed again");
-    test_helpers::assert_probe_string(
-        &scenario.env,
-        probe,
-        "currency after reactivation",
-        BerylTestEnv::B20_STABLECOIN_CURRENCY,
-    );
-
-    let transfer_after_reactivate =
-        scenario.env.transfer_b20_tx(scenario.token, BerylTestEnv::bob(), U256::ONE);
-    let block = scenario.build_block_with_transactions(vec![transfer_after_reactivate]).await;
-    assert!(
         scenario.env.user_tx_succeeded(&block, 0),
-        "stablecoin transfer must succeed after B20_STABLECOIN is re-activated"
+        "existing stablecoin transfer must succeed even when B20_STABLECOIN is deactivated"
     );
     scenario.assert_transfer_log(&block, 0, BerylTestEnv::alice(), BerylTestEnv::bob(), 1);
     scenario.assert_balances(BerylTestEnv::B20_INITIAL_SUPPLY - 1, 1, 0);

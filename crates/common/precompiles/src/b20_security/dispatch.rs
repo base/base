@@ -14,8 +14,7 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20PolicyType, B20SecurityStorage,
-    B20SecurityToken, B20TokenRole, Burnable, Configurable,
+    B20PolicyType, B20SecurityStorage, B20SecurityToken, B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Security::{self, IB20SecurityCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
@@ -105,9 +104,6 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        ActivationRegistryStorage::new(ctx)
-            .ensure_activated(ActivationFeature::B20Security.id())?;
-
         // Security-specific and overridden selectors are caught here first.
         if let Ok(call) = IB20Security::IB20SecurityCalls::abi_decode(calldata) {
             let label = call.as_label();

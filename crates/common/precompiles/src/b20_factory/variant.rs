@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_sol_types::SolValue;
 
-use crate::IB20Factory;
+use crate::{ActivationFeature, IB20Factory};
 
 /// B-20 token variant encoded in token address byte `[10]`.
 ///
@@ -106,6 +106,15 @@ impl B20Variant {
         match self {
             Self::B20 => 18,
             Self::Stablecoin | Self::Security => 6,
+        }
+    }
+
+    /// Returns the activation feature that controls creation of this variant.
+    pub const fn activation_feature(self) -> ActivationFeature {
+        match self {
+            Self::B20 => ActivationFeature::B20Token,
+            Self::Stablecoin => ActivationFeature::B20Stablecoin,
+            Self::Security => ActivationFeature::B20Security,
         }
     }
 

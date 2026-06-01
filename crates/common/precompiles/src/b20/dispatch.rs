@@ -4,7 +4,7 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20Token, B20TokenRole, Burnable, Configurable,
+    B20Token, B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
     PrecompileCallObserver, RoleManaged, Token, TokenAccounting, Transferable,
@@ -93,8 +93,6 @@ impl<S: TokenAccounting, P: Policy> B20Token<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        ActivationRegistryStorage::new(ctx).ensure_activated(ActivationFeature::B20Token.id())?;
-
         let call = decode_precompile_call!(calldata, IB20::IB20Calls);
         let label = call.as_label();
 
