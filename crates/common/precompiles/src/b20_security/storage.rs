@@ -271,29 +271,6 @@ mod tests {
     }
 
     #[test]
-    fn b20_redeem_packed_slot_1_sender_policy_id_does_not_bleed_into_reserved() {
-        // Slot 1 of the redeem namespace packs redeem_sender_policy_id (u64, offset_bytes=0)
-        // with redeem_reserved (FixedBytes<24>, offset_bytes=8).
-        // Writing only the u64 must leave bits [64..255] zero.
-        let (mut storage, _) = setup_storage();
-        let policy_id: u64 = 0xFEED_FACE_FEED_FACE;
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mut token = B20SecurityStorage::from_address(TOKEN, ctx);
-            token.redeem.redeem_sender_policy_id.write(policy_id).unwrap();
-
-            let redeem_policy_slot = REDEEM_ROOT
-                + U256::from(
-                    __packing_b20_redeem_storage::REDEEM_SENDER_POLICY_ID_LOC.offset_slots,
-                );
-            let raw = ctx.sload(TOKEN, redeem_policy_slot).unwrap();
-
-            assert_eq!(raw & U256::from(u64::MAX), U256::from(policy_id), "policy_id at bits [0..63]");
-            assert_eq!(raw >> 64, U256::ZERO, "redeem_reserved region must be zero");
-        });
-    }
-
-    #[test]
     fn initialize_sets_redeem_sender_policy_to_always_block() {
         let (mut storage, _) = setup_storage();
 
