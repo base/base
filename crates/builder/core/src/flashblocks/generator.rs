@@ -1,4 +1,5 @@
 use std::{
+    ops::Deref,
     sync::Arc,
     task::Waker,
     time::{SystemTime, UNIX_EPOCH},
@@ -20,7 +21,6 @@ use reth_provider::{BlockReaderIdExt, CanonStateNotification, StateProviderFacto
 use reth_revm::cached::CachedReads;
 use reth_tasks::Runtime;
 use reth_trie_parallel::state_root_task::StateRootHandle;
-use std::ops::Deref;
 use tokio::{
     sync::{Semaphore, oneshot},
     time::{Duration, Sleep},
@@ -352,7 +352,7 @@ where
         let execution_cache = self.execution_cache.clone();
         let trie_handle = self.trie_handle.take();
         self.executor.spawn_blocking_task(Box::pin(async move {
-            let _permit = guard.acquire().await;
+            let _permit = guard.acquire().await.expect("payload task semaphore is never closed");
             let args = BuildArguments {
                 cached_reads,
                 execution_cache,

@@ -70,7 +70,7 @@ impl<'a, DB> FlashblocksBlockBuilder<'a, DB> {
     }
 
     /// Returns mutable access to the underlying state.
-    pub(crate) fn state_mut(&mut self) -> &mut State<DB> {
+    pub(crate) const fn state_mut(&mut self) -> &mut State<DB> {
         self.state
     }
 
@@ -208,7 +208,7 @@ impl<'a, DB> FlashblocksBlockBuilder<'a, DB> {
         ctx: &BasePayloadBuilderCtx,
     ) -> Option<(B256, TrieUpdates)> {
         let mut handle = self.trie_handle.take()?;
-        if let Some(sender) = &self.state_root_updates {
+        if let Some(sender) = self.state_root_updates.take() {
             // The sparse-trie worker only knows it has a complete block after this signal. All
             // Base-specific execution paths above must have sent their `StateUpdate`s before this.
             let _ = sender.send(StateRootMessage::FinishedStateUpdates);
