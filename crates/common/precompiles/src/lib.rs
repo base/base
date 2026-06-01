@@ -53,10 +53,10 @@ pub use b20::{
     B20TokenStorage, IB20,
 };
 
-mod b20_security;
-pub use b20_security::{
-    B20RedeemStorage, B20SecurityExtensionStorage, B20SecurityInit, B20SecurityPrecompile,
-    B20SecurityStorage, B20SecurityToken, IB20Security, SecurityAccounting,
+mod b20_asset;
+pub use b20_asset::{
+    B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage, B20AssetToken,
+    B20RedeemStorage, IB20Asset, SecurityAccounting,
 };
 
 mod b20_stablecoin;

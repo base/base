@@ -4,7 +4,7 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompileLookup, PrecompilesMap};
 use alloy_primitives::Address;
 
 use crate::{
-    B20SecurityPrecompile, B20StablecoinPrecompile, B20TokenPrecompile, B20Variant,
+    B20AssetPrecompile, B20StablecoinPrecompile, B20TokenPrecompile, B20Variant,
     NoopPrecompileCallObserver, PrecompileCallObserver,
 };
 
@@ -44,7 +44,7 @@ impl BerylLookup {
                 Some(B20StablecoinPrecompile::create_precompile_with_observer(*address, observer))
             }
             B20Variant::Security => {
-                Some(B20SecurityPrecompile::create_precompile_with_observer(*address, observer))
+                Some(B20AssetPrecompile::create_precompile_with_observer(*address, observer))
             }
         }
     }

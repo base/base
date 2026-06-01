@@ -1,4 +1,4 @@
-//! EVM storage adapter for the security B-20 variant.
+//! EVM storage adapter for the asset B-20 variant.
 
 use alloc::string::String;
 
@@ -8,10 +8,10 @@ use base_precompile_storage::{Handler, Mapping, Result, StorageCtx};
 
 use crate::{B20CoreStorage, PolicyRegistryStorage};
 
-/// Security-specific B-20 storage rooted at the `base.b20.security` ERC-7201 namespace.
+/// Asset-specific B-20 storage rooted at the `base.b20.asset` ERC-7201 namespace.
 #[derive(Debug, Clone, Storable)]
-#[namespace("base.b20.security")]
-pub struct B20SecurityExtensionStorage {
+#[namespace("base.b20.asset")]
+pub struct B20AssetExtensionStorage {
     /// Share-to-token conversion ratio scaled to WAD.
     #[accessor]
     #[mutator]
@@ -38,20 +38,20 @@ pub struct B20RedeemStorage {
     pub redeem_reserved: FixedBytes<24>, // slot 1, offset 8 (fills remaining 24 bytes)
 }
 
-/// EVM-backed storage for a security B-20 token.
+/// EVM-backed storage for an asset B-20 token.
 #[contract]
 #[derive(TokenAccounting, SecurityAccounting)]
-pub struct B20SecurityStorage {
+pub struct B20AssetStorage {
     pub b20: B20CoreStorage,
-    pub security: B20SecurityExtensionStorage,
+    pub security: B20AssetExtensionStorage,
     pub redeem: B20RedeemStorage,
 }
 
-/// Creation-time parameters for a security B-20 token.
+/// Creation-time parameters for an asset B-20 token.
 ///
-/// Passed to [`B20SecurityStorage::initialize`] to write all fields atomically.
+/// Passed to [`B20AssetStorage::initialize`] to write all fields atomically.
 #[derive(Debug)]
-pub struct B20SecurityInit {
+pub struct B20AssetInit {
     /// ERC-20 token name.
     pub name: String,
     /// ERC-20 token symbol.
@@ -66,13 +66,13 @@ pub struct B20SecurityInit {
     pub minimum_redeemable: U256,
 }
 
-impl<'a> B20SecurityStorage<'a> {
+impl<'a> B20AssetStorage<'a> {
     /// Policy scope identifier for the sender of a redeem operation:
     /// `keccak256("REDEEM_SENDER_POLICY")`.
     pub const REDEEM_SENDER_POLICY: B256 =
         b256!("0ff53b08b65363a609bb561211128f4044adc0e351f0b92b6aa23f8d85462f59");
 
-    /// Creates a `B20SecurityStorage` instance targeting `addr`.
+    /// Creates a `B20AssetStorage` instance targeting `addr`.
     pub fn from_address(addr: Address, storage: StorageCtx<'a>) -> Self {
         Self::__new(addr, storage)
     }
@@ -84,7 +84,7 @@ impl<'a> B20SecurityStorage<'a> {
     ///
     /// `REDEEM_SENDER_POLICY` is initialised to `ALWAYS_BLOCK_ID` so redemption
     /// is closed by default; issuers must explicitly open it after creation.
-    pub fn initialize(&mut self, init: B20SecurityInit) -> Result<()> {
+    pub fn initialize(&mut self, init: B20AssetInit) -> Result<()> {
         self.b20.name.write(init.name)?;
         self.b20.symbol.write(init.symbol)?;
         self.b20.supply_cap.write(init.supply_cap)?;
@@ -98,7 +98,7 @@ impl<'a> B20SecurityStorage<'a> {
     }
 }
 
-impl B20SecurityStorage<'_> {
+impl B20AssetStorage<'_> {
     /// WAD precision for share ratio arithmetic: 1e18.
     pub const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
@@ -115,54 +115,51 @@ mod tests {
     use base_precompile_storage::{Handler, StorableType, StorageCtx, StorageKey, setup_storage};
 
     use super::{
-        __packing_b20_redeem_storage, __packing_b20_security_extension_storage, B20RedeemStorage,
-        B20SecurityExtensionStorage, B20SecurityInit, B20SecurityStorage, slots,
+        __packing_b20_asset_extension_storage, __packing_b20_redeem_storage,
+        B20AssetExtensionStorage, B20AssetInit, B20AssetStorage, B20RedeemStorage, slots,
     };
     use crate::{B20CoreStorage, PolicyRegistryStorage, SecurityAccounting, TokenAccounting};
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b021");
     const B20_ROOT: U256 =
         uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434000_U256);
-    const SECURITY_ROOT: U256 =
-        uint!(0x4a21e1b7f963e21baf0daffe6bab858a1e5fecef1144f3aca3c0c4534c7ac600_U256);
+    const ASSET_ROOT: U256 =
+        uint!(0xfdc6d4552d1286ade4d9facdbf0fb50d2ec9b89a90e104f26fd277585e374b00_U256);
     const REDEEM_ROOT: U256 =
         uint!(0xc95c24ab0255f9fb9fcdcd524f71c4fe0437265856b7e5e6d0801df0e6cf5100_U256);
 
     #[test]
     fn wad_constant_is_ten_to_the_eighteenth() {
-        assert_eq!(B20SecurityStorage::WAD, U256::from(10u64).pow(U256::from(18u64)));
+        assert_eq!(B20AssetStorage::WAD, U256::from(10u64).pow(U256::from(18u64)));
     }
 
     #[test]
-    fn security_namespaces_match_base_std_roots() {
+    fn asset_namespaces_match_base_std_roots() {
         assert_eq!(<B20CoreStorage as StorableType>::STORAGE_NAMESPACE_ROOT, B20_ROOT);
         assert_eq!(
-            <B20SecurityExtensionStorage as StorableType>::STORAGE_NAMESPACE_ID,
-            "base.b20.security"
+            <B20AssetExtensionStorage as StorableType>::STORAGE_NAMESPACE_ID,
+            "base.b20.asset"
         );
-        assert_eq!(
-            <B20SecurityExtensionStorage as StorableType>::STORAGE_NAMESPACE_ROOT,
-            SECURITY_ROOT
-        );
+        assert_eq!(<B20AssetExtensionStorage as StorableType>::STORAGE_NAMESPACE_ROOT, ASSET_ROOT);
         assert_eq!(<B20RedeemStorage as StorableType>::STORAGE_NAMESPACE_ID, "base.b20.redeem");
         assert_eq!(<B20RedeemStorage as StorableType>::STORAGE_NAMESPACE_ROOT, REDEEM_ROOT);
 
         assert_eq!(slots::B20, B20_ROOT);
-        assert_eq!(slots::SECURITY, SECURITY_ROOT);
+        assert_eq!(slots::SECURITY, ASSET_ROOT);
         assert_eq!(slots::REDEEM, REDEEM_ROOT);
     }
 
     #[test]
-    fn security_extension_offsets_match_mock_storage() {
+    fn asset_extension_offsets_match_mock_storage() {
         assert_eq!(
-            __packing_b20_security_extension_storage::SHARES_TO_TOKENS_RATIO_LOC.offset_slots,
+            __packing_b20_asset_extension_storage::SHARES_TO_TOKENS_RATIO_LOC.offset_slots,
             0
         );
         assert_eq!(
-            __packing_b20_security_extension_storage::USED_ANNOUNCEMENT_IDS_LOC.offset_slots,
+            __packing_b20_asset_extension_storage::USED_ANNOUNCEMENT_IDS_LOC.offset_slots,
             1
         );
-        assert_eq!(__packing_b20_security_extension_storage::IDENTIFIERS_LOC.offset_slots, 2);
+        assert_eq!(__packing_b20_asset_extension_storage::IDENTIFIERS_LOC.offset_slots, 2);
         assert_eq!(__packing_b20_redeem_storage::MINIMUM_REDEEMABLE_LOC.offset_slots, 0);
         assert_eq!(__packing_b20_redeem_storage::REDEEM_SENDER_POLICY_ID_LOC.offset_slots, 1);
         assert_eq!(__packing_b20_redeem_storage::REDEEM_SENDER_POLICY_ID_LOC.offset_bytes, 0);
@@ -173,31 +170,29 @@ mod tests {
         let (mut storage, _) = setup_storage();
 
         StorageCtx::enter(&mut storage, |ctx| {
-            let token = B20SecurityStorage::from_address(TOKEN, ctx);
-            let ratio_slot = SECURITY_ROOT
+            let token = B20AssetStorage::from_address(TOKEN, ctx);
+            let ratio_slot = ASSET_ROOT
                 + U256::from(
-                    __packing_b20_security_extension_storage::SHARES_TO_TOKENS_RATIO_LOC
-                        .offset_slots,
+                    __packing_b20_asset_extension_storage::SHARES_TO_TOKENS_RATIO_LOC.offset_slots,
                 );
 
             assert_eq!(ctx.sload(TOKEN, ratio_slot).unwrap(), U256::ZERO);
-            assert_eq!(token.shares_to_tokens_ratio().unwrap(), B20SecurityStorage::WAD);
+            assert_eq!(token.shares_to_tokens_ratio().unwrap(), B20AssetStorage::WAD);
         });
     }
 
     #[test]
     fn shares_to_tokens_ratio_preserves_configured_value() {
         let (mut storage, _) = setup_storage();
-        let configured_ratio = B20SecurityStorage::WAD * U256::from(3u64);
+        let configured_ratio = B20AssetStorage::WAD * U256::from(3u64);
 
         StorageCtx::enter(&mut storage, |ctx| {
-            let mut token = B20SecurityStorage::from_address(TOKEN, ctx);
+            let mut token = B20AssetStorage::from_address(TOKEN, ctx);
             token.set_shares_to_tokens_ratio(configured_ratio).unwrap();
 
-            let ratio_slot = SECURITY_ROOT
+            let ratio_slot = ASSET_ROOT
                 + U256::from(
-                    __packing_b20_security_extension_storage::SHARES_TO_TOKENS_RATIO_LOC
-                        .offset_slots,
+                    __packing_b20_asset_extension_storage::SHARES_TO_TOKENS_RATIO_LOC.offset_slots,
                 );
 
             assert_eq!(ctx.sload(TOKEN, ratio_slot).unwrap(), configured_ratio);
@@ -213,7 +208,7 @@ mod tests {
         let identifier_value = String::from("US0000000000");
 
         StorageCtx::enter(&mut storage, |ctx| {
-            let mut token = B20SecurityStorage::from_address(TOKEN, ctx);
+            let mut token = B20AssetStorage::from_address(TOKEN, ctx);
             token.security.used_announcement_ids.at_mut(&announcement_id).write(true).unwrap();
             token
                 .security
@@ -223,15 +218,12 @@ mod tests {
                 .unwrap();
             token.redeem.minimum_redeemable.write(U256::from(10u64)).unwrap();
 
-            let announcement_slot = SECURITY_ROOT
+            let announcement_slot = ASSET_ROOT
                 + U256::from(
-                    __packing_b20_security_extension_storage::USED_ANNOUNCEMENT_IDS_LOC
-                        .offset_slots,
+                    __packing_b20_asset_extension_storage::USED_ANNOUNCEMENT_IDS_LOC.offset_slots,
                 );
-            let identifiers_slot = SECURITY_ROOT
-                + U256::from(
-                    __packing_b20_security_extension_storage::IDENTIFIERS_LOC.offset_slots,
-                );
+            let identifiers_slot = ASSET_ROOT
+                + U256::from(__packing_b20_asset_extension_storage::IDENTIFIERS_LOC.offset_slots);
             let minimum_slot = REDEEM_ROOT
                 + U256::from(__packing_b20_redeem_storage::MINIMUM_REDEEMABLE_LOC.offset_slots);
 
@@ -254,10 +246,10 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             {
-                let mut token = B20SecurityStorage::from_address(TOKEN, ctx);
-                token.set_policy_id(B20SecurityStorage::REDEEM_SENDER_POLICY, policy_id).unwrap();
+                let mut token = B20AssetStorage::from_address(TOKEN, ctx);
+                token.set_policy_id(B20AssetStorage::REDEEM_SENDER_POLICY, policy_id).unwrap();
                 assert_eq!(
-                    token.policy_id(B20SecurityStorage::REDEEM_SENDER_POLICY).unwrap(),
+                    token.policy_id(B20AssetStorage::REDEEM_SENDER_POLICY).unwrap(),
                     policy_id
                 );
             }
@@ -275,20 +267,20 @@ mod tests {
         let (mut storage, _) = setup_storage();
 
         StorageCtx::enter(&mut storage, |ctx| {
-            let mut token = B20SecurityStorage::from_address(TOKEN, ctx);
+            let mut token = B20AssetStorage::from_address(TOKEN, ctx);
             token
-                .initialize(B20SecurityInit {
+                .initialize(B20AssetInit {
                     name: String::from("Test"),
                     symbol: String::from("TST"),
                     supply_cap: U256::from(1_000_000u64),
-                    shares_to_tokens_ratio: B20SecurityStorage::WAD,
+                    shares_to_tokens_ratio: B20AssetStorage::WAD,
                     isin: String::new(),
                     minimum_redeemable: U256::ZERO,
                 })
                 .unwrap();
 
             assert_eq!(
-                token.policy_id(B20SecurityStorage::REDEEM_SENDER_POLICY).unwrap(),
+                token.policy_id(B20AssetStorage::REDEEM_SENDER_POLICY).unwrap(),
                 PolicyRegistryStorage::ALWAYS_BLOCK_ID,
                 "REDEEM_SENDER_POLICY must default to ALWAYS_BLOCK_ID at creation"
             );

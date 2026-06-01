@@ -1,6 +1,6 @@
 //! ABI dispatch for the security B-20 variant.
 //!
-//! Security-specific selectors are tried first via `IB20Security::IB20SecurityCalls`.
+//! Security-specific selectors are tried first via `IB20Asset::IB20AssetCalls`.
 //! This catches overridden selectors (`redeem`, `redeemWithMemo`) before the
 //! inherited `IB20` fallthrough, ensuring security semantics always apply.
 //! The `IB20` match block still includes those arms (Rust requires exhaustiveness)
@@ -14,16 +14,17 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    B20PolicyType, B20SecurityStorage, B20SecurityToken, B20TokenRole, Burnable, Configurable,
+    ActivationFeature, ActivationRegistryStorage, B20AssetStorage, B20AssetToken, B20PolicyType,
+    B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
-    IB20Security::{self, IB20SecurityCalls as SC},
+    IB20Asset::{self, IB20AssetCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
     PrecompileCallObserver, RoleManaged, SecurityAccounting, Token, Transferable,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
-impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
-    /// ABI-dispatches `calldata` to the appropriate `IB20Security` handler.
+impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
+    /// ABI-dispatches `calldata` to the appropriate `IB20Asset` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         self.dispatch_with_observer(ctx, calldata, NoopPrecompileCallObserver)
     }
@@ -55,7 +56,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         )
     }
 
-    /// Decodes calldata and executes the matching `IB20Security` or inherited `IB20` operation.
+    /// Decodes calldata and executes the matching `IB20Asset` or inherited `IB20` operation.
     pub fn inner(
         &mut self,
         ctx: StorageCtx<'_>,
@@ -104,8 +105,11 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
+        ActivationRegistryStorage::new(ctx).ensure_activated(ActivationFeature::B20Asset.id())?;
+
+
         // Security-specific and overridden selectors are caught here first.
-        if let Ok(call) = IB20Security::IB20SecurityCalls::abi_decode(calldata) {
+        if let Ok(call) = IB20Asset::IB20AssetCalls::abi_decode(calldata) {
             let label = call.as_label();
             return observer.observe(label, || self.handle_security_call(ctx, call, privileged));
         }
@@ -341,7 +345,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         let encoded: Bytes = match call {
             // --- Role / precision constants ---
             SC::SECURITY_OPERATOR_ROLE(_) => Self::SECURITY_OPERATOR_ROLE.abi_encode().into(),
-            SC::WAD_PRECISION(_) => B20SecurityStorage::WAD.abi_encode().into(),
+            SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
             SC::REDEEM_SENDER_POLICY(_) => Self::REDEEM_SENDER_POLICY.abi_encode().into(),
 
             // --- Share ratio reads ---
@@ -422,19 +426,16 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         let caller = ctx.caller();
         self.ensure_security_operator(caller, privileged)?;
         if self.is_announcement_active() {
-            return Err(BasePrecompileError::revert(IB20Security::AnnouncementInProgress {}));
+            return Err(BasePrecompileError::revert(IB20Asset::AnnouncementInProgress {}));
         }
 
         if self.accounting().is_announcement_id_used(id.as_str())? {
-            return Err(BasePrecompileError::revert(IB20Security::AnnouncementIdAlreadyUsed {
-                id,
-            }));
+            return Err(BasePrecompileError::revert(IB20Asset::AnnouncementIdAlreadyUsed { id }));
         }
         self.accounting_mut().mark_announcement_id_used(id.as_str())?;
 
         self.accounting_mut().emit_event(
-            IB20Security::Announcement { caller, id: id.clone(), description, uri }
-                .encode_log_data(),
+            IB20Asset::Announcement { caller, id: id.clone(), description, uri }.encode_log_data(),
         )?;
 
         self.begin_announcement();
@@ -442,19 +443,19 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         for call in &internal_calls {
             let call_bytes: &[u8] = call.as_ref();
             if call_bytes.len() < 4 {
-                return Err(BasePrecompileError::revert(IB20Security::InternalCallMalformed {
+                return Err(BasePrecompileError::revert(IB20Asset::InternalCallMalformed {
                     call: call.clone(),
                 }));
             }
-            if call_bytes[..4] == IB20Security::announceCall::SELECTOR {
-                return Err(BasePrecompileError::revert(IB20Security::AnnouncementInProgress {}));
+            if call_bytes[..4] == IB20Asset::announceCall::SELECTOR {
+                return Err(BasePrecompileError::revert(IB20Asset::AnnouncementInProgress {}));
             }
             self.inner_with_privilege(ctx, call_bytes, privileged).map_err(|_| {
-                BasePrecompileError::revert(IB20Security::InternalCallFailed { call: call.clone() })
+                BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: call.clone() })
             })?;
         }
 
-        self.accounting_mut().emit_event(IB20Security::EndAnnouncement { id }.encode_log_data())
+        self.accounting_mut().emit_event(IB20Asset::EndAnnouncement { id }.encode_log_data())
     }
 }
 
@@ -469,13 +470,12 @@ mod tests {
     };
 
     use crate::{
-        ActivationFeature, ActivationRegistryStorage, B20PausableFeature, B20SecurityStorage,
-        B20SecurityToken, B20TokenRole, IB20, IB20Security, InMemoryPolicy,
-        InMemoryTokenAccounting, PolicyHandle, PolicyRegistryStorage, SecurityAccounting, Token,
-        TokenAccounting,
+        ActivationFeature, ActivationRegistryStorage, B20AssetStorage, B20AssetToken,
+        B20PausableFeature, B20TokenRole, IB20, IB20Asset, InMemoryPolicy, InMemoryTokenAccounting,
+        PolicyHandle, PolicyRegistryStorage, SecurityAccounting, Token, TokenAccounting,
     };
 
-    type TestSecurityToken = B20SecurityToken<InMemoryTokenAccounting, InMemoryPolicy>;
+    type TestSecurityToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
 
     const REDEEM_SENDER_POLICY: B256 = TestSecurityToken::REDEEM_SENDER_POLICY;
 
@@ -485,24 +485,24 @@ mod tests {
     const ACTIVATION_ADMIN: Address = Address::repeat_byte(0xcb);
     fn make_token() -> TestSecurityToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD; // 1:1 ratio
+        accounting.shares_to_tokens_ratio = B20AssetStorage::WAD; // 1:1 ratio
         // Explicitly open redemption so non-policy tests are not blocked by the ALWAYS_BLOCK default.
         accounting.policy_ids.insert(REDEEM_SENDER_POLICY, PolicyRegistryStorage::ALWAYS_ALLOW_ID);
         TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
     }
 
-    fn activate_b20_security(storage: &mut HashMapStorageProvider) {
+    fn activate_b20_asset(storage: &mut HashMapStorageProvider) {
         storage.set_caller(ACTIVATION_ADMIN);
         StorageCtx::enter(storage, |ctx| {
             ActivationRegistryStorage::new(ctx)
-                .activate(ActivationFeature::B20Security.id(), Some(ACTIVATION_ADMIN))
+                .activate(ActivationFeature::B20Asset.id(), Some(ACTIVATION_ADMIN))
         })
         .unwrap();
     }
 
     fn storage_with_caller(caller: Address) -> HashMapStorageProvider {
         let mut storage = HashMapStorageProvider::new(1);
-        activate_b20_security(&mut storage);
+        activate_b20_asset(&mut storage);
         storage.set_caller(caller);
         storage
     }
@@ -517,7 +517,7 @@ mod tests {
     }
 
     fn batch_mint_calldata(recipients: Vec<Address>, amounts: Vec<U256>) -> Vec<u8> {
-        IB20Security::batchMintCall { recipients, amounts }.abi_encode()
+        IB20Asset::batchMintCall { recipients, amounts }.abi_encode()
     }
 
     #[test]
@@ -529,7 +529,7 @@ mod tests {
     #[test]
     fn to_shares_two_to_one_ratio() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD * U256::from(2u64);
+        accounting.shares_to_tokens_ratio = B20AssetStorage::WAD * U256::from(2u64);
         let token = TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
         assert_eq!(token.to_shares(U256::from(50u64)).unwrap(), U256::from(100u64));
     }
@@ -654,7 +654,7 @@ mod tests {
     fn security_redeem_rejects_when_sender_policy_denies() {
         let policy_id = 7;
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD;
+        accounting.shares_to_tokens_ratio = B20AssetStorage::WAD;
         accounting.balances.insert(ALICE, U256::from(100u64));
         accounting.total_supply = U256::from(100u64);
         accounting.policy_ids.insert(REDEEM_SENDER_POLICY, policy_id);
@@ -706,7 +706,7 @@ mod tests {
         assert_eq!(
             call_security(&mut token, ALICE, batch_mint_calldata(alloc::vec![], alloc::vec![]))
                 .unwrap_err(),
-            BasePrecompileError::revert(IB20Security::EmptyBatch {})
+            BasePrecompileError::revert(IB20Asset::EmptyBatch {})
         );
     }
 
@@ -722,7 +722,7 @@ mod tests {
                 batch_mint_calldata(alloc::vec![ALICE], alloc::vec![U256::ONE, U256::ONE]),
             )
             .unwrap_err(),
-            BasePrecompileError::revert(IB20Security::LengthMismatch {
+            BasePrecompileError::revert(IB20Asset::LengthMismatch {
                 leftLen: U256::ONE,
                 rightLen: U256::from(2u64),
             })
@@ -735,7 +735,7 @@ mod tests {
                 batch_mint_calldata(alloc::vec![], alloc::vec![U256::ONE]),
             )
             .unwrap_err(),
-            BasePrecompileError::revert(IB20Security::LengthMismatch {
+            BasePrecompileError::revert(IB20Asset::LengthMismatch {
                 leftLen: U256::ZERO,
                 rightLen: U256::ONE,
             })
@@ -789,7 +789,7 @@ mod tests {
     fn security_redeem_with_non_unit_ratio_applies_correct_share_math() {
         let mut token = make_token();
         // 2:1 ratio: 1 token = 2 shares
-        token.accounting_mut().shares_to_tokens_ratio = B20SecurityStorage::WAD * U256::from(2u64);
+        token.accounting_mut().shares_to_tokens_ratio = B20AssetStorage::WAD * U256::from(2u64);
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
         token.accounting_mut().total_supply = U256::from(100u64);
         // minimum = 10 shares → need at least 5 tokens
@@ -833,10 +833,10 @@ mod tests {
         );
         assert_eq!(
             token.accounting().events[2],
-            IB20Security::Redeemed {
+            IB20Asset::Redeemed {
                 from: ALICE,
                 amt: amount,
-                sharesToTokensRatio: B20SecurityStorage::WAD,
+                sharesToTokensRatio: B20AssetStorage::WAD,
             }
             .encode_log_data()
         );
@@ -854,7 +854,7 @@ mod tests {
     fn to_shares_sub_wad_ratio_truncates_to_zero() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         // 0.5 WAD: 1 token → 0.5 shares → truncates to 0 via integer division
-        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD / U256::from(2u64);
+        accounting.shares_to_tokens_ratio = B20AssetStorage::WAD / U256::from(2u64);
         let token = TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
         assert_eq!(token.to_shares(U256::from(1u64)).unwrap(), U256::ZERO);
     }
@@ -873,18 +873,15 @@ mod tests {
         let (mut storage, _) = setup_storage();
 
         StorageCtx::enter(&mut storage, |ctx| {
-            let mut token = B20SecurityToken::with_storage_and_policy(
-                B20SecurityStorage::from_address(TOKEN, ctx),
+            let mut token = B20AssetToken::with_storage_and_policy(
+                B20AssetStorage::from_address(TOKEN, ctx),
                 PolicyHandle::new(ctx),
             );
             token.accounting_mut().set_balance(ALICE, U256::from(100u64)).unwrap();
             token.accounting_mut().set_total_supply(U256::from(100u64)).unwrap();
             token.accounting_mut().set_minimum_redeemable(U256::from(10u64)).unwrap();
 
-            assert_eq!(
-                token.accounting().shares_to_tokens_ratio().unwrap(),
-                B20SecurityStorage::WAD
-            );
+            assert_eq!(token.accounting().shares_to_tokens_ratio().unwrap(), B20AssetStorage::WAD);
             token.security_redeem(ALICE, U256::from(10u64)).unwrap();
 
             assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(90u64));
@@ -897,7 +894,7 @@ mod tests {
     #[test]
     fn shares_to_tokens_ratio_update_persists() {
         let mut token = make_token();
-        let new_ratio = B20SecurityStorage::WAD * U256::from(3u64);
+        let new_ratio = B20AssetStorage::WAD * U256::from(3u64);
         token.accounting_mut().set_shares_to_tokens_ratio(new_ratio).unwrap();
         assert_eq!(token.accounting().shares_to_tokens_ratio().unwrap(), new_ratio);
     }

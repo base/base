@@ -7,9 +7,9 @@ use base_precompile_storage::{BasePrecompileError, Result};
 use revm::state::Bytecode;
 
 use crate::{
-    ActivationRegistryStorage, B20SecurityInit, B20SecurityStorage, B20SecurityToken,
-    B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken, B20Token, B20TokenInit,
-    B20TokenRole, B20TokenStorage, B20Variant, IB20Factory, PolicyHandle, RoleManaged, Token,
+    ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20AssetToken, B20StablecoinInit,
+    B20StablecoinStorage, B20StablecoinToken, B20Token, B20TokenInit, B20TokenRole, B20TokenStorage,
+    B20Variant, IB20Factory, PolicyHandle, RoleManaged, Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -193,10 +193,10 @@ impl<'a> B20FactoryStorage<'a> {
         &mut self,
         token_address: Address,
         common: CommonParams,
-        init: B20SecurityInit,
+        init: B20AssetInit,
         init_calls: Vec<Bytes>,
     ) -> Result<()> {
-        let mut storage = B20SecurityStorage::from_address(token_address, self.storage);
+        let mut storage = B20AssetStorage::from_address(token_address, self.storage);
         let (name, symbol) = (init.name.clone(), init.symbol.clone());
         storage.initialize(init)?;
 
@@ -210,8 +210,8 @@ impl<'a> B20FactoryStorage<'a> {
         })?;
 
         if !common.initial_admin.is_zero() {
-            let mut token = B20SecurityToken::with_storage_and_policy(
-                B20SecurityStorage::from_address(token_address, self.storage),
+            let mut token = B20AssetToken::with_storage_and_policy(
+                B20AssetStorage::from_address(token_address, self.storage),
                 PolicyHandle::new(self.storage),
             );
             token.grant_role_unchecked(
@@ -223,8 +223,8 @@ impl<'a> B20FactoryStorage<'a> {
 
         self.storage.with_caller(Self::ADDRESS, || {
             for (index, calldata) in init_calls.into_iter().enumerate() {
-                B20SecurityToken::with_storage_and_policy(
-                    B20SecurityStorage::from_address(token_address, self.storage),
+                B20AssetToken::with_storage_and_policy(
+                    B20AssetStorage::from_address(token_address, self.storage),
                     PolicyHandle::new(self.storage),
                 )
                 .inner_with_privilege(self.storage, &calldata, true)
@@ -292,7 +292,7 @@ pub enum TokenCreateParams {
         /// Shared control-flow fields.
         common: CommonParams,
         /// Security-token initialization fields.
-        init: B20SecurityInit,
+        init: B20AssetInit,
     },
 }
 
@@ -326,11 +326,11 @@ impl TokenCreateParams {
                 })
             }
             B20Variant::Security => {
-                let p = IB20Factory::B20SecurityCreateParams::abi_decode(params)
+                let p = IB20Factory::B20AssetCreateParams::abi_decode(params)
                     .map_err(Self::invalid_params)?;
                 Ok(Self::Security {
                     common: CommonParams { version: p.version, initial_admin: p.initialAdmin },
-                    init: B20SecurityInit {
+                    init: B20AssetInit {
                         name: p.name,
                         symbol: p.symbol,
                         supply_cap: DEFAULT_SUPPLY_CAP,
@@ -377,7 +377,7 @@ impl TokenCreateParams {
     }
 
     /// Validates security-token initialization fields.
-    pub const fn validate_security(_init: &B20SecurityInit) -> Result<()> {
+    pub const fn validate_security(_init: &B20AssetInit) -> Result<()> {
         // isin is optional — empty string is accepted.
         Ok(())
     }
@@ -400,10 +400,10 @@ mod tests {
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
 
     use crate::{
-        ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20SecurityStorage,
-        B20SecurityToken, B20StablecoinStorage, B20Token, B20TokenRole, B20TokenStorage,
-        B20Variant, IB20, IB20Factory, Mintable, Permittable, PolicyHandle, RoleManaged,
-        StablecoinAccounting, Token, TokenAccounting, Transferable,
+        ActivationFeature, ActivationRegistryStorage, B20AssetStorage, B20AssetToken,
+        B20FactoryStorage, B20StablecoinStorage, B20Token, B20TokenRole, B20TokenStorage,
+        B20Variant, IB20, IB20Factory, Mintable, Permittable, PolicyHandle, RoleManaged, Token,
+        TokenAccounting, Transferable,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -422,7 +422,7 @@ mod tests {
             ActivationFeature::B20Factory.id(),
             ActivationFeature::B20Token.id(),
             ActivationFeature::B20Stablecoin.id(),
-            ActivationFeature::B20Security.id(),
+            ActivationFeature::B20Asset.id(),
         ] {
             StorageCtx::enter(storage, |ctx| {
                 ActivationRegistryStorage::new(ctx).activate(key, Some(ACTIVATION_ADMIN)).unwrap()
@@ -839,7 +839,7 @@ mod tests {
         let salt = B256::repeat_byte(0x09);
         let (expected_addr, _) = B20Variant::Security.compute_address(caller, salt);
 
-        let security_params = IB20Factory::B20SecurityCreateParams {
+        let security_params = IB20Factory::B20AssetCreateParams {
             version: B20Variant::Security.supported_version(),
             name: "Security Token".to_string(),
             symbol: "SEC".to_string(),
@@ -862,7 +862,7 @@ mod tests {
             );
             assert!(ctx.has_bytecode(expected_addr).unwrap());
 
-            let sec_storage = B20SecurityStorage::from_address(expected_addr, ctx);
+            let sec_storage = B20AssetStorage::from_address(expected_addr, ctx);
             assert_eq!(sec_storage.b20.name.read().unwrap(), "Security Token");
             assert_eq!(sec_storage.b20.symbol.read().unwrap(), "SEC");
             assert_eq!(sec_storage.decimals().unwrap(), 6);
@@ -1198,7 +1198,7 @@ mod tests {
         let caller = Address::repeat_byte(0x55);
         let initial_admin = Address::repeat_byte(0xAB);
 
-        let params = IB20Factory::B20SecurityCreateParams {
+        let params = IB20Factory::B20AssetCreateParams {
             version: B20Variant::Security.supported_version(),
             name: "Security Token".to_string(),
             symbol: "SEC".to_string(),
@@ -1217,8 +1217,8 @@ mod tests {
             let mut factory = B20FactoryStorage::new(ctx);
             let token_addr = factory.create_b20(caller, call).unwrap();
 
-            let token = B20SecurityToken::with_storage_and_policy(
-                B20SecurityStorage::from_address(token_addr, ctx),
+            let token = B20AssetToken::with_storage_and_policy(
+                B20AssetStorage::from_address(token_addr, ctx),
                 PolicyHandle::new(ctx),
             );
             assert!(token.has_role(B20TokenRole::DefaultAdmin.id(), initial_admin).unwrap());
@@ -1226,7 +1226,7 @@ mod tests {
         });
 
         // Zero initialAdmin grants no role.
-        let params_no_admin = IB20Factory::B20SecurityCreateParams {
+        let params_no_admin = IB20Factory::B20AssetCreateParams {
             version: B20Variant::Security.supported_version(),
             name: "No Admin".to_string(),
             symbol: "NA".to_string(),
@@ -1245,8 +1245,8 @@ mod tests {
             let mut factory = B20FactoryStorage::new(ctx);
             let token_addr = factory.create_b20(caller, call_no_admin).unwrap();
 
-            let token = B20SecurityToken::with_storage_and_policy(
-                B20SecurityStorage::from_address(token_addr, ctx),
+            let token = B20AssetToken::with_storage_and_policy(
+                B20AssetStorage::from_address(token_addr, ctx),
                 PolicyHandle::new(ctx),
             );
             assert!(!token.has_role(B20TokenRole::DefaultAdmin.id(), initial_admin).unwrap());
@@ -1324,7 +1324,7 @@ mod tests {
         let call = IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::SECURITY,
             salt: B256::repeat_byte(0x72),
-            params: IB20Factory::B20SecurityCreateParams {
+            params: IB20Factory::B20AssetCreateParams {
                 version: 1,
                 name: "Sec".to_string(),
                 symbol: "SEC".to_string(),

@@ -298,7 +298,7 @@ mod type_namespaced_layouts {
     /// Security-specific B-20 extension storage.
     #[derive(Debug, Clone, Storable)]
     #[namespace("b20.security")]
-    struct B20SecurityStorage {
+    struct B20AssetStorage {
         shares_to_tokens_ratio: U256,
         used_announcement_ids: Mapping<String, bool>,
         security_identifiers: Mapping<String, bool>,
@@ -314,10 +314,10 @@ mod type_namespaced_layouts {
 
     /// Security token layout that composes canonical namespaced storage sections.
     #[contract(addr = TYPE_NAMESPACE_ADDR)]
-    pub struct B20SecurityLayout {
+    pub struct B20AssetLayout {
         pub local_head: u8,
         pub b20: B20Storage,
-        pub security: B20SecurityStorage,
+        pub security: B20AssetStorage,
         pub redeem: B20RedeemStorage,
         pub local_tail: u16,
     }
@@ -325,7 +325,7 @@ mod type_namespaced_layouts {
     #[test]
     fn type_level_namespaces_mount_layouts_without_repeating_strings() {
         let b20_value = B20Storage { total_supply: U256::ZERO, balances: Mapping::default() };
-        let security_value = B20SecurityStorage {
+        let security_value = B20AssetStorage {
             shares_to_tokens_ratio: U256::ZERO,
             used_announcement_ids: Mapping::default(),
             security_identifiers: Mapping::default(),
@@ -348,7 +348,7 @@ mod type_namespaced_layouts {
 
         assert_eq!(<B20Storage as StorableType>::STORAGE_NAMESPACE_ID, "b20");
         assert_eq!(<B20Storage as StorableType>::STORAGE_NAMESPACE_ROOT, b20_root);
-        assert_eq!(<B20SecurityStorage as StorableType>::STORAGE_NAMESPACE_ROOT, security_root);
+        assert_eq!(<B20AssetStorage as StorableType>::STORAGE_NAMESPACE_ROOT, security_root);
         assert_eq!(<B20RedeemStorage as StorableType>::STORAGE_NAMESPACE_ROOT, redeem_root);
 
         assert_eq!(slots::LOCAL_HEAD, U256::ZERO);
@@ -366,7 +366,7 @@ mod type_namespaced_layouts {
         let holder = Address::from([0xaa; 20]);
 
         StorageCtx::enter(&mut storage, |ctx| {
-            let mut layout = B20SecurityLayout::new(ctx);
+            let mut layout = B20AssetLayout::new(ctx);
 
             layout.local_head.write(0x11).unwrap();
             layout.b20.total_supply.write(U256::from(100)).unwrap();
@@ -407,7 +407,7 @@ mod type_namespaced_layouts {
                     TYPE_NAMESPACE_ADDR,
                     slots::SECURITY
                         + U256::from(
-                            __packing_b20_security_storage::SHARES_TO_TOKENS_RATIO_LOC.offset_slots,
+                            __packing_b20_asset_storage::SHARES_TO_TOKENS_RATIO_LOC.offset_slots,
                         ),
                 )
                 .unwrap(),

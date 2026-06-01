@@ -9,9 +9,9 @@ use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_storage::Result;
 
 use crate::{
-    B20SecurityStorage, IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage,
+    B20AssetStorage, IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage,
     b20::B20Token,
-    b20_security::SecurityAccounting,
+    b20_asset::SecurityAccounting,
     b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
     common::{Policy, TokenAccounting},
 };
@@ -232,7 +232,7 @@ impl TokenAccounting for InMemoryTokenAccounting {
     }
 
     fn policy_id(&self, policy_scope: B256) -> Result<u64> {
-        let default = if policy_scope == B20SecurityStorage::REDEEM_SENDER_POLICY {
+        let default = if policy_scope == B20AssetStorage::REDEEM_SENDER_POLICY {
             PolicyRegistryStorage::ALWAYS_BLOCK_ID
         } else {
             PolicyRegistryStorage::ALWAYS_ALLOW_ID

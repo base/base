@@ -31,7 +31,7 @@ sol! {
             string currency;
         }
 
-        struct B20SecurityCreateParams {
+        struct B20AssetCreateParams {
             uint8 version;
             string name;
             string symbol;

@@ -1,13 +1,13 @@
 //! ABI definitions for the security B-20 variant.
 //!
-//! [`IB20Security`] defines only the security-specific surface.
+//! [`IB20Asset`] defines only the security-specific surface.
 //! All inherited selectors come from [`crate::IB20`] defined in `b20/abi.rs`.
 
 use alloy_sol_types::sol;
 
 sol! {
     #[derive(Debug, PartialEq, Eq)]
-    interface IB20Security {
+    interface IB20Asset {
         // ── Errors ───────────────────────────────────────────────────────────
 
         /// `id` has previously been consumed by `announce`. Each id may be used at most once.
@@ -124,26 +124,26 @@ sol! {
     }
 }
 
-impl IB20Security::IB20SecurityCalls {
+impl IB20Asset::IB20AssetCalls {
     /// Returns the stable label for this decoded security B-20 call.
     pub const fn as_label(&self) -> &'static str {
         match self {
-            Self::SECURITY_OPERATOR_ROLE(_) => "precompile-b20-security-SECURITY_OPERATOR_ROLE",
-            Self::WAD_PRECISION(_) => "precompile-b20-security-WAD_PRECISION",
-            Self::REDEEM_SENDER_POLICY(_) => "precompile-b20-security-REDEEM_SENDER_POLICY",
-            Self::announce(_) => "precompile-b20-security-announce",
-            Self::isAnnouncementIdUsed(_) => "precompile-b20-security-isAnnouncementIdUsed",
-            Self::sharesToTokensRatio(_) => "precompile-b20-security-sharesToTokensRatio",
-            Self::toShares(_) => "precompile-b20-security-toShares",
-            Self::sharesOf(_) => "precompile-b20-security-sharesOf",
-            Self::updateShareRatio(_) => "precompile-b20-security-updateShareRatio",
-            Self::batchMint(_) => "precompile-b20-security-batchMint",
-            Self::redeem(_) => "precompile-b20-security-redeem",
-            Self::redeemWithMemo(_) => "precompile-b20-security-redeemWithMemo",
-            Self::updateMinimumRedeemable(_) => "precompile-b20-security-updateMinimumRedeemable",
-            Self::minimumRedeemable(_) => "precompile-b20-security-minimumRedeemable",
-            Self::securityIdentifier(_) => "precompile-b20-security-securityIdentifier",
-            Self::updateSecurityIdentifier(_) => "precompile-b20-security-updateSecurityIdentifier",
+            Self::SECURITY_OPERATOR_ROLE(_) => "precompile-b20-asset-SECURITY_OPERATOR_ROLE",
+            Self::WAD_PRECISION(_) => "precompile-b20-asset-WAD_PRECISION",
+            Self::REDEEM_SENDER_POLICY(_) => "precompile-b20-asset-REDEEM_SENDER_POLICY",
+            Self::announce(_) => "precompile-b20-asset-announce",
+            Self::isAnnouncementIdUsed(_) => "precompile-b20-asset-isAnnouncementIdUsed",
+            Self::sharesToTokensRatio(_) => "precompile-b20-asset-sharesToTokensRatio",
+            Self::toShares(_) => "precompile-b20-asset-toShares",
+            Self::sharesOf(_) => "precompile-b20-asset-sharesOf",
+            Self::updateShareRatio(_) => "precompile-b20-asset-updateShareRatio",
+            Self::batchMint(_) => "precompile-b20-asset-batchMint",
+            Self::redeem(_) => "precompile-b20-asset-redeem",
+            Self::redeemWithMemo(_) => "precompile-b20-asset-redeemWithMemo",
+            Self::updateMinimumRedeemable(_) => "precompile-b20-asset-updateMinimumRedeemable",
+            Self::minimumRedeemable(_) => "precompile-b20-asset-minimumRedeemable",
+            Self::securityIdentifier(_) => "precompile-b20-asset-securityIdentifier",
+            Self::updateSecurityIdentifier(_) => "precompile-b20-asset-updateSecurityIdentifier",
         }
     }
 }
@@ -153,21 +153,21 @@ mod tests {
     use alloy_primitives::{U256, b256, keccak256};
     use alloy_sol_types::{SolCall, SolEvent};
 
-    use crate::IB20Security;
+    use crate::IB20Asset;
 
     #[test]
     fn redeem_sender_policy_selector_matches_solidity_interface() {
-        assert_eq!(IB20Security::REDEEM_SENDER_POLICYCall::SELECTOR, [0x1c, 0x6f, 0x9d, 0x42]);
+        assert_eq!(IB20Asset::REDEEM_SENDER_POLICYCall::SELECTOR, [0x1c, 0x6f, 0x9d, 0x42]);
     }
 
     #[test]
     fn minimum_redeemable_updated_topic_matches_solidity_interface() {
         assert_eq!(
-            IB20Security::MinimumRedeemableUpdated::SIGNATURE_HASH,
+            IB20Asset::MinimumRedeemableUpdated::SIGNATURE_HASH,
             b256!("7fdd6ea6dad98bfcd2c5ec538e748a5e8ecc40d0fc824f55dfc7397fe78a183b")
         );
         assert_eq!(
-            IB20Security::MinimumRedeemableUpdated::SIGNATURE_HASH,
+            IB20Asset::MinimumRedeemableUpdated::SIGNATURE_HASH,
             keccak256("MinimumRedeemableUpdated(address,uint256)")
         );
     }
@@ -175,18 +175,14 @@ mod tests {
     #[test]
     fn security_call_labels_are_stable() {
         assert_eq!(
-            IB20Security::IB20SecurityCalls::minimumRedeemable(
-                IB20Security::minimumRedeemableCall {},
-            )
-            .as_label(),
-            "precompile-b20-security-minimumRedeemable"
+            IB20Asset::IB20AssetCalls::minimumRedeemable(IB20Asset::minimumRedeemableCall {},)
+                .as_label(),
+            "precompile-b20-asset-minimumRedeemable"
         );
         assert_eq!(
-            IB20Security::IB20SecurityCalls::redeem(IB20Security::redeemCall {
-                amount: U256::ZERO,
-            })
-            .as_label(),
-            "precompile-b20-security-redeem"
+            IB20Asset::IB20AssetCalls::redeem(IB20Asset::redeemCall { amount: U256::ZERO })
+                .as_label(),
+            "precompile-b20-asset-redeem"
         );
     }
 }

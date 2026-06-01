@@ -1,4 +1,4 @@
-//! `B20SecurityToken` struct — the security B-20 token type.
+//! `B20AssetToken` struct — the security B-20 token type.
 
 use alloc::{string::String, vec::Vec};
 
@@ -7,9 +7,9 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    B20Guards, B20PolicyType, B20SecurityStorage, B20TokenRole, Burnable, Configurable,
+    B20AssetStorage, B20Guards, B20PolicyType, B20TokenRole, Burnable, Configurable,
     IB20::{self},
-    IB20Security, Mintable, Pausable, Permittable, Policy, RoleManaged, SecurityAccounting, Token,
+    IB20Asset, Mintable, Pausable, Permittable, Policy, RoleManaged, SecurityAccounting, Token,
     Transferable,
 };
 
@@ -20,21 +20,21 @@ use crate::{
 /// security identifiers, announcement IDs). The `in_announcement` flag guards against
 /// recursive `announce` calls within a single precompile invocation.
 #[derive(Debug, Clone)]
-pub struct B20SecurityToken<S: SecurityAccounting, P: Policy> {
+pub struct B20AssetToken<S: SecurityAccounting, P: Policy> {
     accounting: S,
     policy: P,
     in_announcement: bool,
 }
 
-impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
+impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
     /// Role identifier for security operators: `keccak256("SECURITY_OPERATOR_ROLE")`.
     pub const SECURITY_OPERATOR_ROLE: B256 =
         b256!("e63901dfe7775ace99fa3654743976eb0ab2009f5d19c4fc1ecd40aed27d59af");
 
     /// Policy scope identifier for redeem senders: `keccak256("REDEEM_SENDER_POLICY")`.
-    pub const REDEEM_SENDER_POLICY: B256 = B20SecurityStorage::REDEEM_SENDER_POLICY;
+    pub const REDEEM_SENDER_POLICY: B256 = B20AssetStorage::REDEEM_SENDER_POLICY;
 
-    /// Creates a `B20SecurityToken` backed by the provided storage and policy adapters.
+    /// Creates a `B20AssetToken` backed by the provided storage and policy adapters.
     pub const fn with_storage_and_policy(accounting: S, policy: P) -> Self {
         Self { accounting, policy, in_announcement: false }
     }
@@ -50,7 +50,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     }
 }
 
-impl<S: SecurityAccounting, P: Policy> Token for B20SecurityToken<S, P> {
+impl<S: SecurityAccounting, P: Policy> Token for B20AssetToken<S, P> {
     type Accounting = S;
     type Policy = P;
 
@@ -75,17 +75,17 @@ impl<S: SecurityAccounting, P: Policy> Token for B20SecurityToken<S, P> {
     }
 }
 
-impl<S: SecurityAccounting, P: Policy> Transferable for B20SecurityToken<S, P> {}
-impl<S: SecurityAccounting, P: Policy> Mintable for B20SecurityToken<S, P> {}
-impl<S: SecurityAccounting, P: Policy> Burnable for B20SecurityToken<S, P> {}
-impl<S: SecurityAccounting, P: Policy> Pausable for B20SecurityToken<S, P> {}
-impl<S: SecurityAccounting, P: Policy> Configurable for B20SecurityToken<S, P> {}
-impl<S: SecurityAccounting, P: Policy> Permittable for B20SecurityToken<S, P> {}
-impl<S: SecurityAccounting, P: Policy> RoleManaged for B20SecurityToken<S, P> {}
+impl<S: SecurityAccounting, P: Policy> Transferable for B20AssetToken<S, P> {}
+impl<S: SecurityAccounting, P: Policy> Mintable for B20AssetToken<S, P> {}
+impl<S: SecurityAccounting, P: Policy> Burnable for B20AssetToken<S, P> {}
+impl<S: SecurityAccounting, P: Policy> Pausable for B20AssetToken<S, P> {}
+impl<S: SecurityAccounting, P: Policy> Configurable for B20AssetToken<S, P> {}
+impl<S: SecurityAccounting, P: Policy> Permittable for B20AssetToken<S, P> {}
+impl<S: SecurityAccounting, P: Policy> RoleManaged for B20AssetToken<S, P> {}
 
 // --- Security-Specific Operations ---
 
-impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
+impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
     // --- Policy Scope Validation ---
 
     /// Ensures `policy_scope` names either an inherited B-20 policy slot or the
@@ -160,7 +160,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     pub fn to_shares(&self, balance: U256) -> Result<U256> {
         let ratio = self.accounting().shares_to_tokens_ratio()?;
         let product = balance.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)?;
-        Ok(product / B20SecurityStorage::WAD)
+        Ok(product / B20AssetStorage::WAD)
     }
 
     /// Returns the shares for an account (balance converted to shares).
@@ -179,7 +179,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         self.ensure_security_operator(caller, privileged)?;
         self.accounting_mut().set_shares_to_tokens_ratio(new_ratio)?;
         self.accounting_mut().emit_event(
-            IB20Security::ShareRatioUpdated { sharesToTokensRatio: new_ratio }.encode_log_data(),
+            IB20Asset::ShareRatioUpdated { sharesToTokensRatio: new_ratio }.encode_log_data(),
         )
     }
 
@@ -195,7 +195,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         self.ensure_default_admin(caller, privileged)?;
         self.accounting_mut().set_minimum_redeemable(new_minimum)?;
         self.accounting_mut().emit_event(
-            IB20Security::MinimumRedeemableUpdated { caller, newMinimumRedeemable: new_minimum }
+            IB20Asset::MinimumRedeemableUpdated { caller, newMinimumRedeemable: new_minimum }
                 .encode_log_data(),
         )
     }
@@ -212,12 +212,12 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
     ) -> Result<()> {
         self.ensure_security_operator(caller, privileged)?;
         if identifier_type.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Security::InvalidIdentifierType {}));
+            return Err(BasePrecompileError::revert(IB20Asset::InvalidIdentifierType {}));
         }
         self.accounting_mut()
             .set_security_identifier_value(identifier_type.as_str(), value.clone())?;
         self.accounting_mut().emit_event(
-            IB20Security::SecurityIdentifierUpdated { identifierType: identifier_type, value }
+            IB20Asset::SecurityIdentifierUpdated { identifierType: identifier_type, value }
                 .encode_log_data(),
         )
     }
@@ -250,10 +250,10 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         if !amount.is_zero() {
             let shares =
                 amount.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)?
-                    / B20SecurityStorage::WAD;
+                    / B20AssetStorage::WAD;
             let minimum = self.accounting().minimum_redeemable()?;
             if shares == U256::ZERO || shares < minimum {
-                return Err(BasePrecompileError::revert(IB20Security::BelowMinimumRedeemable {
+                return Err(BasePrecompileError::revert(IB20Asset::BelowMinimumRedeemable {
                     shares,
                     minimum,
                 }));
@@ -280,7 +280,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
 
     fn emit_redeemed(&mut self, caller: Address, amount: U256, ratio: U256) -> Result<()> {
         self.accounting_mut().emit_event(
-            IB20Security::Redeemed { from: caller, amt: amount, sharesToTokensRatio: ratio }
+            IB20Asset::Redeemed { from: caller, amt: amount, sharesToTokensRatio: ratio }
                 .encode_log_data(),
         )
     }
@@ -305,13 +305,13 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         }
         // 3. INPUT VALIDATION
         if recipients.len() != amounts.len() {
-            return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
+            return Err(BasePrecompileError::revert(IB20Asset::LengthMismatch {
                 leftLen: U256::from(recipients.len()),
                 rightLen: U256::from(amounts.len()),
             }));
         }
         if recipients.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
+            return Err(BasePrecompileError::revert(IB20Asset::EmptyBatch {}));
         }
         // 4. BUSINESS LOGIC (privileged=true to skip redundant pause/role checks in mint)
         for (recipient, amount) in recipients.into_iter().zip(amounts) {
@@ -330,11 +330,11 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        B20PausableFeature, B20SecurityStorage, B20SecurityToken, B20TokenRole, IB20, IB20Security,
+        B20AssetStorage, B20AssetToken, B20PausableFeature, B20TokenRole, IB20, IB20Asset,
         InMemoryPolicy, InMemoryTokenAccounting, PolicyRegistryStorage, Token,
     };
 
-    type TestSecurityToken = B20SecurityToken<InMemoryTokenAccounting, InMemoryPolicy>;
+    type TestSecurityToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
 
     const CALLER: Address = Address::repeat_byte(0xcc);
     const ALICE: Address = Address::repeat_byte(0xaa);
@@ -343,7 +343,7 @@ mod tests {
 
     fn make_token() -> TestSecurityToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD;
+        accounting.shares_to_tokens_ratio = B20AssetStorage::WAD;
         accounting.policy_ids.insert(
             TestSecurityToken::REDEEM_SENDER_POLICY,
             PolicyRegistryStorage::ALWAYS_ALLOW_ID,
@@ -361,7 +361,7 @@ mod tests {
 
     fn setup_batch_mint(setup: BatchMintSetup) -> (TestSecurityToken, Vec<Address>, Vec<U256>) {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD;
+        accounting.shares_to_tokens_ratio = B20AssetStorage::WAD;
         let recipients;
         let amounts;
 
@@ -402,9 +402,9 @@ mod tests {
                     neededRole: B20TokenRole::Mint.id(),
                 })
             }
-            BatchMintSetup::EmptyBatch => BasePrecompileError::revert(IB20Security::EmptyBatch {}),
+            BatchMintSetup::EmptyBatch => BasePrecompileError::revert(IB20Asset::EmptyBatch {}),
             BatchMintSetup::LengthMismatch => {
-                BasePrecompileError::revert(IB20Security::LengthMismatch {
+                BasePrecompileError::revert(IB20Asset::LengthMismatch {
                     leftLen: U256::from(2u64),
                     rightLen: U256::from(1u64),
                 })
@@ -421,7 +421,7 @@ mod tests {
 
     fn setup_security_redeem(setup: SecurityRedeemSetup) -> TestSecurityToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = B20SecurityStorage::WAD;
+        accounting.shares_to_tokens_ratio = B20AssetStorage::WAD;
 
         match setup {
             SecurityRedeemSetup::Paused => {

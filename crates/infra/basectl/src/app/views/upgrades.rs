@@ -200,7 +200,7 @@ const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
     ("B-20 factory feature", ActivationFeature::B20Factory),
     ("policy registry feature", ActivationFeature::PolicyRegistry),
     ("B-20 stablecoin feature", ActivationFeature::B20Stablecoin),
-    ("B-20 security feature", ActivationFeature::B20Security),
+    ("B-20 security feature", ActivationFeature::B20Asset),
 ];
 
 fn check_names_for(hardfork: &str) -> &'static [&'static str] {
