@@ -46,6 +46,7 @@ impl Listener {
     }
 
     /// Runs the listener loop, accepting connections until cancelled.
+    #[allow(clippy::result_large_err)]
     pub async fn run(self) {
         let Self { listener, metrics, receiver, ring_buffer, cancel } = self;
 
