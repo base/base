@@ -1,6 +1,3 @@
-# NOTE: This template produces the same JSON structure as the Rust function
-# deploy_config_json() in etc/systems/src/config/deploy_config.rs.
-# If the schema changes, both must be updated in lockstep.
 {
   "baseFeeVaultMinimumWithdrawalAmount": "0x8ac7230489e80000",
   "baseFeeVaultRecipient": "${DEPLOYER_ADDR}",
