@@ -1825,7 +1825,7 @@ mod tests {
         assert_eq!(target_hardfork(&chain, 100), Some("Beryl"));
 
         chain.apply_hardforks(&HardForkConfig {
-            base: HardforkConfig { azul: Some(10), beryl: Some(12) },
+            base: HardforkConfig { azul: Some(10), beryl: Some(12), cobalt: None },
             ..HardForkConfig::default()
         });
 
@@ -1843,7 +1843,7 @@ mod tests {
         };
         chain.apply_hardforks(&HardForkConfig {
             jovian_time: Some(10),
-            base: HardforkConfig { azul: Some(20), beryl: None },
+            base: HardforkConfig { azul: Some(20), beryl: None, cobalt: None },
             ..HardForkConfig::default()
         });
 
@@ -1861,7 +1861,7 @@ mod tests {
         let delta = chain.specs.iter().find(|spec| spec.name == "Delta").unwrap().timestamp;
 
         chain.apply_hardforks(&HardForkConfig {
-            base: HardforkConfig { azul: Some(20), beryl: None },
+            base: HardforkConfig { azul: Some(20), beryl: None, cobalt: None },
             ..HardForkConfig::default()
         });
 
