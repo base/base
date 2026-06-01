@@ -1502,6 +1502,8 @@ fn result_payload_from_receipt_update(update: &UpdateReceipt) -> Result<Option<s
 }
 
 fn proof_result_from_receipt_update(update: &UpdateReceipt) -> Option<ProtocolProofResult> {
+    // `UpdateReceipt` is the legacy OP Succinct receipt path, which currently only
+    // stores SP1 receipts. Protocol-native completions carry their own ZK VM.
     if let Some(snark_receipt) = &update.snark_receipt {
         return Some(ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
             proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: snark_receipt.clone().into() },

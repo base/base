@@ -54,6 +54,12 @@ fn proof_result_for_request(proof_req: &ProofRequest) -> RpcResult<ProofResult> 
     }
 }
 
+fn should_use_dry_run_result(proof_req: &ProofRequest) -> bool {
+    proof_req.result_payload.is_none()
+        && proof_req.stark_receipt.is_none()
+        && proof_req.snark_receipt.is_none()
+}
+
 impl ProverServiceServer {
     /// Returns current proof status and proof bytes for the public `session_id`.
     pub async fn get_proof_impl(&self, request: GetProofRequest) -> RpcResult<GetProofResponse> {
@@ -79,10 +85,7 @@ impl ProverServiceServer {
     }
 
     async fn succeeded_result(&self, proof_req: &ProofRequest) -> RpcResult<Option<ProofResult>> {
-        if proof_req.stark_receipt.is_none()
-            && proof_req.snark_receipt.is_none()
-            && self.request_is_dry_run(proof_req.id).await?
-        {
+        if should_use_dry_run_result(proof_req) && self.request_is_dry_run(proof_req.id).await? {
             return Ok(Some(ProofResult::Compressed(ZkProofResult {
                 zk_vm: ZkVm::Sp1,
                 proof: Vec::new().into(),
@@ -300,6 +303,19 @@ mod tests {
 
         let result = proof_result_for_request(&req).unwrap();
         assert!(matches!(result, ProofResult::Tee(_)));
+    }
+
+    #[test]
+    fn dry_run_result_is_not_used_when_result_payload_exists() {
+        let stored_result = ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: vec![0xAA, 0xBB].into(),
+        });
+        let mut req = make_proof_request(ProofType::OpSuccinctSp1ClusterCompressed, None, None);
+        req.result_payload =
+            Some(serde_json::to_value(&stored_result).expect("proof result should serialize"));
+
+        assert!(!should_use_dry_run_result(&req));
     }
 
     #[test]
