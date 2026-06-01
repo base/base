@@ -1,6 +1,6 @@
 //! Shared helpers for Beryl precompile action tests.
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_sol_types::SolValue;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 
@@ -170,4 +170,8 @@ fn first_word(returndata: &[u8]) -> U256 {
     let copied = returndata.len().min(word.len());
     word[..copied].copy_from_slice(&returndata[..copied]);
     U256::from_be_bytes(word)
+}
+
+fn returndata_hash(returndata: &[u8]) -> B256 {
+    keccak256(returndata)
 }
