@@ -1,4 +1,4 @@
-//! Smoke tests for the full SystemTestStack stack.
+//! Smoke tests for the full `SystemTestStack` stack.
 
 use std::time::Duration;
 
