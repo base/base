@@ -1,10 +1,16 @@
 //! `B20SecurityToken` struct — the security B-20 token type.
 
-use alloy_primitives::{Address, B256, b256};
+use alloc::{string::String, vec::Vec};
+
+use alloy_primitives::{Address, B256, U256, b256};
+use alloy_sol_types::SolEvent;
+use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    B20SecurityStorage, Burnable, Configurable, Mintable, Pausable, Permittable, Policy,
-    RoleManaged, SecurityAccounting, Token, Transferable,
+    B20Guards, B20PolicyType, B20SecurityStorage, Burnable, Configurable,
+    IB20::{self},
+    IB20Security, Mintable, Pausable, Permittable, Policy, RoleManaged, SecurityAccounting, Token,
+    Transferable,
 };
 
 /// EVM precompile for the security B-20 variant.
@@ -80,6 +86,289 @@ impl<S: SecurityAccounting, P: Policy> Pausable for B20SecurityToken<S, P> {}
 impl<S: SecurityAccounting, P: Policy> Configurable for B20SecurityToken<S, P> {}
 impl<S: SecurityAccounting, P: Policy> Permittable for B20SecurityToken<S, P> {}
 impl<S: SecurityAccounting, P: Policy> RoleManaged for B20SecurityToken<S, P> {}
+
+// --- Security-Specific Operations ---
+
+impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
+    // --- Policy Scope Validation ---
+
+    /// Ensures `policy_scope` names either an inherited B-20 policy slot or the
+    /// security redeem slot.
+    pub fn is_supported_policy_scope(policy_scope: B256) -> bool {
+        policy_scope == Self::REDEEM_SENDER_POLICY || B20PolicyType::from_id(policy_scope).is_some()
+    }
+
+    /// Validates that the policy scope is supported.
+    pub fn ensure_supported_policy_type(policy_scope: B256) -> Result<()> {
+        if Self::is_supported_policy_scope(policy_scope) {
+            Ok(())
+        } else {
+            Err(BasePrecompileError::revert(IB20::UnsupportedPolicyType {
+                policyScope: policy_scope,
+            }))
+        }
+    }
+
+    // --- Authorization Helpers ---
+
+    /// Ensures the caller has the security operator role.
+    pub fn ensure_security_operator(&self, caller: Address, privileged: bool) -> Result<()> {
+        if privileged {
+            Ok(())
+        } else {
+            self.ensure_role(caller, Self::SECURITY_OPERATOR_ROLE)
+        }
+    }
+
+    /// Ensures the caller has the default admin role.
+    pub fn ensure_default_admin(&self, caller: Address, privileged: bool) -> Result<()> {
+        if privileged {
+            Ok(())
+        } else {
+            self.ensure_role(caller, Self::default_admin_role())
+        }
+    }
+
+    /// Ensures the caller has the burn-from role.
+    pub fn ensure_burn_from_role(&self, caller: Address) -> Result<()> {
+        self.ensure_role(caller, Self::BURN_FROM_ROLE)
+    }
+
+    // --- Policy Operations ---
+
+    /// Returns the configured policy ID for `policy_scope`.
+    pub fn policy_id_checked(&self, policy_scope: B256) -> Result<u64> {
+        Self::ensure_supported_policy_type(policy_scope)?;
+        self.accounting().policy_id(policy_scope)
+    }
+
+    /// Updates the configured policy ID for `policy_scope`.
+    pub fn update_policy(
+        &mut self,
+        caller: Address,
+        policy_scope: B256,
+        new_policy_id: u64,
+        privileged: bool,
+    ) -> Result<()> {
+        Self::ensure_supported_policy_type(policy_scope)?;
+        if !privileged {
+            self.ensure_role(caller, Self::default_admin_role())?;
+        }
+        let old_policy_id = self.accounting().policy_id(policy_scope)?;
+        if !self.policy().policy_exists(new_policy_id)? {
+            return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
+                policyId: new_policy_id,
+            }));
+        }
+        self.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
+        self.accounting_mut().emit_event(
+            IB20::PolicyUpdated {
+                policyScope: policy_scope,
+                oldPolicyId: old_policy_id,
+                newPolicyId: new_policy_id,
+            }
+            .encode_log_data(),
+        )
+    }
+
+    // --- Share Ratio Operations ---
+
+    /// Converts a token balance to shares: `balance * sharesToTokensRatio / WAD`.
+    pub fn to_shares(&self, balance: U256) -> Result<U256> {
+        let ratio = self.accounting().shares_to_tokens_ratio()?;
+        let product = balance.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)?;
+        Ok(product / B20SecurityStorage::WAD)
+    }
+
+    /// Returns the shares for an account (balance converted to shares).
+    pub fn shares_of(&self, account: Address) -> Result<U256> {
+        let balance = self.accounting().balance_of(account)?;
+        self.to_shares(balance)
+    }
+
+    /// Updates the share-to-tokens ratio.
+    pub fn update_share_ratio(
+        &mut self,
+        caller: Address,
+        new_ratio: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        self.ensure_security_operator(caller, privileged)?;
+        self.accounting_mut().set_shares_to_tokens_ratio(new_ratio)?;
+        self.accounting_mut().emit_event(
+            IB20Security::ShareRatioUpdated { sharesToTokensRatio: new_ratio }.encode_log_data(),
+        )
+    }
+
+    // --- Minimum Redeemable Operations ---
+
+    /// Updates the minimum redeemable amount.
+    pub fn update_minimum_redeemable(
+        &mut self,
+        caller: Address,
+        new_minimum: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        self.ensure_default_admin(caller, privileged)?;
+        self.accounting_mut().set_minimum_redeemable(new_minimum)?;
+        self.accounting_mut().emit_event(
+            IB20Security::MinimumRedeemableUpdated { caller, newMinimumRedeemable: new_minimum }
+                .encode_log_data(),
+        )
+    }
+
+    // --- Security Identifier Operations ---
+
+    /// Updates a security identifier value.
+    pub fn update_security_identifier(
+        &mut self,
+        caller: Address,
+        identifier_type: String,
+        value: String,
+        privileged: bool,
+    ) -> Result<()> {
+        self.ensure_security_operator(caller, privileged)?;
+        if identifier_type.is_empty() {
+            return Err(BasePrecompileError::revert(IB20Security::InvalidIdentifierType {}));
+        }
+        self.accounting_mut().set_security_identifier_value(identifier_type.as_str(), value.clone())?;
+        self.accounting_mut().emit_event(
+            IB20Security::SecurityIdentifierUpdated { identifierType: identifier_type, value }
+                .encode_log_data(),
+        )
+    }
+
+    // --- Security Redeem Operations ---
+
+    /// Performs a security-specific redeem: share-based floor check, burn, security `Redeemed` event.
+    pub fn security_redeem(&mut self, caller: Address, amount: U256) -> Result<()> {
+        let ratio = self.security_redeem_burn(caller, amount)?;
+        self.emit_redeemed(caller, amount, ratio)
+    }
+
+    /// [`Self::security_redeem`] with a memo emitted between `Transfer` and `Redeemed`.
+    pub fn security_redeem_with_memo(
+        &mut self,
+        caller: Address,
+        amount: U256,
+        memo: B256,
+    ) -> Result<()> {
+        let ratio = self.security_redeem_burn(caller, amount)?;
+        self.accounting_mut().emit_event(IB20::Memo { caller, memo }.encode_log_data())?;
+        self.emit_redeemed(caller, amount, ratio)
+    }
+
+    /// Performs the shared security redeem burn and returns the ratio used for the floor check.
+    fn security_redeem_burn(&mut self, caller: Address, amount: U256) -> Result<U256> {
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::REDEEM)?;
+        B20Guards::ensure_policy::<Self>(self, Self::REDEEM_SENDER_POLICY, caller)?;
+        let ratio = self.accounting().shares_to_tokens_ratio()?;
+        if !amount.is_zero() {
+            let shares =
+                amount.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)?
+                    / B20SecurityStorage::WAD;
+            let minimum = self.accounting().minimum_redeemable()?;
+            if shares == U256::ZERO || shares < minimum {
+                return Err(BasePrecompileError::revert(IB20Security::BelowMinimumRedeemable {
+                    shares,
+                    minimum,
+                }));
+            }
+        }
+        let balance = self.accounting().balance_of(caller)?;
+        if balance < amount {
+            return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
+                sender: caller,
+                balance,
+                needed: amount,
+            }));
+        }
+        self.accounting_mut().set_balance(caller, balance - amount)?;
+        let supply = self.accounting().total_supply()?;
+        let new_supply =
+            supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.accounting_mut().set_total_supply(new_supply)?;
+        self.accounting_mut().emit_event(
+            IB20::Transfer { from: caller, to: Address::ZERO, amount }.encode_log_data(),
+        )?;
+        Ok(ratio)
+    }
+
+    fn emit_redeemed(&mut self, caller: Address, amount: U256, ratio: U256) -> Result<()> {
+        self.accounting_mut().emit_event(
+            IB20Security::Redeemed { from: caller, amt: amount, sharesToTokensRatio: ratio }
+                .encode_log_data(),
+        )
+    }
+
+    // --- Batch Operations ---
+
+    /// Mints tokens to multiple recipients. All-or-nothing.
+    pub fn batch_mint(
+        &mut self,
+        caller: Address,
+        recipients: Vec<Address>,
+        amounts: Vec<U256>,
+        privileged: bool,
+    ) -> Result<()> {
+        if recipients.len() != amounts.len() {
+            return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
+                leftLen: U256::from(recipients.len()),
+                rightLen: U256::from(amounts.len()),
+            }));
+        }
+        if recipients.is_empty() {
+            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
+        }
+        for (recipient, amount) in recipients.into_iter().zip(amounts) {
+            self.mint(caller, recipient, amount, privileged)?;
+        }
+        Ok(())
+    }
+
+    /// Burns tokens from multiple accounts unconditionally. All-or-nothing.
+    ///
+    /// Unlike `burnBlocked`, this path has no policy precondition. The
+    /// `BURN_FROM_ROLE` authorization and burn pause check are the only gates.
+    pub fn batch_burn(
+        &mut self,
+        caller: Address,
+        accounts: Vec<Address>,
+        amounts: Vec<U256>,
+    ) -> Result<()> {
+        self.ensure_burn_from_role(caller)?;
+        if accounts.len() != amounts.len() {
+            return Err(BasePrecompileError::revert(IB20Security::LengthMismatch {
+                leftLen: U256::from(accounts.len()),
+                rightLen: U256::from(amounts.len()),
+            }));
+        }
+        if accounts.is_empty() {
+            return Err(BasePrecompileError::revert(IB20Security::EmptyBatch {}));
+        }
+        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::BURN)?;
+        for (account, amount) in accounts.into_iter().zip(amounts) {
+            let balance = self.accounting().balance_of(account)?;
+            if balance < amount {
+                return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
+                    sender: account,
+                    balance,
+                    needed: amount,
+                }));
+            }
+            self.accounting_mut().set_balance(account, balance - amount)?;
+            let supply = self.accounting().total_supply()?;
+            let new_supply =
+                supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+            self.accounting_mut().set_total_supply(new_supply)?;
+            self.accounting_mut().emit_event(
+                IB20::Transfer { from: account, to: Address::ZERO, amount }.encode_log_data(),
+            )?;
+        }
+        Ok(())
+    }
+
+}
 
 #[cfg(test)]
 mod tests {
