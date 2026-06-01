@@ -1121,6 +1121,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn hash_subscriber_receives_initial_pending_event_for_new_sidecar_transaction() {
+        let mut nonce_pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let mut listeners = SidecarListeners::default();
+        let signer = signer();
+
+        let transaction =
+            valid_pool_transaction(signed_channel_tx(&signer, U256::from(1), 0, 1_000));
+        let hash = *transaction.hash();
+
+        let mut events = listeners.subscribe_hash(hash).0;
+        let outcome = nonce_pool.insert_validated(transaction).unwrap();
+        listeners.on_inserted(&nonce_pool, &outcome);
+
+        assert!(matches!(events.next().await, Some(TransactionEvent::Pending)));
+    }
+
+    #[tokio::test]
     async fn gap_fill_broadcasts_pending_for_promoted_sidecar_transaction() {
         let mut nonce_pool = TwoDNoncePool::new(PriceBumpConfig::default());
         let mut listeners = SidecarListeners::default();
