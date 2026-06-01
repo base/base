@@ -5865,6 +5865,7 @@ dependencies = [
  "humantime",
  "jsonrpsee",
  "metrics",
+ "metrics-util",
  "reqwest 0.13.3",
  "rstest",
  "rustls 0.23.40",

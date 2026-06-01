@@ -316,6 +316,7 @@ where
             self.try_recover_and_plan(&mut state.cached_recovery).await
         {
             Metrics::safe_head().set(safe_head as f64);
+            Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
             state.prune_stale(recovered.l2_block_number);
             self.dispatch_proofs(&recovered, safe_head, state).await?;
         }
@@ -1569,6 +1570,11 @@ mod tests {
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
     use base_proof_primitives::{ProofResult, Proposal, ProverClient};
+    #[cfg(feature = "metrics")]
+    use metrics_util::{
+        CompositeKey, MetricKind,
+        debugging::{DebugValue, DebuggingRecorder, Snapshotter},
+    };
     use rstest::rstest;
     use tokio_util::sync::CancellationToken;
 
@@ -1580,6 +1586,28 @@ mod tests {
     };
 
     // ---- Named constants for test data ----
+
+    #[cfg(feature = "metrics")]
+    type SnapEntry =
+        (CompositeKey, Option<metrics::Unit>, Option<metrics::SharedString>, DebugValue);
+
+    #[cfg(feature = "metrics")]
+    fn with_recorder(f: impl FnOnce(Snapshotter)) {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || f(snapshotter));
+    }
+
+    #[cfg(feature = "metrics")]
+    fn find_metric<'a>(
+        snap: &'a [SnapEntry],
+        kind: MetricKind,
+        name: &str,
+    ) -> Option<&'a DebugValue> {
+        snap.iter()
+            .find(|(ck, _, _, _)| ck.kind() == kind && ck.key().name() == name)
+            .map(|(_, _, _, v)| v)
+    }
 
     /// Game type used across recovery tests.
     const TEST_GAME_TYPE: u32 = 42;
@@ -1904,6 +1932,30 @@ mod tests {
 
         let result = handle.await.expect("task should not panic");
         assert!(result.is_ok());
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn test_tick_records_recovered_last_proposed_block() {
+        let (factory, output_roots) = game_chain(1);
+        let pipeline = recovery_pipeline(factory, output_roots);
+
+        with_recorder(|snap| {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let mut state = PipelineState::new();
+
+            rt.block_on(async {
+                pipeline.tick(&mut state).await.unwrap();
+            });
+
+            let snapshot = snap.snapshot().into_vec();
+            match find_metric(&snapshot, MetricKind::Gauge, "base_proposer.last_proposed_block") {
+                Some(DebugValue::Gauge(value)) => {
+                    assert_eq!(value.into_inner(), TEST_BLOCK_INTERVAL as f64);
+                }
+                other => panic!("expected recovered last_proposed_block gauge, got {other:?}"),
+            }
+        });
     }
 
     // ---- Recovery: empty factory ----
