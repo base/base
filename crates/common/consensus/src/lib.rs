@@ -16,7 +16,10 @@ use revm as _;
 #[cfg(feature = "reth")]
 mod reth_compat;
 #[cfg(feature = "reth")]
-pub use reth_compat::{BaseBlockBody, BasePrimitives, CompactTxDeposit, DepositReceiptExt};
+pub use reth_compat::{
+    BaseBlockBody, BaseHeaderCompact, BaseHeaderExt, BasePrimitives, CompactTxDeposit,
+    DepositReceiptExt,
+};
 
 mod receipts;
 pub use receipts::{

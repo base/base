@@ -1,10 +1,13 @@
 //! Header type for Base chains.
 
 use alloc::vec::Vec;
+use core::mem;
 
-use alloy_consensus::Header;
-use alloy_primitives::{B256, Sealable, Sealed, U256, keccak256};
-use alloy_rlp::{BufMut, Encodable, length_of_length};
+use alloy_consensus::{BlockHeader as AlloyBlockHeader, Header, InMemorySize};
+use alloy_primitives::{
+    Address, B64, B256, BlockNumber, Bloom, Bytes, Sealable, Sealed, U256, keccak256,
+};
+use alloy_rlp::{BufMut, Decodable, Encodable, length_of_length};
 
 /// Number of milliseconds in one Unix timestamp second.
 pub const TIMESTAMP_MILLIS_PER_SECOND: u16 = 1_000;
@@ -56,11 +59,21 @@ pub enum TimestampMillisPartError {
 }
 
 /// Base header wrapper with an optional post-Beryl millisecond timestamp component.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+///
+/// `BaseHeader` is the canonical Base block header: it wraps the upstream Ethereum
+/// [`Header`] fields and adds an optional post-Beryl `timestamp_millis_part`
+/// committed by the header hash. When `timestamp_millis_part` is `None`, the RLP
+/// encoding, hash, and reth `Compact` bytes are byte-identical to the upstream
+/// [`Header`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct BaseHeader {
     /// Standard Ethereum execution header fields.
+    #[cfg_attr(feature = "serde", serde(flatten))]
     pub inner: Header,
     /// Post-Beryl millisecond subsecond component committed by the header hash.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub timestamp_millis_part: Option<u16>,
 }
 
@@ -167,7 +180,10 @@ impl BaseHeader {
         let mut length = base_header_payload_length(&self.inner);
 
         if let Some(timestamp_millis_part) = self.timestamp_millis_part {
-            length += timestamp_millis_part.length();
+            // The millisecond trailer is encoded as a single-element RLP list so the decoder
+            // can disambiguate it from a missing intermediate post-Bedrock optional field.
+            let inner_len = timestamp_millis_part.length();
+            length += inner_len + length_of_length(inner_len);
         }
 
         length
@@ -180,15 +196,128 @@ impl From<Header> for BaseHeader {
     }
 }
 
+impl From<BaseHeader> for Header {
+    fn from(header: BaseHeader) -> Self {
+        header.inner
+    }
+}
+
 impl AsRef<Header> for BaseHeader {
     fn as_ref(&self) -> &Header {
         &self.inner
     }
 }
 
+impl AsRef<Self> for BaseHeader {
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}
+
 impl Sealable for BaseHeader {
     fn hash_slow(&self) -> B256 {
         Self::hash_slow(self)
+    }
+}
+
+impl InMemorySize for BaseHeader {
+    #[inline]
+    fn size(&self) -> usize {
+        self.inner.size() + mem::size_of::<Option<u16>>()
+    }
+}
+
+impl AlloyBlockHeader for BaseHeader {
+    fn parent_hash(&self) -> B256 {
+        self.inner.parent_hash()
+    }
+
+    fn ommers_hash(&self) -> B256 {
+        self.inner.ommers_hash()
+    }
+
+    fn beneficiary(&self) -> Address {
+        self.inner.beneficiary()
+    }
+
+    fn state_root(&self) -> B256 {
+        self.inner.state_root()
+    }
+
+    fn transactions_root(&self) -> B256 {
+        self.inner.transactions_root()
+    }
+
+    fn receipts_root(&self) -> B256 {
+        self.inner.receipts_root()
+    }
+
+    fn withdrawals_root(&self) -> Option<B256> {
+        self.inner.withdrawals_root()
+    }
+
+    fn logs_bloom(&self) -> Bloom {
+        self.inner.logs_bloom()
+    }
+
+    fn difficulty(&self) -> U256 {
+        self.inner.difficulty()
+    }
+
+    fn number(&self) -> BlockNumber {
+        self.inner.number()
+    }
+
+    fn gas_limit(&self) -> u64 {
+        self.inner.gas_limit()
+    }
+
+    fn gas_used(&self) -> u64 {
+        self.inner.gas_used()
+    }
+
+    fn timestamp(&self) -> u64 {
+        self.inner.timestamp()
+    }
+
+    fn mix_hash(&self) -> Option<B256> {
+        self.inner.mix_hash()
+    }
+
+    fn nonce(&self) -> Option<B64> {
+        self.inner.nonce()
+    }
+
+    fn base_fee_per_gas(&self) -> Option<u64> {
+        self.inner.base_fee_per_gas()
+    }
+
+    fn blob_gas_used(&self) -> Option<u64> {
+        self.inner.blob_gas_used()
+    }
+
+    fn excess_blob_gas(&self) -> Option<u64> {
+        self.inner.excess_blob_gas()
+    }
+
+    fn parent_beacon_block_root(&self) -> Option<B256> {
+        self.inner.parent_beacon_block_root()
+    }
+
+    fn requests_hash(&self) -> Option<B256> {
+        self.inner.requests_hash()
+    }
+
+    fn block_access_list_hash(&self) -> Option<B256> {
+        self.inner.block_access_list_hash()
+    }
+
+    fn slot_number(&self) -> Option<u64> {
+        self.inner.slot_number()
+    }
+
+    fn extra_data(&self) -> &Bytes {
+        self.inner.extra_data()
     }
 }
 
@@ -200,6 +329,11 @@ impl Encodable for BaseHeader {
         encode_inner_header(&self.inner, out);
 
         if let Some(timestamp_millis_part) = self.timestamp_millis_part {
+            // Wrap in a single-element list (`[u16]`) so the trailer cannot be confused with a
+            // missing intermediate post-Bedrock optional field (which are all strings).
+            let trailer_header =
+                alloy_rlp::Header { list: true, payload_length: timestamp_millis_part.length() };
+            trailer_header.encode(out);
             timestamp_millis_part.encode(out);
         }
     }
@@ -207,6 +341,103 @@ impl Encodable for BaseHeader {
     fn length(&self) -> usize {
         let length = self.header_payload_length();
         length + length_of_length(length)
+    }
+}
+
+impl Decodable for BaseHeader {
+    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        let rlp_head = alloy_rlp::Header::decode(buf)?;
+        if !rlp_head.list {
+            return Err(alloy_rlp::Error::UnexpectedString);
+        }
+        let started_len = buf.len();
+        let mut inner = Header {
+            parent_hash: Decodable::decode(buf)?,
+            ommers_hash: Decodable::decode(buf)?,
+            beneficiary: Decodable::decode(buf)?,
+            state_root: Decodable::decode(buf)?,
+            transactions_root: Decodable::decode(buf)?,
+            receipts_root: Decodable::decode(buf)?,
+            logs_bloom: Decodable::decode(buf)?,
+            difficulty: Decodable::decode(buf)?,
+            number: u64::decode(buf)?,
+            gas_limit: u64::decode(buf)?,
+            gas_used: u64::decode(buf)?,
+            timestamp: Decodable::decode(buf)?,
+            extra_data: Decodable::decode(buf)?,
+            mix_hash: Decodable::decode(buf)?,
+            nonce: B64::decode(buf)?,
+            base_fee_per_gas: None,
+            withdrawals_root: None,
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            parent_beacon_block_root: None,
+            requests_hash: None,
+            block_access_list_hash: None,
+            slot_number: None,
+        };
+
+        // After the mandatory fields, the upstream Ethereum [`Header`] writes a contiguous
+        // suffix of fork-specific optional fields. The Base millisecond trailer is encoded as
+        // a single-element RLP list and is always written last, so we can disambiguate it
+        // from a missing intermediate optional field by peeking for an RLP list header.
+        let has_more = |buf: &&[u8]| started_len - buf.len() < rlp_head.payload_length;
+        let is_trailer = |buf: &&[u8]| -> bool { buf.first().is_some_and(|b| *b >= 0xC0) };
+
+        if has_more(buf) && !is_trailer(buf) {
+            inner.base_fee_per_gas = Some(u64::decode(buf)?);
+        }
+        if has_more(buf) && !is_trailer(buf) {
+            inner.withdrawals_root = Some(Decodable::decode(buf)?);
+        }
+        if has_more(buf) && !is_trailer(buf) {
+            inner.blob_gas_used = Some(u64::decode(buf)?);
+        }
+        if has_more(buf) && !is_trailer(buf) {
+            inner.excess_blob_gas = Some(u64::decode(buf)?);
+        }
+        if has_more(buf) && !is_trailer(buf) {
+            inner.parent_beacon_block_root = Some(B256::decode(buf)?);
+        }
+        if has_more(buf) && !is_trailer(buf) {
+            inner.requests_hash = Some(B256::decode(buf)?);
+        }
+        if has_more(buf) && !is_trailer(buf) {
+            inner.block_access_list_hash = Some(B256::decode(buf)?);
+        }
+        if has_more(buf) && !is_trailer(buf) {
+            inner.slot_number = Some(u64::decode(buf)?);
+        }
+
+        let timestamp_millis_part = if has_more(buf) {
+            let trailer_head = alloy_rlp::Header::decode(buf)?;
+            if !trailer_head.list {
+                return Err(alloy_rlp::Error::UnexpectedString);
+            }
+            let trailer_started = buf.len();
+            let part = u16::decode(buf)?;
+            if trailer_started - buf.len() != trailer_head.payload_length {
+                return Err(alloy_rlp::Error::ListLengthMismatch {
+                    expected: trailer_head.payload_length,
+                    got: trailer_started - buf.len(),
+                });
+            }
+            Self::validate_timestamp_millis_part(part).map_err(|_| {
+                alloy_rlp::Error::Custom("invalid base header timestamp_millis_part")
+            })?;
+            Some(part)
+        } else {
+            None
+        };
+
+        let consumed = started_len - buf.len();
+        if consumed != rlp_head.payload_length {
+            return Err(alloy_rlp::Error::ListLengthMismatch {
+                expected: rlp_head.payload_length,
+                got: consumed,
+            });
+        }
+        Ok(Self { inner, timestamp_millis_part })
     }
 }
 
@@ -316,7 +547,7 @@ fn encode_inner_header(header: &Header, out: &mut dyn BufMut) {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Header;
-    use alloy_rlp::Encodable;
+    use alloy_rlp::{Decodable, Encodable};
 
     use super::*;
 
@@ -452,5 +683,93 @@ mod tests {
 
         assert_ne!(zero_millis_header.hash_slow(), no_millis_header.hash_slow());
         assert_ne!(two_hundred_millis_header.hash_slow(), zero_millis_header.hash_slow());
+    }
+
+    fn sample_post_subsecond_header() -> Header {
+        Header {
+            timestamp: 1_780_334_562,
+            number: 42_000,
+            gas_limit: 30_000_000,
+            gas_used: 1_234,
+            base_fee_per_gas: Some(1_000_000_000),
+            withdrawals_root: Some(B256::repeat_byte(0x11)),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(B256::repeat_byte(0x22)),
+            requests_hash: Some(B256::repeat_byte(0x33)),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn rlp_round_trip_with_none_millis_part() {
+        let header = sample_post_subsecond_header();
+        let base_header = BaseHeader::new(header, None).unwrap();
+        let mut encoded = Vec::new();
+        base_header.encode(&mut encoded);
+
+        let mut slice = encoded.as_slice();
+        let decoded = BaseHeader::decode(&mut slice).unwrap();
+        assert!(slice.is_empty(), "decoder must consume the entire RLP list");
+        assert_eq!(decoded, base_header);
+    }
+
+    #[test]
+    fn rlp_round_trip_with_some_millis_part() {
+        for part in VALID_TIMESTAMP_MILLIS_PARTS {
+            let header = sample_post_subsecond_header();
+            let base_header = BaseHeader::new(header, Some(part)).unwrap();
+            let mut encoded = Vec::new();
+            base_header.encode(&mut encoded);
+
+            let mut slice = encoded.as_slice();
+            let decoded = BaseHeader::decode(&mut slice).unwrap();
+            assert!(slice.is_empty(), "decoder must consume the entire RLP list for part={part}");
+            assert_eq!(decoded, base_header);
+        }
+    }
+
+    #[test]
+    fn rlp_decode_of_plain_header_yields_none_millis_part() {
+        let header = sample_post_subsecond_header();
+        let mut encoded = Vec::new();
+        header.encode(&mut encoded);
+
+        let mut slice = encoded.as_slice();
+        let decoded = BaseHeader::decode(&mut slice).unwrap();
+        assert!(slice.is_empty());
+        assert_eq!(decoded.inner, header);
+        assert_eq!(decoded.timestamp_millis_part, None);
+    }
+
+    #[test]
+    fn rlp_decode_rejects_invalid_millis_part() {
+        let header = sample_post_subsecond_header();
+        // Manually craft a header with a trailing u16 outside the 200ms cadence.
+        let base_header = BaseHeader::new_unchecked(header, Some(123));
+        let mut encoded = Vec::new();
+        base_header.encode(&mut encoded);
+
+        let mut slice = encoded.as_slice();
+        let err = BaseHeader::decode(&mut slice).expect_err("invalid millis part must be rejected");
+        assert!(matches!(err, alloy_rlp::Error::Custom(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn block_header_trait_forwards_to_inner() {
+        let inner = sample_post_subsecond_header();
+        let base_header = BaseHeader::new(inner.clone(), Some(400)).unwrap();
+        assert_eq!(AlloyBlockHeader::number(&base_header), inner.number);
+        assert_eq!(AlloyBlockHeader::timestamp(&base_header), inner.timestamp);
+        assert_eq!(AlloyBlockHeader::gas_limit(&base_header), inner.gas_limit);
+        assert_eq!(AlloyBlockHeader::base_fee_per_gas(&base_header), inner.base_fee_per_gas);
+        assert_eq!(AlloyBlockHeader::requests_hash(&base_header), inner.requests_hash);
+    }
+
+    #[test]
+    fn in_memory_size_includes_millis_part_slot() {
+        let inner = sample_post_subsecond_header();
+        let base_header = BaseHeader::new(inner.clone(), Some(200)).unwrap();
+        assert_eq!(base_header.size(), inner.size() + mem::size_of::<Option<u16>>());
     }
 }
