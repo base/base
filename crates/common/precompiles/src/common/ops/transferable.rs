@@ -65,13 +65,14 @@ pub trait Transferable: Token {
     }
 
     /// Moves `amount` tokens from `from` to `to` using `spender`'s allowance.
-    /// Emits `Transfer`. Skips allowance decrement when allowance is `U256::MAX`.
+    /// Emits `Transfer`. Skips allowance decrement when allowance is `U256::MAX`
+    /// or `privileged` is true.
     ///
     /// The pause check is always enforced first. The executor policy check runs
     /// unconditionally (unless `privileged` is true or `spender == from`),
     /// regardless of whether the allowance is `U256::MAX`. When `privileged` is
-    /// true the executor policy check is skipped; the inner transfer also receives
-    /// `privileged`.
+    /// true the executor policy check is skipped, the allowance is not
+    /// decremented, and the inner transfer also receives `privileged`.
     fn transfer_from(
         &mut self,
         spender: Address,
@@ -100,7 +101,7 @@ pub trait Transferable: Token {
             B20Guards::ensure_policy_type::<Self>(self, B20PolicyType::TransferExecutor, spender)?;
         }
         self.transfer_inner(from, to, amount, privileged)?;
-        if is_infinite {
+        if is_infinite || privileged {
             return Ok(());
         }
         self.accounting_mut().set_allowance(from, spender, allowance - amount)
@@ -478,6 +479,21 @@ mod tests {
         token.transfer_from(SPENDER, ALICE, BOB, U256::ONE, true).unwrap();
 
         assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::ONE);
+    }
+
+    #[test]
+    fn transfer_from_privileged_does_not_decrement_allowance() {
+        let mut token = token_with_balance(U256::from(100u64));
+        token.accounting_mut().allowances.insert((ALICE, SPENDER), U256::from(50u64));
+
+        token.transfer_from(SPENDER, ALICE, BOB, U256::from(20u64), true).unwrap();
+
+        assert_eq!(
+            token.accounting().allowance(ALICE, SPENDER).unwrap(),
+            U256::from(50u64),
+            "privileged transferFrom must leave allowance unchanged"
+        );
+        assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(20u64));
     }
 
     // ---- Balance checks ----
