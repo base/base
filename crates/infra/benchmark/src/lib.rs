@@ -57,7 +57,7 @@ mod runner;
 pub use runner::{NetworkBenchmark, RunResult, RunnerOptions};
 
 mod service;
-pub use service::{run_benchmark, BenchmarkArgs};
+pub use service::{parse_config, run_benchmark, BenchmarkArgs, DEFAULT_CONFIG_YAML};
 
 mod params;
 pub use params::{

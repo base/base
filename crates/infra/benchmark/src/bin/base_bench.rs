@@ -6,19 +6,28 @@ use clap::Parser;
 use tracing::error;
 
 #[derive(Debug, Parser)]
-#[command(name = "base-bench", about = "Base EL benchmark orchestrator")]
+#[command(
+    name = "base-bench",
+    about = "Base EL benchmark orchestrator",
+    long_about = "Runs a configurable benchmark against a Base EL node. \
+                  All arguments are optional: with no arguments, runs the built-in \
+                  ERC-20 transfer benchmark on a fresh devnet and writes results to ./results/."
+)]
 struct Cli {
-    /// Path to the benchmark YAML config file.
+    /// Path to a benchmark YAML config file.
+    /// Defaults to the built-in ERC-20 transfer devnet config.
     #[arg(long, env = "BASE_BENCH_CONFIG")]
-    config: PathBuf,
+    config: Option<PathBuf>,
 
-    /// Root working directory for snapshots and results.
-    #[arg(long, env = "BASE_BENCH_ROOT_DIR")]
+    /// Root working directory for snapshots and (optionally) results.
+    /// Defaults to the current directory.
+    #[arg(long, env = "BASE_BENCH_ROOT_DIR", default_value = ".")]
     root_dir: PathBuf,
 
     /// Directory for writing benchmark results.
+    /// Defaults to <root-dir>/results.
     #[arg(long, env = "BASE_BENCH_OUTPUT_DIR")]
-    output_dir: PathBuf,
+    output_dir: Option<PathBuf>,
 
     #[arg(long, env = "BASE_BENCH_RUN_ID")]
     benchmark_run_id: Option<String>,
@@ -81,11 +90,52 @@ async fn main() {
     let builder_bin = cli.builder_bin_path();
     let load_test_bin = cli.load_test_bin_path();
 
+    let (config, config_path) = cli.config.as_ref().map_or_else(
+        || {
+            let config =
+                match base_benchmark::parse_config(base_benchmark::DEFAULT_CONFIG_YAML) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!(error = %e, "built-in default config failed to parse");
+                        std::process::exit(1);
+                    }
+                };
+            (config, None)
+        },
+        |path| {
+            let yaml = match std::fs::read_to_string(path) {
+                Ok(s) => s,
+                Err(e) => {
+                    error!(path = %path.display(), error = %e, "failed to read config file");
+                    std::process::exit(1);
+                }
+            };
+            let config = match base_benchmark::parse_config(&yaml) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!(path = %path.display(), error = %e, "failed to parse config file");
+                    std::process::exit(1);
+                }
+            };
+            let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+            (config, Some(canonical))
+        },
+    );
+
+    let output_dir = cli
+        .output_dir
+        .clone()
+        .unwrap_or_else(|| cli.root_dir.join("results"));
+
     tracing::info!(
-        config = %cli.config.display(),
+        config = config_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<default>".to_string()),
         reth_bin = %reth_bin.display(),
         builder_bin = %builder_bin.display(),
         load_test_bin = %load_test_bin.display(),
+        output_dir = %output_dir.display(),
         "starting base-bench",
     );
 
@@ -95,8 +145,9 @@ async fn main() {
     let snapshot_dir = cli.root_dir.join("snapshots");
 
     let args = base_benchmark::BenchmarkArgs {
-        config_path: cli.config.clone(),
-        output_dir: cli.output_dir.clone(),
+        config,
+        config_path,
+        output_dir,
         reth_bin,
         builder_bin,
         load_test_bin,

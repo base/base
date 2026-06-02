@@ -36,8 +36,8 @@ pub struct RunnerOptions {
     pub builder_bin: PathBuf,
     /// Path to the `base-load-test` binary.
     pub load_test_bin: PathBuf,
-    /// Path to the benchmark YAML config file (recorded in metadata).
-    pub config_path: PathBuf,
+    /// Path to the benchmark YAML config file, if one was provided (recorded in metadata).
+    pub config_path: Option<PathBuf>,
     /// Directory for writing results and metrics.
     pub output_dir: PathBuf,
     /// Hex-encoded private key for pre-funding test accounts.
@@ -322,7 +322,7 @@ impl NetworkBenchmark {
         write_metrics_file(&self.options.output_dir, "validator", &validator_metrics)?;
         write_metadata_json(
             &self.options.output_dir,
-            &self.options.config_path,
+            self.options.config_path.as_deref(),
             &run,
             &self.config,
             &block_metrics_vec,
@@ -440,7 +440,7 @@ mod tests {
             reth_bin: PathBuf::from("/bin/reth"),
             builder_bin: PathBuf::from("/bin/builder"),
             load_test_bin: PathBuf::from("/bin/load-test"),
-            config_path: PathBuf::from("/tmp/config.yaml"),
+            config_path: Some(PathBuf::from("/tmp/config.yaml")),
             output_dir: PathBuf::from("/tmp/bench"),
             prefund_key: "0xdef".into(),
         };

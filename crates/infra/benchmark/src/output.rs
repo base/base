@@ -105,7 +105,7 @@ pub fn write_metrics_file(
 /// Write a `metadata.json` summarising the run, config, and metrics.
 pub fn write_metadata_json(
     output_dir: &Path,
-    config_path: &Path,
+    config_path: Option<&Path>,
     run: &TestRun,
     config: &BenchmarkConfig,
     sequencer_metrics: &[BlockMetrics],
@@ -117,6 +117,9 @@ pub fn write_metadata_json(
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| output_dir.display().to_string());
+    let source_file = config_path
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "<default>".to_string());
 
     let mut test_config = serde_json::Map::from_iter([
         ("NodeType".to_string(), json!(run.definition.node_type)),
@@ -139,7 +142,7 @@ pub fn write_metadata_json(
     let metadata = json!({
         "runs": [{
             "id": run.id,
-            "sourceFile": config_path.display().to_string(),
+            "sourceFile": source_file,
             "outputDir": output_dir_name,
             "testName": config.name,
             "testDescription": config.description.clone().unwrap_or_default(),
