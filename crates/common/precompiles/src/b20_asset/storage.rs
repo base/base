@@ -102,7 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn security_namespaces_match_base_std_roots() {
+    fn asset_namespaces_match_base_std_roots() {
         assert_eq!(<B20CoreStorage as StorableType>::STORAGE_NAMESPACE_ROOT, B20_ROOT);
         assert_eq!(
             <B20AssetExtensionStorage as StorableType>::STORAGE_NAMESPACE_ID,

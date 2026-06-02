@@ -223,7 +223,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     ) -> Result<()> {
         self.ensure_metadata_role(caller, privileged)?;
         if identifier_type.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Asset::InvalidIdentifierType {}));
+            return Err(BasePrecompileError::revert(IB20Asset::InvalidMetadataKey {}));
         }
         self.accounting_mut().set_extra_metadata_value(identifier_type.as_str(), value.clone())?;
         self.accounting_mut().emit_event(

@@ -222,9 +222,11 @@ impl<'a> B20PrecompileClient<'a> {
         B20Variant::from_address(token).wrap_err("Token address is not a supported B-20 token")
     }
 
-    /// Reads the fixed decimals for the token variant encoded in an address.
+    /// Reads the token decimals.
     pub async fn decimals_of(&self, token: Address) -> Result<u8> {
-        B20Variant::decimals_of(token).wrap_err("Token address is not a supported B-20 token")
+        let output = self.call(token, IB20::decimalsCall {}).await?;
+        IB20::decimalsCall::abi_decode_returns(output.as_ref())
+            .wrap_err("Failed to decode decimals")
     }
 
     /// Mints B-20 tokens to an account.

@@ -14,7 +14,7 @@ sol! {
         error AnnouncementIdAlreadyUsed(string id);
 
         /// `updateExtraMetadata` was called with an empty `identifierType`.
-        error InvalidIdentifierType();
+        error InvalidMetadataKey();
 
         /// A batched function was called with parallel arrays of differing lengths.
         error LengthMismatch(uint256 leftLen, uint256 rightLen);

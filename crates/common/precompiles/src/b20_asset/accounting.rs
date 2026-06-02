@@ -27,6 +27,6 @@ pub trait AssetAccounting: TokenAccounting {
     /// Marks `id` as consumed. Called exactly once per announcement id.
     fn mark_announcement_id_used(&mut self, id: &str) -> Result<()>;
 
-    /// Returns the custom decimal precision stored for this security token.
+    /// Returns the custom decimal precision stored for this asset token.
     fn decimals(&self) -> Result<u8>;
 }

@@ -1,6 +1,6 @@
 //! ABI dispatch for the asset B-20 variant.
 //!
-//! Security-specific selectors are tried first via `IB20Asset::IB20AssetCalls`.
+//! Asset-specific selectors are tried first via `IB20Asset::IB20AssetCalls`.
 //! The `IB20` match block handles inherited selectors.
 
 use alloc::{string::String, vec::Vec};
@@ -101,7 +101,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        // Security-specific and overridden selectors are caught here first.
+        // Asset-specific and overridden selectors are caught here first.
         if let Ok(call) = IB20Asset::IB20AssetCalls::abi_decode(calldata) {
             let label = call.as_label();
             return observer.observe(label, || self.handle_asset_call(ctx, call, privileged));

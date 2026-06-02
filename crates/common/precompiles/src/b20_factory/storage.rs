@@ -155,7 +155,7 @@ impl<'a> B20FactoryStorage<'a> {
             B20AssetStorage::from_address(token_address, self.storage),
             PolicyHandle::new(self.storage),
         );
-        let (name, symbol) = (init.name.clone(), init.symbol.clone());
+        let (name, symbol, decimals) = (init.name.clone(), init.symbol.clone(), init.decimals);
         token.accounting_mut().initialize(init)?;
 
         self.emit_event(IB20Factory::B20Created {
@@ -163,7 +163,7 @@ impl<'a> B20FactoryStorage<'a> {
             variant: B20Variant::Asset.abi(),
             name,
             symbol,
-            decimals: B20Variant::Asset.decimals(),
+            decimals,
             variantParams: Bytes::new(),
         })?;
 
