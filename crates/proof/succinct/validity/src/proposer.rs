@@ -1368,6 +1368,25 @@ where
             .get_l2_output_at_block(completed_agg_proof.end_block as u64)
             .await?;
 
+        let checkpointed_l1_block_number = completed_agg_proof
+        .checkpointed_l1_block_number
+        .ok_or_else(|| {
+         anyhow!(
+            "completed aggregation proof {} is missing checkpointed_l1_block_number",
+            completed_agg_proof.id
+              )
+         })?;
+
+        let proof = completed_agg_proof
+       .proof
+       .clone()
+       .ok_or_else(|| {
+        anyhow!(
+            "completed aggregation proof {} is missing proof bytes",
+            completed_agg_proof.id
+             )
+        })?;
+  
         // If the DisputeGameFactory address is set, use it to create a new validity dispute game
         // that will resolve with the proof. Note: In the DGF setting, the proof immediately
         // resolves the game. Otherwise, propose the L2 output.
@@ -1390,8 +1409,8 @@ where
                     self.requester_config.base_proof_succinct_config_name_hash,
                     output.output_root,
                     U256::from(completed_agg_proof.end_block),
-                    U256::from(completed_agg_proof.checkpointed_l1_block_number.unwrap()),
-                    completed_agg_proof.proof.clone().unwrap().into(),
+                    U256::from(checkpointed_l1_block_number),
+                    proof.clone().into(),
                     self.driver_config.signer.address(),
                 )
                 .value(init_bond)
@@ -1404,8 +1423,9 @@ where
                     transaction_request,
                 )
                 .await
-                .map_err(|e| anyhow!("Failed to relay aggregation proof onchain. end_block: {}, checkpointed_l1_block_number: {}, error: {}", completed_agg_proof.end_block, completed_agg_proof.checkpointed_l1_block_number.unwrap(), e))?
-        } else {
+                .map_err(|e| anyhow!( "Failed to relay aggregation proof onchain. end_block: {}, checkpointed_l1_block_number: {}, error: {}", completed_agg_proof.end_block,  checkpointed_l1_block_number,e
+))?
+                } else {
             // Propose the L2 output to the L2OutputOracle directly.
             let transaction_request = self
                 .contract_config
@@ -1414,8 +1434,8 @@ where
                     self.requester_config.base_proof_succinct_config_name_hash,
                     output.output_root,
                     U256::from(completed_agg_proof.end_block),
-                    U256::from(completed_agg_proof.checkpointed_l1_block_number.unwrap()),
-                    completed_agg_proof.proof.clone().unwrap().into(),
+                    U256::from(checkpointed_l1_block_number),
+                    proof.clone().into(),
                     self.driver_config.signer.address(),
                 )
                 .into_transaction_request();
