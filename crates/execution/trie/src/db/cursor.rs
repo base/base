@@ -556,11 +556,11 @@ where
     type Value = Account;
 
     fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
-        Ok(self.cursor.seek(key)?)
+        self.cursor.seek(key)
     }
 
     fn next(&mut self) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
-        Ok(self.cursor.next()?)
+        self.cursor.next()
     }
 
     fn reset(&mut self) {}
@@ -1196,7 +1196,7 @@ where
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
         self.positioned = true;
         self.last_path = None;
-        let subkey = StoredNibblesSubKey::from(path.clone());
+        let subkey = StoredNibblesSubKey::from(path);
         let entry = self.cursor.seek_by_key_subkey(self.hashed_address, subkey.clone())?;
         let current_address = self.cursor.current()?.map(|(address, _)| address);
         let out = entry.and_then(|entry| {

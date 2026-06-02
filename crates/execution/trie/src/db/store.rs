@@ -691,18 +691,12 @@ impl MdbxProofsStorage {
                     )?;
                 }
 
-                if value.is_zero() {
-                    Self::delete_dup_current::<V2HashedStorages>(
-                        tx,
-                        *hashed_address,
-                        *hashed_storage_key,
-                    )?;
-                } else {
-                    Self::delete_dup_current::<V2HashedStorages>(
-                        tx,
-                        *hashed_address,
-                        *hashed_storage_key,
-                    )?;
+                Self::delete_dup_current::<V2HashedStorages>(
+                    tx,
+                    *hashed_address,
+                    *hashed_storage_key,
+                )?;
+                if !value.is_zero() {
                     tx.cursor_dup_write::<V2HashedStorages>()?.upsert(
                         *hashed_address,
                         &StorageEntry { key: *hashed_storage_key, value: *value },
