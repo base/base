@@ -4,14 +4,16 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use alloy_primitives::{Address, Bytes, TxKind, B256, B64, U256};
+use alloy_primitives::{address, keccak256, Bytes, TxKind, B256, B64, U256};
 use alloy_provider::RootProvider;
+use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes, PayloadId};
 use base_common_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types_engine::{BaseExecutionPayloadV4, BasePayloadAttributes};
 use base_consensus_engine::{BaseEngineClient, EngineClientBuilder};
+use base_protocol::L1BlockInfoEcotone;
 use reqwest::Url;
 use tokio::task::JoinSet;
 use tracing::info;
@@ -23,7 +25,6 @@ use crate::params;
 const FAKE_BEACON_ROOT_PREIMAGE: &[u8] = b"fake-beacon-block-root\x01";
 
 fn fake_beacon_root() -> B256 {
-    use alloy_primitives::keccak256;
     keccak256(FAKE_BEACON_ROOT_PREIMAGE)
 }
 
@@ -82,9 +83,21 @@ type EngineClient = BaseEngineClient<RootProvider, RootProvider<Base>>;
 /// (FCU V3, getPayload V5, newPayload V4).
 pub struct BaseConsensusClient {
     engine: EngineClient,
+    /// Hash of the current chain head.
     pub head_block_hash: B256,
+    /// Block number of the current chain head.
     pub head_block_number: u64,
+    /// Timestamp of the current chain head.
     pub head_block_timestamp: u64,
+}
+
+impl std::fmt::Debug for BaseConsensusClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BaseConsensusClient")
+            .field("head_block_hash", &self.head_block_hash)
+            .field("head_block_number", &self.head_block_number)
+            .finish_non_exhaustive()
+    }
 }
 
 impl BaseConsensusClient {
@@ -144,6 +157,7 @@ impl BaseConsensusClient {
         Ok(())
     }
 
+    /// Send `fork_choice_updated_v3` with optional payload attributes.
     pub async fn update_fork_choice(
         &mut self,
         attrs: Option<BasePayloadAttributes>,
@@ -163,6 +177,7 @@ impl BaseConsensusClient {
         Ok(result.payload_id)
     }
 
+    /// Retrieve the built payload via `get_payload_v4`.
     pub async fn get_built_payload(
         &self,
         payload_id: PayloadId,
@@ -177,6 +192,7 @@ impl BaseConsensusClient {
         Ok(envelope.execution_payload)
     }
 
+    /// Submit a payload via `new_payload_v4` and update head state.
     pub async fn new_payload(
         &mut self,
         payload: BaseExecutionPayloadV4,
@@ -207,9 +223,17 @@ pub struct SequencerConsensusClient {
     rpc_url: String,
 }
 
+impl std::fmt::Debug for SequencerConsensusClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SequencerConsensusClient")
+            .field("rpc_url", &self.rpc_url)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SequencerConsensusClient {
     /// Create from an already-connected [`BaseConsensusClient`].
-    pub fn new(base: BaseConsensusClient, rpc_url: String) -> Self {
+    pub const fn new(base: BaseConsensusClient, rpc_url: String) -> Self {
         Self { base, rpc_url }
     }
 
@@ -350,9 +374,15 @@ pub struct SyncingConsensusClient {
     base: BaseConsensusClient,
 }
 
+impl std::fmt::Debug for SyncingConsensusClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SyncingConsensusClient").finish_non_exhaustive()
+    }
+}
+
 impl SyncingConsensusClient {
     /// Create from an already-connected [`BaseConsensusClient`].
-    pub fn new(base: BaseConsensusClient) -> Self {
+    pub const fn new(base: BaseConsensusClient) -> Self {
         Self { base }
     }
 
@@ -411,10 +441,6 @@ impl SyncingConsensusClient {
 }
 
 fn build_l1_info_deposit_tx() -> Bytes {
-    use alloy_primitives::address;
-    use alloy_rlp::Encodable;
-    use base_protocol::L1BlockInfoEcotone;
-
     let l1_info_calldata = L1BlockInfoEcotone::default().encode_calldata();
 
     let deposit = TxDeposit {

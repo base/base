@@ -10,15 +10,25 @@ use crate::error::BenchmarkError;
 /// Top-level benchmark configuration loaded from YAML.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkConfig {
+    /// Human-readable name for this benchmark suite.
     pub name: String,
+    /// Optional long description.
     pub description: Option<String>,
+    /// Target block time in milliseconds.
     pub block_time_ms: u64,
+    /// Number of blocks to produce per run.
     pub num_blocks: u64,
+    /// Optional per-block gas limit override (default 30M).
     pub gas_limit: Option<u64>,
+    /// Path to the OP-Stack rollup config JSON.
     pub rollup_config: Option<PathBuf>,
+    /// Number of parallel transaction batches to send.
     pub parallel_tx_batches: Option<u64>,
+    /// Flashblocks replay configuration.
     pub flashblocks: Option<FlashblocksConfig>,
+    /// Payload definitions referenced by benchmark entries.
     pub transaction_payloads: Vec<TransactionPayloadDef>,
+    /// Node definitions to benchmark (each expanded by variables).
     pub benchmarks: Vec<BenchmarkDefinition>,
 }
 
@@ -59,20 +69,28 @@ impl BenchmarkConfig {
 /// Flashblocks configuration for block-time-aware replay.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlashblocksConfig {
+    /// Target flashblock interval in milliseconds.
     pub block_time_ms: u64,
 }
 
 /// A single benchmark definition including node configuration and variable matrix.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkDefinition {
+    /// EL client type: `"base-reth-node"` or `"builder"`.
     pub node_type: String,
+    /// Explicit data directory paths.
     pub datadir: DatadirConfig,
+    /// Snapshot creation configuration.
     pub snapshot: Option<SnapshotConfig>,
+    /// Prometheus threshold configuration.
     pub metrics: Option<MetricsConfig>,
+    /// Extra CLI arguments for the node binary.
     #[serde(default)]
     pub node_args: Option<String>,
+    /// Arbitrary key-value tags attached to the run output.
     #[serde(default)]
     pub tags: HashMap<String, String>,
+    /// Matrix variables for combinatorial expansion.
     #[serde(default)]
     pub variables: Vec<Variable>,
 }
@@ -81,23 +99,30 @@ pub struct BenchmarkDefinition {
 /// creation is skipped and the provided path is used directly.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DatadirConfig {
+    /// Explicit sequencer data directory path.
     pub sequencer: Option<PathBuf>,
+    /// Explicit validator data directory path.
     pub validator: Option<PathBuf>,
 }
 
 /// Snapshot configuration for setting up a node's data directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotConfig {
+    /// Shell command to run for snapshot creation.
     pub command: String,
+    /// Optional genesis file path passed to the snapshot script.
     pub genesis_file: Option<PathBuf>,
+    /// Delete existing snapshot before re-running the script.
     pub force_clean: bool,
 }
 
 /// Prometheus-based metric thresholds for warn/error alerting.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsConfig {
+    /// Thresholds that produce warnings.
     #[serde(default)]
     pub warning: Vec<MetricsThreshold>,
+    /// Thresholds that produce errors (fail the run).
     #[serde(default)]
     pub error: Vec<MetricsThreshold>,
 }
@@ -105,32 +130,43 @@ pub struct MetricsConfig {
 /// A single threshold bound for a named metric.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsThreshold {
+    /// Prometheus metric name to check.
     pub metric: String,
+    /// Minimum acceptable average value.
     pub min: Option<f64>,
+    /// Maximum acceptable average value.
     pub max: Option<f64>,
 }
 
 /// A matrix variable with one or more values to expand.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Variable {
+    /// Variable name substituted into tags/labels.
     pub name: String,
+    /// Set of values to expand combinatorially.
     pub values: Vec<String>,
 }
 
 /// A transaction payload definition referencing a payload type and parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionPayloadDef {
+    /// Unique identifier for this payload definition.
     pub id: String,
+    /// Payload type discriminator (e.g. `"load-test"`).
     #[serde(rename = "type")]
     pub payload_type: String,
+    /// Parameters for the load-test payload.
     pub params: LoadTestPayloadParams,
 }
 
 /// Parameters for the load-test payload type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoadTestPayloadParams {
+    /// Number of pre-funded sender accounts.
     pub sender_count: u64,
+    /// Per-sender funding amount in wei (hex or decimal string).
     pub funding_amount: Option<String>,
+    /// Weighted transaction type mix.
     #[serde(default = "default_transactions")]
     pub transactions: Vec<WeightedTx>,
 }
@@ -138,11 +174,15 @@ pub struct LoadTestPayloadParams {
 /// A weighted transaction type entry for the load-test configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WeightedTx {
+    /// Relative weight in the transaction mix.
     pub weight: u64,
+    /// Transaction kind: `"transfer"`, `"calldata"`, `"precompile"`, etc.
     #[serde(rename = "type")]
     pub tx_type: String,
+    /// Maximum calldata size in bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_size: Option<u64>,
+    /// Target contract or precompile name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
 }
@@ -168,9 +208,13 @@ fn default_transactions() -> Vec<WeightedTx> {
 /// A fully expanded test run produced by matrix expansion.
 #[derive(Debug, Clone)]
 pub struct TestRun {
+    /// Unique run identifier (random hex).
     pub id: String,
+    /// Resolved variable bindings for this run.
     pub params: HashMap<String, String>,
+    /// The benchmark definition this run was expanded from.
     pub definition: BenchmarkDefinition,
+    /// The payload definition used for this run.
     pub payload: TransactionPayloadDef,
 }
 

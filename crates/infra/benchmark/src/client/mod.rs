@@ -48,7 +48,7 @@ pub struct InternalClientOptions {
     pub metrics_path: PathBuf,
 }
 
-/// Abstracts over EL client implementations (BaseRethNode, Builder).
+/// Abstracts over EL client implementations (`BaseRethNode`, Builder).
 #[async_trait]
 pub trait ExecutionClient: Send + Sync {
     /// Start the client process and wait until its RPC is ready.
@@ -93,9 +93,18 @@ pub struct BaseRethNodeClient {
     websocket_url: Option<String>,
 }
 
+impl std::fmt::Debug for BaseRethNodeClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BaseRethNodeClient")
+            .field("rpc_url", &self.rpc_url)
+            .field("ports", &self.ports)
+            .finish_non_exhaustive()
+    }
+}
+
 impl BaseRethNodeClient {
     /// Create a new client. Ports are not acquired until [`run`](Self::run).
-    pub fn new(
+    pub const fn new(
         options: ClientOptions,
         internal: InternalClientOptions,
         port_manager: Arc<PortManager>,
@@ -294,6 +303,15 @@ pub struct BuilderClient {
     flashblocks_port: Option<u16>,
     block_time_ms: u64,
     flashblocks_block_time_ms: u64,
+}
+
+impl std::fmt::Debug for BuilderClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BuilderClient")
+            .field("builder_bin", &self.builder_bin)
+            .field("block_time_ms", &self.block_time_ms)
+            .finish_non_exhaustive()
+    }
 }
 
 impl BuilderClient {

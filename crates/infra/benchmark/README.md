@@ -39,8 +39,8 @@ See [`examples/devnet.yaml`](examples/devnet.yaml) for an annotated example.
 | `block_time_ms` | Target block time in milliseconds |
 | `num_blocks` | Number of blocks to produce per run |
 | `flashblocks` | Optional flashblocks config (`block_time_ms`) |
-| `transaction_payloads` | List of payload definitions (id, sender_count, transactions) |
-| `benchmarks` | List of node definitions (node_type, snapshot, metrics thresholds) |
+| `transaction_payloads` | List of payload definitions (id, `sender_count`, transactions) |
+| `benchmarks` | List of node definitions (`node_type`, snapshot, metrics thresholds) |
 
 ### Matrix expansion
 

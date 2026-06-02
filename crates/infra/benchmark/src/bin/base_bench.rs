@@ -1,3 +1,5 @@
+//! CLI entry point for the `base-bench` benchmark orchestrator.
+
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -6,12 +8,15 @@ use tracing::error;
 #[derive(Debug, Parser)]
 #[command(name = "base-bench", about = "Base EL benchmark orchestrator")]
 struct Cli {
+    /// Path to the benchmark YAML config file.
     #[arg(long, env = "BASE_BENCH_CONFIG")]
     config: PathBuf,
 
+    /// Root working directory for snapshots and results.
     #[arg(long, env = "BASE_BENCH_ROOT_DIR")]
     root_dir: PathBuf,
 
+    /// Directory for writing benchmark results.
     #[arg(long, env = "BASE_BENCH_OUTPUT_DIR")]
     output_dir: PathBuf,
 

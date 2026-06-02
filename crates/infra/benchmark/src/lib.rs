@@ -11,7 +11,10 @@ mod error;
 pub use error::BenchmarkError;
 
 mod output;
-pub use output::random_id;
+pub use output::{
+    copy_metrics, create_run_dir, dump_log_tail, gzip_file, random_id, write_metadata_json,
+    write_metrics_file, write_result_json, write_tags_json,
+};
 
 mod ports;
 pub use ports::PortManager;
@@ -35,8 +38,8 @@ pub use consensus::{
 
 mod metrics;
 pub use metrics::{
-    check_thresholds, write_metrics_json, BlockMetrics, MetricsCollector, Severity,
-    ThresholdViolation, GAS_PER_BLOCK, GAS_PER_SECOND, GET_PAYLOAD_LATENCY,
+    check_thresholds, scrape_prometheus, write_metrics_json, BlockMetrics, MetricsCollector,
+    Severity, ThresholdViolation, GAS_PER_BLOCK, GAS_PER_SECOND, GET_PAYLOAD_LATENCY,
     NEW_PAYLOAD_LATENCY, SEND_TXS_LATENCY, TRANSACTIONS_PER_BLOCK,
     UPDATE_FORK_CHOICE_LATENCY,
 };
@@ -45,7 +48,7 @@ mod proxy;
 pub use proxy::run_proxy;
 
 mod payload;
-pub use payload::{LoadTestPayloadWorker, PayloadWorker};
+pub use payload::{LoadTestConfig, LoadTestPayloadWorker, PayloadWorker};
 
 mod flashblocks;
 pub use flashblocks::{FlashblockReplayServer, FlashblocksClient};

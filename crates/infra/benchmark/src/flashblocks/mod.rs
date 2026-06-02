@@ -10,7 +10,7 @@ use axum::extract::{ConnectInfo, State, WebSocketUpgrade};
 use axum::extract::ws::{Message, WebSocket};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use base_common_flashblocks::{Flashblock, FlashblockDecodeError};
+use base_common_flashblocks::Flashblock;
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -27,12 +27,24 @@ const RECONNECT_DELAY_MIN: Duration = Duration::from_millis(500);
 const RECONNECT_DELAY_MAX: Duration = Duration::from_secs(5);
 const BROADCAST_CAPACITY: usize = 256;
 
+/// WebSocket consumer that connects to a flashblocks stream and collects
+/// decoded flashblocks for later replay.
 pub struct FlashblocksClient {
+    /// Port the flashblocks WebSocket server listens on.
     pub port: u16,
     collected: Arc<tokio::sync::Mutex<Vec<Flashblock>>>,
 }
 
+impl std::fmt::Debug for FlashblocksClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FlashblocksClient")
+            .field("port", &self.port)
+            .finish_non_exhaustive()
+    }
+}
+
 impl FlashblocksClient {
+    /// Create a new client targeting the given WebSocket port.
     pub fn new(port: u16) -> Self {
         Self {
             port,
@@ -40,10 +52,12 @@ impl FlashblocksClient {
         }
     }
 
+    /// WebSocket URL for this client.
     pub fn url(&self) -> String {
         format!("ws://127.0.0.1:{}", self.port)
     }
 
+    /// Drain all collected flashblocks, returning them and clearing the buffer.
     pub async fn drain(&self) -> Vec<Flashblock> {
         std::mem::take(&mut *self.collected.lock().await)
     }
@@ -90,7 +104,6 @@ impl FlashblocksClient {
                                             Err(e) => warn!(error = %e, "failed to decode flashblock binary"),
                                         }
                                     }
-                                    Some(Ok(TungsteniteMessage::Pong(_))) => {}
                                     Some(Err(e)) => {
                                         warn!(error = %e, "flashblocks WS error");
                                         break;
@@ -154,20 +167,30 @@ async fn handle_client(
     info!(addr = %addr, "flashblocks replay client disconnected");
 }
 
+/// WebSocket server that broadcasts flashblocks to connected validator clients.
 pub struct FlashblockReplayServer {
     tx: broadcast::Sender<Vec<u8>>,
 }
 
+impl std::fmt::Debug for FlashblockReplayServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FlashblockReplayServer").finish_non_exhaustive()
+    }
+}
+
 impl FlashblockReplayServer {
+    /// Create a new replay server with no connected clients.
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         Self { tx }
     }
 
+    /// Send raw bytes to all connected replay clients.
     pub fn broadcast(&self, data: Vec<u8>) {
         let _ = self.tx.send(data);
     }
 
+    /// Serialize and broadcast all flashblocks to connected clients.
     pub fn broadcast_all(&self, flashblocks: &[Flashblock]) {
         for fb in flashblocks {
             match serde_json::to_vec(fb) {
@@ -177,6 +200,7 @@ impl FlashblockReplayServer {
         }
     }
 
+    /// Start the WebSocket server on `port` until `cancel` fires.
     pub async fn run(&self, port: u16, cancel: CancellationToken) -> Result<(), BenchmarkError> {
         let state = ReplayState { tx: self.tx.clone() };
 

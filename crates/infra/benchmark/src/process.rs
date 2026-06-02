@@ -1,7 +1,6 @@
 //! Child process lifecycle management with graceful SIGINT shutdown.
 
 use std::fs::File;
-use std::os::unix::process::CommandExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -14,6 +13,7 @@ use tracing::{info, warn};
 
 use crate::error::BenchmarkError;
 
+/// Managed child process with graceful SIGINT→SIGKILL shutdown.
 pub struct ProcessHandle {
     binary: PathBuf,
     args: Vec<String>,
@@ -24,9 +24,18 @@ pub struct ProcessHandle {
     child: Option<Child>,
 }
 
+impl std::fmt::Debug for ProcessHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProcessHandle")
+            .field("binary", &self.binary)
+            .field("pid", &self.pid())
+            .finish_non_exhaustive()
+    }
+}
+
 impl ProcessHandle {
     /// Create a new handle. Call [`start`](Self::start) to spawn the process.
-    pub fn new(
+    pub const fn new(
         binary: PathBuf,
         args: Vec<String>,
         env: Vec<(String, String)>,
@@ -36,11 +45,13 @@ impl ProcessHandle {
         Self { binary, args, env, pipe_stdout: false, stdout_file, stderr_file, child: None }
     }
 
-    pub fn with_piped_stdout(mut self) -> Self {
+    /// Enable stdout piping so the caller can read process output.
+    pub const fn with_piped_stdout(mut self) -> Self {
         self.pipe_stdout = true;
         self
     }
 
+    /// Take ownership of the child's stdout handle.
     pub fn take_stdout(&mut self) -> Option<ChildStdout> {
         self.child.as_mut()?.stdout.take()
     }
@@ -60,6 +71,9 @@ impl ProcessHandle {
             .stderr(stderr)
             .kill_on_drop(false)
             .process_group(0);
+        // SAFETY: `pre_exec` runs between fork and exec in the child process.
+        // We reset the signal mask so the child does not inherit blocked signals
+        // from the parent's tokio runtime.
         unsafe {
             cmd.pre_exec(|| {
                 let mut sigset = std::mem::zeroed::<libc::sigset_t>();
@@ -129,7 +143,7 @@ impl ProcessHandle {
             return Ok(());
         }
 
-        let exit_code = status.code().or_else(|| status.signal().map(|s| -(s as i32)));
+        let exit_code = status.code().or_else(|| status.signal().map(|s| -s));
         Err(BenchmarkError::ProcessCrash { binary: name, exit_code })
     }
 
