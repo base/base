@@ -6,6 +6,9 @@
 
 use std::future::Future;
 
+#[cfg(unix)]
+use tokio::signal::unix::{SignalKind, signal};
+
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
