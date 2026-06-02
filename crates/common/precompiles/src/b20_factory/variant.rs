@@ -8,26 +8,26 @@ use crate::{ActivationFeature, IB20Factory};
 /// B-20 token variant encoded in token address byte `[10]`.
 ///
 /// Discriminant values match the `B20Variant` ABI enum ordinals directly
-/// (STABLECOIN=0, ASSET=1), so `uint8(variant)` in Solidity
+/// (ASSET=0, STABLECOIN=1), so `uint8(variant)` in Solidity
 /// equals the byte written at address position `[10]` with no offset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum B20Variant {
-    /// Stablecoin B-20 token.
-    Stablecoin = 0,
     /// Asset B-20 token.
-    Asset = 1,
+    Asset = 0,
+    /// Stablecoin B-20 token.
+    Stablecoin = 1,
 }
 
 impl B20Variant {
     /// First byte of every B-20 address.
     pub const PREFIX_BYTE: u8 = 0xb2;
 
-    /// Variant discriminant for stablecoin B-20 tokens.
-    pub const STABLECOIN_DISCRIMINANT: u8 = Self::Stablecoin as u8;
-
     /// Variant discriminant for asset B-20 tokens.
     pub const ASSET_DISCRIMINANT: u8 = Self::Asset as u8;
+
+    /// Variant discriminant for stablecoin B-20 tokens.
+    pub const STABLECOIN_DISCRIMINANT: u8 = Self::Stablecoin as u8;
 
     /// Returns the currently supported creation-parameter version for this variant.
     ///
@@ -35,15 +35,15 @@ impl B20Variant {
     /// does not affect the others.
     pub const fn supported_version(self) -> u8 {
         match self {
-            Self::Stablecoin | Self::Asset => 1,
+            Self::Asset | Self::Stablecoin => 1,
         }
     }
 
     /// Returns the supported token variant for `variant`, if any.
     pub const fn from_discriminant(variant: u8) -> Option<Self> {
         match variant {
-            Self::STABLECOIN_DISCRIMINANT => Some(Self::Stablecoin),
             Self::ASSET_DISCRIMINANT => Some(Self::Asset),
+            Self::STABLECOIN_DISCRIMINANT => Some(Self::Stablecoin),
             _ => None,
         }
     }
@@ -51,8 +51,8 @@ impl B20Variant {
     /// Returns the supported token variant for an ABI enum value, or `None` for unknown variants.
     pub const fn from_abi(variant: IB20Factory::B20Variant) -> Option<Self> {
         match variant {
-            IB20Factory::B20Variant::STABLECOIN => Some(Self::Stablecoin),
             IB20Factory::B20Variant::ASSET => Some(Self::Asset),
+            IB20Factory::B20Variant::STABLECOIN => Some(Self::Stablecoin),
             IB20Factory::B20Variant::__Invalid => None,
         }
     }
@@ -88,23 +88,23 @@ impl B20Variant {
     /// Returns this variant as the generated ABI enum.
     pub const fn abi(self) -> IB20Factory::B20Variant {
         match self {
-            Self::Stablecoin => IB20Factory::B20Variant::STABLECOIN,
             Self::Asset => IB20Factory::B20Variant::ASSET,
+            Self::Stablecoin => IB20Factory::B20Variant::STABLECOIN,
         }
     }
 
     /// Returns this variant's fixed decimal precision.
     pub const fn decimals(self) -> u8 {
         match self {
-            Self::Stablecoin | Self::Asset => 6,
+            Self::Asset | Self::Stablecoin => 6,
         }
     }
 
     /// Returns the activation feature that controls creation of this variant.
     pub const fn activation_feature(self) -> ActivationFeature {
         match self {
-            Self::Stablecoin => ActivationFeature::B20Stablecoin,
             Self::Asset => ActivationFeature::B20Asset,
+            Self::Stablecoin => ActivationFeature::B20Stablecoin,
         }
     }
 

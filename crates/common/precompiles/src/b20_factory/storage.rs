@@ -441,16 +441,24 @@ mod tests {
     fn test_supported_variants_are_b20_prefixes() {
         let creator = Address::repeat_byte(0x11);
         let salt = B256::repeat_byte(0x44);
-        let (stablecoin, _) = B20Variant::compute_address_for_discriminant(creator, 0, salt);
-        let (asset, _) = B20Variant::compute_address_for_discriminant(creator, 1, salt);
+        let (asset, _) = B20Variant::compute_address_for_discriminant(creator, 0, salt);
+        let (stablecoin, _) = B20Variant::compute_address_for_discriminant(creator, 1, salt);
 
         assert!(B20Variant::is_supported_discriminant(0));
         assert!(B20Variant::is_supported_discriminant(1));
         assert!(!B20Variant::is_supported_discriminant(2));
-        assert!(B20Variant::is_b20_address(stablecoin));
         assert!(B20Variant::is_b20_address(asset));
-        assert_eq!(B20Variant::from_address(stablecoin), Some(B20Variant::Stablecoin));
+        assert!(B20Variant::is_b20_address(stablecoin));
         assert_eq!(B20Variant::from_address(asset), Some(B20Variant::Asset));
+        assert_eq!(B20Variant::from_address(stablecoin), Some(B20Variant::Stablecoin));
+    }
+
+    #[test]
+    fn test_abi_enum_ordinals_match_solidity() {
+        assert_eq!(B20Variant::ASSET_DISCRIMINANT, 0);
+        assert_eq!(B20Variant::STABLECOIN_DISCRIMINANT, 1);
+        assert_eq!(B20Variant::Asset.discriminant(), 0);
+        assert_eq!(B20Variant::Stablecoin.discriminant(), 1);
     }
 
     #[test]

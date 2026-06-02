@@ -8,10 +8,10 @@ sol! {
         // ── Structs ─────────────────────────────────────────────────────────
 
         enum B20Variant {
-            /// Stablecoin B-20 token variant.
-            STABLECOIN,
             /// Asset B-20 token variant.
-            ASSET
+            ASSET,
+            /// Stablecoin B-20 token variant.
+            STABLECOIN
         }
 
         struct B20StablecoinCreateParams {
