@@ -87,11 +87,30 @@ pub(crate) struct TwoDNoncePool<T: BasePooledTx> {
     /// Reverse index from transaction hash to replay identifier for nonce-free
     /// transactions.
     nonce_free_by_hash: HashMap<TxHash, B256>,
+    /// Per-sender count of nonce-free transactions, used to enforce
+    /// [`Self::MAX_NONCE_FREE_TXS_PER_SENDER`].
+    nonce_free_count_by_sender: HashMap<Address, usize>,
+    /// Hashes of EIP-8130 transactions with a non-zero `expiry`, bucketed by
+    /// expiry timestamp. Enables [`Self::evict_expired`] to find expired
+    /// transactions via a range scan instead of iterating the whole sidecar on
+    /// every canonical state change.
+    expiry_index: BTreeMap<u64, HashSet<TxHash>>,
     senders: SenderIdentifiers,
     price_bump_config: PriceBumpConfig,
 }
 
 impl<T: BasePooledTx> TwoDNoncePool<T> {
+    /// Maximum number of concurrent nonce-free EIP-8130 transactions a single
+    /// sender may keep in the sidecar.
+    ///
+    /// Replay-id dedup only collapses re-signed variants of the *same* logical
+    /// body, so each distinct nonce-free body (e.g. a different `max_fee_per_gas`
+    /// or `expiry`) yields a fresh `replay_id`. Without this cap a single sender
+    /// could insert an unbounded number of nonce-free transactions, exhausting
+    /// sidecar memory and the eviction-scan budget. The limit mirrors the
+    /// per-account slot bound used by the protocol pools.
+    const MAX_NONCE_FREE_TXS_PER_SENDER: usize = 16;
+
     /// Creates a new 2D nonce sidecar pool.
     pub(crate) fn new(price_bump_config: PriceBumpConfig) -> Self {
         Self {
@@ -100,6 +119,8 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             index: HashMap::new(),
             nonce_free_txs: HashMap::new(),
             nonce_free_by_hash: HashMap::new(),
+            nonce_free_count_by_sender: HashMap::new(),
+            expiry_index: BTreeMap::new(),
             senders: SenderIdentifiers::default(),
             price_bump_config,
         }
@@ -304,6 +325,13 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             Vec::new()
         };
 
+        // Maintain the expiry index after the final use of `lane` to avoid
+        // overlapping the lane borrow with these `&mut self` helpers.
+        self.track_expiry(&transaction, hash);
+        if let Some(replaced) = &replaced {
+            self.untrack_expiry(replaced, replaced.hash());
+        }
+
         Ok(InsertOutcome { outcome: AddedTransactionOutcome { hash, state }, replaced, promoted })
     }
 
@@ -325,13 +353,30 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             return Err(PoolError::new(hash, PoolErrorKind::AlreadyImported));
         }
 
+        // Bound the number of concurrent nonce-free transactions per sender.
+        // Dedup by `replay_id` only collapses re-signed variants of one body;
+        // distinct bodies each get a new `replay_id`, so without this cap a
+        // single sender could grow the sidecar without limit.
+        if self.nonce_free_count_by_sender.get(&sender).copied().unwrap_or(0)
+            >= Self::MAX_NONCE_FREE_TXS_PER_SENDER
+        {
+            return Err(PoolError::new(hash, PoolErrorKind::SpammerExceededCapacity(sender)));
+        }
+
         let sender_id = self.senders.sender_id_or_create(sender);
+        // All nonce-free transactions carry `nonce_sequence == 0`, so they share
+        // `transaction_id = (sender_id, 0)`. This collision is intentional: the
+        // sidecar keys storage and dedup on `replay_id`/hash and never on
+        // `transaction_id`, so no entries are lost. Downstream consumers must not
+        // treat a nonce-free transaction's `transaction_id` as unique.
         transaction.transaction_id = TransactionId::new(sender_id, transaction.nonce());
         let transaction = Arc::new(transaction);
 
+        self.track_expiry(&transaction, hash);
         self.nonce_free_txs.insert(replay_id, Arc::clone(&transaction));
         self.nonce_free_by_hash.insert(hash, replay_id);
         self.hashes.insert(hash, transaction);
+        *self.nonce_free_count_by_sender.entry(sender).or_insert(0) += 1;
 
         Ok(InsertOutcome {
             outcome: AddedTransactionOutcome { hash, state: AddedTransactionState::Pending },
@@ -415,19 +460,22 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// Evicts EIP-8130 transactions whose `expiry` has passed relative to
     /// `now` (Unix seconds), returning the evicted transactions.
     ///
-    /// Nonce-free transactions always carry a non-zero `expiry` and rely on it
-    /// for replay protection, so they are pruned once the chain advances past
-    /// it. Channelized transactions with `expiry == 0` never expire. Expired
-    /// transactions are removed exactly (descendants are left in place and
-    /// simply become non-consecutive/queued).
+    /// Eviction is driven by [`Self::expiry_index`], which records only
+    /// transactions with a non-zero `expiry`, so this is `O(k log n)` in the
+    /// number of expired transactions rather than a full scan of the sidecar.
+    /// Transactions with `expiry == 0` are never indexed and never expire.
+    ///
+    /// Upstream validation is expected to guarantee that nonce-free
+    /// (`NONCE_KEY_MAX`) transactions carry a non-zero `expiry` (their only
+    /// replay protection); this method does not re-enforce that, so a nonce-free
+    /// transaction that somehow reached the sidecar with `expiry == 0` would
+    /// never be evicted here. Expired transactions are removed exactly
+    /// (descendants are left in place and simply become non-consecutive/queued).
     pub(crate) fn evict_expired(&mut self, now: u64) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let expired: Vec<TxHash> = self
-            .hashes
-            .values()
-            .filter_map(|transaction| {
-                let expiry = transaction.transaction.as_eip8130()?.tx().expiry;
-                (expiry != 0 && expiry <= now).then(|| *transaction.hash())
-            })
+            .expiry_index
+            .range(..=now)
+            .flat_map(|(_, hashes)| hashes.iter().copied())
             .collect();
         self.remove_transactions(&expired)
     }
@@ -462,6 +510,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         if let Some(replay_id) = self.nonce_free_by_hash.remove(&hash) {
             let transaction = self.nonce_free_txs.remove(&replay_id);
             self.hashes.remove(&hash);
+            if let Some(transaction) = &transaction {
+                self.untrack_expiry(transaction, &hash);
+                self.decrement_nonce_free_count(transaction.sender());
+            }
             return transaction;
         }
 
@@ -480,7 +532,49 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             self.lanes.remove(&lane_id);
         }
         self.hashes.remove(&hash);
+        self.untrack_expiry(&transaction, &hash);
         Some(transaction)
+    }
+
+    /// Returns the EIP-8130 `expiry` of `transaction`, if it is an EIP-8130
+    /// transaction.
+    fn expiry_of(transaction: &ValidPoolTransaction<T>) -> Option<u64> {
+        Some(transaction.transaction.as_eip8130()?.tx().expiry)
+    }
+
+    /// Records `hash` in [`Self::expiry_index`] when `transaction` carries a
+    /// non-zero `expiry`. Transactions with `expiry == 0` are never indexed and
+    /// therefore never expire.
+    fn track_expiry(&mut self, transaction: &ValidPoolTransaction<T>, hash: TxHash) {
+        if let Some(expiry) = Self::expiry_of(transaction)
+            && expiry != 0
+        {
+            self.expiry_index.entry(expiry).or_default().insert(hash);
+        }
+    }
+
+    /// Removes `hash` from [`Self::expiry_index`]; a no-op if it was never
+    /// indexed (e.g. `expiry == 0`).
+    fn untrack_expiry(&mut self, transaction: &ValidPoolTransaction<T>, hash: &TxHash) {
+        if let Some(expiry) = Self::expiry_of(transaction)
+            && expiry != 0
+            && let Some(bucket) = self.expiry_index.get_mut(&expiry)
+        {
+            bucket.remove(hash);
+            if bucket.is_empty() {
+                self.expiry_index.remove(&expiry);
+            }
+        }
+    }
+
+    /// Decrements the per-sender nonce-free count, dropping the entry at zero.
+    fn decrement_nonce_free_count(&mut self, sender: Address) {
+        if let Some(count) = self.nonce_free_count_by_sender.get_mut(&sender) {
+            *count -= 1;
+            if *count == 0 {
+                self.nonce_free_count_by_sender.remove(&sender);
+            }
+        }
     }
 }
 
@@ -671,7 +765,8 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
+        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
+        TxEip8130,
     };
     use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, TransactionOrigin};
 
@@ -722,6 +817,33 @@ mod tests {
         BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
     }
 
+    fn signed_channel_tx_with_expiry(
+        signer: &PrivateKeySigner,
+        nonce_key: U256,
+        nonce_sequence: u64,
+        expiry: u64,
+        max_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: None,
+            nonce_key,
+            nonce_sequence,
+            expiry,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas,
+            gas_limit: 50_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            payer: None,
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+    }
+
     fn nonce_free_body(
         expiry: u64,
         max_priority_fee_per_gas: u128,
@@ -730,7 +852,7 @@ mod tests {
         TxEip8130 {
             chain_id: test_chain_id(),
             sender: None,
-            nonce_key: U256::MAX,
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
             expiry,
             max_priority_fee_per_gas,
@@ -1257,5 +1379,106 @@ mod tests {
         assert!(pool.get(&expiring_soon_hash).is_none());
         assert!(pool.get(&expiring_later_hash).is_some());
         assert!(pool.get(&no_expiry_hash).is_some());
+    }
+
+    #[test]
+    fn evict_expired_removes_channelized_with_non_zero_expiry() {
+        // The expiry index covers channelized transactions too, not just
+        // nonce-free ones, so a channelized tx with a non-zero expiry must be
+        // evicted once the chain advances past it.
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+
+        let channel_expiring = valid_pool_transaction(signed_channel_tx_with_expiry(
+            &signer,
+            U256::from(5),
+            0,
+            100,
+            1_000,
+        ));
+        let hash = *channel_expiring.hash();
+        pool.insert_validated(channel_expiring).unwrap();
+
+        let evicted = pool.evict_expired(150);
+
+        assert_eq!(
+            evicted.iter().map(|transaction| *transaction.hash()).collect::<Vec<_>>(),
+            vec![hash]
+        );
+        assert!(pool.get(&hash).is_none());
+    }
+
+    #[test]
+    fn nonce_free_per_sender_cap_rejects_excess() {
+        const CAP: usize = TwoDNoncePool::<BasePooledTransaction>::MAX_NONCE_FREE_TXS_PER_SENDER;
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+
+        // Distinct fee caps => distinct bodies => distinct replay ids, so dedup
+        // does not collapse them and each occupies a sidecar slot.
+        for i in 0..CAP {
+            let tx = valid_pool_transaction(signed_nonce_free_tx(&signer, 100, 1_000 + i as u128));
+            pool.insert_validated(tx).unwrap();
+        }
+
+        let excess =
+            valid_pool_transaction(signed_nonce_free_tx(&signer, 100, 1_000 + CAP as u128));
+        let error = pool.insert_validated(excess).unwrap_err();
+        assert!(matches!(error.kind, PoolErrorKind::SpammerExceededCapacity(_)));
+        assert_eq!(pool.all_transactions().len(), CAP);
+    }
+
+    #[test]
+    fn nonce_free_cap_slot_frees_after_removal() {
+        const CAP: usize = TwoDNoncePool::<BasePooledTransaction>::MAX_NONCE_FREE_TXS_PER_SENDER;
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+
+        let mut first_hash = None;
+        for i in 0..CAP {
+            let tx = valid_pool_transaction(signed_nonce_free_tx(&signer, 100, 1_000 + i as u128));
+            if i == 0 {
+                first_hash = Some(*tx.hash());
+            }
+            pool.insert_validated(tx).unwrap();
+        }
+
+        // At capacity: a new distinct body is rejected.
+        let blocked =
+            valid_pool_transaction(signed_nonce_free_tx(&signer, 100, 1_000 + CAP as u128));
+        assert!(matches!(
+            pool.insert_validated(blocked).unwrap_err().kind,
+            PoolErrorKind::SpammerExceededCapacity(_)
+        ));
+
+        // Free a slot, then the same new body is admitted.
+        pool.remove_transactions(&[first_hash.unwrap()]);
+        let admitted =
+            valid_pool_transaction(signed_nonce_free_tx(&signer, 100, 1_000 + CAP as u128));
+        pool.insert_validated(admitted).unwrap();
+        assert_eq!(pool.all_transactions().len(), CAP);
+    }
+
+    #[test]
+    fn nonce_free_cap_is_per_sender() {
+        const CAP: usize = TwoDNoncePool::<BasePooledTransaction>::MAX_NONCE_FREE_TXS_PER_SENDER;
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let spammer = signer();
+        let other = signer();
+
+        for i in 0..CAP {
+            let tx = valid_pool_transaction(signed_nonce_free_tx(&spammer, 100, 1_000 + i as u128));
+            pool.insert_validated(tx).unwrap();
+        }
+        // The spammer is capped...
+        let blocked = valid_pool_transaction(signed_nonce_free_tx(&spammer, 100, 9_000));
+        assert!(matches!(
+            pool.insert_validated(blocked).unwrap_err().kind,
+            PoolErrorKind::SpammerExceededCapacity(_)
+        ));
+        // ...but an unrelated sender is unaffected.
+        let other_tx = valid_pool_transaction(signed_nonce_free_tx(&other, 100, 1_000));
+        pool.insert_validated(other_tx).unwrap();
+        assert_eq!(pool.all_transactions().len(), CAP + 1);
     }
 }
