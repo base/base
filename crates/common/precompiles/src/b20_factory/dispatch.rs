@@ -12,6 +12,9 @@ use crate::{
 
 impl<'a> B20FactoryStorage<'a> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Factory` handler.
+    ///
+    /// View (read-only) calls bypass the activation gate and remain accessible even when the
+    /// feature is disabled. Write calls require the feature to be activated.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         deduct_calldata_cost!(ctx, calldata);
         let result = self.inner(ctx, calldata);
@@ -24,6 +27,11 @@ impl<'a> B20FactoryStorage<'a> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
+        if !Self::is_view_selector(calldata) {
+            ActivationRegistryStorage::new(ctx)
+                .ensure_activated(ActivationFeature::B20Factory.id())?;
+        }
+
         match decode_precompile_call!(calldata, IB20Factory::IB20FactoryCalls) {
             IB20Factory::IB20FactoryCalls::createB20(call) => {
                 let caller = ctx.caller();
@@ -45,5 +53,17 @@ impl<'a> B20FactoryStorage<'a> {
                 Ok(IB20Factory::isB20InitializedCall::abi_encode_returns(&initialized).into())
             }
         }
+    }
+
+    /// Returns `true` when the calldata selector belongs to a view (read-only) function.
+    ///
+    /// View functions are accessible regardless of whether the feature is activated.
+    fn is_view_selector(calldata: &[u8]) -> bool {
+        let Some(selector) = calldata.first_chunk::<4>().copied() else {
+            return false;
+        };
+        selector == IB20Factory::getB20AddressCall::SELECTOR
+            || selector == IB20Factory::isB20Call::SELECTOR
+            || selector == IB20Factory::isB20InitializedCall::SELECTOR
     }
 }
