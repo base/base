@@ -29,6 +29,15 @@ impl B20Variant {
     /// Variant discriminant for stablecoin B-20 tokens.
     pub const STABLECOIN_DISCRIMINANT: u8 = Self::Stablecoin as u8;
 
+    /// Minimum allowed decimals for the Asset variant.
+    pub const MIN_ASSET_DECIMALS: u8 = 6;
+
+    /// Maximum allowed decimals for the Asset variant.
+    pub const MAX_ASSET_DECIMALS: u8 = 18;
+
+    /// Fixed decimals value for the Stablecoin variant.
+    pub const STABLECOIN_DECIMALS: u8 = 6;
+
     /// Returns the currently supported creation-parameter version for this variant.
     ///
     /// Each variant owns its version independently so that one variant advancing to v2
@@ -93,11 +102,9 @@ impl B20Variant {
         }
     }
 
-    /// Returns this variant's fixed decimal precision.
-    pub const fn decimals(self) -> u8 {
-        match self {
-            Self::Asset | Self::Stablecoin => 6,
-        }
+    /// Returns whether `decimals` is valid for the Asset variant.
+    pub const fn is_valid_asset_decimals(decimals: u8) -> bool {
+        decimals >= Self::MIN_ASSET_DECIMALS && decimals <= Self::MAX_ASSET_DECIMALS
     }
 
     /// Returns the activation feature that controls creation of this variant.
@@ -157,10 +164,5 @@ impl B20Variant {
     pub fn variant_of(address: Address) -> Option<u8> {
         Self::from_address(address)?;
         Some(address.as_slice()[10])
-    }
-
-    /// Returns the fixed decimals for the variant encoded in `address`.
-    pub fn decimals_of(address: Address) -> Option<u8> {
-        Some(Self::from_address(address)?.decimals())
     }
 }

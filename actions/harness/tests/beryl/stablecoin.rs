@@ -357,7 +357,7 @@ impl StablecoinScenario {
             name: BerylTestEnv::B20_STABLECOIN_NAME.to_string(),
             symbol: BerylTestEnv::B20_STABLECOIN_SYMBOL.to_string(),
             decimals: BerylTestEnv::B20_STABLECOIN_DECIMALS,
-            variantParams: variant_params,
+            variantEventParams: variant_params,
         }
         .encode_log_data();
         assert!(
@@ -366,7 +366,7 @@ impl StablecoinScenario {
                 .logs()
                 .iter()
                 .any(|log| log.address == B20FactoryStorage::ADDRESS && log.data == expected),
-            "createB20(STABLECOIN) must emit B20Created with ABI-encoded currency in variantParams"
+            "createB20(STABLECOIN) must emit B20Created with ABI-encoded currency in variantEventParams"
         );
     }
 

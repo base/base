@@ -4,25 +4,25 @@ use alloc::string::String;
 
 use alloy_primitives::{Address, B256, FixedBytes, U256, b256};
 use base_precompile_macros::{AssetAccounting, Storable, TokenAccounting, contract};
-use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result, StorageCtx};
+use base_precompile_storage::{Handler, Mapping, Result, StorageCtx};
 
-use crate::{B20CoreStorage, IB20Asset, PolicyRegistryStorage};
+use crate::{B20CoreStorage, PolicyRegistryStorage};
 
 /// Asset-specific B-20 storage rooted at the `base.b20.asset` ERC-7201 namespace.
 #[derive(Debug, Clone, Storable)]
 #[namespace("base.b20.asset")]
 pub struct B20AssetExtensionStorage {
-    /// Custom decimal precision for this token; stored once at creation time.
+    /// ERC-20 decimals (immutable after creation).
     #[accessor]
-    pub decimals: u8, // slot 0, offset 0
+    pub decimals: u8, // slot 0
     /// Multiplier scaled to WAD.
     #[accessor]
     #[mutator]
     pub multiplier: U256, // slot 1
     /// Announcement IDs that have already been consumed.
     pub used_announcement_ids: Mapping<String, bool>, // slot 2
-    /// Security identifier values by identifier type.
-    pub identifiers: Mapping<String, String>, // slot 3
+    /// Asset metadata values by key.
+    pub extra_metadata: Mapping<String, String>, // slot 3
 }
 
 /// Redemption-specific B-20 storage rooted at the `base.b20.redeem` ERC-7201 namespace.
@@ -51,23 +51,17 @@ pub struct B20AssetStorage {
 }
 
 /// Creation-time parameters for an asset B-20 token.
-///
-/// Passed to [`B20AssetStorage::initialize`] to write all fields atomically.
 #[derive(Debug)]
 pub struct B20AssetInit {
-    /// ERC-20 token name.
+    /// Token name.
     pub name: String,
-    /// ERC-20 token symbol.
+    /// Token symbol.
     pub symbol: String,
-    /// Maximum total supply.
+    /// Maximum total supply for mint operations.
     pub supply_cap: U256,
-    /// Initial multiplier at WAD precision.
+    /// Initial multiplier at WAD precision (1:1 when zero).
     pub multiplier: U256,
-    /// ISIN identifier stored under the `"ISIN"` key.
-    pub isin: String,
-    /// Minimum redeemable amount; `0` allows any non-zero redemption.
-    pub minimum_redeemable: U256,
-    /// Custom decimal precision for this token; must be in `[6, 18]`.
+    /// Token decimals (must be in range 6..=18).
     pub decimals: u8,
 }
 
@@ -83,40 +77,30 @@ impl<'a> B20AssetStorage<'a> {
     }
 
     /// Writes all creation-time fields atomically.
-    ///
-    /// `isin` may be empty; when non-empty it is stored under the `"ISIN"` key
-    /// in the security identifiers mapping.
-    ///
-    /// `REDEEM_SENDER_POLICY` is initialised to `ALWAYS_BLOCK_ID` so redemption
-    /// is closed by default; issuers must explicitly open it after creation.
     pub fn initialize(&mut self, init: B20AssetInit) -> Result<()> {
-        if init.decimals < Self::MIN_DECIMALS || init.decimals > Self::MAX_DECIMALS {
-            return Err(BasePrecompileError::revert(IB20Asset::InvalidDecimals {}));
-        }
         self.b20.name.write(init.name)?;
         self.b20.symbol.write(init.symbol)?;
         self.b20.supply_cap.write(init.supply_cap)?;
         self.asset.multiplier.write(init.multiplier)?;
         self.asset.decimals.write(init.decimals)?;
-        self.redeem.minimum_redeemable.write(init.minimum_redeemable)?;
-        if !init.isin.is_empty() {
-            self.asset.identifiers.at_mut(&String::from("ISIN")).write(init.isin)?;
-        }
         self.write_redeem_policy_ids_default()?;
         Ok(())
     }
 }
 
 impl B20AssetStorage<'_> {
-    /// Minimum allowed decimals for a B-20 asset token.
+    /// Minimum allowed decimals for asset tokens.
     pub const MIN_DECIMALS: u8 = 6;
-    /// Maximum allowed decimals for a B-20 asset token.
+    /// Maximum allowed decimals for asset tokens.
     pub const MAX_DECIMALS: u8 = 18;
-    /// WAD precision for multiplier arithmetic: 1e18.
+    /// 10^18 fixed-point unit for multiplier arithmetic.
     pub const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
-    /// Writes the default `redeem_sender_policy_id` to `ALWAYS_BLOCK_ID`.
-    /// Called once from [`initialize`].
+    /// Returns the token decimals stored at creation time.
+    pub fn decimals(&self) -> Result<u8> {
+        self.asset.decimals()
+    }
+
     fn write_redeem_policy_ids_default(&mut self) -> Result<()> {
         self.redeem.set_redeem_sender_policy_id(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
     }
@@ -171,7 +155,7 @@ mod tests {
             __packing_b20_asset_extension_storage::USED_ANNOUNCEMENT_IDS_LOC.offset_slots,
             2
         );
-        assert_eq!(__packing_b20_asset_extension_storage::IDENTIFIERS_LOC.offset_slots, 3);
+        assert_eq!(__packing_b20_asset_extension_storage::EXTRA_METADATA_LOC.offset_slots, 3);
         assert_eq!(__packing_b20_redeem_storage::MINIMUM_REDEEMABLE_LOC.offset_slots, 0);
         assert_eq!(__packing_b20_redeem_storage::REDEEM_SENDER_POLICY_ID_LOC.offset_slots, 1);
         assert_eq!(__packing_b20_redeem_storage::REDEEM_SENDER_POLICY_ID_LOC.offset_bytes, 0);
@@ -220,7 +204,7 @@ mod tests {
             token.asset.used_announcement_ids.at_mut(&announcement_id).write(true).unwrap();
             token
                 .asset
-                .identifiers
+                .extra_metadata
                 .at_mut(&identifier_type)
                 .write(identifier_value.clone())
                 .unwrap();
@@ -230,8 +214,10 @@ mod tests {
                 + U256::from(
                     __packing_b20_asset_extension_storage::USED_ANNOUNCEMENT_IDS_LOC.offset_slots,
                 );
-            let identifiers_slot = ASSET_ROOT
-                + U256::from(__packing_b20_asset_extension_storage::IDENTIFIERS_LOC.offset_slots);
+            let extra_metadata_slot = ASSET_ROOT
+                + U256::from(
+                    __packing_b20_asset_extension_storage::EXTRA_METADATA_LOC.offset_slots,
+                );
             let minimum_slot = REDEEM_ROOT
                 + U256::from(__packing_b20_redeem_storage::MINIMUM_REDEEMABLE_LOC.offset_slots);
 
@@ -240,7 +226,7 @@ mod tests {
                 U256::ONE
             );
             assert_eq!(
-                ctx.sload(TOKEN, identifier_type.mapping_slot(identifiers_slot)).unwrap(),
+                ctx.sload(TOKEN, identifier_type.mapping_slot(extra_metadata_slot)).unwrap(),
                 short_string_word(&identifier_value)
             );
             assert_eq!(ctx.sload(TOKEN, minimum_slot).unwrap(), U256::from(10u64));
@@ -282,9 +268,7 @@ mod tests {
                     symbol: String::from("TST"),
                     supply_cap: U256::from(1_000_000u64),
                     multiplier: B20AssetStorage::WAD,
-                    isin: String::new(),
-                    minimum_redeemable: U256::ZERO,
-                    decimals: 6,
+                    decimals: 8,
                 })
                 .unwrap();
 
@@ -309,8 +293,6 @@ mod tests {
             symbol: String::from("TST"),
             supply_cap: U256::from(1_000_000u64),
             multiplier: B20AssetStorage::WAD,
-            isin: String::new(),
-            minimum_redeemable: U256::ZERO,
             decimals,
         }
     }
@@ -334,54 +316,6 @@ mod tests {
             let mut token = B20AssetStorage::from_address(TOKEN, ctx);
             token.initialize(make_init(18)).unwrap();
             assert_eq!(token.asset.decimals.read().unwrap(), 18);
-        });
-    }
-
-    #[test]
-    fn decimals_5_reverts_with_invalid_decimals() {
-        let (mut storage, _) = setup_storage();
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mut token = B20AssetStorage::from_address(TOKEN, ctx);
-            let err = token.initialize(make_init(5)).unwrap_err();
-            assert_eq!(
-                err,
-                base_precompile_storage::BasePrecompileError::revert(
-                    crate::IB20Asset::InvalidDecimals {}
-                )
-            );
-        });
-    }
-
-    #[test]
-    fn decimals_19_reverts_with_invalid_decimals() {
-        let (mut storage, _) = setup_storage();
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mut token = B20AssetStorage::from_address(TOKEN, ctx);
-            let err = token.initialize(make_init(19)).unwrap_err();
-            assert_eq!(
-                err,
-                base_precompile_storage::BasePrecompileError::revert(
-                    crate::IB20Asset::InvalidDecimals {}
-                )
-            );
-        });
-    }
-
-    #[test]
-    fn decimals_uninitialized_slot_falls_back_to_six() {
-        let (mut storage, _) = setup_storage();
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            // Token address exists but initialize() was never called — storage slot is 0.
-            let token = B20AssetStorage::from_address(TOKEN, ctx);
-            assert_eq!(token.asset.decimals.read().unwrap(), 0, "raw slot should be 0");
-            assert_eq!(
-                crate::AssetAccounting::decimals(&token).unwrap(),
-                6,
-                "fallback must return 6 for uninitialized tokens"
-            );
         });
     }
 }

@@ -115,9 +115,7 @@ impl<'a> B20PrecompileClient<'a> {
                 name: name.to_string(),
                 symbol: symbol.to_string(),
                 initialAdmin: initial_admin,
-                isin: String::new(),
-                minimumRedeemable: U256::ZERO,
-                decimals: 6,
+                decimals: 8,
             },
             initial_supply,
             initial_supply_recipient,
@@ -224,9 +222,10 @@ impl<'a> B20PrecompileClient<'a> {
         B20Variant::from_address(token).wrap_err("Token address is not a supported B-20 token")
     }
 
-    /// Reads the fixed decimals for the token variant encoded in an address.
+    /// Reads the decimals for a B-20 token.
     pub async fn decimals_of(&self, token: Address) -> Result<u8> {
-        B20Variant::decimals_of(token).wrap_err("Token address is not a supported B-20 token")
+        let result = self.call(token, IB20::decimalsCall {}).await?;
+        Ok(result.0)
     }
 
     /// Mints B-20 tokens to an account.

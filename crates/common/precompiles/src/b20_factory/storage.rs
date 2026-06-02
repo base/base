@@ -12,12 +12,10 @@ use crate::{
     RoleManaged, Token,
 };
 
-/// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
+/// Version byte for `B20StablecoinEventParams` inside `B20Created.variantEventParams`.
 const B20_STABLECOIN_EVENT_PARAMS_VERSION: u8 = 1;
 
-/// ABI-encodes stablecoin-specific `variantParams` for `B20Created`.
-/// DEFAULT and ASSET call sites use `Bytes::new()` directly.
-fn encode_stablecoin_variant_params(currency: &str) -> Bytes {
+fn encode_stablecoin_variant_event_params(currency: &str) -> Bytes {
     IB20Factory::B20StablecoinEventParams {
         version: B20_STABLECOIN_EVENT_PARAMS_VERSION,
         currency: currency.to_string(),
@@ -121,8 +119,8 @@ impl<'a> B20FactoryStorage<'a> {
             variant: B20Variant::Stablecoin.abi(),
             name,
             symbol,
-            decimals: B20Variant::Stablecoin.decimals(),
-            variantParams: encode_stablecoin_variant_params(&currency),
+            decimals: B20Variant::STABLECOIN_DECIMALS,
+            variantEventParams: encode_stablecoin_variant_event_params(&currency),
         })?;
 
         if !common.initial_admin.is_zero() {
@@ -155,7 +153,7 @@ impl<'a> B20FactoryStorage<'a> {
             B20AssetStorage::from_address(token_address, self.storage),
             PolicyHandle::new(self.storage),
         );
-        let (name, symbol) = (init.name.clone(), init.symbol.clone());
+        let (name, symbol, decimals) = (init.name.clone(), init.symbol.clone(), init.decimals);
         token.accounting_mut().initialize(init)?;
 
         self.emit_event(IB20Factory::B20Created {
@@ -163,8 +161,8 @@ impl<'a> B20FactoryStorage<'a> {
             variant: B20Variant::Asset.abi(),
             name,
             symbol,
-            decimals: B20Variant::Asset.decimals(),
-            variantParams: Bytes::new(),
+            decimals,
+            variantEventParams: Bytes::new(),
         })?;
 
         if !common.initial_admin.is_zero() {
@@ -267,9 +265,7 @@ impl TokenCreateParams {
                         symbol: p.symbol,
                         supply_cap: DEFAULT_SUPPLY_CAP,
                         multiplier: INITIAL_MULTIPLIER,
-                        isin: p.isin,
                         decimals: p.decimals,
-                        minimum_redeemable: p.minimumRedeemable,
                     },
                 })
             }
@@ -283,27 +279,26 @@ impl TokenCreateParams {
         }
     }
 
-    /// Validates variant-specific invariants after the shared version check.
-    ///
-    /// Each arm owns its own rules. Version is checked first by the caller (`check_version`)
-    /// so that version errors always take precedence over field-level errors.
-    pub const fn validate(&self) -> Result<()> {
+    /// Validates the token create parameters for the variant.
+    pub fn validate(&self) -> Result<()> {
         match self {
             Self::Stablecoin { init, .. } => Self::validate_stablecoin(init),
             Self::Asset { init, .. } => Self::validate_asset(init),
         }
     }
 
-    /// Validates stablecoin initialization fields.
+    /// Validates stablecoin-specific create parameters.
     pub const fn validate_stablecoin(_init: &B20StablecoinInit) -> Result<()> {
-        // Currency validation is delegated to `B20StablecoinStorage::initialize`, which rejects
-        // empty values with `MissingRequiredField` and non-A-Z values with `InvalidCurrency`.
         Ok(())
     }
 
-    /// Validates asset-token initialization fields.
-    pub const fn validate_asset(_init: &B20AssetInit) -> Result<()> {
-        // isin is optional — empty string is accepted.
+    /// Validates asset-specific create parameters (decimals range).
+    pub fn validate_asset(init: &B20AssetInit) -> Result<()> {
+        if !B20Variant::is_valid_asset_decimals(init.decimals) {
+            return Err(BasePrecompileError::revert(IB20Factory::InvalidDecimals {
+                decimals: init.decimals,
+            }));
+        }
         Ok(())
     }
 
@@ -355,8 +350,6 @@ mod tests {
             name: name.to_string(),
             symbol: symbol.to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
-            isin: String::new(),
-            minimumRedeemable: U256::ZERO,
             decimals: 6,
         }
     }
@@ -422,19 +415,18 @@ mod tests {
         assert_eq!(addr.as_slice()[11..], tail);
         assert!(B20Variant::is_b20_address(addr));
         assert_eq!(B20Variant::from_address(addr), Some(B20Variant::Asset));
-        assert_eq!(B20Variant::decimals_of(addr), Some(6));
     }
 
     #[test]
-    fn test_address_derivation_ignores_decimals_and_uses_variant() {
+    fn test_address_derivation_uses_variant() {
         let creator = Address::repeat_byte(0x11);
         let salt = B256::repeat_byte(0x33);
         let (asset_token, _) = B20Variant::Asset.compute_address(creator, salt);
         let (stablecoin, _) = B20Variant::Stablecoin.compute_address(creator, salt);
 
         assert_ne!(asset_token, stablecoin);
-        assert_eq!(B20Variant::decimals_of(asset_token), Some(6));
-        assert_eq!(B20Variant::decimals_of(stablecoin), Some(6));
+        assert_eq!(B20Variant::from_address(asset_token), Some(B20Variant::Asset));
+        assert_eq!(B20Variant::from_address(stablecoin), Some(B20Variant::Stablecoin));
     }
 
     #[test]
@@ -479,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_token_stores_metadata_and_uses_variant_decimals() {
+    fn test_create_token_stores_metadata_and_decimals() {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
@@ -496,7 +488,6 @@ mod tests {
             assert_eq!(token.b20.symbol.read().unwrap(), "MYT");
             assert_eq!(token.decimals().unwrap(), 6);
             assert_eq!(token.supply_cap().unwrap(), B20FactoryStorage::DEFAULT_SUPPLY_CAP);
-            assert_eq!(B20Variant::decimals_of(token_addr), Some(6));
         });
     }
 
@@ -751,12 +742,11 @@ mod tests {
             assert_eq!(stablecoin.stablecoin.currency.read().unwrap(), "USD");
             assert_eq!(stablecoin.b20.name.read().unwrap(), "Stablecoin Token");
             assert_eq!(B20Variant::from_address(stablecoin_addr), Some(B20Variant::Stablecoin));
-            assert_eq!(B20Variant::decimals_of(stablecoin_addr), Some(6));
         });
     }
 
     #[test]
-    fn test_create_asset_token_stores_isin_and_ratio() {
+    fn test_create_asset_token_stores_decimals_and_ratio() {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
@@ -768,9 +758,7 @@ mod tests {
             name: "Asset Token".to_string(),
             symbol: "AST".to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
-            isin: "US0000000000".to_string(),
-            minimumRedeemable: U256::ONE,
-            decimals: 6,
+            decimals: 12,
         };
         let asset_call = IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::ASSET,
@@ -790,14 +778,8 @@ mod tests {
             let asset_storage = B20AssetStorage::from_address(expected_addr, ctx);
             assert_eq!(asset_storage.b20.name.read().unwrap(), "Asset Token");
             assert_eq!(asset_storage.b20.symbol.read().unwrap(), "AST");
-            assert_eq!(asset_storage.decimals().unwrap(), 6);
+            assert_eq!(asset_storage.decimals().unwrap(), 12);
             assert_eq!(asset_storage.asset.multiplier.read().unwrap(), U256::ZERO);
-            assert_eq!(asset_storage.redeem.minimum_redeemable.read().unwrap(), U256::ONE);
-            // ISIN is stored in the identifiers mapping under the raw "ISIN" key.
-            assert_eq!(
-                asset_storage.asset.identifiers.at(&String::from("ISIN")).read().unwrap(),
-                "US0000000000"
-            );
         });
     }
 
@@ -1128,9 +1110,7 @@ mod tests {
             name: "Asset Token".to_string(),
             symbol: "AST".to_string(),
             initialAdmin: initial_admin,
-            isin: "US0000000001".to_string(),
-            minimumRedeemable: U256::ZERO,
-            decimals: 6,
+            decimals: 8,
         };
         let call = IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::ASSET,
@@ -1151,15 +1131,12 @@ mod tests {
             assert!(!token.has_role(B20TokenRole::DefaultAdmin.id(), Address::ZERO).unwrap());
         });
 
-        // Zero initialAdmin grants no role.
         let params_no_admin = IB20Factory::B20AssetCreateParams {
             version: B20Variant::Asset.supported_version(),
             name: "No Admin".to_string(),
             symbol: "NA".to_string(),
             initialAdmin: Address::ZERO,
-            isin: "US0000000002".to_string(),
-            minimumRedeemable: U256::ZERO,
-            decimals: 6,
+            decimals: 8,
         };
         let call_no_admin = IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::ASSET,
@@ -1182,7 +1159,7 @@ mod tests {
     }
 
     #[test]
-    fn b20created_asset_variant_emits_empty_variant_params() {
+    fn b20created_asset_variant_emits_empty_variant_event_params() {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
         let call = IB20Factory::createB20Call {
@@ -1193,9 +1170,7 @@ mod tests {
                 name: "T".to_string(),
                 symbol: "T".to_string(),
                 initialAdmin: Address::repeat_byte(0xAB),
-                isin: String::new(),
-                minimumRedeemable: U256::ZERO,
-                decimals: 6,
+                decimals: 18,
             }
             .abi_encode()
             .into(),
@@ -1210,7 +1185,7 @@ mod tests {
             .iter()
             .find_map(|l| IB20Factory::B20Created::decode_log_data(l).ok())
             .expect("B20Created must be emitted");
-        assert!(event.variantParams.is_empty(), "ASSET variantParams must be empty");
+        assert!(event.variantEventParams.is_empty(), "ASSET variantEventParams must be empty");
     }
 
     #[test]
@@ -1240,9 +1215,12 @@ mod tests {
             .iter()
             .find_map(|l| IB20Factory::B20Created::decode_log_data(l).ok())
             .expect("B20Created must be emitted");
-        assert!(!event.variantParams.is_empty(), "STABLECOIN variantParams must not be empty");
-        let params = IB20Factory::B20StablecoinEventParams::abi_decode(&event.variantParams)
-            .expect("variantParams must decode as B20StablecoinEventParams");
+        assert!(
+            !event.variantEventParams.is_empty(),
+            "STABLECOIN variantEventParams must not be empty"
+        );
+        let params = IB20Factory::B20StablecoinEventParams::abi_decode(&event.variantEventParams)
+            .expect("variantEventParams must decode as B20StablecoinEventParams");
         assert_eq!(params.version, super::B20_STABLECOIN_EVENT_PARAMS_VERSION);
         assert_eq!(params.currency, "USD");
     }
@@ -1254,5 +1232,31 @@ mod tests {
         // constant sharing.
         assert!(B20Variant::Stablecoin.supported_version() > 0);
         assert!(B20Variant::Asset.supported_version() > 0);
+    }
+
+    #[test]
+    fn test_invalid_decimals_reverts() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let call = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::ASSET,
+            salt: B256::repeat_byte(0x72),
+            params: IB20Factory::B20AssetCreateParams {
+                version: 1,
+                name: "Bad".to_string(),
+                symbol: "BAD".to_string(),
+                initialAdmin: Address::repeat_byte(0xAB),
+                decimals: 5,
+            }
+            .abi_encode()
+            .into(),
+            initCalls: Vec::new(),
+        };
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_output(
+                dispatch_factory_revert(ctx, call),
+                IB20Factory::InvalidDecimals { decimals: 5 }.abi_encode(),
+            );
+        });
     }
 }

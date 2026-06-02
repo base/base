@@ -27,8 +27,6 @@ sol! {
             string name;
             string symbol;
             address initialAdmin;
-            string isin;
-            uint256 minimumRedeemable;
             uint8 decimals;
         }
 
@@ -53,6 +51,9 @@ sol! {
         /// One of the post-creation init calls failed.
         error InitCallFailed(uint256 index);
 
+        /// The asset `decimals` was outside the allowed range.
+        error InvalidDecimals(uint8 decimals);
+
         // ── Events ───────────────────────────────────────────────────────────
 
         event B20Created(
@@ -61,7 +62,7 @@ sol! {
             string name,
             string symbol,
             uint8 decimals,
-            bytes variantParams
+            bytes variantEventParams
         );
 
         /// ABI-encoded payload for the `variantParams` field of `B20Created`

@@ -19,18 +19,7 @@ pub(crate) fn derive_asset(input: DeriveInput) -> proc_macro::TokenStream {
 fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
     require_field(&input, "b20")?;
     let has_redeem = has_field(&input, "redeem");
-    let has_security = has_field(&input, "asset");
     let name = input.ident;
-    let decimals_impl = if has_security {
-        quote! { crate::AssetAccounting::decimals(self) }
-    } else {
-        quote! {
-            Ok(crate::B20Variant::from_address(
-                ::base_precompile_storage::ContractStorage::address(self),
-            )
-            .map_or(0, crate::B20Variant::decimals))
-        }
-    };
     let redeem = has_redeem.then_some(quote! {
         if policy_scope == Self::REDEEM_SENDER_POLICY {
             return self.redeem.redeem_sender_policy_id();
@@ -143,7 +132,9 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
             }
 
             fn decimals(&self) -> ::base_precompile_storage::Result<u8> {
-                #decimals_impl
+                // Stablecoin returns fixed 6 decimals, Asset reads from storage.
+                // This default assumes stablecoin; B20AssetStorage overrides via its own decimals().
+                Ok(crate::B20Variant::STABLECOIN_DECIMALS)
             }
 
             fn paused(&self) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {
@@ -340,7 +331,7 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
             ) -> ::base_precompile_storage::Result<::alloc::string::String> {
                 ::base_precompile_storage::Handler::read(
                     self.asset
-                        .identifiers
+                        .extra_metadata
                         .at(&::alloc::string::String::from(identifier_type)),
                 )
             }
@@ -352,10 +343,10 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
             ) -> ::base_precompile_storage::Result<()> {
                 let key = ::alloc::string::String::from(identifier_type);
                 if value.is_empty() {
-                    ::base_precompile_storage::Handler::delete(self.asset.identifiers.at_mut(&key))
+                    ::base_precompile_storage::Handler::delete(self.asset.extra_metadata.at_mut(&key))
                 } else {
                     ::base_precompile_storage::Handler::write(
-                        self.asset.identifiers.at_mut(&key),
+                        self.asset.extra_metadata.at_mut(&key),
                         value,
                     )
                 }
@@ -398,8 +389,7 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
             }
 
             fn decimals(&self) -> ::base_precompile_storage::Result<u8> {
-                let stored = self.asset.decimals()?;
-                Ok(if stored == 0 { 6 } else { stored })
+                self.asset.decimals()
             }
         }
     })

@@ -32,9 +32,7 @@ impl BaseTokenBenchSetup {
             name: name.to_string(),
             symbol: symbol.to_string(),
             initialAdmin: Self::admin(),
-            isin: String::new(),
-            minimumRedeemable: U256::ZERO,
-            decimals: 6,
+            decimals: 18,
         }
     }
 

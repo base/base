@@ -72,12 +72,12 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                     "extraMetadata(ISIN)",
                     IB20Asset::extraMetadataCall { identifierType: "ISIN".to_string() }
                         .abi_encode(),
-                    BerylTestEnv::B20_ASSET_ISIN,
+                    "",
                 ),
                 StaticcallCase::word(
                     "decimals",
                     IB20::decimalsCall {}.abi_encode(),
-                    U256::from(BerylTestEnv::B20_ASSET_DECIMALS),
+                    U256::from(8u8),
                 ),
                 StaticcallCase::word(
                     "totalSupply",
@@ -445,7 +445,7 @@ impl B20AssetScenario {
             "POLICY_REGISTRY activation must succeed"
         );
 
-        let create = scenario.env.create_b20_security_tx();
+        let create = scenario.env.create_b20_asset_tx();
         let block = scenario.build_block_with_transactions(vec![create]).await;
 
         assert!(
@@ -524,7 +524,7 @@ impl B20AssetScenario {
             name: BerylTestEnv::B20_ASSET_NAME.to_string(),
             symbol: BerylTestEnv::B20_ASSET_SYMBOL.to_string(),
             decimals: BerylTestEnv::B20_ASSET_DECIMALS,
-            variantParams: Bytes::new(),
+            variantEventParams: Bytes::new(),
         }
         .encode_log_data();
         self.assert_receipt_log(block, 0, B20FactoryStorage::ADDRESS, expected);

@@ -422,9 +422,7 @@ impl PolicyTransferScenario {
             name: "Policy B20".to_string(),
             symbol: "PB20".to_string(),
             initialAdmin: BerylTestEnv::alice(),
-            isin: String::new(),
-            minimumRedeemable: U256::ZERO,
-            decimals: 6,
+            decimals: 18,
         }
     }
 }
