@@ -45,10 +45,10 @@ pub struct NonceManagerStorage {
 impl NonceManagerStorage<'_> {
     /// 2D nonce manager precompile address.
     ///
-    /// Provisional: the EIP-8130 nonce-manager address is not finalized upstream.
-    /// Uses the `0x8130…` namespace (the EIP number) reserved for EIP-8130 system
-    /// precompiles and can be renumbered when the spec pins a concrete value.
-    pub const ADDRESS: Address = address!("813000000000000000000000000000000000aa02");
+    /// Pinned to `NONCE_MANAGER_ADDRESS` from the EIP-8130 constant table
+    /// (`0x8130…aa01`, in the `0x8130…` / EIP-number namespace for EIP-8130
+    /// system precompiles).
+    pub const ADDRESS: Address = address!("813000000000000000000000000000000000aa01");
 
     /// Capacity of the expiring-nonce ring buffer.
     ///
