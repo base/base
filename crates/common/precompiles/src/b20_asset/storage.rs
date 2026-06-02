@@ -26,7 +26,7 @@ pub struct B20AssetExtensionStorage {
 #[derive(Debug, Clone, Storable)]
 #[namespace("base.b20.redeem")]
 pub struct B20RedeemStorage {
-    /// Minimum share amount required for a redeem operation.
+    /// Minimum scaled amount required for a redeem operation.
     #[accessor]
     #[mutator]
     pub minimum_redeemable: U256, // offset 0

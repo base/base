@@ -731,7 +731,7 @@ mod tests {
         );
     }
 
-    // --- redeem: InsufficientBalance / boundary / ratio math / event pair ---
+    // --- redeem: InsufficientBalance / boundary / scaled math / event pair ---
 
     #[test]
     fn security_redeem_rejects_insufficient_balance() {
@@ -797,7 +797,7 @@ mod tests {
         token.accounting_mut().total_supply = U256::from(100u64);
         token.accounting_mut().minimum_redeemable = U256::from(1u64);
         token.security_redeem(ALICE, U256::from(10u64)).unwrap();
-        // "Emits Transfer(caller, address(0), amount) followed by Redeemed(caller, amount, ratio)"
+        // "Emits Transfer(caller, address(0), amount) followed by Redeemed(caller, amount, multiplier)"
         assert_eq!(token.accounting().events.len(), 2);
     }
 
