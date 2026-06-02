@@ -146,7 +146,7 @@ mod tests {
     use crate::{BaseTransaction, BaseUpgrade, DefaultBase};
 
     fn b20_token_address() -> Address {
-        B20Variant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22)).0
+        B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22)).0
     }
 
     #[test]

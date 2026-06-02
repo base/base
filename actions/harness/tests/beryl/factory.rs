@@ -202,7 +202,7 @@ async fn b20_factory_views_and_events_are_available_after_beryl_activation() {
         probe,
         Bytes::from(
             IB20Factory::getB20AddressCall {
-                variant: IB20Factory::B20Variant::DEFAULT,
+                variant: IB20Factory::B20Variant::ASSET,
                 sender: BerylTestEnv::alice(),
                 salt: BerylTestEnv::b20_token_salt(),
             }
@@ -318,7 +318,7 @@ impl B20FactoryPrecompiles {
 fn assert_token_created_log(env: &BerylTestEnv, block: &BaseBlock, token: Address) {
     let expected = IB20Factory::B20Created {
         token,
-        variant: IB20Factory::B20Variant::DEFAULT,
+        variant: IB20Factory::B20Variant::ASSET,
         name: BerylTestEnv::B20_NAME.to_string(),
         symbol: BerylTestEnv::B20_SYMBOL.to_string(),
         decimals: BerylTestEnv::B20_DECIMALS,

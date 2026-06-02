@@ -36,7 +36,7 @@ async fn activated_client<'a>(
     let client = B20PrecompileClient::new(provider, admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
     client.activate_feature(ActivationFeature::B20Factory.id()).await?;
-    client.activate_feature(ActivationFeature::B20Token.id()).await?;
+    client.activate_feature(ActivationFeature::B20Asset.id()).await?;
     client.activate_feature(ActivationFeature::PolicyRegistry.id()).await?;
     Ok(client)
 }
@@ -87,7 +87,7 @@ async fn create_token(
 ) -> Result<Address> {
     let params =
         B20PrecompileClient::token_params(name, symbol, admin, U256::from(INITIAL_SUPPLY), admin);
-    let token = client.create_token(B20Variant::B20, params, salt).await?;
+    let token = client.create_token(B20Variant::Asset, params, salt).await?;
     client
         .wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL)
         .await?;

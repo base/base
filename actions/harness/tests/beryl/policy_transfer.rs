@@ -384,7 +384,7 @@ impl PolicyTransferScenario {
             TxKind::Call(B20FactoryStorage::ADDRESS),
             Bytes::from(
                 IB20Factory::createB20Call {
-                    variant: IB20Factory::B20Variant::DEFAULT,
+                    variant: IB20Factory::B20Variant::ASSET,
                     salt: BerylTestEnv::b20_token_salt(),
                     params: Self::token_params().abi_encode().into(),
                     initCalls: init_calls,
@@ -428,12 +428,14 @@ impl PolicyTransferScenario {
         self.env.derive_blocks(self.blocks, expected_safe_head).await;
     }
 
-    fn token_params() -> IB20Factory::B20CreateParams {
-        IB20Factory::B20CreateParams {
-            version: B20Variant::B20.supported_version(),
+    fn token_params() -> IB20Factory::B20AssetCreateParams {
+        IB20Factory::B20AssetCreateParams {
+            version: B20Variant::Asset.supported_version(),
             name: "Policy B20".to_string(),
             symbol: "PB20".to_string(),
             initialAdmin: BerylTestEnv::alice(),
+            isin: String::new(),
+            minimumRedeemable: U256::ZERO,
         }
     }
 }

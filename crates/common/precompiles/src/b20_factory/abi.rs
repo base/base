@@ -8,19 +8,10 @@ sol! {
         // ── Structs ─────────────────────────────────────────────────────────
 
         enum B20Variant {
-            /// Default B-20 token variant.
-            DEFAULT,
             /// Stablecoin B-20 token variant.
             STABLECOIN,
-            /// Security B-20 token variant.
-            SECURITY
-        }
-
-        struct B20CreateParams {
-            uint8 version;
-            string name;
-            string symbol;
-            address initialAdmin;
+            /// Asset B-20 token variant.
+            ASSET
         }
 
         struct B20StablecoinCreateParams {

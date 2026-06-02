@@ -11,7 +11,7 @@ use crate::{
 
 /// EVM precompile for the stablecoin B-20 variant.
 ///
-/// Mirrors the structure of [`crate::B20Token`] but requires `S: StablecoinAccounting`
+/// Mirrors the structure of [`crate::B20AssetToken`] but requires `S: StablecoinAccounting`
 /// so the dispatch layer can read `currency()` from stablecoin storage. All inherited
 /// `IB20` capability traits are wired in identically.
 #[derive(Debug, Clone)]

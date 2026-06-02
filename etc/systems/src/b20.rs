@@ -24,7 +24,7 @@ use tokio::time::{sleep, timeout};
 #[derive(Debug, Clone)]
 pub struct B20CreateConfig {
     /// ABI-level creation params sent to `IB20Factory.createB20`.
-    pub create: IB20Factory::B20CreateParams,
+    pub create: IB20Factory::B20AssetCreateParams,
     /// Initial supply to mint during the factory init-call window.
     pub initial_supply: U256,
     /// Account receiving the initial supply.
@@ -110,11 +110,13 @@ impl<'a> B20PrecompileClient<'a> {
         initial_supply_recipient: Address,
     ) -> B20CreateConfig {
         B20CreateConfig {
-            create: IB20Factory::B20CreateParams {
-                version: B20Variant::B20.supported_version(),
+            create: IB20Factory::B20AssetCreateParams {
+                version: B20Variant::Asset.supported_version(),
                 name: name.to_string(),
                 symbol: symbol.to_string(),
                 initialAdmin: initial_admin,
+                isin: String::new(),
+                minimumRedeemable: U256::ZERO,
             },
             initial_supply,
             initial_supply_recipient,

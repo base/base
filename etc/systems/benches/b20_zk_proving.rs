@@ -141,7 +141,7 @@ impl B20ZkProvingBench {
             .with_receipt_timeout(config.tx_receipt_timeout);
         display.setup_message("setup ensuring B-20 features are active");
         Self::ensure_feature_active(&b20, ActivationFeature::B20Factory.id()).await?;
-        Self::ensure_feature_active(&b20, ActivationFeature::B20Token.id()).await?;
+        Self::ensure_feature_active(&b20, ActivationFeature::B20Asset.id()).await?;
 
         display.setup_message("setup creating benchmark B-20 token");
         let token = Self::create_b20_token(&b20, admin.address()).await?;
@@ -201,7 +201,7 @@ impl B20ZkProvingBench {
             admin,
         );
 
-        client.create_token(B20Variant::B20, params, salt).await
+        client.create_token(B20Variant::Asset, params, salt).await
     }
 
     /// Activates `feature` if it is not already active.

@@ -5,7 +5,7 @@ use std::hint::black_box;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolValue;
 use base_common_precompiles::{
-    B20FactoryStorage, B20Token, B20TokenStorage, B20Variant, Burnable, Configurable, IB20,
+    B20AssetStorage, B20AssetToken, B20FactoryStorage, B20Variant, Burnable, Configurable, IB20,
     IB20Factory, Mintable, Pausable, PolicyHandle, Token, TokenAccounting, Transferable,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
@@ -26,24 +26,26 @@ impl BaseTokenBenchSetup {
         Address::repeat_byte(0xcd)
     }
 
-    fn token_params(name: &str, symbol: &str) -> IB20Factory::B20CreateParams {
-        IB20Factory::B20CreateParams {
-            version: B20Variant::B20.supported_version(),
+    fn token_params(name: &str, symbol: &str) -> IB20Factory::B20AssetCreateParams {
+        IB20Factory::B20AssetCreateParams {
+            version: B20Variant::Asset.supported_version(),
             name: name.to_string(),
             symbol: symbol.to_string(),
             initialAdmin: Self::admin(),
+            isin: String::new(),
+            minimumRedeemable: U256::ZERO,
         }
     }
 
     fn create_b20(
         ctx: StorageCtx<'_>,
         caller: Address,
-        params: IB20Factory::B20CreateParams,
+        params: IB20Factory::B20AssetCreateParams,
         salt: B256,
         _initial_supply: U256,
     ) -> Address {
         let call = IB20Factory::createB20Call {
-            variant: IB20Factory::B20Variant::DEFAULT,
+            variant: IB20Factory::B20Variant::ASSET,
             salt,
             params: params.abi_encode().into(),
             initCalls: Vec::new(),
@@ -56,7 +58,7 @@ impl BaseTokenBenchSetup {
         ctx: StorageCtx<'a>,
         salt: B256,
         initial_supply: U256,
-    ) -> B20Token<B20TokenStorage<'a>, PolicyHandle<'a>> {
+    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyHandle<'a>> {
         let params = Self::token_params("BaseToken", "BASE");
 
         let token_address = Self::create_b20(ctx, Self::caller(), params, salt, initial_supply);
@@ -72,9 +74,9 @@ impl BaseTokenBenchSetup {
     fn token_at<'a>(
         ctx: StorageCtx<'a>,
         token_address: Address,
-    ) -> B20Token<B20TokenStorage<'a>, PolicyHandle<'a>> {
-        B20Token::with_storage_and_policy(
-            B20TokenStorage::from_address(token_address, ctx),
+    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyHandle<'a>> {
+        B20AssetToken::with_storage_and_policy(
+            B20AssetStorage::from_address(token_address, ctx),
             PolicyHandle::new(ctx),
         )
     }
@@ -428,7 +430,7 @@ fn base_b20_factory_view(c: &mut Criterion) {
         b.iter(|| {
             let caller = black_box(caller);
             let salt = black_box(salt);
-            let result = B20Variant::B20.compute_address(caller, salt);
+            let result = B20Variant::Asset.compute_address(caller, salt);
             black_box(result);
         });
     });
@@ -452,7 +454,7 @@ fn base_b20_factory_view(c: &mut Criterion) {
         b.iter(|| {
             let caller = black_box(caller);
             let salt = black_box(salt);
-            let result = B20Variant::Security.compute_address(caller, salt);
+            let result = B20Variant::Asset.compute_address(caller, salt);
             black_box(result);
         });
     });
@@ -480,8 +482,8 @@ fn base_b20_factory_view(c: &mut Criterion) {
     });
 
     c.bench_function("base_b20_factory_get_token_variant", |b| {
-        let (token_address, _) =
-            B20Variant::B20.compute_address(BaseTokenBenchSetup::caller(), B256::repeat_byte(0x25));
+        let (token_address, _) = B20Variant::Asset
+            .compute_address(BaseTokenBenchSetup::caller(), B256::repeat_byte(0x25));
 
         b.iter(|| {
             let token_address = black_box(token_address);

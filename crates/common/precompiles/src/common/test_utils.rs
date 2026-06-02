@@ -10,16 +10,13 @@ use base_precompile_storage::Result;
 
 use crate::{
     B20AssetStorage, IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage,
-    b20::B20Token,
-    b20_asset::SecurityAccounting,
+    b20_asset::{B20AssetToken, SecurityAccounting},
     b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
     common::{Policy, TokenAccounting},
 };
 
-/// Convenience alias: [`B20Token`] wired with both in-memory fakes.
-///
-/// Use this in unit tests instead of spelling out the full generic each time.
-pub type TestToken = B20Token<InMemoryTokenAccounting, InMemoryPolicy>;
+/// Convenience alias: [`B20AssetToken`] wired with both in-memory fakes.
+pub type TestToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
 
 /// Convenience alias: [`B20StablecoinToken`] wired with both in-memory fakes.
 ///

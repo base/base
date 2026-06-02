@@ -13,7 +13,7 @@ use base_common_precompiles::{
 use base_system_tests::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, B20PrecompileClient};
 use eyre::{Result, WrapErr};
 
-const TOKEN_DECIMALS: u8 = 18;
+const TOKEN_DECIMALS: u8 = 6;
 const INITIAL_SUPPLY: u64 = 1_000_000_000;
 const TRANSFER_AMOUNT: u64 = 100_000_000;
 const MINT_AMOUNT: u64 = 500_000;
@@ -31,7 +31,7 @@ async fn activated_b20_client<'a>(
     let b20 = B20PrecompileClient::new(provider, admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
     b20.activate_feature(ActivationFeature::B20Factory.id()).await?;
-    b20.activate_feature(ActivationFeature::B20Token.id()).await?;
+    b20.activate_feature(ActivationFeature::B20Asset.id()).await?;
     Ok(b20)
 }
 
@@ -54,10 +54,10 @@ async fn test_b20_factory_create_and_transfer_via_rpc() -> Result<()> {
         admin.address(),
     );
 
-    let token = b20.create_token(B20Variant::B20, params, salt).await?;
+    let token = b20.create_token(B20Variant::Asset, params, salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
-    assert_eq!(b20.variant_of(token).await?, B20Variant::B20);
+    assert_eq!(b20.variant_of(token).await?, B20Variant::Asset);
     assert_eq!(b20.decimals_of(token).await?, TOKEN_DECIMALS);
 
     let admin_balance_before = b20.balance_of(token, admin.address()).await?;
@@ -91,7 +91,7 @@ async fn test_b20_token_metadata() -> Result<()> {
         admin.address(),
     );
 
-    let token = b20.create_token(B20Variant::B20, params, salt).await?;
+    let token = b20.create_token(B20Variant::Asset, params, salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     assert_eq!(b20.name(token).await?, "Metadata Token");
@@ -124,7 +124,7 @@ async fn test_b20_approve_and_transfer_from() -> Result<()> {
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
-    let token = b20_admin.create_token(B20Variant::B20, params, salt).await?;
+    let token = b20_admin.create_token(B20Variant::Asset, params, salt).await?;
     b20_admin
         .wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL)
         .await?;
@@ -169,7 +169,7 @@ async fn test_b20_mint_and_burn() -> Result<()> {
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
-    let token = b20.create_token(B20Variant::B20, params, salt).await?;
+    let token = b20.create_token(B20Variant::Asset, params, salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     let supply_before = b20.total_supply(token).await?;
@@ -239,7 +239,7 @@ async fn test_b20_transfer_with_memo() -> Result<()> {
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
-    let token = b20.create_token(B20Variant::B20, params, salt).await?;
+    let token = b20.create_token(B20Variant::Asset, params, salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     let memo = B256::repeat_byte(0xde);
@@ -270,7 +270,7 @@ async fn test_b20_supply_cap() -> Result<()> {
     );
     params.supply_cap = U256::from(INITIAL_SUPPLY_CAP);
 
-    let token = b20.create_token(B20Variant::B20, params, salt).await?;
+    let token = b20.create_token(B20Variant::Asset, params, salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     assert_eq!(b20.supply_cap(token).await?, U256::from(INITIAL_SUPPLY_CAP));
@@ -320,7 +320,7 @@ async fn test_b20_metadata_updates() -> Result<()> {
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
-    let token = b20.create_token(B20Variant::B20, params, salt).await?;
+    let token = b20.create_token(B20Variant::Asset, params, salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     b20.send_call(
@@ -358,7 +358,7 @@ async fn test_b20_pause_and_unpause() -> Result<()> {
         U256::from(INITIAL_SUPPLY),
         admin.address(),
     );
-    let token = b20.create_token(B20Variant::B20, params, salt).await?;
+    let token = b20.create_token(B20Variant::Asset, params, salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     // Transfer succeeds before pause.
@@ -419,12 +419,12 @@ async fn test_b20_factory_predict_and_is_b20() -> Result<()> {
         admin.address(),
     );
 
-    let local_prediction = b20.predict_token_address(B20Variant::B20, salt);
+    let local_prediction = b20.predict_token_address(B20Variant::Asset, salt);
     let rpc_prediction =
-        b20.predict_token_address_rpc(admin.address(), B20Variant::B20, salt).await?;
+        b20.predict_token_address_rpc(admin.address(), B20Variant::Asset, salt).await?;
     assert_eq!(local_prediction, rpc_prediction, "local and RPC predictions should match");
 
-    let token = b20.create_token(B20Variant::B20, params, salt).await?;
+    let token = b20.create_token(B20Variant::Asset, params, salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     assert_eq!(token, rpc_prediction, "created token address should match prediction");
@@ -456,14 +456,14 @@ async fn test_b20_create_token_duplicate_reverts() -> Result<()> {
         admin.address(),
     );
 
-    let token = b20.create_token(B20Variant::B20, params.clone(), salt).await?;
+    let token = b20.create_token(B20Variant::Asset, params.clone(), salt).await?;
     b20.wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
 
     let succeeded = b20
         .try_send_call(
             B20FactoryStorage::ADDRESS,
             IB20Factory::createB20Call {
-                variant: IB20Factory::B20Variant::DEFAULT,
+                variant: IB20Factory::B20Variant::ASSET,
                 salt,
                 params: params.create.abi_encode().into(),
                 initCalls: Vec::new(),
