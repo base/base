@@ -343,18 +343,18 @@ mod type_namespaced_layouts {
         );
 
         let b20_root = erc7201_root("b20");
-        let security_root = erc7201_root("b20.security");
+        let asset_root = erc7201_root("b20.asset");
         let redeem_root = erc7201_root("b20.redeem");
 
         assert_eq!(<B20Storage as StorableType>::STORAGE_NAMESPACE_ID, "b20");
         assert_eq!(<B20Storage as StorableType>::STORAGE_NAMESPACE_ROOT, b20_root);
-        assert_eq!(<B20AssetStorage as StorableType>::STORAGE_NAMESPACE_ROOT, security_root);
+        assert_eq!(<B20AssetStorage as StorableType>::STORAGE_NAMESPACE_ROOT, asset_root);
         assert_eq!(<B20RedeemStorage as StorableType>::STORAGE_NAMESPACE_ROOT, redeem_root);
 
         assert_eq!(slots::LOCAL_HEAD, U256::ZERO);
         assert_eq!(slots::LOCAL_HEAD_OFFSET, 0);
         assert_eq!(slots::B20, b20_root);
-        assert_eq!(slots::SECURITY, security_root);
+        assert_eq!(slots::SECURITY, asset_root);
         assert_eq!(slots::REDEEM, redeem_root);
         assert_eq!(slots::LOCAL_TAIL, U256::ZERO);
         assert_eq!(slots::LOCAL_TAIL_OFFSET, 1);
