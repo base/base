@@ -14,8 +14,7 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20AssetStorage, B20AssetToken, B20PolicyType,
-    B20TokenRole, Burnable, Configurable,
+    B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
