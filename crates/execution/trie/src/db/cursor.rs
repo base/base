@@ -7,7 +7,7 @@ use reth_db::{
     table::{DupSort, Table},
     transaction::DbTx,
 };
-use reth_primitives_traits::Account;
+use reth_primitives_traits::{Account, StorageEntry};
 use reth_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
@@ -536,6 +536,73 @@ impl HashedCursor for MdbxV2AccountCursor {
     }
 }
 
+/// V2 account cursor over current state, used when the requested block is the latest proof block.
+#[derive(Debug)]
+pub struct MdbxV2LatestAccountCursor<Cursor> {
+    cursor: Cursor,
+}
+
+impl<Cursor> MdbxV2LatestAccountCursor<Cursor> {
+    /// Creates a latest-state account cursor backed directly by MDBX.
+    pub const fn new(cursor: Cursor) -> Self {
+        Self { cursor }
+    }
+}
+
+impl<Cursor> HashedCursor for MdbxV2LatestAccountCursor<Cursor>
+where
+    Cursor: DbCursorRO<V2HashedAccounts> + Send + Sync,
+{
+    type Value = Account;
+
+    fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
+        Ok(self.cursor.seek(key)?)
+    }
+
+    fn next(&mut self) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
+        Ok(self.cursor.next()?)
+    }
+
+    fn reset(&mut self) {}
+}
+
+/// V2 account cursor that uses direct current-state iteration when possible.
+#[derive(Debug)]
+pub enum MdbxV2AccountCursorEither<Cursor> {
+    /// Latest proof block, backed by the current-state table cursor.
+    Latest(MdbxV2LatestAccountCursor<Cursor>),
+    /// Historical block, backed by the existing materialized history view.
+    Historical(MdbxV2AccountCursor),
+}
+
+impl<Cursor> HashedCursor for MdbxV2AccountCursorEither<Cursor>
+where
+    Cursor: DbCursorRO<V2HashedAccounts> + Send + Sync,
+{
+    type Value = Account;
+
+    fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
+        match self {
+            Self::Latest(cursor) => cursor.seek(key),
+            Self::Historical(cursor) => cursor.seek(key),
+        }
+    }
+
+    fn next(&mut self) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
+        match self {
+            Self::Latest(cursor) => cursor.next(),
+            Self::Historical(cursor) => cursor.next(),
+        }
+    }
+
+    fn reset(&mut self) {
+        match self {
+            Self::Latest(cursor) => cursor.reset(),
+            Self::Historical(cursor) => cursor.reset(),
+        }
+    }
+}
+
 /// V2 MDBX implementation of [`TrieCursor`] for account trie nodes.
 #[derive(Debug, Clone)]
 pub struct MdbxV2AccountTrieCursor {
@@ -619,6 +686,103 @@ impl TrieCursor for MdbxV2AccountTrieCursor {
 
     fn reset(&mut self) {
         self.inner.reset();
+    }
+}
+
+/// V2 account-trie cursor over current state, used for latest proof-state root calculation.
+#[derive(Debug)]
+pub struct MdbxV2LatestAccountTrieCursor<Cursor> {
+    cursor: Cursor,
+}
+
+impl<Cursor> MdbxV2LatestAccountTrieCursor<Cursor> {
+    /// Creates a latest-state account-trie cursor backed directly by MDBX.
+    pub const fn new(cursor: Cursor) -> Self {
+        Self { cursor }
+    }
+}
+
+impl<Cursor> TrieCursor for MdbxV2LatestAccountTrieCursor<Cursor>
+where
+    Cursor: DbCursorRO<V2AccountsTrie>,
+{
+    fn seek_exact(
+        &mut self,
+        path: Nibbles,
+    ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        Ok(self.cursor.seek_exact(StoredNibbles(path))?.map(|(key, node)| (key.0, node)))
+    }
+
+    fn seek(
+        &mut self,
+        path: Nibbles,
+    ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        Ok(self.cursor.seek(StoredNibbles(path))?.map(|(key, node)| (key.0, node)))
+    }
+
+    fn next(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        Ok(self.cursor.next()?.map(|(key, node)| (key.0, node)))
+    }
+
+    fn current(&mut self) -> Result<Option<Nibbles>, DatabaseError> {
+        Ok(self.cursor.current()?.map(|(key, _)| key.0))
+    }
+
+    fn reset(&mut self) {}
+}
+
+/// V2 account-trie cursor that uses direct current-state iteration when possible.
+#[derive(Debug)]
+pub enum MdbxV2AccountTrieCursorEither<Cursor> {
+    /// Latest proof block, backed by the current-state table cursor.
+    Latest(MdbxV2LatestAccountTrieCursor<Cursor>),
+    /// Historical block, backed by the existing materialized history view.
+    Historical(MdbxV2AccountTrieCursor),
+}
+
+impl<Cursor> TrieCursor for MdbxV2AccountTrieCursorEither<Cursor>
+where
+    Cursor: DbCursorRO<V2AccountsTrie>,
+{
+    fn seek_exact(
+        &mut self,
+        key: Nibbles,
+    ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        match self {
+            Self::Latest(cursor) => cursor.seek_exact(key),
+            Self::Historical(cursor) => cursor.seek_exact(key),
+        }
+    }
+
+    fn seek(
+        &mut self,
+        key: Nibbles,
+    ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        match self {
+            Self::Latest(cursor) => cursor.seek(key),
+            Self::Historical(cursor) => cursor.seek(key),
+        }
+    }
+
+    fn next(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        match self {
+            Self::Latest(cursor) => cursor.next(),
+            Self::Historical(cursor) => cursor.next(),
+        }
+    }
+
+    fn current(&mut self) -> Result<Option<Nibbles>, DatabaseError> {
+        match self {
+            Self::Latest(cursor) => cursor.current(),
+            Self::Historical(cursor) => cursor.current(),
+        }
+    }
+
+    fn reset(&mut self) {
+        match self {
+            Self::Latest(cursor) => cursor.reset(),
+            Self::Historical(cursor) => cursor.reset(),
+        }
     }
 }
 
@@ -728,6 +892,142 @@ impl HashedStorageCursor for MdbxV2StorageCursor {
     fn set_hashed_address(&mut self, hashed_address: B256) {
         self.hashed_address = hashed_address;
         self.position = None;
+    }
+}
+
+/// V2 storage cursor over current state for one account.
+#[derive(Debug)]
+pub struct MdbxV2LatestStorageCursor<Cursor> {
+    cursor: Cursor,
+    hashed_address: B256,
+    positioned: bool,
+}
+
+impl<Cursor> MdbxV2LatestStorageCursor<Cursor> {
+    /// Creates a latest-state storage cursor backed directly by the dup-sort MDBX table.
+    pub const fn new(cursor: Cursor, hashed_address: B256) -> Self {
+        Self { cursor, hashed_address, positioned: false }
+    }
+}
+
+impl<Cursor> HashedCursor for MdbxV2LatestStorageCursor<Cursor>
+where
+    Cursor: DbCursorRO<V2HashedStorages> + DbDupCursorRO<V2HashedStorages> + Send + Sync,
+{
+    type Value = U256;
+
+    fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
+        self.positioned = true;
+        let entry = self.cursor.seek_by_key_subkey(self.hashed_address, key)?;
+        let current_address = self.cursor.current()?.map(|(address, _)| address);
+        self.live_storage_entry(current_address, entry)
+    }
+
+    fn next(&mut self) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
+        if !self.positioned {
+            return self.seek(B256::ZERO);
+        }
+        let entry = self.cursor.next_dup()?;
+        self.live_storage_entry(
+            entry.as_ref().map(|(address, _)| *address),
+            entry.map(|(_, entry)| entry),
+        )
+    }
+
+    fn reset(&mut self) {
+        self.positioned = false;
+    }
+}
+
+impl<Cursor> MdbxV2LatestStorageCursor<Cursor>
+where
+    Cursor: DbCursorRO<V2HashedStorages> + DbDupCursorRO<V2HashedStorages> + Send + Sync,
+{
+    fn live_storage_entry(
+        &mut self,
+        current_address: Option<B256>,
+        entry: Option<StorageEntry>,
+    ) -> Result<Option<(B256, U256)>, DatabaseError> {
+        if current_address != Some(self.hashed_address) {
+            return Ok(None);
+        }
+        let Some(entry) = entry else {
+            return Ok(None);
+        };
+        if entry.value.is_zero() {
+            return self.next();
+        }
+        Ok(Some((entry.key, entry.value)))
+    }
+}
+
+impl<Cursor> HashedStorageCursor for MdbxV2LatestStorageCursor<Cursor>
+where
+    Cursor: DbCursorRO<V2HashedStorages> + DbDupCursorRO<V2HashedStorages> + Send + Sync,
+{
+    fn is_storage_empty(&mut self) -> Result<bool, DatabaseError> {
+        Ok(self.seek(B256::ZERO)?.is_none())
+    }
+
+    fn set_hashed_address(&mut self, hashed_address: B256) {
+        self.hashed_address = hashed_address;
+        self.positioned = false;
+    }
+}
+
+/// V2 storage cursor that uses direct current-state iteration when possible.
+#[derive(Debug)]
+pub enum MdbxV2StorageCursorEither<Cursor> {
+    /// Latest proof block, backed by the current-state table cursor.
+    Latest(MdbxV2LatestStorageCursor<Cursor>),
+    /// Historical block, backed by the existing materialized history view.
+    Historical(MdbxV2StorageCursor),
+}
+
+impl<Cursor> HashedCursor for MdbxV2StorageCursorEither<Cursor>
+where
+    Cursor: DbCursorRO<V2HashedStorages> + DbDupCursorRO<V2HashedStorages> + Send + Sync,
+{
+    type Value = U256;
+
+    fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
+        match self {
+            Self::Latest(cursor) => cursor.seek(key),
+            Self::Historical(cursor) => cursor.seek(key),
+        }
+    }
+
+    fn next(&mut self) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
+        match self {
+            Self::Latest(cursor) => cursor.next(),
+            Self::Historical(cursor) => cursor.next(),
+        }
+    }
+
+    fn reset(&mut self) {
+        match self {
+            Self::Latest(cursor) => cursor.reset(),
+            Self::Historical(cursor) => cursor.reset(),
+        }
+    }
+}
+
+impl<Cursor> HashedStorageCursor for MdbxV2StorageCursorEither<Cursor>
+where
+    Cursor: DbCursorRO<V2HashedStorages> + DbDupCursorRO<V2HashedStorages> + Send + Sync,
+{
+    fn is_storage_empty(&mut self) -> Result<bool, DatabaseError> {
+        match self {
+            Self::Latest(cursor) => cursor.is_storage_empty(),
+            Self::Historical(cursor) => cursor.is_storage_empty(),
+        }
+    }
+
+    fn set_hashed_address(&mut self, hashed_address: B256) {
+        match self {
+            Self::Latest(cursor) => cursor.set_hashed_address(hashed_address),
+            Self::Historical(cursor) => cursor.set_hashed_address(hashed_address),
+        }
     }
 }
 
@@ -859,6 +1159,149 @@ impl TrieStorageCursor for MdbxV2StorageTrieCursor {
     }
 }
 
+/// V2 storage-trie cursor over current state for one account.
+#[derive(Debug)]
+pub struct MdbxV2LatestStorageTrieCursor<Cursor> {
+    cursor: Cursor,
+    hashed_address: B256,
+    positioned: bool,
+}
+
+impl<Cursor> MdbxV2LatestStorageTrieCursor<Cursor> {
+    /// Creates a latest-state storage-trie cursor backed directly by the dup-sort MDBX table.
+    pub const fn new(cursor: Cursor, hashed_address: B256) -> Self {
+        Self { cursor, hashed_address, positioned: false }
+    }
+}
+
+impl<Cursor> TrieCursor for MdbxV2LatestStorageTrieCursor<Cursor>
+where
+    Cursor: DbCursorRO<V2StoragesTrie> + DbDupCursorRO<V2StoragesTrie>,
+{
+    fn seek_exact(
+        &mut self,
+        path: Nibbles,
+    ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        self.positioned = true;
+        let subkey = StoredNibblesSubKey::from(path.clone());
+        let entry = self.cursor.seek_by_key_subkey(self.hashed_address, subkey.clone())?;
+        let current_address = self.cursor.current()?.map(|(address, _)| address);
+        Ok(entry.and_then(|entry| {
+            (current_address == Some(self.hashed_address) && entry.nibbles == subkey)
+                .then_some((path, entry.node))
+        }))
+    }
+
+    fn seek(
+        &mut self,
+        path: Nibbles,
+    ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        self.positioned = true;
+        let entry =
+            self.cursor.seek_by_key_subkey(self.hashed_address, StoredNibblesSubKey::from(path))?;
+        let current_address = self.cursor.current()?.map(|(address, _)| address);
+        Ok(entry.and_then(|entry| {
+            (current_address == Some(self.hashed_address)).then_some((entry.nibbles.0, entry.node))
+        }))
+    }
+
+    fn next(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        if !self.positioned {
+            return self.seek(Nibbles::default());
+        }
+        Ok(self.cursor.next_dup()?.and_then(|(address, entry)| {
+            (address == self.hashed_address).then_some((entry.nibbles.0, entry.node))
+        }))
+    }
+
+    fn current(&mut self) -> Result<Option<Nibbles>, DatabaseError> {
+        Ok(self.cursor.current()?.and_then(|(address, entry)| {
+            (address == self.hashed_address).then_some(entry.nibbles.0)
+        }))
+    }
+
+    fn reset(&mut self) {
+        self.positioned = false;
+    }
+}
+
+impl<Cursor> TrieStorageCursor for MdbxV2LatestStorageTrieCursor<Cursor>
+where
+    Cursor: DbCursorRO<V2StoragesTrie> + DbDupCursorRO<V2StoragesTrie>,
+{
+    fn set_hashed_address(&mut self, hashed_address: B256) {
+        self.hashed_address = hashed_address;
+        self.positioned = false;
+    }
+}
+
+/// V2 storage-trie cursor that uses direct current-state iteration when possible.
+#[derive(Debug)]
+pub enum MdbxV2StorageTrieCursorEither<Cursor> {
+    /// Latest proof block, backed by the current-state table cursor.
+    Latest(MdbxV2LatestStorageTrieCursor<Cursor>),
+    /// Historical block, backed by the existing materialized history view.
+    Historical(MdbxV2StorageTrieCursor),
+}
+
+impl<Cursor> TrieCursor for MdbxV2StorageTrieCursorEither<Cursor>
+where
+    Cursor: DbCursorRO<V2StoragesTrie> + DbDupCursorRO<V2StoragesTrie>,
+{
+    fn seek_exact(
+        &mut self,
+        key: Nibbles,
+    ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        match self {
+            Self::Latest(cursor) => cursor.seek_exact(key),
+            Self::Historical(cursor) => cursor.seek_exact(key),
+        }
+    }
+
+    fn seek(
+        &mut self,
+        key: Nibbles,
+    ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        match self {
+            Self::Latest(cursor) => cursor.seek(key),
+            Self::Historical(cursor) => cursor.seek(key),
+        }
+    }
+
+    fn next(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        match self {
+            Self::Latest(cursor) => cursor.next(),
+            Self::Historical(cursor) => cursor.next(),
+        }
+    }
+
+    fn current(&mut self) -> Result<Option<Nibbles>, DatabaseError> {
+        match self {
+            Self::Latest(cursor) => cursor.current(),
+            Self::Historical(cursor) => cursor.current(),
+        }
+    }
+
+    fn reset(&mut self) {
+        match self {
+            Self::Latest(cursor) => cursor.reset(),
+            Self::Historical(cursor) => cursor.reset(),
+        }
+    }
+}
+
+impl<Cursor> TrieStorageCursor for MdbxV2StorageTrieCursorEither<Cursor>
+where
+    Cursor: DbCursorRO<V2StoragesTrie> + DbDupCursorRO<V2StoragesTrie>,
+{
+    fn set_hashed_address(&mut self, hashed_address: B256) {
+        match self {
+            Self::Latest(cursor) => cursor.set_hashed_address(hashed_address),
+            Self::Historical(cursor) => cursor.set_hashed_address(hashed_address),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use reth_db::{
@@ -867,10 +1310,11 @@ mod tests {
     };
     use reth_db_api::{
         Database,
-        cursor::DbDupCursorRW,
+        cursor::{DbCursorRW, DbDupCursorRW},
         transaction::{DbTx, DbTxMut},
     };
     use reth_trie::{BranchNodeCompact, Nibbles, StoredNibbles};
+    use reth_trie_common::{StorageTrieEntry, StoredNibblesSubKey};
     use tempfile::TempDir;
 
     use super::*;
@@ -1961,5 +2405,154 @@ mod tests {
         let result2 = TrieCursor::next(&mut cur2).expect("ok");
         assert!(result2.is_some(), "next() should work for non-first address without seek()");
         assert_eq!(result2.unwrap().0, path2);
+    }
+
+    #[test]
+    fn latest_account_cursor_iterates_current_table() {
+        let db = setup_db();
+        let k1 = B256::from([0x01; 32]);
+        let k2 = B256::from([0x02; 32]);
+
+        {
+            let wtx = db.tx_mut().expect("rw");
+            let mut cursor = wtx.cursor_write::<V2HashedAccounts>().expect("write cursor");
+            cursor.upsert(k1, &Account::default()).expect("insert account");
+            cursor.upsert(k2, &Account::default()).expect("insert account");
+            drop(cursor);
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro");
+        let mut cursor =
+            MdbxV2LatestAccountCursor::new(tx.cursor_read::<V2HashedAccounts>().expect("read"));
+
+        let (got1, _) = cursor.seek(k1).expect("ok").expect("first account");
+        assert_eq!(got1, k1);
+
+        let (got2, _) = cursor.next().expect("ok").expect("second account");
+        assert_eq!(got2, k2);
+    }
+
+    #[test]
+    fn latest_account_trie_cursor_iterates_current_table() {
+        let db = setup_db();
+        let p1 = Nibbles::from_nibbles([0x01]);
+        let p2 = Nibbles::from_nibbles([0x02]);
+
+        {
+            let wtx = db.tx_mut().expect("rw");
+            let mut cursor = wtx.cursor_write::<V2AccountsTrie>().expect("write cursor");
+            cursor.upsert(StoredNibbles(p1), &node()).expect("insert trie node");
+            cursor.upsert(StoredNibbles(p2), &node()).expect("insert trie node");
+            drop(cursor);
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro");
+        let mut cursor =
+            MdbxV2LatestAccountTrieCursor::new(tx.cursor_read::<V2AccountsTrie>().expect("read"));
+
+        let (got1, _) = cursor.seek(p1).expect("ok").expect("first trie node");
+        assert_eq!(got1, p1);
+
+        let (got2, _) = cursor.next().expect("ok").expect("second trie node");
+        assert_eq!(got2, p2);
+    }
+
+    #[test]
+    fn latest_storage_cursor_uses_dupsort_and_stops_at_address_boundary() {
+        let db = setup_db();
+        let addr1 = B256::from([0x01; 32]);
+        let addr2 = B256::from([0x02; 32]);
+        let s1 = B256::from([0x11; 32]);
+        let s2 = B256::from([0x12; 32]);
+        let s3 = B256::from([0x13; 32]);
+
+        {
+            let wtx = db.tx_mut().expect("rw");
+            let mut cursor = wtx.cursor_dup_write::<V2HashedStorages>().expect("dup write");
+            cursor
+                .upsert(addr1, &StorageEntry { key: s1, value: U256::from(11) })
+                .expect("insert storage");
+            cursor
+                .upsert(addr1, &StorageEntry { key: s2, value: U256::from(22) })
+                .expect("insert storage");
+            cursor
+                .upsert(addr2, &StorageEntry { key: s3, value: U256::from(33) })
+                .expect("insert storage");
+            drop(cursor);
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro");
+        let mut cursor = MdbxV2LatestStorageCursor::new(
+            tx.cursor_dup_read::<V2HashedStorages>().expect("read"),
+            addr1,
+        );
+
+        let (got1, value1) = cursor.seek(s1).expect("ok").expect("first slot");
+        assert_eq!((got1, value1), (s1, U256::from(11)));
+
+        let (got2, value2) = cursor.next().expect("ok").expect("second slot");
+        assert_eq!((got2, value2), (s2, U256::from(22)));
+
+        let out = cursor.next().expect("ok");
+        assert!(out.is_none(), "should stop at address boundary");
+
+        let out = cursor.seek(s3).expect("ok");
+        assert!(out.is_none(), "should not expose another address slot");
+    }
+
+    #[test]
+    fn latest_storage_trie_cursor_uses_dupsort_and_stops_at_address_boundary() {
+        let db = setup_db();
+        let addr1 = B256::from([0x01; 32]);
+        let addr2 = B256::from([0x02; 32]);
+        let p1 = Nibbles::from_nibbles([0x01]);
+        let p2 = Nibbles::from_nibbles([0x02]);
+        let p3 = Nibbles::from_nibbles([0x03]);
+
+        {
+            let wtx = db.tx_mut().expect("rw");
+            let mut cursor = wtx.cursor_dup_write::<V2StoragesTrie>().expect("dup write");
+            cursor
+                .upsert(
+                    addr1,
+                    &StorageTrieEntry { nibbles: StoredNibblesSubKey::from(p1), node: node() },
+                )
+                .expect("insert storage trie");
+            cursor
+                .upsert(
+                    addr1,
+                    &StorageTrieEntry { nibbles: StoredNibblesSubKey::from(p2), node: node() },
+                )
+                .expect("insert storage trie");
+            cursor
+                .upsert(
+                    addr2,
+                    &StorageTrieEntry { nibbles: StoredNibblesSubKey::from(p3), node: node() },
+                )
+                .expect("insert storage trie");
+            drop(cursor);
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro");
+        let mut cursor = MdbxV2LatestStorageTrieCursor::new(
+            tx.cursor_dup_read::<V2StoragesTrie>().expect("read"),
+            addr1,
+        );
+
+        let (got1, _) = cursor.seek(p1).expect("ok").expect("first path");
+        assert_eq!(got1, p1);
+
+        let (got2, _) = cursor.next().expect("ok").expect("second path");
+        assert_eq!(got2, p2);
+
+        let out = cursor.next().expect("ok");
+        assert!(out.is_none(), "should stop at address boundary");
+
+        let out = cursor.seek(p3).expect("ok");
+        assert!(out.is_none(), "should not expose another address path");
     }
 }

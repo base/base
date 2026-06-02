@@ -14,7 +14,10 @@ pub use store::MdbxProofsStorage;
 mod cursor;
 pub use cursor::{
     BlockNumberVersionedCursor, Dup, MdbxAccountCursor, MdbxStorageCursor, MdbxTrieCursor,
-    MdbxV2AccountCursor, MdbxV2AccountTrieCursor, MdbxV2StorageCursor, MdbxV2StorageTrieCursor,
+    MdbxV2AccountCursor, MdbxV2AccountCursorEither, MdbxV2AccountTrieCursor,
+    MdbxV2AccountTrieCursorEither, MdbxV2LatestAccountCursor, MdbxV2LatestAccountTrieCursor,
+    MdbxV2LatestStorageCursor, MdbxV2LatestStorageTrieCursor, MdbxV2StorageCursor,
+    MdbxV2StorageCursorEither, MdbxV2StorageTrieCursor, MdbxV2StorageTrieCursorEither,
 };
 
 mod batch;

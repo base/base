@@ -12,23 +12,29 @@ use crate::{
     BaseProofsStorageError, BaseProofsStorageResult, BlockStateDiff,
     api::{BaseProofsBatchSession, WriteCounts},
     db::{
-        MdbxProofsStorage, MdbxV2AccountCursor, MdbxV2AccountTrieCursor, MdbxV2StorageCursor,
-        MdbxV2StorageTrieCursor,
+        MdbxProofsStorage, MdbxV2AccountCursor, MdbxV2AccountCursorEither, MdbxV2AccountTrieCursor,
+        MdbxV2AccountTrieCursorEither, MdbxV2LatestAccountCursor, MdbxV2LatestAccountTrieCursor,
+        MdbxV2LatestStorageCursor, MdbxV2LatestStorageTrieCursor, MdbxV2StorageCursor,
+        MdbxV2StorageCursorEither, MdbxV2StorageTrieCursor, MdbxV2StorageTrieCursorEither,
+        V2AccountsTrie, V2HashedAccounts, V2HashedStorages, V2StoragesTrie,
     },
 };
+
+type TxMut = <DatabaseEnv as Database>::TXMut;
+type V2AccountTrieCursor = <TxMut as DbTx>::Cursor<V2AccountsTrie>;
+type V2StorageTrieCursor = <TxMut as DbTx>::DupCursor<V2StoragesTrie>;
+type V2AccountCursor = <TxMut as DbTx>::Cursor<V2HashedAccounts>;
+type V2StorageCursor = <TxMut as DbTx>::DupCursor<V2HashedStorages>;
 
 /// Active write batch holding one MDBX RW transaction across multiple block writes.
 #[derive(Debug)]
 pub struct MdbxBatchSession<'tx> {
     storage: &'tx MdbxProofsStorage,
-    tx: Option<<DatabaseEnv as Database>::TXMut>,
+    tx: Option<TxMut>,
 }
 
 impl<'tx> MdbxBatchSession<'tx> {
-    pub(crate) const fn new(
-        storage: &'tx MdbxProofsStorage,
-        tx: <DatabaseEnv as Database>::TXMut,
-    ) -> Self {
+    pub(crate) const fn new(storage: &'tx MdbxProofsStorage, tx: TxMut) -> Self {
         Self { storage, tx: Some(tx) }
     }
 
@@ -39,26 +45,32 @@ impl<'tx> MdbxBatchSession<'tx> {
         Ok(())
     }
 
-    fn tx_ref(&self) -> BaseProofsStorageResult<&<DatabaseEnv as Database>::TXMut> {
+    fn tx_ref(&self) -> BaseProofsStorageResult<&TxMut> {
         self.tx.as_ref().ok_or(BaseProofsStorageError::BatchSessionClosed)
+    }
+
+    fn should_use_latest_cursor(&self, max_block_number: u64) -> BaseProofsStorageResult<bool> {
+        Ok(self
+            .get_latest_block_number()?
+            .is_some_and(|(latest_block_number, _)| latest_block_number == max_block_number))
     }
 }
 
 impl BaseProofsBatchSession for MdbxBatchSession<'_> {
     type StorageTrieCursor<'a>
-        = MdbxV2StorageTrieCursor
+        = MdbxV2StorageTrieCursorEither<V2StorageTrieCursor>
     where
         Self: 'a;
     type AccountTrieCursor<'a>
-        = MdbxV2AccountTrieCursor
+        = MdbxV2AccountTrieCursorEither<V2AccountTrieCursor>
     where
         Self: 'a;
     type StorageCursor<'a>
-        = MdbxV2StorageCursor
+        = MdbxV2StorageCursorEither<V2StorageCursor>
     where
         Self: 'a;
     type AccountHashedCursor<'a>
-        = MdbxV2AccountCursor
+        = MdbxV2AccountCursorEither<V2AccountCursor>
     where
         Self: 'a;
 
@@ -75,14 +87,32 @@ impl BaseProofsBatchSession for MdbxBatchSession<'_> {
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'_>> {
-        MdbxV2StorageTrieCursor::new(self.tx_ref()?, max_block_number, hashed_address)
+        if self.should_use_latest_cursor(max_block_number)? {
+            return Ok(MdbxV2StorageTrieCursorEither::Latest(MdbxV2LatestStorageTrieCursor::new(
+                self.tx_ref()?.cursor_dup_read::<V2StoragesTrie>()?,
+                hashed_address,
+            )));
+        }
+        Ok(MdbxV2StorageTrieCursorEither::Historical(MdbxV2StorageTrieCursor::new(
+            self.tx_ref()?,
+            max_block_number,
+            hashed_address,
+        )?))
     }
 
     fn account_trie_cursor(
         &self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'_>> {
-        MdbxV2AccountTrieCursor::new(self.tx_ref()?, max_block_number)
+        if self.should_use_latest_cursor(max_block_number)? {
+            return Ok(MdbxV2AccountTrieCursorEither::Latest(MdbxV2LatestAccountTrieCursor::new(
+                self.tx_ref()?.cursor_read::<V2AccountsTrie>()?,
+            )));
+        }
+        Ok(MdbxV2AccountTrieCursorEither::Historical(MdbxV2AccountTrieCursor::new(
+            self.tx_ref()?,
+            max_block_number,
+        )?))
     }
 
     fn storage_hashed_cursor(
@@ -90,14 +120,32 @@ impl BaseProofsBatchSession for MdbxBatchSession<'_> {
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'_>> {
-        MdbxV2StorageCursor::new(self.tx_ref()?, max_block_number, hashed_address)
+        if self.should_use_latest_cursor(max_block_number)? {
+            return Ok(MdbxV2StorageCursorEither::Latest(MdbxV2LatestStorageCursor::new(
+                self.tx_ref()?.cursor_dup_read::<V2HashedStorages>()?,
+                hashed_address,
+            )));
+        }
+        Ok(MdbxV2StorageCursorEither::Historical(MdbxV2StorageCursor::new(
+            self.tx_ref()?,
+            max_block_number,
+            hashed_address,
+        )?))
     }
 
     fn account_hashed_cursor(
         &self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'_>> {
-        MdbxV2AccountCursor::new(self.tx_ref()?, max_block_number)
+        if self.should_use_latest_cursor(max_block_number)? {
+            return Ok(MdbxV2AccountCursorEither::Latest(MdbxV2LatestAccountCursor::new(
+                self.tx_ref()?.cursor_read::<V2HashedAccounts>()?,
+            )));
+        }
+        Ok(MdbxV2AccountCursorEither::Historical(MdbxV2AccountCursor::new(
+            self.tx_ref()?,
+            max_block_number,
+        )?))
     }
 
     fn hashed_account(
