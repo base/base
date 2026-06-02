@@ -115,8 +115,6 @@ impl<'a> B20PrecompileClient<'a> {
                 name: name.to_string(),
                 symbol: symbol.to_string(),
                 initialAdmin: initial_admin,
-                isin: String::new(),
-                minimumRedeemable: U256::ZERO,
             },
             initial_supply,
             initial_supply_recipient,
