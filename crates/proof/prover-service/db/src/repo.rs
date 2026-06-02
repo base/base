@@ -1778,6 +1778,7 @@ fn parse_tee_kind(value: &str) -> Result<TeeKind> {
 const PROOF_JOB_RETURNING_COLUMNS: &str = "id, COALESCE(session_id, id::text) AS session_id, \
      request_payload, api_proof_type, zk_vm, tee_kind, \
      start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, \
+     stark_receipt, snark_receipt, result_payload, \
      submitted_by_worker_id, submitted_lock_id, status, error_message, \
      prover_address, l1_head, intermediate_root_interval, \
      created_at, updated_at, completed_at, retry_count, \
@@ -1861,60 +1862,10 @@ fn claim_query(api_proof_type: ApiProofType) -> String {
     }
 }
 
-/// Convert a database row into a [`ProofJob`].
-///
-/// This is a dedicated parser that does not route through [`row_to_proof_request`],
-/// so it never touches the large receipt/result blob columns (see
-/// [`PROOF_JOB_RETURNING_COLUMNS`]). It reads only the scalar columns needed for the
-/// worker-facing view, synthesizing `request_payload` from legacy columns when the
-/// native column is NULL, exactly as the requester parser does.
+/// Convert a database row into a [`ProofJob`], reusing [`row_to_proof_request`]
+/// for the requester fields (including protocol payload synthesis for legacy rows).
 fn row_to_proof_job(row: &sqlx::postgres::PgRow) -> Result<ProofJob> {
-    let id = row.get("id");
-    let session_id = row.get::<String, _>("session_id");
-    let start_block_number = row.get("start_block_number");
-    let number_of_blocks_to_prove = row.get("number_of_blocks_to_prove");
-    let sequence_window = row.get("sequence_window");
-    let prover_address = row.get::<Option<String>, _>("prover_address");
-    let l1_head = row.get::<Option<String>, _>("l1_head");
-    let intermediate_root_interval = row.get("intermediate_root_interval");
-
-    let proof_type = row
-        .get::<Option<&str>, _>("proof_type")
-        .map(|proof_type_str| {
-            ProofType::try_from(proof_type_str).map_err(|e| {
-                sqlx::Error::Protocol(format!("Unknown proof_type '{proof_type_str}': {e}"))
-            })
-        })
-        .transpose()?;
-
-    let api_proof_type = match row.get::<Option<&str>, _>("api_proof_type") {
-        Some(value) => ApiProofType::try_from(value)
-            .map_err(|e| sqlx::Error::Protocol(format!("Unknown api_proof_type '{value}': {e}")))?,
-        None => api_proof_type_for_backend(proof_type),
-    };
-
-    let zk_vm = row
-        .get::<Option<&str>, _>("zk_vm")
-        .map(parse_zk_vm_kind)
-        .transpose()?
-        .or_else(|| fallback_zk_vm_for_request(api_proof_type));
-    let tee_kind = row.get::<Option<&str>, _>("tee_kind").map(parse_tee_kind).transpose()?;
-
-    let request_payload =
-        row.get::<Option<serde_json::Value>, _>("request_payload").unwrap_or_else(|| {
-            ProtocolRequestPayloadParams {
-                session_id: &session_id,
-                start_block_number,
-                number_of_blocks_to_prove,
-                sequence_window,
-                api_proof_type,
-                tee_kind,
-                prover_address: prover_address.as_deref(),
-                l1_head: l1_head.as_deref(),
-                intermediate_root_interval,
-            }
-            .build()
-        });
+    let base = row_to_proof_request(row)?;
 
     let job_status_str: &str = row.get("job_status");
     let job_status = ProofJobStatus::try_from(job_status_str).map_err(|e| {
@@ -1922,12 +1873,12 @@ fn row_to_proof_job(row: &sqlx::postgres::PgRow) -> Result<ProofJob> {
     })?;
 
     Ok(ProofJob {
-        id,
-        session_id,
-        request_payload,
-        api_proof_type,
-        zk_vm,
-        tee_kind,
+        id: base.id,
+        session_id: base.session_id,
+        request_payload: base.request_payload,
+        api_proof_type: base.api_proof_type,
+        zk_vm: base.zk_vm,
+        tee_kind: base.tee_kind,
         job_status,
         attempt: row.get("attempt"),
         worker_id: row.get("worker_id"),
@@ -1935,10 +1886,10 @@ fn row_to_proof_job(row: &sqlx::postgres::PgRow) -> Result<ProofJob> {
         lock_expires_at: row.get("lock_expires_at"),
         claimed_at: row.get("claimed_at"),
         last_heartbeat_at: row.get("last_heartbeat_at"),
-        error_message: row.get("error_message"),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
-        completed_at: row.get("completed_at"),
+        error_message: base.error_message,
+        created_at: base.created_at,
+        updated_at: base.updated_at,
+        completed_at: base.completed_at,
     })
 }
 
