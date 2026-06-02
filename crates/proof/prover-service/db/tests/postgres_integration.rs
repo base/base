@@ -16,10 +16,11 @@
 use std::time::Duration;
 
 use base_prover_service_db::{
-    ApiProofType, ClaimProofJob, CreateProofRequest, CreateProofRequestError,
-    CreateProofRequestOutcome, CreateProofSession, MarkOutboxError, MarkOutboxProcessed,
-    ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType, RetryOutcome,
-    SessionStatus, SessionType, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
+    ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
+    CreateProofRequestError, CreateProofRequestOutcome, CreateProofSession, FailExpiredProofJobs,
+    HeartbeatOutcome, HeartbeatProofJob, MarkOutboxError, MarkOutboxProcessed, ProofJobStatus,
+    ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType, RetryOutcome, SessionStatus,
+    SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
 };
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
@@ -1472,7 +1473,8 @@ async fn drain_claimable_tee_jobs(repo: &ProofRequestRepo) {
     {}
 }
 
-/// Drain every currently claimable compressed job by claiming it under a long lease.
+/// Drain every currently claimable compressed job for tests that need to claim a
+/// freshly inserted ZK request deterministically.
 async fn drain_claimable_compressed_jobs(repo: &ProofRequestRepo) {
     while repo
         .claim_next_proof_job(compressed_claim("drain-zk-worker", u32::MAX))
@@ -1491,6 +1493,10 @@ async fn expire_lock(pool: &PgPool, id: Uuid) {
     .execute(pool)
     .await
     .expect("expire lock should succeed");
+}
+
+fn compressed_result(bytes: Vec<u8>) -> ProtocolProofResult {
+    ProtocolProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: bytes.into() })
 }
 
 #[tokio::test]
@@ -1618,4 +1624,216 @@ async fn test_claim_next_proof_job_expired_lock_lifecycle() {
         repo.claim_next_proof_job(tee_claim("worker-c", 2)).await.unwrap().is_none(),
         "exhausted job must not be reclaimed"
     );
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_heartbeat_proof_job_guards_current_expired_and_reclaimed_locks() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    drain_claimable_tee_jobs(&repo).await;
+    let id = repo.create(tee_request()).await.unwrap();
+    let first = repo
+        .claim_next_proof_job(tee_claim("first-worker", 3))
+        .await
+        .unwrap()
+        .expect("first claim should succeed");
+    assert_eq!(first.id, id);
+    let first_lock = first.lock_id.expect("first claim has lock");
+
+    let updated = repo
+        .heartbeat_proof_job(HeartbeatProofJob {
+            session_id: first.session_id.clone(),
+            lock_id: first_lock,
+            worker_id: "first-worker".to_owned(),
+            lock_duration_seconds: 7200,
+        })
+        .await
+        .unwrap();
+    let HeartbeatOutcome::Updated(updated) = updated else {
+        panic!("heartbeat should update the current lock");
+    };
+    assert_eq!(updated.id, id);
+    assert_eq!(updated.lock_id, Some(first_lock));
+    assert_eq!(updated.worker_id.as_deref(), Some("first-worker"));
+    assert!(updated.lock_expires_at >= first.lock_expires_at);
+
+    let stale = repo
+        .heartbeat_proof_job(HeartbeatProofJob {
+            session_id: first.session_id.clone(),
+            lock_id: Uuid::new_v4(),
+            worker_id: "first-worker".to_owned(),
+            lock_duration_seconds: 7200,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(stale, HeartbeatOutcome::StaleLock(_)));
+
+    expire_lock(&pool, id).await;
+
+    let expired = repo
+        .heartbeat_proof_job(HeartbeatProofJob {
+            session_id: first.session_id.clone(),
+            lock_id: first_lock,
+            worker_id: "first-worker".to_owned(),
+            lock_duration_seconds: 3600,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(expired, HeartbeatOutcome::Expired(_)));
+
+    let second = repo
+        .claim_next_proof_job(tee_claim("second-worker", 3))
+        .await
+        .unwrap()
+        .expect("expired lock should be reclaimed");
+    assert_ne!(second.lock_id, Some(first_lock));
+
+    let stale = repo
+        .heartbeat_proof_job(HeartbeatProofJob {
+            session_id: first.session_id,
+            lock_id: first_lock,
+            worker_id: "first-worker".to_owned(),
+            lock_duration_seconds: 3600,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(stale, HeartbeatOutcome::StaleLock(_)));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_complete_claimed_proof_job_guards_and_stores_result() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let id = repo.create(compressed_request()).await.unwrap();
+    let claimed = repo
+        .claim_next_proof_job(compressed_claim("submit-worker", 3))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    assert_eq!(claimed.id, id);
+    let lock_id = claimed.lock_id.expect("claimed job has lock");
+
+    let stale = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: claimed.session_id.clone(),
+            lock_id: Uuid::new_v4(),
+            worker_id: "submit-worker".to_owned(),
+            result: compressed_result(vec![0xde, 0xad]),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(stale, SubmitProofOutcome::StaleLock(_)));
+    assert!(repo.get(id).await.unwrap().unwrap().result_payload.is_none());
+
+    let result = compressed_result(vec![0xca, 0xfe]);
+    let submitted = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: claimed.session_id.clone(),
+            lock_id,
+            worker_id: "submit-worker".to_owned(),
+            result: result.clone(),
+        })
+        .await
+        .unwrap();
+    let SubmitProofOutcome::Completed(completed) = submitted else {
+        panic!("submit should complete the current claim");
+    };
+    assert_eq!(completed.job_status, ProofJobStatus::Succeeded);
+    assert!(completed.completed_at.is_some());
+
+    let req = repo.get(id).await.unwrap().unwrap();
+    assert_eq!(req.status, ProofStatus::Succeeded);
+    assert_eq!(req.stark_receipt.as_deref(), Some(&[0xca, 0xfe][..]));
+    assert!(req.snark_receipt.is_none());
+    assert_eq!(req.submitted_by_worker_id.as_deref(), Some("submit-worker"));
+    assert_eq!(req.submitted_lock_id, Some(lock_id.to_string()));
+    let stored: ProtocolProofResult =
+        serde_json::from_value(req.result_payload.expect("result payload should be stored"))
+            .expect("stored result should deserialize");
+    assert_eq!(stored, result);
+
+    let duplicate = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: claimed.session_id,
+            lock_id,
+            worker_id: "submit-worker".to_owned(),
+            result: compressed_result(vec![0xba, 0xad]),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(duplicate, SubmitProofOutcome::Terminal(_)));
+    assert_eq!(
+        repo.get(id).await.unwrap().unwrap().stark_receipt.as_deref(),
+        Some(&[0xca, 0xfe][..])
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_fail_expired_proof_jobs_enforces_retry_exhaustion() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    drain_claimable_tee_jobs(&repo).await;
+    let id = repo.create(tee_request()).await.unwrap();
+    let first = repo
+        .claim_next_proof_job(tee_claim("retry-worker-a", 2))
+        .await
+        .unwrap()
+        .expect("first claim should succeed");
+    expire_lock(&pool, id).await;
+
+    let failed = repo
+        .fail_expired_proof_jobs(FailExpiredProofJobs {
+            max_attempts: 2,
+            batch_size: 100,
+            error_message: "worker lock expired after retry budget".to_owned(),
+        })
+        .await
+        .unwrap();
+    assert!(failed.iter().all(|job| job.id != id), "attempt 1 is still under the retry budget");
+
+    let second = repo
+        .claim_next_proof_job(tee_claim("retry-worker-b", 2))
+        .await
+        .unwrap()
+        .expect("second claim should succeed before exhaustion");
+    assert_eq!(second.id, id);
+    assert_eq!(second.attempt, 2);
+    assert_ne!(second.lock_id, first.lock_id);
+    expire_lock(&pool, id).await;
+
+    let failed = repo
+        .fail_expired_proof_jobs(FailExpiredProofJobs {
+            max_attempts: 2,
+            batch_size: 100,
+            error_message: "worker lock expired after retry budget".to_owned(),
+        })
+        .await
+        .unwrap();
+    let job = failed.iter().find(|job| job.id == id).expect("exhausted job should fail");
+    assert_eq!(job.job_status, ProofJobStatus::Failed);
+    assert!(job.completed_at.is_some());
+    assert_eq!(job.error_message.as_deref(), Some("worker lock expired after retry budget"));
+
+    let req = repo.get(id).await.unwrap().unwrap();
+    assert_eq!(req.status, ProofStatus::Failed);
+    assert_eq!(req.error_message.as_deref(), Some("worker lock expired after retry budget"));
+    assert!(req.completed_at.is_some());
+
+    let terminal = repo
+        .heartbeat_proof_job(HeartbeatProofJob {
+            session_id: second.session_id,
+            lock_id: second.lock_id.expect("second claim has lock"),
+            worker_id: "retry-worker-b".to_owned(),
+            lock_duration_seconds: 3600,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(terminal, HeartbeatOutcome::Terminal(_)));
 }

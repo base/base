@@ -582,7 +582,7 @@ pub struct ProofRequestListItem {
 
 /// Worker-visible proof job, combining requester request data with the
 /// worker-owned claim/lock state needed to build a protocol `ProofJob`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofJob {
     /// Internal proof request identifier.
     pub id: Uuid,
@@ -959,6 +959,77 @@ pub struct ClaimProofJob {
     pub lock_duration_seconds: u32,
     /// Reclaim budget: expired claims are only reclaimable while `attempt < max_attempts`.
     pub max_attempts: u32,
+}
+
+/// Parameters for extending the currently owned worker proof job lock.
+#[derive(Debug, Clone)]
+pub struct HeartbeatProofJob {
+    /// Public proof session identifier.
+    pub session_id: String,
+    /// Current worker fencing token.
+    pub lock_id: Uuid,
+    /// Worker identifier that owns the claim.
+    pub worker_id: String,
+    /// Lock duration in seconds. Callers must resolve the server default first.
+    pub lock_duration_seconds: u32,
+}
+
+/// Outcome of attempting to heartbeat a worker proof job.
+#[derive(Debug, Clone)]
+pub enum HeartbeatOutcome {
+    /// The heartbeat succeeded and the returned job has the updated lock expiry.
+    Updated(ProofJob),
+    /// No proof job exists for the supplied `session_id`.
+    NotFound,
+    /// The job exists but is not currently claimed.
+    NotClaimed(ProofJob),
+    /// The supplied `worker_id` or `lock_id` no longer owns the job.
+    StaleLock(ProofJob),
+    /// The supplied lock matched the job, but it had already expired.
+    Expired(ProofJob),
+    /// The job is already terminal.
+    Terminal(ProofJob),
+}
+
+/// Parameters for completing a claimed worker proof job.
+#[derive(Debug, Clone)]
+pub struct CompleteClaimedProofJob {
+    /// Public proof session identifier.
+    pub session_id: String,
+    /// Current worker fencing token.
+    pub lock_id: Uuid,
+    /// Worker identifier that owns the claim.
+    pub worker_id: String,
+    /// Protocol result to store in `result_payload`.
+    pub result: ProtocolProofResult,
+}
+
+/// Outcome of attempting to complete a worker proof job.
+#[derive(Debug, Clone)]
+pub enum SubmitProofOutcome {
+    /// The submit succeeded and the returned job is terminal `SUCCEEDED`.
+    Completed(ProofJob),
+    /// No proof job exists for the supplied `session_id`.
+    NotFound,
+    /// The job exists but is not currently claimed.
+    NotClaimed(ProofJob),
+    /// The supplied `worker_id` or `lock_id` no longer owns the job.
+    StaleLock(ProofJob),
+    /// The supplied lock matched the job, but it had already expired.
+    Expired(ProofJob),
+    /// The job is already terminal.
+    Terminal(ProofJob),
+}
+
+/// Parameters for terminally failing expired worker jobs that exhausted attempts.
+#[derive(Debug, Clone)]
+pub struct FailExpiredProofJobs {
+    /// Jobs with `attempt >= max_attempts` are failed once their lock has expired.
+    pub max_attempts: u32,
+    /// Maximum number of expired jobs to fail in this batch.
+    pub batch_size: u32,
+    /// Error message stored on newly failed jobs.
+    pub error_message: String,
 }
 
 /// Outbox entry for reliable task processing

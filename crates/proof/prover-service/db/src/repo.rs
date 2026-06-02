@@ -1,15 +1,17 @@
 use base_prover_service_protocol::{
     ProofResult as ProtocolProofResult, SnarkGroth16ProofResult, ZkProofResult, ZkVm,
 };
+use chrono::Utc;
 use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
-    ApiProofType, ClaimProofJob, CompleteProofResult, CreateOutboxEntry, CreateProofRequest,
-    CreateProofRequestError, CreateProofRequestOutcome, CreateProofRequestValidationError,
-    CreateProofSession, MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofJob,
-    ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession,
-    ProofStatus, ProofType, RetryOutcome, SessionStatus, SessionType, TeeKind, UpdateProofSession,
+    ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CompleteProofResult, CreateOutboxEntry,
+    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
+    CreateProofRequestValidationError, CreateProofSession, FailExpiredProofJobs, HeartbeatOutcome,
+    HeartbeatProofJob, MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofJob, ProofJobStatus,
+    ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession, ProofStatus, ProofType,
+    RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession,
     UpdateReceipt, ZkVmKind, canonical_session_id,
 };
 
@@ -583,6 +585,192 @@ impl ProofRequestRepo {
             .await?;
 
         row.as_ref().map(row_to_proof_job).transpose()
+    }
+
+    /// Fetch a worker-visible proof job by protocol `session_id`.
+    pub async fn get_proof_job_by_session_id(&self, session_id: &str) -> Result<Option<ProofJob>> {
+        let columns = PROOF_JOB_RETURNING_COLUMNS;
+        let sql = format!(
+            r#"
+            SELECT {columns}
+            FROM proof_requests
+            WHERE COALESCE(session_id, id::text) = $1
+            "#
+        );
+
+        let row = sqlx::query(&sql).bind(session_id).fetch_optional(&self.pool).await?;
+
+        row.as_ref().map(row_to_proof_job).transpose()
+    }
+
+    /// Extend the lock for the currently owned worker proof job (`heartbeat`).
+    ///
+    /// The update is guarded by `session_id`, `job_status = 'CLAIMED'`, `lock_id`,
+    /// `worker_id`, and an unexpired `lock_expires_at`. A stale worker cannot
+    /// revive an expired or reclaimed job because the update only succeeds for the
+    /// current fencing token.
+    pub async fn heartbeat_proof_job(&self, req: HeartbeatProofJob) -> Result<HeartbeatOutcome> {
+        let columns = PROOF_JOB_RETURNING_COLUMNS;
+        let sql = format!(
+            r#"
+            UPDATE proof_requests
+            SET last_heartbeat_at = NOW(),
+                lock_expires_at = NOW() + ($4)::double precision * INTERVAL '1 second'
+            WHERE COALESCE(session_id, id::text) = $1
+              AND job_status = 'CLAIMED'
+              AND lock_id = $2
+              AND worker_id = $3
+              AND lock_expires_at > NOW()
+            RETURNING {columns}
+            "#
+        );
+
+        let row = sqlx::query(&sql)
+            .bind(&req.session_id)
+            .bind(req.lock_id)
+            .bind(&req.worker_id)
+            .bind(i64::from(req.lock_duration_seconds))
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = row {
+            return row_to_proof_job(&row).map(HeartbeatOutcome::Updated);
+        }
+
+        let Some(job) = self.get_proof_job_by_session_id(&req.session_id).await? else {
+            return Ok(HeartbeatOutcome::NotFound);
+        };
+
+        if matches!(job.job_status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
+            return Ok(HeartbeatOutcome::Terminal(job));
+        }
+        if job.job_status != ProofJobStatus::Claimed {
+            return Ok(HeartbeatOutcome::NotClaimed(job));
+        }
+        if job.lock_id != Some(req.lock_id) || job.worker_id.as_deref() != Some(&req.worker_id) {
+            return Ok(HeartbeatOutcome::StaleLock(job));
+        }
+        if job.lock_expires_at.is_none_or(|expires_at| expires_at <= Utc::now()) {
+            return Ok(HeartbeatOutcome::Expired(job));
+        }
+
+        // Timing-window fallback between database time and app diagnostics.
+        Ok(HeartbeatOutcome::StaleLock(job))
+    }
+
+    /// Complete the currently owned worker proof job (`submitProof`).
+    ///
+    /// The ownership guard matches [`Self::heartbeat_proof_job`]. On success the
+    /// worker job and requester proof both transition to `SUCCEEDED`,
+    /// `result_payload` stores the protocol result, and ZK results are mirrored
+    /// into legacy receipt columns for compatibility.
+    pub async fn complete_claimed_proof_job(
+        &self,
+        req: CompleteClaimedProofJob,
+    ) -> Result<SubmitProofOutcome> {
+        let result_payload =
+            serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+        let (stark_receipt, snark_receipt) = compatibility_receipts_for_result(&req.result);
+        let submitted_lock_id = req.lock_id.to_string();
+        let columns = PROOF_JOB_RETURNING_COLUMNS;
+        let sql = format!(
+            r#"
+            UPDATE proof_requests
+            SET job_status = 'SUCCEEDED',
+                status = 'SUCCEEDED',
+                result_payload = $4,
+                submitted_by_worker_id = $3,
+                submitted_lock_id = $5,
+                stark_receipt = COALESCE($6, stark_receipt),
+                snark_receipt = COALESCE($7, snark_receipt),
+                error_message = NULL,
+                completed_at = NOW()
+            WHERE COALESCE(session_id, id::text) = $1
+              AND job_status = 'CLAIMED'
+              AND lock_id = $2
+              AND worker_id = $3
+              AND lock_expires_at > NOW()
+            RETURNING {columns}
+            "#
+        );
+
+        let row = sqlx::query(&sql)
+            .bind(&req.session_id)
+            .bind(req.lock_id)
+            .bind(&req.worker_id)
+            .bind(&result_payload)
+            .bind(&submitted_lock_id)
+            .bind(&stark_receipt)
+            .bind(&snark_receipt)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = row {
+            return row_to_proof_job(&row).map(SubmitProofOutcome::Completed);
+        }
+
+        let Some(job) = self.get_proof_job_by_session_id(&req.session_id).await? else {
+            return Ok(SubmitProofOutcome::NotFound);
+        };
+
+        if matches!(job.job_status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
+            return Ok(SubmitProofOutcome::Terminal(job));
+        }
+        if job.job_status != ProofJobStatus::Claimed {
+            return Ok(SubmitProofOutcome::NotClaimed(job));
+        }
+        if job.lock_id != Some(req.lock_id) || job.worker_id.as_deref() != Some(&req.worker_id) {
+            return Ok(SubmitProofOutcome::StaleLock(job));
+        }
+        if job.lock_expires_at.is_none_or(|expires_at| expires_at <= Utc::now()) {
+            return Ok(SubmitProofOutcome::Expired(job));
+        }
+
+        // Timing-window fallback between database time and app diagnostics.
+        Ok(SubmitProofOutcome::StaleLock(job))
+    }
+
+    /// Terminally fail expired worker jobs that have exhausted their claim attempts.
+    ///
+    /// Worker execution failure is represented by lock expiry. Jobs remain
+    /// reclaimable while `attempt < max_attempts`; once an expired claim reaches
+    /// the budget, this reaper transition marks both the worker job and requester
+    /// proof `FAILED` and stores `error_message`. The update is batched and uses
+    /// `FOR UPDATE SKIP LOCKED` to avoid locking the full expired backlog.
+    pub async fn fail_expired_proof_jobs(
+        &self,
+        req: FailExpiredProofJobs,
+    ) -> Result<Vec<ProofJob>> {
+        let columns = PROOF_JOB_RETURNING_COLUMNS;
+        let sql = format!(
+            r#"
+            UPDATE proof_requests
+            SET job_status = 'FAILED',
+                status = 'FAILED',
+                error_message = $2,
+                completed_at = NOW()
+            WHERE id IN (
+                SELECT id
+                FROM proof_requests
+                WHERE job_status = 'CLAIMED'
+                  AND lock_expires_at < NOW()
+                  AND attempt >= $1
+                ORDER BY lock_expires_at ASC, start_block_number ASC, created_at ASC, id ASC
+                LIMIT $3
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING {columns}
+            "#
+        );
+
+        let rows = sqlx::query(&sql)
+            .bind(i64::from(req.max_attempts))
+            .bind(&req.error_message)
+            .bind(i64::from(req.batch_size))
+            .fetch_all(&self.pool)
+            .await?;
+
+        rows.iter().map(row_to_proof_job).collect()
     }
 
     /// Retry a stuck PENDING request if under the retry limit, otherwise fail it permanently.
