@@ -6,7 +6,7 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant, IB20Factory,
+    B20FactoryStorage, B20Variant, IB20Factory,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
