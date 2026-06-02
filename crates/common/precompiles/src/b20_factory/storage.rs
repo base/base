@@ -1177,7 +1177,7 @@ mod tests {
     }
 
     #[test]
-    fn b20created_default_variant_emits_empty_variant_params() {
+    fn b20created_asset_variant_emits_empty_variant_params() {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
         let call = IB20Factory::createB20Call {
@@ -1204,7 +1204,7 @@ mod tests {
             .iter()
             .find_map(|l| IB20Factory::B20Created::decode_log_data(l).ok())
             .expect("B20Created must be emitted");
-        assert!(event.variantParams.is_empty(), "SECURITY variantParams must be empty");
+        assert!(event.variantParams.is_empty(), "ASSET variantParams must be empty");
     }
 
     #[test]
@@ -1240,6 +1240,7 @@ mod tests {
         assert_eq!(params.version, super::B20_STABLECOIN_EVENT_PARAMS_VERSION);
         assert_eq!(params.currency, "USD");
     }
+<<<<<<< HEAD
 
     #[test]
     fn b20created_security_variant_emits_empty_variant_params() {
@@ -1293,4 +1294,6 @@ mod tests {
             );
         });
     }
+=======
+>>>>>>> 305d4cd8a (fix(b20-factory): address review comments from PR 3145 (BOP-242 follow-up))
 }

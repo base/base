@@ -63,13 +63,13 @@ impl BerylTestEnv {
     /// Gas limit used for B-20 staticcall probe transactions.
     pub(crate) const B20_PROBE_GAS_LIMIT: u64 = 1_000_000;
 
-    /// Fixed decimals for the default B-20 token variant.
+    /// Fixed decimals for the asset B-20 token variant.
     pub(crate) const B20_DECIMALS: u8 = 6;
 
-    /// Name for the default B-20 token variant.
+    /// Name for the asset B-20 token variant.
     pub(crate) const B20_NAME: &str = "Action B20";
 
-    /// Symbol for the default B-20 token variant.
+    /// Symbol for the asset B-20 token variant.
     pub(crate) const B20_SYMBOL: &str = "AB20";
 
     /// Fixed decimals for the stablecoin B-20 token variant.
