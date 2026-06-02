@@ -551,4 +551,26 @@ mod tests {
 
         assert_eq!(err, expected_update_policy_error(setup, invalid_scope));
     }
+
+    /// Caller holding only `OPERATOR_ROLE` must be denied `updateExtraMetadata`.
+    ///
+    /// This guards against regressions where `ensure_metadata_role` is accidentally
+    /// reverted to `ensure_operator_role`, collapsing the two distinct capabilities.
+    #[test]
+    fn update_extra_metadata_requires_metadata_role_not_operator_role() {
+        let mut token = make_token();
+        token.accounting_mut().roles.insert((TestSecurityToken::OPERATOR_ROLE, CALLER), true);
+
+        let err = token
+            .update_extra_metadata(CALLER, "ISIN".to_string(), "US0000000000".to_string(), false)
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: CALLER,
+                neededRole: TestSecurityToken::METADATA_ROLE,
+            })
+        );
+    }
 }
