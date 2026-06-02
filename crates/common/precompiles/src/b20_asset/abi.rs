@@ -22,9 +22,6 @@ sol! {
         /// A batched function was called with empty arrays.
         error EmptyBatch();
 
-        /// `redeem`/`redeemWithMemo` was called with a scaled amount below the floor, or zero.
-        error BelowMinimumRedeemable(uint256 scaledAmount, uint256 minimum);
-
         /// An `internalCalls` entry tried to invoke `announce` itself.
         error AnnouncementInProgress();
 
@@ -38,9 +35,6 @@ sol! {
 
         /// Emitted by `redeem`/`redeemWithMemo`. Includes the active multiplier at redemption time.
         event Redeemed(address indexed from, uint256 amt, uint256 multiplier);
-
-        /// Emitted by `updateMinimumRedeemable`.
-        event MinimumRedeemableUpdated(address indexed caller, uint256 newMinimumRedeemable);
 
         /// Emitted by `updateMultiplier`.
         event MultiplierUpdated(uint256 multiplier);
@@ -102,17 +96,11 @@ sol! {
 
         // ── Redemption ────────────────────────────────────────────────────────
 
-        /// Burns `amount` from caller with a multiplier-scaled minimum floor check.
+        /// Burns `amount` from caller.
         function redeem(uint256 amount) external;
 
         /// Same as `redeem`, followed by a `Memo` event.
         function redeemWithMemo(uint256 amount, bytes32 memo) external;
-
-        /// Sets the minimum-redeemable threshold in scaled units. Requires `DEFAULT_ADMIN_ROLE`.
-        function updateMinimumRedeemable(uint256 newMinimumRedeemable) external;
-
-        /// Returns the minimum-redeemable threshold in scaled units.
-        function minimumRedeemable() external view returns (uint256);
 
         // ── Asset metadata ──────────────────────────────────────────────────
 
@@ -144,8 +132,6 @@ impl IB20Asset::IB20AssetCalls {
             Self::batchMint(_) => "precompile-b20-asset-batchMint",
             Self::redeem(_) => "precompile-b20-asset-redeem",
             Self::redeemWithMemo(_) => "precompile-b20-asset-redeemWithMemo",
-            Self::updateMinimumRedeemable(_) => "precompile-b20-asset-updateMinimumRedeemable",
-            Self::minimumRedeemable(_) => "precompile-b20-asset-minimumRedeemable",
             Self::extraMetadata(_) => "precompile-b20-asset-extraMetadata",
             Self::updateExtraMetadata(_) => "precompile-b20-asset-updateExtraMetadata",
         }
@@ -154,8 +140,8 @@ impl IB20Asset::IB20AssetCalls {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{U256, b256, keccak256};
-    use alloy_sol_types::{SolCall, SolEvent};
+    use alloy_primitives::U256;
+    use alloy_sol_types::SolCall;
 
     use crate::IB20Asset;
 
@@ -164,25 +150,7 @@ mod tests {
         assert_eq!(IB20Asset::REDEEM_SENDER_POLICYCall::SELECTOR, [0x1c, 0x6f, 0x9d, 0x42]);
     }
 
-    #[test]
-    fn minimum_redeemable_updated_topic_matches_solidity_interface() {
-        assert_eq!(
-            IB20Asset::MinimumRedeemableUpdated::SIGNATURE_HASH,
-            b256!("7fdd6ea6dad98bfcd2c5ec538e748a5e8ecc40d0fc824f55dfc7397fe78a183b")
-        );
-        assert_eq!(
-            IB20Asset::MinimumRedeemableUpdated::SIGNATURE_HASH,
-            keccak256("MinimumRedeemableUpdated(address,uint256)")
-        );
-    }
-
-    #[test]
     fn asset_call_labels_are_stable() {
-        assert_eq!(
-            IB20Asset::IB20AssetCalls::minimumRedeemable(IB20Asset::minimumRedeemableCall {},)
-                .as_label(),
-            "precompile-b20-asset-minimumRedeemable"
-        );
         assert_eq!(
             IB20Asset::IB20AssetCalls::redeem(IB20Asset::redeemCall { amount: U256::ZERO })
                 .as_label(),

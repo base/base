@@ -353,19 +353,6 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
                 }
             }
 
-            fn minimum_redeemable(
-                &self,
-            ) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {
-                self.redeem.minimum_redeemable()
-            }
-
-            fn set_minimum_redeemable(
-                &mut self,
-                minimum: ::alloy_primitives::U256,
-            ) -> ::base_precompile_storage::Result<()> {
-                self.redeem.set_minimum_redeemable(minimum)
-            }
-
             fn is_announcement_id_used(
                 &self,
                 id: &str,

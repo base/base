@@ -2,7 +2,7 @@
 
 use alloc::string::String;
 
-use alloy_primitives::{Address, B256, FixedBytes, U256, b256};
+use alloy_primitives::{Address, B256, U256, b256};
 use base_precompile_macros::{AssetAccounting, Storable, TokenAccounting, contract};
 use base_precompile_storage::{Handler, Mapping, Result, StorageCtx};
 
@@ -26,16 +26,10 @@ pub struct B20AssetExtensionStorage {
 #[derive(Debug, Clone, Storable)]
 #[namespace("base.b20.redeem")]
 pub struct B20RedeemStorage {
-    /// Minimum scaled amount required for a redeem operation.
+    /// Policy ID controlling who can redeem tokens.
     #[accessor]
     #[mutator]
-    pub minimum_redeemable: U256, // offset 0
-    /// Redeem sender policy ID.
-    #[accessor]
-    #[mutator]
-    pub redeem_sender_policy_id: u64, // slot 1, offset 0
-    /// Reserved padding to fill the remainder of slot 1.
-    pub redeem_reserved: FixedBytes<24>, // slot 1, offset 8 (fills remaining 24 bytes)
+    pub redeem_sender_policy_id: u64,
 }
 
 /// EVM-backed storage for an asset B-20 token.
@@ -60,10 +54,6 @@ pub struct B20AssetInit {
     pub supply_cap: U256,
     /// Initial multiplier at WAD precision.
     pub multiplier: U256,
-    /// ISIN identifier stored under the `"ISIN"` key.
-    pub isin: String,
-    /// Minimum redeemable amount; `0` allows any non-zero redemption.
-    pub minimum_redeemable: U256,
 }
 
 impl<'a> B20AssetStorage<'a> {
@@ -79,9 +69,6 @@ impl<'a> B20AssetStorage<'a> {
 
     /// Writes all creation-time fields atomically.
     ///
-    /// `isin` may be empty; when non-empty it is stored under the `"ISIN"` key
-    /// in the asset metadata mapping.
-    ///
     /// `REDEEM_SENDER_POLICY` is initialised to `ALWAYS_BLOCK_ID` so redemption
     /// is closed by default; issuers must explicitly open it after creation.
     pub fn initialize(&mut self, init: B20AssetInit) -> Result<()> {
@@ -89,10 +76,6 @@ impl<'a> B20AssetStorage<'a> {
         self.b20.symbol.write(init.symbol)?;
         self.b20.supply_cap.write(init.supply_cap)?;
         self.asset.multiplier.write(init.multiplier)?;
-        self.redeem.minimum_redeemable.write(init.minimum_redeemable)?;
-        if !init.isin.is_empty() {
-            self.asset.identifiers.at_mut(&String::from("ISIN")).write(init.isin)?;
-        }
         self.write_redeem_policy_ids_default()?;
         Ok(())
     }
@@ -157,8 +140,7 @@ mod tests {
             1
         );
         assert_eq!(__packing_b20_asset_extension_storage::IDENTIFIERS_LOC.offset_slots, 2);
-        assert_eq!(__packing_b20_redeem_storage::MINIMUM_REDEEMABLE_LOC.offset_slots, 0);
-        assert_eq!(__packing_b20_redeem_storage::REDEEM_SENDER_POLICY_ID_LOC.offset_slots, 1);
+        assert_eq!(__packing_b20_redeem_storage::REDEEM_SENDER_POLICY_ID_LOC.offset_slots, 0);
         assert_eq!(__packing_b20_redeem_storage::REDEEM_SENDER_POLICY_ID_LOC.offset_bytes, 0);
     }
 
@@ -209,7 +191,6 @@ mod tests {
                 .at_mut(&identifier_type)
                 .write(identifier_value.clone())
                 .unwrap();
-            token.redeem.minimum_redeemable.write(U256::from(10u64)).unwrap();
 
             let announcement_slot = ASSET_ROOT
                 + U256::from(
@@ -217,8 +198,6 @@ mod tests {
                 );
             let identifiers_slot = ASSET_ROOT
                 + U256::from(__packing_b20_asset_extension_storage::IDENTIFIERS_LOC.offset_slots);
-            let minimum_slot = REDEEM_ROOT
-                + U256::from(__packing_b20_redeem_storage::MINIMUM_REDEEMABLE_LOC.offset_slots);
 
             assert_eq!(
                 ctx.sload(TOKEN, announcement_id.mapping_slot(announcement_slot)).unwrap(),
@@ -228,7 +207,6 @@ mod tests {
                 ctx.sload(TOKEN, identifier_type.mapping_slot(identifiers_slot)).unwrap(),
                 short_string_word(&identifier_value)
             );
-            assert_eq!(ctx.sload(TOKEN, minimum_slot).unwrap(), U256::from(10u64));
         });
     }
 
@@ -267,8 +245,6 @@ mod tests {
                     symbol: String::from("TST"),
                     supply_cap: U256::from(1_000_000u64),
                     multiplier: B20AssetStorage::WAD,
-                    isin: String::new(),
-                    minimum_redeemable: U256::ZERO,
                 })
                 .unwrap();
 

@@ -214,23 +214,6 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         )
     }
 
-    // --- Minimum Redeemable Operations ---
-
-    /// Updates the minimum redeemable amount.
-    pub fn update_minimum_redeemable(
-        &mut self,
-        caller: Address,
-        new_minimum: U256,
-        privileged: bool,
-    ) -> Result<()> {
-        self.ensure_default_admin(caller, privileged)?;
-        self.accounting_mut().set_minimum_redeemable(new_minimum)?;
-        self.accounting_mut().emit_event(
-            IB20Asset::MinimumRedeemableUpdated { caller, newMinimumRedeemable: new_minimum }
-                .encode_log_data(),
-        )
-    }
-
     // --- Asset Metadata Operations ---
 
     /// Updates an asset metadata value.
@@ -272,23 +255,11 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         self.emit_redeemed(caller, amount, multiplier)
     }
 
-    /// Performs the shared asset redeem burn and returns the multiplier used for the floor check.
+    /// Performs the shared asset redeem burn and returns the multiplier.
     fn asset_redeem_burn(&mut self, caller: Address, amount: U256) -> Result<U256> {
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::REDEEM)?;
         B20Guards::ensure_policy::<Self>(self, Self::REDEEM_SENDER_POLICY, caller)?;
         let multiplier = self.accounting().multiplier()?;
-        if !amount.is_zero() {
-            let scaled =
-                amount.checked_mul(multiplier).ok_or_else(BasePrecompileError::under_overflow)?
-                    / B20AssetStorage::WAD;
-            let minimum = self.accounting().minimum_redeemable()?;
-            if scaled == U256::ZERO || scaled < minimum {
-                return Err(BasePrecompileError::revert(IB20Asset::BelowMinimumRedeemable {
-                    scaledAmount: scaled,
-                    minimum,
-                }));
-            }
-        }
         let balance = self.accounting().balance_of(caller)?;
         if balance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
@@ -470,7 +441,6 @@ mod tests {
                     TestAssetToken::REDEEM_SENDER_POLICY,
                     PolicyRegistryStorage::ALWAYS_ALLOW_ID,
                 );
-                accounting.minimum_redeemable = U256::from(1u64);
                 accounting.balances.insert(CALLER, U256::from(5u64));
             }
         }

@@ -22,11 +22,6 @@ pub trait AssetAccounting: TokenAccounting {
     /// Writes (or removes when `value` is empty) the asset metadata for `identifier_type`.
     fn set_extra_metadata_value(&mut self, identifier_type: &str, value: String) -> Result<()>;
 
-    /// Returns the minimum amount that may be redeemed in a single call.
-    fn minimum_redeemable(&self) -> Result<U256>;
-    /// Overwrites the minimum redeemable amount.
-    fn set_minimum_redeemable(&mut self, minimum: U256) -> Result<()>;
-
     /// Returns `true` if `id` has been consumed by `announce`.
     fn is_announcement_id_used(&self, id: &str) -> Result<bool>;
     /// Marks `id` as consumed. Called exactly once per announcement id.

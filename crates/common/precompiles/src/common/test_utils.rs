@@ -47,14 +47,10 @@ pub struct InMemoryTokenAccounting {
     pub decimals: u8,
     /// Stablecoin currency identifier.
     pub currency: String,
-    /// Asset ISIN identifier (legacy field; prefer `extra_metadata` map for asset tokens).
-    pub asset_isin: String,
     /// Bitmask of active pause vectors.
     pub paused: U256,
     /// Per-account EIP-2612 nonces.
     pub nonces: HashMap<Address, U256>,
-    /// Minimum amount required for a redeem operation.
-    pub minimum_redeemable: U256,
     /// URI pointing to the contract-level metadata.
     pub contract_uri: String,
     /// Role membership keyed by `(role, account)`.
@@ -89,10 +85,8 @@ impl InMemoryTokenAccounting {
             symbol: String::new(),
             decimals: 18,
             currency: String::new(),
-            asset_isin: String::new(),
             paused: U256::ZERO,
             nonces: HashMap::new(),
-            minimum_redeemable: U256::ZERO,
             contract_uri: String::new(),
             roles: HashMap::new(),
             role_member_counts: HashMap::new(),
@@ -397,10 +391,7 @@ impl AssetAccounting for InMemoryTokenAccounting {
     }
 
     fn extra_metadata(&self, identifier_type: &str) -> Result<String> {
-        if let Some(val) = self.extra_metadata.get(identifier_type) {
-            return Ok(val.clone());
-        }
-        if identifier_type == "ISIN" { Ok(self.asset_isin.clone()) } else { Ok(String::new()) }
+        Ok(self.extra_metadata.get(identifier_type).cloned().unwrap_or_default())
     }
 
     fn set_extra_metadata_value(&mut self, identifier_type: &str, value: String) -> Result<()> {
@@ -409,15 +400,6 @@ impl AssetAccounting for InMemoryTokenAccounting {
         } else {
             self.extra_metadata.insert(identifier_type.to_owned(), value);
         }
-        Ok(())
-    }
-
-    fn minimum_redeemable(&self) -> Result<U256> {
-        Ok(self.minimum_redeemable)
-    }
-
-    fn set_minimum_redeemable(&mut self, minimum: U256) -> Result<()> {
-        self.minimum_redeemable = minimum;
         Ok(())
     }
 

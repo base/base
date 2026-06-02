@@ -267,8 +267,6 @@ impl TokenCreateParams {
                         symbol: p.symbol,
                         supply_cap: DEFAULT_SUPPLY_CAP,
                         multiplier: INITIAL_MULTIPLIER,
-                        isin: p.isin,
-                        minimum_redeemable: p.minimumRedeemable,
                     },
                 })
             }
@@ -302,7 +300,7 @@ impl TokenCreateParams {
 
     /// Validates asset-token initialization fields.
     pub const fn validate_asset(_init: &B20AssetInit) -> Result<()> {
-        // isin is optional — empty string is accepted.
+        // Asset initialization currently has no additional factory-side validation.
         Ok(())
     }
 
@@ -745,8 +743,7 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_create_asset_token_stores_isin_and_ratio() {
+    fn test_create_asset_token_sets_multiplier() {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
@@ -781,12 +778,6 @@ mod tests {
             assert_eq!(asset_storage.b20.symbol.read().unwrap(), "AST");
             assert_eq!(asset_storage.decimals().unwrap(), 6);
             assert_eq!(asset_storage.asset.multiplier.read().unwrap(), U256::ZERO);
-            assert_eq!(asset_storage.redeem.minimum_redeemable.read().unwrap(), U256::ONE);
-            // ISIN is stored in the identifiers mapping under the raw "ISIN" key.
-            assert_eq!(
-                asset_storage.asset.identifiers.at(&String::from("ISIN")).read().unwrap(),
-                "US0000000000"
-            );
         });
     }
 
