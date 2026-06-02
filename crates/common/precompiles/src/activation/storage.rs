@@ -31,7 +31,7 @@ pub enum ActivationFeature {
     PolicyRegistry,
     /// `keccak256("base.b20_stablecoin")`
     B20Stablecoin,
-    /// `keccak256("base.b20_security")`
+    /// `keccak256("base.b20_assets")`
     B20Asset,
 }
 
@@ -52,7 +52,7 @@ impl ActivationFeature {
                 b256!("0xecfa0def2c10020caaf65e6155aa69c84b24892aaef76eeac52e0e2b3a0b8601")
             }
             Self::B20Asset => {
-                b256!("0x83d32fab502ae0e8bc4352a117767262cb5e47cc8d67a744008ed4ff03fcf5e6")
+                b256!("0xd6299a9639c8f99e1d9bcd1622e04ab0a33ebe89dbfc7dca6902e2805f158759")
             }
         }
     }
@@ -285,7 +285,7 @@ mod tests {
         assert_eq!(ActivationFeature::B20Factory.id(), keccak256("base.b20_factory"));
         assert_eq!(ActivationFeature::PolicyRegistry.id(), keccak256("base.policy_registry"));
         assert_eq!(ActivationFeature::B20Stablecoin.id(), keccak256("base.b20_stablecoin"));
-        assert_eq!(ActivationFeature::B20Asset.id(), keccak256("base.b20_security"));
+        assert_eq!(ActivationFeature::B20Asset.id(), keccak256("base.b20_assets"));
     }
 
     #[test]

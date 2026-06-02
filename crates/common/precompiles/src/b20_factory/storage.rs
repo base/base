@@ -1430,7 +1430,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
             let result = factory.create_b20(caller, call);
-            assert!(result.is_err(), "create_b20 must revert when B20Security is deactivated");
+            assert!(result.is_err(), "create_b20 must revert when B20Asset is deactivated");
         });
     }
 
