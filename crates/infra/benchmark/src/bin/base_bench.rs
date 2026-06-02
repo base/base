@@ -1,5 +1,6 @@
 //! CLI entry point for the `base-bench` benchmark orchestrator.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -11,7 +12,8 @@ use tracing::error;
     about = "Base EL benchmark orchestrator",
     long_about = "Runs a configurable benchmark against a Base EL node. \
                   All arguments are optional: with no arguments, runs the built-in \
-                  ERC-20 transfer benchmark on a fresh devnet and writes results to ./results/."
+                  ERC-20 transfer benchmark on a fresh devnet and writes results to ./results/.\n\n\
+                  Use --tags key=value,key2=value2 to attach metadata tags to each run."
 )]
 struct Cli {
     /// Path to a benchmark YAML config file.
@@ -52,6 +54,10 @@ struct Cli {
 
     #[arg(long, env = "BASE_BENCH_FILE_SYSTEM")]
     file_system: Option<String>,
+
+    /// Comma-separated key=value tags attached to every run (e.g. `env=ci,pr=123`).
+    #[arg(long, env = "BASE_BENCH_TAGS")]
+    tags: Option<String>,
 }
 
 impl Cli {
@@ -144,6 +150,25 @@ async fn main() {
 
     let snapshot_dir = cli.root_dir.join("snapshots");
 
+    let git_info = base_benchmark::GitInfo::from_cwd();
+    let run_group_id = base_benchmark::random_id();
+
+    let tags: HashMap<String, String> = cli
+        .tags
+        .as_deref()
+        .map(|s| {
+            s.split(',')
+                .filter_map(|kv| {
+                    let mut p = kv.splitn(2, '=');
+                    Some((
+                        p.next()?.trim().to_string(),
+                        p.next()?.trim().to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let args = base_benchmark::BenchmarkArgs {
         config,
         config_path,
@@ -153,6 +178,9 @@ async fn main() {
         load_test_bin,
         prefund_key,
         snapshot_dir,
+        run_group_id,
+        git_info,
+        tags,
     };
 
     if let Err(e) = base_benchmark::run_benchmark(args).await {

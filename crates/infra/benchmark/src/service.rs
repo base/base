@@ -1,11 +1,13 @@
 //! Top-level entry point: parse config, create runner, report results.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use tracing::info;
 
 use crate::config::BenchmarkConfig;
 use crate::error::BenchmarkError;
+use crate::git::GitInfo;
 use crate::runner::{NetworkBenchmark, RunnerOptions};
 
 /// The embedded default benchmark config (ERC-20 transfers on a fresh devnet).
@@ -35,6 +37,12 @@ pub struct BenchmarkArgs {
     pub prefund_key: String,
     /// Directory for cached snapshots.
     pub snapshot_dir: PathBuf,
+    /// Unique identifier grouping all runs in this invocation.
+    pub run_group_id: String,
+    /// Git commit and branch at process startup.
+    pub git_info: GitInfo,
+    /// User-supplied key-value tags from `--tags`.
+    pub tags: HashMap<String, String>,
 }
 
 /// Run all benchmark entries from the pre-parsed config and log results.
@@ -49,6 +57,9 @@ pub async fn run_benchmark(args: BenchmarkArgs) -> Result<(), BenchmarkError> {
         config_path: args.config_path,
         output_dir: args.output_dir.clone(),
         prefund_key: args.prefund_key,
+        run_group_id: args.run_group_id,
+        git_info: args.git_info,
+        tags: args.tags,
     };
 
     let mut runner = NetworkBenchmark::new(args.config, options, args.snapshot_dir);
@@ -86,6 +97,9 @@ mod tests {
             load_test_bin: PathBuf::from("/bin/load-test"),
             prefund_key: "0xdeadbeef".into(),
             snapshot_dir: PathBuf::from("/tmp/snapshots"),
+            run_group_id: "test-group-1".into(),
+            git_info: GitInfo { sha: "abc123".into(), branch: "main".into() },
+            tags: HashMap::new(),
         };
         assert_eq!(args.config_path, Some(PathBuf::from("/tmp/config.yaml")));
     }

@@ -1,7 +1,7 @@
 //! Output directory management, file helpers, and random ID generation.
 
 use std::collections::HashMap;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -9,6 +9,7 @@ use chrono::{SecondsFormat, Utc};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use rand::Rng;
+use serde::Serialize;
 use serde_json::json;
 use tracing::warn;
 
@@ -102,6 +103,21 @@ pub fn write_metrics_file(
     Ok(())
 }
 
+/// Git/group/tag context passed alongside each metadata write.
+#[derive(Debug)]
+pub struct RunContext<'a> {
+    /// Invocation-level group identifier.
+    pub run_group_id: &'a str,
+    /// Git commit SHA.
+    pub git_sha: &'a str,
+    /// Git branch name.
+    pub git_branch: &'a str,
+    /// Global user-supplied tags.
+    pub global_tags: &'a HashMap<String, String>,
+    /// Whether the run passed all thresholds.
+    pub success: bool,
+}
+
 /// Write a `metadata.json` summarising the run, config, and metrics.
 pub fn write_metadata_json(
     output_dir: &Path,
@@ -110,7 +126,7 @@ pub fn write_metadata_json(
     config: &BenchmarkConfig,
     sequencer_metrics: &[BlockMetrics],
     validator_metrics: &[BlockMetrics],
-    success: bool,
+    ctx: &RunContext<'_>,
 ) -> Result<(), BenchmarkError> {
     let gas_limit = config.gas_limit.unwrap_or(30_000_000);
     let output_dir_name = output_dir
@@ -139,16 +155,25 @@ pub fn write_metadata_json(
         test_config.insert(key.clone(), json!(value));
     }
 
+    let mut merged_tags = ctx.global_tags.clone();
+    for (key, value) in &run.definition.tags {
+        merged_tags.insert(key.clone(), value.clone());
+    }
+
     let metadata = json!({
         "runs": [{
             "id": run.id,
+            "runGroupId": ctx.run_group_id,
+            "gitSha": ctx.git_sha,
+            "gitBranch": ctx.git_branch,
+            "tags": merged_tags,
             "sourceFile": source_file,
             "outputDir": output_dir_name,
             "testName": config.name,
             "testDescription": config.description.clone().unwrap_or_default(),
             "testConfig": test_config,
             "result": {
-                "success": success,
+                "success": ctx.success,
                 "complete": true,
                 "sequencerMetrics": {
                     "gasPerSecond": average_metric(sequencer_metrics, GAS_PER_SECOND),
@@ -174,7 +199,8 @@ pub fn write_metadata_json(
     Ok(())
 }
 
-fn average_metric(metrics: &[BlockMetrics], metric_name: &str) -> f64 {
+/// Compute the arithmetic mean of a named metric across all blocks.
+pub fn average_metric(metrics: &[BlockMetrics], metric_name: &str) -> f64 {
     let values: Vec<f64> = metrics
         .iter()
         .filter_map(|entry| entry.execution_metrics.get(metric_name).copied())
@@ -186,8 +212,54 @@ fn average_metric(metrics: &[BlockMetrics], metric_name: &str) -> f64 {
     }
 }
 
-fn average_metric_seconds(metrics: &[BlockMetrics], metric_name: &str) -> f64 {
+/// Like [`average_metric`] but converts nanoseconds to seconds.
+pub fn average_metric_seconds(metrics: &[BlockMetrics], metric_name: &str) -> f64 {
     average_metric(metrics, metric_name) / 1_000_000_000.0
+}
+
+/// One-line-per-run index entry appended to `results.jsonl`.
+#[derive(Debug, Serialize)]
+pub struct ResultsIndexEntry {
+    /// Unique run identifier.
+    pub run_id: String,
+    /// Group identifier for this invocation.
+    pub run_group_id: String,
+    /// ISO-8601 timestamp.
+    pub timestamp: String,
+    /// Git commit SHA.
+    pub git_sha: String,
+    /// Git branch name.
+    pub git_branch: String,
+    /// Benchmark config name.
+    pub config_name: String,
+    /// EL client type.
+    pub node_type: String,
+    /// Output directory path.
+    pub output_dir: String,
+    /// Whether the run passed all thresholds.
+    pub success: bool,
+    /// Merged tags.
+    pub tags: HashMap<String, String>,
+    /// Mean sequencer gas/s.
+    pub gas_per_second_sequencer: f64,
+    /// Mean `get_payload` latency (seconds).
+    pub get_payload_ms: f64,
+    /// Mean `new_payload` latency (seconds).
+    pub new_payload_ms: f64,
+}
+
+impl ResultsIndexEntry {
+    /// Append this entry as a single JSON line to `results_dir/results.jsonl`.
+    pub fn append_to_file(&self, results_dir: &Path) -> Result<(), BenchmarkError> {
+        let path = results_dir.join("results.jsonl");
+        let line = serde_json::to_string(self)? + "\n";
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        file.write_all(line.as_bytes())?;
+        Ok(())
+    }
 }
 
 /// Print the last `max_bytes` of a log file to stderr, used on test failure.
@@ -246,5 +318,37 @@ mod tests {
         let mut out = Vec::new();
         decoder.read_to_end(&mut out).unwrap();
         assert_eq!(out, b"hello benchmark");
+    }
+
+    #[test]
+    fn results_index_entry_appends_jsonl() {
+        let tmp = tempdir().unwrap();
+        let entry = ResultsIndexEntry {
+            run_id: "run-1".into(),
+            run_group_id: "group-1".into(),
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            git_sha: "abc123".into(),
+            git_branch: "main".into(),
+            config_name: "devnet".into(),
+            node_type: "base-reth-node".into(),
+            output_dir: "/tmp/out".into(),
+            success: true,
+            tags: HashMap::from([("env".into(), "ci".into())]),
+            gas_per_second_sequencer: 1_000_000.0,
+            get_payload_ms: 0.005,
+            new_payload_ms: 0.003,
+        };
+
+        entry.append_to_file(tmp.path()).unwrap();
+        entry.append_to_file(tmp.path()).unwrap();
+
+        let contents = fs::read_to_string(tmp.path().join("results.jsonl")).unwrap();
+        let lines: Vec<&str> = contents.lines().collect();
+        assert_eq!(lines.len(), 2);
+
+        let parsed: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(parsed["run_id"], "run-1");
+        assert_eq!(parsed["success"], true);
+        assert_eq!(parsed["tags"]["env"], "ci");
     }
 }

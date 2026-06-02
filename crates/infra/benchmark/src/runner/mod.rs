@@ -1,6 +1,7 @@
 //! End-to-end benchmark orchestration: snapshot preparation, node lifecycle,
 //! block production loop, metrics collection, and result serialization.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,6 +13,7 @@ use tracing::{info, warn};
 
 use crate::client::{setup_node, ClientOptions, InternalClientOptions};
 use crate::config::{BenchmarkConfig, TestRun};
+use crate::git::GitInfo;
 use crate::deploy::deploy_uniswap_v3;
 use crate::consensus::{
     BaseConsensusClient, FakeMempool, SequencerConsensusClient, SyncingConsensusClient,
@@ -19,8 +21,12 @@ use crate::consensus::{
 use crate::error::BenchmarkError;
 use crate::metrics::{
     check_thresholds, BlockMetrics, MetricsCollector, Severity, ThresholdViolation,
+    GAS_PER_SECOND, GET_PAYLOAD_LATENCY, NEW_PAYLOAD_LATENCY,
 };
-use crate::output::{write_metadata_json, write_metrics_file};
+use crate::output::{
+    average_metric, average_metric_seconds, write_metadata_json, write_metrics_file,
+    ResultsIndexEntry, RunContext,
+};
 use crate::payload::{LoadTestConfig, LoadTestPayloadWorker, PayloadWorker};
 use crate::ports::PortManager;
 use crate::proxy::run_proxy;
@@ -43,6 +49,12 @@ pub struct RunnerOptions {
     pub output_dir: PathBuf,
     /// Hex-encoded private key for pre-funding test accounts.
     pub prefund_key: String,
+    /// Unique identifier grouping all runs in this invocation.
+    pub run_group_id: String,
+    /// Git commit and branch at process startup.
+    pub git_info: GitInfo,
+    /// User-supplied key-value tags from `--tags`.
+    pub tags: HashMap<String, String>,
 }
 
 /// Top-level orchestrator: expands the config matrix, runs each test, and
@@ -339,6 +351,13 @@ impl NetworkBenchmark {
         let success = violations.iter().all(|v| v.severity != Severity::Error);
         write_metrics_file(&self.options.output_dir, "sequencer", &block_metrics_vec)?;
         write_metrics_file(&self.options.output_dir, "validator", &validator_metrics)?;
+        let ctx = RunContext {
+            run_group_id: &self.options.run_group_id,
+            git_sha: &self.options.git_info.sha,
+            git_branch: &self.options.git_info.branch,
+            global_tags: &self.options.tags,
+            success,
+        };
         write_metadata_json(
             &self.options.output_dir,
             self.options.config_path.as_deref(),
@@ -346,8 +365,26 @@ impl NetworkBenchmark {
             &self.config,
             &block_metrics_vec,
             &validator_metrics,
-            success,
+            &ctx,
         )?;
+
+        let entry = ResultsIndexEntry {
+            run_id: run.id.clone(),
+            run_group_id: self.options.run_group_id.clone(),
+            timestamp: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+            git_sha: self.options.git_info.sha.clone(),
+            git_branch: self.options.git_info.branch.clone(),
+            config_name: self.config.name.clone(),
+            node_type: run.definition.node_type.clone(),
+            output_dir: self.options.output_dir.display().to_string(),
+            success,
+            tags: self.options.tags.clone(),
+            gas_per_second_sequencer: average_metric(&block_metrics_vec, GAS_PER_SECOND),
+            get_payload_ms: average_metric_seconds(&block_metrics_vec, GET_PAYLOAD_LATENCY),
+            new_payload_ms: average_metric_seconds(&validator_metrics, NEW_PAYLOAD_LATENCY),
+        };
+        entry.append_to_file(&self.options.output_dir)?;
+
         info!(run_id = %run.id, "run complete");
 
         Ok(RunResult {
@@ -462,6 +499,9 @@ mod tests {
             config_path: Some(PathBuf::from("/tmp/config.yaml")),
             output_dir: PathBuf::from("/tmp/bench"),
             prefund_key: "0xdef".into(),
+            run_group_id: "test-group".into(),
+            git_info: GitInfo { sha: "abc".into(), branch: "main".into() },
+            tags: HashMap::new(),
         };
         assert_eq!(opts.reth_bin, PathBuf::from("/bin/reth"));
     }

@@ -10,10 +10,14 @@ pub use config::{
 mod error;
 pub use error::BenchmarkError;
 
+mod git;
+pub use git::GitInfo;
+
 mod output;
 pub use output::{
-    copy_metrics, create_run_dir, dump_log_tail, gzip_file, random_id, write_metadata_json,
-    write_metrics_file, write_result_json, write_tags_json,
+    average_metric, average_metric_seconds, copy_metrics, create_run_dir, dump_log_tail,
+    gzip_file, random_id, write_metadata_json, write_metrics_file, write_result_json,
+    write_tags_json, ResultsIndexEntry, RunContext,
 };
 
 mod ports;
