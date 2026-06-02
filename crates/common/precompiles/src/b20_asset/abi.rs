@@ -37,7 +37,7 @@ sol! {
         event MultiplierUpdated(uint256 multiplier);
 
         /// Emitted by `updateExtraMetadata`. Empty `value` indicates removal.
-        event ExtraMetadataUpdated(string identifierType, string value);
+        event ExtraMetadataUpdated(string key, string value);
 
         /// Emitted at the start of `announce`. Indexers join with `EndAnnouncement` via `id`.
         event Announcement(address indexed caller, string id, string description, string uri);
@@ -49,9 +49,6 @@ sol! {
 
         /// `keccak256("OPERATOR_ROLE")` — required for `announce` and `updateMultiplier`.
         function OPERATOR_ROLE() external view returns (bytes32);
-
-        /// `keccak256("METADATA_ROLE")` — required for `updateExtraMetadata`.
-        function METADATA_ROLE() external view returns (bytes32);
 
         /// Fixed-point precision for `multiplier`: `1e18` (one WAD).
         function WAD_PRECISION() external view returns (uint256);
@@ -92,14 +89,14 @@ sol! {
         /// Mints `amounts[i]` to `recipients[i]`. Requires `MINT_ROLE`. All-or-nothing.
         function batchMint(address[] calldata recipients, uint256[] calldata amounts) external;
 
-        // ── Asset identifiers ─────────────────────────────────────────────
+        // ── Extra metadata ────────────────────────────────────────────────
 
-        /// Returns the value of the named identifier (e.g. ISIN, CUSIP). Empty string if not set.
-        function extraMetadata(string calldata identifierType) external view returns (string);
+        /// Returns the value of the named metadata entry. Empty string if not set.
+        function extraMetadata(string calldata key) external view returns (string);
 
-        /// Sets, updates, or removes a asset identifier. Empty `value` removes the entry. Requires `METADATA_ROLE`.
+        /// Sets, updates, or removes an extra-metadata entry. Empty `value` removes the entry. Requires `METADATA_ROLE`.
         function updateExtraMetadata(
-            string calldata identifierType,
+            string calldata key,
             string calldata value
         ) external;
     }
@@ -110,7 +107,6 @@ impl IB20Asset::IB20AssetCalls {
     pub const fn as_label(&self) -> &'static str {
         match self {
             Self::OPERATOR_ROLE(_) => "precompile-b20-asset-OPERATOR_ROLE",
-            Self::METADATA_ROLE(_) => "precompile-b20-asset-METADATA_ROLE",
             Self::WAD_PRECISION(_) => "precompile-b20-asset-WAD_PRECISION",
             Self::announce(_) => "precompile-b20-asset-announce",
             Self::isAnnouncementIdUsed(_) => "precompile-b20-asset-isAnnouncementIdUsed",
@@ -134,7 +130,7 @@ mod tests {
     fn asset_call_labels_are_stable() {
         assert_eq!(
             IB20Asset::IB20AssetCalls::updateExtraMetadata(IB20Asset::updateExtraMetadataCall {
-                identifierType: alloc::string::String::new(),
+                key: alloc::string::String::new(),
                 value: alloc::string::String::new(),
             })
             .as_label(),

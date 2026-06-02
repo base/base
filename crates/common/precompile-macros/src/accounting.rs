@@ -309,39 +309,39 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
             fn multiplier(
                 &self,
             ) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {
-                let ratio = self.asset.multiplier()?;
-                Ok(if ratio.is_zero() { Self::WAD } else { ratio })
+                let multiplier = self.asset.multiplier()?;
+                Ok(if multiplier.is_zero() { Self::WAD } else { multiplier })
             }
 
             fn set_multiplier(
                 &mut self,
-                ratio: ::alloy_primitives::U256,
+                multiplier: ::alloy_primitives::U256,
             ) -> ::base_precompile_storage::Result<()> {
-                self.asset.set_multiplier(ratio)
+                self.asset.set_multiplier(multiplier)
             }
 
             fn extra_metadata(
                 &self,
-                identifier_type: &str,
+                key: &str,
             ) -> ::base_precompile_storage::Result<::alloc::string::String> {
                 ::base_precompile_storage::Handler::read(
                     self.asset
-                        .identifiers
-                        .at(&::alloc::string::String::from(identifier_type)),
+                        .extra_metadata
+                        .at(&::alloc::string::String::from(key)),
                 )
             }
 
             fn set_extra_metadata_value(
                 &mut self,
-                identifier_type: &str,
+                key: &str,
                 value: ::alloc::string::String,
             ) -> ::base_precompile_storage::Result<()> {
-                let key = ::alloc::string::String::from(identifier_type);
+                let key = ::alloc::string::String::from(key);
                 if value.is_empty() {
-                    ::base_precompile_storage::Handler::delete(self.asset.identifiers.at_mut(&key))
+                    ::base_precompile_storage::Handler::delete(self.asset.extra_metadata.at_mut(&key))
                 } else {
                     ::base_precompile_storage::Handler::write(
-                        self.asset.identifiers.at_mut(&key),
+                        self.asset.extra_metadata.at_mut(&key),
                         value,
                     )
                 }

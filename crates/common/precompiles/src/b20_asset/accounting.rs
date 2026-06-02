@@ -9,18 +9,18 @@ use crate::TokenAccounting;
 
 /// Extends [`TokenAccounting`] with asset-token-specific storage slots.
 ///
-/// Asset identifiers (ISIN, CUSIP, etc.) are only exposed through the
-/// asset-token surface, not the base B-20 surface.
+/// Extra metadata entries are only exposed through the asset-token surface,
+/// not the base B-20 surface.
 pub trait AssetAccounting: TokenAccounting {
-    /// Returns the current share-to-tokens ratio scaled to WAD (1e18).
+    /// Returns the current multiplier scaled to WAD (1e18).
     fn multiplier(&self) -> Result<U256>;
-    /// Writes a new share-to-tokens ratio.
-    fn set_multiplier(&mut self, ratio: U256) -> Result<()>;
+    /// Writes a new multiplier.
+    fn set_multiplier(&mut self, multiplier: U256) -> Result<()>;
 
-    /// Returns the asset identifier value for `identifier_type`, or an empty string if unset.
-    fn extra_metadata(&self, identifier_type: &str) -> Result<String>;
-    /// Writes (or removes when `value` is empty) the asset identifier for `identifier_type`.
-    fn set_extra_metadata_value(&mut self, identifier_type: &str, value: String) -> Result<()>;
+    /// Returns the extra-metadata value for `key`, or an empty string if unset.
+    fn extra_metadata(&self, key: &str) -> Result<String>;
+    /// Writes (or removes when `value` is empty) the extra-metadata entry for `key`.
+    fn set_extra_metadata_value(&mut self, key: &str, value: String) -> Result<()>;
 
     /// Returns `true` if `id` has been consumed by `announce`.
     fn is_announcement_id_used(&self, id: &str) -> Result<bool>;

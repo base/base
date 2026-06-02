@@ -61,9 +61,9 @@ pub struct InMemoryTokenAccounting {
     pub role_admins: HashMap<B256, B256>,
     /// Policy IDs keyed by policy type.
     pub policy_ids: HashMap<B256, u64>,
-    /// Share-to-tokens ratio scaled to WAD (1e18). Asset tokens only.
+    /// Multiplier scaled to WAD (1e18). Asset tokens only.
     pub multiplier: U256,
-    /// Asset identifier values keyed by raw `identifier_type`. Asset tokens only.
+    /// Extra-metadata values keyed by raw metadata `key`. Asset tokens only.
     pub extra_metadata: HashMap<String, String>,
     /// Consumed announcement ids keyed by raw announcement id. Asset tokens only.
     pub announcement_ids_used: HashSet<String>,
@@ -385,15 +385,15 @@ impl AssetAccounting for InMemoryTokenAccounting {
         Ok(())
     }
 
-    fn extra_metadata(&self, identifier_type: &str) -> Result<String> {
-        Ok(self.extra_metadata.get(identifier_type).cloned().unwrap_or_default())
+    fn extra_metadata(&self, key: &str) -> Result<String> {
+        Ok(self.extra_metadata.get(key).cloned().unwrap_or_default())
     }
 
-    fn set_extra_metadata_value(&mut self, identifier_type: &str, value: String) -> Result<()> {
+    fn set_extra_metadata_value(&mut self, key: &str, value: String) -> Result<()> {
         if value.is_empty() {
-            self.extra_metadata.remove(identifier_type);
+            self.extra_metadata.remove(key);
         } else {
-            self.extra_metadata.insert(identifier_type.to_owned(), value);
+            self.extra_metadata.insert(key.to_owned(), value);
         }
         Ok(())
     }

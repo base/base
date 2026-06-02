@@ -336,10 +336,9 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         let encoded: Bytes = match call {
             // --- Role / precision constants ---
             SC::OPERATOR_ROLE(_) => Self::OPERATOR_ROLE.abi_encode().into(),
-            SC::METADATA_ROLE(_) => Self::METADATA_ROLE.abi_encode().into(),
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
 
-            // --- Share ratio reads ---
+            // --- Multiplier reads ---
             SC::multiplier(_) => self.accounting().multiplier()?.abi_encode().into(),
             SC::toScaledBalance(c) => self.to_scaled_balance(c.rawBalance)?.abi_encode().into(),
             SC::toRawBalance(c) => self.to_raw_balance(c.scaledBalance)?.abi_encode().into(),
@@ -350,12 +349,12 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
                 self.accounting().is_announcement_id_used(c.id.as_str())?.abi_encode().into()
             }
 
-            // --- Asset identifier reads ---
+            // --- Extra metadata reads ---
             SC::extraMetadata(c) => {
-                self.accounting().extra_metadata(c.identifierType.as_str())?.abi_encode().into()
+                self.accounting().extra_metadata(c.key.as_str())?.abi_encode().into()
             }
 
-            // --- Share ratio mutations ---
+            // --- Multiplier mutations ---
             SC::updateMultiplier(c) => {
                 self.update_multiplier(caller, c.newMultiplier, privileged)?;
                 Bytes::new()
@@ -373,9 +372,9 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
                 Bytes::new()
             }
 
-            // --- Asset identifier mutations ---
+            // --- Extra metadata mutations ---
             SC::updateExtraMetadata(c) => {
-                self.update_extra_metadata(caller, c.identifierType, c.value, privileged)?;
+                self.update_extra_metadata(caller, c.key, c.value, privileged)?;
                 Bytes::new()
             }
         };
@@ -454,7 +453,7 @@ mod tests {
     const ACTIVATION_ADMIN: Address = Address::repeat_byte(0xcb);
     fn make_token() -> TestAssetToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.multiplier = B20AssetStorage::WAD; // 1:1 ratio
+        accounting.multiplier = B20AssetStorage::WAD; // 1:1 multiplier
         TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
     }
 
@@ -484,13 +483,13 @@ mod tests {
     }
 
     #[test]
-    fn to_scaled_balance_one_to_one_ratio() {
+    fn to_scaled_balance_one_to_one_multiplier() {
         let token = make_token();
         assert_eq!(token.to_scaled_balance(U256::from(100u64)).unwrap(), U256::from(100u64));
     }
 
     #[test]
-    fn to_scaled_balance_two_to_one_ratio() {
+    fn to_scaled_balance_two_to_one_multiplier() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         accounting.multiplier = B20AssetStorage::WAD * U256::from(2u64);
         let token = TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
@@ -624,17 +623,17 @@ mod tests {
     }
 
     #[test]
-    fn to_scaled_balance_sub_wad_ratio_truncates_to_zero() {
+    fn to_scaled_balance_sub_wad_multiplier_truncates_to_zero() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        // 0.5 WAD: 1 token → 0.5 shares → truncates to 0 via integer division
+        // 0.5 WAD: 1 token → 0.5 scaled → truncates to 0 via integer division
         accounting.multiplier = B20AssetStorage::WAD / U256::from(2u64);
         let token = TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
         assert_eq!(token.to_scaled_balance(U256::from(1u64)).unwrap(), U256::ZERO);
     }
 
     #[test]
-    fn shares_of_derives_from_balance() {
-        let mut token = make_token(); // 1:1 ratio
+    fn scaled_balance_of_derives_from_balance() {
+        let mut token = make_token(); // 1:1 multiplier
         token.accounting_mut().balances.insert(ALICE, U256::from(75u64));
         // scaledBalanceOf(account) = toScaledBalance(balanceOf(account))
         let balance = token.accounting().balance_of(ALICE).unwrap();
@@ -646,9 +645,9 @@ mod tests {
     #[test]
     fn multiplier_update_persists() {
         let mut token = make_token();
-        let new_ratio = B20AssetStorage::WAD * U256::from(3u64);
-        token.accounting_mut().set_multiplier(new_ratio).unwrap();
-        assert_eq!(token.accounting().multiplier().unwrap(), new_ratio);
+        let new_multiplier = B20AssetStorage::WAD * U256::from(3u64);
+        token.accounting_mut().set_multiplier(new_multiplier).unwrap();
+        assert_eq!(token.accounting().multiplier().unwrap(), new_multiplier);
     }
 
     // --- extraMetadata / updateExtraMetadata ---
@@ -688,7 +687,7 @@ mod tests {
     #[test]
     fn to_scaled_balance_overflows_when_product_exceeds_u256_max() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        // Any balance > 1 overflows when multiplied by this ratio.
+        // Any balance > 1 overflows when multiplied by this multiplier.
         accounting.multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
         let token = TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
