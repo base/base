@@ -22,7 +22,8 @@ use crate::consensus::{
 use crate::error::BenchmarkError;
 use crate::metrics::{
     check_thresholds, BlockMetrics, MetricsCollector, Severity, ThresholdViolation,
-    GAS_PER_SECOND, GET_PAYLOAD_LATENCY, NEW_PAYLOAD_LATENCY,
+    GAS_PER_BLOCK, GAS_PER_SECOND, GET_PAYLOAD_LATENCY, NEW_PAYLOAD_LATENCY,
+    TRANSACTIONS_PER_BLOCK,
 };
 use crate::output::{
     average_metric, average_metric_seconds, write_metadata_json, write_metrics_file,
@@ -425,6 +426,68 @@ pub struct RunResult {
     pub validator_block_metrics: Vec<BlockMetrics>,
     /// Threshold violations detected after the run.
     pub violations: Vec<ThresholdViolation>,
+}
+
+impl RunResult {
+    /// Print a human-readable summary table to stdout.
+    pub fn print_summary(&self) {
+        let seq_stat = |metric: &str| -> (f64, f64) {
+            let vals: Vec<f64> = self
+                .block_metrics
+                .iter()
+                .filter_map(|b| b.execution_metrics.get(metric).copied())
+                .collect();
+            if vals.is_empty() {
+                return (0.0, 0.0);
+            }
+            let avg = vals.iter().sum::<f64>() / vals.len() as f64;
+            let max = vals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            (avg, max)
+        };
+        let val_stat = |metric: &str| -> f64 {
+            let vals: Vec<f64> = self
+                .validator_block_metrics
+                .iter()
+                .filter_map(|b| b.execution_metrics.get(metric).copied())
+                .collect();
+            if vals.is_empty() {
+                return 0.0;
+            }
+            vals.iter().sum::<f64>() / vals.len() as f64
+        };
+
+        let (gas_ps_avg, gas_ps_max) = seq_stat(GAS_PER_SECOND);
+        let (gas_pb_avg, gas_pb_max) = seq_stat(GAS_PER_BLOCK);
+        let (txs_avg, txs_max) = seq_stat(TRANSACTIONS_PER_BLOCK);
+        let gp_avg_ms = seq_stat(GET_PAYLOAD_LATENCY).0 / 1_000_000.0;
+        let np_avg_ms = val_stat(NEW_PAYLOAD_LATENCY) / 1_000_000.0;
+
+        let n_seq = self.block_metrics.len();
+        let n_val = self.validator_block_metrics.len();
+        let n_viol = self.violations.len();
+
+        let gas_ps_avg_m = gas_ps_avg / 1e6;
+        let gas_ps_max_m = gas_ps_max / 1e6;
+        let gas_pb_avg_m = gas_pb_avg / 1e6;
+        let gas_pb_max_m = gas_pb_max / 1e6;
+
+        println!();
+        println!("══════════════════════════════════════════");
+        println!("  Run {id}", id = self.id);
+        println!("  {n_seq:>4} seq blocks · {n_val:>4} val blocks · {n_viol:>2} violations");
+        println!("──────────────────────────────────────────");
+        println!("  Throughput");
+        println!("    Gas/s:      {gas_ps_avg_m:>8.1} Mgas/s avg");
+        println!("                {gas_ps_max_m:>8.1} Mgas/s peak");
+        println!("    Gas/block:  {gas_pb_avg_m:>8.2} M avg  (peak {gas_pb_max_m:.2} M)");
+        println!("    Txs/block:  {txs_avg:>8.1} avg    (max {txs_max:.0})");
+        println!("──────────────────────────────────────────");
+        println!("  Latency");
+        println!("    get_payload: {gp_avg_ms:>9.4} ms avg");
+        println!("    new_payload: {np_avg_ms:>9.4} ms avg");
+        println!("══════════════════════════════════════════");
+        println!();
+    }
 }
 
 fn genesis_json_from_rollup_config(

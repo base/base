@@ -66,14 +66,12 @@ pub async fn run_benchmark(args: BenchmarkArgs) -> Result<(), BenchmarkError> {
     let results = runner.run_all().await?;
 
     for result in &results {
-        let violation_count = result.violations.len();
-        let block_count = result.block_metrics.len();
-        let validator_block_count = result.validator_block_metrics.len();
+        result.print_summary();
         info!(
             run_id = %result.id,
-            sequencer_blocks = block_count,
-            validator_blocks = validator_block_count,
-            violations = violation_count,
+            sequencer_blocks = result.block_metrics.len(),
+            validator_blocks = result.validator_block_metrics.len(),
+            violations = result.violations.len(),
             "run finished"
         );
     }
