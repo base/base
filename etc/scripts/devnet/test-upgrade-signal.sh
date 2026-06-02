@@ -7,6 +7,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
 ACTIVATION_OFFSET="${UPGRADE_SIGNAL_ACTIVATION_OFFSET:-240}"
+RESCHEDULE_BEFORE_SECONDS="${UPGRADE_SIGNAL_TEST_RESCHEDULE_BEFORE_SECONDS:-10}"
+RESCHEDULE_DELAY_SECONDS="${UPGRADE_SIGNAL_TEST_RESCHEDULE_DELAY_SECONDS:-60}"
 POLL_INTERVAL="${UPGRADE_SIGNAL_TEST_POLL_INTERVAL:-2}"
 TIMEOUT_SECONDS="${UPGRADE_SIGNAL_TEST_TIMEOUT_SECONDS:-300}"
 CHECKPOINT_ENV="$REPO_ROOT/.devnet/upgrade-signal-checkpoint.env"
@@ -112,24 +114,85 @@ latest_l2_timestamp() {
     printf '%d\n' "$((16#${timestamp_hex#0x}))"
 }
 
-wait_for_activation_timestamp() {
-    local activation_timestamp="$1"
+wait_for_l2_timestamp() {
+    local target_timestamp="$1"
+    local label="${2:-target timestamp}"
     local deadline=$((SECONDS + TIMEOUT_SECONDS))
     local current
 
-    echo "Waiting for L2 timestamp to reach $activation_timestamp..."
+    echo "Waiting for L2 timestamp to reach $target_timestamp ($label)..."
     while true; do
         current="$(latest_l2_timestamp)"
-        if ((current >= activation_timestamp)); then
-            echo "L2 timestamp reached activation: $current"
+        if ((current >= target_timestamp)); then
+            echo "L2 timestamp reached $label: $current"
             return
         fi
         if ((SECONDS >= deadline)); then
-            echo "timed out waiting for activation timestamp; latest L2 timestamp is $current" >&2
+            echo "timed out waiting for $label; latest L2 timestamp is $current" >&2
             exit 1
         fi
         sleep "$POLL_INTERVAL"
     done
+}
+
+wait_for_activation_timestamp() {
+    local activation_timestamp="$1"
+
+    wait_for_l2_timestamp "$activation_timestamp" "activation"
+}
+
+upgrade_signal_contract() {
+    local contract_address
+
+    if [[ ! -f "$UPGRADE_ENV" ]]; then
+        echo "missing upgrade signal env file: $UPGRADE_ENV" >&2
+        exit 1
+    fi
+
+    contract_address="$(sed -n 's/^UPGRADE_SIGNAL_CONTRACT=//p' "$UPGRADE_ENV" | tail -n 1)"
+    if [[ -z "$contract_address" ]]; then
+        echo "failed to read UPGRADE_SIGNAL_CONTRACT from $UPGRADE_ENV" >&2
+        exit 1
+    fi
+
+    printf '%s\n' "$contract_address"
+}
+
+set_azul_activation_timestamp() {
+    local activation_timestamp="$1"
+    local contract_address
+    local read_timestamp
+
+    contract_address="$(upgrade_signal_contract)"
+
+    echo "Setting contract Azul timestamp to $activation_timestamp..."
+    cast send \
+        --rpc-url "$L1_RPC" \
+        --private-key "$DEPLOYER_KEY" \
+        "$contract_address" \
+        "setTimestamp(string,uint256)" \
+        "azul" \
+        "$activation_timestamp" \
+        --json >/dev/null
+
+    read_timestamp="$(
+        cast call \
+            --rpc-url "$L1_RPC" \
+            "$contract_address" \
+            "getTimestamp(string)(uint256)" \
+            "azul"
+    )"
+    echo "Contract Azul timestamp is now $read_timestamp"
+}
+
+restart_upgrade_signal_consumers() {
+    echo "Restarting L2 services that apply the upgrade signal schedule..."
+    compose_upgrade up -d --no-build --no-deps --force-recreate \
+        base-builder \
+        base-builder-cl \
+        base-client \
+        base-client-cl
+    wait_for_l2_rpc
 }
 
 require_cmd cast
@@ -139,6 +202,22 @@ require_cmd jq
 
 if ! [[ "$ACTIVATION_OFFSET" =~ ^[0-9]+$ ]]; then
     echo "UPGRADE_SIGNAL_ACTIVATION_OFFSET must be a non-negative integer" >&2
+    exit 1
+fi
+if ! [[ "$RESCHEDULE_BEFORE_SECONDS" =~ ^[0-9]+$ ]]; then
+    echo "UPGRADE_SIGNAL_TEST_RESCHEDULE_BEFORE_SECONDS must be a non-negative integer" >&2
+    exit 1
+fi
+if ! [[ "$RESCHEDULE_DELAY_SECONDS" =~ ^[0-9]+$ ]] || ((RESCHEDULE_DELAY_SECONDS == 0)); then
+    echo "UPGRADE_SIGNAL_TEST_RESCHEDULE_DELAY_SECONDS must be a positive integer" >&2
+    exit 1
+fi
+if ((ACTIVATION_OFFSET <= RESCHEDULE_BEFORE_SECONDS)); then
+    echo "UPGRADE_SIGNAL_ACTIVATION_OFFSET must be greater than UPGRADE_SIGNAL_TEST_RESCHEDULE_BEFORE_SECONDS" >&2
+    exit 1
+fi
+if ((RESCHEDULE_DELAY_SECONDS <= RESCHEDULE_BEFORE_SECONDS)); then
+    echo "UPGRADE_SIGNAL_TEST_RESCHEDULE_DELAY_SECONDS must be greater than UPGRADE_SIGNAL_TEST_RESCHEDULE_BEFORE_SECONDS" >&2
     exit 1
 fi
 
@@ -219,17 +298,57 @@ echo "Running pre-Azul checks at L2 timestamp $CURRENT_TIMESTAMP..."
 UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP="$ACTIVATION_TIMESTAMP" \
     "$SCRIPT_DIR/test-base-azul.sh" before "$L2_RPC" latest
 
-wait_for_activation_timestamp "$ACTIVATION_TIMESTAMP"
+RESCHEDULE_AT_TIMESTAMP="$((ACTIVATION_TIMESTAMP - RESCHEDULE_BEFORE_SECONDS))"
+wait_for_l2_timestamp "$RESCHEDULE_AT_TIMESTAMP" "Azul reschedule window"
+
+CURRENT_TIMESTAMP="$(latest_l2_timestamp)"
+if ((CURRENT_TIMESTAMP >= ACTIVATION_TIMESTAMP)); then
+    echo "missed Azul reschedule window: latest L2 timestamp $CURRENT_TIMESTAMP >= $ACTIVATION_TIMESTAMP" >&2
+    exit 1
+fi
+
+UPDATED_ACTIVATION_TIMESTAMP="$((CURRENT_TIMESTAMP + RESCHEDULE_DELAY_SECONDS))"
+if ((UPDATED_ACTIVATION_TIMESTAMP <= ACTIVATION_TIMESTAMP)); then
+    echo "updated Azul timestamp $UPDATED_ACTIVATION_TIMESTAMP must be after original timestamp $ACTIVATION_TIMESTAMP" >&2
+    exit 1
+fi
+
+echo "Rescheduling Azul from $ACTIVATION_TIMESTAMP to $UPDATED_ACTIVATION_TIMESTAMP..."
+set_azul_activation_timestamp "$UPDATED_ACTIVATION_TIMESTAMP"
+restart_upgrade_signal_consumers
+
+CURRENT_TIMESTAMP="$(latest_l2_timestamp)"
+if ((CURRENT_TIMESTAMP >= UPDATED_ACTIVATION_TIMESTAMP)); then
+    echo "missed delayed pre-activation window: latest L2 timestamp $CURRENT_TIMESTAMP >= $UPDATED_ACTIVATION_TIMESTAMP" >&2
+    exit 1
+fi
+
+wait_for_l2_timestamp "$ACTIVATION_TIMESTAMP" "original Azul timestamp"
+
+CURRENT_TIMESTAMP="$(latest_l2_timestamp)"
+if ((CURRENT_TIMESTAMP >= UPDATED_ACTIVATION_TIMESTAMP)); then
+    echo "missed delayed pre-activation window after original timestamp: latest L2 timestamp $CURRENT_TIMESTAMP >= $UPDATED_ACTIVATION_TIMESTAMP" >&2
+    exit 1
+fi
+
+echo "Running delayed pre-Azul checks at L2 timestamp $CURRENT_TIMESTAMP..."
+UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP="$UPDATED_ACTIVATION_TIMESTAMP" \
+    "$SCRIPT_DIR/test-base-azul.sh" before "$L2_RPC" latest
+
+wait_for_activation_timestamp "$UPDATED_ACTIVATION_TIMESTAMP"
 
 echo "Running post-Azul checks..."
-UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP="$ACTIVATION_TIMESTAMP" \
+UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP="$UPDATED_ACTIVATION_TIMESTAMP" \
     "$SCRIPT_DIR/test-base-azul.sh" after "$L2_RPC" latest
 
 cat <<EOF
 
 Contract-driven upgrade signal devnet test passed.
 
-L2 genesis timestamp:     $L2_GENESIS_TIME
-Activation offset:        $ACTIVATION_OFFSET seconds
-Contract Azul timestamp:  $ACTIVATION_TIMESTAMP
+L2 genesis timestamp:          $L2_GENESIS_TIME
+Activation offset:             $ACTIVATION_OFFSET seconds
+Initial contract Azul time:    $ACTIVATION_TIMESTAMP
+Reschedule before activation:  $RESCHEDULE_BEFORE_SECONDS seconds
+Reschedule delay:              $RESCHEDULE_DELAY_SECONDS seconds
+Updated contract Azul time:    $UPDATED_ACTIVATION_TIMESTAMP
 EOF
