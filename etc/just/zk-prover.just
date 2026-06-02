@@ -44,7 +44,7 @@ describe:
     bash "{{ _script }}" describe "{{ _endpoint }}"
 
 # Request a proof or dry-run for a block range
-prove start_block number_of_blocks='1' proof_type='PROOF_TYPE_COMPRESSED':
+prove start_block number_of_blocks='1' proof_type='PROOF_TYPE_SNARK_GROTH16':
     bash "{{ _script }}" prove "{{ start_block }}" "{{ number_of_blocks }}" "{{ _endpoint }}" "{{ proof_type }}"
 
 # Get proof status and, for dry-run mode, executionStats
