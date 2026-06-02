@@ -468,8 +468,7 @@ async fn security_mutations_revert_on_invalid_inputs() {
 async fn security_calls_succeed_while_security_feature_is_deactivated() {
     let mut scenario = B20SecurityScenario::new().await;
 
-    let deactivate_security =
-        scenario.env.deactivate_feature_tx(BerylTestEnv::b20_security_feature());
+    let deactivate_security = scenario.env.deactivate_feature_tx(BerylTestEnv::b20_asset_feature());
     let block = scenario.build_block_with_transactions(vec![deactivate_security]).await;
     assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_SECURITY deactivation must succeed");
 
@@ -517,8 +516,7 @@ impl B20SecurityScenario {
 
         let activate_factory =
             scenario.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
-        let activate_security =
-            scenario.env.activate_feature_tx(BerylTestEnv::b20_security_feature());
+        let activate_security = scenario.env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
         let activate_policy =
             scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
         let block = scenario
