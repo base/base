@@ -228,10 +228,7 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
     type Error = AlloyL2ChainProviderError;
 
     async fn l2_block_info_by_number(&mut self, number: u64) -> Result<L2BlockInfo, Self::Error> {
-        let block = self
-            .block_by_number(number)
-            .await
-            .map_err(|_| AlloyL2ChainProviderError::BlockNotFound(number))?;
+        let block = self.block_by_number(number).await?;
         L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
             .map_err(|_| AlloyL2ChainProviderError::L2BlockInfoConstruction(number))
     }
@@ -273,6 +270,12 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
             }
         }
 
+        tracing::warn!(
+            target: "l2_chain_provider",
+            number,
+            attempts = L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS,
+            "L2 block not visible after exhausting retry budget"
+        );
         Err(AlloyL2ChainProviderError::BlockNotFound(number))
     }
 }
@@ -286,10 +289,7 @@ impl L2ChainProvider for AlloyL2ChainProvider {
         number: u64,
         rollup_config: Arc<RollupConfig>,
     ) -> Result<SystemConfig, <Self as BatchValidationProvider>::Error> {
-        let block = self
-            .block_by_number(number)
-            .await
-            .map_err(|_| AlloyL2ChainProviderError::BlockNotFound(number))?;
+        let block = self.block_by_number(number).await?;
         to_system_config(&block, &rollup_config)
             .map_err(|_| AlloyL2ChainProviderError::SystemConfigConversion(number))
     }
@@ -471,5 +471,36 @@ mod tests {
 
         assert!(matches!(err, AlloyL2ChainProviderError::Transport(_)));
         mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_block_by_number_callers_preserve_transport_errors() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByNumber"}"#);
+                then.respond_with(|req| {
+                    HttpMockResponse::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(json_rpc_error_response(req))
+                        .build()
+                });
+            })
+            .await;
+
+        let mut provider = l2_provider(&server);
+        let err = provider.l2_block_info_by_number(42).await.unwrap_err();
+        assert!(matches!(err, AlloyL2ChainProviderError::Transport(_)));
+
+        let err = provider
+            .system_config_by_number(42, Arc::new(RollupConfig::default()))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AlloyL2ChainProviderError::Transport(_)));
+
+        mock.assert_calls_async(2).await;
     }
 }
