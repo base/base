@@ -105,8 +105,6 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        ActivationRegistryStorage::new(ctx).ensure_activated(ActivationFeature::B20Asset.id())?;
-
         // Security-specific and overridden selectors are caught here first.
         if let Ok(call) = IB20Asset::IB20AssetCalls::abi_decode(calldata) {
             let label = call.as_label();
