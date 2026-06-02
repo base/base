@@ -54,7 +54,7 @@ mod tests {
 
     /// A rollup.json fixture matching the format produced by the devnet deployer
     /// (setup-l2.sh / assemble-rollup-config.sh). Uses devnet-specific parameter
-    /// values: l1_chain_id=1337, l2_chain_id=84538453, all hardforks at 0.
+    /// values: `l1_chain_id`=1337, `l2_chain_id`=84538453, all hardforks at 0.
     const DEVNET_ROLLUP_JSON: &str = r#"
     {
       "genesis": {

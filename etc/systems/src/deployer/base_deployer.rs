@@ -13,7 +13,7 @@ use testcontainers::{
 use url::Url;
 
 use super::artifacts::DeploymentArtifacts;
-use crate::config::{BATCHER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER};
+use crate::config::{BATCHER, CHALLENGER, PROPOSER, SEQUENCER};
 
 const OUTPUT_DIR: &str = "/output/l2";
 
@@ -115,7 +115,6 @@ impl DeployerContainer {
         }
 
         std::fs::create_dir_all(&self.output_dir).wrap_err("failed to create output directory")?;
-
 
         let image = GenericImage::new("devnet-setup", "local")
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)));
