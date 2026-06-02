@@ -23,7 +23,7 @@ const ANNOUNCEMENT_URI: &str = "ipfs://security-action";
 
 #[tokio::test]
 async fn security_creation_initializes_identifiers_and_factory_views() {
-    let mut scenario = B20SecurityScenario::new().await;
+    let mut scenario = B20AssetScenario::new().await;
 
     scenario
         .assert_staticcall_cases(
@@ -32,7 +32,7 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                 StaticcallCase::word(
                     "factory getB20Address(SECURITY)",
                     IB20Factory::getB20AddressCall {
-                        variant: IB20Factory::B20Variant::SECURITY,
+                        variant: IB20Factory::B20Variant::ASSET,
                         sender: BerylTestEnv::alice(),
                         salt: BerylTestEnv::b20_security_salt(),
                     }
@@ -134,7 +134,7 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
 
 #[tokio::test]
 async fn security_mutations_update_state_and_emit_events() {
-    let mut scenario = B20SecurityScenario::new().await;
+    let mut scenario = B20AssetScenario::new().await;
     scenario.grant_roles([security_operator_role(), B20TokenRole::Mint.id()]).await;
 
     let update_ratio =
@@ -284,7 +284,7 @@ async fn security_mutations_update_state_and_emit_events() {
 
 #[tokio::test]
 async fn security_mutations_revert_on_invalid_inputs() {
-    let mut scenario = B20SecurityScenario::new().await;
+    let mut scenario = B20AssetScenario::new().await;
     scenario.grant_roles([security_operator_role(), B20TokenRole::Mint.id()]).await;
 
     let first_announcement = scenario.call_tx(IB20Asset::announceCall {
@@ -380,7 +380,7 @@ async fn security_mutations_revert_on_invalid_inputs() {
 
 #[tokio::test]
 async fn security_calls_succeed_while_security_feature_is_deactivated() {
-    let mut scenario = B20SecurityScenario::new().await;
+    let mut scenario = B20AssetScenario::new().await;
 
     let deactivate_security = scenario.env.deactivate_feature_tx(BerylTestEnv::b20_asset_feature());
     let block = scenario.build_block_with_transactions(vec![deactivate_security]).await;
@@ -414,13 +414,13 @@ async fn security_calls_succeed_while_security_feature_is_deactivated() {
     scenario.derive().await;
 }
 
-struct B20SecurityScenario {
+struct B20AssetScenario {
     env: BerylTestEnv,
     token: Address,
     blocks: Vec<(BaseBlock, u64)>,
 }
 
-impl B20SecurityScenario {
+impl B20AssetScenario {
     async fn new() -> Self {
         let env = BerylTestEnv::new();
         let token = env.b20_security_address();
@@ -523,7 +523,7 @@ impl B20SecurityScenario {
     fn assert_token_created_log(&self, block: &BaseBlock) {
         let expected = IB20Factory::B20Created {
             token: self.token,
-            variant: IB20Factory::B20Variant::SECURITY,
+            variant: IB20Factory::B20Variant::ASSET,
             name: BerylTestEnv::B20_SECURITY_NAME.to_string(),
             symbol: BerylTestEnv::B20_SECURITY_SYMBOL.to_string(),
             decimals: BerylTestEnv::B20_SECURITY_DECIMALS,
