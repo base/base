@@ -40,9 +40,10 @@ pub(crate) enum Commands {
         command: Option<MonitorCommands>,
     },
     /// Flashblocks operations
+    #[command(after_help = "Use `basectl monitor flashblocks` for the TUI.")]
     Flashblocks {
         /// Output flashblocks as JSON lines
-        #[arg(long)]
+        #[arg(long, required = true)]
         json: bool,
     },
 }

@@ -37,13 +37,8 @@ async fn main() -> anyhow::Result<()> {
             }
             None => run_app(ViewId::Home, config, conductor_rpc).await,
         },
-        Some(cli::Commands::Flashblocks { json: true }) => {
+        Some(cli::Commands::Flashblocks { .. }) => {
             run_flashblocks_json(MonitoringConfig::load(config).await?).await
-        }
-        Some(cli::Commands::Flashblocks { json: false }) => {
-            anyhow::bail!(
-                "use `basectl monitor flashblocks` for the TUI or `basectl flashblocks --json` for the JSONL stream"
-            )
         }
         None => {
             cli::Cli::command().print_help()?;
