@@ -420,8 +420,14 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             if call_bytes[..4] == IB20Asset::announceCall::SELECTOR {
                 return Err(BasePrecompileError::revert(IB20Asset::AnnouncementInProgress {}));
             }
-            self.inner_with_privilege(ctx, call_bytes, privileged).map_err(|_| {
-                BasePrecompileError::revert(IB20Asset::InternalCallFailed { call: call.clone() })
+            self.inner_with_privilege(ctx, call_bytes, privileged).map_err(|err| match err {
+                BasePrecompileError::Revert(bytes) if !bytes.is_empty() => {
+                    BasePrecompileError::Revert(bytes)
+                }
+                err if err.is_system_error() => err,
+                _ => BasePrecompileError::revert(IB20Asset::InternalCallFailed {
+                    call: call.clone(),
+                }),
             })?;
         }
 
