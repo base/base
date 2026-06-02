@@ -8,10 +8,10 @@ sol! {
         // ── Structs ─────────────────────────────────────────────────────────
 
         enum B20Variant {
-            /// Stablecoin B-20 token variant.
-            STABLECOIN,
             /// Asset B-20 token variant.
-            ASSET
+            ASSET,
+            /// Stablecoin B-20 token variant.
+            STABLECOIN
         }
 
         struct B20StablecoinCreateParams {
@@ -27,8 +27,6 @@ sol! {
             string name;
             string symbol;
             address initialAdmin;
-            string isin;
-            uint256 minimumRedeemable;
             uint8 decimals;
         }
 
@@ -49,6 +47,9 @@ sol! {
 
         /// The stablecoin `currency` field was not on the ISO 4217 fiat allowlist.
         error InvalidCurrency(string code);
+
+        /// The asset `decimals` field was outside the allowed range.
+        error InvalidDecimals(uint8 decimals);
 
         /// One of the post-creation init calls failed.
         error InitCallFailed(uint256 index);

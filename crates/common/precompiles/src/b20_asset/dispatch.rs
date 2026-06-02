@@ -1,10 +1,7 @@
 //! ABI dispatch for the asset B-20 variant.
 //!
 //! Asset-specific selectors are tried first via `IB20Asset::IB20AssetCalls`.
-//! This catches overridden selectors (`redeem`, `redeemWithMemo`) before the
-//! inherited `IB20` fallthrough, ensuring asset semantics always apply.
-//! The `IB20` match block still includes those arms (Rust requires exhaustiveness)
-//! and routes them to the same asset implementation as a safety net.
+//! The `IB20` match block handles inherited selectors.
 
 use alloc::{string::String, vec::Vec};
 
@@ -341,11 +338,11 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             SC::OPERATOR_ROLE(_) => Self::OPERATOR_ROLE.abi_encode().into(),
             SC::METADATA_ROLE(_) => Self::METADATA_ROLE.abi_encode().into(),
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
-            SC::REDEEM_SENDER_POLICY(_) => Self::REDEEM_SENDER_POLICY.abi_encode().into(),
 
-            // --- Multiplier reads ---
+            // --- Share ratio reads ---
             SC::multiplier(_) => self.accounting().multiplier()?.abi_encode().into(),
             SC::toScaledBalance(c) => self.to_scaled_balance(c.rawBalance)?.abi_encode().into(),
+            SC::toRawBalance(c) => self.to_raw_balance(c.scaledBalance)?.abi_encode().into(),
             SC::scaledBalanceOf(c) => self.scaled_balance_of(c.account)?.abi_encode().into(),
 
             // --- Announcement reads ---
@@ -353,12 +350,12 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
                 self.accounting().is_announcement_id_used(c.id.as_str())?.abi_encode().into()
             }
 
-            // --- Asset metadata reads ---
+            // --- Asset identifier reads ---
             SC::extraMetadata(c) => {
                 self.accounting().extra_metadata(c.identifierType.as_str())?.abi_encode().into()
             }
 
-            // --- Multiplier mutations ---
+            // --- Share ratio mutations ---
             SC::updateMultiplier(c) => {
                 self.update_multiplier(caller, c.newMultiplier, privileged)?;
                 Bytes::new()
@@ -376,24 +373,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
                 Bytes::new()
             }
 
-            // --- Asset redeem (overrides IB20 redeem semantics) ---
-            SC::redeem(c) => {
-                self.asset_redeem(caller, c.amount)?;
-                Bytes::new()
-            }
-            SC::redeemWithMemo(c) => {
-                self.asset_redeem_with_memo(caller, c.amount, c.memo)?;
-                Bytes::new()
-            }
-
-            // --- Minimum redeemable (asset version, in scaled units) ---
-            SC::minimumRedeemable(_) => self.accounting().minimum_redeemable()?.abi_encode().into(),
-            SC::updateMinimumRedeemable(c) => {
-                self.update_minimum_redeemable(caller, c.newMinimumRedeemable, privileged)?;
-                Bytes::new()
-            }
-
-            // --- Asset metadata mutations ---
+            // --- Asset identifier mutations ---
             SC::updateExtraMetadata(c) => {
                 self.update_extra_metadata(caller, c.identifierType, c.value, privileged)?;
                 Bytes::new()
@@ -454,21 +434,19 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
 mod tests {
     use alloc::vec::Vec;
 
-    use alloy_primitives::{Address, B256, Bytes, U256};
+    use alloy_primitives::{Address, Bytes, U256};
     use alloy_sol_types::{SolCall, SolEvent};
     use base_precompile_storage::{
-        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, setup_storage,
+        BasePrecompileError, HashMapStorageProvider, Result, StorageCtx,
     };
 
     use crate::{
         ActivationFeature, ActivationRegistryStorage, AssetAccounting, B20AssetStorage,
-        B20AssetToken, B20PausableFeature, B20TokenRole, IB20, IB20Asset, InMemoryPolicy,
-        InMemoryTokenAccounting, PolicyHandle, PolicyRegistryStorage, Token, TokenAccounting,
+        B20AssetToken, B20TokenRole, IB20, IB20Asset, InMemoryPolicy, InMemoryTokenAccounting,
+        Token, TokenAccounting,
     };
 
     type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
-
-    const REDEEM_SENDER_POLICY: B256 = TestAssetToken::REDEEM_SENDER_POLICY;
 
     const ALICE: Address = Address::repeat_byte(0xaa);
     const BOB: Address = Address::repeat_byte(0xbb);
@@ -476,9 +454,7 @@ mod tests {
     const ACTIVATION_ADMIN: Address = Address::repeat_byte(0xcb);
     fn make_token() -> TestAssetToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.multiplier = B20AssetStorage::WAD; // 1:1 multiplier
-        // Explicitly open redemption so non-policy tests are not blocked by the ALWAYS_BLOCK default.
-        accounting.policy_ids.insert(REDEEM_SENDER_POLICY, PolicyRegistryStorage::ALWAYS_ALLOW_ID);
+        accounting.multiplier = B20AssetStorage::WAD; // 1:1 ratio
         TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
     }
 
@@ -508,13 +484,13 @@ mod tests {
     }
 
     #[test]
-    fn to_scaled_balance_one_to_one_multiplier() {
+    fn to_scaled_balance_one_to_one_ratio() {
         let token = make_token();
         assert_eq!(token.to_scaled_balance(U256::from(100u64)).unwrap(), U256::from(100u64));
     }
 
     #[test]
-    fn to_scaled_balance_two_to_one_multiplier() {
+    fn to_scaled_balance_two_to_one_ratio() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         accounting.multiplier = B20AssetStorage::WAD * U256::from(2u64);
         let token = TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
@@ -570,92 +546,6 @@ mod tests {
         );
         assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::ZERO);
         assert_eq!(token.accounting().total_supply().unwrap(), U256::ZERO);
-    }
-
-    #[test]
-    fn asset_redeem_burns_and_emits_asset_event() {
-        let mut token = make_token();
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(100u64);
-        token.accounting_mut().minimum_redeemable = U256::from(1u64);
-
-        token.asset_redeem(ALICE, U256::from(50u64)).unwrap();
-
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(50u64));
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(50u64));
-        assert_eq!(token.accounting().events.len(), 2); // Transfer + Redeemed
-    }
-
-    #[test]
-    fn asset_redeem_zero_amount_is_no_op() {
-        let mut token = make_token();
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(100u64);
-        token.accounting_mut().minimum_redeemable = U256::from(1u64);
-
-        token.asset_redeem(ALICE, U256::ZERO).unwrap();
-
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(100u64));
-        assert_eq!(token.accounting().events.len(), 2); // Transfer(ALICE, 0x0, 0) + Redeemed(ALICE, 0, multiplier)
-    }
-
-    #[test]
-    fn asset_redeem_rejects_below_minimum_scaled_amount() {
-        let mut token = make_token();
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(100u64);
-        token.accounting_mut().minimum_redeemable = U256::from(10u64);
-
-        // 5 tokens * 1e18 multiplier / 1e18 = 5 scaled < 10 minimum
-        assert!(token.asset_redeem(ALICE, U256::from(5u64)).is_err());
-    }
-
-    #[test]
-    fn asset_redeem_rejects_zero_scaled_amount() {
-        let mut token = make_token();
-        token.accounting_mut().multiplier = U256::ONE;
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(100u64);
-
-        // 1 token-wei * 1 / WAD rounds down to 0 scaled units, which is always rejected.
-        assert!(token.asset_redeem(ALICE, U256::ONE).is_err());
-    }
-
-    #[test]
-    fn asset_redeem_rejects_when_redeem_feature_paused() {
-        let mut token = make_token();
-        token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::REDEEM);
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(100u64);
-
-        assert_eq!(
-            token.asset_redeem(ALICE, U256::from(1u64)).unwrap_err(),
-            BasePrecompileError::revert(IB20::ContractPaused {
-                feature: IB20::PausableFeature::REDEEM,
-            })
-        );
-    }
-
-    #[test]
-    fn asset_redeem_rejects_when_sender_policy_denies() {
-        let policy_id = 7;
-        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.multiplier = B20AssetStorage::WAD;
-        accounting.balances.insert(ALICE, U256::from(100u64));
-        accounting.total_supply = U256::from(100u64);
-        accounting.policy_ids.insert(REDEEM_SENDER_POLICY, policy_id);
-        let mut policy = InMemoryPolicy::new();
-        policy.create_existing_policy(policy_id);
-        let mut token = TestAssetToken::with_storage_and_policy(accounting, policy);
-
-        assert_eq!(
-            token.asset_redeem(ALICE, U256::from(1u64)).unwrap_err(),
-            BasePrecompileError::revert(IB20::PolicyForbids {
-                policyScope: REDEEM_SENDER_POLICY,
-                policyId: policy_id,
-            })
-        );
     }
 
     #[test]
@@ -726,104 +616,7 @@ mod tests {
         );
     }
 
-    // --- redeem: InsufficientBalance / boundary / scaled math / event pair ---
-
-    #[test]
-    fn asset_redeem_rejects_insufficient_balance() {
-        let mut token = make_token();
-        token.accounting_mut().balances.insert(ALICE, U256::from(10u64));
-        token.accounting_mut().total_supply = U256::from(10u64);
-        token.accounting_mut().minimum_redeemable = U256::from(1u64);
-        // amount=100 > balance=10 → InsufficientBalance after the scaled-floor check passes
-        assert!(token.asset_redeem(ALICE, U256::from(100u64)).is_err());
-        // no state mutation on failure
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
-    }
-
-    #[test]
-    fn asset_redeem_supply_underflow_is_under_overflow_panic() {
-        // Regression: before BOP-160, saturating_sub silently clamped supply to zero.
-        // If an accounting bug left total_supply < balance, the correct behavior is to
-        // revert with an arithmetic under/overflow panic rather than zeroing the supply.
-        let mut token = make_token();
-        // Supply invariant violated: balance exceeds total supply.
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(50u64);
-
-        // amount=75 passes the balance check (100 >= 75) but underflows total_supply (50 - 75).
-        assert_eq!(
-            token.asset_redeem(ALICE, U256::from(75u64)).unwrap_err(),
-            BasePrecompileError::under_overflow()
-        );
-    }
-
-    #[test]
-    fn asset_redeem_at_exact_minimum_succeeds() {
-        let mut token = make_token(); // 1:1 multiplier
-        token.accounting_mut().balances.insert(ALICE, U256::from(50u64));
-        token.accounting_mut().total_supply = U256::from(50u64);
-        // 5 tokens * WAD / WAD = 5 scaled == minimum → boundary must be accepted
-        token.accounting_mut().minimum_redeemable = U256::from(5u64);
-        token.asset_redeem(ALICE, U256::from(5u64)).unwrap();
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(45u64));
-        assert_eq!(token.accounting().total_supply().unwrap(), U256::from(45u64));
-    }
-
-    #[test]
-    fn asset_redeem_with_non_unit_multiplier_applies_correct_scaled_math() {
-        let mut token = make_token();
-        // 2x multiplier: 1 token scales to 2 units
-        token.accounting_mut().multiplier = B20AssetStorage::WAD * U256::from(2u64);
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(100u64);
-        // minimum = 10 scaled → need at least 5 tokens
-        token.accounting_mut().minimum_redeemable = U256::from(10u64);
-        // 4 tokens → 8 scaled < 10 → BelowMinimumRedeemable
-        assert!(token.asset_redeem(ALICE, U256::from(4u64)).is_err());
-        // 5 tokens → 10 scaled == minimum → accepted
-        token.asset_redeem(ALICE, U256::from(5u64)).unwrap();
-        assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(95u64));
-    }
-
-    #[test]
-    fn asset_redeem_emits_transfer_then_redeemed() {
-        let mut token = make_token();
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(100u64);
-        token.accounting_mut().minimum_redeemable = U256::from(1u64);
-        token.asset_redeem(ALICE, U256::from(10u64)).unwrap();
-        // "Emits Transfer(caller, address(0), amount) followed by Redeemed(caller, amount, multiplier)"
-        assert_eq!(token.accounting().events.len(), 2);
-    }
-
-    #[test]
-    fn asset_redeem_with_memo_emits_memo_before_redeemed() {
-        let mut token = make_token();
-        let amount = U256::from(10u64);
-        let memo = B256::repeat_byte(0x42);
-        token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
-        token.accounting_mut().total_supply = U256::from(100u64);
-        token.accounting_mut().minimum_redeemable = U256::from(1u64);
-
-        token.asset_redeem_with_memo(ALICE, amount, memo).unwrap();
-
-        assert_eq!(
-            token.accounting().events[0],
-            IB20::Transfer { from: ALICE, to: Address::ZERO, amount }.encode_log_data()
-        );
-        assert_eq!(
-            token.accounting().events[1],
-            IB20::Memo { caller: ALICE, memo }.encode_log_data()
-        );
-        assert_eq!(
-            token.accounting().events[2],
-            IB20Asset::Redeemed { from: ALICE, amt: amount, multiplier: B20AssetStorage::WAD }
-                .encode_log_data()
-        );
-    }
-
     // --- toScaledBalance: zero balance / sub-WAD truncation / scaledBalanceOf delegation ---
-
     #[test]
     fn to_scaled_balance_zero_balance_yields_zero() {
         let token = make_token();
@@ -831,42 +624,21 @@ mod tests {
     }
 
     #[test]
-    fn to_scaled_balance_sub_wad_multiplier_truncates_to_zero() {
+    fn to_scaled_balance_sub_wad_ratio_truncates_to_zero() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        // 0.5 WAD: 1 token → 0.5 scaled → truncates to 0 via integer division
+        // 0.5 WAD: 1 token → 0.5 shares → truncates to 0 via integer division
         accounting.multiplier = B20AssetStorage::WAD / U256::from(2u64);
         let token = TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
         assert_eq!(token.to_scaled_balance(U256::from(1u64)).unwrap(), U256::ZERO);
     }
 
     #[test]
-    fn scaled_balance_of_derives_from_balance() {
-        let mut token = make_token(); // 1:1 multiplier
+    fn shares_of_derives_from_balance() {
+        let mut token = make_token(); // 1:1 ratio
         token.accounting_mut().balances.insert(ALICE, U256::from(75u64));
         // scaledBalanceOf(account) = toScaledBalance(balanceOf(account))
         let balance = token.accounting().balance_of(ALICE).unwrap();
         assert_eq!(token.to_scaled_balance(balance).unwrap(), U256::from(75u64));
-    }
-
-    #[test]
-    fn storage_backed_redeem_uses_wad_when_multiplier_slot_is_unset() {
-        let (mut storage, _) = setup_storage();
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mut token = B20AssetToken::with_storage_and_policy(
-                B20AssetStorage::from_address(TOKEN, ctx),
-                PolicyHandle::new(ctx),
-            );
-            token.accounting_mut().set_balance(ALICE, U256::from(100u64)).unwrap();
-            token.accounting_mut().set_total_supply(U256::from(100u64)).unwrap();
-            token.accounting_mut().set_minimum_redeemable(U256::from(10u64)).unwrap();
-
-            assert_eq!(token.accounting().multiplier().unwrap(), B20AssetStorage::WAD);
-            token.asset_redeem(ALICE, U256::from(10u64)).unwrap();
-
-            assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(90u64));
-            assert_eq!(token.accounting().total_supply().unwrap(), U256::from(90u64));
-        });
     }
 
     // --- updateMultiplier: persistence ---
@@ -874,9 +646,9 @@ mod tests {
     #[test]
     fn multiplier_update_persists() {
         let mut token = make_token();
-        let new_multiplier = B20AssetStorage::WAD * U256::from(3u64);
-        token.accounting_mut().set_multiplier(new_multiplier).unwrap();
-        assert_eq!(token.accounting().multiplier().unwrap(), new_multiplier);
+        let new_ratio = B20AssetStorage::WAD * U256::from(3u64);
+        token.accounting_mut().set_multiplier(new_ratio).unwrap();
+        assert_eq!(token.accounting().multiplier().unwrap(), new_ratio);
     }
 
     // --- extraMetadata / updateExtraMetadata ---
@@ -901,16 +673,6 @@ mod tests {
         assert_eq!(token.accounting().extra_metadata("FIGI").unwrap(), "");
     }
 
-    // --- minimumRedeemable / updateMinimumRedeemable ---
-
-    #[test]
-    fn minimum_redeemable_persists() {
-        let mut token = make_token();
-        let floor = U256::from(42u64);
-        token.accounting_mut().set_minimum_redeemable(floor).unwrap();
-        assert_eq!(token.accounting().minimum_redeemable().unwrap(), floor);
-    }
-
     // --- isAnnouncementIdUsed: fresh state ---
 
     #[test]
@@ -922,35 +684,16 @@ mod tests {
     }
 
     /// `to_scaled_balance` must return an arithmetic overflow panic rather than silently
-    /// saturating when `rawBalance * multiplier` exceeds `U256::MAX`.
+    /// saturating when `balance * multiplier` exceeds `U256::MAX`.
     #[test]
     fn to_scaled_balance_overflows_when_product_exceeds_u256_max() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        // Any balance > 1 overflows when multiplied by this multiplier.
+        // Any balance > 1 overflows when multiplied by this ratio.
         accounting.multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
         let token = TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
             token.to_scaled_balance(U256::from(2u64)).unwrap_err(),
-            BasePrecompileError::under_overflow()
-        );
-    }
-
-    /// `asset_redeem` must return an arithmetic overflow panic rather than
-    /// silently saturating when `amount * multiplier` exceeds `U256::MAX`.
-    #[test]
-    fn asset_redeem_overflows_when_product_exceeds_u256_max() {
-        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        // Any amount > 1 overflows when multiplied by this multiplier.
-        accounting.multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
-        accounting.balances.insert(ALICE, U256::from(2u64));
-        accounting.total_supply = U256::from(2u64);
-        // Open redemption so the policy gate does not block the call before the overflow.
-        accounting.policy_ids.insert(REDEEM_SENDER_POLICY, PolicyRegistryStorage::ALWAYS_ALLOW_ID);
-        let mut token = TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
-
-        assert_eq!(
-            token.asset_redeem(ALICE, U256::from(2u64)).unwrap_err(),
             BasePrecompileError::under_overflow()
         );
     }

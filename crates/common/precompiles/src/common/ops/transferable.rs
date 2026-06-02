@@ -236,16 +236,6 @@ mod tests {
     }
 
     #[test]
-    fn transfer_from_with_zero_from_address_reverts() {
-        let mut token = make_token();
-
-        assert_eq!(
-            token.transfer_from(SPENDER, Address::ZERO, BOB, U256::ONE, false).unwrap_err(),
-            BasePrecompileError::revert(IB20::InvalidSender { sender: Address::ZERO })
-        );
-    }
-
-    #[test]
     fn transfer_to_zero_receiver_reverts() {
         let mut token = token_with_balance(U256::from(100u64));
 

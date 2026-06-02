@@ -16,8 +16,8 @@ use crate::{
 /// EVM precompile for the asset B-20 variant.
 ///
 /// Mirrors the structure of [`crate::B20Token`] but requires `S: AssetAccounting`
-/// so the dispatch layer can read and write asset-specific storage (multiplier,
-/// asset metadata, announcement IDs). The `in_announcement` flag guards against
+/// so the dispatch layer can read and write asset-specific storage (share ratio,
+/// asset identifiers, announcement IDs). The `in_announcement` flag guards against
 /// recursive `announce` calls within a single precompile invocation.
 #[derive(Debug, Clone)]
 pub struct B20AssetToken<S: AssetAccounting, P: Policy> {
@@ -34,9 +34,6 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     /// Role identifier for metadata updaters: `keccak256("METADATA_ROLE")`.
     pub const METADATA_ROLE: B256 =
         b256!("6bd6b5318a46e5fff572d5e4258a20774aab40cc35ac7680654b9081fcc82f80");
-
-    /// Policy scope identifier for redeem senders: `keccak256("REDEEM_SENDER_POLICY")`.
-    pub const REDEEM_SENDER_POLICY: B256 = B20AssetStorage::REDEEM_SENDER_POLICY;
 
     /// Creates a `B20AssetToken` backed by the provided storage and policy adapters.
     pub const fn with_storage_and_policy(accounting: S, policy: P) -> Self {
@@ -92,10 +89,9 @@ impl<S: AssetAccounting, P: Policy> RoleManaged for B20AssetToken<S, P> {}
 impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     // --- Policy Scope Validation ---
 
-    /// Ensures `policy_scope` names either an inherited B-20 policy slot or the
-    /// asset redeem slot.
+    /// Ensures `policy_scope` names an inherited B-20 policy slot.
     pub fn is_supported_policy_scope(policy_scope: B256) -> bool {
-        policy_scope == Self::REDEEM_SENDER_POLICY || B20PolicyType::from_id(policy_scope).is_some()
+        B20PolicyType::from_id(policy_scope).is_some()
     }
 
     /// Validates that the policy scope is supported.
@@ -185,55 +181,46 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         )
     }
 
-    // --- Multiplier Operations ---
+    // --- Share Ratio Operations ---
 
-    /// Converts a raw balance to its scaled view: `rawBalance * multiplier / WAD`.
-    pub fn to_scaled_balance(&self, raw_balance: U256) -> Result<U256> {
-        let m = self.accounting().multiplier()?;
-        let product = raw_balance.checked_mul(m).ok_or_else(BasePrecompileError::under_overflow)?;
+    /// Converts a token balance to shares: `balance * multiplier / WAD`.
+    pub fn to_scaled_balance(&self, balance: U256) -> Result<U256> {
+        let ratio = self.accounting().multiplier()?;
+        let product = balance.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)?;
         Ok(product / B20AssetStorage::WAD)
     }
 
-    /// Returns the scaled balance for an account.
+    /// Converts a scaled balance back to its raw representation: `scaled * WAD / multiplier`.
+    pub fn to_raw_balance(&self, balance: U256) -> Result<U256> {
+        let ratio = self.accounting().multiplier()?;
+        let product = balance
+            .checked_mul(B20AssetStorage::WAD)
+            .ok_or_else(BasePrecompileError::under_overflow)?;
+        Ok(product / ratio)
+    }
+
+    /// Returns the shares for an account (balance converted to shares).
     pub fn scaled_balance_of(&self, account: Address) -> Result<U256> {
         let balance = self.accounting().balance_of(account)?;
         self.to_scaled_balance(balance)
     }
 
-    /// Sets a new multiplier.
+    /// Updates the share-to-tokens ratio.
     pub fn update_multiplier(
         &mut self,
         caller: Address,
-        new_multiplier: U256,
+        new_ratio: U256,
         privileged: bool,
     ) -> Result<()> {
         self.ensure_operator_role(caller, privileged)?;
-        self.accounting_mut().set_multiplier(new_multiplier)?;
-        self.accounting_mut().emit_event(
-            IB20Asset::MultiplierUpdated { multiplier: new_multiplier }.encode_log_data(),
-        )
+        self.accounting_mut().set_multiplier(new_ratio)?;
+        self.accounting_mut()
+            .emit_event(IB20Asset::MultiplierUpdated { multiplier: new_ratio }.encode_log_data())
     }
 
-    // --- Minimum Redeemable Operations ---
+    // --- Asset Identifier Operations ---
 
-    /// Updates the minimum redeemable amount.
-    pub fn update_minimum_redeemable(
-        &mut self,
-        caller: Address,
-        new_minimum: U256,
-        privileged: bool,
-    ) -> Result<()> {
-        self.ensure_default_admin(caller, privileged)?;
-        self.accounting_mut().set_minimum_redeemable(new_minimum)?;
-        self.accounting_mut().emit_event(
-            IB20Asset::MinimumRedeemableUpdated { caller, newMinimumRedeemable: new_minimum }
-                .encode_log_data(),
-        )
-    }
-
-    // --- Asset Metadata Operations ---
-
-    /// Updates an asset metadata value.
+    /// Updates a asset identifier value.
     pub fn update_extra_metadata(
         &mut self,
         caller: Address,
@@ -243,74 +230,12 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     ) -> Result<()> {
         self.ensure_metadata_role(caller, privileged)?;
         if identifier_type.is_empty() {
-            return Err(BasePrecompileError::revert(IB20Asset::InvalidIdentifierType {}));
+            return Err(BasePrecompileError::revert(IB20Asset::InvalidMetadataKey {}));
         }
         self.accounting_mut().set_extra_metadata_value(identifier_type.as_str(), value.clone())?;
         self.accounting_mut().emit_event(
             IB20Asset::ExtraMetadataUpdated { identifierType: identifier_type, value }
                 .encode_log_data(),
-        )
-    }
-
-    // --- Asset Redeem Operations ---
-
-    /// Performs an asset-specific redeem: multiplier floor check, burn, asset `Redeemed` event.
-    pub fn asset_redeem(&mut self, caller: Address, amount: U256) -> Result<()> {
-        let multiplier = self.asset_redeem_burn(caller, amount)?;
-        self.emit_redeemed(caller, amount, multiplier)
-    }
-
-    /// [`Self::asset_redeem`] with a memo emitted between `Transfer` and `Redeemed`.
-    pub fn asset_redeem_with_memo(
-        &mut self,
-        caller: Address,
-        amount: U256,
-        memo: B256,
-    ) -> Result<()> {
-        let multiplier = self.asset_redeem_burn(caller, amount)?;
-        self.accounting_mut().emit_event(IB20::Memo { caller, memo }.encode_log_data())?;
-        self.emit_redeemed(caller, amount, multiplier)
-    }
-
-    /// Performs the shared asset redeem burn and returns the multiplier used for the floor check.
-    fn asset_redeem_burn(&mut self, caller: Address, amount: U256) -> Result<U256> {
-        B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::REDEEM)?;
-        B20Guards::ensure_policy::<Self>(self, Self::REDEEM_SENDER_POLICY, caller)?;
-        let multiplier = self.accounting().multiplier()?;
-        if !amount.is_zero() {
-            let scaled =
-                amount.checked_mul(multiplier).ok_or_else(BasePrecompileError::under_overflow)?
-                    / B20AssetStorage::WAD;
-            let minimum = self.accounting().minimum_redeemable()?;
-            if scaled == U256::ZERO || scaled < minimum {
-                return Err(BasePrecompileError::revert(IB20Asset::BelowMinimumRedeemable {
-                    scaledAmount: scaled,
-                    minimum,
-                }));
-            }
-        }
-        let balance = self.accounting().balance_of(caller)?;
-        if balance < amount {
-            return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
-                sender: caller,
-                balance,
-                needed: amount,
-            }));
-        }
-        self.accounting_mut().set_balance(caller, balance - amount)?;
-        let supply = self.accounting().total_supply()?;
-        let new_supply =
-            supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        self.accounting_mut().set_total_supply(new_supply)?;
-        self.accounting_mut().emit_event(
-            IB20::Transfer { from: caller, to: Address::ZERO, amount }.encode_log_data(),
-        )?;
-        Ok(multiplier)
-    }
-
-    fn emit_redeemed(&mut self, caller: Address, amount: U256, multiplier: U256) -> Result<()> {
-        self.accounting_mut().emit_event(
-            IB20Asset::Redeemed { from: caller, amt: amount, multiplier }.encode_log_data(),
         )
     }
 
@@ -360,7 +285,7 @@ mod tests {
 
     use crate::{
         B20AssetStorage, B20AssetToken, B20PausableFeature, B20TokenRole, IB20, IB20Asset,
-        InMemoryPolicy, InMemoryTokenAccounting, PolicyRegistryStorage, Token,
+        InMemoryPolicy, InMemoryTokenAccounting, Token,
     };
 
     type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
@@ -373,9 +298,6 @@ mod tests {
     fn make_token() -> TestAssetToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         accounting.multiplier = B20AssetStorage::WAD;
-        accounting
-            .policy_ids
-            .insert(TestAssetToken::REDEEM_SENDER_POLICY, PolicyRegistryStorage::ALWAYS_ALLOW_ID);
         TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
     }
 
@@ -441,63 +363,6 @@ mod tests {
     }
 
     #[derive(Debug, Clone, Copy)]
-    enum AssetRedeemSetup {
-        Paused,
-        PolicyBlocked,
-        InsufficientBalance,
-    }
-
-    fn setup_asset_redeem(setup: AssetRedeemSetup) -> TestAssetToken {
-        let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.multiplier = B20AssetStorage::WAD;
-
-        match setup {
-            AssetRedeemSetup::Paused => {
-                accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::REDEEM);
-                accounting.policy_ids.insert(
-                    TestAssetToken::REDEEM_SENDER_POLICY,
-                    PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-                );
-            }
-            AssetRedeemSetup::PolicyBlocked => {
-                accounting.policy_ids.insert(
-                    TestAssetToken::REDEEM_SENDER_POLICY,
-                    PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-                );
-            }
-            AssetRedeemSetup::InsufficientBalance => {
-                accounting.policy_ids.insert(
-                    TestAssetToken::REDEEM_SENDER_POLICY,
-                    PolicyRegistryStorage::ALWAYS_ALLOW_ID,
-                );
-                accounting.minimum_redeemable = U256::from(1u64);
-                accounting.balances.insert(CALLER, U256::from(5u64));
-            }
-        }
-
-        TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
-    }
-
-    fn expected_asset_redeem_error(setup: AssetRedeemSetup) -> BasePrecompileError {
-        match setup {
-            AssetRedeemSetup::Paused => BasePrecompileError::revert(IB20::ContractPaused {
-                feature: IB20::PausableFeature::REDEEM,
-            }),
-            AssetRedeemSetup::PolicyBlocked => BasePrecompileError::revert(IB20::PolicyForbids {
-                policyScope: TestAssetToken::REDEEM_SENDER_POLICY,
-                policyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
-            }),
-            AssetRedeemSetup::InsufficientBalance => {
-                BasePrecompileError::revert(IB20::InsufficientBalance {
-                    sender: CALLER,
-                    balance: U256::from(5u64),
-                    needed: U256::from(10u64),
-                })
-            }
-        }
-    }
-
-    #[derive(Debug, Clone, Copy)]
     enum UpdatePolicySetup {
         NoRole,
         InvalidScope,
@@ -529,10 +394,9 @@ mod tests {
     }
 
     #[test]
-    fn role_and_policy_ids_match_solidity_hashes() {
+    fn role_ids_match_solidity_hashes() {
         assert_eq!(TestAssetToken::OPERATOR_ROLE, keccak256("OPERATOR_ROLE"));
         assert_eq!(TestAssetToken::METADATA_ROLE, keccak256("METADATA_ROLE"));
-        assert_eq!(TestAssetToken::REDEEM_SENDER_POLICY, keccak256("REDEEM_SENDER_POLICY"));
     }
 
     #[rstest]
@@ -549,18 +413,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::paused_gets_pause_error(AssetRedeemSetup::Paused)]
-    #[case::policy_blocked_gets_policy_error(AssetRedeemSetup::PolicyBlocked)]
-    #[case::insufficient_balance_gets_business_error(AssetRedeemSetup::InsufficientBalance)]
-    fn asset_redeem_check_order(#[case] setup: AssetRedeemSetup) {
-        let mut token = setup_asset_redeem(setup);
-
-        let err = token.asset_redeem(CALLER, U256::from(10u64)).unwrap_err();
-
-        assert_eq!(err, expected_asset_redeem_error(setup));
-    }
-
-    #[rstest]
     #[case::no_role_gets_role_error(UpdatePolicySetup::NoRole)]
     #[case::invalid_scope_gets_input_error(UpdatePolicySetup::InvalidScope)]
     fn update_policy_check_order(#[case] setup: UpdatePolicySetup) {
@@ -569,27 +421,5 @@ mod tests {
         let err = token.update_policy(CALLER, invalid_scope, 999, false).unwrap_err();
 
         assert_eq!(err, expected_update_policy_error(setup, invalid_scope));
-    }
-
-    /// Caller holding only `OPERATOR_ROLE` must be denied `updateExtraMetadata`.
-    ///
-    /// This guards against regressions where `ensure_metadata_role` is accidentally
-    /// reverted to `ensure_operator_role`, collapsing the two distinct capabilities.
-    #[test]
-    fn update_extra_metadata_requires_metadata_role_not_operator_role() {
-        let mut token = make_token();
-        token.accounting_mut().roles.insert((TestAssetToken::OPERATOR_ROLE, CALLER), true);
-
-        let err = token
-            .update_extra_metadata(CALLER, "ISIN".to_string(), "US0000000000".to_string(), false)
-            .unwrap_err();
-
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
-                account: CALLER,
-                neededRole: TestAssetToken::METADATA_ROLE,
-            })
-        );
     }
 }

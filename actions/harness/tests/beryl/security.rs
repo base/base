@@ -69,10 +69,10 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                 ),
                 StaticcallCase::string("contractURI", IB20::contractURICall {}.abi_encode(), ""),
                 StaticcallCase::string(
-                    "extraMetadata(ISIN)",
+                    "extraMetadata(unset)",
                     IB20Asset::extraMetadataCall { identifierType: "ISIN".to_string() }
                         .abi_encode(),
-                    BerylTestEnv::B20_ASSET_ISIN,
+                    "",
                 ),
                 StaticcallCase::word(
                     "decimals",
@@ -101,7 +101,7 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                     U256::from(100),
                 ),
                 StaticcallCase::word(
-                    "scaledBalanceOf(alice)",
+                    "scaledBalanceOf((alice)",
                     IB20Asset::scaledBalanceOfCall { account: BerylTestEnv::alice() }.abi_encode(),
                     U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
                 ),
@@ -251,7 +251,7 @@ async fn security_mutations_update_state_and_emit_events() {
                     U256::from(100),
                 ),
                 StaticcallCase::word(
-                    "scaledBalanceOf(alice) after update",
+                    "scaledBalanceOf((alice) after update",
                     IB20Asset::scaledBalanceOfCall { account: BerylTestEnv::alice() }.abi_encode(),
                     U256::from(BerylTestEnv::B20_INITIAL_SUPPLY) * U256::from(2),
                 ),

@@ -9,7 +9,7 @@ use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_storage::Result;
 
 use crate::{
-    B20AssetStorage, IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage,
+    IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage,
     b20_asset::{AssetAccounting, B20AssetToken},
     b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
     common::{Policy, TokenAccounting},
@@ -47,14 +47,10 @@ pub struct InMemoryTokenAccounting {
     pub decimals: u8,
     /// Stablecoin currency identifier.
     pub currency: String,
-    /// Asset ISIN identifier (legacy field; prefer `extra_metadata` map for asset tokens).
-    pub asset_isin: String,
     /// Bitmask of active pause vectors.
     pub paused: U256,
     /// Per-account EIP-2612 nonces.
     pub nonces: HashMap<Address, U256>,
-    /// Minimum amount required for a redeem operation.
-    pub minimum_redeemable: U256,
     /// URI pointing to the contract-level metadata.
     pub contract_uri: String,
     /// Role membership keyed by `(role, account)`.
@@ -65,9 +61,9 @@ pub struct InMemoryTokenAccounting {
     pub role_admins: HashMap<B256, B256>,
     /// Policy IDs keyed by policy type.
     pub policy_ids: HashMap<B256, u64>,
-    /// Multiplier scaled to WAD (1e18). Asset tokens only.
+    /// Share-to-tokens ratio scaled to WAD (1e18). Asset tokens only.
     pub multiplier: U256,
-    /// Asset metadata values keyed by raw `identifier_type`. Asset tokens only.
+    /// Asset identifier values keyed by raw `identifier_type`. Asset tokens only.
     pub extra_metadata: HashMap<String, String>,
     /// Consumed announcement ids keyed by raw announcement id. Asset tokens only.
     pub announcement_ids_used: HashSet<String>,
@@ -89,10 +85,8 @@ impl InMemoryTokenAccounting {
             symbol: String::new(),
             decimals: 18,
             currency: String::new(),
-            asset_isin: String::new(),
             paused: U256::ZERO,
             nonces: HashMap::new(),
-            minimum_redeemable: U256::ZERO,
             contract_uri: String::new(),
             roles: HashMap::new(),
             role_member_counts: HashMap::new(),
@@ -229,12 +223,7 @@ impl TokenAccounting for InMemoryTokenAccounting {
     }
 
     fn policy_id(&self, policy_scope: B256) -> Result<u64> {
-        let default = if policy_scope == B20AssetStorage::REDEEM_SENDER_POLICY {
-            PolicyRegistryStorage::ALWAYS_BLOCK_ID
-        } else {
-            PolicyRegistryStorage::ALWAYS_ALLOW_ID
-        };
-        Ok(*self.policy_ids.get(&policy_scope).unwrap_or(&default))
+        Ok(*self.policy_ids.get(&policy_scope).unwrap_or(&PolicyRegistryStorage::ALWAYS_ALLOW_ID))
     }
 
     fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
@@ -391,16 +380,13 @@ impl AssetAccounting for InMemoryTokenAccounting {
         Ok(if self.multiplier.is_zero() { WAD } else { self.multiplier })
     }
 
-    fn set_multiplier(&mut self, multiplier: U256) -> Result<()> {
-        self.multiplier = multiplier;
+    fn set_multiplier(&mut self, ratio: U256) -> Result<()> {
+        self.multiplier = ratio;
         Ok(())
     }
 
     fn extra_metadata(&self, identifier_type: &str) -> Result<String> {
-        if let Some(val) = self.extra_metadata.get(identifier_type) {
-            return Ok(val.clone());
-        }
-        if identifier_type == "ISIN" { Ok(self.asset_isin.clone()) } else { Ok(String::new()) }
+        Ok(self.extra_metadata.get(identifier_type).cloned().unwrap_or_default())
     }
 
     fn set_extra_metadata_value(&mut self, identifier_type: &str, value: String) -> Result<()> {
@@ -409,15 +395,6 @@ impl AssetAccounting for InMemoryTokenAccounting {
         } else {
             self.extra_metadata.insert(identifier_type.to_owned(), value);
         }
-        Ok(())
-    }
-
-    fn minimum_redeemable(&self) -> Result<U256> {
-        Ok(self.minimum_redeemable)
-    }
-
-    fn set_minimum_redeemable(&mut self, minimum: U256) -> Result<()> {
-        self.minimum_redeemable = minimum;
         Ok(())
     }
 

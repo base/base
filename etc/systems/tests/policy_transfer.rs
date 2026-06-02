@@ -27,8 +27,8 @@ const SALT_ALLOWLIST: B256 = B256::repeat_byte(0x50);
 const SALT_BLOCKLIST: B256 = B256::repeat_byte(0x51);
 const SALT_ALWAYS_BLOCK: B256 = B256::repeat_byte(0x52);
 
-/// Activates `B20_TOKEN` and `POLICY_REGISTRY` features, then returns a
-/// [`B20PrecompileClient`] ready for precompile calls.
+/// Activates `B20_FACTORY`, `B20_TOKEN`, and `POLICY_REGISTRY` features, then
+/// returns a [`B20PrecompileClient`] ready for precompile calls.
 async fn activated_client<'a>(
     provider: &'a RootProvider<Base>,
     admin: &'a PrivateKeySigner,

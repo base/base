@@ -13,17 +13,14 @@ sol! {
         /// `id` has previously been consumed by `announce`. Each id may be used at most once.
         error AnnouncementIdAlreadyUsed(string id);
 
-        /// `updateExtraMetadata` was called with an empty `identifierType`.
-        error InvalidIdentifierType();
+        /// `updateExtraMetadata` was called with an empty metadata key.
+        error InvalidMetadataKey();
 
         /// A batched function was called with parallel arrays of differing lengths.
         error LengthMismatch(uint256 leftLen, uint256 rightLen);
 
         /// A batched function was called with empty arrays.
         error EmptyBatch();
-
-        /// `redeem`/`redeemWithMemo` was called with a scaled amount below the floor, or zero.
-        error BelowMinimumRedeemable(uint256 scaledAmount, uint256 minimum);
 
         /// An `internalCalls` entry tried to invoke `announce` itself.
         error AnnouncementInProgress();
@@ -34,16 +31,7 @@ sol! {
         /// An `internalCalls` entry reverted during its inner dispatch.
         error InternalCallFailed(bytes call);
 
-        /// `decimals` was not in the allowed range `[6, 18]`.
-        error InvalidDecimals();
-
         // ── Events ───────────────────────────────────────────────────────────
-
-        /// Emitted by `redeem`/`redeemWithMemo`. Includes the active multiplier at redemption time.
-        event Redeemed(address indexed from, uint256 amt, uint256 multiplier);
-
-        /// Emitted by `updateMinimumRedeemable`.
-        event MinimumRedeemableUpdated(address indexed caller, uint256 newMinimumRedeemable);
 
         /// Emitted by `updateMultiplier`.
         event MultiplierUpdated(uint256 multiplier);
@@ -68,8 +56,6 @@ sol! {
         /// Fixed-point precision for `multiplier`: `1e18` (one WAD).
         function WAD_PRECISION() external view returns (uint256);
 
-        /// `keccak256("REDEEM_SENDER_POLICY")` — consulted on `redeem`/`redeemWithMemo`.
-        function REDEEM_SENDER_POLICY() external view returns (bytes32);
 
         // ── Announcements ────────────────────────────────────────────────────
 
@@ -92,6 +78,9 @@ sol! {
         /// Converts a raw balance to its scaled view: `rawBalance * multiplier / WAD_PRECISION`.
         function toScaledBalance(uint256 rawBalance) external view returns (uint256);
 
+        /// Converts a scaled balance back to its raw representation.
+        function toRawBalance(uint256 scaledBalance) external view returns (uint256 rawBalance);
+
         /// Convenience: `toScaledBalance(balanceOf(account))`.
         function scaledBalanceOf(address account) external view returns (uint256);
 
@@ -103,26 +92,12 @@ sol! {
         /// Mints `amounts[i]` to `recipients[i]`. Requires `MINT_ROLE`. All-or-nothing.
         function batchMint(address[] calldata recipients, uint256[] calldata amounts) external;
 
-        // ── Redemption ────────────────────────────────────────────────────────
-
-        /// Burns `amount` from caller with a multiplier-scaled minimum floor check.
-        function redeem(uint256 amount) external;
-
-        /// Same as `redeem`, followed by a `Memo` event.
-        function redeemWithMemo(uint256 amount, bytes32 memo) external;
-
-        /// Sets the minimum-redeemable threshold in scaled units. Requires `DEFAULT_ADMIN_ROLE`.
-        function updateMinimumRedeemable(uint256 newMinimumRedeemable) external;
-
-        /// Returns the minimum-redeemable threshold in scaled units.
-        function minimumRedeemable() external view returns (uint256);
-
-        // ── Asset metadata ──────────────────────────────────────────────────
+        // ── Asset identifiers ─────────────────────────────────────────────
 
         /// Returns the value of the named identifier (e.g. ISIN, CUSIP). Empty string if not set.
         function extraMetadata(string calldata identifierType) external view returns (string);
 
-        /// Sets, updates, or removes asset metadata. Empty `value` removes the entry. Requires `METADATA_ROLE`.
+        /// Sets, updates, or removes a asset identifier. Empty `value` removes the entry. Requires `METADATA_ROLE`.
         function updateExtraMetadata(
             string calldata identifierType,
             string calldata value
@@ -137,18 +112,14 @@ impl IB20Asset::IB20AssetCalls {
             Self::OPERATOR_ROLE(_) => "precompile-b20-asset-OPERATOR_ROLE",
             Self::METADATA_ROLE(_) => "precompile-b20-asset-METADATA_ROLE",
             Self::WAD_PRECISION(_) => "precompile-b20-asset-WAD_PRECISION",
-            Self::REDEEM_SENDER_POLICY(_) => "precompile-b20-asset-REDEEM_SENDER_POLICY",
             Self::announce(_) => "precompile-b20-asset-announce",
             Self::isAnnouncementIdUsed(_) => "precompile-b20-asset-isAnnouncementIdUsed",
             Self::multiplier(_) => "precompile-b20-asset-multiplier",
             Self::toScaledBalance(_) => "precompile-b20-asset-toScaledBalance",
+            Self::toRawBalance(_) => "precompile-b20-asset-toRawBalance",
             Self::scaledBalanceOf(_) => "precompile-b20-asset-scaledBalanceOf",
             Self::updateMultiplier(_) => "precompile-b20-asset-updateMultiplier",
             Self::batchMint(_) => "precompile-b20-asset-batchMint",
-            Self::redeem(_) => "precompile-b20-asset-redeem",
-            Self::redeemWithMemo(_) => "precompile-b20-asset-redeemWithMemo",
-            Self::updateMinimumRedeemable(_) => "precompile-b20-asset-updateMinimumRedeemable",
-            Self::minimumRedeemable(_) => "precompile-b20-asset-minimumRedeemable",
             Self::extraMetadata(_) => "precompile-b20-asset-extraMetadata",
             Self::updateExtraMetadata(_) => "precompile-b20-asset-updateExtraMetadata",
         }
@@ -157,39 +128,17 @@ impl IB20Asset::IB20AssetCalls {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{U256, b256, keccak256};
-    use alloy_sol_types::{SolCall, SolEvent};
-
     use crate::IB20Asset;
-
-    #[test]
-    fn redeem_sender_policy_selector_matches_solidity_interface() {
-        assert_eq!(IB20Asset::REDEEM_SENDER_POLICYCall::SELECTOR, [0x1c, 0x6f, 0x9d, 0x42]);
-    }
-
-    #[test]
-    fn minimum_redeemable_updated_topic_matches_solidity_interface() {
-        assert_eq!(
-            IB20Asset::MinimumRedeemableUpdated::SIGNATURE_HASH,
-            b256!("7fdd6ea6dad98bfcd2c5ec538e748a5e8ecc40d0fc824f55dfc7397fe78a183b")
-        );
-        assert_eq!(
-            IB20Asset::MinimumRedeemableUpdated::SIGNATURE_HASH,
-            keccak256("MinimumRedeemableUpdated(address,uint256)")
-        );
-    }
 
     #[test]
     fn asset_call_labels_are_stable() {
         assert_eq!(
-            IB20Asset::IB20AssetCalls::minimumRedeemable(IB20Asset::minimumRedeemableCall {},)
-                .as_label(),
-            "precompile-b20-asset-minimumRedeemable"
-        );
-        assert_eq!(
-            IB20Asset::IB20AssetCalls::redeem(IB20Asset::redeemCall { amount: U256::ZERO })
-                .as_label(),
-            "precompile-b20-asset-redeem"
+            IB20Asset::IB20AssetCalls::updateExtraMetadata(IB20Asset::updateExtraMetadataCall {
+                identifierType: alloc::string::String::new(),
+                value: alloc::string::String::new(),
+            })
+            .as_label(),
+            "precompile-b20-asset-updateExtraMetadata"
         );
     }
 }
