@@ -10,15 +10,15 @@ default:
     @just --justfile {{source_file()}} --list
 
 # Stops devnet, deletes data, and starts fresh (3-node HA conductor cluster)
-up: down _ensure-sp1-elfs _build-setup-image (_build-rust-images "devnet" "dev")
+up: down _build-setup-image (_build-rust-images "devnet" "dev")
     docker compose {{ _env }} {{ _ha }} up -d --no-build
 
 # Stops devnet, deletes data, and starts fresh with a single sequencer (no conductor)
-up-single: down _ensure-sp1-elfs _build-setup-image (_build-rust-images "devnet" "dev")
+up-single: down _build-setup-image (_build-rust-images "devnet" "dev")
     docker compose {{ _env }} {{ _base }} up -d --no-build
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
-profiling: down _ensure-sp1-elfs _build-setup-image (_build-rust-images "devnet" "profiling")
+profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
     docker compose {{ _env }} {{ _ha }} --profile profiling up -d --no-build
 
 # Stops devnet and deletes all data
@@ -133,20 +133,6 @@ bench name:
 [private]
 _install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
-
-# Ensures SP1 toolchain is installed and ELF artifacts are cached.
-# Installs SP1 automatically if cargo-prove is not found.
-[private]
-_ensure-sp1-elfs:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if ! command -v ~/.sp1/bin/cargo-prove &>/dev/null; then
-        echo "SP1 toolchain not found. Installing..."
-        curl -L https://sp1.succinct.xyz | bash
-        ~/.sp1/bin/sp1up
-    fi
-    cd "$(git rev-parse --show-toplevel)"
-    just succinct ensure-elfs
 
 # Env var: CONTRACTS_COMMIT overrides the base/contracts commit SHA (default in Dockerfile).
 [private]
