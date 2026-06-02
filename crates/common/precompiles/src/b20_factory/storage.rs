@@ -7,8 +7,9 @@ use base_precompile_storage::{BasePrecompileError, Result};
 use revm::state::Bytecode;
 
 use crate::{
-    B20AssetInit, B20AssetStorage, B20AssetToken, B20StablecoinInit, B20StablecoinStorage,
-    B20StablecoinToken, B20TokenRole, B20Variant, IB20Factory, PolicyHandle, RoleManaged, Token,
+    ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20AssetToken, B20StablecoinInit,
+    B20StablecoinStorage, B20StablecoinToken, B20TokenRole, B20Variant, IB20Factory, PolicyHandle,
+    RoleManaged, Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -50,6 +51,8 @@ impl<'a> B20FactoryStorage<'a> {
     ) -> Result<Address> {
         let variant = B20Variant::from_abi(call.variant)
             .ok_or_else(|| BasePrecompileError::revert(IB20Factory::InvalidVariant {}))?;
+        ActivationRegistryStorage::new(self.storage)
+            .ensure_activated(variant.activation_feature().id())?;
         let params = TokenCreateParams::decode(variant, &call.params)?;
         Self::check_version(params.version(), variant)?;
         params.validate()?;
@@ -460,6 +463,7 @@ mod tests {
     #[test]
     fn test_create_token_deploys_ef_stub() {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0xAA);
         let (expected_addr, _) = B20Variant::Asset.compute_address(caller, salt);
@@ -476,6 +480,7 @@ mod tests {
     #[test]
     fn test_create_token_stores_metadata_and_uses_variant_decimals() {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0xBB);
         let call =
@@ -543,6 +548,7 @@ mod tests {
     #[test]
     fn test_create_token_reverts_if_salt_reused() {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0xEE);
 
@@ -619,6 +625,7 @@ mod tests {
     #[test]
     fn test_create_token_allows_empty_default_name_and_symbol() {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0x05);
         let call = create_call(IB20Factory::B20Variant::ASSET, token_params("", ""), salt);
@@ -814,6 +821,7 @@ mod tests {
     #[test]
     fn test_is_b20_and_variant_prefix_before_and_after_create() {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0x11);
         let (addr, _) = B20Variant::Asset.compute_address(caller, salt);
@@ -856,6 +864,7 @@ mod tests {
     #[test]
     fn test_transfer_and_mint_lifecycle() {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
             let params = token_params("Lifecycle", "LIFE");
@@ -883,6 +892,7 @@ mod tests {
     #[test]
     fn test_token_identity_uses_dynamic_address() {
         let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
             let first = factory
