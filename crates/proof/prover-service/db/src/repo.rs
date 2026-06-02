@@ -562,35 +562,8 @@ impl ProofRequestRepo {
     /// eligible (including when the worker advertises no matching capabilities).
     pub async fn claim_next_proof_job(&self, req: ClaimProofJob) -> Result<Option<ProofJob>> {
         let lock_id = Uuid::new_v4();
-        let (cap_column, cap_values) = worker_capability_filter(&req);
-        let columns = PROOF_JOB_RETURNING_COLUMNS;
-
-        let sql = format!(
-            r#"
-            UPDATE proof_requests
-            SET job_status = 'CLAIMED',
-                status = 'RUNNING',
-                worker_id = $1,
-                lock_id = $2,
-                attempt = attempt + 1,
-                claimed_at = NOW(),
-                last_heartbeat_at = NOW(),
-                lock_expires_at = NOW() + ($3)::double precision * INTERVAL '1 second'
-            WHERE id = (
-                SELECT id FROM proof_requests
-                WHERE api_proof_type = $4
-                  AND {cap_column} = ANY($5::text[])
-                  AND (
-                      job_status = 'PENDING'
-                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $6)
-                  )
-                ORDER BY created_at ASC
-                FOR UPDATE SKIP LOCKED
-                LIMIT 1
-            )
-            RETURNING {columns}
-            "#,
-        );
+        let sql = claim_query(req.api_proof_type);
+        let cap_values = worker_capability_values(&req);
 
         let row = sqlx::query(&sql)
             .bind(&req.worker_id)
@@ -1796,19 +1769,81 @@ const PROOF_JOB_RETURNING_COLUMNS: &str = "id, COALESCE(session_id, id::text) AS
      created_at, updated_at, completed_at, retry_count, \
      job_status, worker_id, lock_id, lock_expires_at, claimed_at, attempt, last_heartbeat_at";
 
-/// Capability predicate `(column, values)` for the worker claim query.
+/// Capability values bound (as `$5`) into the claim query.
 ///
-/// TEE workers are matched on `tee_kind`, ZK workers on `zk_vm`. An empty value
-/// list yields `ANY('{}')`, which matches no rows, so a worker that advertises no
+/// TEE workers contribute their `tee_kinds`, ZK workers their `zk_vms`. An empty
+/// list binds `ANY('{}')`, which matches no rows, so a worker that advertises no
 /// matching capabilities simply claims nothing.
-fn worker_capability_filter(req: &ClaimProofJob) -> (&'static str, Vec<String>) {
+fn worker_capability_values(req: &ClaimProofJob) -> Vec<String> {
     match req.api_proof_type {
-        ApiProofType::Tee => {
-            ("tee_kind", req.tee_kinds.iter().map(|kind| kind.as_str().to_owned()).collect())
-        }
+        ApiProofType::Tee => req.tee_kinds.iter().map(|kind| kind.as_str().to_owned()).collect(),
         ApiProofType::Compressed | ApiProofType::SnarkGroth16 => {
-            ("zk_vm", req.zk_vms.iter().map(|vm| vm.as_str().to_owned()).collect())
+            req.zk_vms.iter().map(|vm| vm.as_str().to_owned()).collect()
         }
+    }
+}
+
+/// Build the atomic claim query for a proof type.
+///
+/// The capability column (`tee_kind` for TEE, `zk_vm` for ZK) is hardcoded as a
+/// literal in each variant rather than interpolated from a value, so no
+/// caller-derived string can ever reach the SQL as a column name. The only
+/// interpolated token is the fixed [`PROOF_JOB_RETURNING_COLUMNS`] constant.
+fn claim_query(api_proof_type: ApiProofType) -> String {
+    let columns = PROOF_JOB_RETURNING_COLUMNS;
+    match api_proof_type {
+        ApiProofType::Tee => format!(
+            r#"
+            UPDATE proof_requests
+            SET job_status = 'CLAIMED',
+                status = 'RUNNING',
+                worker_id = $1,
+                lock_id = $2,
+                attempt = attempt + 1,
+                claimed_at = NOW(),
+                last_heartbeat_at = NOW(),
+                lock_expires_at = NOW() + ($3)::double precision * INTERVAL '1 second'
+            WHERE id = (
+                SELECT id FROM proof_requests
+                WHERE api_proof_type = $4
+                  AND tee_kind = ANY($5::text[])
+                  AND (
+                      job_status = 'PENDING'
+                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $6)
+                  )
+                ORDER BY created_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING {columns}
+            "#,
+        ),
+        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => format!(
+            r#"
+            UPDATE proof_requests
+            SET job_status = 'CLAIMED',
+                status = 'RUNNING',
+                worker_id = $1,
+                lock_id = $2,
+                attempt = attempt + 1,
+                claimed_at = NOW(),
+                last_heartbeat_at = NOW(),
+                lock_expires_at = NOW() + ($3)::double precision * INTERVAL '1 second'
+            WHERE id = (
+                SELECT id FROM proof_requests
+                WHERE api_proof_type = $4
+                  AND zk_vm = ANY($5::text[])
+                  AND (
+                      job_status = 'PENDING'
+                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $6)
+                  )
+                ORDER BY created_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING {columns}
+            "#,
+        ),
     }
 }
 
