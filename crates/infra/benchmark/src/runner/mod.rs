@@ -20,22 +20,33 @@ use crate::metrics::{
     check_thresholds, BlockMetrics, MetricsCollector, Severity, ThresholdViolation,
 };
 use crate::output::{write_metadata_json, write_metrics_file};
-use crate::payload::{LoadTestPayloadWorker, PayloadWorker};
+use crate::payload::{LoadTestConfig, LoadTestPayloadWorker, PayloadWorker};
 use crate::ports::PortManager;
 use crate::proxy::run_proxy;
 use crate::snapshots::SnapshotManager;
 
 const JWT_SECRET: [u8; 32] = [0u8; 32];
 
+/// Filesystem paths and keys needed by the benchmark runner.
+#[derive(Debug)]
 pub struct RunnerOptions {
+    /// Path to the `base-reth-node` binary.
     pub reth_bin: PathBuf,
+    /// Path to the `base-builder` binary.
     pub builder_bin: PathBuf,
+    /// Path to the `base-load-test` binary.
     pub load_test_bin: PathBuf,
+    /// Path to the benchmark YAML config file (recorded in metadata).
     pub config_path: PathBuf,
+    /// Directory for writing results and metrics.
     pub output_dir: PathBuf,
+    /// Hex-encoded private key for pre-funding test accounts.
     pub prefund_key: String,
 }
 
+/// Top-level orchestrator: expands the config matrix, runs each test, and
+/// collects results.
+#[derive(Debug)]
 pub struct NetworkBenchmark {
     config: BenchmarkConfig,
     options: RunnerOptions,
@@ -44,6 +55,7 @@ pub struct NetworkBenchmark {
 }
 
 impl NetworkBenchmark {
+    /// Create a new benchmark runner.
     pub fn new(config: BenchmarkConfig, options: RunnerOptions, snapshot_dir: PathBuf) -> Self {
         Self {
             config,
@@ -53,6 +65,7 @@ impl NetworkBenchmark {
         }
     }
 
+    /// Expand the config matrix and execute every test run sequentially.
     pub async fn run_all(&mut self) -> Result<Vec<RunResult>, BenchmarkError> {
         let runs = self.config.expand()?;
         let mut results = Vec::with_capacity(runs.len());
@@ -177,16 +190,16 @@ impl NetworkBenchmark {
             .parse()
             .map_err(|_| BenchmarkError::Config("invalid proxy url".into()))?;
 
-        let worker = LoadTestPayloadWorker::new(
-            self.options.load_test_bin.clone(),
-            proxy_url,
-            None,
-            None,
-            run.payload.params.clone(),
-            self.options.prefund_key.clone(),
-            Some(sequencer_log_dir.join("load-test.log")),
-            mempool.clone(),
-        );
+        let worker = LoadTestPayloadWorker::new(LoadTestConfig {
+            bin: self.options.load_test_bin.clone(),
+            rpc_proxy_url: proxy_url,
+            block_watcher_url: None,
+            flashblocks_ws_url: None,
+            params: run.payload.params.clone(),
+            funder_key: self.options.prefund_key.clone(),
+            log_path: Some(sequencer_log_dir.join("load-test.log")),
+            mempool: mempool.clone(),
+        });
 
         let auth_url: Url = node.auth_rpc_url().parse().map_err(|_| {
             BenchmarkError::Config(format!("invalid auth url: {}", node.auth_rpc_url()))
@@ -300,11 +313,9 @@ impl NetworkBenchmark {
 
         validator_node.stop().await?;
 
-        let violations = if let Some(mc) = &run.definition.metrics {
+        let violations = run.definition.metrics.as_ref().map_or_else(Vec::new, |mc| {
             check_thresholds(&block_metrics_vec, mc)
-        } else {
-            vec![]
-        };
+        });
 
         let success = violations.iter().all(|v| v.severity != Severity::Error);
         write_metrics_file(&self.options.output_dir, "sequencer", &block_metrics_vec)?;
@@ -329,10 +340,16 @@ impl NetworkBenchmark {
     }
 }
 
+/// Outcome of a single benchmark run.
+#[derive(Debug)]
 pub struct RunResult {
+    /// Unique run identifier.
     pub id: String,
+    /// Sequencer per-block metrics.
     pub block_metrics: Vec<BlockMetrics>,
+    /// Validator per-block metrics.
     pub validator_block_metrics: Vec<BlockMetrics>,
+    /// Threshold violations detected after the run.
     pub violations: Vec<ThresholdViolation>,
 }
 

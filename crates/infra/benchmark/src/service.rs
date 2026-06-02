@@ -1,3 +1,5 @@
+//! Top-level entry point: parse config, create runner, report results.
+
 use std::path::PathBuf;
 
 use tracing::info;
@@ -6,16 +8,26 @@ use crate::config::BenchmarkConfig;
 use crate::error::BenchmarkError;
 use crate::runner::{NetworkBenchmark, RunnerOptions};
 
+/// CLI-resolved arguments for [`run_benchmark`].
+#[derive(Debug)]
 pub struct BenchmarkArgs {
+    /// Path to the benchmark YAML config file.
     pub config_path: PathBuf,
+    /// Directory for writing results.
     pub output_dir: PathBuf,
+    /// Path to the `base-reth-node` binary.
     pub reth_bin: PathBuf,
+    /// Path to the `base-builder` binary.
     pub builder_bin: PathBuf,
+    /// Path to the `base-load-test` binary.
     pub load_test_bin: PathBuf,
+    /// Hex-encoded private key for pre-funding.
     pub prefund_key: String,
+    /// Directory for cached snapshots.
     pub snapshot_dir: PathBuf,
 }
 
+/// Run all benchmark entries from the config file and log results.
 pub async fn run_benchmark(args: BenchmarkArgs) -> Result<(), BenchmarkError> {
     let raw = std::fs::read_to_string(&args.config_path).map_err(BenchmarkError::Io)?;
     let config: BenchmarkConfig =

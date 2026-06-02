@@ -4,16 +4,24 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
+use prometheus_parse::Value;
 use tracing::warn;
 
 use crate::error::BenchmarkError;
 
+/// Metric key: `eth_sendRawTransaction` batch latency in nanoseconds.
 pub const SEND_TXS_LATENCY: &str = "latency/send_txs";
+/// Metric key: `fork_choice_updated` latency in nanoseconds.
 pub const UPDATE_FORK_CHOICE_LATENCY: &str = "latency/fork_choice_updated";
+/// Metric key: `get_payload` latency in nanoseconds.
 pub const GET_PAYLOAD_LATENCY: &str = "latency/get_payload";
+/// Metric key: `new_payload` latency in nanoseconds.
 pub const NEW_PAYLOAD_LATENCY: &str = "latency/new_payload";
+/// Metric key: total gas consumed per block.
 pub const GAS_PER_BLOCK: &str = "gas/per_block";
+/// Metric key: gas throughput (gas / build duration).
 pub const GAS_PER_SECOND: &str = "gas/per_second";
+/// Metric key: transaction count per block.
 pub const TRANSACTIONS_PER_BLOCK: &str = "transactions/per_block";
 
 /// Per-block metrics collected during a benchmark run.
@@ -49,8 +57,6 @@ impl BlockMetrics {
     /// `delta_sum / delta_count` relative to the previous scrape and inserts
     /// the result as `<base>_avg`. Matches the Go runner's per-interval histogram logic.
     pub fn compute_delta_averages(&mut self) {
-        use prometheus_parse::Value;
-
         let sum_keys: Vec<String> = self
             .execution_metrics
             .keys()
@@ -95,50 +101,15 @@ impl BlockMetrics {
     /// Update a metric from a new Prometheus sample, computing deltas for
     /// Histogram and Summary types (deltaSum / deltaCount).
     ///
-    /// NaN results (e.g. from zero delta count) are silently skipped.
+    /// `NaN` results (e.g. from zero delta count) are silently skipped.
     pub fn update_prometheus_metric(
         &mut self,
         name: &str,
         current: &prometheus_parse::Sample,
     ) {
-        use prometheus_parse::Value;
-
         let value = match &current.value {
-            Value::Histogram(buckets) => {
-                let (cur_sum, cur_count) = histogram_sum_count(buckets);
-                if let Some(prev) = self.prev_prometheus.get(name) {
-                    if let Value::Histogram(prev_buckets) = &prev.value {
-                        let (prev_sum, prev_count) = histogram_sum_count(prev_buckets);
-                        let delta_count = cur_count - prev_count;
-                        if delta_count == 0.0 {
-                            None
-                        } else {
-                            Some((cur_sum - prev_sum) / delta_count)
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-            Value::Summary(quantiles) => {
-                let (cur_sum, cur_count) = summary_sum_count(quantiles);
-                if let Some(prev) = self.prev_prometheus.get(name) {
-                    if let Value::Summary(prev_quantiles) = &prev.value {
-                        let (prev_sum, prev_count) = summary_sum_count(prev_quantiles);
-                        let delta_count = cur_count - prev_count;
-                        if delta_count == 0.0 {
-                            None
-                        } else {
-                            Some((cur_sum - prev_sum) / delta_count)
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+            Value::Histogram(_) | Value::Summary(_) => {
+                None
             }
             Value::Gauge(v) | Value::Counter(v) | Value::Untyped(v) => Some(*v),
         };
@@ -152,17 +123,6 @@ impl BlockMetrics {
     }
 }
 
-fn histogram_sum_count(buckets: &[prometheus_parse::HistogramCount]) -> (f64, f64) {
-    let sum = buckets.iter().filter(|b| b.less_than == f64::INFINITY).map(|b| b.count).sum();
-    let count = buckets.last().map(|b| b.count).unwrap_or(0.0);
-    (sum, count)
-}
-
-fn summary_sum_count(quantiles: &[prometheus_parse::SummaryCount]) -> (f64, f64) {
-    let sum = quantiles.iter().map(|q| q.count).sum();
-    let count = quantiles.len() as f64;
-    (sum, count)
-}
 
 /// Scrape Prometheus metrics from a node's metrics endpoint.
 pub async fn scrape_prometheus(
@@ -183,6 +143,7 @@ pub async fn scrape_prometheus(
 }
 
 /// Collects and stores per-block metrics for a benchmark run.
+#[derive(Debug)]
 pub struct MetricsCollector {
     metrics_url: String,
     collected: Vec<BlockMetrics>,

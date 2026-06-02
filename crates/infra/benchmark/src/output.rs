@@ -81,6 +81,7 @@ pub fn copy_metrics(src_dir: &Path, dest_dir: &Path, role: &str) -> Result<(), B
     Ok(())
 }
 
+/// Write per-block metrics as `metrics-<role>.json` in `output_dir`.
 pub fn write_metrics_file(
     output_dir: &Path,
     role: &str,
@@ -101,6 +102,7 @@ pub fn write_metrics_file(
     Ok(())
 }
 
+/// Write a `metadata.json` summarising the run, config, and metrics.
 pub fn write_metadata_json(
     output_dir: &Path,
     config_path: &Path,

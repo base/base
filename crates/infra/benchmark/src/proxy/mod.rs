@@ -6,7 +6,7 @@ use std::sync::Arc;
 use alloy_primitives::Bytes;
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{HeaderMap, Request, Response, StatusCode};
+use axum::http::{HeaderMap, Response, StatusCode};
 use axum::response::IntoResponse;
 use axum::Router;
 use axum::routing::post;
@@ -60,18 +60,68 @@ async fn handle_rpc(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> impl IntoResponse {
-    let req: JsonRpcRequest = match serde_json::from_slice(&body) {
-        Ok(r) => r,
-        Err(_) => {
-            return proxy_raw(&state, &headers, body).await.into_response();
+    if let Ok(req) = serde_json::from_slice::<JsonRpcRequest>(&body) {
+        if req.method == "eth_sendRawTransaction" {
+            return handle_send_raw_transaction(&state, req).await.into_response();
         }
-    };
+        return proxy_raw(&state, &headers, body).await.into_response();
+    }
 
-    if req.method == "eth_sendRawTransaction" {
-        return handle_send_raw_transaction(&state, req).await.into_response();
+    if let Ok(reqs) = serde_json::from_slice::<Vec<JsonRpcRequest>>(&body) {
+        return handle_batch_rpc(&state, &headers, body, reqs).await.into_response();
     }
 
     proxy_raw(&state, &headers, body).await.into_response()
+}
+
+async fn handle_batch_rpc(
+    state: &ProxyState,
+    headers: &HeaderMap,
+    body: axum::body::Bytes,
+    reqs: Vec<JsonRpcRequest>,
+) -> impl IntoResponse {
+    let all_send_raw = reqs.iter().all(|r| r.method == "eth_sendRawTransaction");
+    if !all_send_raw {
+        return proxy_raw(state, headers, body).await.into_response();
+    }
+
+    let mut responses: Vec<serde_json::Value> = Vec::with_capacity(reqs.len());
+    for req in reqs {
+        let raw_hex = req
+            .params
+            .as_ref()
+            .and_then(|p| p.as_array())
+            .and_then(|a| a.first())
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        match hex::decode(raw_hex.trim_start_matches("0x")) {
+            Ok(bytes) => {
+                let raw_bytes = Bytes::from(bytes);
+                let tx_hash = alloy_primitives::keccak256(&raw_bytes);
+                state.mempool.add_transactions(vec![raw_bytes]);
+                info!(tx_hash = %tx_hash, "intercepted eth_sendRawTransaction (batch)");
+                responses.push(serde_json::json!({
+                    "jsonrpc": req.jsonrpc,
+                    "id": req.id,
+                    "result": format!("{tx_hash:#x}"),
+                }));
+            }
+            Err(e) => {
+                warn!(error = %e, "failed to decode raw transaction hex in batch");
+                responses.push(serde_json::json!({
+                    "jsonrpc": req.jsonrpc,
+                    "id": req.id,
+                    "error": {
+                        "code": -32602,
+                        "message": format!("invalid hex: {e}"),
+                    },
+                }));
+            }
+        }
+    }
+
+    (StatusCode::OK, axum::Json(responses)).into_response()
 }
 
 async fn handle_send_raw_transaction(
@@ -160,6 +210,8 @@ async fn proxy_raw(
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
+/// Start an axum JSON-RPC proxy that intercepts `eth_sendRawTransaction`
+/// into `mempool` and forwards everything else to `upstream_url`.
 pub async fn run_proxy(
     listen_port: u16,
     upstream_url: Url,
@@ -178,14 +230,14 @@ pub async fn run_proxy(
 
     let listener = TcpListener::bind(("0.0.0.0", listen_port))
         .await
-        .map_err(|e| BenchmarkError::Io(e))?;
+        .map_err(BenchmarkError::Io)?;
 
     info!(port = listen_port, "proxy listening");
 
     axum::serve(listener, router)
         .with_graceful_shutdown(cancel.cancelled_owned())
         .await
-        .map_err(|e| BenchmarkError::Io(e))
+        .map_err(BenchmarkError::Io)
 }
 
 #[cfg(test)]
