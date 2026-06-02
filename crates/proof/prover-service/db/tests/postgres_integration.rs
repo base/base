@@ -1499,6 +1499,13 @@ fn compressed_result(bytes: Vec<u8>) -> ProtocolProofResult {
     ProtocolProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: bytes.into() })
 }
 
+fn uppercase_uuid_session_id() -> (Uuid, String) {
+    let mut bytes = *Uuid::new_v4().as_bytes();
+    bytes[0] = 0xaa;
+    let id = Uuid::from_bytes(bytes);
+    (id, id.to_string().to_uppercase())
+}
+
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_claim_next_proof_job_claim_and_capabilities() {
@@ -1633,7 +1640,11 @@ async fn test_heartbeat_proof_job_guards_current_expired_and_reclaimed_locks() {
     let repo = test_repo(pool.clone());
 
     drain_claimable_tee_jobs(&repo).await;
-    let id = repo.create(tee_request()).await.unwrap();
+    let (explicit_id, uppercase_session_id) = uppercase_uuid_session_id();
+    let mut request = tee_request();
+    request.session_id = Some(uppercase_session_id.clone());
+    let id = repo.create(request).await.unwrap();
+    assert_eq!(id, explicit_id);
     let first = repo
         .claim_next_proof_job(tee_claim("first-worker", 3))
         .await
@@ -1644,7 +1655,7 @@ async fn test_heartbeat_proof_job_guards_current_expired_and_reclaimed_locks() {
 
     let updated = repo
         .heartbeat_proof_job(HeartbeatProofJob {
-            session_id: first.session_id.clone(),
+            session_id: uppercase_session_id.clone(),
             lock_id: first_lock,
             worker_id: "first-worker".to_owned(),
             lock_duration_seconds: 7200,
@@ -1661,7 +1672,7 @@ async fn test_heartbeat_proof_job_guards_current_expired_and_reclaimed_locks() {
 
     let stale = repo
         .heartbeat_proof_job(HeartbeatProofJob {
-            session_id: first.session_id.clone(),
+            session_id: uppercase_session_id.clone(),
             lock_id: Uuid::new_v4(),
             worker_id: "first-worker".to_owned(),
             lock_duration_seconds: 7200,
@@ -1674,7 +1685,7 @@ async fn test_heartbeat_proof_job_guards_current_expired_and_reclaimed_locks() {
 
     let expired = repo
         .heartbeat_proof_job(HeartbeatProofJob {
-            session_id: first.session_id.clone(),
+            session_id: uppercase_session_id.clone(),
             lock_id: first_lock,
             worker_id: "first-worker".to_owned(),
             lock_duration_seconds: 3600,
@@ -1692,7 +1703,7 @@ async fn test_heartbeat_proof_job_guards_current_expired_and_reclaimed_locks() {
 
     let stale = repo
         .heartbeat_proof_job(HeartbeatProofJob {
-            session_id: first.session_id,
+            session_id: uppercase_session_id,
             lock_id: first_lock,
             worker_id: "first-worker".to_owned(),
             lock_duration_seconds: 3600,
@@ -1709,7 +1720,11 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
     let repo = test_repo(pool);
 
     drain_claimable_compressed_jobs(&repo).await;
-    let id = repo.create(compressed_request()).await.unwrap();
+    let (explicit_id, uppercase_session_id) = uppercase_uuid_session_id();
+    let mut request = compressed_request();
+    request.session_id = Some(uppercase_session_id.clone());
+    let id = repo.create(request).await.unwrap();
+    assert_eq!(id, explicit_id);
     let claimed = repo
         .claim_next_proof_job(compressed_claim("submit-worker", 3))
         .await
@@ -1720,7 +1735,7 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
 
     let stale = repo
         .complete_claimed_proof_job(CompleteClaimedProofJob {
-            session_id: claimed.session_id.clone(),
+            session_id: uppercase_session_id.clone(),
             lock_id: Uuid::new_v4(),
             worker_id: "submit-worker".to_owned(),
             result: compressed_result(vec![0xde, 0xad]),
@@ -1733,7 +1748,7 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
     let result = compressed_result(vec![0xca, 0xfe]);
     let submitted = repo
         .complete_claimed_proof_job(CompleteClaimedProofJob {
-            session_id: claimed.session_id.clone(),
+            session_id: uppercase_session_id.clone(),
             lock_id,
             worker_id: "submit-worker".to_owned(),
             result: result.clone(),
@@ -1759,7 +1774,7 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
 
     let duplicate = repo
         .complete_claimed_proof_job(CompleteClaimedProofJob {
-            session_id: claimed.session_id,
+            session_id: uppercase_session_id,
             lock_id,
             worker_id: "submit-worker".to_owned(),
             result: compressed_result(vec![0xba, 0xad]),
@@ -1836,4 +1851,60 @@ async fn test_fail_expired_proof_jobs_enforces_retry_exhaustion() {
         .await
         .unwrap();
     assert!(matches!(terminal, HeartbeatOutcome::Terminal(_)));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_fail_expired_proof_jobs_honors_batch_size() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    drain_claimable_tee_jobs(&repo).await;
+    let ids = [
+        repo.create(tee_request()).await.unwrap(),
+        repo.create(tee_request()).await.unwrap(),
+        repo.create(tee_request()).await.unwrap(),
+    ];
+
+    for _ in ids {
+        let claimed = repo
+            .claim_next_proof_job(tee_claim("batch-reaper-worker", 1))
+            .await
+            .unwrap()
+            .expect("pending job should be claimed");
+        assert!(ids.contains(&claimed.id));
+        expire_lock(&pool, claimed.id).await;
+    }
+
+    let first_batch = repo
+        .fail_expired_proof_jobs(FailExpiredProofJobs {
+            max_attempts: 1,
+            batch_size: 2,
+            error_message: "worker lock expired after retry budget".to_owned(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(first_batch.len(), 2);
+    assert!(first_batch.iter().all(|job| ids.contains(&job.id)));
+
+    let second_batch = repo
+        .fail_expired_proof_jobs(FailExpiredProofJobs {
+            max_attempts: 1,
+            batch_size: 2,
+            error_message: "worker lock expired after retry budget".to_owned(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(second_batch.len(), 1);
+    assert!(ids.contains(&second_batch[0].id));
+
+    let final_batch = repo
+        .fail_expired_proof_jobs(FailExpiredProofJobs {
+            max_attempts: 1,
+            batch_size: 2,
+            error_message: "worker lock expired after retry budget".to_owned(),
+        })
+        .await
+        .unwrap();
+    assert!(final_batch.is_empty());
 }

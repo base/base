@@ -582,7 +582,7 @@ pub struct ProofRequestListItem {
 
 /// Worker-visible proof job, combining requester request data with the
 /// worker-owned claim/lock state needed to build a protocol `ProofJob`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ProofJob {
     /// Internal proof request identifier.
     pub id: Uuid,
@@ -989,6 +989,8 @@ pub enum HeartbeatOutcome {
     Expired(ProofJob),
     /// The job is already terminal.
     Terminal(ProofJob),
+    /// The update was denied, but the diagnostic read did not identify a stable reason.
+    Unknown(ProofJob),
 }
 
 /// Parameters for completing a claimed worker proof job.
@@ -1019,6 +1021,8 @@ pub enum SubmitProofOutcome {
     Expired(ProofJob),
     /// The job is already terminal.
     Terminal(ProofJob),
+    /// The update was denied, but the diagnostic read did not identify a stable reason.
+    Unknown(ProofJob),
 }
 
 /// Parameters for terminally failing expired worker jobs that exhausted attempts.

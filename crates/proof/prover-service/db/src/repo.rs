@@ -589,6 +589,15 @@ impl ProofRequestRepo {
 
     /// Fetch a worker-visible proof job by protocol `session_id`.
     pub async fn get_proof_job_by_session_id(&self, session_id: &str) -> Result<Option<ProofJob>> {
+        let session_id = canonical_session_id(session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+        self.get_proof_job_by_canonical_session_id(&session_id).await
+    }
+
+    async fn get_proof_job_by_canonical_session_id(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<ProofJob>> {
         let columns = PROOF_JOB_RETURNING_COLUMNS;
         let sql = format!(
             r#"
@@ -610,6 +619,8 @@ impl ProofRequestRepo {
     /// revive an expired or reclaimed job because the update only succeeds for the
     /// current fencing token.
     pub async fn heartbeat_proof_job(&self, req: HeartbeatProofJob) -> Result<HeartbeatOutcome> {
+        let session_id = canonical_session_id(&req.session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
         let columns = PROOF_JOB_RETURNING_COLUMNS;
         let sql = format!(
             r#"
@@ -626,7 +637,7 @@ impl ProofRequestRepo {
         );
 
         let row = sqlx::query(&sql)
-            .bind(&req.session_id)
+            .bind(&session_id)
             .bind(req.lock_id)
             .bind(&req.worker_id)
             .bind(i64::from(req.lock_duration_seconds))
@@ -637,7 +648,7 @@ impl ProofRequestRepo {
             return row_to_proof_job(&row).map(HeartbeatOutcome::Updated);
         }
 
-        let Some(job) = self.get_proof_job_by_session_id(&req.session_id).await? else {
+        let Some(job) = self.get_proof_job_by_canonical_session_id(&session_id).await? else {
             return Ok(HeartbeatOutcome::NotFound);
         };
 
@@ -654,8 +665,7 @@ impl ProofRequestRepo {
             return Ok(HeartbeatOutcome::Expired(job));
         }
 
-        // Timing-window fallback between database time and app diagnostics.
-        Ok(HeartbeatOutcome::StaleLock(job))
+        Ok(HeartbeatOutcome::Unknown(job))
     }
 
     /// Complete the currently owned worker proof job (`submitProof`).
@@ -668,6 +678,8 @@ impl ProofRequestRepo {
         &self,
         req: CompleteClaimedProofJob,
     ) -> Result<SubmitProofOutcome> {
+        let session_id = canonical_session_id(&req.session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
         let result_payload =
             serde_json::to_value(&req.result).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
         let (stark_receipt, snark_receipt) = compatibility_receipts_for_result(&req.result);
@@ -695,7 +707,7 @@ impl ProofRequestRepo {
         );
 
         let row = sqlx::query(&sql)
-            .bind(&req.session_id)
+            .bind(&session_id)
             .bind(req.lock_id)
             .bind(&req.worker_id)
             .bind(&result_payload)
@@ -709,7 +721,7 @@ impl ProofRequestRepo {
             return row_to_proof_job(&row).map(SubmitProofOutcome::Completed);
         }
 
-        let Some(job) = self.get_proof_job_by_session_id(&req.session_id).await? else {
+        let Some(job) = self.get_proof_job_by_canonical_session_id(&session_id).await? else {
             return Ok(SubmitProofOutcome::NotFound);
         };
 
@@ -726,8 +738,7 @@ impl ProofRequestRepo {
             return Ok(SubmitProofOutcome::Expired(job));
         }
 
-        // Timing-window fallback between database time and app diagnostics.
-        Ok(SubmitProofOutcome::StaleLock(job))
+        Ok(SubmitProofOutcome::Unknown(job))
     }
 
     /// Terminally fail expired worker jobs that have exhausted their claim attempts.
