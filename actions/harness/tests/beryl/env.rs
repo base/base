@@ -93,11 +93,10 @@ impl BerylTestEnv {
     /// Symbol for the security B-20 token variant.
     pub(crate) const B20_ASSET_SYMBOL: &str = "ASEC";
 
-    /// ISIN stored on the security B-20 token at creation.
-    pub(crate) const B20_ASSET_ISIN: &str = "US0000000001";
-
-    /// Initial minimum redeemable share amount for the security B-20 token.
-    pub(crate) const B20_ASSET_MINIMUM_REDEEMABLE: u64 = 10;
+    /// Key for a test extra metadata entry on the asset B-20 token.
+    pub(crate) const B20_ASSET_EXTRA_METADATA_KEY: &str = "category";
+    /// Value for the test extra metadata entry.
+    pub(crate) const B20_ASSET_EXTRA_METADATA_VALUE: &str = "real-world-asset";
 
     /// Initial B-20 supply minted to Alice.
     pub(crate) const B20_INITIAL_SUPPLY: u64 = 1_000_000;

@@ -18,10 +18,9 @@ pub(crate) fn derive_asset(input: DeriveInput) -> proc_macro::TokenStream {
 
 fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
     require_field(&input, "b20")?;
-    let has_redeem = has_field(&input, "redeem");
-    let has_security = has_field(&input, "asset");
+    let has_asset = has_field(&input, "asset");
     let name = input.ident;
-    let decimals_impl = if has_security {
+    let decimals_impl = if has_asset {
         quote! { crate::AssetAccounting::decimals(self) }
     } else {
         quote! {
@@ -31,16 +30,6 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
             .map_or(0, crate::B20Variant::decimals))
         }
     };
-    let redeem = has_redeem.then_some(quote! {
-        if policy_scope == Self::REDEEM_SENDER_POLICY {
-            return self.redeem.redeem_sender_policy_id();
-        }
-    });
-    let set_redeem = has_redeem.then_some(quote! {
-        if policy_scope == Self::REDEEM_SENDER_POLICY {
-            return self.redeem.set_redeem_sender_policy_id(policy_id);
-        }
-    });
 
     Ok(quote! {
         impl #name<'_> {
@@ -250,7 +239,6 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 &self,
                 policy_scope: ::alloy_primitives::B256,
             ) -> ::base_precompile_storage::Result<u64> {
-                #redeem
                 match Self::__require_policy_type(policy_scope)? {
                     crate::B20PolicyType::TransferSender => self.b20.transfer_sender_policy_id(),
                     crate::B20PolicyType::TransferReceiver => {
@@ -268,7 +256,6 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
                 policy_scope: ::alloy_primitives::B256,
                 policy_id: u64,
             ) -> ::base_precompile_storage::Result<()> {
-                #set_redeem
                 match Self::__require_policy_type(policy_scope)? {
                     crate::B20PolicyType::TransferSender => {
                         self.b20.set_transfer_sender_policy_id(policy_id)

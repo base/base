@@ -69,10 +69,10 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                 ),
                 StaticcallCase::string("contractURI", IB20::contractURICall {}.abi_encode(), ""),
                 StaticcallCase::string(
-                    "extraMetadata(ISIN)",
-                    IB20Asset::extraMetadataCall { identifierType: "ISIN".to_string() }
+                    "extraMetadata(category)",
+                    IB20Asset::extraMetadataCall { identifierType: "category".to_string() }
                         .abi_encode(),
-                    BerylTestEnv::B20_ASSET_ISIN,
+                    BerylTestEnv::B20_ASSET_EXTRA_METADATA_VALUE,
                 ),
                 StaticcallCase::word(
                     "decimals",
