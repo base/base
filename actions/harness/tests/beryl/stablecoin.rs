@@ -239,10 +239,7 @@ async fn stablecoin_creation_reverts_for_invalid_currency() {
 
     let block1 = env.sequencer.build_empty_block().await;
     let activate_stablecoin = env.activate_feature_tx(BerylTestEnv::b20_stablecoin_feature());
-    let block2 = env
-        .sequencer
-        .build_next_block_with_transactions(vec![activate_stablecoin])
-        .await;
+    let block2 = env.sequencer.build_next_block_with_transactions(vec![activate_stablecoin]).await;
     assert!(env.user_tx_succeeded(&block2, 0), "B20_STABLECOIN activation must succeed");
 
     let invalid_currency = create_stablecoin_with_currency_tx(&env, "usd");

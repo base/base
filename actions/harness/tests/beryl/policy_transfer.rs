@@ -250,9 +250,8 @@ impl PolicyTransferScenario {
         let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
         let activate_registry =
             scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
-        let block = scenario
-            .build_block_with_transactions(vec![activate_b20, activate_registry])
-            .await;
+        let block =
+            scenario.build_block_with_transactions(vec![activate_b20, activate_registry]).await;
         assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_ASSET activation must succeed");
         assert!(
             scenario.env.user_tx_succeeded(&block, 1),
@@ -300,9 +299,8 @@ impl PolicyTransferScenario {
         let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
         let activate_registry =
             scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
-        let block = scenario
-            .build_block_with_transactions(vec![activate_b20, activate_registry])
-            .await;
+        let block =
+            scenario.build_block_with_transactions(vec![activate_b20, activate_registry]).await;
         assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_ASSET activation must succeed");
         assert!(
             scenario.env.user_tx_succeeded(&block, 1),

@@ -431,9 +431,8 @@ impl B20AssetScenario {
         let activate_security = scenario.env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
         let activate_policy =
             scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
-        let block = scenario
-            .build_block_with_transactions(vec![activate_security, activate_policy])
-            .await;
+        let block =
+            scenario.build_block_with_transactions(vec![activate_security, activate_policy]).await;
 
         assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_SECURITY activation must succeed");
         assert!(

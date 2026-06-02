@@ -259,8 +259,8 @@ struct B20FactoryPrecompiles;
 
 impl B20FactoryPrecompiles {
     async fn activate(env: &mut BerylTestEnv) -> BaseBlock {
-        let activate_b20_asset = env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
-        let block = env.sequencer.build_next_block_with_transactions(vec![activate_b20_asset]).await;
+        let activate_b20 = env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
+        let block = env.sequencer.build_next_block_with_transactions(vec![activate_b20]).await;
 
         assert!(env.user_tx_succeeded(&block, 0), "B20_ASSET activation must succeed");
 
