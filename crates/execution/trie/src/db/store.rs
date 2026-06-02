@@ -698,6 +698,11 @@ impl MdbxProofsStorage {
                         *hashed_storage_key,
                     )?;
                 } else {
+                    Self::delete_dup_current::<V2HashedStorages>(
+                        tx,
+                        *hashed_address,
+                        *hashed_storage_key,
+                    )?;
                     tx.cursor_dup_write::<V2HashedStorages>()?.upsert(
                         *hashed_address,
                         &StorageEntry { key: *hashed_storage_key, value: *value },
@@ -829,6 +834,90 @@ impl MdbxProofsStorage {
             row = cursor.next()?;
         }
         Ok(false)
+    }
+
+    pub(crate) fn inner_hashed_account(
+        &self,
+        tx: &impl DbTx,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>> {
+        if let Some(changed_at) = Self::v2_first_change_after::<V2HashedAccountsHistory>(
+            tx,
+            HashedAccountShardedKey::new(hashed_address, u64::MAX),
+            max_block_number,
+        )? {
+            return Ok(tx
+                .cursor_dup_read::<V2HashedAccountChangeSets>()?
+                .seek_by_key_subkey(changed_at, hashed_address)?
+                .filter(|entry| entry.hashed_address == hashed_address)
+                .and_then(|entry| entry.info));
+        }
+
+        Ok(tx
+            .cursor_read::<V2HashedAccounts>()?
+            .seek_exact(hashed_address)?
+            .map(|(_, account)| account))
+    }
+
+    pub(crate) fn inner_hashed_storage(
+        &self,
+        tx: &impl DbTx,
+        hashed_address: B256,
+        hashed_storage_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>> {
+        if let Some(changed_at) = Self::v2_first_change_after::<V2HashedStoragesHistory>(
+            tx,
+            HashedStorageShardedKey::new(hashed_address, hashed_storage_key, u64::MAX),
+            max_block_number,
+        )? {
+            return Ok(tx
+                .cursor_dup_read::<V2HashedStorageChangeSets>()?
+                .seek_by_key_subkey(
+                    BlockNumberHashedAddress((changed_at, hashed_address)),
+                    hashed_storage_key,
+                )?
+                .filter(|entry| entry.key == hashed_storage_key)
+                .and_then(|entry| (!entry.value.is_zero()).then_some(entry.value)));
+        }
+
+        Ok(tx
+            .cursor_dup_read::<V2HashedStorages>()?
+            .seek_by_key_subkey(hashed_address, hashed_storage_key)?
+            .filter(|entry| entry.key == hashed_storage_key)
+            .and_then(|entry| (!entry.value.is_zero()).then_some(entry.value)))
+    }
+
+    fn v2_first_change_after<T>(
+        tx: &impl DbTx,
+        key: T::Key,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<u64>>
+    where
+        T: Table<Value = BlockNumberList>,
+        T::Key: V2HistoryShardKey,
+    {
+        if max_block_number == u64::MAX {
+            return Ok(None);
+        }
+
+        let logical_key = key.logical_key();
+        let mut cursor = tx.cursor_read::<T>()?;
+        let mut row = cursor.seek(key.with_highest_block(max_block_number.saturating_add(1)))?;
+
+        while let Some((history_key, list)) = row {
+            if history_key.logical_key() != logical_key {
+                break;
+            }
+            if let Some(changed_at) = list.iter().find(|changed_at| *changed_at > max_block_number)
+            {
+                return Ok(Some(changed_at));
+            }
+            row = cursor.next()?;
+        }
+
+        Ok(None)
     }
 
     /// Append-only writer for a block: validates parent, persists diff (soft-delete=true),
@@ -1022,6 +1111,25 @@ impl BaseProofsStore for MdbxProofsStorage {
         Self: 'tx,
     {
         MdbxV2AccountCursor::new(tx, max_block_number)
+    }
+
+    fn hashed_account(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>> {
+        self.env.view(|tx| self.inner_hashed_account(tx, hashed_address, max_block_number))?
+    }
+
+    fn hashed_storage(
+        &self,
+        hashed_address: B256,
+        hashed_storage_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>> {
+        self.env.view(|tx| {
+            self.inner_hashed_storage(tx, hashed_address, hashed_storage_key, max_block_number)
+        })?
     }
 
     fn store_trie_updates(
@@ -1829,6 +1937,23 @@ mod tests {
     }
 
     #[test]
+    fn point_account_read_uses_first_change_after_requested_block() {
+        let dir = TempDir::new().unwrap();
+        let store = MdbxProofsStorage::new(dir.path()).expect("env");
+        let address = B256::from([0x42; 32]);
+        let first = Account { nonce: 1, ..Default::default() };
+        let second = Account { nonce: 2, ..Default::default() };
+        let block_1 = block(1, B256::ZERO);
+        let block_2 = block(2, block_1.block.hash);
+
+        store.store_trie_updates(block_1, account_diff(address, Some(first))).expect("block 1");
+        store.store_trie_updates(block_2, account_diff(address, Some(second))).expect("block 2");
+
+        assert_eq!(store.hashed_account(address, 1).unwrap(), Some(first));
+        assert_eq!(store.hashed_account(address, 2).unwrap(), Some(second));
+    }
+
+    #[test]
     fn historical_storage_cursor_treats_deleted_key_as_absent() {
         let dir = TempDir::new().unwrap();
         let store = MdbxProofsStorage::new(dir.path()).expect("env");
@@ -1849,6 +1974,25 @@ mod tests {
         let mut at_2 = MdbxV2StorageCursor::new(&tx, 2, address).expect("cursor at 2");
         assert_eq!(at_1.seek(slot).unwrap().map(|(_, value)| value), Some(U256::from(10)));
         assert!(at_2.seek(slot).unwrap().is_none());
+    }
+
+    #[test]
+    fn point_storage_read_uses_dupsort_key_and_history() {
+        let dir = TempDir::new().unwrap();
+        let store = MdbxProofsStorage::new(dir.path()).expect("env");
+        let address = B256::from([0x42; 32]);
+        let slot = B256::from([0x24; 32]);
+        let first = U256::from(7);
+        let second = U256::from(9);
+        let block_1 = block(1, B256::ZERO);
+        let block_2 = block(2, block_1.block.hash);
+
+        store.store_trie_updates(block_1, storage_diff(address, slot, first)).expect("block 1");
+        store.store_trie_updates(block_2, storage_diff(address, slot, second)).expect("block 2");
+
+        assert_eq!(store.hashed_storage(address, slot, 1).unwrap(), Some(first));
+        assert_eq!(store.hashed_storage(address, slot, 2).unwrap(), Some(second));
+        assert_eq!(store.hashed_storage(address, B256::from([0x99; 32]), 2).unwrap(), None);
     }
 
     #[test]

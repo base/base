@@ -15,7 +15,6 @@ use reth_revm::{
 };
 use reth_trie::{
     StateRoot, StorageRoot,
-    hashed_cursor::HashedCursor,
     proof::{self, Proof},
     witness::TrieWitness,
 };
@@ -184,13 +183,9 @@ impl<'a, Storage: BaseProofsStore> HashedPostStateProvider
 impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<'a, Storage> {
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         let hashed_key = keccak256(address.0);
-        Ok(self
-            .storage
-            .account_hashed_cursor(self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, account)| (key == hashed_key).then_some(account)))
+        self.storage
+            .hashed_account(hashed_key, self.block_number)
+            .map_err(Into::<ProviderError>::into)
     }
 }
 
@@ -208,13 +203,9 @@ where
         address: Address,
         hashed_key: B256,
     ) -> ProviderResult<Option<StorageValue>> {
-        Ok(self
-            .storage
-            .storage_hashed_cursor(keccak256(address.0), self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, storage)| (key == hashed_key).then_some(storage)))
+        self.storage
+            .hashed_storage(keccak256(address.0), hashed_key, self.block_number)
+            .map_err(Into::<ProviderError>::into)
     }
 }
 

@@ -127,6 +127,31 @@ pub trait BaseProofsStore: Send + Sync + Debug {
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>;
 
+    /// Read one hashed account at `max_block_number` without requiring full cursor materialization.
+    fn hashed_account(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>> {
+        Ok(self
+            .account_hashed_cursor(max_block_number)?
+            .seek(hashed_address)?
+            .and_then(|(key, account)| (key == hashed_address).then_some(account)))
+    }
+
+    /// Read one hashed storage slot at `max_block_number` without requiring full cursor materialization.
+    fn hashed_storage(
+        &self,
+        hashed_address: B256,
+        hashed_storage_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>> {
+        Ok(self
+            .storage_hashed_cursor(hashed_address, max_block_number)?
+            .seek(hashed_storage_key)?
+            .and_then(|(key, value)| (key == hashed_storage_key).then_some(value)))
+    }
+
     /// Open a transaction for a request-scoped cursor factory.
     fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx>;
 
@@ -269,6 +294,31 @@ pub trait BaseProofsBatchSession: Send + Sync + Debug {
         &self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'_>>;
+
+    /// Read one hashed account through the active transaction.
+    fn hashed_account(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>> {
+        Ok(self
+            .account_hashed_cursor(max_block_number)?
+            .seek(hashed_address)?
+            .and_then(|(key, account)| (key == hashed_address).then_some(account)))
+    }
+
+    /// Read one hashed storage slot through the active transaction.
+    fn hashed_storage(
+        &self,
+        hashed_address: B256,
+        hashed_storage_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>> {
+        Ok(self
+            .storage_hashed_cursor(hashed_address, max_block_number)?
+            .seek(hashed_storage_key)?
+            .and_then(|(key, value)| (key == hashed_storage_key).then_some(value)))
+    }
 
     /// Append-only write of `block_state_diff` for `block_ref` to the active transaction.
     /// Subsequent reads through this session observe the new state immediately, but the

@@ -18,12 +18,8 @@ use reth_revm::{
     primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
 };
 use reth_trie::{
-    StateRoot, StorageRoot, TrieType,
-    hashed_cursor::{HashedCursor, HashedPostStateCursorFactory},
-    metrics::TrieRootMetrics,
-    proof,
-    trie_cursor::InMemoryTrieCursorFactory,
-    witness::TrieWitness,
+    StateRoot, StorageRoot, TrieType, hashed_cursor::HashedPostStateCursorFactory,
+    metrics::TrieRootMetrics, proof, trie_cursor::InMemoryTrieCursorFactory, witness::TrieWitness,
 };
 use reth_trie_common::{
     AccountProof, HashedPostState, HashedPostStateSorted, HashedStorage, KeccakKeyHasher,
@@ -274,13 +270,9 @@ impl<S: BaseProofsBatchSession> HashedPostStateProvider for BaseProofsBatchState
 impl<S: BaseProofsBatchSession> AccountReader for BaseProofsBatchStateProviderRef<'_, S> {
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         let hashed_key = keccak256(address.0);
-        Ok(self
-            .session
-            .account_hashed_cursor(self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, account)| (key == hashed_key).then_some(account)))
+        self.session
+            .hashed_account(hashed_key, self.block_number)
+            .map_err(Into::<ProviderError>::into)
     }
 }
 
@@ -295,13 +287,9 @@ impl<S: BaseProofsBatchSession> StateProvider for BaseProofsBatchStateProviderRe
         address: Address,
         hashed_key: B256,
     ) -> ProviderResult<Option<StorageValue>> {
-        Ok(self
-            .session
-            .storage_hashed_cursor(keccak256(address.0), self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, storage)| (key == hashed_key).then_some(storage)))
+        self.session
+            .hashed_storage(keccak256(address.0), hashed_key, self.block_number)
+            .map_err(Into::<ProviderError>::into)
     }
 }
 

@@ -374,6 +374,25 @@ where
     }
 
     #[inline]
+    fn hashed_account(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>> {
+        self.storage.hashed_account(hashed_address, max_block_number)
+    }
+
+    #[inline]
+    fn hashed_storage(
+        &self,
+        hashed_address: B256,
+        hashed_storage_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>> {
+        self.storage.hashed_storage(hashed_address, hashed_storage_key, max_block_number)
+    }
+
+    #[inline]
     fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx> {
         let tx = self.storage.ro_tx()?;
         self.tx_acquisitions.fetch_add(1, Ordering::Relaxed);

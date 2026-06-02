@@ -4,8 +4,9 @@
 //! block `N` written but not yet committed.
 
 use alloy_eips::eip1898::BlockWithParent;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use reth_db::{Database, DatabaseEnv, transaction::DbTx};
+use reth_primitives_traits::Account;
 
 use crate::{
     BaseProofsStorageError, BaseProofsStorageResult, BlockStateDiff,
@@ -97,6 +98,28 @@ impl BaseProofsBatchSession for MdbxBatchSession<'_> {
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'_>> {
         MdbxV2AccountCursor::new(self.tx_ref()?, max_block_number)
+    }
+
+    fn hashed_account(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<Account>> {
+        self.storage.inner_hashed_account(self.tx_ref()?, hashed_address, max_block_number)
+    }
+
+    fn hashed_storage(
+        &self,
+        hashed_address: B256,
+        hashed_storage_key: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<U256>> {
+        self.storage.inner_hashed_storage(
+            self.tx_ref()?,
+            hashed_address,
+            hashed_storage_key,
+            max_block_number,
+        )
     }
 
     fn store_trie_updates(
