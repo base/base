@@ -4876,6 +4876,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-flashblocks",
  "base-common-network",
+ "base-common-precompiles",
  "base-tx-manager",
  "eyre",
  "futures",

@@ -11,9 +11,7 @@ sol! {
             /// Mint operations.
             MINT,
             /// Burn operations.
-            BURN,
-            /// Redeem operations.
-            REDEEM
+            BURN
         }
 
         // Errors

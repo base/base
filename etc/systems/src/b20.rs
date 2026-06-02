@@ -24,7 +24,7 @@ use tokio::time::{sleep, timeout};
 #[derive(Debug, Clone)]
 pub struct B20CreateConfig {
     /// ABI-level creation params sent to `IB20Factory.createB20`.
-    pub create: IB20Factory::B20CreateParams,
+    pub create: IB20Factory::B20AssetCreateParams,
     /// Initial supply to mint during the factory init-call window.
     pub initial_supply: U256,
     /// Account receiving the initial supply.
@@ -110,11 +110,12 @@ impl<'a> B20PrecompileClient<'a> {
         initial_supply_recipient: Address,
     ) -> B20CreateConfig {
         B20CreateConfig {
-            create: IB20Factory::B20CreateParams {
-                version: B20Variant::B20.supported_version(),
+            create: IB20Factory::B20AssetCreateParams {
+                version: B20Variant::Asset.supported_version(),
                 name: name.to_string(),
                 symbol: symbol.to_string(),
                 initialAdmin: initial_admin,
+                decimals: 6,
             },
             initial_supply,
             initial_supply_recipient,
@@ -221,9 +222,11 @@ impl<'a> B20PrecompileClient<'a> {
         B20Variant::from_address(token).wrap_err("Token address is not a supported B-20 token")
     }
 
-    /// Reads the fixed decimals for the token variant encoded in an address.
+    /// Reads the token decimals.
     pub async fn decimals_of(&self, token: Address) -> Result<u8> {
-        B20Variant::decimals_of(token).wrap_err("Token address is not a supported B-20 token")
+        let output = self.call(token, IB20::decimalsCall {}).await?;
+        IB20::decimalsCall::abi_decode_returns(output.as_ref())
+            .wrap_err("Failed to decode decimals")
     }
 
     /// Mints B-20 tokens to an account.
@@ -530,13 +533,8 @@ impl<'a> B20PrecompileClient<'a> {
 }
 
 fn pausable_features_from_mask(mask: U256) -> Vec<IB20::PausableFeature> {
-    [
-        IB20::PausableFeature::TRANSFER,
-        IB20::PausableFeature::MINT,
-        IB20::PausableFeature::BURN,
-        IB20::PausableFeature::REDEEM,
-    ]
-    .into_iter()
-    .filter(|feature| (mask & B20PausableFeature::mask(*feature)) != U256::ZERO)
-    .collect()
+    [IB20::PausableFeature::TRANSFER, IB20::PausableFeature::MINT, IB20::PausableFeature::BURN]
+        .into_iter()
+        .filter(|feature| (mask & B20PausableFeature::mask(*feature)) != U256::ZERO)
+        .collect()
 }

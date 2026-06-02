@@ -8,12 +8,16 @@ use std::{
 };
 
 use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, TxHash, U256, utils::format_ether};
+use alloy_primitives::{Address, B256, Bytes, TxHash, U256, utils::format_ether};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolCall, sol};
+use alloy_sol_types::{SolCall, SolValue, sol};
 use base_common_network::Base;
+use base_common_precompiles::{
+    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20TokenRole, B20Variant,
+    IActivationRegistry, IB20, IB20Factory,
+};
 use base_tx_manager::NonceManager;
 use futures::{StreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -25,10 +29,10 @@ use tracing::{debug, error, info, instrument, warn};
 /// Maximum number of concurrent RPC requests during funding/draining operations.
 const FUNDING_CONCURRENCY: usize = 32;
 
-/// Maximum number of funding TXs to send before waiting for confirmation.
+/// Maximum number of TXs to send before waiting for confirmation.
 /// Kept below typical per-sender txpool limits (e.g. reth default is 16) to
 /// avoid "txpool is full" rejections when all TXs originate from one funder.
-const FUNDING_BATCH_SIZE: usize = 16;
+const BATCH_SIZE: usize = 16;
 
 use super::{
     BlockWatcher, DisplaySnapshot, FlashblockWatcher, LoadConfig, LoadTestDisplay, PreparedBatch,
@@ -44,8 +48,8 @@ use crate::{
         create_wallet_provider,
     },
     workload::{
-        AccountPool, AerodromeClPayload, CalldataPayload, Erc20Payload, OsakaPayload,
-        PrecompilePayload, TransferPayload, UniswapV3Payload, WorkloadGenerator,
+        AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload, Erc20Payload,
+        OsakaPayload, PrecompilePayload, TransferPayload, UniswapV3Payload, WorkloadGenerator,
     },
 };
 
@@ -212,6 +216,14 @@ impl LoadRunner {
                     );
                     generator = generator.with_payload(payload, weight_pct);
                 }
+                TxType::B20 { contract } => {
+                    if let Some(token) = contract {
+                        generator = generator.with_payload(
+                            B20TransferPayload::new(*token, U256::from(1000), U256::from(10000)),
+                            weight_pct,
+                        );
+                    }
+                }
                 TxType::Osaka { target } => {
                     generator =
                         generator.with_payload(OsakaPayload::new(target.clone()), weight_pct);
@@ -271,6 +283,7 @@ impl LoadRunner {
                 TxType::Transfer => 21_000,
                 TxType::Calldata { max_size, .. } => 21_000 + (*max_size as u64 * 16),
                 TxType::Erc20 { .. } => 65_000,
+                TxType::B20 { .. } => 100_000,
                 TxType::Precompile { target, iterations, blake2f_rounds, .. } => {
                     let per_call = match target {
                         PrecompileId::Identity | PrecompileId::Bn254Add => 22_000,
@@ -441,7 +454,7 @@ impl LoadRunner {
         let pb_fund = self.progress_bar(total_txs, "Funding accounts");
         let mut txs_remaining = txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(FUNDING_BATCH_SIZE).collect();
+            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
             let mut batch_pending: Vec<Address> = Vec::with_capacity(batch.len());
             let mut retries: Vec<(Address, U256, u64)> = Vec::new();
             let mut fatal_errors: Vec<String> = Vec::new();
@@ -454,7 +467,7 @@ impl LoadRunner {
                 }
             });
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_BATCH_SIZE);
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
 
             let mut nonce_refresh_needed: Vec<(Address, U256)> = Vec::new();
 
@@ -506,8 +519,7 @@ impl LoadRunner {
                     }
                 });
 
-                let mut retry_stream =
-                    stream::iter(retry_futs).buffer_unordered(FUNDING_BATCH_SIZE);
+                let mut retry_stream = stream::iter(retry_futs).buffer_unordered(BATCH_SIZE);
 
                 while let Some((result, address, nonce)) = retry_stream.next().await {
                     match result {
@@ -555,8 +567,7 @@ impl LoadRunner {
                         }
                     });
 
-                let mut nonce_retry_stream =
-                    stream::iter(nonce_retry_futs).buffered(FUNDING_BATCH_SIZE);
+                let mut nonce_retry_stream = stream::iter(nonce_retry_futs).buffered(BATCH_SIZE);
 
                 let mut nonce_retry_pending: Vec<Address> = Vec::new();
                 while let Some((result, address, retry_nonce)) = nonce_retry_stream.next().await {
@@ -643,6 +654,7 @@ impl LoadRunner {
                 TxType::Transfer
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
+                | TxType::B20 { .. }
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
             }
@@ -869,7 +881,7 @@ impl LoadRunner {
         let total_txs = txs.len();
         let mut txs_remaining = txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(FUNDING_BATCH_SIZE).collect();
+            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
             let mut pending_txs: Vec<(Address, Address)> = Vec::new();
 
             let send_futs = batch.into_iter().map(|(tx, token, sender)| {
@@ -880,7 +892,7 @@ impl LoadRunner {
                 }
             });
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_BATCH_SIZE);
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
 
             while let Some((result, token, sender)) = send_stream.next().await {
                 match result {
@@ -931,9 +943,476 @@ impl LoadRunner {
         Bytes::from(balanceOfCall { account }.abi_encode())
     }
 
+    /// Returns `true` if any configured transaction type is [`TxType::B20`].
+    pub fn needs_b20_setup(&self) -> bool {
+        self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::B20 { .. }))
+    }
+
+    /// Creates a B-20 token via the factory, grants `MINT_ROLE` and `BURN_ROLE` to all senders,
+    /// then mints tokens to every sender account.
+    ///
+    /// If all B-20 transaction configs already have a resolved `contract` address, this is a
+    /// no-op for creation but still handles role grants and minting.
+    #[instrument(skip(self, funding_key), fields(accounts = self.accounts.len()))]
+    pub async fn setup_b20_tokens(
+        &mut self,
+        funding_key: PrivateKeySigner,
+        amount_per_sender: U256,
+    ) -> Result<()> {
+        let funder_address = funding_key.address();
+        let wallet = EthereumWallet::from(funding_key);
+        let funder_provider =
+            Arc::new(create_wallet_provider(self.config.primary_submission_rpc().clone(), wallet));
+        let chain_id = self.config.chain_id;
+        let max_gas_price = self.config.max_gas_price;
+        let gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
+        let max_priority_fee = (gas_price / 10).max(1);
+        let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
+        let b20_gas_limit = 10_000_000u64;
+
+        let mut nonce = funder_provider
+            .get_transaction_count(funder_address)
+            .pending()
+            .await
+            .rpc("get pending transaction count")?;
+
+        // Phase 1: Create B-20 token if no contract address is configured.
+        let mut token_address: Option<Address> = None;
+        for tx_config in &self.config.transactions {
+            if let TxType::B20 { contract: Some(addr) } = &tx_config.tx_type {
+                token_address = Some(*addr);
+                break;
+            }
+        }
+
+        if token_address.is_none() {
+            // Activate B-20 features if not already active. Activation is idempotent on
+            // already-active features but reverts if the funder is not the activation admin.
+            let features = [ActivationFeature::B20Asset.id()];
+            for feature in &features {
+                let is_activated_call = IActivationRegistry::isActivatedCall { feature: *feature };
+                let check_result = self
+                    .client
+                    .call(
+                        TransactionRequest::default()
+                            .with_to(ActivationRegistryStorage::ADDRESS)
+                            .with_input(Bytes::from(is_activated_call.abi_encode()))
+                            .into(),
+                    )
+                    .await;
+
+                let already_active = check_result
+                    .ok()
+                    .and_then(|bytes| {
+                        IActivationRegistry::isActivatedCall::abi_decode_returns(bytes.as_ref())
+                            .ok()
+                    })
+                    .unwrap_or(false);
+
+                if !already_active {
+                    info!(feature = %feature, "activating B-20 feature");
+                    let activate_call = IActivationRegistry::activateCall { feature: *feature };
+                    let tx = TransactionRequest::default()
+                        .with_to(ActivationRegistryStorage::ADDRESS)
+                        .with_input(Bytes::from(activate_call.abi_encode()))
+                        .with_nonce(nonce)
+                        .with_chain_id(chain_id)
+                        .with_gas_limit(b20_gas_limit)
+                        .with_max_fee_per_gas(max_fee)
+                        .with_max_priority_fee_per_gas(max_priority_fee);
+                    nonce += 1;
+
+                    let pending = funder_provider.send_transaction(tx).await.map_err(|e| {
+                        BaselineError::Transaction(format!(
+                            "failed to activate B-20 feature {feature}: {e}. \
+                             The funder must be the activation admin (sequencer key on devnet)"
+                        ))
+                    })?;
+
+                    let receipt = pending.get_receipt().await.map_err(|e| {
+                        BaselineError::Transaction(format!(
+                            "B-20 feature activation receipt failed: {e}"
+                        ))
+                    })?;
+
+                    if !receipt.status() {
+                        return Err(BaselineError::Transaction(format!(
+                            "B-20 feature {feature} activation reverted. \
+                             The funder must be the activation admin (sequencer key on devnet)"
+                        )));
+                    }
+                }
+            }
+
+            info!("creating new B-20 token via factory");
+
+            let salt = B256::from(rand::random::<[u8; 32]>());
+            let predicted = B20Variant::Asset.compute_address(funder_address, salt).0;
+
+            let params = IB20Factory::B20AssetCreateParams {
+                version: B20Variant::Asset.supported_version(),
+                name: "Load Test B20".to_string(),
+                symbol: "LTB20".to_string(),
+                initialAdmin: funder_address,
+                decimals: 6,
+            };
+
+            let init_calls: Vec<Bytes> =
+                vec![IB20::updateSupplyCapCall { newSupplyCap: U256::MAX }.abi_encode().into()];
+
+            let create_call = IB20Factory::createB20Call {
+                variant: IB20Factory::B20Variant::ASSET,
+                salt,
+                params: params.abi_encode().into(),
+                initCalls: init_calls,
+            };
+
+            let tx = TransactionRequest::default()
+                .with_to(B20FactoryStorage::ADDRESS)
+                .with_input(Bytes::from(create_call.abi_encode()))
+                .with_nonce(nonce)
+                .with_chain_id(chain_id)
+                .with_gas_limit(b20_gas_limit)
+                .with_max_fee_per_gas(max_fee)
+                .with_max_priority_fee_per_gas(max_priority_fee);
+            nonce += 1;
+
+            let pending = funder_provider.send_transaction(tx).await.map_err(|e| {
+                BaselineError::Transaction(format!("failed to create B-20 token: {e}"))
+            })?;
+
+            let receipt = pending.get_receipt().await.map_err(|e| {
+                BaselineError::Transaction(format!("B-20 creation receipt failed: {e}"))
+            })?;
+
+            if !receipt.status() {
+                return Err(BaselineError::Transaction(
+                    "B-20 token creation transaction reverted".into(),
+                ));
+            }
+
+            info!(token = %predicted, "B-20 token created");
+            token_address = Some(predicted);
+        }
+
+        let token = token_address.ok_or_else(|| {
+            BaselineError::Config("b20 token address was not resolved during setup".into())
+        })?;
+
+        for tx_config in &mut self.config.transactions {
+            if let TxType::B20 { contract } = &mut tx_config.tx_type {
+                *contract = Some(token);
+            }
+        }
+
+        // Phase 2: Grant MINT_ROLE to funder + MINT_ROLE and BURN_ROLE to all senders.
+        let sender_addresses: Vec<Address> =
+            self.accounts.accounts().iter().map(|a| a.address).collect();
+        let roles = [B20TokenRole::Mint.id(), B20TokenRole::Burn.id()];
+
+        let total_grants = 1 + sender_addresses.len() * roles.len();
+        let pb = self.progress_bar(total_grants as u64, "Granting B-20 roles");
+
+        let mut grant_txs: Vec<TransactionRequest> = Vec::with_capacity(total_grants);
+
+        // Funder needs MINT_ROLE to execute Phase 3 mints.
+        let funder_mint_grant =
+            IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: funder_address };
+        grant_txs.push(
+            TransactionRequest::default()
+                .with_to(token)
+                .with_input(Bytes::from(funder_mint_grant.abi_encode()))
+                .with_nonce(nonce)
+                .with_chain_id(chain_id)
+                .with_gas_limit(b20_gas_limit)
+                .with_max_fee_per_gas(max_fee)
+                .with_max_priority_fee_per_gas(max_priority_fee),
+        );
+        nonce += 1;
+
+        for &sender in &sender_addresses {
+            for &role in &roles {
+                let call = IB20::grantRoleCall { role, account: sender };
+                grant_txs.push(
+                    TransactionRequest::default()
+                        .with_to(token)
+                        .with_input(Bytes::from(call.abi_encode()))
+                        .with_nonce(nonce)
+                        .with_chain_id(chain_id)
+                        .with_gas_limit(b20_gas_limit)
+                        .with_max_fee_per_gas(max_fee)
+                        .with_max_priority_fee_per_gas(max_priority_fee),
+                );
+                nonce += 1;
+            }
+        }
+
+        let mut grant_failed = 0usize;
+        let mut txs_remaining = grant_txs.into_iter().peekable();
+        while txs_remaining.peek().is_some() {
+            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
+            let send_futs = batch.into_iter().map(|tx| {
+                let provider = Arc::clone(&funder_provider);
+                async move {
+                    let pending = provider.send_transaction(tx).await?;
+                    pending.get_receipt().await
+                }
+            });
+
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
+            while let Some(result) = send_stream.next().await {
+                match result {
+                    Ok(receipt) if receipt.status() => pb.inc(1),
+                    Ok(receipt) => {
+                        warn!(tx_hash = %receipt.transaction_hash, "B-20 role grant reverted");
+                        grant_failed += 1;
+                        pb.inc(1);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "B-20 role grant failed");
+                        grant_failed += 1;
+                        pb.inc(1);
+                    }
+                }
+            }
+        }
+
+        pb.finish_and_clear();
+        if grant_failed > 0 {
+            return Err(BaselineError::Transaction(format!(
+                "{grant_failed}/{total_grants} B-20 role grants failed"
+            )));
+        }
+
+        info!(roles = total_grants, "B-20 roles granted");
+
+        // Phase 3: Mint tokens to all senders.
+        let total_mints = sender_addresses.len();
+        let pb_mint = self.progress_bar(total_mints as u64, "Minting B-20 tokens");
+
+        let mint_txs: Vec<(TransactionRequest, Address)> = sender_addresses
+            .iter()
+            .map(|&sender| {
+                let call = IB20::mintCall { to: sender, amount: amount_per_sender };
+                let tx = TransactionRequest::default()
+                    .with_to(token)
+                    .with_input(Bytes::from(call.abi_encode()))
+                    .with_nonce(nonce)
+                    .with_chain_id(chain_id)
+                    .with_gas_limit(b20_gas_limit)
+                    .with_max_fee_per_gas(max_fee)
+                    .with_max_priority_fee_per_gas(max_priority_fee);
+                nonce += 1;
+                (tx, sender)
+            })
+            .collect();
+
+        let mut mint_failed = 0usize;
+        let mut txs_remaining = mint_txs.into_iter().peekable();
+
+        while txs_remaining.peek().is_some() {
+            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
+            let send_futs = batch.into_iter().map(|(tx, sender)| {
+                let provider = Arc::clone(&funder_provider);
+                async move {
+                    match provider.send_transaction(tx).await {
+                        Ok(pending) => {
+                            let receipt = pending
+                                .get_receipt()
+                                .await
+                                .map_err(|e| eyre::eyre!("mint receipt failed: {e}"))?;
+                            Ok::<_, eyre::Report>((receipt, sender))
+                        }
+                        Err(e) => Err(eyre::eyre!("mint send failed: {e}")),
+                    }
+                }
+            });
+
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
+            while let Some(result) = send_stream.next().await {
+                match result {
+                    Ok((receipt, sender)) if receipt.status() => {
+                        debug!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint confirmed");
+                        pb_mint.inc(1);
+                    }
+                    Ok((receipt, sender)) => {
+                        warn!(to = %sender, tx_hash = %receipt.transaction_hash, "B-20 mint reverted");
+                        mint_failed += 1;
+                        pb_mint.inc(1);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "B-20 mint failed");
+                        mint_failed += 1;
+                        pb_mint.inc(1);
+                    }
+                }
+            }
+        }
+
+        pb_mint.finish_and_clear();
+        if mint_failed > 0 {
+            return Err(BaselineError::Transaction(format!(
+                "{mint_failed}/{total_mints} B-20 mints failed"
+            )));
+        }
+
+        // Rebuild the workload generator now that the B-20 contract address is resolved.
+        let workload_config = WorkloadConfig::new("load-test").with_seed(self.config.seed);
+        self.generator = Self::create_generator(workload_config, &self.config)?;
+
+        info!(
+            token = %token,
+            senders = total_mints,
+            amount = %amount_per_sender,
+            "B-20 token setup complete"
+        );
+        Ok(())
+    }
+
+    /// Burns remaining B-20 token balances from all sender accounts.
+    ///
+    /// Each sender calls `burn(uint256)` with their full balance. Requires senders to hold
+    /// `BURN_ROLE`, which is granted during [`Self::setup_b20_tokens`].
+    #[instrument(skip(self), fields(accounts = self.accounts.len()))]
+    pub async fn teardown_b20_tokens(&self) -> Result<()> {
+        let token = self.config.transactions.iter().find_map(|t| match &t.tx_type {
+            TxType::B20 { contract: Some(addr) } => Some(*addr),
+            _ => None,
+        });
+
+        let Some(token) = token else {
+            return Ok(());
+        };
+
+        let chain_id = self.config.chain_id;
+        let max_gas_price = self.config.max_gas_price;
+        let gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
+        let max_priority_fee = (gas_price / 10).max(1);
+        let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
+        let burn_gas_limit = 200_000u64;
+
+        let sender_addresses: Vec<Address> =
+            self.accounts.accounts().iter().map(|a| a.address).collect();
+
+        let signers = Self::build_signers(&self.accounts);
+        let client = &self.client;
+        let rpc_url = self.config.primary_submission_rpc().clone();
+
+        // Phase 1: Query all balances in parallel.
+        let balance_futs: Vec<_> = sender_addresses
+            .iter()
+            .map(|&sender| {
+                let client = client.clone();
+                let call_data = Self::encode_erc20_balance_of(sender);
+                async move {
+                    let balance = client
+                        .call(
+                            TransactionRequest::default()
+                                .with_to(token)
+                                .with_input(call_data)
+                                .into(),
+                        )
+                        .await
+                        .rpc("eth_call")
+                        .map(|bytes| U256::from_be_slice(bytes.as_ref()))
+                        .unwrap_or(U256::ZERO);
+                    (sender, balance)
+                }
+            })
+            .collect();
+
+        let balances: Vec<_> =
+            stream::iter(balance_futs).buffer_unordered(FUNDING_CONCURRENCY).collect().await;
+
+        let senders_with_balance: Vec<_> =
+            balances.into_iter().filter(|(_, balance)| !balance.is_zero()).collect();
+
+        if senders_with_balance.is_empty() {
+            info!("all B-20 balances are zero, skipping teardown");
+            return Ok(());
+        }
+
+        // Phase 2: Build burn txs — each sender burns their own balance.
+        let pb = self.progress_bar(senders_with_balance.len() as u64, "Burning B-20 tokens");
+        let mut burn_failed = 0usize;
+        let mut burn_count = 0usize;
+
+        let burn_futs: Vec<_> = senders_with_balance
+            .into_iter()
+            .filter_map(|(sender, balance)| {
+                let signer = signers.get(&sender)?.clone();
+                let wallet = EthereumWallet::from(signer);
+                let provider = create_wallet_provider(rpc_url.clone(), wallet);
+                Some(async move {
+                    let sender_nonce = match provider.get_transaction_count(sender).pending().await
+                    {
+                        Ok(n) => n,
+                        Err(e) => {
+                            return Err((sender, eyre::eyre!("nonce fetch failed: {e}")));
+                        }
+                    };
+
+                    let burn_call = IB20::burnCall { amount: balance };
+                    let tx = TransactionRequest::default()
+                        .with_to(token)
+                        .with_input(Bytes::from(burn_call.abi_encode()))
+                        .with_nonce(sender_nonce)
+                        .with_chain_id(chain_id)
+                        .with_gas_limit(burn_gas_limit)
+                        .with_max_fee_per_gas(max_fee)
+                        .with_max_priority_fee_per_gas(max_priority_fee);
+
+                    match provider.send_transaction(tx).await {
+                        Ok(pending) => match pending.get_receipt().await {
+                            Ok(receipt) => Ok((sender, balance, receipt)),
+                            Err(e) => Err((sender, eyre::eyre!("receipt failed: {e}"))),
+                        },
+                        Err(e) => Err((sender, eyre::eyre!("send failed: {e}"))),
+                    }
+                })
+            })
+            .collect();
+
+        let mut burn_stream = stream::iter(burn_futs).buffer_unordered(BATCH_SIZE);
+        while let Some(result) = burn_stream.next().await {
+            match result {
+                Ok((sender, balance, receipt)) if receipt.status() => {
+                    debug!(sender = %sender, amount = %balance, tx_hash = %receipt.transaction_hash, "B-20 burn confirmed");
+                    burn_count += 1;
+                }
+                Ok((sender, _, receipt)) => {
+                    warn!(sender = %sender, tx_hash = %receipt.transaction_hash, "B-20 burn reverted");
+                    burn_failed += 1;
+                }
+                Err((sender, e)) => {
+                    warn!(sender = %sender, error = %e, "B-20 burn failed");
+                    burn_failed += 1;
+                }
+            }
+            pb.inc(1);
+        }
+
+        pb.finish_and_clear();
+
+        if burn_failed > 0 {
+            warn!(failed = burn_failed, succeeded = burn_count, "some B-20 burns failed");
+        }
+
+        info!(burned = burn_count, failed = burn_failed, "B-20 teardown complete");
+        Ok(())
+    }
+
     /// Runs the load test and returns metrics summary.
     #[instrument(skip(self), fields(target_gps = self.config.target_gps, continuous = self.config.duration.is_none(), duration = ?self.config.duration))]
     pub async fn run(&mut self) -> Result<MetricsSummary> {
+        for tx_config in &self.config.transactions {
+            if let TxType::B20 { contract: None } = &tx_config.tx_type {
+                return Err(BaselineError::Config(
+                    "b20 contract address not resolved; call setup_b20_tokens first".into(),
+                ));
+            }
+        }
+
         self.collector.reset();
         self.stop_flag.store(false, Ordering::SeqCst);
         self.cancel_token = CancellationToken::new();

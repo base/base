@@ -41,7 +41,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             BaseUpgrade::Granite | BaseUpgrade::Holocene => Self::granite(),
             BaseUpgrade::Isthmus => Self::isthmus(),
             BaseUpgrade::Jovian => Self::jovian(),
-            BaseUpgrade::Azul | BaseUpgrade::Beryl => Self::azul(),
+            BaseUpgrade::Azul | BaseUpgrade::Beryl | BaseUpgrade::Cobalt => Self::azul(),
             upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
         };
 
@@ -514,10 +514,11 @@ mod tests {
     #[rstest]
     #[case::azul(BaseUpgrade::Azul, false)]
     #[case::beryl(BaseUpgrade::Beryl, true)]
+    #[case::cobalt(BaseUpgrade::Cobalt, true)]
     fn install_routes_b20_precompiles_by_fork(#[case] spec: BaseUpgrade, #[case] expected: bool) {
         let precompiles = BasePrecompiles::new_with_spec(spec).install();
         let (token, _) =
-            B20Variant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
 
         assert_eq!(precompiles.get(&B20FactoryStorage::ADDRESS).is_some(), expected);
         assert_eq!(precompiles.get(&token).is_some(), expected);

@@ -37,6 +37,10 @@ impl ActivationRegistryStorage<'_> {
                 let activated = self.is_activated(call.feature)?;
                 Ok(IActivationRegistry::isActivatedCall::abi_encode_returns(&activated).into())
             }
+            C::checkActivated(call) => {
+                self.ensure_activated(call.feature)?;
+                Ok(Bytes::new())
+            }
             C::activate(call) => {
                 self.activate(call.feature, activation_admin_address)?;
                 Ok(Bytes::new())

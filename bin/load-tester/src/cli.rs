@@ -161,6 +161,7 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
 
     let funding_amount = test_config.parse_funding_amount()?;
     let swap_token_amount = test_config.parse_swap_token_amount()?;
+    let b20_mint_amount = test_config.parse_b20_mint_amount()?;
 
     let config_summary = test_config.to_summary();
     let mut runner = LoadRunner::new(load_config.clone())?;
@@ -176,6 +177,7 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
         &funding_key,
         funding_amount,
         swap_token_amount,
+        b20_mint_amount,
         &mp,
         load_config.duration,
     )
@@ -270,6 +272,14 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     // mempool state settles before we query balances for the drain.
     tokio::time::sleep(Duration::from_secs(2)).await;
 
+    if runner.needs_b20_setup() {
+        println!("Burning remaining B-20 tokens...");
+        match runner.teardown_b20_tokens().await {
+            Ok(()) => println!("B-20 teardown complete."),
+            Err(e) => eprintln!("Warning: B-20 teardown failed: {e}"),
+        }
+    }
+
     println!();
     println!("Draining accounts back to funder...");
     match runner.drain_accounts(funding_key).await {
@@ -290,6 +300,7 @@ async fn run_test_phases(
     funding_key: &PrivateKeySigner,
     funding_amount: U256,
     swap_token_amount: U256,
+    b20_mint_amount: U256,
     mp: &indicatif::MultiProgress,
     duration: Option<Duration>,
 ) -> LoadResult<MetricsSummary> {
@@ -307,6 +318,12 @@ async fn run_test_phases(
         println!("Distributing swap tokens...");
         runner.setup_swap_tokens(funding_key.clone(), swap_token_amount).await?;
         println!("Swap tokens distributed.");
+    }
+
+    if runner.needs_b20_setup() {
+        println!("Setting up B-20 tokens...");
+        runner.setup_b20_tokens(funding_key.clone(), b20_mint_amount).await?;
+        println!("B-20 tokens ready.");
     }
     println!();
 

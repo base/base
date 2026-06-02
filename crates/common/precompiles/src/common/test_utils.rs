@@ -9,17 +9,14 @@ use alloy_primitives::{Address, B256, LogData, U256};
 use base_precompile_storage::Result;
 
 use crate::{
-    B20SecurityStorage, IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage,
-    b20::B20Token,
-    b20_security::SecurityAccounting,
+    IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage,
+    b20_asset::{AssetAccounting, B20AssetToken},
     b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
     common::{Policy, TokenAccounting},
 };
 
-/// Convenience alias: [`B20Token`] wired with both in-memory fakes.
-///
-/// Use this in unit tests instead of spelling out the full generic each time.
-pub type TestToken = B20Token<InMemoryTokenAccounting, InMemoryPolicy>;
+/// Convenience alias: [`B20AssetToken`] wired with both in-memory fakes.
+pub type TestToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
 
 /// Convenience alias: [`B20StablecoinToken`] wired with both in-memory fakes.
 ///
@@ -50,14 +47,10 @@ pub struct InMemoryTokenAccounting {
     pub decimals: u8,
     /// Stablecoin currency identifier.
     pub currency: String,
-    /// Security ISIN identifier (legacy field; prefer `security_identifiers` map for security tokens).
-    pub security_isin: String,
     /// Bitmask of active pause vectors.
     pub paused: U256,
     /// Per-account EIP-2612 nonces.
     pub nonces: HashMap<Address, U256>,
-    /// Minimum amount required for a redeem operation.
-    pub minimum_redeemable: U256,
     /// URI pointing to the contract-level metadata.
     pub contract_uri: String,
     /// Role membership keyed by `(role, account)`.
@@ -68,11 +61,11 @@ pub struct InMemoryTokenAccounting {
     pub role_admins: HashMap<B256, B256>,
     /// Policy IDs keyed by policy type.
     pub policy_ids: HashMap<B256, u64>,
-    /// Share-to-tokens ratio scaled to WAD (1e18). Security tokens only.
-    pub shares_to_tokens_ratio: U256,
-    /// Security identifier values keyed by raw `identifier_type`. Security tokens only.
-    pub security_identifiers: HashMap<String, String>,
-    /// Consumed announcement ids keyed by raw announcement id. Security tokens only.
+    /// Multiplier scaled to WAD (1e18). Asset tokens only.
+    pub multiplier: U256,
+    /// Extra-metadata values keyed by raw metadata `key`. Asset tokens only.
+    pub extra_metadata: HashMap<String, String>,
+    /// Consumed announcement ids keyed by raw announcement id. Asset tokens only.
     pub announcement_ids_used: HashSet<String>,
     /// Events collected by `emit_event`; does not produce real EVM logs.
     pub events: Vec<LogData>,
@@ -92,17 +85,15 @@ impl InMemoryTokenAccounting {
             symbol: String::new(),
             decimals: 18,
             currency: String::new(),
-            security_isin: String::new(),
             paused: U256::ZERO,
             nonces: HashMap::new(),
-            minimum_redeemable: U256::ZERO,
             contract_uri: String::new(),
             roles: HashMap::new(),
             role_member_counts: HashMap::new(),
             role_admins: HashMap::new(),
             policy_ids: HashMap::new(),
-            shares_to_tokens_ratio: U256::ZERO,
-            security_identifiers: HashMap::new(),
+            multiplier: U256::ZERO,
+            extra_metadata: HashMap::new(),
             announcement_ids_used: HashSet::new(),
             events: Vec::new(),
         }
@@ -232,12 +223,7 @@ impl TokenAccounting for InMemoryTokenAccounting {
     }
 
     fn policy_id(&self, policy_scope: B256) -> Result<u64> {
-        let default = if policy_scope == B20SecurityStorage::REDEEM_SENDER_POLICY {
-            PolicyRegistryStorage::ALWAYS_BLOCK_ID
-        } else {
-            PolicyRegistryStorage::ALWAYS_ALLOW_ID
-        };
-        Ok(*self.policy_ids.get(&policy_scope).unwrap_or(&default))
+        Ok(*self.policy_ids.get(&policy_scope).unwrap_or(&PolicyRegistryStorage::ALWAYS_ALLOW_ID))
     }
 
     fn set_policy_id(&mut self, policy_scope: B256, policy_id: u64) -> Result<()> {
@@ -388,43 +374,27 @@ impl PolicyRegistry for InMemoryPolicy {
     }
 }
 
-impl SecurityAccounting for InMemoryTokenAccounting {
-    fn shares_to_tokens_ratio(&self) -> Result<U256> {
+impl AssetAccounting for InMemoryTokenAccounting {
+    fn multiplier(&self) -> Result<U256> {
         const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
-        Ok(if self.shares_to_tokens_ratio.is_zero() { WAD } else { self.shares_to_tokens_ratio })
+        Ok(if self.multiplier.is_zero() { WAD } else { self.multiplier })
     }
 
-    fn set_shares_to_tokens_ratio(&mut self, ratio: U256) -> Result<()> {
-        self.shares_to_tokens_ratio = ratio;
+    fn set_multiplier(&mut self, ratio: U256) -> Result<()> {
+        self.multiplier = ratio;
         Ok(())
     }
 
-    fn security_identifier(&self, identifier_type: &str) -> Result<String> {
-        if let Some(val) = self.security_identifiers.get(identifier_type) {
-            return Ok(val.clone());
-        }
-        if identifier_type == "ISIN" { Ok(self.security_isin.clone()) } else { Ok(String::new()) }
+    fn extra_metadata(&self, key: &str) -> Result<String> {
+        Ok(self.extra_metadata.get(key).cloned().unwrap_or_default())
     }
 
-    fn set_security_identifier_value(
-        &mut self,
-        identifier_type: &str,
-        value: String,
-    ) -> Result<()> {
+    fn set_extra_metadata_value(&mut self, key: &str, value: String) -> Result<()> {
         if value.is_empty() {
-            self.security_identifiers.remove(identifier_type);
+            self.extra_metadata.remove(key);
         } else {
-            self.security_identifiers.insert(identifier_type.to_owned(), value);
+            self.extra_metadata.insert(key.to_owned(), value);
         }
-        Ok(())
-    }
-
-    fn minimum_redeemable(&self) -> Result<U256> {
-        Ok(self.minimum_redeemable)
-    }
-
-    fn set_minimum_redeemable(&mut self, minimum: U256) -> Result<()> {
-        self.minimum_redeemable = minimum;
         Ok(())
     }
 
@@ -435,5 +405,9 @@ impl SecurityAccounting for InMemoryTokenAccounting {
     fn mark_announcement_id_used(&mut self, id: &str) -> Result<()> {
         self.announcement_ids_used.insert(id.to_owned());
         Ok(())
+    }
+
+    fn decimals(&self) -> Result<u8> {
+        Ok(if self.decimals == 0 { 6 } else { self.decimals })
     }
 }

@@ -8,7 +8,7 @@ use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IAct
 use crate::env::BerylTestEnv;
 
 const GAS_LIMIT: u64 = 1_000_000;
-const FEATURE: alloy_primitives::B256 = ActivationFeature::B20Security.id();
+const FEATURE: alloy_primitives::B256 = ActivationFeature::B20Asset.id();
 
 #[tokio::test]
 async fn beryl_enables_activation_registry_admin_and_feature_lifecycle() {

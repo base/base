@@ -225,4 +225,6 @@ pub struct ConfigSummary {
     pub looper_contract: Option<String>,
     /// Amount of each swap token per sender (in wei, as string).
     pub swap_token_amount: String,
+    /// Amount of B-20 tokens to mint per sender (in wei, as string).
+    pub b20_mint_amount: String,
 }

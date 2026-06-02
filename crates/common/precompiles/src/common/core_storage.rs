@@ -1,23 +1,10 @@
-//! `B20TokenStorage` stores the EVM storage layout for B-20 tokens.
+//! Core B-20 EVM storage layout shared by all token variants.
 
 use alloc::string::String;
 
 use alloy_primitives::{Address, B256, FixedBytes, U256};
-use base_precompile_macros::{Storable, TokenAccounting, contract};
-use base_precompile_storage::{Handler, Mapping, Result, StorageCtx};
-
-/// Creation-time parameters for a B-20 token.
-///
-/// Passed to [`B20TokenStorage::initialize`] to write all fields atomically.
-#[derive(Debug)]
-pub struct B20TokenInit {
-    /// Token name.
-    pub name: String,
-    /// Token symbol.
-    pub symbol: String,
-    /// Maximum total supply allowed.
-    pub supply_cap: U256,
-}
+use base_precompile_macros::Storable;
+use base_precompile_storage::Mapping;
 
 /// Core B-20 storage rooted at the `base.b20` ERC-7201 namespace.
 #[derive(Debug, Clone, Storable)]
@@ -93,41 +80,14 @@ pub struct B20CoreStorage {
     pub nonces: Mapping<Address, U256>, // offset 13
 }
 
-/// EVM-backed storage for the default B-20 variant.
-#[contract]
-#[derive(TokenAccounting)]
-pub struct B20TokenStorage {
-    pub b20: B20CoreStorage,
-}
-
-impl<'a> B20TokenStorage<'a> {
-    /// Creates a `B20TokenStorage` instance targeting `addr`.
-    ///
-    /// Used by the factory to initialize token storage at a dynamically computed address.
-    pub fn from_address(addr: Address, storage: StorageCtx<'a>) -> Self {
-        Self::__new(addr, storage)
-    }
-
-    /// Writes all creation-time fields atomically.
-    pub fn initialize(&mut self, init: B20TokenInit) -> Result<()> {
-        self.b20.name.write(init.name)?;
-        self.b20.symbol.write(init.symbol)?;
-        self.b20.supply_cap.write(init.supply_cap)?;
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256, address, uint};
-    use base_precompile_storage::{Handler, StorableType, StorageCtx, StorageKey, setup_storage};
+    use alloy_primitives::{U256, uint};
+    use base_precompile_storage::StorableType;
 
-    use crate::{
-        B20CoreStorage, B20TokenRole, B20TokenStorage, TokenAccounting,
-        b20::storage::{__packing_b20_core_storage, slots},
-    };
+    use super::__packing_b20_core_storage;
+    use crate::B20CoreStorage;
 
-    const TOKEN: Address = address!("000000000000000000000000000000000000b020");
     const B20_ROOT: U256 =
         uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434000_U256);
 
@@ -135,8 +95,6 @@ mod tests {
     fn b20_namespaces_match_base_std_roots() {
         assert_eq!(<B20CoreStorage as StorableType>::STORAGE_NAMESPACE_ID, "base.b20");
         assert_eq!(<B20CoreStorage as StorableType>::STORAGE_NAMESPACE_ROOT, B20_ROOT);
-
-        assert_eq!(slots::B20, B20_ROOT);
     }
 
     #[test]
@@ -163,45 +121,5 @@ mod tests {
         assert_eq!(__packing_b20_core_storage::PAUSED_LOC.offset_slots, 11);
         assert_eq!(__packing_b20_core_storage::SUPPLY_CAP_LOC.offset_slots, 12);
         assert_eq!(__packing_b20_core_storage::NONCES_LOC.offset_slots, 13);
-    }
-
-    #[test]
-    fn b20_core_mapping_slots_are_rooted_at_namespace_offsets() {
-        let (mut storage, _) = setup_storage();
-        let holder = Address::repeat_byte(0xaa);
-        let spender = Address::repeat_byte(0xbb);
-        let role = B20TokenRole::Mint.id();
-
-        StorageCtx::enter(&mut storage, |ctx| {
-            let mut token = B20TokenStorage::from_address(TOKEN, ctx);
-            token.b20.balances.at_mut(&holder).write(U256::from(100)).unwrap();
-            token.b20.allowances.at_mut(&holder).at_mut(&spender).write(U256::from(25)).unwrap();
-            token.b20.roles.at_mut(&role).at_mut(&holder).write(true).unwrap();
-            token.set_role_member_count(B20TokenRole::DefaultAdmin.id(), U256::ONE).unwrap();
-
-            let balances_slot =
-                B20_ROOT + U256::from(__packing_b20_core_storage::BALANCES_LOC.offset_slots);
-            let allowances_slot =
-                B20_ROOT + U256::from(__packing_b20_core_storage::ALLOWANCES_LOC.offset_slots);
-            let roles_slot =
-                B20_ROOT + U256::from(__packing_b20_core_storage::ROLES_LOC.offset_slots);
-            let admin_count_slot =
-                B20_ROOT + U256::from(__packing_b20_core_storage::ADMIN_COUNT_LOC.offset_slots);
-
-            assert_eq!(
-                ctx.sload(TOKEN, holder.mapping_slot(balances_slot)).unwrap(),
-                U256::from(100)
-            );
-            assert_eq!(
-                ctx.sload(TOKEN, spender.mapping_slot(holder.mapping_slot(allowances_slot)))
-                    .unwrap(),
-                U256::from(25)
-            );
-            assert_eq!(
-                ctx.sload(TOKEN, holder.mapping_slot(role.mapping_slot(roles_slot))).unwrap(),
-                U256::ONE
-            );
-            assert_eq!(ctx.sload(TOKEN, admin_count_slot).unwrap(), U256::ONE);
-        });
     }
 }

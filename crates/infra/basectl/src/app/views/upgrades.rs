@@ -108,6 +108,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
         UpgradeSpec { name: "Jovian", timestamp: Some(cfg.jovian_timestamp) },
         UpgradeSpec { name: "Azul", timestamp: cfg.azul_timestamp },
         UpgradeSpec { name: "Beryl", timestamp: cfg.beryl_timestamp },
+        UpgradeSpec { name: "Cobalt", timestamp: cfg.cobalt_timestamp },
     ]
 }
 
@@ -188,19 +189,15 @@ const JOVIAN_CHECK_NAMES: &[&str] = &["bn256Pairing limit", "extra data v1", "GP
 const BERYL_CHECK_NAMES: &[&str] = &[
     "registry precompile",
     "registry admin",
-    "B-20 token feature",
-    "B-20 factory feature",
     "policy registry feature",
     "B-20 stablecoin feature",
-    "B-20 security feature",
+    "B-20 asset feature",
 ];
 
 const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
-    ("B-20 token feature", ActivationFeature::B20Token),
-    ("B-20 factory feature", ActivationFeature::B20Factory),
     ("policy registry feature", ActivationFeature::PolicyRegistry),
     ("B-20 stablecoin feature", ActivationFeature::B20Stablecoin),
-    ("B-20 security feature", ActivationFeature::B20Security),
+    ("B-20 asset feature", ActivationFeature::B20Asset),
 ];
 
 fn check_names_for(hardfork: &str) -> &'static [&'static str] {
@@ -1824,7 +1821,7 @@ mod tests {
         assert_eq!(target_hardfork(&chain, 100), Some("Beryl"));
 
         chain.apply_hardforks(&HardForkConfig {
-            base: HardforkConfig { azul: Some(10), beryl: Some(12) },
+            base: HardforkConfig { azul: Some(10), beryl: Some(12), cobalt: None },
             ..HardForkConfig::default()
         });
 
@@ -1842,7 +1839,7 @@ mod tests {
         };
         chain.apply_hardforks(&HardForkConfig {
             jovian_time: Some(10),
-            base: HardforkConfig { azul: Some(20), beryl: None },
+            base: HardforkConfig { azul: Some(20), beryl: None, cobalt: None },
             ..HardForkConfig::default()
         });
 
@@ -1860,7 +1857,7 @@ mod tests {
         let delta = chain.specs.iter().find(|spec| spec.name == "Delta").unwrap().timestamp;
 
         chain.apply_hardforks(&HardForkConfig {
-            base: HardforkConfig { azul: Some(20), beryl: None },
+            base: HardforkConfig { azul: Some(20), beryl: None, cobalt: None },
             ..HardForkConfig::default()
         });
 

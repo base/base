@@ -12,12 +12,34 @@ use crate::{
 
 impl PolicyRegistryStorage<'_> {
     /// ABI-dispatches policy registry calldata.
+    ///
+    /// View (read-only) calls bypass the activation gate and remain accessible even when the
+    /// feature is disabled. Write calls require the feature to be activated.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         deduct_calldata_cost!(ctx, calldata);
-        ActivationRegistryStorage::new(ctx)
-            .ensure_activated(ActivationFeature::PolicyRegistry.id())
-            .and_then(|()| self.inner(calldata))
-            .into_precompile_result(ctx.gas_used(), ctx.state_gas_used(), |b| b)
+        let result = if Self::is_view_selector(calldata) {
+            self.inner(calldata)
+        } else {
+            ActivationRegistryStorage::new(ctx)
+                .ensure_activated(ActivationFeature::PolicyRegistry.id())
+                .and_then(|()| self.inner(calldata))
+        };
+        result.into_precompile_result(ctx.gas_used(), ctx.state_gas_used(), |b| b)
+    }
+
+    /// Returns `true` when the calldata selector belongs to a view (read-only) function.
+    ///
+    /// View functions are accessible regardless of whether the feature is activated, so that
+    /// callers can still query policy state (e.g. check blocklist membership) even if the
+    /// precompile feature is administratively disabled.
+    fn is_view_selector(calldata: &[u8]) -> bool {
+        let Some(selector) = calldata.first_chunk::<4>().copied() else {
+            return false;
+        };
+        selector == IPolicyRegistry::isAuthorizedCall::SELECTOR
+            || selector == IPolicyRegistry::policyExistsCall::SELECTOR
+            || selector == IPolicyRegistry::policyAdminCall::SELECTOR
+            || selector == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR
     }
 
     fn inner(&mut self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
@@ -106,10 +128,24 @@ mod tests {
         .unwrap();
     }
 
+    fn deactivate_policy_registry(storage: &mut HashMapStorageProvider) {
+        storage.set_caller(ACTIVATION_ADMIN);
+        StorageCtx::enter(storage, |ctx| {
+            ActivationRegistryStorage::new(ctx)
+                .deactivate(ActivationFeature::PolicyRegistry.id(), Some(ACTIVATION_ADMIN))
+                .unwrap()
+        });
+    }
+
     #[test]
-    fn dispatch_reverts_when_policy_registry_is_inactive() {
+    fn write_call_reverts_when_policy_registry_is_inactive() {
         let mut storage = HashMapStorageProvider::new(1);
-        let calldata = IPolicyRegistry::policyExistsCall { policyId: 0 }.abi_encode();
+        storage.set_caller(ADMIN);
+        let calldata = IPolicyRegistry::createPolicyCall {
+            admin: ADMIN,
+            policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
+        }
+        .abi_encode();
 
         let output = StorageCtx::enter(&mut storage, |ctx| {
             PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
@@ -380,5 +416,98 @@ mod tests {
         let pending =
             IPolicyRegistry::pendingPolicyAdminCall::abi_decode_returns(&out.bytes).unwrap();
         assert_eq!(pending, Address::ZERO);
+    }
+
+    #[test]
+    fn view_functions_succeed_when_policy_registry_deactivated() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_and_init(&mut storage);
+
+        // Create a blocklist policy while the registry is active.
+        storage.set_caller(ADMIN);
+        let policy_id = {
+            let calldata = IPolicyRegistry::createPolicyCall {
+                admin: ADMIN,
+                policyType: IPolicyRegistry::PolicyType::BLOCKLIST,
+            }
+            .abi_encode();
+            let out = StorageCtx::enter(&mut storage, |ctx| {
+                PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+            })
+            .unwrap();
+            assert!(!out.is_revert());
+            IPolicyRegistry::createPolicyCall::abi_decode_returns(&out.bytes).unwrap()
+        };
+
+        // Add Alice to the blocklist.
+        storage.set_caller(ADMIN);
+        {
+            let calldata = IPolicyRegistry::updateBlocklistCall {
+                policyId: policy_id,
+                blocked: true,
+                accounts: alloc::vec![ALICE],
+            }
+            .abi_encode();
+            let out = StorageCtx::enter(&mut storage, |ctx| {
+                PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+            })
+            .unwrap();
+            assert!(!out.is_revert());
+        }
+
+        // Deactivate the registry.
+        deactivate_policy_registry(&mut storage);
+
+        // View calls must still return current state after deactivation.
+        {
+            let is_authorized_calldata =
+                IPolicyRegistry::isAuthorizedCall { policyId: policy_id, account: ALICE }
+                    .abi_encode();
+            let out = StorageCtx::enter(&mut storage, |ctx| {
+                PolicyRegistryStorage::new(ctx).dispatch(ctx, &is_authorized_calldata)
+            })
+            .unwrap();
+            assert!(!out.is_revert(), "isAuthorized must not revert when feature is deactivated");
+            let authorized =
+                IPolicyRegistry::isAuthorizedCall::abi_decode_returns(&out.bytes).unwrap();
+            assert!(!authorized, "Alice should remain blocked after deactivation");
+        }
+
+        {
+            let calldata = IPolicyRegistry::policyExistsCall { policyId: policy_id }.abi_encode();
+            let out = StorageCtx::enter(&mut storage, |ctx| {
+                PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+            })
+            .unwrap();
+            assert!(!out.is_revert(), "policyExists must not revert when feature is deactivated");
+            let exists = IPolicyRegistry::policyExistsCall::abi_decode_returns(&out.bytes).unwrap();
+            assert!(exists, "policy must still report existing after deactivation");
+        }
+
+        {
+            let calldata = IPolicyRegistry::policyAdminCall { policyId: policy_id }.abi_encode();
+            let out = StorageCtx::enter(&mut storage, |ctx| {
+                PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+            })
+            .unwrap();
+            assert!(!out.is_revert(), "policyAdmin must not revert when feature is deactivated");
+            let admin = IPolicyRegistry::policyAdminCall::abi_decode_returns(&out.bytes).unwrap();
+            assert_eq!(admin, ADMIN, "policy admin must remain after deactivation");
+        }
+
+        // Write calls must still revert when deactivated.
+        storage.set_caller(ADMIN);
+        {
+            let calldata = IPolicyRegistry::createPolicyCall {
+                admin: ADMIN,
+                policyType: IPolicyRegistry::PolicyType::ALLOWLIST,
+            }
+            .abi_encode();
+            let out = StorageCtx::enter(&mut storage, |ctx| {
+                PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata)
+            })
+            .unwrap();
+            assert!(out.is_revert(), "createPolicy must revert when feature is deactivated");
+        }
     }
 }

@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn test_string_mapping_slot_matches_solidity_packed_encoding() {
         let slot = U256::from(123u64);
-        let key = "ISIN".to_owned();
+        let key = "description".to_owned();
         let mut buf = key.as_bytes().to_vec();
         buf.extend_from_slice(&slot.to_be_bytes::<32>());
 

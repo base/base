@@ -144,6 +144,11 @@ pub struct TestConfig {
     /// Only used when swap transaction types are configured.
     #[serde(default = "default_swap_token_amount")]
     pub swap_token_amount: String,
+
+    /// Amount of B-20 tokens to mint per sender during setup (in wei, as string).
+    /// Only used when B-20 transaction types are configured.
+    #[serde(default = "default_b20_mint_amount")]
+    pub b20_mint_amount: String,
 }
 
 impl Default for TestConfig {
@@ -169,6 +174,7 @@ impl Default for TestConfig {
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
             looper_contract: None,
             swap_token_amount: default_swap_token_amount(),
+            b20_mint_amount: default_b20_mint_amount(),
         }
     }
 }
@@ -192,6 +198,7 @@ impl fmt::Debug for TestConfig {
             .field("transactions", &self.transactions)
             .field("looper_contract", &self.looper_contract)
             .field("swap_token_amount", &self.swap_token_amount)
+            .field("b20_mint_amount", &self.b20_mint_amount)
             .finish()
     }
 }
@@ -276,6 +283,14 @@ pub enum TxTypeConfig {
         #[serde(default = "default_swap_max_amount")]
         max_amount: String,
     },
+    /// B-20 precompile token transfer.
+    B20 {
+        /// B-20 token precompile address. When omitted, a new token is created via the factory
+        /// during setup.
+        #[serde(default)]
+        contract: Option<String>,
+    },
+
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
         /// CL Router contract address.
@@ -325,6 +340,10 @@ const fn default_aerodrome_tick_spacing() -> i32 {
 }
 
 fn default_swap_token_amount() -> String {
+    "1000000000000000000000".to_string() // 1000 tokens (1000e18)
+}
+
+fn default_b20_mint_amount() -> String {
     "1000000000000000000000".to_string() // 1000 tokens (1000e18)
 }
 
@@ -468,6 +487,16 @@ impl TestConfig {
         })
     }
 
+    /// Parses the B-20 mint amount string into a U256.
+    pub fn parse_b20_mint_amount(&self) -> Result<alloy_primitives::U256> {
+        self.b20_mint_amount.parse().map_err(|e| {
+            BaselineError::Config(format!(
+                "invalid b20_mint_amount '{}': {e}",
+                self.b20_mint_amount
+            ))
+        })
+    }
+
     /// Returns a summary of the config for JSON output (excludes URLs and secrets).
     pub fn to_summary(&self) -> ConfigSummary {
         ConfigSummary {
@@ -491,6 +520,7 @@ impl TestConfig {
                 .unwrap_or_default(),
             looper_contract: self.looper_contract.clone(),
             swap_token_amount: self.swap_token_amount.clone(),
+            b20_mint_amount: self.b20_mint_amount.clone(),
         }
     }
 
@@ -584,6 +614,19 @@ impl TestConfig {
                     iterations: *iterations,
                     looper_contract,
                 }
+            }
+            TxTypeConfig::B20 { contract } => {
+                let contract = contract
+                    .as_ref()
+                    .map(|c| {
+                        c.parse::<Address>().map_err(|e| {
+                            BaselineError::Config(format!(
+                                "invalid b20 contract address '{c}': {e}"
+                            ))
+                        })
+                    })
+                    .transpose()?;
+                TxType::B20 { contract }
             }
             TxTypeConfig::Osaka { target } => TxType::Osaka { target: target.clone() },
             TxTypeConfig::UniswapV3 {

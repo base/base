@@ -25,9 +25,9 @@ pub use metrics::{
 
 mod workload;
 pub use workload::{
-    AccountPool, AerodromeClPayload, CalldataPayload, Erc20Payload, FundedAccount, OsakaPayload,
-    Payload, PrecompileLooper, PrecompilePayload, SeededRng, StoragePayload, TransferPayload,
-    UniswapV3Payload, WorkloadGenerator, parse_precompile_id,
+    AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload, Erc20Payload,
+    FundedAccount, OsakaPayload, Payload, PrecompileLooper, PrecompilePayload, SeededRng,
+    StoragePayload, TransferPayload, UniswapV3Payload, WorkloadGenerator, parse_precompile_id,
 };
 
 mod runner;
