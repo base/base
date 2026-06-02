@@ -6,6 +6,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 MODE="${1:-after}"
 RPC_URL="${2:-${RPC_URL:-${L2_CLIENT_RPC_URL:-http://localhost:8545}}}"
 BLOCK_TAG="${3:-latest}"
+ACTIVATION_TIMESTAMP="${UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP:-}"
 
 PROBE_ADDRESS="0x000000000000000000000000000000000000001e"
 CLZ_RUNTIME="0x6000351e60005260206000f3"
@@ -57,6 +58,54 @@ fail_check() {
     exit 1
 }
 
+block_timestamp() {
+    local block_tag="$1"
+    local rpc_url="${2:-$RPC_URL}"
+    local rpc_block_tag
+    local block_json
+    local timestamp_hex
+
+    case "$block_tag" in
+        latest|earliest|pending|safe|finalized|0x*)
+            rpc_block_tag="$block_tag"
+            ;;
+        *)
+            rpc_block_tag="$(printf '0x%x' "$block_tag")"
+            ;;
+    esac
+
+    block_json="$(cast rpc --rpc-url "$rpc_url" eth_getBlockByNumber "$rpc_block_tag" false)"
+    timestamp_hex="$(jq -r '.timestamp // empty' <<< "$block_json")"
+    if [[ ! "$timestamp_hex" =~ ^0x[0-9a-fA-F]+$ ]]; then
+        fail "failed to read timestamp for block $block_tag"
+    fi
+
+    printf '%d\n' "$((16#${timestamp_hex#0x}))"
+}
+
+skip_if_pre_activation_window_closed() {
+    local check_name="$1"
+    local current_timestamp
+
+    if [[ "$MODE" != "before" || -z "$ACTIVATION_TIMESTAMP" ]]; then
+        return 1
+    fi
+
+    if ! current_timestamp="$(block_timestamp latest)"; then
+        return 1
+    fi
+    if ((current_timestamp < ACTIVATION_TIMESTAMP)); then
+        return 1
+    fi
+
+    pass_check \
+        "$check_name" \
+        "skipped: pre-activation transaction window closed" \
+        "latest L2 timestamp: $current_timestamp" \
+        "activation timestamp: $ACTIVATION_TIMESTAMP"
+    return 0
+}
+
 usage() {
     cat <<EOF
 Usage: $0 <before|after> [rpc-url] [block-tag]
@@ -78,6 +127,36 @@ check_eth_config() {
             local next_activation
             current_activation="$(printf '%s\n' "$raw_result" | jq -r '.current.activationTime // empty')"
             next_activation="$(printf '%s\n' "$raw_result" | jq -r '.next.activationTime // empty')"
+
+            if [[ -n "$ACTIVATION_TIMESTAMP" && "$current_activation" =~ ^[0-9]+$ ]] &&
+                ((current_activation >= ACTIVATION_TIMESTAMP)); then
+                fail_check \
+                    "$check_name" \
+                    "unexpected active Azul eth_config before activation on $RPC_URL" \
+                    "current activationTime=$current_activation" \
+                    "target activationTime=$ACTIVATION_TIMESTAMP" \
+                    "$raw_result"
+            fi
+
+            if [[ -n "$ACTIVATION_TIMESTAMP" && "$next_activation" =~ ^[0-9]+$ ]] &&
+                ((next_activation < ACTIVATION_TIMESTAMP)); then
+                fail_check \
+                    "$check_name" \
+                    "unexpected next eth_config activation before Azul target on $RPC_URL" \
+                    "next activationTime=$next_activation" \
+                    "target activationTime=$ACTIVATION_TIMESTAMP" \
+                    "$raw_result"
+            fi
+
+            if [[ -n "$ACTIVATION_TIMESTAMP" ]]; then
+                pass_check \
+                    "$check_name" \
+                    "available before Azul" \
+                    "current activationTime=${current_activation:-<unset>}" \
+                    "next activationTime=${next_activation:-<unset>}" \
+                    "target activationTime=$ACTIVATION_TIMESTAMP"
+                return
+            fi
 
             if [[ -z "$current_activation" || "$current_activation" = "0" ]]; then
                 pass_check \
@@ -260,6 +339,10 @@ check_tx_gas_limit_cap() {
     local addr="$ANVIL_DEFAULT_ADDR"
     local key="$ANVIL_DEFAULT_KEY"
 
+    if skip_if_pre_activation_window_closed "$check_name"; then
+        return
+    fi
+
     local raw_result
     if raw_result="$(
         cast send \
@@ -269,6 +352,10 @@ check_tx_gas_limit_cap() {
             "$addr" 2>&1
     )"; then
         if [ "$MODE" = "before" ]; then
+            if skip_if_pre_activation_window_closed "$check_name"; then
+                return
+            fi
+
             pass_check "$check_name" \
                 "tx with gas_limit=$TX_GAS_LIMIT_OVER accepted before Azul"
             return
@@ -295,6 +382,10 @@ check_tx_gas_limit_cap() {
         return
     fi
 
+    if skip_if_pre_activation_window_closed "$check_name"; then
+        return
+    fi
+
     fail_check "$check_name" \
         "tx with gas_limit=$TX_GAS_LIMIT_OVER unexpectedly rejected before Azul" \
         "$raw_result"
@@ -306,6 +397,10 @@ check_clz_transaction() {
     local input_word="0x0000000000000000000000000000000000000000000000000000000000000001"
     local expected="0x00000000000000000000000000000000000000000000000000000000000000ff"
     local send_rpc="${L2_BUILDER_RPC_URL:-$RPC_URL}"
+
+    if skip_if_pre_activation_window_closed "$check_name"; then
+        return
+    fi
 
     local deploy_result
     if ! deploy_result="$(
@@ -347,6 +442,10 @@ check_clz_transaction() {
             --json \
             "$contract_addr" "$input_word" 2>&1
     )"; then
+        if skip_if_pre_activation_window_closed "$check_name"; then
+            return
+        fi
+
         if [ "$MODE" = "before" ]; then
             pass_check "$check_name" \
                 "call failed before Azul (CLZ opcode not available)" \
@@ -382,8 +481,26 @@ check_clz_transaction() {
     actual="$(cast call --rpc-url "$RPC_URL" "$contract_addr" "$input_word" 2>&1)"
 
     if [ "$MODE" = "before" ]; then
+        local call_timestamp="<unknown>"
+        if [[ -n "$ACTIVATION_TIMESTAMP" ]]; then
+            call_timestamp="$(block_timestamp "$call_block" "$send_rpc")"
+            if ((call_timestamp >= ACTIVATION_TIMESTAMP)); then
+                pass_check "$check_name" \
+                    "skipped: CLZ call tx landed after activation during pre-check" \
+                    "deploy block: $deploy_block" \
+                    "call block: $call_block" \
+                    "call block timestamp: $call_timestamp" \
+                    "activation timestamp: $ACTIVATION_TIMESTAMP"
+                return
+            fi
+        fi
+
         fail_check "$check_name" \
-            "unexpectedly succeeded before Azul"
+            "unexpectedly succeeded before Azul" \
+            "deploy block: $deploy_block" \
+            "call block: $call_block" \
+            "call block timestamp: $call_timestamp" \
+            "activation timestamp: ${ACTIVATION_TIMESTAMP:-<unset>}"
     fi
 
     if [ "$actual" != "$expected" ]; then
@@ -455,10 +572,14 @@ run_case() {
 }
 
 command -v cast >/dev/null 2>&1 || fail "'cast' is required"
+command -v jq >/dev/null 2>&1 || fail "'jq' is required"
 [ "$MODE" = "before" ] || [ "$MODE" = "after" ] || {
     usage >&2
     fail "mode must be 'before' or 'after'"
 }
+if [[ -n "$ACTIVATION_TIMESTAMP" && ! "$ACTIVATION_TIMESTAMP" =~ ^[0-9]+$ ]]; then
+    fail "UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP must be a non-negative integer"
+fi
 
 echo "Testing Azul mode '$MODE' on $RPC_URL (block tag: $BLOCK_TAG)"
 echo "Using state override at $PROBE_ADDRESS with runtime $CLZ_RUNTIME"

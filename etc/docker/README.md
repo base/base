@@ -39,9 +39,10 @@ To test contract-driven Azul activation, run:
 just devnet upgrade-signal-test
 ```
 
-That flow starts L1, generates L2 configs without static Azul/Beryl activation, deploys the mock
-upgrade signal with Azul scheduled two minutes after the L2 genesis timestamp, starts L2 with the
-upgrade-signal override, then checks behavior before and after the activation timestamp.
+That flow starts L1, generates L2 configs without static hardfork activation timestamps, deploys
+the mock upgrade signal with prior hardforks active at genesis and Azul scheduled two minutes after
+the L2 genesis timestamp, starts L2 with the upgrade-signal override, then checks behavior before
+and after the activation timestamp.
 
 To build a specific Rust service image directly:
 

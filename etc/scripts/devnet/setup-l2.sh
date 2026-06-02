@@ -9,6 +9,7 @@ L2_DATA_DIR="${L2_DATA_DIR:-/data}"
 TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
 L2_BASE_AZUL_BLOCK="${L2_BASE_AZUL_BLOCK:-}"
 L2_BASE_BERYL_BLOCK="${L2_BASE_BERYL_BLOCK:-}"
+L2_DYNAMIC_HARDFORKS="${L2_DYNAMIC_HARDFORKS:-}"
 L2_ACTIVATION_ADMIN_ADDR="${L2_ACTIVATION_ADMIN_ADDR:-$SEQUENCER_ADDR}"
 L2_EL_BOOTNODE_P2P_KEY="${L2_EL_BOOTNODE_P2P_KEY:-1111111111111111111111111111111111111111111111111111111111111111}"
 L2_EL_BOOTNODE_ENODE_ID="${L2_EL_BOOTNODE_ENODE_ID:-4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1}"
@@ -39,6 +40,11 @@ if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
   echo "Base Beryl activation block: $L2_BASE_BERYL_BLOCK"
 else
   echo "Base Beryl activation block: <unset>"
+fi
+if [ -n "$L2_DYNAMIC_HARDFORKS" ]; then
+  echo "Dynamic hardfork config: enabled"
+else
+  echo "Dynamic hardfork config: disabled"
 fi
 echo "Output directory: $OUTPUT_DIR"
 
@@ -226,6 +232,50 @@ else
   echo "L2 genesis time: $L2_GENESIS_TIME"
   echo "L2 block time: $L2_BLOCK_TIME"
   echo "Base Beryl activation block is unset; leaving base.beryl unchanged"
+fi
+
+if [ -n "$L2_DYNAMIC_HARDFORKS" ]; then
+  echo ""
+  echo "=== Clearing Static Hardfork Activation Config ==="
+
+  TMP_ROLLUP=$(mktemp)
+  jq \
+    'del(
+      .regolith_time,
+      .canyon_time,
+      .delta_time,
+      .ecotone_time,
+      .fjord_time,
+      .granite_time,
+      .holocene_time,
+      .pectra_blob_schedule_time,
+      .isthmus_time,
+      .jovian_time,
+      .base
+    )' \
+    "$OUTPUT_DIR/rollup.json" \
+    >"$TMP_ROLLUP"
+  mv "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
+
+  TMP_GENESIS=$(mktemp)
+  jq \
+    'del(
+      .config.regolithTime,
+      .config.canyonTime,
+      .config.ecotoneTime,
+      .config.fjordTime,
+      .config.graniteTime,
+      .config.holoceneTime,
+      .config.isthmusTime,
+      .config.jovianTime,
+      .config.osakaTime,
+      .config.base
+    )' \
+    "$OUTPUT_DIR/genesis.json" \
+    >"$TMP_GENESIS"
+  mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
+
+  echo "Cleared static hardfork activation timestamps from rollup and genesis configs"
 fi
 
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."

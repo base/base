@@ -8,9 +8,11 @@ source "$SCRIPT_DIR/common.sh"
 
 CONTRACT_ROOT="$REPO_ROOT/crates/utilities/test-utils/contracts"
 ENV_OUT="$REPO_ROOT/.devnet/upgrade-signal.env"
+ROLLUP_JSON="$REPO_ROOT/.devnet/l2/configs/rollup.json"
 L1_RPC="${UPGRADE_SIGNAL_L1_RPC_URL:-${L1_RPC_URL:-http://localhost:4545}}"
 L2_RPC="${UPGRADE_SIGNAL_L2_RPC_URL:-${L2_CLIENT_RPC_URL:-http://localhost:8545}}"
 HARDFORK_ID="${UPGRADE_SIGNAL_HARDFORK_ID:-azul}"
+ACTIVE_HARDFORK_IDS="${UPGRADE_SIGNAL_ACTIVE_HARDFORK_IDS:-regolith,canyon,delta,ecotone,fjord,granite,holocene,isthmus,jovian}"
 PROTOCOL_VERSION="${UPGRADE_SIGNAL_PROTOCOL_VERSION:-7}"
 ACTIVATION_OFFSET="${UPGRADE_SIGNAL_ACTIVATION_OFFSET:-120}"
 
@@ -29,25 +31,66 @@ require_cmd jq
 echo "Checking devnet RPCs..."
 cast block-number --rpc-url "$L1_RPC" >/dev/null
 
+read_latest_l2_timestamp() {
+    local block_json
+    local timestamp_hex
+
+    block_json="$(cast rpc --rpc-url "$L2_RPC" eth_getBlockByNumber latest false)"
+    timestamp_hex="$(jq -r '.timestamp' <<< "$block_json")"
+    if [[ "$timestamp_hex" == "null" || -z "$timestamp_hex" ]]; then
+        echo "failed to read latest L2 timestamp from $L2_RPC" >&2
+        exit 1
+    fi
+
+    printf '%d\n' "$((16#${timestamp_hex#0x}))"
+}
+
+read_reference_timestamp() {
+    if [[ -n "${UPGRADE_SIGNAL_REFERENCE_TIMESTAMP:-}" ]]; then
+        if ! [[ "$UPGRADE_SIGNAL_REFERENCE_TIMESTAMP" =~ ^[0-9]+$ ]]; then
+            echo "UPGRADE_SIGNAL_REFERENCE_TIMESTAMP must be a non-negative integer" >&2
+            exit 1
+        fi
+        printf '%s\n' "$UPGRADE_SIGNAL_REFERENCE_TIMESTAMP"
+        return
+    fi
+
+    if [[ -f "$ROLLUP_JSON" ]]; then
+        jq -re '.genesis.l2_time' "$ROLLUP_JSON"
+        return
+    fi
+
+    echo "UPGRADE_SIGNAL_REFERENCE_TIMESTAMP must be set when $ROLLUP_JSON is unavailable" >&2
+    exit 1
+}
+
 if [[ -n "${UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP:-}" ]]; then
     if ! [[ "$UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP" =~ ^[0-9]+$ ]]; then
         echo "UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP must be a non-negative integer" >&2
         exit 1
     fi
-    L2_TIMESTAMP="${UPGRADE_SIGNAL_REFERENCE_TIMESTAMP:-not-read}"
-    REFERENCE_TIMESTAMP_LABEL="reference timestamp"
     ACTIVATION_TIMESTAMP="$UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP"
 else
-    L2_BLOCK_JSON="$(cast rpc --rpc-url "$L2_RPC" eth_getBlockByNumber latest false)"
-    L2_TIMESTAMP_HEX="$(jq -r '.timestamp' <<< "$L2_BLOCK_JSON")"
-    if [[ "$L2_TIMESTAMP_HEX" == "null" || -z "$L2_TIMESTAMP_HEX" ]]; then
-        echo "failed to read latest L2 timestamp from $L2_RPC" >&2
+    LATEST_L2_TIMESTAMP="$(read_latest_l2_timestamp)"
+    ACTIVATION_TIMESTAMP="$((LATEST_L2_TIMESTAMP + ACTIVATION_OFFSET))"
+fi
+
+if [[ -n "$ACTIVE_HARDFORK_IDS" ]]; then
+    if [[ -n "${UPGRADE_SIGNAL_REFERENCE_TIMESTAMP:-}" ]]; then
+        REFERENCE_TIMESTAMP_LABEL="reference timestamp"
+    elif [[ -f "$ROLLUP_JSON" ]]; then
+        REFERENCE_TIMESTAMP_LABEL="rollup genesis timestamp"
+    else
+        REFERENCE_TIMESTAMP_LABEL="reference timestamp"
+    fi
+    L2_TIMESTAMP="$(read_reference_timestamp)"
+    if ! [[ "$L2_TIMESTAMP" =~ ^[0-9]+$ ]]; then
+        echo "$REFERENCE_TIMESTAMP_LABEL must be a non-negative integer" >&2
         exit 1
     fi
-
-    L2_TIMESTAMP="$((16#${L2_TIMESTAMP_HEX#0x}))"
-    REFERENCE_TIMESTAMP_LABEL="latest L2 timestamp"
-    ACTIVATION_TIMESTAMP="$((L2_TIMESTAMP + ACTIVATION_OFFSET))"
+else
+    L2_TIMESTAMP="not-set"
+    REFERENCE_TIMESTAMP_LABEL="reference timestamp"
 fi
 
 echo "Deploying MockUpgradeSignal to $L1_RPC..."
@@ -76,24 +119,42 @@ if [[ -z "$CONTRACT_ADDRESS" ]]; then
     exit 1
 fi
 
-echo "Setting hardfork=$HARDFORK_ID timestamp=$ACTIVATION_TIMESTAMP protocol_version=$PROTOCOL_VERSION..."
-cast send \
-    --rpc-url "$L1_RPC" \
-    --private-key "$DEPLOYER_KEY" \
-    "$CONTRACT_ADDRESS" \
-    "setTimestamp(string,uint256)" \
-    "$HARDFORK_ID" \
-    "$ACTIVATION_TIMESTAMP" \
-    --json >/dev/null
+set_signal() {
+    local hardfork_id="$1"
+    local timestamp="$2"
 
-cast send \
-    --rpc-url "$L1_RPC" \
-    --private-key "$DEPLOYER_KEY" \
-    "$CONTRACT_ADDRESS" \
-    "setProtocolVersion(string,uint256)" \
-    "$HARDFORK_ID" \
-    "$PROTOCOL_VERSION" \
-    --json >/dev/null
+    cast send \
+        --rpc-url "$L1_RPC" \
+        --private-key "$DEPLOYER_KEY" \
+        "$CONTRACT_ADDRESS" \
+        "setTimestamp(string,uint256)" \
+        "$hardfork_id" \
+        "$timestamp" \
+        --json >/dev/null
+
+    cast send \
+        --rpc-url "$L1_RPC" \
+        --private-key "$DEPLOYER_KEY" \
+        "$CONTRACT_ADDRESS" \
+        "setProtocolVersion(string,uint256)" \
+        "$hardfork_id" \
+        "$PROTOCOL_VERSION" \
+        --json >/dev/null
+}
+
+if [[ -n "$ACTIVE_HARDFORK_IDS" ]]; then
+    IFS=',' read -r -a ACTIVE_HARDFORK_ID_ARRAY <<< "$ACTIVE_HARDFORK_IDS"
+    echo "Setting already-active hardforks timestamp=$L2_TIMESTAMP protocol_version=$PROTOCOL_VERSION..."
+    for active_hardfork_id in "${ACTIVE_HARDFORK_ID_ARRAY[@]}"; do
+        if [[ -z "$active_hardfork_id" ]]; then
+            continue
+        fi
+        set_signal "$active_hardfork_id" "$L2_TIMESTAMP"
+    done
+fi
+
+echo "Setting target hardfork=$HARDFORK_ID timestamp=$ACTIVATION_TIMESTAMP protocol_version=$PROTOCOL_VERSION..."
+set_signal "$HARDFORK_ID" "$ACTIVATION_TIMESTAMP"
 
 READ_TIMESTAMP="$(cast call --rpc-url "$L1_RPC" "$CONTRACT_ADDRESS" "getTimestamp(string)(uint256)" "$HARDFORK_ID")"
 READ_VERSION="$(cast call --rpc-url "$L1_RPC" "$CONTRACT_ADDRESS" "getProtocolVersion(string)(uint256)" "$HARDFORK_ID")"
@@ -101,7 +162,6 @@ READ_VERSION="$(cast call --rpc-url "$L1_RPC" "$CONTRACT_ADDRESS" "getProtocolVe
 mkdir -p "$(dirname "$ENV_OUT")"
 cat > "$ENV_OUT" <<EOF
 UPGRADE_SIGNAL_CONTRACT=$CONTRACT_ADDRESS
-UPGRADE_SIGNAL_HARDFORK_ID=$HARDFORK_ID
 UPGRADE_SIGNAL_PROTOCOL_VERSION=$PROTOCOL_VERSION
 UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP=$ACTIVATION_TIMESTAMP
 L2_BASE_AZUL_BLOCK=
@@ -113,7 +173,8 @@ cat <<EOF
 Mock upgrade signal configured.
 
 contract:              $CONTRACT_ADDRESS
-hardfork id:           $HARDFORK_ID
+active hardfork ids:   $ACTIVE_HARDFORK_IDS
+target hardfork id:    $HARDFORK_ID
 $REFERENCE_TIMESTAMP_LABEL:   $L2_TIMESTAMP
 activation timestamp:  $ACTIVATION_TIMESTAMP
 protocol version:      $PROTOCOL_VERSION

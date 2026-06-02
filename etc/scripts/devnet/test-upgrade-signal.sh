@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 source "$SCRIPT_DIR/common.sh"
 
-ACTIVATION_OFFSET="${UPGRADE_SIGNAL_ACTIVATION_OFFSET:-120}"
+ACTIVATION_OFFSET="${UPGRADE_SIGNAL_ACTIVATION_OFFSET:-240}"
 POLL_INTERVAL="${UPGRADE_SIGNAL_TEST_POLL_INTERVAL:-2}"
 TIMEOUT_SECONDS="${UPGRADE_SIGNAL_TEST_TIMEOUT_SECONDS:-300}"
 CHECKPOINT_ENV="$REPO_ROOT/.devnet/upgrade-signal-checkpoint.env"
@@ -51,6 +51,7 @@ reset_devnet() {
     echo "Resetting Docker devnet state..."
     export L2_BASE_AZUL_BLOCK=
     export L2_BASE_BERYL_BLOCK=
+    export L2_DYNAMIC_HARDFORKS=1
 
     (
         cd "$REPO_ROOT"
@@ -67,6 +68,7 @@ reset_devnet() {
     cat > "$CHECKPOINT_ENV" <<EOF
 L2_BASE_AZUL_BLOCK=
 L2_BASE_BERYL_BLOCK=
+L2_DYNAMIC_HARDFORKS=1
 EOF
 }
 
@@ -146,19 +148,44 @@ echo "Starting L1 services..."
 compose_base up -d --no-build setup-l1 l1-el l1-cl l1-vc
 wait_for_l1_rpc
 
-echo "Generating L2 configs with static Azul and Beryl disabled..."
+echo "Generating L2 configs with static hardforks disabled..."
 compose_base up --no-build setup-l2
 
 if [[ ! -f "$ROLLUP_JSON" || ! -f "$GENESIS_JSON" ]]; then
     echo "expected L2 configs were not generated" >&2
     exit 1
 fi
-if jq -e '.base.azul? // empty' "$ROLLUP_JSON" >/dev/null; then
-    echo "rollup config still contains static base.azul" >&2
+if jq -e '
+    .regolith_time? //
+    .canyon_time? //
+    .delta_time? //
+    .ecotone_time? //
+    .fjord_time? //
+    .granite_time? //
+    .holocene_time? //
+    .pectra_blob_schedule_time? //
+    .isthmus_time? //
+    .jovian_time? //
+    .base? //
+    empty
+' "$ROLLUP_JSON" >/dev/null; then
+    echo "rollup config still contains static hardfork config" >&2
     exit 1
 fi
-if jq -e '.config.osakaTime? // empty' "$GENESIS_JSON" >/dev/null; then
-    echo "genesis config still contains static osakaTime" >&2
+if jq -e '
+    .config.regolithTime? //
+    .config.canyonTime? //
+    .config.ecotoneTime? //
+    .config.fjordTime? //
+    .config.graniteTime? //
+    .config.holoceneTime? //
+    .config.isthmusTime? //
+    .config.jovianTime? //
+    .config.osakaTime? //
+    .config.base? //
+    empty
+' "$GENESIS_JSON" >/dev/null; then
+    echo "genesis config still contains static hardfork config" >&2
     exit 1
 fi
 
@@ -189,12 +216,14 @@ if ((CURRENT_TIMESTAMP >= ACTIVATION_TIMESTAMP)); then
 fi
 
 echo "Running pre-Azul checks at L2 timestamp $CURRENT_TIMESTAMP..."
-"$SCRIPT_DIR/test-base-azul.sh" before "$L2_RPC" latest
+UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP="$ACTIVATION_TIMESTAMP" \
+    "$SCRIPT_DIR/test-base-azul.sh" before "$L2_RPC" latest
 
 wait_for_activation_timestamp "$ACTIVATION_TIMESTAMP"
 
 echo "Running post-Azul checks..."
-"$SCRIPT_DIR/test-base-azul.sh" after "$L2_RPC" latest
+UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP="$ACTIVATION_TIMESTAMP" \
+    "$SCRIPT_DIR/test-base-azul.sh" after "$L2_RPC" latest
 
 cat <<EOF
 
