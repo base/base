@@ -91,6 +91,11 @@ impl ProofRequesterDispatcher {
             .prove_block_range(request)
             .await
             .map_err(|e| ProposerError::Prover(e.to_string()))?;
+        debug!(
+            session_id = %response.session_id,
+            tee_kind = ?self.tee_kind,
+            "dispatched TEE proof request"
+        );
         Ok(DispatchedProof { session_id: response.session_id })
     }
 }
