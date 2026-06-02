@@ -27,8 +27,6 @@ sol! {
             string name;
             string symbol;
             address initialAdmin;
-            string isin;
-            uint256 minimumRedeemable;
         }
 
         // ── Errors ───────────────────────────────────────────────────────────

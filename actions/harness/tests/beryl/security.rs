@@ -68,12 +68,6 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                     BerylTestEnv::B20_SECURITY_SYMBOL,
                 ),
                 StaticcallCase::string("contractURI", IB20::contractURICall {}.abi_encode(), ""),
-                StaticcallCase::string(
-                    "extraMetadata(ISIN)",
-                    IB20Asset::extraMetadataCall { identifierType: "ISIN".to_string() }
-                        .abi_encode(),
-                    BerylTestEnv::B20_SECURITY_ISIN,
-                ),
                 StaticcallCase::word(
                     "decimals",
                     IB20::decimalsCall {}.abi_encode(),

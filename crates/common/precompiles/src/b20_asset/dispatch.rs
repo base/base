@@ -589,6 +589,7 @@ mod tests {
         assert_eq!(token.accounting().events.len(), 2); // Transfer(ALICE, 0x0, 0) + Redeemed(ALICE, 0, multiplier)
     }
 
+    #[test]
     fn asset_redeem_rejects_when_redeem_feature_paused() {
         let mut token = make_token();
         token.accounting_mut().paused = B20PausableFeature::mask(IB20::PausableFeature::REDEEM);

@@ -352,8 +352,6 @@ mod tests {
             name: name.to_string(),
             symbol: symbol.to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
-            isin: String::new(),
-            minimumRedeemable: U256::ZERO,
         }
     }
 
@@ -755,8 +753,6 @@ mod tests {
             name: "Asset Token".to_string(),
             symbol: "AST".to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
-            isin: "US0000000000".to_string(),
-            minimumRedeemable: U256::ONE,
         };
         let asset_call = IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::ASSET,
@@ -1108,8 +1104,6 @@ mod tests {
             name: "Asset Token".to_string(),
             symbol: "AST".to_string(),
             initialAdmin: initial_admin,
-            isin: "US0000000001".to_string(),
-            minimumRedeemable: U256::ZERO,
         };
         let call = IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::ASSET,
@@ -1136,8 +1130,6 @@ mod tests {
             name: "No Admin".to_string(),
             symbol: "NA".to_string(),
             initialAdmin: Address::ZERO,
-            isin: "US0000000002".to_string(),
-            minimumRedeemable: U256::ZERO,
         };
         let call_no_admin = IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::ASSET,
@@ -1171,8 +1163,6 @@ mod tests {
                 name: "T".to_string(),
                 symbol: "T".to_string(),
                 initialAdmin: Address::repeat_byte(0xAB),
-                isin: String::new(),
-                minimumRedeemable: U256::ZERO,
             }
             .abi_encode()
             .into(),

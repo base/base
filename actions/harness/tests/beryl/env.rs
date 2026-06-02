@@ -93,12 +93,6 @@ impl BerylTestEnv {
     /// Symbol for the security B-20 token variant.
     pub(crate) const B20_SECURITY_SYMBOL: &str = "ASEC";
 
-    /// ISIN stored on the security B-20 token at creation.
-    pub(crate) const B20_SECURITY_ISIN: &str = "US0000000001";
-
-    /// Initial minimum redeemable share amount for the security B-20 token.
-    pub(crate) const B20_SECURITY_MINIMUM_REDEEMABLE: u64 = 10;
-
     /// Initial B-20 supply minted to Alice.
     pub(crate) const B20_INITIAL_SUPPLY: u64 = 1_000_000;
 
@@ -629,8 +623,6 @@ impl BerylTestEnv {
             name: Self::B20_NAME.to_string(),
             symbol: Self::B20_SYMBOL.to_string(),
             initialAdmin: Self::alice(),
-            isin: String::new(),
-            minimumRedeemable: U256::ZERO,
         }
     }
 
@@ -650,8 +642,6 @@ impl BerylTestEnv {
             name: Self::B20_SECURITY_NAME.to_string(),
             symbol: Self::B20_SECURITY_SYMBOL.to_string(),
             initialAdmin: Self::alice(),
-            isin: Self::B20_SECURITY_ISIN.to_string(),
-            minimumRedeemable: U256::from(Self::B20_SECURITY_MINIMUM_REDEEMABLE),
         }
     }
 
