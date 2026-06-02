@@ -35,7 +35,7 @@ impl B20Variant {
     /// does not affect the others.
     pub const fn supported_version(self) -> u8 {
         match self {
-            Self::Stablecoin | Self::Asset => 1,
+            Self::Asset | Self::Stablecoin => 1,
         }
     }
 
@@ -96,15 +96,15 @@ impl B20Variant {
     /// Returns the default fixed decimal precision for variants without stored decimals.
     pub const fn decimals(self) -> u8 {
         match self {
-            Self::Stablecoin | Self::Asset => 6,
+            Self::Asset | Self::Stablecoin => 6,
         }
     }
 
     /// Returns the activation feature that controls creation of this variant.
     pub const fn activation_feature(self) -> ActivationFeature {
         match self {
-            Self::Stablecoin => ActivationFeature::B20Stablecoin,
             Self::Asset => ActivationFeature::B20Asset,
+            Self::Stablecoin => ActivationFeature::B20Stablecoin,
         }
     }
 
