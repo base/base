@@ -433,4 +433,51 @@ mod tests {
         assert!(!activated_output.is_revert());
         assert!(deactivated_output.is_revert());
     }
+
+    #[test]
+    fn ensure_activated_succeeds_when_feature_is_active() {
+        let mut storage = HashMapStorageProvider::new(1);
+
+        activate_feature(&mut storage).unwrap();
+
+        let result = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).ensure_activated(FEATURE)
+        });
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn ensure_activated_reverts_when_feature_never_activated() {
+        let mut storage = HashMapStorageProvider::new(1);
+
+        let result = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).ensure_activated(FEATURE)
+        });
+
+        assert_eq!(
+            result.unwrap_err(),
+            BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated {
+                feature: FEATURE,
+            })
+        );
+    }
+
+    #[test]
+    fn ensure_activated_reverts_after_deactivate() {
+        let mut storage = HashMapStorageProvider::new(1);
+
+        activate_feature(&mut storage).unwrap();
+        deactivate_feature(&mut storage).unwrap();
+
+        let result = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).ensure_activated(FEATURE)
+        });
+
+        assert_eq!(
+            result.unwrap_err(),
+            BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated {
+                feature: FEATURE,
+            })
+        );
+    }
 }
