@@ -65,8 +65,8 @@ pub struct InMemoryTokenAccounting {
     pub role_admins: HashMap<B256, B256>,
     /// Policy IDs keyed by policy type.
     pub policy_ids: HashMap<B256, u64>,
-    /// Share-to-tokens ratio scaled to WAD (1e18). Security tokens only.
-    pub shares_to_tokens_ratio: U256,
+    /// Multiplier scaled to WAD (1e18). Security tokens only.
+    pub multiplier: U256,
     /// Security identifier values keyed by raw `identifier_type`. Security tokens only.
     pub extra_metadata: HashMap<String, String>,
     /// Consumed announcement ids keyed by raw announcement id. Security tokens only.
@@ -98,7 +98,7 @@ impl InMemoryTokenAccounting {
             role_member_counts: HashMap::new(),
             role_admins: HashMap::new(),
             policy_ids: HashMap::new(),
-            shares_to_tokens_ratio: U256::ZERO,
+            multiplier: U256::ZERO,
             extra_metadata: HashMap::new(),
             announcement_ids_used: HashSet::new(),
             events: Vec::new(),
@@ -386,13 +386,13 @@ impl PolicyRegistry for InMemoryPolicy {
 }
 
 impl SecurityAccounting for InMemoryTokenAccounting {
-    fn shares_to_tokens_ratio(&self) -> Result<U256> {
+    fn multiplier(&self) -> Result<U256> {
         const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
-        Ok(if self.shares_to_tokens_ratio.is_zero() { WAD } else { self.shares_to_tokens_ratio })
+        Ok(if self.multiplier.is_zero() { WAD } else { self.multiplier })
     }
 
-    fn set_shares_to_tokens_ratio(&mut self, ratio: U256) -> Result<()> {
-        self.shares_to_tokens_ratio = ratio;
+    fn set_multiplier(&mut self, ratio: U256) -> Result<()> {
+        self.multiplier = ratio;
         Ok(())
     }
 

@@ -12,10 +12,10 @@ use crate::{B20CoreStorage, PolicyRegistryStorage};
 #[derive(Debug, Clone, Storable)]
 #[namespace("base.b20.asset")]
 pub struct B20AssetExtensionStorage {
-    /// Share-to-token conversion ratio scaled to WAD.
+    /// Multiplier scaled to WAD.
     #[accessor]
     #[mutator]
-    pub shares_to_tokens_ratio: U256, // offset 0
+    pub multiplier: U256, // offset 0
     /// Announcement IDs that have already been consumed.
     pub used_announcement_ids: Mapping<String, bool>, // offset 1
     /// Security identifier values by identifier type.
@@ -58,8 +58,8 @@ pub struct B20AssetInit {
     pub symbol: String,
     /// Maximum total supply.
     pub supply_cap: U256,
-    /// Share-to-token conversion ratio at WAD precision.
-    pub shares_to_tokens_ratio: U256,
+    /// Initial multiplier at WAD precision.
+    pub multiplier: U256,
     /// ISIN identifier stored under the `"ISIN"` key.
     pub isin: String,
     /// Minimum redeemable amount; `0` allows any non-zero redemption.
@@ -88,7 +88,7 @@ impl<'a> B20AssetStorage<'a> {
         self.b20.name.write(init.name)?;
         self.b20.symbol.write(init.symbol)?;
         self.b20.supply_cap.write(init.supply_cap)?;
-        self.security.shares_to_tokens_ratio.write(init.shares_to_tokens_ratio)?;
+        self.security.multiplier.write(init.multiplier)?;
         self.redeem.minimum_redeemable.write(init.minimum_redeemable)?;
         if !init.isin.is_empty() {
             self.security.identifiers.at_mut(&String::from("ISIN")).write(init.isin)?;
@@ -99,7 +99,7 @@ impl<'a> B20AssetStorage<'a> {
 }
 
 impl B20AssetStorage<'_> {
-    /// WAD precision for share ratio arithmetic: 1e18.
+    /// WAD precision for multiplier arithmetic: 1e18.
     pub const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
     /// Writes the default `redeem_sender_policy_id` to `ALWAYS_BLOCK_ID`.
@@ -151,10 +151,7 @@ mod tests {
 
     #[test]
     fn asset_extension_offsets_match_mock_storage() {
-        assert_eq!(
-            __packing_b20_asset_extension_storage::SHARES_TO_TOKENS_RATIO_LOC.offset_slots,
-            0
-        );
+        assert_eq!(__packing_b20_asset_extension_storage::MULTIPLIER_LOC.offset_slots, 0);
         assert_eq!(
             __packing_b20_asset_extension_storage::USED_ANNOUNCEMENT_IDS_LOC.offset_slots,
             1
@@ -166,37 +163,33 @@ mod tests {
     }
 
     #[test]
-    fn shares_to_tokens_ratio_defaults_unset_slot_to_wad() {
+    fn multiplier_defaults_unset_slot_to_wad() {
         let (mut storage, _) = setup_storage();
 
         StorageCtx::enter(&mut storage, |ctx| {
             let token = B20AssetStorage::from_address(TOKEN, ctx);
-            let ratio_slot = ASSET_ROOT
-                + U256::from(
-                    __packing_b20_asset_extension_storage::SHARES_TO_TOKENS_RATIO_LOC.offset_slots,
-                );
+            let multiplier_slot = ASSET_ROOT
+                + U256::from(__packing_b20_asset_extension_storage::MULTIPLIER_LOC.offset_slots);
 
-            assert_eq!(ctx.sload(TOKEN, ratio_slot).unwrap(), U256::ZERO);
-            assert_eq!(token.shares_to_tokens_ratio().unwrap(), B20AssetStorage::WAD);
+            assert_eq!(ctx.sload(TOKEN, multiplier_slot).unwrap(), U256::ZERO);
+            assert_eq!(token.multiplier().unwrap(), B20AssetStorage::WAD);
         });
     }
 
     #[test]
-    fn shares_to_tokens_ratio_preserves_configured_value() {
+    fn multiplier_preserves_configured_value() {
         let (mut storage, _) = setup_storage();
-        let configured_ratio = B20AssetStorage::WAD * U256::from(3u64);
+        let configured_multiplier = B20AssetStorage::WAD * U256::from(3u64);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut token = B20AssetStorage::from_address(TOKEN, ctx);
-            token.set_shares_to_tokens_ratio(configured_ratio).unwrap();
+            token.set_multiplier(configured_multiplier).unwrap();
 
-            let ratio_slot = ASSET_ROOT
-                + U256::from(
-                    __packing_b20_asset_extension_storage::SHARES_TO_TOKENS_RATIO_LOC.offset_slots,
-                );
+            let multiplier_slot = ASSET_ROOT
+                + U256::from(__packing_b20_asset_extension_storage::MULTIPLIER_LOC.offset_slots);
 
-            assert_eq!(ctx.sload(TOKEN, ratio_slot).unwrap(), configured_ratio);
-            assert_eq!(token.shares_to_tokens_ratio().unwrap(), configured_ratio);
+            assert_eq!(ctx.sload(TOKEN, multiplier_slot).unwrap(), configured_multiplier);
+            assert_eq!(token.multiplier().unwrap(), configured_multiplier);
         });
     }
 
@@ -273,7 +266,7 @@ mod tests {
                     name: String::from("Test"),
                     symbol: String::from("TST"),
                     supply_cap: U256::from(1_000_000u64),
-                    shares_to_tokens_ratio: B20AssetStorage::WAD,
+                    multiplier: B20AssetStorage::WAD,
                     isin: String::new(),
                     minimum_redeemable: U256::ZERO,
                 })

@@ -344,12 +344,10 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
             SC::REDEEM_SENDER_POLICY(_) => Self::REDEEM_SENDER_POLICY.abi_encode().into(),
 
-            // --- Share ratio reads ---
-            SC::sharesToTokensRatio(_) => {
-                self.accounting().shares_to_tokens_ratio()?.abi_encode().into()
-            }
-            SC::toShares(c) => self.to_shares(c.balance)?.abi_encode().into(),
-            SC::sharesOf(c) => self.shares_of(c.account)?.abi_encode().into(),
+            // --- Multiplier reads ---
+            SC::multiplier(_) => self.accounting().multiplier()?.abi_encode().into(),
+            SC::toScaledBalance(c) => self.to_scaled_balance(c.rawBalance)?.abi_encode().into(),
+            SC::scaledBalanceOf(c) => self.scaled_balance_of(c.account)?.abi_encode().into(),
 
             // --- Announcement reads ---
             SC::isAnnouncementIdUsed(c) => {
@@ -361,9 +359,9 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
                 self.accounting().extra_metadata(c.identifierType.as_str())?.abi_encode().into()
             }
 
-            // --- Share ratio mutations ---
-            SC::updateShareRatio(c) => {
-                self.update_share_ratio(caller, c.newSharesToTokensRatio, privileged)?;
+            // --- Multiplier mutations ---
+            SC::updateMultiplier(c) => {
+                self.update_multiplier(caller, c.newMultiplier, privileged)?;
                 Bytes::new()
             }
 
@@ -479,7 +477,7 @@ mod tests {
     const ACTIVATION_ADMIN: Address = Address::repeat_byte(0xcb);
     fn make_token() -> TestSecurityToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = B20AssetStorage::WAD; // 1:1 ratio
+        accounting.multiplier = B20AssetStorage::WAD; // 1:1 multiplier
         // Explicitly open redemption so non-policy tests are not blocked by the ALWAYS_BLOCK default.
         accounting.policy_ids.insert(REDEEM_SENDER_POLICY, PolicyRegistryStorage::ALWAYS_ALLOW_ID);
         TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
@@ -515,17 +513,17 @@ mod tests {
     }
 
     #[test]
-    fn to_shares_one_to_one_ratio() {
+    fn to_scaled_balance_one_to_one_multiplier() {
         let token = make_token();
-        assert_eq!(token.to_shares(U256::from(100u64)).unwrap(), U256::from(100u64));
+        assert_eq!(token.to_scaled_balance(U256::from(100u64)).unwrap(), U256::from(100u64));
     }
 
     #[test]
-    fn to_shares_two_to_one_ratio() {
+    fn to_scaled_balance_two_to_one_multiplier() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = B20AssetStorage::WAD * U256::from(2u64);
+        accounting.multiplier = B20AssetStorage::WAD * U256::from(2u64);
         let token = TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
-        assert_eq!(token.to_shares(U256::from(50u64)).unwrap(), U256::from(100u64));
+        assert_eq!(token.to_scaled_balance(U256::from(50u64)).unwrap(), U256::from(100u64));
     }
 
     #[test]
@@ -621,7 +619,7 @@ mod tests {
     #[test]
     fn security_redeem_rejects_zero_shares() {
         let mut token = make_token();
-        token.accounting_mut().shares_to_tokens_ratio = U256::ONE;
+        token.accounting_mut().multiplier = U256::ONE;
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
         token.accounting_mut().total_supply = U256::from(100u64);
 
@@ -648,7 +646,7 @@ mod tests {
     fn security_redeem_rejects_when_sender_policy_denies() {
         let policy_id = 7;
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        accounting.shares_to_tokens_ratio = B20AssetStorage::WAD;
+        accounting.multiplier = B20AssetStorage::WAD;
         accounting.balances.insert(ALICE, U256::from(100u64));
         accounting.total_supply = U256::from(100u64);
         accounting.policy_ids.insert(REDEEM_SENDER_POLICY, policy_id);
@@ -780,7 +778,7 @@ mod tests {
     fn security_redeem_with_non_unit_ratio_applies_correct_share_math() {
         let mut token = make_token();
         // 2:1 ratio: 1 token = 2 shares
-        token.accounting_mut().shares_to_tokens_ratio = B20AssetStorage::WAD * U256::from(2u64);
+        token.accounting_mut().multiplier = B20AssetStorage::WAD * U256::from(2u64);
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
         token.accounting_mut().total_supply = U256::from(100u64);
         // minimum = 10 shares → need at least 5 tokens
@@ -824,43 +822,39 @@ mod tests {
         );
         assert_eq!(
             token.accounting().events[2],
-            IB20Asset::Redeemed {
-                from: ALICE,
-                amt: amount,
-                sharesToTokensRatio: B20AssetStorage::WAD,
-            }
-            .encode_log_data()
+            IB20Asset::Redeemed { from: ALICE, amt: amount, multiplier: B20AssetStorage::WAD }
+                .encode_log_data()
         );
     }
 
-    // --- toShares: zero balance / sub-WAD truncation / sharesOf delegation ---
+    // --- toScaledBalance: zero balance / sub-WAD truncation / scaledBalanceOf delegation ---
 
     #[test]
-    fn to_shares_zero_balance_yields_zero() {
+    fn to_scaled_balance_zero_balance_yields_zero() {
         let token = make_token();
-        assert_eq!(token.to_shares(U256::ZERO).unwrap(), U256::ZERO);
+        assert_eq!(token.to_scaled_balance(U256::ZERO).unwrap(), U256::ZERO);
     }
 
     #[test]
-    fn to_shares_sub_wad_ratio_truncates_to_zero() {
+    fn to_scaled_balance_sub_wad_multiplier_truncates_to_zero() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        // 0.5 WAD: 1 token → 0.5 shares → truncates to 0 via integer division
-        accounting.shares_to_tokens_ratio = B20AssetStorage::WAD / U256::from(2u64);
+        // 0.5 WAD: 1 token → 0.5 scaled → truncates to 0 via integer division
+        accounting.multiplier = B20AssetStorage::WAD / U256::from(2u64);
         let token = TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
-        assert_eq!(token.to_shares(U256::from(1u64)).unwrap(), U256::ZERO);
+        assert_eq!(token.to_scaled_balance(U256::from(1u64)).unwrap(), U256::ZERO);
     }
 
     #[test]
-    fn shares_of_derives_from_balance() {
-        let mut token = make_token(); // 1:1 ratio
+    fn scaled_balance_of_derives_from_balance() {
+        let mut token = make_token(); // 1:1 multiplier
         token.accounting_mut().balances.insert(ALICE, U256::from(75u64));
-        // sharesOf(account) = toShares(balanceOf(account))
+        // scaledBalanceOf(account) = toScaledBalance(balanceOf(account))
         let balance = token.accounting().balance_of(ALICE).unwrap();
-        assert_eq!(token.to_shares(balance).unwrap(), U256::from(75u64));
+        assert_eq!(token.to_scaled_balance(balance).unwrap(), U256::from(75u64));
     }
 
     #[test]
-    fn storage_backed_redeem_uses_wad_when_share_ratio_slot_is_unset() {
+    fn storage_backed_redeem_uses_wad_when_multiplier_slot_is_unset() {
         let (mut storage, _) = setup_storage();
 
         StorageCtx::enter(&mut storage, |ctx| {
@@ -872,7 +866,7 @@ mod tests {
             token.accounting_mut().set_total_supply(U256::from(100u64)).unwrap();
             token.accounting_mut().set_minimum_redeemable(U256::from(10u64)).unwrap();
 
-            assert_eq!(token.accounting().shares_to_tokens_ratio().unwrap(), B20AssetStorage::WAD);
+            assert_eq!(token.accounting().multiplier().unwrap(), B20AssetStorage::WAD);
             token.security_redeem(ALICE, U256::from(10u64)).unwrap();
 
             assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(90u64));
@@ -880,14 +874,14 @@ mod tests {
         });
     }
 
-    // --- updateShareRatio: persistence ---
+    // --- updateMultiplier: persistence ---
 
     #[test]
-    fn shares_to_tokens_ratio_update_persists() {
+    fn multiplier_update_persists() {
         let mut token = make_token();
-        let new_ratio = B20AssetStorage::WAD * U256::from(3u64);
-        token.accounting_mut().set_shares_to_tokens_ratio(new_ratio).unwrap();
-        assert_eq!(token.accounting().shares_to_tokens_ratio().unwrap(), new_ratio);
+        let new_multiplier = B20AssetStorage::WAD * U256::from(3u64);
+        token.accounting_mut().set_multiplier(new_multiplier).unwrap();
+        assert_eq!(token.accounting().multiplier().unwrap(), new_multiplier);
     }
 
     // --- extraMetadata / updateExtraMetadata ---
@@ -932,28 +926,28 @@ mod tests {
         assert!(!token.accounting().is_announcement_id_used(id).unwrap());
     }
 
-    /// `to_shares` must return an arithmetic overflow panic rather than silently
-    /// saturating when `balance * sharesToTokensRatio` exceeds `U256::MAX`.
+    /// `to_scaled_balance` must return an arithmetic overflow panic rather than silently
+    /// saturating when `rawBalance * multiplier` exceeds `U256::MAX`.
     #[test]
-    fn to_shares_overflows_when_product_exceeds_u256_max() {
+    fn to_scaled_balance_overflows_when_product_exceeds_u256_max() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        // Any balance > 1 overflows when multiplied by this ratio.
-        accounting.shares_to_tokens_ratio = U256::MAX / U256::from(2u64) + U256::ONE;
+        // Any balance > 1 overflows when multiplied by this multiplier.
+        accounting.multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
         let token = TestSecurityToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
 
         assert_eq!(
-            token.to_shares(U256::from(2u64)).unwrap_err(),
+            token.to_scaled_balance(U256::from(2u64)).unwrap_err(),
             BasePrecompileError::under_overflow()
         );
     }
 
     /// `security_redeem` must return an arithmetic overflow panic rather than
-    /// silently saturating when `amount * sharesToTokensRatio` exceeds `U256::MAX`.
+    /// silently saturating when `amount * multiplier` exceeds `U256::MAX`.
     #[test]
     fn security_redeem_overflows_when_product_exceeds_u256_max() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
-        // Any amount > 1 overflows when multiplied by this ratio.
-        accounting.shares_to_tokens_ratio = U256::MAX / U256::from(2u64) + U256::ONE;
+        // Any amount > 1 overflows when multiplied by this multiplier.
+        accounting.multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
         accounting.balances.insert(ALICE, U256::from(2u64));
         accounting.total_supply = U256::from(2u64);
         // Open redemption so the policy gate does not block the call before the overflow.

@@ -36,14 +36,14 @@ sol! {
 
         // ── Events ───────────────────────────────────────────────────────────
 
-        /// Emitted by `redeem`/`redeemWithMemo`. Includes the active share ratio at redemption time.
-        event Redeemed(address indexed from, uint256 amt, uint256 sharesToTokensRatio);
+        /// Emitted by `redeem`/`redeemWithMemo`. Includes the active multiplier at redemption time.
+        event Redeemed(address indexed from, uint256 amt, uint256 multiplier);
 
         /// Emitted by `updateMinimumRedeemable`.
         event MinimumRedeemableUpdated(address indexed caller, uint256 newMinimumRedeemable);
 
-        /// Emitted by `updateShareRatio`.
-        event ShareRatioUpdated(uint256 sharesToTokensRatio);
+        /// Emitted by `updateMultiplier`.
+        event MultiplierUpdated(uint256 multiplier);
 
         /// Emitted by `updateExtraMetadata`. Empty `value` indicates removal.
         event ExtraMetadataUpdated(string identifierType, string value);
@@ -56,10 +56,10 @@ sol! {
 
         // ── Role / precision identifiers ─────────────────────────────────────
 
-        /// `keccak256("OPERATOR_ROLE")` — required for `announce`, `updateShareRatio`, `updateExtraMetadata`.
+        /// `keccak256("OPERATOR_ROLE")` — required for `announce`, `updateMultiplier`, `updateExtraMetadata`.
         function OPERATOR_ROLE() external view returns (bytes32);
 
-        /// Fixed-point precision for `sharesToTokensRatio`: `1e18` (one WAD).
+        /// Fixed-point precision for `multiplier`: `1e18` (one WAD).
         function WAD_PRECISION() external view returns (uint256);
 
         /// `keccak256("REDEEM_SENDER_POLICY")` — consulted on `redeem`/`redeemWithMemo`.
@@ -78,19 +78,19 @@ sol! {
         /// Returns true if `id` has been consumed by `announce`.
         function isAnnouncementIdUsed(string calldata id) external view returns (bool);
 
-        // ── Share ratio ───────────────────────────────────────────────────────
+        // ── Multiplier ────────────────────────────────────────────────────────
 
-        /// The current share-to-tokens ratio, scaled to `WAD_PRECISION`.
-        function sharesToTokensRatio() external view returns (uint256);
+        /// The current multiplier, scaled to `WAD_PRECISION`.
+        function multiplier() external view returns (uint256);
 
-        /// Converts `balance` tokens to shares: `balance * sharesToTokensRatio / WAD_PRECISION`.
-        function toShares(uint256 balance) external view returns (uint256);
+        /// Converts a raw balance to its scaled view: `rawBalance * multiplier / WAD_PRECISION`.
+        function toScaledBalance(uint256 rawBalance) external view returns (uint256);
 
-        /// Convenience: `toShares(balanceOf(account))`.
-        function sharesOf(address account) external view returns (uint256);
+        /// Convenience: `toScaledBalance(balanceOf(account))`.
+        function scaledBalanceOf(address account) external view returns (uint256);
 
-        /// Sets a new share ratio. Holder balances are not rewritten; share count derives at read time.
-        function updateShareRatio(uint256 newSharesToTokensRatio) external;
+        /// Sets a new multiplier. Holder balances are not rewritten; scaled balances derive at read time.
+        function updateMultiplier(uint256 newMultiplier) external;
 
         // ── Batched issuance and clawback ────────────────────────────────────
 
@@ -133,10 +133,10 @@ impl IB20Asset::IB20AssetCalls {
             Self::REDEEM_SENDER_POLICY(_) => "precompile-b20-asset-REDEEM_SENDER_POLICY",
             Self::announce(_) => "precompile-b20-asset-announce",
             Self::isAnnouncementIdUsed(_) => "precompile-b20-asset-isAnnouncementIdUsed",
-            Self::sharesToTokensRatio(_) => "precompile-b20-asset-sharesToTokensRatio",
-            Self::toShares(_) => "precompile-b20-asset-toShares",
-            Self::sharesOf(_) => "precompile-b20-asset-sharesOf",
-            Self::updateShareRatio(_) => "precompile-b20-asset-updateShareRatio",
+            Self::multiplier(_) => "precompile-b20-asset-multiplier",
+            Self::toScaledBalance(_) => "precompile-b20-asset-toScaledBalance",
+            Self::scaledBalanceOf(_) => "precompile-b20-asset-scaledBalanceOf",
+            Self::updateMultiplier(_) => "precompile-b20-asset-updateMultiplier",
             Self::batchMint(_) => "precompile-b20-asset-batchMint",
             Self::redeem(_) => "precompile-b20-asset-redeem",
             Self::redeemWithMemo(_) => "precompile-b20-asset-redeemWithMemo",

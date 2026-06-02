@@ -312,18 +312,18 @@ fn expand_security(input: DeriveInput) -> syn::Result<TokenStream> {
     let name = input.ident;
     Ok(quote! {
         impl crate::SecurityAccounting for #name<'_> {
-            fn shares_to_tokens_ratio(
+            fn multiplier(
                 &self,
             ) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {
-                let ratio = self.security.shares_to_tokens_ratio()?;
+                let ratio = self.security.multiplier()?;
                 Ok(if ratio.is_zero() { Self::WAD } else { ratio })
             }
 
-            fn set_shares_to_tokens_ratio(
+            fn set_multiplier(
                 &mut self,
                 ratio: ::alloy_primitives::U256,
             ) -> ::base_precompile_storage::Result<()> {
-                self.security.set_shares_to_tokens_ratio(ratio)
+                self.security.set_multiplier(ratio)
             }
 
             fn extra_metadata(

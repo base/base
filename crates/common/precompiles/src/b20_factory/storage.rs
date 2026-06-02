@@ -29,8 +29,8 @@ fn encode_stablecoin_variant_params(currency: &str) -> Bytes {
 /// Maximum total supply for all newly-created B-20 tokens.
 const DEFAULT_SUPPLY_CAP: U256 = U256::MAX;
 
-/// Initial share-to-token ratio storage value. Reads treat zero as WAD precision (1:1).
-const INITIAL_SHARES_TO_TOKENS_RATIO: U256 = U256::ZERO;
+/// Initial multiplier storage value. Reads treat zero as WAD precision (1:1).
+const INITIAL_MULTIPLIER: U256 = U256::ZERO;
 
 /// The B-20 token factory precompile.
 #[contract(addr = Self::ADDRESS)]
@@ -270,7 +270,7 @@ impl TokenCreateParams {
                         name: p.name,
                         symbol: p.symbol,
                         supply_cap: DEFAULT_SUPPLY_CAP,
-                        shares_to_tokens_ratio: INITIAL_SHARES_TO_TOKENS_RATIO,
+                        multiplier: INITIAL_MULTIPLIER,
                         isin: p.isin,
                         minimum_redeemable: p.minimumRedeemable,
                     },
@@ -789,7 +789,7 @@ mod tests {
             assert_eq!(sec_storage.b20.name.read().unwrap(), "Security Token");
             assert_eq!(sec_storage.b20.symbol.read().unwrap(), "SEC");
             assert_eq!(sec_storage.decimals().unwrap(), 6);
-            assert_eq!(sec_storage.security.shares_to_tokens_ratio.read().unwrap(), U256::ZERO);
+            assert_eq!(sec_storage.security.multiplier.read().unwrap(), U256::ZERO);
             assert_eq!(sec_storage.redeem.minimum_redeemable.read().unwrap(), U256::ONE);
             // ISIN is stored in the identifiers mapping under the raw "ISIN" key.
             assert_eq!(

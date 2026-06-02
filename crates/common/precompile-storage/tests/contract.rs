@@ -299,7 +299,7 @@ mod type_namespaced_layouts {
     #[derive(Debug, Clone, Storable)]
     #[namespace("b20.security")]
     struct B20AssetStorage {
-        shares_to_tokens_ratio: U256,
+        multiplier: U256,
         used_announcement_ids: Mapping<String, bool>,
         security_identifiers: Mapping<String, bool>,
     }
@@ -326,7 +326,7 @@ mod type_namespaced_layouts {
     fn type_level_namespaces_mount_layouts_without_repeating_strings() {
         let b20_value = B20Storage { total_supply: U256::ZERO, balances: Mapping::default() };
         let security_value = B20AssetStorage {
-            shares_to_tokens_ratio: U256::ZERO,
+            multiplier: U256::ZERO,
             used_announcement_ids: Mapping::default(),
             security_identifiers: Mapping::default(),
         };
@@ -335,7 +335,7 @@ mod type_namespaced_layouts {
         let _ = (
             &b20_value.total_supply,
             &b20_value.balances,
-            &security_value.shares_to_tokens_ratio,
+            &security_value.multiplier,
             &security_value.used_announcement_ids,
             &security_value.security_identifiers,
             &redeem_value.minimum_redeemable,
@@ -371,7 +371,7 @@ mod type_namespaced_layouts {
             layout.local_head.write(0x11).unwrap();
             layout.b20.total_supply.write(U256::from(100)).unwrap();
             layout.b20.balances.at_mut(&holder).write(U256::from(25)).unwrap();
-            layout.security.shares_to_tokens_ratio.write(U256::from(2)).unwrap();
+            layout.security.multiplier.write(U256::from(2)).unwrap();
             layout.redeem.minimum_redeemable.write(U256::from(10)).unwrap();
             layout.redeem.redeem_policy_ids.write(U256::from(3)).unwrap();
             layout.local_tail.write(0x2233).unwrap();
@@ -379,7 +379,7 @@ mod type_namespaced_layouts {
             assert_eq!(layout.local_head.read().unwrap(), 0x11);
             assert_eq!(layout.b20.total_supply.read().unwrap(), U256::from(100));
             assert_eq!(layout.b20.balances.at(&holder).read().unwrap(), U256::from(25));
-            assert_eq!(layout.security.shares_to_tokens_ratio.read().unwrap(), U256::from(2));
+            assert_eq!(layout.security.multiplier.read().unwrap(), U256::from(2));
             assert_eq!(layout.redeem.minimum_redeemable.read().unwrap(), U256::from(10));
             assert_eq!(layout.redeem.redeem_policy_ids.read().unwrap(), U256::from(3));
             assert_eq!(layout.local_tail.read().unwrap(), 0x2233);
@@ -406,9 +406,7 @@ mod type_namespaced_layouts {
                 ctx.sload(
                     TYPE_NAMESPACE_ADDR,
                     slots::SECURITY
-                        + U256::from(
-                            __packing_b20_asset_storage::SHARES_TO_TOKENS_RATIO_LOC.offset_slots,
-                        ),
+                        + U256::from(__packing_b20_asset_storage::MULTIPLIER_LOC.offset_slots,),
                 )
                 .unwrap(),
                 U256::from(2)

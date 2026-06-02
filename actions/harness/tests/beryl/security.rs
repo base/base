@@ -89,24 +89,20 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                     IB20::balanceOfCall { account: BerylTestEnv::alice() }.abi_encode(),
                     U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
                 ),
-                StaticcallCase::word(
-                    "sharesToTokensRatio",
-                    IB20Asset::sharesToTokensRatioCall {}.abi_encode(),
-                    WAD,
-                ),
+                StaticcallCase::word("multiplier", IB20Asset::multiplierCall {}.abi_encode(), WAD),
                 StaticcallCase::word(
                     "WAD_PRECISION",
                     IB20Asset::WAD_PRECISIONCall {}.abi_encode(),
                     WAD,
                 ),
                 StaticcallCase::word(
-                    "toShares",
-                    IB20Asset::toSharesCall { balance: U256::from(100) }.abi_encode(),
+                    "toScaledBalance",
+                    IB20Asset::toScaledBalanceCall { rawBalance: U256::from(100) }.abi_encode(),
                     U256::from(100),
                 ),
                 StaticcallCase::word(
-                    "sharesOf(alice)",
-                    IB20Asset::sharesOfCall { account: BerylTestEnv::alice() }.abi_encode(),
+                    "scaledBalanceOf(alice)",
+                    IB20Asset::scaledBalanceOfCall { account: BerylTestEnv::alice() }.abi_encode(),
                     U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
                 ),
                 StaticcallCase::word(
@@ -138,7 +134,7 @@ async fn security_mutations_update_state_and_emit_events() {
     scenario.grant_roles([security_operator_role(), B20TokenRole::Mint.id()]).await;
 
     let update_ratio =
-        scenario.call_tx(IB20Asset::updateShareRatioCall { newSharesToTokensRatio: UPDATED_RATIO });
+        scenario.call_tx(IB20Asset::updateMultiplierCall { newMultiplier: UPDATED_RATIO });
     let update_cusip = scenario.call_tx(IB20Asset::updateExtraMetadataCall {
         identifierType: "CUSIP".to_string(),
         value: CUSIP.to_string(),
@@ -171,7 +167,7 @@ async fn security_mutations_update_state_and_emit_events() {
     scenario.assert_log(
         &block,
         0,
-        IB20Asset::ShareRatioUpdated { sharesToTokensRatio: UPDATED_RATIO }.encode_log_data(),
+        IB20Asset::MultiplierUpdated { multiplier: UPDATED_RATIO }.encode_log_data(),
     );
     scenario.assert_log(
         &block,
@@ -238,18 +234,18 @@ async fn security_mutations_update_state_and_emit_events() {
             scenario.token,
             vec![
                 StaticcallCase::word(
-                    "sharesToTokensRatio after update",
-                    IB20Asset::sharesToTokensRatioCall {}.abi_encode(),
+                    "multiplier after update",
+                    IB20Asset::multiplierCall {}.abi_encode(),
                     UPDATED_RATIO,
                 ),
                 StaticcallCase::word(
-                    "toShares after update",
-                    IB20Asset::toSharesCall { balance: U256::from(50) }.abi_encode(),
+                    "toScaledBalance after update",
+                    IB20Asset::toScaledBalanceCall { rawBalance: U256::from(50) }.abi_encode(),
                     U256::from(100),
                 ),
                 StaticcallCase::word(
-                    "sharesOf(alice) after update",
-                    IB20Asset::sharesOfCall { account: BerylTestEnv::alice() }.abi_encode(),
+                    "scaledBalanceOf(alice) after update",
+                    IB20Asset::scaledBalanceOfCall { account: BerylTestEnv::alice() }.abi_encode(),
                     U256::from(BerylTestEnv::B20_INITIAL_SUPPLY) * U256::from(2),
                 ),
                 StaticcallCase::string(
@@ -401,7 +397,7 @@ async fn security_calls_succeed_while_security_feature_is_deactivated() {
 
     let probe_call = scenario.env.call_staticcall_probe_tx(
         probe,
-        Bytes::from(IB20Asset::sharesToTokensRatioCall {}.abi_encode()),
+        Bytes::from(IB20Asset::multiplierCall {}.abi_encode()),
         BerylTestEnv::B20_PROBE_GAS_LIMIT,
     );
     let block = scenario.build_block_with_transactions(vec![probe_call]).await;

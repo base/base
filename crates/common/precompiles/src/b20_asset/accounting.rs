@@ -12,10 +12,10 @@ use crate::TokenAccounting;
 /// Security identifiers (ISIN, CUSIP, etc.) and redeem parameters are only
 /// exposed through the security-token surface, not the base B-20 surface.
 pub trait SecurityAccounting: TokenAccounting {
-    /// Returns the current share-to-tokens ratio scaled to WAD (1e18).
-    fn shares_to_tokens_ratio(&self) -> Result<U256>;
-    /// Writes a new share-to-tokens ratio.
-    fn set_shares_to_tokens_ratio(&mut self, ratio: U256) -> Result<()>;
+    /// Returns the current multiplier scaled to WAD (1e18).
+    fn multiplier(&self) -> Result<U256>;
+    /// Writes a new multiplier.
+    fn set_multiplier(&mut self, ratio: U256) -> Result<()>;
 
     /// Returns the security identifier value for `identifier_type`, or an empty string if unset.
     fn extra_metadata(&self, identifier_type: &str) -> Result<String>;
