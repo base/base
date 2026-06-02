@@ -228,6 +228,8 @@ services:
     depends_on:
       setup-l2:
         condition: service_completed_successfully
+      patch-genesis-hash:
+        condition: service_completed_successfully
     ports:
       - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}"     # P2P TCP metadata
       - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}/udp" # Discovery
