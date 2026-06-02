@@ -85,9 +85,8 @@ mod tests {
     use alloy_primitives::{U256, uint};
     use base_precompile_storage::StorableType;
 
-    use crate::B20CoreStorage;
-
     use super::__packing_b20_core_storage;
+    use crate::B20CoreStorage;
 
     const B20_ROOT: U256 =
         uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434000_U256);
