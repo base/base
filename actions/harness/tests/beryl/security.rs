@@ -12,7 +12,7 @@ use crate::{
 };
 
 const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
-const UPDATED_RATIO: U256 = U256::from_limbs([2_000_000_000_000_000_000, 0, 0, 0]);
+const UPDATED_MULTIPLIER: U256 = U256::from_limbs([2_000_000_000_000_000_000, 0, 0, 0]);
 const BOB_MINT_AMOUNT: u64 = 100;
 const CAROL_MINT_AMOUNT: u64 = 200;
 const CUSIP: &str = "123456789";
@@ -69,10 +69,10 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                 ),
                 StaticcallCase::string("contractURI", IB20::contractURICall {}.abi_encode(), ""),
                 StaticcallCase::string(
-                    "extraMetadata(unset)",
+                    "extraMetadata(ISIN)",
                     IB20Asset::extraMetadataCall { identifierType: "ISIN".to_string() }
                         .abi_encode(),
-                    "",
+                    BerylTestEnv::B20_ASSET_ISIN,
                 ),
                 StaticcallCase::word(
                     "decimals",
@@ -101,7 +101,7 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                     U256::from(100),
                 ),
                 StaticcallCase::word(
-                    "scaledBalanceOf((alice)",
+                    "scaledBalanceOf(alice)",
                     IB20Asset::scaledBalanceOfCall { account: BerylTestEnv::alice() }.abi_encode(),
                     U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
                 ),
@@ -140,8 +140,8 @@ async fn security_mutations_update_state_and_emit_events() {
         .grant_roles([security_operator_role(), metadata_role(), B20TokenRole::Mint.id()])
         .await;
 
-    let update_ratio =
-        scenario.call_tx(IB20Asset::updateMultiplierCall { newMultiplier: UPDATED_RATIO });
+    let update_multiplier =
+        scenario.call_tx(IB20Asset::updateMultiplierCall { newMultiplier: UPDATED_MULTIPLIER });
     let update_cusip = scenario.call_tx(IB20Asset::updateExtraMetadataCall {
         identifierType: "CUSIP".to_string(),
         value: CUSIP.to_string(),
@@ -161,7 +161,7 @@ async fn security_mutations_update_state_and_emit_events() {
         uri: ANNOUNCEMENT_URI.to_string(),
     });
     let block = scenario
-        .build_block_with_transactions(vec![update_ratio, update_cusip, batch_mint, announce])
+        .build_block_with_transactions(vec![update_multiplier, update_cusip, batch_mint, announce])
         .await;
 
     for index in 0..4 {
@@ -174,7 +174,7 @@ async fn security_mutations_update_state_and_emit_events() {
     scenario.assert_log(
         &block,
         0,
-        IB20Asset::MultiplierUpdated { multiplier: UPDATED_RATIO }.encode_log_data(),
+        IB20Asset::MultiplierUpdated { multiplier: UPDATED_MULTIPLIER }.encode_log_data(),
     );
     scenario.assert_log(
         &block,
@@ -243,7 +243,7 @@ async fn security_mutations_update_state_and_emit_events() {
                 StaticcallCase::word(
                     "multiplier after update",
                     IB20Asset::multiplierCall {}.abi_encode(),
-                    UPDATED_RATIO,
+                    UPDATED_MULTIPLIER,
                 ),
                 StaticcallCase::word(
                     "toScaledBalance after update",
@@ -251,7 +251,7 @@ async fn security_mutations_update_state_and_emit_events() {
                     U256::from(100),
                 ),
                 StaticcallCase::word(
-                    "scaledBalanceOf((alice) after update",
+                    "scaledBalanceOf(alice) after update",
                     IB20Asset::scaledBalanceOfCall { account: BerylTestEnv::alice() }.abi_encode(),
                     U256::from(BerylTestEnv::B20_INITIAL_SUPPLY) * U256::from(2),
                 ),

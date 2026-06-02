@@ -13,8 +13,8 @@ sol! {
         /// `id` has previously been consumed by `announce`. Each id may be used at most once.
         error AnnouncementIdAlreadyUsed(string id);
 
-        /// `updateExtraMetadata` was called with an empty metadata key.
-        error InvalidMetadataKey();
+        /// `updateExtraMetadata` was called with an empty `identifierType`.
+        error InvalidIdentifierType();
 
         /// A batched function was called with parallel arrays of differing lengths.
         error LengthMismatch(uint256 leftLen, uint256 rightLen);
@@ -30,6 +30,9 @@ sol! {
 
         /// An `internalCalls` entry reverted during its inner dispatch.
         error InternalCallFailed(bytes call);
+
+        /// `decimals` was not in the allowed range `[6, 18]`.
+        error InvalidDecimals();
 
         // ── Events ───────────────────────────────────────────────────────────
 
@@ -56,7 +59,6 @@ sol! {
         /// Fixed-point precision for `multiplier`: `1e18` (one WAD).
         function WAD_PRECISION() external view returns (uint256);
 
-
         // ── Announcements ────────────────────────────────────────────────────
 
         /// Posts a holder-impacting announcement and atomically executes `internalCalls`.
@@ -78,9 +80,6 @@ sol! {
         /// Converts a raw balance to its scaled view: `rawBalance * multiplier / WAD_PRECISION`.
         function toScaledBalance(uint256 rawBalance) external view returns (uint256);
 
-        /// Converts a scaled balance back to its raw representation.
-        function toRawBalance(uint256 scaledBalance) external view returns (uint256 rawBalance);
-
         /// Convenience: `toScaledBalance(balanceOf(account))`.
         function scaledBalanceOf(address account) external view returns (uint256);
 
@@ -92,12 +91,10 @@ sol! {
         /// Mints `amounts[i]` to `recipients[i]`. Requires `MINT_ROLE`. All-or-nothing.
         function batchMint(address[] calldata recipients, uint256[] calldata amounts) external;
 
-        // ── Asset identifiers ─────────────────────────────────────────────
-
         /// Returns the value of the named identifier (e.g. ISIN, CUSIP). Empty string if not set.
         function extraMetadata(string calldata identifierType) external view returns (string);
 
-        /// Sets, updates, or removes a asset identifier. Empty `value` removes the entry. Requires `METADATA_ROLE`.
+        /// Sets, updates, or removes asset metadata. Empty `value` removes the entry. Requires `METADATA_ROLE`.
         function updateExtraMetadata(
             string calldata identifierType,
             string calldata value
@@ -116,7 +113,6 @@ impl IB20Asset::IB20AssetCalls {
             Self::isAnnouncementIdUsed(_) => "precompile-b20-asset-isAnnouncementIdUsed",
             Self::multiplier(_) => "precompile-b20-asset-multiplier",
             Self::toScaledBalance(_) => "precompile-b20-asset-toScaledBalance",
-            Self::toRawBalance(_) => "precompile-b20-asset-toRawBalance",
             Self::scaledBalanceOf(_) => "precompile-b20-asset-scaledBalanceOf",
             Self::updateMultiplier(_) => "precompile-b20-asset-updateMultiplier",
             Self::batchMint(_) => "precompile-b20-asset-batchMint",

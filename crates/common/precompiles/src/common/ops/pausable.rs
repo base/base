@@ -13,7 +13,6 @@ use crate::{B20Guards, B20PausableFeature, B20TokenRole, IB20, Token, TokenAccou
 pub trait Pausable: Token {
     /// Returns whether the given pause `feature` is currently set.
     fn is_paused(&self, feature: IB20::PausableFeature) -> Result<bool> {
-        B20PausableFeature::ensure_valid(feature)?;
         Ok((self.accounting().paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
     }
 
@@ -40,14 +39,11 @@ pub trait Pausable: Token {
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
     ) -> Result<()> {
-        for feature in &features {
-            B20PausableFeature::ensure_valid(*feature)?;
+        if features.is_empty() {
+            return Err(BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
         }
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Pause)?;
-        }
-        if features.is_empty() {
-            return Err(BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
         }
         let current = self.accounting().paused()?;
         let mut next = current;
@@ -66,14 +62,11 @@ pub trait Pausable: Token {
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
     ) -> Result<()> {
-        for feature in &features {
-            B20PausableFeature::ensure_valid(*feature)?;
+        if features.is_empty() {
+            return Err(BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
         }
         if !privileged {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::Unpause)?;
-        }
-        if features.is_empty() {
-            return Err(BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
         }
         let mut next = self.accounting().paused()?;
         for feature in &features {

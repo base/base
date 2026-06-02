@@ -61,9 +61,9 @@ pub struct InMemoryTokenAccounting {
     pub role_admins: HashMap<B256, B256>,
     /// Policy IDs keyed by policy type.
     pub policy_ids: HashMap<B256, u64>,
-    /// Share-to-tokens ratio scaled to WAD (1e18). Asset tokens only.
+    /// Multiplier scaled to WAD (1e18). Asset tokens only.
     pub multiplier: U256,
-    /// Asset identifier values keyed by raw `identifier_type`. Asset tokens only.
+    /// Extra metadata values keyed by raw key string. Asset tokens only.
     pub extra_metadata: HashMap<String, String>,
     /// Consumed announcement ids keyed by raw announcement id. Asset tokens only.
     pub announcement_ids_used: HashSet<String>,
@@ -380,8 +380,8 @@ impl AssetAccounting for InMemoryTokenAccounting {
         Ok(if self.multiplier.is_zero() { WAD } else { self.multiplier })
     }
 
-    fn set_multiplier(&mut self, ratio: U256) -> Result<()> {
-        self.multiplier = ratio;
+    fn set_multiplier(&mut self, multiplier: U256) -> Result<()> {
+        self.multiplier = multiplier;
         Ok(())
     }
 

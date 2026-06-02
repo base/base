@@ -93,7 +93,7 @@ impl B20Variant {
         }
     }
 
-    /// Returns the default fixed decimal precision for variants without stored decimals.
+    /// Returns this variant's fixed decimal precision.
     pub const fn decimals(self) -> u8 {
         match self {
             Self::Asset | Self::Stablecoin => 6,
@@ -157,5 +157,10 @@ impl B20Variant {
     pub fn variant_of(address: Address) -> Option<u8> {
         Self::from_address(address)?;
         Some(address.as_slice()[10])
+    }
+
+    /// Returns the fixed decimals for the variant encoded in `address`.
+    pub fn decimals_of(address: Address) -> Option<u8> {
+        Some(Self::from_address(address)?.decimals())
     }
 }

@@ -5,7 +5,7 @@ use base_precompile_storage::Result;
 
 use crate::IPolicyRegistry::PolicyType;
 
-/// Minimal read-only policy interface consulted by B-20 tokens on every transfer and mint.
+/// Minimal read-only policy interface consulted by B-20 tokens on every transfer, mint, and redeem.
 ///
 /// # `is_authorized` vs `policy_exists`
 ///

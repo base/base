@@ -11,8 +11,8 @@ use base_action_harness::{
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_precompiles::{
-    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
-    IActivationRegistry, IB20, IB20Factory, IPolicyRegistry,
+    ActivationFeature, ActivationRegistryStorage, B20AssetStorage, B20FactoryStorage, B20Variant,
+    IActivationRegistry, IB20, IB20Factory, IPolicyRegistry, PolicyRegistryStorage,
 };
 use base_precompile_storage::StorageKey;
 use base_test_utils::Account;
@@ -92,6 +92,12 @@ impl BerylTestEnv {
 
     /// Symbol for the security B-20 token variant.
     pub(crate) const B20_ASSET_SYMBOL: &str = "ASEC";
+
+    /// ISIN stored on the security B-20 token at creation.
+    pub(crate) const B20_ASSET_ISIN: &str = "US0000000001";
+
+    /// Initial minimum redeemable share amount for the security B-20 token.
+    pub(crate) const B20_ASSET_MINIMUM_REDEEMABLE: u64 = 10;
 
     /// Initial B-20 supply minted to Alice.
     pub(crate) const B20_INITIAL_SUPPLY: u64 = 1_000_000;

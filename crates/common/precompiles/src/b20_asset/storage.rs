@@ -4,9 +4,9 @@ use alloc::string::String;
 
 use alloy_primitives::{Address, U256};
 use base_precompile_macros::{AssetAccounting, Storable, TokenAccounting, contract};
-use base_precompile_storage::{Handler, Mapping, Result, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result, StorageCtx};
 
-use crate::B20CoreStorage;
+use crate::{B20CoreStorage, IB20Asset};
 
 /// Asset-specific B-20 storage rooted at the `base.b20.asset` ERC-7201 namespace.
 #[derive(Debug, Clone, Storable)]
@@ -21,7 +21,7 @@ pub struct B20AssetExtensionStorage {
     pub multiplier: U256, // slot 1
     /// Announcement IDs that have already been consumed.
     pub used_announcement_ids: Mapping<String, bool>, // slot 2
-    /// Extra metadata values by metadata key.
+    /// Extra metadata values by key.
     pub identifiers: Mapping<String, String>, // slot 3
 }
 
@@ -44,7 +44,7 @@ pub struct B20AssetInit {
     pub symbol: String,
     /// Maximum total supply.
     pub supply_cap: U256,
-    /// Share-to-token conversion ratio at WAD precision.
+    /// Initial multiplier at WAD precision.
     pub multiplier: U256,
     /// Custom decimal precision for this token; must be in `[6, 18]`.
     pub decimals: u8,
@@ -58,11 +58,14 @@ impl<'a> B20AssetStorage<'a> {
 
     /// Writes all creation-time fields atomically.
     pub fn initialize(&mut self, init: B20AssetInit) -> Result<()> {
+        if init.decimals < Self::MIN_DECIMALS || init.decimals > Self::MAX_DECIMALS {
+            return Err(BasePrecompileError::revert(IB20Asset::InvalidDecimals {}));
+        }
         self.b20.name.write(init.name)?;
         self.b20.symbol.write(init.symbol)?;
         self.b20.supply_cap.write(init.supply_cap)?;
-        self.asset.decimals.write(init.decimals)?;
         self.asset.multiplier.write(init.multiplier)?;
+        self.asset.decimals.write(init.decimals)?;
         Ok(())
     }
 }
@@ -74,12 +77,6 @@ impl B20AssetStorage<'_> {
     pub const MAX_DECIMALS: u8 = 18;
     /// WAD precision for multiplier arithmetic: 1e18.
     pub const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
-
-    /// Returns the configured asset decimals, defaulting an unset storage slot to `6`.
-    pub fn decimals(&self) -> Result<u8> {
-        let decimals = self.asset.decimals()?;
-        Ok(if decimals == 0 { Self::MIN_DECIMALS } else { decimals })
-    }
 }
 
 #[cfg(test)]
@@ -91,7 +88,7 @@ mod tests {
         __packing_b20_asset_extension_storage, B20AssetExtensionStorage, B20AssetInit,
         B20AssetStorage, slots,
     };
-    use crate::{AssetAccounting, B20CoreStorage};
+    use crate::{AssetAccounting, B20CoreStorage, TokenAccounting};
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b021");
     const B20_ROOT: U256 =
@@ -105,7 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn asset_namespaces_match_base_std_roots() {
+    fn security_namespaces_match_base_std_roots() {
         assert_eq!(<B20CoreStorage as StorableType>::STORAGE_NAMESPACE_ROOT, B20_ROOT);
         assert_eq!(
             <B20AssetExtensionStorage as StorableType>::STORAGE_NAMESPACE_ID,
@@ -135,10 +132,10 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let token = B20AssetStorage::from_address(TOKEN, ctx);
-            let ratio_slot = ASSET_ROOT
+            let multiplier_slot = ASSET_ROOT
                 + U256::from(__packing_b20_asset_extension_storage::MULTIPLIER_LOC.offset_slots);
 
-            assert_eq!(ctx.sload(TOKEN, ratio_slot).unwrap(), U256::ZERO);
+            assert_eq!(ctx.sload(TOKEN, multiplier_slot).unwrap(), U256::ZERO);
             assert_eq!(token.multiplier().unwrap(), B20AssetStorage::WAD);
         });
     }
@@ -146,37 +143,42 @@ mod tests {
     #[test]
     fn multiplier_preserves_configured_value() {
         let (mut storage, _) = setup_storage();
-        let configured_ratio = B20AssetStorage::WAD * U256::from(3u64);
+        let configured_multiplier = B20AssetStorage::WAD * U256::from(3u64);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut token = B20AssetStorage::from_address(TOKEN, ctx);
-            token.set_multiplier(configured_ratio).unwrap();
+            token.set_multiplier(configured_multiplier).unwrap();
 
-            let ratio_slot = ASSET_ROOT
+            let multiplier_slot = ASSET_ROOT
                 + U256::from(__packing_b20_asset_extension_storage::MULTIPLIER_LOC.offset_slots);
 
-            assert_eq!(ctx.sload(TOKEN, ratio_slot).unwrap(), configured_ratio);
-            assert_eq!(token.multiplier().unwrap(), configured_ratio);
+            assert_eq!(ctx.sload(TOKEN, multiplier_slot).unwrap(), configured_multiplier);
+            assert_eq!(token.multiplier().unwrap(), configured_multiplier);
         });
     }
 
     #[test]
-    fn string_mapping_slots_use_solidity_string_key_derivation() {
+    fn security_string_mapping_slots_use_solidity_string_key_derivation() {
         let (mut storage, _) = setup_storage();
         let announcement_id = String::from("2026-Q1-split");
-        let metadata_key = String::from("category");
-        let metadata_value = String::from("fund");
+        let identifier_type = String::from("ISIN");
+        let identifier_value = String::from("US0000000000");
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut token = B20AssetStorage::from_address(TOKEN, ctx);
             token.asset.used_announcement_ids.at_mut(&announcement_id).write(true).unwrap();
-            token.asset.identifiers.at_mut(&metadata_key).write(metadata_value.clone()).unwrap();
+            token
+                .asset
+                .identifiers
+                .at_mut(&identifier_type)
+                .write(identifier_value.clone())
+                .unwrap();
 
             let announcement_slot = ASSET_ROOT
                 + U256::from(
                     __packing_b20_asset_extension_storage::USED_ANNOUNCEMENT_IDS_LOC.offset_slots,
                 );
-            let metadata_slot = ASSET_ROOT
+            let identifiers_slot = ASSET_ROOT
                 + U256::from(__packing_b20_asset_extension_storage::IDENTIFIERS_LOC.offset_slots);
 
             assert_eq!(
@@ -184,8 +186,8 @@ mod tests {
                 U256::ONE
             );
             assert_eq!(
-                ctx.sload(TOKEN, metadata_key.mapping_slot(metadata_slot)).unwrap(),
-                short_string_word(&metadata_value)
+                ctx.sload(TOKEN, identifier_type.mapping_slot(identifiers_slot)).unwrap(),
+                short_string_word(&identifier_value)
             );
         });
     }
@@ -208,26 +210,56 @@ mod tests {
     }
 
     #[test]
-    fn decimals_stores_and_reads_back_lower_bound() {
+    fn decimals_6_stores_and_reads_back() {
         let (mut storage, _) = setup_storage();
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut token = B20AssetStorage::from_address(TOKEN, ctx);
-            token.initialize(make_init(B20AssetStorage::MIN_DECIMALS)).unwrap();
-            assert_eq!(token.asset.decimals.read().unwrap(), B20AssetStorage::MIN_DECIMALS);
-            assert_eq!(AssetAccounting::decimals(&token).unwrap(), B20AssetStorage::MIN_DECIMALS);
+            token.initialize(make_init(6)).unwrap();
+            assert_eq!(token.asset.decimals.read().unwrap(), 6);
         });
     }
 
     #[test]
-    fn decimals_stores_and_reads_back_upper_bound() {
+    fn decimals_18_stores_and_reads_back() {
         let (mut storage, _) = setup_storage();
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut token = B20AssetStorage::from_address(TOKEN, ctx);
-            token.initialize(make_init(B20AssetStorage::MAX_DECIMALS)).unwrap();
-            assert_eq!(token.asset.decimals.read().unwrap(), B20AssetStorage::MAX_DECIMALS);
-            assert_eq!(AssetAccounting::decimals(&token).unwrap(), B20AssetStorage::MAX_DECIMALS);
+            token.initialize(make_init(18)).unwrap();
+            assert_eq!(token.asset.decimals.read().unwrap(), 18);
+        });
+    }
+
+    #[test]
+    fn decimals_5_reverts_with_invalid_decimals() {
+        let (mut storage, _) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20AssetStorage::from_address(TOKEN, ctx);
+            let err = token.initialize(make_init(5)).unwrap_err();
+            assert_eq!(
+                err,
+                base_precompile_storage::BasePrecompileError::revert(
+                    crate::IB20Asset::InvalidDecimals {}
+                )
+            );
+        });
+    }
+
+    #[test]
+    fn decimals_19_reverts_with_invalid_decimals() {
+        let (mut storage, _) = setup_storage();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut token = B20AssetStorage::from_address(TOKEN, ctx);
+            let err = token.initialize(make_init(19)).unwrap_err();
+            assert_eq!(
+                err,
+                base_precompile_storage::BasePrecompileError::revert(
+                    crate::IB20Asset::InvalidDecimals {}
+                )
+            );
         });
     }
 
@@ -236,9 +268,14 @@ mod tests {
         let (mut storage, _) = setup_storage();
 
         StorageCtx::enter(&mut storage, |ctx| {
+            // Token address exists but initialize() was never called — storage slot is 0.
             let token = B20AssetStorage::from_address(TOKEN, ctx);
-            assert_eq!(token.asset.decimals.read().unwrap(), 0);
-            assert_eq!(AssetAccounting::decimals(&token).unwrap(), B20AssetStorage::MIN_DECIMALS);
+            assert_eq!(token.asset.decimals.read().unwrap(), 0, "raw slot should be 0");
+            assert_eq!(
+                crate::AssetAccounting::decimals(&token).unwrap(),
+                6,
+                "fallback must return 6 for uninitialized tokens"
+            );
         });
     }
 }

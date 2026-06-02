@@ -32,9 +32,6 @@ sol! {
         /// Returns true when `feature` is activated.
         function isActivated(bytes32 feature) external view returns (bool);
 
-        /// Reverts with `FeatureNotActivated` if `feature` is not activated.
-        function checkActivated(bytes32 feature) external view;
-
         /// Returns the activation admin.
         function admin() external view returns (address);
 

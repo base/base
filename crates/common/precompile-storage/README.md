@@ -41,7 +41,7 @@ field with that type is automatically mounted at the type's namespace root:
 #[derive(Debug, Clone, Storable)]
 #[namespace("b20.asset")]
 pub struct B20AssetStorage {
-    pub shares_to_tokens_ratio: U256,
+    pub multiplier: U256,
 }
 
 #[contract]
