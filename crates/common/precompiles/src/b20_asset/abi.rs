@@ -1,6 +1,6 @@
 //! ABI definitions for the asset B-20 variant.
 //!
-//! [`IB20Asset`] defines only the security-specific surface.
+//! [`IB20Asset`] defines only the asset-specific surface.
 //! All inherited selectors come from [`crate::IB20`] defined in `b20/abi.rs`.
 
 use alloy_sol_types::sol;
