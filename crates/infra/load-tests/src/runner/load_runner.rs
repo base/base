@@ -988,7 +988,7 @@ impl LoadRunner {
         if token_address.is_none() {
             // Activate B-20 features if not already active. Activation is idempotent on
             // already-active features but reverts if the funder is not the activation admin.
-            let features = [ActivationFeature::B20Factory.id(), ActivationFeature::B20Token.id()];
+            let features = [ActivationFeature::B20Asset.id()];
             for feature in &features {
                 let is_activated_call = IActivationRegistry::isActivatedCall { feature: *feature };
                 let check_result = self
@@ -1047,20 +1047,21 @@ impl LoadRunner {
             info!("creating new B-20 token via factory");
 
             let salt = B256::from(rand::random::<[u8; 32]>());
-            let predicted = B20Variant::B20.compute_address(funder_address, salt).0;
+            let predicted = B20Variant::Asset.compute_address(funder_address, salt).0;
 
-            let params = IB20Factory::B20CreateParams {
-                version: 1,
+            let params = IB20Factory::B20AssetCreateParams {
+                version: B20Variant::Asset.supported_version(),
                 name: "Load Test B20".to_string(),
                 symbol: "LTB20".to_string(),
                 initialAdmin: funder_address,
+                decimals: 6,
             };
 
             let init_calls: Vec<Bytes> =
                 vec![IB20::updateSupplyCapCall { newSupplyCap: U256::MAX }.abi_encode().into()];
 
             let create_call = IB20Factory::createB20Call {
-                variant: IB20Factory::B20Variant::DEFAULT,
+                variant: IB20Factory::B20Variant::ASSET,
                 salt,
                 params: params.abi_encode().into(),
                 initCalls: init_calls,
