@@ -956,9 +956,9 @@ pub struct ClaimProofJob {
     /// ZK virtual machines this worker can execute (matched for ZK proofs).
     pub zk_vms: Vec<ZkVmKind>,
     /// Lock duration in seconds. Callers must resolve the server default first.
-    pub lock_duration_seconds: i64,
+    pub lock_duration_seconds: u32,
     /// Reclaim budget: expired claims are only reclaimable while `attempt < max_attempts`.
-    pub max_attempts: i32,
+    pub max_attempts: u32,
 }
 
 /// Outbox entry for reliable task processing

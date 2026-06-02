@@ -1391,7 +1391,7 @@ fn claim_job(
     api_proof_type: ApiProofType,
     tee_kinds: Vec<TeeKind>,
     zk_vms: Vec<ZkVmKind>,
-    max_attempts: i32,
+    max_attempts: u32,
 ) -> ClaimProofJob {
     ClaimProofJob {
         worker_id: worker_id.to_owned(),
@@ -1404,7 +1404,7 @@ fn claim_job(
 }
 
 /// A TEE worker claim advertising AWS Nitro capability.
-fn tee_claim(worker_id: &str, max_attempts: i32) -> ClaimProofJob {
+fn tee_claim(worker_id: &str, max_attempts: u32) -> ClaimProofJob {
     claim_job(worker_id, ApiProofType::Tee, vec![TeeKind::AwsNitro], vec![], max_attempts)
 }
 
@@ -1414,7 +1414,7 @@ fn tee_claim(worker_id: &str, max_attempts: i32) -> ClaimProofJob {
 /// worker submit API.
 async fn drain_claimable_tee_jobs(repo: &ProofRequestRepo) {
     while repo
-        .claim_next_proof_job(tee_claim("drain-worker", i32::MAX))
+        .claim_next_proof_job(tee_claim("drain-worker", u32::MAX))
         .await
         .expect("drain claim should not error")
         .is_some()

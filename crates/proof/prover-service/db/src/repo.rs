@@ -595,10 +595,10 @@ impl ProofRequestRepo {
         let row = sqlx::query(&sql)
             .bind(&req.worker_id)
             .bind(lock_id)
-            .bind(req.lock_duration_seconds)
+            .bind(i64::from(req.lock_duration_seconds))
             .bind(req.api_proof_type.as_str())
             .bind(&cap_values)
-            .bind(req.max_attempts)
+            .bind(i64::from(req.max_attempts))
             .fetch_optional(&self.pool)
             .await?;
 
