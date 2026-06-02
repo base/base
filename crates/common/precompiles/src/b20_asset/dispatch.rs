@@ -14,7 +14,7 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, Burnable, Configurable,
+    B20AssetStorage, B20AssetToken, B20TokenRole, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
@@ -136,7 +136,7 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
             C::contractURI(_) => self.accounting().contract_uri()?.abi_encode().into(),
 
             // --- Role identifiers ---
-            C::DEFAULT_ADMIN_ROLE(_) => Self::default_admin_role().abi_encode().into(),
+            C::DEFAULT_ADMIN_ROLE(_) => B20TokenRole::DefaultAdmin.id().abi_encode().into(),
             C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
             C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),
             C::BURN_BLOCKED_ROLE(_) => B20TokenRole::BurnBlocked.id().abi_encode().into(),
@@ -145,25 +145,21 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
             C::METADATA_ROLE(_) => B20TokenRole::Metadata.id().abi_encode().into(),
 
             // --- Policy type identifiers ---
-            C::TRANSFER_SENDER_POLICY(_) => B20PolicyType::TransferSender.id().abi_encode().into(),
-            C::TRANSFER_RECEIVER_POLICY(_) => {
-                B20PolicyType::TransferReceiver.id().abi_encode().into()
-            }
-            C::TRANSFER_EXECUTOR_POLICY(_) => {
-                B20PolicyType::TransferExecutor.id().abi_encode().into()
-            }
-            C::MINT_RECEIVER_POLICY(_) => B20PolicyType::MintReceiver.id().abi_encode().into(),
+            C::TRANSFER_SENDER_POLICY(_) => Self::transfer_sender_policy().abi_encode().into(),
+            C::TRANSFER_RECEIVER_POLICY(_) => Self::transfer_receiver_policy().abi_encode().into(),
+            C::TRANSFER_EXECUTOR_POLICY(_) => Self::transfer_executor_policy().abi_encode().into(),
+            C::MINT_RECEIVER_POLICY(_) => Self::mint_receiver_policy().abi_encode().into(),
 
             // --- Role reads ---
-            C::hasRole(c) => self.accounting().has_role(c.role, c.account)?.abi_encode().into(),
-            C::getRoleAdmin(c) => self.accounting().role_admin(c.role)?.abi_encode().into(),
+            C::hasRole(c) => self.has_role(c.role, c.account)?.abi_encode().into(),
+            C::getRoleAdmin(c) => self.role_admin(c.role)?.abi_encode().into(),
 
             // --- Pause reads ---
             C::pausedFeatures(_) => self.paused_features()?.abi_encode().into(),
             C::isPaused(c) => self.is_paused(c.feature)?.abi_encode().into(),
 
             // --- Policy reads ---
-            C::policyId(c) => self.policy_id_checked(c.policyScope)?.abi_encode().into(),
+            C::policyId(c) => self.policy_id(c.policyScope)?.abi_encode().into(),
 
             // --- Domain reads ---
             C::DOMAIN_SEPARATOR(_) => self.domain_separator(ctx.chain_id())?.abi_encode().into(),

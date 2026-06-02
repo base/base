@@ -151,9 +151,12 @@ impl<'a> B20FactoryStorage<'a> {
         init: B20AssetInit,
         init_calls: Vec<Bytes>,
     ) -> Result<()> {
-        let mut storage = B20AssetStorage::from_address(token_address, self.storage);
+        let mut token = B20AssetToken::with_storage_and_policy(
+            B20AssetStorage::from_address(token_address, self.storage),
+            PolicyHandle::new(self.storage),
+        );
         let (name, symbol) = (init.name.clone(), init.symbol.clone());
-        storage.initialize(init)?;
+        token.accounting_mut().initialize(init)?;
 
         self.emit_event(IB20Factory::B20Created {
             token: token_address,
@@ -165,10 +168,6 @@ impl<'a> B20FactoryStorage<'a> {
         })?;
 
         if !common.initial_admin.is_zero() {
-            let mut token = B20AssetToken::with_storage_and_policy(
-                B20AssetStorage::from_address(token_address, self.storage),
-                PolicyHandle::new(self.storage),
-            );
             token.grant_role_unchecked(
                 B20TokenRole::DefaultAdmin.id(),
                 common.initial_admin,
@@ -178,12 +177,9 @@ impl<'a> B20FactoryStorage<'a> {
 
         self.storage.with_caller(Self::ADDRESS, || {
             for (index, calldata) in init_calls.into_iter().enumerate() {
-                B20AssetToken::with_storage_and_policy(
-                    B20AssetStorage::from_address(token_address, self.storage),
-                    PolicyHandle::new(self.storage),
-                )
-                .inner_with_privilege(self.storage, &calldata, true)
-                .map_err(|err| Self::map_init_call_error(index, err))?;
+                token
+                    .inner_with_privilege(self.storage, &calldata, true)
+                    .map_err(|err| Self::map_init_call_error(index, err))?;
             }
             Ok::<(), BasePrecompileError>(())
         })?;

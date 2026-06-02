@@ -117,10 +117,32 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
         if privileged { Ok(()) } else { self.ensure_role(caller, Self::default_admin_role()) }
     }
 
+    // --- Policy Scope Helpers ---
+
+    /// Policy slot checked against transfer senders.
+    pub const fn transfer_sender_policy() -> B256 {
+        B20PolicyType::TransferSender.id()
+    }
+
+    /// Policy slot checked against transfer receivers.
+    pub const fn transfer_receiver_policy() -> B256 {
+        B20PolicyType::TransferReceiver.id()
+    }
+
+    /// Policy slot checked against delegated transfer executors.
+    pub const fn transfer_executor_policy() -> B256 {
+        B20PolicyType::TransferExecutor.id()
+    }
+
+    /// Policy slot checked against mint receivers.
+    pub const fn mint_receiver_policy() -> B256 {
+        B20PolicyType::MintReceiver.id()
+    }
+
     // --- Policy Operations ---
 
     /// Returns the configured policy ID for `policy_scope`.
-    pub fn policy_id_checked(&self, policy_scope: B256) -> Result<u64> {
+    pub fn policy_id(&self, policy_scope: B256) -> Result<u64> {
         Self::ensure_supported_policy_type(policy_scope)?;
         self.accounting().policy_id(policy_scope)
     }
