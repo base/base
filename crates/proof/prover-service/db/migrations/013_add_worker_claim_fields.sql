@@ -36,9 +36,9 @@ END;
 
 ALTER TABLE proof_requests ENABLE TRIGGER update_proof_requests_updated_at;
 
--- Claim queries scan for the oldest claimable job of a given proof type.
+-- Claim queries scan for the lowest-start-block claimable job of a given proof type.
 CREATE INDEX IF NOT EXISTS idx_proof_requests_job_claim
-ON proof_requests(job_status, api_proof_type, created_at);
+ON proof_requests(job_status, api_proof_type, start_block_number, created_at);
 
 -- Ownership lookups by fencing token.
 CREATE INDEX IF NOT EXISTS idx_proof_requests_lock_id

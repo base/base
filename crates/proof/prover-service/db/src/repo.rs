@@ -556,12 +556,12 @@ impl ProofRequestRepo {
 
     /// Atomically claim the next eligible worker proof job (`getNextProof`).
     ///
-    /// Selects the oldest job whose `api_proof_type` matches the worker and whose
-    /// capability discriminator (`tee_kind` for TEE, `zk_vm` for ZK) is in the
-    /// worker's advertised set. A job is claimable when it is `PENDING`, or when it
-    /// is `CLAIMED` with an expired lock and still under the reclaim budget
-    /// (`attempt < max_attempts`). The row is locked with `FOR UPDATE SKIP LOCKED`
-    /// so concurrent workers never claim the same job.
+    /// Selects the lowest-start-block job whose `api_proof_type` matches the
+    /// worker and whose capability discriminator (`tee_kind` for TEE, `zk_vm` for
+    /// ZK) is in the worker's advertised set. A job is claimable when it is
+    /// `PENDING`, or when it is `CLAIMED` with an expired lock and still under the
+    /// reclaim budget (`attempt < max_attempts`). The row is locked with
+    /// `FOR UPDATE SKIP LOCKED` so concurrent workers never claim the same job.
     ///
     /// On success the job transitions to `job_status = 'CLAIMED'` and requester
     /// `status = 'RUNNING'`, with a freshly rotated `lock_id`, incremented
@@ -1826,7 +1826,7 @@ fn claim_query(api_proof_type: ApiProofType) -> String {
                       job_status = 'PENDING'
                       OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $6)
                   )
-                ORDER BY created_at ASC
+                ORDER BY start_block_number ASC, created_at ASC, id ASC
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
             )
@@ -1852,7 +1852,7 @@ fn claim_query(api_proof_type: ApiProofType) -> String {
                       job_status = 'PENDING'
                       OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $6)
                   )
-                ORDER BY created_at ASC
+                ORDER BY start_block_number ASC, created_at ASC, id ASC
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
             )

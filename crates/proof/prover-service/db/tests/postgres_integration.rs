@@ -53,10 +53,14 @@ const fn test_repo(pool: PgPool) -> ProofRequestRepo {
 }
 
 fn compressed_request() -> CreateProofRequest {
+    compressed_request_at(100)
+}
+
+fn compressed_request_at(start_block_number: u64) -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: None,
         request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
-            start_block_number: 100,
+            start_block_number,
             number_of_blocks_to_prove: 5,
             sequence_window: Some(50),
             l1_head: None,
@@ -1450,6 +1454,11 @@ fn tee_claim(worker_id: &str, max_attempts: u32) -> ClaimProofJob {
     claim_job(worker_id, ApiProofType::Tee, vec![TeeKind::AwsNitro], vec![], max_attempts)
 }
 
+/// A compressed ZK worker claim advertising SP1 capability.
+fn compressed_claim(worker_id: &str, max_attempts: u32) -> ClaimProofJob {
+    claim_job(worker_id, ApiProofType::Compressed, vec![], vec![ZkVmKind::Sp1], max_attempts)
+}
+
 /// Drain every currently claimable TEE job by claiming it under a long lease, so
 /// each test starts from a known-empty TEE queue. Holding the jobs `CLAIMED` with
 /// an unexpired lock (rather than completing them) keeps this independent of the
@@ -1457,6 +1466,16 @@ fn tee_claim(worker_id: &str, max_attempts: u32) -> ClaimProofJob {
 async fn drain_claimable_tee_jobs(repo: &ProofRequestRepo) {
     while repo
         .claim_next_proof_job(tee_claim("drain-worker", u32::MAX))
+        .await
+        .expect("drain claim should not error")
+        .is_some()
+    {}
+}
+
+/// Drain every currently claimable compressed job by claiming it under a long lease.
+async fn drain_claimable_compressed_jobs(repo: &ProofRequestRepo) {
+    while repo
+        .claim_next_proof_job(compressed_claim("drain-zk-worker", u32::MAX))
         .await
         .expect("drain claim should not error")
         .is_some()
@@ -1508,8 +1527,8 @@ async fn test_claim_next_proof_job_claim_and_capabilities() {
     repo.create(compressed_request()).await.unwrap();
     assert!(repo.claim_next_proof_job(tee_claim("worker-2", 3)).await.unwrap().is_none());
 
-    // A ZK worker can claim the compressed job (oldest-first may surface an earlier
-    // pending ZK job from another test, so we only assert the proof type).
+    // A ZK worker can claim a compressed job (block-number ordering may surface a
+    // lower-block pending ZK job from another test, so we only assert the proof type).
     let zk = claim_job("zk-worker", ApiProofType::Compressed, vec![], vec![ZkVmKind::Sp1], 3);
     let job = repo
         .claim_next_proof_job(zk)
@@ -1541,6 +1560,27 @@ async fn test_claim_next_proof_job_concurrent_workers_never_double_claim() {
     let winner = a.or(b).unwrap();
     assert_eq!(winner.id, id);
     assert_eq!(winner.attempt, 1);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_claim_next_proof_job_orders_by_start_block_number() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let high_block_id = repo.create(compressed_request_at(200)).await.unwrap();
+    let low_block_id = repo.create(compressed_request_at(100)).await.unwrap();
+
+    let job = repo
+        .claim_next_proof_job(compressed_claim("block-order-worker", 3))
+        .await
+        .unwrap()
+        .expect("a compressed job should be claimable");
+
+    assert_eq!(job.id, low_block_id);
+    assert_ne!(job.id, high_block_id);
+    assert_eq!(job.api_proof_type, ApiProofType::Compressed);
 }
 
 #[tokio::test]
