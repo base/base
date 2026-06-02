@@ -1234,7 +1234,10 @@ mod tests {
     }
 
     #[test]
-    fn variant_creation_versions_are_distinct_and_independent() {
+    fn variant_supported_versions_are_nonzero() {
+        // Each variant has its own match arm in supported_version() so adding a new
+        // variant without an explicit version is a compile error, preventing silent
+        // constant sharing.
         assert!(B20Variant::Stablecoin.supported_version() > 0);
         assert!(B20Variant::Asset.supported_version() > 0);
     }
