@@ -128,7 +128,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             C::name(_) => self.accounting().name()?.abi_encode().into(),
             C::symbol(_) => self.accounting().symbol()?.abi_encode().into(),
             C::decimals(_) => {
-                U256::from(SecurityAccounting::decimals(self.accounting())?).abi_encode().into()
+                U256::from(AssetAccounting::decimals(self.accounting())?).abi_encode().into()
             }
             C::totalSupply(_) => self.accounting().total_supply()?.abi_encode().into(),
             C::balanceOf(c) => self.accounting().balance_of(c.account)?.abi_encode().into(),

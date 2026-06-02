@@ -219,7 +219,7 @@ mod tests {
             let mut token = B20AssetStorage::from_address(TOKEN, ctx);
             token.asset.used_announcement_ids.at_mut(&announcement_id).write(true).unwrap();
             token
-                .security
+                .asset
                 .identifiers
                 .at_mut(&identifier_type)
                 .write(identifier_value.clone())
