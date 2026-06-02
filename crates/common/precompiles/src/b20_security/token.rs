@@ -268,22 +268,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
                 }));
             }
         }
-        let balance = self.accounting().balance_of(caller)?;
-        if balance < amount {
-            return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
-                sender: caller,
-                balance,
-                needed: amount,
-            }));
-        }
-        self.accounting_mut().set_balance(caller, balance - amount)?;
-        let supply = self.accounting().total_supply()?;
-        let new_supply =
-            supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        self.accounting_mut().set_total_supply(new_supply)?;
-        self.accounting_mut().emit_event(
-            IB20::Transfer { from: caller, to: Address::ZERO, amount }.encode_log_data(),
-        )?;
+        self.burn_inner(caller, amount)?;
         Ok(ratio)
     }
 
@@ -357,22 +342,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
         }
         // 4. BUSINESS LOGIC (no allowance/policy for batch_burn)
         for (account, amount) in accounts.into_iter().zip(amounts) {
-            let balance = self.accounting().balance_of(account)?;
-            if balance < amount {
-                return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
-                    sender: account,
-                    balance,
-                    needed: amount,
-                }));
-            }
-            self.accounting_mut().set_balance(account, balance - amount)?;
-            let supply = self.accounting().total_supply()?;
-            let new_supply =
-                supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-            self.accounting_mut().set_total_supply(new_supply)?;
-            self.accounting_mut().emit_event(
-                IB20::Transfer { from: account, to: Address::ZERO, amount }.encode_log_data(),
-            )?;
+            self.burn_inner(account, amount)?;
         }
         Ok(())
     }
