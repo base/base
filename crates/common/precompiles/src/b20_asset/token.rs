@@ -29,7 +29,7 @@ pub struct B20AssetToken<S: SecurityAccounting, P: Policy> {
 impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
     /// Role identifier for security operators: `keccak256("OPERATOR_ROLE")`.
     pub const OPERATOR_ROLE: B256 =
-        b256!("e63901dfe7775ace99fa3654743976eb0ab2009f5d19c4fc1ecd40aed27d59af");
+        b256!("97667070c54ef182b0f5858b034beac1b6f3089aa2d3188bb1e8929f4fa9b929");
 
     /// Policy scope identifier for redeem senders: `keccak256("REDEEM_SENDER_POLICY")`.
     pub const REDEEM_SENDER_POLICY: B256 = B20AssetStorage::REDEEM_SENDER_POLICY;
