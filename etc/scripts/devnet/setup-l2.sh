@@ -74,6 +74,10 @@ L1_TIMESTAMP=$(echo "$L1_GENESIS" | jq -r '.timestamp')
 echo "L1 genesis hash: $L1_HASH"
 echo "L1 genesis timestamp: $L1_TIMESTAMP"
 
+# Validate L1 genesis data before proceeding
+[ -n "$L1_HASH" ] && [ "$L1_HASH" != "null" ] || { echo "ERROR: failed to fetch L1 genesis hash"; exit 1; }
+[ -n "$L1_TIMESTAMP" ] && [ "$L1_TIMESTAMP" != "null" ] || { echo "ERROR: failed to fetch L1 genesis timestamp"; exit 1; }
+
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
 
