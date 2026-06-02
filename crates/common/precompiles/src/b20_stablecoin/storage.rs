@@ -49,10 +49,16 @@ impl<'a> B20StablecoinStorage<'a> {
 
     /// Writes all creation-time fields atomically.
     ///
-    /// Validates that `currency` contains only `A-Z` characters before writing
-    /// anything; reverts `ITokenFactory::InvalidCurrency` otherwise.
+    /// Validates that `currency` is non-empty and contains only `A-Z` characters
+    /// before writing anything; reverts `MissingRequiredField` for empty and
+    /// `InvalidCurrency` for non-A-Z values.
     pub fn initialize(&mut self, init: B20StablecoinInit) -> Result<()> {
-        if init.currency.is_empty() || !init.currency.bytes().all(|b| b.is_ascii_uppercase()) {
+        if init.currency.is_empty() {
+            return Err(BasePrecompileError::revert(IB20Factory::MissingRequiredField {
+                field: String::from("currency"),
+            }));
+        }
+        if !init.currency.bytes().all(|b| b.is_ascii_uppercase()) {
             return Err(BasePrecompileError::revert(IB20Factory::InvalidCurrency {
                 code: init.currency,
             }));

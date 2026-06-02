@@ -52,7 +52,8 @@ sol! {
         error UnsupportedVersion(uint8 version, B20Variant variant);
 
         /// A required string argument was empty.
-        error MissingRequiredField();
+        /// @param field  Name of the missing field (e.g. `"currency"`).
+        error MissingRequiredField(string field);
 
         /// The stablecoin `currency` field was not on the ISO 4217 fiat allowlist.
         error InvalidCurrency(string code);
