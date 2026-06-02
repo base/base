@@ -421,33 +421,50 @@ async fn test_update_receipt_if_running() {
 
     let (id, _backend_id) = setup_running_request(&repo).await;
 
+    // Intermediate receipt update while RUNNING succeeds and keeps status RUNNING.
     let updated = repo
         .update_receipt_if_running(UpdateReceipt {
             id,
             stark_receipt: Some(vec![1, 2, 3]),
             snark_receipt: None,
-            status: ProofStatus::Succeeded,
+            status: ProofStatus::Running,
             error_message: None,
         })
         .await
         .unwrap();
     assert!(updated);
+    let req = repo.get(id).await.unwrap().unwrap();
+    assert_eq!(req.status, ProofStatus::Running);
+    assert_eq!(req.stark_receipt.as_deref(), Some(&[1u8, 2, 3][..]));
 
-    // Now that it's SUCCEEDED, a second update should be skipped
+    // A later intermediate update overwrites the receipt while still RUNNING.
     let updated = repo
         .update_receipt_if_running(UpdateReceipt {
             id,
             stark_receipt: Some(vec![4, 5, 6]),
             snark_receipt: None,
-            status: ProofStatus::Succeeded,
+            status: ProofStatus::Running,
             error_message: None,
         })
         .await
         .unwrap();
-    assert!(!updated);
-
+    assert!(updated);
     let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.stark_receipt.as_deref(), Some(&[1u8, 2, 3][..])); // first write won
+    assert_eq!(req.stark_receipt.as_deref(), Some(&[4u8, 5, 6][..]));
+
+    // Once the request leaves RUNNING, intermediate updates are skipped.
+    assert!(repo.transition_running_to_failed(id, Some("done".into())).await.unwrap());
+    let updated = repo
+        .update_receipt_if_running(UpdateReceipt {
+            id,
+            stark_receipt: Some(vec![7, 8, 9]),
+            snark_receipt: None,
+            status: ProofStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(!updated, "updates must be skipped once not RUNNING");
 }
 
 // ============================================================
@@ -806,8 +823,8 @@ async fn test_retry_or_fail_stuck_request_retries() {
         WHERE id = $6
         "#,
     )
-    .bind(vec![0x01, 0x02])
-    .bind(vec![0x03, 0x04])
+    .bind(vec![0x01u8, 0x02u8])
+    .bind(vec![0x03u8, 0x04u8])
     .bind(serde_json::json!({"proof_type": "compressed"}))
     .bind("stale-worker")
     .bind("stale-lock")
@@ -962,8 +979,9 @@ async fn test_outbox_process_and_cleanup() {
     let id =
         repo.create_with_outbox(compressed_request(), TEST_MAX_PROOF_RETRIES).await.unwrap().id();
 
-    // Get unprocessed entries
-    let entries = repo.get_unprocessed_outbox_entries(10, 3).await.unwrap();
+    // Get unprocessed entries. Use a high limit because the shared test DB accumulates
+    // unprocessed entries from other tests, and this entry is the newest (FIFO order).
+    let entries = repo.get_unprocessed_outbox_entries(100, 3).await.unwrap();
     let entry = entries.iter().find(|e| e.proof_request_id == id).expect("should find our entry");
     assert!(!entry.processed);
     let seq = entry.sequence_id;
@@ -1028,7 +1046,7 @@ async fn drive_to_failed(repo: &ProofRequestRepo, id: Uuid, error_message: &str)
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_create_with_outbox_requeues_failed_row() {
     let pool = test_pool().await;
-    let repo = test_repo(pool);
+    let repo = test_repo(pool.clone());
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
@@ -1038,6 +1056,18 @@ async fn test_create_with_outbox_requeues_failed_row() {
     let first = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
     drive_to_failed(&repo, explicit_id, "transient backend error").await;
+
+    // Simulate stale worker-claim state on the row (as if it had been claimed and
+    // failed through the worker API) so the requeue must reset the job lifecycle too.
+    sqlx::query(
+        "UPDATE proof_requests SET job_status = 'FAILED', worker_id = 'stale-worker', \
+         lock_id = gen_random_uuid(), lock_expires_at = NOW(), claimed_at = NOW(), \
+         last_heartbeat_at = NOW(), attempt = 4 WHERE id = $1",
+    )
+    .bind(explicit_id)
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // Sanity: the row is FAILED and the original outbox row exists.
     let before = repo.get(explicit_id).await.unwrap().unwrap();
@@ -1059,6 +1089,18 @@ async fn test_create_with_outbox_requeues_failed_row() {
     assert!(after.completed_at.is_none(), "stale completed_at must be cleared");
     assert!(after.stark_receipt.is_none(), "stale stark_receipt must be cleared");
     assert!(after.snark_receipt.is_none(), "stale snark_receipt must be cleared");
+
+    // The worker job lifecycle must also be reset so the requeued row is claimable
+    // again and carries no stale claim metadata.
+    let (job_status, attempt, worker_id): (String, i32, Option<String>) =
+        sqlx::query_as("SELECT job_status, attempt, worker_id FROM proof_requests WHERE id = $1")
+            .bind(explicit_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(job_status, "PENDING", "job_status must reset so workers can re-claim");
+    assert_eq!(attempt, 0, "stale claim attempt must be cleared");
+    assert!(worker_id.is_none(), "stale worker_id must be cleared");
 
     // A new outbox entry must be present so the worker can claim the task again.
     let after_outbox =
@@ -1423,11 +1465,13 @@ async fn drain_claimable_tee_jobs(repo: &ProofRequestRepo) {
 
 /// Force a job's lock to appear expired so it becomes reclaimable.
 async fn expire_lock(pool: &PgPool, id: Uuid) {
-    sqlx::query("UPDATE proof_requests SET lock_expires_at = NOW() - INTERVAL '1 hour' WHERE id = $1")
-        .bind(id)
-        .execute(pool)
-        .await
-        .expect("expire lock should succeed");
+    sqlx::query(
+        "UPDATE proof_requests SET lock_expires_at = NOW() - INTERVAL '1 hour' WHERE id = $1",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .expect("expire lock should succeed");
 }
 
 #[tokio::test]

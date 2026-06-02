@@ -226,6 +226,7 @@ impl ProofRequestRepo {
                     r#"
                     UPDATE proof_requests
                     SET status = $1,
+                        job_status = 'PENDING',
                         retry_count = retry_count + 1,
                         error_message = NULL,
                         stark_receipt = NULL,
@@ -233,7 +234,13 @@ impl ProofRequestRepo {
                         result_payload = NULL,
                         submitted_by_worker_id = NULL,
                         submitted_lock_id = NULL,
-                        completed_at = NULL
+                        completed_at = NULL,
+                        worker_id = NULL,
+                        lock_id = NULL,
+                        lock_expires_at = NULL,
+                        claimed_at = NULL,
+                        last_heartbeat_at = NULL,
+                        attempt = 0
                     WHERE id = $2
                     "#,
                 )
@@ -669,6 +676,7 @@ impl ProofRequestRepo {
             r#"
             UPDATE proof_requests
             SET status = $1,
+                job_status = 'PENDING',
                 retry_count = retry_count + 1,
                 error_message = NULL,
                 stark_receipt = NULL,
@@ -676,7 +684,13 @@ impl ProofRequestRepo {
                 result_payload = NULL,
                 submitted_by_worker_id = NULL,
                 submitted_lock_id = NULL,
-                completed_at = NULL
+                completed_at = NULL,
+                worker_id = NULL,
+                lock_id = NULL,
+                lock_expires_at = NULL,
+                claimed_at = NULL,
+                last_heartbeat_at = NULL,
+                attempt = 0
             WHERE id = $2
             "#,
         )
