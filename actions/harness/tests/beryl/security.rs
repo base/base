@@ -70,8 +70,7 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                 StaticcallCase::string("contractURI", IB20::contractURICall {}.abi_encode(), ""),
                 StaticcallCase::string(
                     "extraMetadata(unset)",
-                    IB20Asset::extraMetadataCall { identifierType: "ISIN".to_string() }
-                        .abi_encode(),
+                    IB20Asset::extraMetadataCall { key: "ISIN".to_string() }.abi_encode(),
                     "",
                 ),
                 StaticcallCase::word(
@@ -118,7 +117,7 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                 ),
                 StaticcallCase::bytes32(
                     "METADATA_ROLE",
-                    IB20Asset::METADATA_ROLECall {}.abi_encode(),
+                    IB20::METADATA_ROLECall {}.abi_encode(),
                     metadata_role(),
                 ),
                 StaticcallCase::returndata(
@@ -143,17 +142,15 @@ async fn security_mutations_update_state_and_emit_events() {
     let update_ratio =
         scenario.call_tx(IB20Asset::updateMultiplierCall { newMultiplier: UPDATED_RATIO });
     let update_cusip = scenario.call_tx(IB20Asset::updateExtraMetadataCall {
-        identifierType: "CUSIP".to_string(),
+        key: "CUSIP".to_string(),
         value: CUSIP.to_string(),
     });
     let batch_mint = scenario.call_tx(IB20Asset::batchMintCall {
         recipients: vec![BerylTestEnv::bob(), BerylTestEnv::carol()],
         amounts: vec![U256::from(BOB_MINT_AMOUNT), U256::from(CAROL_MINT_AMOUNT)],
     });
-    let announced_identifier = IB20Asset::updateExtraMetadataCall {
-        identifierType: "FIGI".to_string(),
-        value: FIGI.to_string(),
-    };
+    let announced_identifier =
+        IB20Asset::updateExtraMetadataCall { key: "FIGI".to_string(), value: FIGI.to_string() };
     let announce = scenario.call_tx(IB20Asset::announceCall {
         internalCalls: vec![Bytes::from(announced_identifier.abi_encode())],
         id: ANNOUNCEMENT_ID.to_string(),
@@ -179,11 +176,8 @@ async fn security_mutations_update_state_and_emit_events() {
     scenario.assert_log(
         &block,
         1,
-        IB20Asset::ExtraMetadataUpdated {
-            identifierType: "CUSIP".to_string(),
-            value: CUSIP.to_string(),
-        }
-        .encode_log_data(),
+        IB20Asset::ExtraMetadataUpdated { key: "CUSIP".to_string(), value: CUSIP.to_string() }
+            .encode_log_data(),
     );
     scenario.assert_log(
         &block,
@@ -219,11 +213,8 @@ async fn security_mutations_update_state_and_emit_events() {
     scenario.assert_log(
         &block,
         3,
-        IB20Asset::ExtraMetadataUpdated {
-            identifierType: "FIGI".to_string(),
-            value: FIGI.to_string(),
-        }
-        .encode_log_data(),
+        IB20Asset::ExtraMetadataUpdated { key: "FIGI".to_string(), value: FIGI.to_string() }
+            .encode_log_data(),
     );
     scenario.assert_log(
         &block,
@@ -257,14 +248,12 @@ async fn security_mutations_update_state_and_emit_events() {
                 ),
                 StaticcallCase::string(
                     "extraMetadata(CUSIP)",
-                    IB20Asset::extraMetadataCall { identifierType: "CUSIP".to_string() }
-                        .abi_encode(),
+                    IB20Asset::extraMetadataCall { key: "CUSIP".to_string() }.abi_encode(),
                     CUSIP,
                 ),
                 StaticcallCase::string(
                     "extraMetadata(FIGI)",
-                    IB20Asset::extraMetadataCall { identifierType: "FIGI".to_string() }
-                        .abi_encode(),
+                    IB20Asset::extraMetadataCall { key: "FIGI".to_string() }.abi_encode(),
                     FIGI,
                 ),
                 StaticcallCase::word(
@@ -304,10 +293,8 @@ async fn security_mutations_revert_on_invalid_inputs() {
         recipients: vec![BerylTestEnv::bob()],
         amounts: vec![U256::from(1), U256::from(2)],
     });
-    let empty_identifier_type = scenario.call_tx(IB20Asset::updateExtraMetadataCall {
-        identifierType: String::new(),
-        value: "x".to_string(),
-    });
+    let empty_metadata_key = scenario
+        .call_tx(IB20Asset::updateExtraMetadataCall { key: String::new(), value: "x".to_string() });
     let duplicate_announcement = scenario.call_tx(IB20Asset::announceCall {
         internalCalls: Vec::new(),
         id: "duplicate-id".to_string(),
@@ -337,7 +324,7 @@ async fn security_mutations_revert_on_invalid_inputs() {
             first_announcement,
             empty_batch_mint,
             mismatched_batch_mint,
-            empty_identifier_type,
+            empty_metadata_key,
             duplicate_announcement,
             malformed_internal_call,
             recursive_announcement,
