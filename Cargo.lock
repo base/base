@@ -6555,35 +6555,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "based"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus 2.0.5",
- "alloy-primitives",
- "alloy-provider 2.0.5",
- "alloy-rpc-types-eth 2.0.5",
- "alloy-transport-http 2.0.5",
- "anyhow",
- "async-trait",
- "cadence",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "based-bin"
-version = "0.0.0"
-dependencies = [
- "base-cli-utils",
- "based",
- "cadence",
- "clap",
- "serde",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "bcrypt-pbkdf"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7299,15 +7270,6 @@ dependencies = [
  "libc",
  "once_cell",
  "serde",
-]
-
-[[package]]
-name = "cadence"
-version = "1.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ca08f6db9f0c963249cf23a27820f9d973d2acaad4d6bfaeb858b58ebd58a6a"
-dependencies = [
- "crossbeam-channel",
 ]
 
 [[package]]
