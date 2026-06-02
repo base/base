@@ -23,13 +23,11 @@ pub struct ActivationRegistryStorage {
 /// the key when querying or mutating activation state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivationFeature {
-    /// `keccak256("base.b20_token")`
-    B20Token,
     /// `keccak256("base.policy_registry")`
     PolicyRegistry,
     /// `keccak256("base.b20_stablecoin")`
     B20Stablecoin,
-    /// `keccak256("base.b20_security")`
+    /// `keccak256("base.b20_asset")`
     B20Asset,
 }
 
@@ -37,9 +35,6 @@ impl ActivationFeature {
     /// Returns the `keccak256` hash that identifies this feature in storage.
     pub const fn id(self) -> B256 {
         match self {
-            Self::B20Token => {
-                b256!("0x47a1afe8d3d691b87e090ee972d223a11f4da971ff5416c04985bb2393aca752")
-            }
             Self::PolicyRegistry => {
                 b256!("0xb582ebae03f16fee49a6763f78df482fb11ae73f103ed0d330bbe556aa90a43f")
             }
@@ -47,7 +42,7 @@ impl ActivationFeature {
                 b256!("0xecfa0def2c10020caaf65e6155aa69c84b24892aaef76eeac52e0e2b3a0b8601")
             }
             Self::B20Asset => {
-                b256!("0x83d32fab502ae0e8bc4352a117767262cb5e47cc8d67a744008ed4ff03fcf5e6")
+                b256!("0xcdcc772fe4cbdb1029f822861176d09e646db96723d4c1e82ddfdeb8163ef54c")
             }
         }
     }
@@ -276,10 +271,9 @@ mod tests {
 
     #[test]
     fn feature_id_constants_match_canonical_names() {
-        assert_eq!(ActivationFeature::B20Token.id(), keccak256("base.b20_token"));
         assert_eq!(ActivationFeature::PolicyRegistry.id(), keccak256("base.policy_registry"));
         assert_eq!(ActivationFeature::B20Stablecoin.id(), keccak256("base.b20_stablecoin"));
-        assert_eq!(ActivationFeature::B20Asset.id(), keccak256("base.b20_security"));
+        assert_eq!(ActivationFeature::B20Asset.id(), keccak256("base.b20_asset"));
     }
 
     #[test]

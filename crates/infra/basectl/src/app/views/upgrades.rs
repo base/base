@@ -188,14 +188,12 @@ const JOVIAN_CHECK_NAMES: &[&str] = &["bn256Pairing limit", "extra data v1", "GP
 const BERYL_CHECK_NAMES: &[&str] = &[
     "registry precompile",
     "registry admin",
-    "B-20 token feature",
     "policy registry feature",
     "B-20 stablecoin feature",
     "B-20 asset feature",
 ];
 
 const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
-    ("B-20 token feature", ActivationFeature::B20Token),
     ("policy registry feature", ActivationFeature::PolicyRegistry),
     ("B-20 stablecoin feature", ActivationFeature::B20Stablecoin),
     ("B-20 asset feature", ActivationFeature::B20Asset),
