@@ -18,10 +18,9 @@ pub trait SecurityAccounting: TokenAccounting {
     fn set_shares_to_tokens_ratio(&mut self, ratio: U256) -> Result<()>;
 
     /// Returns the security identifier value for `identifier_type`, or an empty string if unset.
-    fn security_identifier(&self, identifier_type: &str) -> Result<String>;
+    fn extra_metadata(&self, identifier_type: &str) -> Result<String>;
     /// Writes (or removes when `value` is empty) the security identifier for `identifier_type`.
-    fn set_security_identifier_value(&mut self, identifier_type: &str, value: String)
-    -> Result<()>;
+    fn set_extra_metadata_value(&mut self, identifier_type: &str, value: String) -> Result<()>;
 
     /// Returns the minimum amount that may be redeemed in a single call.
     fn minimum_redeemable(&self) -> Result<U256>;

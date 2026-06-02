@@ -326,7 +326,7 @@ fn expand_security(input: DeriveInput) -> syn::Result<TokenStream> {
                 self.security.set_shares_to_tokens_ratio(ratio)
             }
 
-            fn security_identifier(
+            fn extra_metadata(
                 &self,
                 identifier_type: &str,
             ) -> ::base_precompile_storage::Result<::alloc::string::String> {
@@ -337,7 +337,7 @@ fn expand_security(input: DeriveInput) -> syn::Result<TokenStream> {
                 )
             }
 
-            fn set_security_identifier_value(
+            fn set_extra_metadata_value(
                 &mut self,
                 identifier_type: &str,
                 value: ::alloc::string::String,

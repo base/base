@@ -13,7 +13,7 @@ sol! {
         /// `id` has previously been consumed by `announce`. Each id may be used at most once.
         error AnnouncementIdAlreadyUsed(string id);
 
-        /// `updateSecurityIdentifier` was called with an empty `identifierType`.
+        /// `updateExtraMetadata` was called with an empty `identifierType`.
         error InvalidIdentifierType();
 
         /// A batched function was called with parallel arrays of differing lengths.
@@ -45,8 +45,8 @@ sol! {
         /// Emitted by `updateShareRatio`.
         event ShareRatioUpdated(uint256 sharesToTokensRatio);
 
-        /// Emitted by `updateSecurityIdentifier`. Empty `value` indicates removal.
-        event SecurityIdentifierUpdated(string identifierType, string value);
+        /// Emitted by `updateExtraMetadata`. Empty `value` indicates removal.
+        event ExtraMetadataUpdated(string identifierType, string value);
 
         /// Emitted at the start of `announce`. Indexers join with `EndAnnouncement` via `id`.
         event Announcement(address indexed caller, string id, string description, string uri);
@@ -56,8 +56,8 @@ sol! {
 
         // ── Role / precision identifiers ─────────────────────────────────────
 
-        /// `keccak256("SECURITY_OPERATOR_ROLE")` — required for `announce`, `updateShareRatio`, `updateSecurityIdentifier`.
-        function SECURITY_OPERATOR_ROLE() external view returns (bytes32);
+        /// `keccak256("OPERATOR_ROLE")` — required for `announce`, `updateShareRatio`, `updateExtraMetadata`.
+        function OPERATOR_ROLE() external view returns (bytes32);
 
         /// Fixed-point precision for `sharesToTokensRatio`: `1e18` (one WAD).
         function WAD_PRECISION() external view returns (uint256);
@@ -114,10 +114,10 @@ sol! {
         // ── Security identifiers ─────────────────────────────────────────────
 
         /// Returns the value of the named identifier (e.g. ISIN, CUSIP). Empty string if not set.
-        function securityIdentifier(string calldata identifierType) external view returns (string);
+        function extraMetadata(string calldata identifierType) external view returns (string);
 
         /// Sets, updates, or removes a security identifier. Empty `value` removes the entry.
-        function updateSecurityIdentifier(
+        function updateExtraMetadata(
             string calldata identifierType,
             string calldata value
         ) external;
@@ -128,7 +128,7 @@ impl IB20Asset::IB20AssetCalls {
     /// Returns the stable label for this decoded asset B-20 call.
     pub const fn as_label(&self) -> &'static str {
         match self {
-            Self::SECURITY_OPERATOR_ROLE(_) => "precompile-b20-asset-SECURITY_OPERATOR_ROLE",
+            Self::OPERATOR_ROLE(_) => "precompile-b20-asset-OPERATOR_ROLE",
             Self::WAD_PRECISION(_) => "precompile-b20-asset-WAD_PRECISION",
             Self::REDEEM_SENDER_POLICY(_) => "precompile-b20-asset-REDEEM_SENDER_POLICY",
             Self::announce(_) => "precompile-b20-asset-announce",
@@ -142,8 +142,8 @@ impl IB20Asset::IB20AssetCalls {
             Self::redeemWithMemo(_) => "precompile-b20-asset-redeemWithMemo",
             Self::updateMinimumRedeemable(_) => "precompile-b20-asset-updateMinimumRedeemable",
             Self::minimumRedeemable(_) => "precompile-b20-asset-minimumRedeemable",
-            Self::securityIdentifier(_) => "precompile-b20-asset-securityIdentifier",
-            Self::updateSecurityIdentifier(_) => "precompile-b20-asset-updateSecurityIdentifier",
+            Self::extraMetadata(_) => "precompile-b20-asset-extraMetadata",
+            Self::updateExtraMetadata(_) => "precompile-b20-asset-updateExtraMetadata",
         }
     }
 }

@@ -69,8 +69,8 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                 ),
                 StaticcallCase::string("contractURI", IB20::contractURICall {}.abi_encode(), ""),
                 StaticcallCase::string(
-                    "securityIdentifier(ISIN)",
-                    IB20Asset::securityIdentifierCall { identifierType: "ISIN".to_string() }
+                    "extraMetadata(ISIN)",
+                    IB20Asset::extraMetadataCall { identifierType: "ISIN".to_string() }
                         .abi_encode(),
                     BerylTestEnv::B20_SECURITY_ISIN,
                 ),
@@ -116,8 +116,8 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                     U256::ZERO,
                 ),
                 StaticcallCase::bytes32(
-                    "SECURITY_OPERATOR_ROLE",
-                    IB20Asset::SECURITY_OPERATOR_ROLECall {}.abi_encode(),
+                    "OPERATOR_ROLE",
+                    IB20Asset::OPERATOR_ROLECall {}.abi_encode(),
                     security_operator_role(),
                 ),
                 StaticcallCase::returndata(
@@ -139,7 +139,7 @@ async fn security_mutations_update_state_and_emit_events() {
 
     let update_ratio =
         scenario.call_tx(IB20Asset::updateShareRatioCall { newSharesToTokensRatio: UPDATED_RATIO });
-    let update_cusip = scenario.call_tx(IB20Asset::updateSecurityIdentifierCall {
+    let update_cusip = scenario.call_tx(IB20Asset::updateExtraMetadataCall {
         identifierType: "CUSIP".to_string(),
         value: CUSIP.to_string(),
     });
@@ -147,7 +147,7 @@ async fn security_mutations_update_state_and_emit_events() {
         recipients: vec![BerylTestEnv::bob(), BerylTestEnv::carol()],
         amounts: vec![U256::from(BOB_MINT_AMOUNT), U256::from(CAROL_MINT_AMOUNT)],
     });
-    let announced_identifier = IB20Asset::updateSecurityIdentifierCall {
+    let announced_identifier = IB20Asset::updateExtraMetadataCall {
         identifierType: "FIGI".to_string(),
         value: FIGI.to_string(),
     };
@@ -176,7 +176,7 @@ async fn security_mutations_update_state_and_emit_events() {
     scenario.assert_log(
         &block,
         1,
-        IB20Asset::SecurityIdentifierUpdated {
+        IB20Asset::ExtraMetadataUpdated {
             identifierType: "CUSIP".to_string(),
             value: CUSIP.to_string(),
         }
@@ -216,7 +216,7 @@ async fn security_mutations_update_state_and_emit_events() {
     scenario.assert_log(
         &block,
         3,
-        IB20Asset::SecurityIdentifierUpdated {
+        IB20Asset::ExtraMetadataUpdated {
             identifierType: "FIGI".to_string(),
             value: FIGI.to_string(),
         }
@@ -253,14 +253,14 @@ async fn security_mutations_update_state_and_emit_events() {
                     U256::from(BerylTestEnv::B20_INITIAL_SUPPLY) * U256::from(2),
                 ),
                 StaticcallCase::string(
-                    "securityIdentifier(CUSIP)",
-                    IB20Asset::securityIdentifierCall { identifierType: "CUSIP".to_string() }
+                    "extraMetadata(CUSIP)",
+                    IB20Asset::extraMetadataCall { identifierType: "CUSIP".to_string() }
                         .abi_encode(),
                     CUSIP,
                 ),
                 StaticcallCase::string(
-                    "securityIdentifier(FIGI)",
-                    IB20Asset::securityIdentifierCall { identifierType: "FIGI".to_string() }
+                    "extraMetadata(FIGI)",
+                    IB20Asset::extraMetadataCall { identifierType: "FIGI".to_string() }
                         .abi_encode(),
                     FIGI,
                 ),
@@ -299,7 +299,7 @@ async fn security_mutations_revert_on_invalid_inputs() {
         recipients: vec![BerylTestEnv::bob()],
         amounts: vec![U256::from(1), U256::from(2)],
     });
-    let empty_identifier_type = scenario.call_tx(IB20Asset::updateSecurityIdentifierCall {
+    let empty_identifier_type = scenario.call_tx(IB20Asset::updateExtraMetadataCall {
         identifierType: String::new(),
         value: "x".to_string(),
     });
@@ -561,5 +561,5 @@ impl B20SecurityScenario {
 }
 
 fn security_operator_role() -> B256 {
-    keccak256("SECURITY_OPERATOR_ROLE")
+    keccak256("OPERATOR_ROLE")
 }

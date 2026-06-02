@@ -71,7 +71,7 @@ pub struct InMemoryTokenAccounting {
     /// Share-to-tokens ratio scaled to WAD (1e18). Security tokens only.
     pub shares_to_tokens_ratio: U256,
     /// Security identifier values keyed by raw `identifier_type`. Security tokens only.
-    pub security_identifiers: HashMap<String, String>,
+    pub extra_metadata: HashMap<String, String>,
     /// Consumed announcement ids keyed by raw announcement id. Security tokens only.
     pub announcement_ids_used: HashSet<String>,
     /// Events collected by `emit_event`; does not produce real EVM logs.
@@ -102,7 +102,7 @@ impl InMemoryTokenAccounting {
             role_admins: HashMap::new(),
             policy_ids: HashMap::new(),
             shares_to_tokens_ratio: U256::ZERO,
-            security_identifiers: HashMap::new(),
+            extra_metadata: HashMap::new(),
             announcement_ids_used: HashSet::new(),
             events: Vec::new(),
         }
@@ -399,22 +399,18 @@ impl SecurityAccounting for InMemoryTokenAccounting {
         Ok(())
     }
 
-    fn security_identifier(&self, identifier_type: &str) -> Result<String> {
-        if let Some(val) = self.security_identifiers.get(identifier_type) {
+    fn extra_metadata(&self, identifier_type: &str) -> Result<String> {
+        if let Some(val) = self.extra_metadata.get(identifier_type) {
             return Ok(val.clone());
         }
         if identifier_type == "ISIN" { Ok(self.security_isin.clone()) } else { Ok(String::new()) }
     }
 
-    fn set_security_identifier_value(
-        &mut self,
-        identifier_type: &str,
-        value: String,
-    ) -> Result<()> {
+    fn set_extra_metadata_value(&mut self, identifier_type: &str, value: String) -> Result<()> {
         if value.is_empty() {
-            self.security_identifiers.remove(identifier_type);
+            self.extra_metadata.remove(identifier_type);
         } else {
-            self.security_identifiers.insert(identifier_type.to_owned(), value);
+            self.extra_metadata.insert(identifier_type.to_owned(), value);
         }
         Ok(())
     }

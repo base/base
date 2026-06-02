@@ -340,7 +340,7 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
         let caller = ctx.caller();
         let encoded: Bytes = match call {
             // --- Role / precision constants ---
-            SC::SECURITY_OPERATOR_ROLE(_) => Self::SECURITY_OPERATOR_ROLE.abi_encode().into(),
+            SC::OPERATOR_ROLE(_) => Self::OPERATOR_ROLE.abi_encode().into(),
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
             SC::REDEEM_SENDER_POLICY(_) => Self::REDEEM_SENDER_POLICY.abi_encode().into(),
 
@@ -357,11 +357,9 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
             }
 
             // --- Security identifier reads ---
-            SC::securityIdentifier(c) => self
-                .accounting()
-                .security_identifier(c.identifierType.as_str())?
-                .abi_encode()
-                .into(),
+            SC::extraMetadata(c) => {
+                self.accounting().extra_metadata(c.identifierType.as_str())?.abi_encode().into()
+            }
 
             // --- Share ratio mutations ---
             SC::updateShareRatio(c) => {
@@ -399,8 +397,8 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
             }
 
             // --- Security identifier mutations ---
-            SC::updateSecurityIdentifier(c) => {
-                self.update_security_identifier(caller, c.identifierType, c.value, privileged)?;
+            SC::updateExtraMetadata(c) => {
+                self.update_extra_metadata(caller, c.identifierType, c.value, privileged)?;
                 Bytes::new()
             }
         };
@@ -420,7 +418,7 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
         privileged: bool,
     ) -> base_precompile_storage::Result<()> {
         let caller = ctx.caller();
-        self.ensure_security_operator(caller, privileged)?;
+        self.ensure_operator_role(caller, privileged)?;
         if self.is_announcement_active() {
             return Err(BasePrecompileError::revert(IB20Asset::AnnouncementInProgress {}));
         }
@@ -678,18 +676,15 @@ mod tests {
     }
 
     #[test]
-    fn security_identifier_roundtrip() {
+    fn extra_metadata_roundtrip() {
         let mut token = make_token();
 
-        assert_eq!(token.accounting().security_identifier("ISIN").unwrap(), "");
+        assert_eq!(token.accounting().extra_metadata("ISIN").unwrap(), "");
         token
             .accounting_mut()
-            .set_security_identifier_value("ISIN", "US0000000000".to_string())
+            .set_extra_metadata_value("ISIN", "US0000000000".to_string())
             .unwrap();
-        assert_eq!(
-            token.accounting().security_identifier("ISIN").unwrap(),
-            "US0000000000".to_string()
-        );
+        assert_eq!(token.accounting().extra_metadata("ISIN").unwrap(), "US0000000000".to_string());
     }
 
     // --- batchMint: EmptyBatch / LengthMismatch ---
@@ -895,26 +890,26 @@ mod tests {
         assert_eq!(token.accounting().shares_to_tokens_ratio().unwrap(), new_ratio);
     }
 
-    // --- securityIdentifier / updateSecurityIdentifier ---
+    // --- extraMetadata / updateExtraMetadata ---
 
     #[test]
-    fn security_identifier_missing_key_returns_empty() {
+    fn extra_metadata_missing_key_returns_empty() {
         let token = make_token();
         // "Returns the empty string if not set"
-        assert_eq!(token.accounting().security_identifier("CUSIP").unwrap(), "");
+        assert_eq!(token.accounting().extra_metadata("CUSIP").unwrap(), "");
     }
 
     #[test]
-    fn security_identifier_empty_value_clears_entry() {
+    fn extra_metadata_empty_value_clears_entry() {
         let mut token = make_token();
         token
             .accounting_mut()
-            .set_security_identifier_value("FIGI", "BBG000B9XRY4".to_string())
+            .set_extra_metadata_value("FIGI", "BBG000B9XRY4".to_string())
             .unwrap();
-        assert_eq!(token.accounting().security_identifier("FIGI").unwrap(), "BBG000B9XRY4");
+        assert_eq!(token.accounting().extra_metadata("FIGI").unwrap(), "BBG000B9XRY4");
         // "passing an empty value removes the entry"
-        token.accounting_mut().set_security_identifier_value("FIGI", String::new()).unwrap();
-        assert_eq!(token.accounting().security_identifier("FIGI").unwrap(), "");
+        token.accounting_mut().set_extra_metadata_value("FIGI", String::new()).unwrap();
+        assert_eq!(token.accounting().extra_metadata("FIGI").unwrap(), "");
     }
 
     // --- minimumRedeemable / updateMinimumRedeemable ---

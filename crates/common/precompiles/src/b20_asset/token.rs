@@ -27,8 +27,8 @@ pub struct B20AssetToken<S: SecurityAccounting, P: Policy> {
 }
 
 impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
-    /// Role identifier for security operators: `keccak256("SECURITY_OPERATOR_ROLE")`.
-    pub const SECURITY_OPERATOR_ROLE: B256 =
+    /// Role identifier for security operators: `keccak256("OPERATOR_ROLE")`.
+    pub const OPERATOR_ROLE: B256 =
         b256!("e63901dfe7775ace99fa3654743976eb0ab2009f5d19c4fc1ecd40aed27d59af");
 
     /// Policy scope identifier for redeem senders: `keccak256("REDEEM_SENDER_POLICY")`.
@@ -108,8 +108,8 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
     // --- Authorization Helpers ---
 
     /// Ensures the caller has the security operator role.
-    pub fn ensure_security_operator(&self, caller: Address, privileged: bool) -> Result<()> {
-        if privileged { Ok(()) } else { self.ensure_role(caller, Self::SECURITY_OPERATOR_ROLE) }
+    pub fn ensure_operator_role(&self, caller: Address, privileged: bool) -> Result<()> {
+        if privileged { Ok(()) } else { self.ensure_role(caller, Self::OPERATOR_ROLE) }
     }
 
     /// Ensures the caller has the default admin role.
@@ -176,7 +176,7 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
         new_ratio: U256,
         privileged: bool,
     ) -> Result<()> {
-        self.ensure_security_operator(caller, privileged)?;
+        self.ensure_operator_role(caller, privileged)?;
         self.accounting_mut().set_shares_to_tokens_ratio(new_ratio)?;
         self.accounting_mut().emit_event(
             IB20Asset::ShareRatioUpdated { sharesToTokensRatio: new_ratio }.encode_log_data(),
@@ -203,21 +203,20 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
     // --- Security Identifier Operations ---
 
     /// Updates a security identifier value.
-    pub fn update_security_identifier(
+    pub fn update_extra_metadata(
         &mut self,
         caller: Address,
         identifier_type: String,
         value: String,
         privileged: bool,
     ) -> Result<()> {
-        self.ensure_security_operator(caller, privileged)?;
+        self.ensure_operator_role(caller, privileged)?;
         if identifier_type.is_empty() {
             return Err(BasePrecompileError::revert(IB20Asset::InvalidIdentifierType {}));
         }
-        self.accounting_mut()
-            .set_security_identifier_value(identifier_type.as_str(), value.clone())?;
+        self.accounting_mut().set_extra_metadata_value(identifier_type.as_str(), value.clone())?;
         self.accounting_mut().emit_event(
-            IB20Asset::SecurityIdentifierUpdated { identifierType: identifier_type, value }
+            IB20Asset::ExtraMetadataUpdated { identifierType: identifier_type, value }
                 .encode_log_data(),
         )
     }
@@ -504,7 +503,7 @@ mod tests {
 
     #[test]
     fn role_and_policy_ids_match_solidity_hashes() {
-        assert_eq!(TestSecurityToken::SECURITY_OPERATOR_ROLE, keccak256("SECURITY_OPERATOR_ROLE"));
+        assert_eq!(TestSecurityToken::OPERATOR_ROLE, keccak256("OPERATOR_ROLE"));
         assert_eq!(TestSecurityToken::REDEEM_SENDER_POLICY, keccak256("REDEEM_SENDER_POLICY"));
     }
 
