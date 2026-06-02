@@ -297,11 +297,11 @@ mod type_namespaced_layouts {
 
     /// Security-specific B-20 extension storage.
     #[derive(Debug, Clone, Storable)]
-    #[namespace("b20.security")]
+    #[namespace("b20.asset")]
     struct B20AssetStorage {
         multiplier: U256,
         used_announcement_ids: Mapping<String, bool>,
-        security_identifiers: Mapping<String, bool>,
+        extra_metadata: Mapping<String, bool>,
     }
 
     /// Redeem-specific B-20 extension storage.
@@ -328,7 +328,7 @@ mod type_namespaced_layouts {
         let security_value = B20AssetStorage {
             multiplier: U256::ZERO,
             used_announcement_ids: Mapping::default(),
-            security_identifiers: Mapping::default(),
+            extra_metadata: Mapping::default(),
         };
         let redeem_value =
             B20RedeemStorage { minimum_redeemable: U256::ZERO, redeem_policy_ids: U256::ZERO };
@@ -337,7 +337,7 @@ mod type_namespaced_layouts {
             &b20_value.balances,
             &security_value.multiplier,
             &security_value.used_announcement_ids,
-            &security_value.security_identifiers,
+            &security_value.extra_metadata,
             &redeem_value.minimum_redeemable,
             &redeem_value.redeem_policy_ids,
         );

@@ -91,7 +91,7 @@ sol! {
 
         // ── Extra metadata ────────────────────────────────────────────────
 
-        /// Returns the value of the named metadata entry. Empty string if not set.
+        /// Returns the value of the named metadata entry (e.g. `"category"`, `"region"`). Empty string if not set.
         function extraMetadata(string calldata key) external view returns (string);
 
         /// Sets, updates, or removes an extra-metadata entry. Empty `value` removes the entry. Requires `METADATA_ROLE`.
