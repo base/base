@@ -8,7 +8,7 @@ use crate::{ActivationFeature, IB20Factory};
 /// B-20 token variant encoded in token address byte `[10]`.
 ///
 /// Discriminant values match the `B20Variant` ABI enum ordinals directly
-/// (STABLECOIN=0, SECURITY=1), so `uint8(variant)` in Solidity
+/// (STABLECOIN=0, ASSET=1), so `uint8(variant)` in Solidity
 /// equals the byte written at address position `[10]` with no offset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -26,7 +26,7 @@ impl B20Variant {
     /// Variant discriminant for stablecoin B-20 tokens.
     pub const STABLECOIN_DISCRIMINANT: u8 = Self::Stablecoin as u8;
 
-    /// Variant discriminant for security B-20 tokens.
+    /// Variant discriminant for asset B-20 tokens.
     pub const ASSET_DISCRIMINANT: u8 = Self::Asset as u8;
 
     /// Returns the currently supported creation-parameter version for this variant.
