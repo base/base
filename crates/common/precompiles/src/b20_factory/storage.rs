@@ -8,8 +8,8 @@ use revm::state::Bytecode;
 
 use crate::{
     ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20AssetToken, B20StablecoinInit,
-    B20StablecoinStorage, B20StablecoinToken, B20Token, B20TokenInit, B20TokenRole, B20TokenStorage,
-    B20Variant, IB20Factory, PolicyHandle, RoleManaged, Token,
+    B20StablecoinStorage, B20StablecoinToken, B20Token, B20TokenInit, B20TokenRole,
+    B20TokenStorage, B20Variant, IB20Factory, PolicyHandle, RoleManaged, Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -1407,7 +1407,7 @@ mod tests {
     fn create_b20_reverts_when_security_variant_deactivated() {
         let mut storage = HashMapStorageProvider::new(1);
         activate_precompiles(&mut storage);
-        deactivate_feature(&mut storage, ActivationFeature::B20Security);
+        deactivate_feature(&mut storage, ActivationFeature::B20Asset);
 
         let caller = Address::repeat_byte(0x55);
         let salt = B256::repeat_byte(0xD3);
@@ -1577,7 +1577,7 @@ mod tests {
             addr
         });
 
-        deactivate_feature(&mut storage, ActivationFeature::B20Security);
+        deactivate_feature(&mut storage, ActivationFeature::B20Asset);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut token = B20SecurityToken::with_storage_and_policy(
