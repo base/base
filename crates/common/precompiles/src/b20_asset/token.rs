@@ -253,7 +253,7 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
             let minimum = self.accounting().minimum_redeemable()?;
             if scaled == U256::ZERO || scaled < minimum {
                 return Err(BasePrecompileError::revert(IB20Asset::BelowMinimumRedeemable {
-                    shares: scaled,
+                    scaledAmount: scaled,
                     minimum,
                 }));
             }

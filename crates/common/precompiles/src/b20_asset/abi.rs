@@ -22,8 +22,8 @@ sol! {
         /// A batched function was called with empty arrays.
         error EmptyBatch();
 
-        /// `redeem`/`redeemWithMemo` was called with a share count below the floor, or zero.
-        error BelowMinimumRedeemable(uint256 shares, uint256 minimum);
+        /// `redeem`/`redeemWithMemo` was called with a scaled amount below the floor, or zero.
+        error BelowMinimumRedeemable(uint256 scaledAmount, uint256 minimum);
 
         /// An `internalCalls` entry tried to invoke `announce` itself.
         error AnnouncementInProgress();
@@ -99,16 +99,16 @@ sol! {
 
         // ── Redemption ────────────────────────────────────────────────────────
 
-        /// Burns `amount` from caller with a share-based minimum floor check.
+        /// Burns `amount` from caller with a multiplier-scaled minimum floor check.
         function redeem(uint256 amount) external;
 
         /// Same as `redeem`, followed by a `Memo` event.
         function redeemWithMemo(uint256 amount, bytes32 memo) external;
 
-        /// Sets the minimum-redeemable threshold in shares. Requires `DEFAULT_ADMIN_ROLE`.
+        /// Sets the minimum-redeemable threshold in scaled units. Requires `DEFAULT_ADMIN_ROLE`.
         function updateMinimumRedeemable(uint256 newMinimumRedeemable) external;
 
-        /// Returns the minimum-redeemable threshold in shares.
+        /// Returns the minimum-redeemable threshold in scaled units.
         function minimumRedeemable() external view returns (uint256);
 
         // ── Security identifiers ─────────────────────────────────────────────

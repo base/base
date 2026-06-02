@@ -15,7 +15,7 @@ pub trait SecurityAccounting: TokenAccounting {
     /// Returns the current multiplier scaled to WAD (1e18).
     fn multiplier(&self) -> Result<U256>;
     /// Writes a new multiplier.
-    fn set_multiplier(&mut self, ratio: U256) -> Result<()>;
+    fn set_multiplier(&mut self, multiplier: U256) -> Result<()>;
 
     /// Returns the security identifier value for `identifier_type`, or an empty string if unset.
     fn extra_metadata(&self, identifier_type: &str) -> Result<String>;

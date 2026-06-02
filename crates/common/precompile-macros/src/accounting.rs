@@ -315,15 +315,15 @@ fn expand_security(input: DeriveInput) -> syn::Result<TokenStream> {
             fn multiplier(
                 &self,
             ) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {
-                let ratio = self.security.multiplier()?;
-                Ok(if ratio.is_zero() { Self::WAD } else { ratio })
+                let multiplier = self.security.multiplier()?;
+                Ok(if multiplier.is_zero() { Self::WAD } else { multiplier })
             }
 
             fn set_multiplier(
                 &mut self,
-                ratio: ::alloy_primitives::U256,
+                multiplier: ::alloy_primitives::U256,
             ) -> ::base_precompile_storage::Result<()> {
-                self.security.set_multiplier(ratio)
+                self.security.set_multiplier(multiplier)
             }
 
             fn extra_metadata(

@@ -387,7 +387,7 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
                 Bytes::new()
             }
 
-            // --- Minimum redeemable (security version, in shares) ---
+            // --- Minimum redeemable (security version, in scaled units) ---
             SC::minimumRedeemable(_) => self.accounting().minimum_redeemable()?.abi_encode().into(),
             SC::updateMinimumRedeemable(c) => {
                 self.update_minimum_redeemable(caller, c.newMinimumRedeemable, privileged)?;
@@ -602,28 +602,28 @@ mod tests {
 
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(100u64));
         assert_eq!(token.accounting().total_supply().unwrap(), U256::from(100u64));
-        assert_eq!(token.accounting().events.len(), 2); // Transfer(ALICE, 0x0, 0) + Redeemed(ALICE, 0, ratio)
+        assert_eq!(token.accounting().events.len(), 2); // Transfer(ALICE, 0x0, 0) + Redeemed(ALICE, 0, multiplier)
     }
 
     #[test]
-    fn security_redeem_rejects_below_minimum_shares() {
+    fn security_redeem_rejects_below_minimum_scaled_amount() {
         let mut token = make_token();
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
         token.accounting_mut().total_supply = U256::from(100u64);
         token.accounting_mut().minimum_redeemable = U256::from(10u64);
 
-        // 5 tokens * 1e18 ratio / 1e18 = 5 shares < 10 minimum
+        // 5 tokens * 1e18 multiplier / 1e18 = 5 scaled < 10 minimum
         assert!(token.security_redeem(ALICE, U256::from(5u64)).is_err());
     }
 
     #[test]
-    fn security_redeem_rejects_zero_shares() {
+    fn security_redeem_rejects_zero_scaled_amount() {
         let mut token = make_token();
         token.accounting_mut().multiplier = U256::ONE;
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
         token.accounting_mut().total_supply = U256::from(100u64);
 
-        // 1 token-wei * 1 / WAD rounds down to 0 shares, which is always rejected.
+        // 1 token-wei * 1 / WAD rounds down to 0 scaled units, which is always rejected.
         assert!(token.security_redeem(ALICE, U256::ONE).is_err());
     }
 
@@ -739,7 +739,7 @@ mod tests {
         token.accounting_mut().balances.insert(ALICE, U256::from(10u64));
         token.accounting_mut().total_supply = U256::from(10u64);
         token.accounting_mut().minimum_redeemable = U256::from(1u64);
-        // amount=100 > balance=10 → InsufficientBalance after the share-floor check passes
+        // amount=100 > balance=10 → InsufficientBalance after the scaled-floor check passes
         assert!(token.security_redeem(ALICE, U256::from(100u64)).is_err());
         // no state mutation on failure
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
@@ -764,10 +764,10 @@ mod tests {
 
     #[test]
     fn security_redeem_at_exact_minimum_succeeds() {
-        let mut token = make_token(); // 1:1 ratio
+        let mut token = make_token(); // 1:1 multiplier
         token.accounting_mut().balances.insert(ALICE, U256::from(50u64));
         token.accounting_mut().total_supply = U256::from(50u64);
-        // 5 tokens * WAD / WAD = 5 shares == minimum → boundary must be accepted
+        // 5 tokens * WAD / WAD = 5 scaled == minimum → boundary must be accepted
         token.accounting_mut().minimum_redeemable = U256::from(5u64);
         token.security_redeem(ALICE, U256::from(5u64)).unwrap();
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(45u64));
@@ -775,17 +775,17 @@ mod tests {
     }
 
     #[test]
-    fn security_redeem_with_non_unit_ratio_applies_correct_share_math() {
+    fn security_redeem_with_non_unit_multiplier_applies_correct_scaled_math() {
         let mut token = make_token();
-        // 2:1 ratio: 1 token = 2 shares
+        // 2x multiplier: 1 token scales to 2 units
         token.accounting_mut().multiplier = B20AssetStorage::WAD * U256::from(2u64);
         token.accounting_mut().balances.insert(ALICE, U256::from(100u64));
         token.accounting_mut().total_supply = U256::from(100u64);
-        // minimum = 10 shares → need at least 5 tokens
+        // minimum = 10 scaled → need at least 5 tokens
         token.accounting_mut().minimum_redeemable = U256::from(10u64);
-        // 4 tokens → 8 shares < 10 → BelowMinimumRedeemable
+        // 4 tokens → 8 scaled < 10 → BelowMinimumRedeemable
         assert!(token.security_redeem(ALICE, U256::from(4u64)).is_err());
-        // 5 tokens → 10 shares == minimum → accepted
+        // 5 tokens → 10 scaled == minimum → accepted
         token.security_redeem(ALICE, U256::from(5u64)).unwrap();
         assert_eq!(token.accounting().balance_of(ALICE).unwrap(), U256::from(95u64));
     }
