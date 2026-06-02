@@ -278,17 +278,34 @@ where
             return Ok(());
         }
 
+        let first_block_number = blocks.first().map(Self::batch_block_number).unwrap_or_default();
+        let final_block_number = blocks.last().map(Self::batch_block_number).unwrap_or_default();
         let start = Instant::now();
         let mut total_writes = WriteCounts::default();
         let mut block_count: u64 = 0;
         let mut last_block_number: u64 = 0;
 
+        info!(
+            target: "base::trie",
+            block_count = blocks.len(),
+            first_block_number,
+            final_block_number,
+            "Starting proofs storage batch execution"
+        );
+
         self.storage.with_batch_session(|session| {
+            let session_start = Instant::now();
             let (Some((earliest, _)), Some((_, _))) =
                 (session.get_earliest_block_number()?, session.get_latest_block_number()?)
             else {
                 return Err(BaseProofsStorageError::NoBlocksFound);
             };
+            info!(
+                target: "base::trie",
+                earliest,
+                elapsed = ?session_start.elapsed(),
+                "Loaded proofs storage batch session bounds"
+            );
 
             for entry in blocks {
                 match entry {
@@ -297,6 +314,13 @@ where
                         sorted_trie_updates,
                         sorted_post_state,
                     } => {
+                        let block_number = block_with_parent.block.number;
+                        let store_start = Instant::now();
+                        info!(
+                            target: "base::trie",
+                            block_number,
+                            "Storing cached trie updates in batch session"
+                        );
                         let counts = session.store_trie_updates(
                             block_with_parent,
                             BlockStateDiff {
@@ -306,13 +330,25 @@ where
                         )?;
                         total_writes += counts;
                         block_count += 1;
-                        last_block_number = block_with_parent.block.number;
+                        last_block_number = block_number;
+                        info!(
+                            target: "base::trie",
+                            block_number,
+                            elapsed = ?store_start.elapsed(),
+                            "Stored cached trie updates in batch session"
+                        );
                     }
                     BatchBlock::Execute(block) => {
+                        let block_number = block.number();
+                        info!(
+                            target: "base::trie",
+                            block_number,
+                            "Executing block in proofs storage batch session"
+                        );
                         let counts = self.execute_one_in_session(session, &block, earliest)?;
                         total_writes += counts;
                         block_count += 1;
-                        last_block_number = block.number();
+                        last_block_number = block_number;
                     }
                 }
             }
@@ -329,7 +365,9 @@ where
         BlockMetrics::latest_number().set(last_block_number as f64);
 
         info!(
+            target: "base::trie",
             block_count,
+            first_block_number,
             last_block_number,
             ?total_writes,
             duration = ?total,
@@ -337,6 +375,13 @@ where
         );
 
         Ok(())
+    }
+
+    fn batch_block_number(block: &BatchBlock<Evm::Primitives>) -> u64 {
+        match block {
+            BatchBlock::Cached { block_with_parent, .. } => block_with_parent.block.number,
+            BatchBlock::Execute(block) => block.number(),
+        }
     }
 
     fn execute_one_in_session<S>(
@@ -348,42 +393,108 @@ where
     where
         S: BaseProofsBatchSession,
     {
+        let block_number = block.number();
+        let block_hash = block.hash();
+        let parent_hash = block.parent_hash();
+        let parent_block_number = block_number - 1;
+        let block_start = Instant::now();
+
+        info!(
+            target: "base::trie",
+            block_number,
+            ?block_hash,
+            parent_block_number,
+            ?parent_hash,
+            "Starting full block execution in proofs storage batch session"
+        );
+
+        let latest_lookup_start = Instant::now();
         let latest_in_session =
             session.get_latest_block_number()?.ok_or(BaseProofsStorageError::NoBlocksFound)?.0;
+        info!(
+            target: "base::trie",
+            block_number,
+            latest_in_session,
+            elapsed = ?latest_lookup_start.elapsed(),
+            "Loaded latest block from proofs storage batch session"
+        );
 
-        let parent_block_number = block.number() - 1;
         if parent_block_number < earliest {
             return Err(BaseProofsStorageError::UnknownParent);
         }
         if parent_block_number > latest_in_session {
             return Err(BaseProofsStorageError::MissingParentBlock {
-                block_number: block.number(),
+                block_number,
                 parent_block_number,
                 latest_block_number: latest_in_session,
             });
         }
 
-        let block_ref =
-            BlockWithParent::new(block.parent_hash(), NumHash::new(block.number(), block.hash()));
+        let block_ref = BlockWithParent::new(parent_hash, NumHash::new(block_number, block_hash));
 
+        let state_provider_start = Instant::now();
+        info!(
+            target: "base::trie",
+            block_number,
+            ?parent_hash,
+            "Loading parent state provider for proofs storage batch execution"
+        );
         let state_provider = BaseProofsBatchStateProviderRef::new(
-            self.provider.state_by_block_hash(block.parent_hash())?,
+            self.provider.state_by_block_hash(parent_hash)?,
             session,
             parent_block_number,
+        );
+        info!(
+            target: "base::trie",
+            block_number,
+            elapsed = ?state_provider_start.elapsed(),
+            "Loaded parent state provider for proofs storage batch execution"
         );
 
         let db = StateProviderDatabase::new(&state_provider);
         let block_executor = self.evm_config.batch_executor(db);
 
+        let execution_start = Instant::now();
+        info!(target: "base::trie", block_number, "Executing block for proofs storage verification");
         let execution_result = block_executor.execute(&(*block).clone())?;
+        info!(
+            target: "base::trie",
+            block_number,
+            elapsed = ?execution_start.elapsed(),
+            "Executed block for proofs storage verification"
+        );
 
+        let hashed_state_start = Instant::now();
+        info!(target: "base::trie", block_number, "Hashing post state for proofs storage verification");
         let hashed_state = state_provider.hashed_post_state(&execution_result.state);
+        info!(
+            target: "base::trie",
+            block_number,
+            elapsed = ?hashed_state_start.elapsed(),
+            "Hashed post state for proofs storage verification"
+        );
+
+        let state_root_start = Instant::now();
+        info!(target: "base::trie", block_number, "Computing state root for proofs storage verification");
         let (state_root, trie_updates) =
             state_provider.state_root_with_updates(hashed_state.clone())?;
+        info!(
+            target: "base::trie",
+            block_number,
+            elapsed = ?state_root_start.elapsed(),
+            "Computed state root for proofs storage verification"
+        );
 
         if state_root != block.state_root() {
+            warn!(
+                target: "base::trie",
+                block_number,
+                current_state_hash = ?state_root,
+                expected_state_hash = ?block.state_root(),
+                "State root mismatch during proofs storage verification"
+            );
             return Err(BaseProofsStorageError::StateRootMismatch {
-                block_number: block.number(),
+                block_number,
                 current_state_hash: state_root,
                 expected_state_hash: block.state_root(),
             });
@@ -391,12 +502,24 @@ where
 
         drop(state_provider);
 
-        session.store_trie_updates(
+        let store_start = Instant::now();
+        info!(target: "base::trie", block_number, "Storing executed trie updates in proofs storage batch session");
+        let counts = session.store_trie_updates(
             block_ref,
             BlockStateDiff {
                 sorted_trie_updates: trie_updates.into_sorted(),
                 sorted_post_state: hashed_state.into_sorted(),
             },
-        )
+        )?;
+        info!(
+            target: "base::trie",
+            block_number,
+            elapsed = ?store_start.elapsed(),
+            total_elapsed = ?block_start.elapsed(),
+            ?counts,
+            "Stored executed trie updates in proofs storage batch session"
+        );
+
+        Ok(counts)
     }
 }

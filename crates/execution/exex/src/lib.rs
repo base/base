@@ -8,7 +8,10 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod sync_target;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip1898::BlockWithParent;
@@ -26,7 +29,7 @@ use reth_node_api::{FullNodeComponents, NodePrimitives, NodeTypes};
 use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
 pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Default safety threshold for the gap between stored earliest block and the configured
 /// window target. When exceeded on startup, the node refuses to auto-prune and asks the
@@ -460,6 +463,7 @@ where
             }
 
             let end = (latest + SYNC_BLOCKS_BATCH_SIZE as u64).min(target);
+            let batch_start = Instant::now();
             info!(
                 target: "base::exex",
                 start = latest + 1,
@@ -482,12 +486,31 @@ where
                 }
             }
 
+            debug!(
+                target: "base::exex",
+                start = latest + 1,
+                end,
+                target,
+                "Submitting proofs storage sync batch"
+            );
             if let Err(e) = collector.execute_and_store_batch(batch) {
                 error!(target: "base::exex", start = latest + 1, end, error = ?e, "Batch processing failed");
                 return;
             }
 
-            info!(target: "base::exex", latest_stored = latest, target, "Batch processed, yielding");
+            let batch_elapsed = batch_start.elapsed();
+            if batch_elapsed.as_secs() >= 30 {
+                warn!(
+                    target: "base::exex",
+                    start = latest + 1,
+                    end,
+                    target,
+                    elapsed = ?batch_elapsed,
+                    "Proofs storage sync batch completed slowly"
+                );
+            }
+
+            info!(target: "base::exex", latest_stored = latest, target, elapsed = ?batch_elapsed, "Batch processed, yielding");
             task::yield_now().await;
         }
     }
@@ -539,9 +562,17 @@ where
             "Fetching block from provider for execution",
         );
 
+        let fetch_start = Instant::now();
         let block = provider
             .recovered_block(block_number.into(), TransactionVariant::NoHash)?
             .ok_or_else(|| eyre::eyre!("Missing block {} in provider", block_number))?;
+        let fetch_elapsed = fetch_start.elapsed();
+        info!(
+            target: "base::exex",
+            block_number,
+            elapsed = ?fetch_elapsed,
+            "Fetched block from provider for execution"
+        );
 
         Ok(BatchBlock::Execute(Box::new(block)))
     }
