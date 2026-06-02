@@ -514,6 +514,14 @@ impl SpanBatch {
                     warn!(target: "batch_span", tx_index = i, "EIP-7702 transactions are not supported pre-isthmus");
                     return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
                 }
+
+                // If cobalt is not active yet and the transaction is an 8130, drop the batch.
+                if !cfg.is_cobalt_active(batch.timestamp)
+                    && tx.as_ref().first() == Some(&(OpTxType::Eip8130 as u8))
+                {
+                    warn!(target: "batch_span", tx_index = i, "EIP-8130 transactions are not supported pre-cobalt");
+                    return BatchValidity::Drop(BatchDropReason::Eip8130PreCobalt);
+                }
             }
         }
 
@@ -758,7 +766,7 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, Bytes, b256};
     use base_common_consensus::BaseBlock;
-    use base_common_genesis::{ChainGenesis, HardForkConfig};
+    use base_common_genesis::{ChainGenesis, HardForkConfig, HardforkConfig};
     use tracing::Level;
 
     use super::*;
@@ -1971,6 +1979,130 @@ mod tests {
             logs[0].contains("EIP-7702 transactions are not supported pre-isthmus")
                 && logs[0].contains("tx_index")
                 && logs[0].contains('0')
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_batch_with_eip8130_tx() {
+        let (trace_store, _guard) = crate::capture_traces!();
+
+        let cfg = RollupConfig {
+            seq_window_size: 100,
+            max_sequencer_drift: 100,
+            hardforks: HardForkConfig { delta_time: Some(0), ..Default::default() },
+            block_time: 10,
+            ..Default::default()
+        };
+        let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
+        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
+        let l2_safe_head = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 41,
+                timestamp: 10,
+                hash: parent_hash,
+                ..Default::default()
+            },
+            l1_origin: BlockNumHash { number: 9, ..Default::default() },
+            ..Default::default()
+        };
+        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
+        let l2_block = L2BlockInfo {
+            block_info: BlockInfo { number: 40, ..Default::default() },
+            ..Default::default()
+        };
+        let mut fetcher: TestBatchValidator =
+            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
+        let filler_bytes = Bytes::copy_from_slice(&[EIP1559_TX_TYPE_ID]);
+        let first = SpanBatchElement {
+            epoch_num: 10,
+            timestamp: 20,
+            transactions: vec![filler_bytes.clone()],
+        };
+        let second = SpanBatchElement {
+            epoch_num: 10,
+            timestamp: 20,
+            transactions: vec![Bytes::copy_from_slice(&[OpTxType::Eip8130 as u8])],
+        };
+        let third =
+            SpanBatchElement { epoch_num: 11, timestamp: 20, transactions: vec![filler_bytes] };
+        let batch = SpanBatch {
+            batches: vec![first, second, third],
+            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
+            l1_origin_check: FixedBytes::<20>::from_slice(&l1_blocks[0].hash[..20]),
+            txs: SpanBatchTransactions::default(),
+            ..Default::default()
+        };
+        assert_eq!(
+            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
+            BatchValidity::Drop(BatchDropReason::Eip8130PreCobalt)
+        );
+        let logs = trace_store.get_by_level(Level::WARN);
+        assert_eq!(logs.len(), 1);
+        assert!(
+            logs[0].contains("EIP-8130 transactions are not supported pre-cobalt")
+                && logs[0].contains("tx_index")
+                && logs[0].contains('0')
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_batch_accept_eip8130_post_cobalt() {
+        // Mirror of `test_check_batch_with_eip8130_tx` with Cobalt active: the same
+        // span batch carrying an EIP-8130 transaction is accepted once the fork gate
+        // opens, exercising the post-Cobalt side for symmetry with the single-batch tests.
+        let cfg = RollupConfig {
+            seq_window_size: 100,
+            max_sequencer_drift: 100,
+            hardforks: HardForkConfig {
+                delta_time: Some(0),
+                base: HardforkConfig { cobalt: Some(0), ..Default::default() },
+                ..Default::default()
+            },
+            block_time: 10,
+            ..Default::default()
+        };
+        let l1_blocks = gen_l1_blocks(9, 3, 0, 10);
+        let parent_hash = b256!("1111111111111111111111111111111111111111000000000000000000000000");
+        let l2_safe_head = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 41,
+                timestamp: 10,
+                hash: parent_hash,
+                ..Default::default()
+            },
+            l1_origin: BlockNumHash { number: 9, ..Default::default() },
+            ..Default::default()
+        };
+        let inclusion_block = BlockInfo { number: 50, ..Default::default() };
+        let l2_block = L2BlockInfo {
+            block_info: BlockInfo { number: 40, ..Default::default() },
+            ..Default::default()
+        };
+        let mut fetcher: TestBatchValidator =
+            TestBatchValidator { blocks: vec![l2_block], ..Default::default() };
+        let filler_bytes = Bytes::copy_from_slice(&[EIP1559_TX_TYPE_ID]);
+        let first = SpanBatchElement {
+            epoch_num: 10,
+            timestamp: 20,
+            transactions: vec![filler_bytes.clone()],
+        };
+        let second = SpanBatchElement {
+            epoch_num: 10,
+            timestamp: 20,
+            transactions: vec![Bytes::copy_from_slice(&[OpTxType::Eip8130 as u8])],
+        };
+        let third =
+            SpanBatchElement { epoch_num: 11, timestamp: 20, transactions: vec![filler_bytes] };
+        let batch = SpanBatch {
+            batches: vec![first, second, third],
+            parent_check: FixedBytes::<20>::from_slice(&parent_hash[..20]),
+            l1_origin_check: FixedBytes::<20>::from_slice(&l1_blocks[0].hash[..20]),
+            txs: SpanBatchTransactions::default(),
+            ..Default::default()
+        };
+        assert_eq!(
+            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
+            BatchValidity::Accept
         );
     }
 
