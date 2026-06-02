@@ -76,3 +76,7 @@ COPY etc/scripts/devnet/templates/ /templates/
 # Copy setup scripts
 COPY etc/scripts/devnet/ /usr/local/bin/
 RUN chmod +x /usr/local/bin/*.sh
+
+# Reset the inherited ENTRYPOINT from the foundry base image (ENTRYPOINT ["forge"]).
+# Without this, commands like `setup-l2.sh` would run as `forge setup-l2.sh`.
+ENTRYPOINT []
