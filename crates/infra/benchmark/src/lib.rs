@@ -6,7 +6,7 @@ pub use compare::{compare_run_groups, CompareOutcome, CompareResult, GroupStats}
 mod config;
 pub use config::{
     BenchmarkConfig, BenchmarkDefinition, DatadirConfig, FlashblocksConfig, LoadTestPayloadParams,
-    MetricsConfig, MetricsThreshold, SetupConfig, SnapshotConfig, TestRun, TransactionPayloadDef,
+    MetricsConfig, MetricsThreshold, SnapshotConfig, TestRun, TransactionPayloadDef,
     Variable, WeightedTx,
 };
 

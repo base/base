@@ -7,8 +7,6 @@ num_blocks: 20
 benchmarks:
   - node_type: reth
     datadir: {}
-    setup:
-      deploy_uniswap_v3: true
     payload:
       id: uniswap-swaps
       type: load-test

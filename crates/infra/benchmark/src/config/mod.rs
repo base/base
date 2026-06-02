@@ -72,8 +72,6 @@ pub struct BenchmarkDefinition {
     pub datadir: DatadirConfig,
     /// Snapshot creation configuration.
     pub snapshot: Option<SnapshotConfig>,
-    /// Pre-test setup steps (contract deployments, etc.).
-    pub setup: Option<SetupConfig>,
     /// Transaction payload to submit during the benchmark.
     pub payload: TransactionPayloadDef,
     /// Prometheus threshold configuration.
@@ -87,16 +85,6 @@ pub struct BenchmarkDefinition {
     /// Matrix variables for combinatorial expansion.
     #[serde(default)]
     pub variables: Vec<Variable>,
-}
-
-/// Contract deployment configuration for devnet benchmark runs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetupConfig {
-    /// Deploy a mock Uniswap V3 router and two `FreeTransferERC20` tokens, then
-    /// inject their addresses into any `uniswap_v3` transaction entries that do not
-    /// already have explicit addresses.
-    #[serde(default)]
-    pub deploy_uniswap_v3: bool,
 }
 
 /// Explicit datadir paths for sequencer and validator. When set, snapshot
@@ -293,7 +281,6 @@ mod tests {
                 node_type: "base-reth-node".into(),
                 datadir: DatadirConfig::default(),
                 snapshot: None,
-                setup: None,
                 payload: TransactionPayloadDef {
                     id: "lt".into(),
                     payload_type: "load-test".into(),

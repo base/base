@@ -239,12 +239,19 @@ impl NetworkBenchmark {
         let block_time = std::time::Duration::from_millis(self.config.block_time_ms);
         let gas_limit = self.config.gas_limit.unwrap_or(30_000_000);
 
-        if run.definition.setup.as_ref().is_some_and(|s| s.deploy_uniswap_v3) {
+        let needs_uniswap_deploy = run
+            .definition
+            .payload
+            .params
+            .transactions
+            .iter()
+            .any(|tx| tx.tx_type == "uniswap_v3" && tx.router.is_none());
+
+        if needs_uniswap_deploy {
             let deploy_mempool = FakeMempool::new();
             let rpc_url = node.rpc_url().to_string();
             let prefund_key = self.options.prefund_key.clone();
-            let mut deploy_fut =
-                std::pin::pin!(deploy_uniswap_v3(&rpc_url, &prefund_key));
+            let mut deploy_fut = std::pin::pin!(deploy_uniswap_v3(&rpc_url, &prefund_key));
             let addrs = loop {
                 tokio::select! {
                     biased;
