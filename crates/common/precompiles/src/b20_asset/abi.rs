@@ -34,6 +34,9 @@ sol! {
         /// An `internalCalls` entry reverted during its inner dispatch.
         error InternalCallFailed(bytes call);
 
+        /// `decimals` was not in the allowed range `[6, 18]`.
+        error InvalidDecimals();
+
         // ── Events ───────────────────────────────────────────────────────────
 
         /// Emitted by `redeem`/`redeemWithMemo`. Includes the active multiplier at redemption time.

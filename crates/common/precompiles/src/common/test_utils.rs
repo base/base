@@ -429,4 +429,8 @@ impl AssetAccounting for InMemoryTokenAccounting {
         self.announcement_ids_used.insert(id.to_owned());
         Ok(())
     }
+
+    fn decimals(&self) -> Result<u8> {
+        Ok(if self.decimals == 0 { 6 } else { self.decimals })
+    }
 }

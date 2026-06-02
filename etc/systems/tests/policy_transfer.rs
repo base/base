@@ -14,7 +14,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use base_common_network::Base;
 use base_common_precompiles::{
-    ActivationFeature, B20PolicyType, IB20, IPolicyRegistry, PolicyRegistryStorage,
+    ActivationFeature, B20PolicyType, B20Variant, IB20, IPolicyRegistry, PolicyRegistryStorage,
 };
 use base_system_tests::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, B20PrecompileClient};
 use eyre::{Result, WrapErr};
@@ -86,7 +86,7 @@ async fn create_token(
 ) -> Result<Address> {
     let params =
         B20PrecompileClient::token_params(name, symbol, admin, U256::from(INITIAL_SUPPLY), admin);
-    let token = client.create_token(params, salt).await?;
+    let token = client.create_token(B20Variant::Asset, params, salt).await?;
     client
         .wait_for_token_code(token, common::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL)
         .await?;

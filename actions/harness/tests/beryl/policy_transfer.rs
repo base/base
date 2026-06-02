@@ -424,6 +424,7 @@ impl PolicyTransferScenario {
             initialAdmin: BerylTestEnv::alice(),
             isin: String::new(),
             minimumRedeemable: U256::ZERO,
+            decimals: 6,
         }
     }
 }

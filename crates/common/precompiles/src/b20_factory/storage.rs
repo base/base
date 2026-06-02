@@ -268,6 +268,7 @@ impl TokenCreateParams {
                         supply_cap: DEFAULT_SUPPLY_CAP,
                         multiplier: INITIAL_MULTIPLIER,
                         isin: p.isin,
+                        decimals: p.decimals,
                         minimum_redeemable: p.minimumRedeemable,
                     },
                 })
@@ -356,6 +357,7 @@ mod tests {
             initialAdmin: Address::repeat_byte(0xAB),
             isin: String::new(),
             minimumRedeemable: U256::ZERO,
+            decimals: 6,
         }
     }
 
@@ -760,6 +762,7 @@ mod tests {
             initialAdmin: Address::repeat_byte(0xAB),
             isin: "US0000000000".to_string(),
             minimumRedeemable: U256::ONE,
+            decimals: 6,
         };
         let asset_call = IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::ASSET,
@@ -1119,6 +1122,7 @@ mod tests {
             initialAdmin: initial_admin,
             isin: "US0000000001".to_string(),
             minimumRedeemable: U256::ZERO,
+            decimals: 6,
         };
         let call = IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::ASSET,
@@ -1147,6 +1151,7 @@ mod tests {
             initialAdmin: Address::ZERO,
             isin: "US0000000002".to_string(),
             minimumRedeemable: U256::ZERO,
+            decimals: 6,
         };
         let call_no_admin = IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::ASSET,
@@ -1182,6 +1187,7 @@ mod tests {
                 initialAdmin: Address::repeat_byte(0xAB),
                 isin: String::new(),
                 minimumRedeemable: U256::ZERO,
+            decimals: 6,
             }
             .abi_encode()
             .into(),

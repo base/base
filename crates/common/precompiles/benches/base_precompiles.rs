@@ -34,6 +34,7 @@ impl BaseTokenBenchSetup {
             initialAdmin: Self::admin(),
             isin: String::new(),
             minimumRedeemable: U256::ZERO,
+            decimals: 6,
         }
     }
 

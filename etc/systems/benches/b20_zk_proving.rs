@@ -14,7 +14,8 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolInterface};
 use base_common_precompiles::{
-    ActivationFeature, ActivationRegistryStorage, B20TokenRole, IActivationRegistry, IB20,
+    ActivationFeature, ActivationRegistryStorage, B20TokenRole, B20Variant, IActivationRegistry,
+    IB20,
 };
 use base_system_tests::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, B20PrecompileClient};
 use clap::Parser;
@@ -199,7 +200,7 @@ impl B20ZkProvingBench {
             admin,
         );
 
-        client.create_token(params, salt).await
+        client.create_token(B20Variant::Asset, params, salt).await
     }
 
     /// Activates `feature` if it is not already active.

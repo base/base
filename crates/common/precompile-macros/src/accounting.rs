@@ -19,7 +19,18 @@ pub(crate) fn derive_asset(input: DeriveInput) -> proc_macro::TokenStream {
 fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
     require_field(&input, "b20")?;
     let has_redeem = has_field(&input, "redeem");
+    let has_security = has_field(&input, "security");
     let name = input.ident;
+    let decimals_impl = if has_security {
+        quote! { crate::SecurityAccounting::decimals(self) }
+    } else {
+        quote! {
+            Ok(crate::B20Variant::from_address(
+                ::base_precompile_storage::ContractStorage::address(self),
+            )
+            .map_or(0, crate::B20Variant::decimals))
+        }
+    };
     let redeem = has_redeem.then_some(quote! {
         if policy_scope == Self::REDEEM_SENDER_POLICY {
             return self.redeem.redeem_sender_policy_id();
@@ -132,10 +143,7 @@ fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
             }
 
             fn decimals(&self) -> ::base_precompile_storage::Result<u8> {
-                Ok(crate::B20Variant::from_address(
-                    ::base_precompile_storage::ContractStorage::address(self),
-                )
-                .map_or(0, crate::B20Variant::decimals))
+                #decimals_impl
             }
 
             fn paused(&self) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {
@@ -387,6 +395,11 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
                         .at_mut(&::alloc::string::String::from(id)),
                     true,
                 )
+            }
+
+            fn decimals(&self) -> ::base_precompile_storage::Result<u8> {
+                let stored = self.security.decimals()?;
+                Ok(if stored == 0 { 6 } else { stored })
             }
         }
     })

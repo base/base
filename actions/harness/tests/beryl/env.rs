@@ -63,13 +63,13 @@ impl BerylTestEnv {
     /// Gas limit used for B-20 staticcall probe transactions.
     pub(crate) const B20_PROBE_GAS_LIMIT: u64 = 1_000_000;
 
-    /// Fixed decimals for the asset B-20 token variant.
+    /// Fixed decimals for the default B-20 token variant.
     pub(crate) const B20_DECIMALS: u8 = 6;
 
-    /// Name for the asset B-20 token variant.
+    /// Name for the default B-20 token variant.
     pub(crate) const B20_NAME: &str = "Action B20";
 
-    /// Symbol for the asset B-20 token variant.
+    /// Symbol for the default B-20 token variant.
     pub(crate) const B20_SYMBOL: &str = "AB20";
 
     /// Fixed decimals for the stablecoin B-20 token variant.
@@ -85,19 +85,19 @@ impl BerylTestEnv {
     pub(crate) const B20_STABLECOIN_CURRENCY: &str = "USD";
 
     /// Fixed decimals for the security B-20 token variant.
-    pub(crate) const B20_SECURITY_DECIMALS: u8 = 6;
+    pub(crate) const B20_ASSET_DECIMALS: u8 = 6;
 
     /// Name for the security B-20 token variant.
-    pub(crate) const B20_SECURITY_NAME: &str = "Action Security";
+    pub(crate) const B20_ASSET_NAME: &str = "Action Security";
 
     /// Symbol for the security B-20 token variant.
-    pub(crate) const B20_SECURITY_SYMBOL: &str = "ASEC";
+    pub(crate) const B20_ASSET_SYMBOL: &str = "ASEC";
 
     /// ISIN stored on the security B-20 token at creation.
-    pub(crate) const B20_SECURITY_ISIN: &str = "US0000000001";
+    pub(crate) const B20_ASSET_ISIN: &str = "US0000000001";
 
     /// Initial minimum redeemable share amount for the security B-20 token.
-    pub(crate) const B20_SECURITY_MINIMUM_REDEEMABLE: u64 = 10;
+    pub(crate) const B20_ASSET_MINIMUM_REDEEMABLE: u64 = 10;
 
     /// Initial B-20 supply minted to Alice.
     pub(crate) const B20_INITIAL_SUPPLY: u64 = 1_000_000;
@@ -578,7 +578,7 @@ impl BerylTestEnv {
         IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::ASSET,
             salt,
-            params: self.b20_security_params().abi_encode().into(),
+            params: self.b20_asset_params().abi_encode().into(),
             initCalls: vec![
                 IB20::mintCall { to: Self::alice(), amount: U256::from(Self::B20_INITIAL_SUPPLY) }
                     .abi_encode()
@@ -631,6 +631,7 @@ impl BerylTestEnv {
             initialAdmin: Self::alice(),
             isin: String::new(),
             minimumRedeemable: U256::ZERO,
+            decimals: 6,
         }
     }
 
@@ -644,14 +645,15 @@ impl BerylTestEnv {
         }
     }
 
-    fn b20_security_params(&self) -> IB20Factory::B20AssetCreateParams {
+    fn b20_asset_params(&self) -> IB20Factory::B20AssetCreateParams {
         IB20Factory::B20AssetCreateParams {
             version: B20Variant::Asset.supported_version(),
-            name: Self::B20_SECURITY_NAME.to_string(),
-            symbol: Self::B20_SECURITY_SYMBOL.to_string(),
+            name: Self::B20_ASSET_NAME.to_string(),
+            symbol: Self::B20_ASSET_SYMBOL.to_string(),
             initialAdmin: Self::alice(),
-            isin: Self::B20_SECURITY_ISIN.to_string(),
-            minimumRedeemable: U256::from(Self::B20_SECURITY_MINIMUM_REDEEMABLE),
+            isin: Self::B20_ASSET_ISIN.to_string(),
+            minimumRedeemable: U256::from(Self::B20_ASSET_MINIMUM_REDEEMABLE),
+            decimals: Self::B20_ASSET_DECIMALS,
         }
     }
 

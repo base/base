@@ -29,6 +29,7 @@ sol! {
             address initialAdmin;
             string isin;
             uint256 minimumRedeemable;
+            uint8 decimals;
         }
 
         // ── Errors ───────────────────────────────────────────────────────────

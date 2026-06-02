@@ -117,6 +117,7 @@ impl<'a> B20PrecompileClient<'a> {
                 initialAdmin: initial_admin,
                 isin: String::new(),
                 minimumRedeemable: U256::ZERO,
+                decimals: 6,
             },
             initial_supply,
             initial_supply_recipient,
@@ -125,9 +126,14 @@ impl<'a> B20PrecompileClient<'a> {
         }
     }
 
-    /// Creates a B-20 asset token through the factory and returns the deterministic token address.
-    pub async fn create_token(&self, params: B20CreateConfig, salt: B256) -> Result<Address> {
-        let token = self.predict_token_address(B20Variant::Asset, salt);
+    /// Creates a B-20 token through the factory and returns the deterministic token address.
+    pub async fn create_token(
+        &self,
+        variant: B20Variant,
+        params: B20CreateConfig,
+        salt: B256,
+    ) -> Result<Address> {
+        let token = self.predict_token_address(variant, salt);
         let mut init_calls = Vec::new();
         if params.initial_supply > U256::ZERO {
             init_calls.push(
@@ -150,7 +156,7 @@ impl<'a> B20PrecompileClient<'a> {
             );
         }
         let call = IB20Factory::createB20Call {
-            variant: B20Variant::Asset.abi(),
+            variant: variant.abi(),
             salt,
             params: params.create.abi_encode().into(),
             initCalls: init_calls,

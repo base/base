@@ -60,24 +60,24 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                 StaticcallCase::string(
                     "name",
                     IB20::nameCall {}.abi_encode(),
-                    BerylTestEnv::B20_SECURITY_NAME,
+                    BerylTestEnv::B20_ASSET_NAME,
                 ),
                 StaticcallCase::string(
                     "symbol",
                     IB20::symbolCall {}.abi_encode(),
-                    BerylTestEnv::B20_SECURITY_SYMBOL,
+                    BerylTestEnv::B20_ASSET_SYMBOL,
                 ),
                 StaticcallCase::string("contractURI", IB20::contractURICall {}.abi_encode(), ""),
                 StaticcallCase::string(
                     "extraMetadata(ISIN)",
                     IB20Asset::extraMetadataCall { identifierType: "ISIN".to_string() }
                         .abi_encode(),
-                    BerylTestEnv::B20_SECURITY_ISIN,
+                    BerylTestEnv::B20_ASSET_ISIN,
                 ),
                 StaticcallCase::word(
                     "decimals",
                     IB20::decimalsCall {}.abi_encode(),
-                    U256::from(BerylTestEnv::B20_SECURITY_DECIMALS),
+                    U256::from(BerylTestEnv::B20_ASSET_DECIMALS),
                 ),
                 StaticcallCase::word(
                     "totalSupply",
@@ -521,9 +521,9 @@ impl B20AssetScenario {
         let expected = IB20Factory::B20Created {
             token: self.token,
             variant: IB20Factory::B20Variant::ASSET,
-            name: BerylTestEnv::B20_SECURITY_NAME.to_string(),
-            symbol: BerylTestEnv::B20_SECURITY_SYMBOL.to_string(),
-            decimals: BerylTestEnv::B20_SECURITY_DECIMALS,
+            name: BerylTestEnv::B20_ASSET_NAME.to_string(),
+            symbol: BerylTestEnv::B20_ASSET_SYMBOL.to_string(),
+            decimals: BerylTestEnv::B20_ASSET_DECIMALS,
             variantParams: Bytes::new(),
         }
         .encode_log_data();
