@@ -9,6 +9,10 @@ use std::{
 };
 
 use base_bundles::RejectedTransaction;
+use base_observability_events::{
+    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
+};
+use chrono::{TimeZone, Utc};
 use futures::stream::{self, StreamExt};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc, types::error::ErrorObjectOwned};
 use jsonrpsee_types::error::ErrorCode;
@@ -16,7 +20,11 @@ use moka::sync::Cache;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::{metrics::Metrics, reader::Event, storage::S3EventReaderWriter, types::BundleEvent};
+use crate::{
+    DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT, PgTransactionEventSink, RejectedTransactionEventQuery,
+    TransactionEventRecord, TransactionEventSink, metrics::Metrics, reader::Event,
+    storage::S3EventReaderWriter, types::BundleEvent,
+};
 
 const MAX_BATCH_SIZE: usize = 500;
 
@@ -37,6 +45,45 @@ pub trait AuditArchiverApi {
     /// forwarded (after dedup).
     #[method(name = "persistBatchedBundleEvent")]
     async fn persist_batched_bundle_event(&self, batch: Vec<BundleEvent>) -> RpcResult<u32>;
+
+    /// Returns Postgres-backed transaction event history for one transaction hash.
+    #[method(name = "getTransactionEventsByHash")]
+    async fn get_transaction_events_by_hash(
+        &self,
+        tx_hash: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>>;
+
+    /// Returns Postgres-backed transaction/block event history for one block number.
+    #[method(name = "getTransactionEventsByBlockNumber")]
+    async fn get_transaction_events_by_block_number(
+        &self,
+        block_number: u64,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>>;
+
+    /// Returns Postgres-backed transaction/block event history for one block hash.
+    #[method(name = "getTransactionEventsByBlockHash")]
+    async fn get_transaction_events_by_block_hash(
+        &self,
+        block_hash: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>>;
+
+    /// Returns Postgres-backed transaction event history for one bundle UUID or hash.
+    #[method(name = "getTransactionEventsByBundle")]
+    async fn get_transaction_events_by_bundle(
+        &self,
+        bundle_key: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>>;
+
+    /// Returns rejected transaction events by block/time range.
+    #[method(name = "getRejectedTransactionEvents")]
+    async fn get_rejected_transaction_events(
+        &self,
+        query: RejectedTransactionEventQuery,
+    ) -> RpcResult<Vec<TransactionEventRecord>>;
 }
 
 /// RPC handler for audit archiver requests.
@@ -44,6 +91,7 @@ pub trait AuditArchiverApi {
 pub struct AuditArchiverRpc {
     storage: Arc<S3EventReaderWriter>,
     bundle_events: Option<BundleEventForwarder>,
+    transaction_events: Option<PgTransactionEventSink>,
 }
 
 /// In-memory dedup + forwarding pipeline for bundle events received over RPC.
@@ -104,7 +152,7 @@ impl AuditArchiverRpc {
     /// Creates a new `AuditArchiverRpc` that only handles rejected-transaction
     /// batches. The bundle-event RPC method will return an error.
     pub const fn new(storage: Arc<S3EventReaderWriter>) -> Self {
-        Self { storage, bundle_events: None }
+        Self { storage, bundle_events: None, transaction_events: None }
     }
 
     /// Creates a new `AuditArchiverRpc` configured to also accept bundle-event
@@ -115,7 +163,27 @@ impl AuditArchiverRpc {
         cache: Cache<String, ()>,
         event_tx: mpsc::Sender<Event>,
     ) -> Self {
-        Self { storage, bundle_events: Some(BundleEventForwarder { cache, event_tx }) }
+        Self {
+            storage,
+            bundle_events: Some(BundleEventForwarder { cache, event_tx }),
+            transaction_events: None,
+        }
+    }
+
+    /// Attaches the Postgres transaction event store used by read APIs.
+    pub fn with_transaction_event_store(mut self, store: PgTransactionEventSink) -> Self {
+        self.transaction_events = Some(store);
+        self
+    }
+
+    fn transaction_event_store(&self) -> RpcResult<&PgTransactionEventSink> {
+        self.transaction_events.as_ref().ok_or_else(|| {
+            ErrorObjectOwned::owned(
+                ErrorCode::InternalError.code(),
+                "Transaction event Postgres store is not configured on this audit archiver",
+                None::<()>,
+            )
+        })
     }
 }
 
@@ -147,11 +215,23 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
         let storage = Arc::clone(&self.storage);
 
         // Peform the S3 operations in parallel on the batch. Up to 5 concurrent operations at a time.
+        let transaction_event_store = self.transaction_events.clone();
         let persisted = stream::iter(batch)
             .map(move |tx| {
                 let storage = Arc::clone(&storage);
+                let transaction_event_store = transaction_event_store.clone();
                 async move {
                     let result = storage.store_rejected_transaction(&tx).await;
+                    if result.is_ok()
+                        && let Some(store) = transaction_event_store.as_ref()
+                        && let Err(err) = persist_rejected_transaction_event(store, &tx).await
+                    {
+                        error!(
+                            error = %err,
+                            tx_hash = %tx.tx_hash,
+                            "Failed to persist rejected transaction event"
+                        );
+                    }
                     (tx, result)
                 }
             })
@@ -203,6 +283,133 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
         debug!(batch_size, forwarded, "Forwarded bundle event batch");
         Ok(forwarded)
     }
+
+    async fn get_transaction_events_by_hash(
+        &self,
+        tx_hash: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        self.transaction_event_store()?
+            .events_by_transaction_hash(
+                &tx_hash,
+                limit.unwrap_or(DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT),
+            )
+            .await
+            .map_err(internal_rpc_error)
+    }
+
+    async fn get_transaction_events_by_block_number(
+        &self,
+        block_number: u64,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        self.transaction_event_store()?
+            .events_by_block_number(
+                block_number,
+                limit.unwrap_or(DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT),
+            )
+            .await
+            .map_err(internal_rpc_error)
+    }
+
+    async fn get_transaction_events_by_block_hash(
+        &self,
+        block_hash: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        self.transaction_event_store()?
+            .events_by_block_hash(
+                &block_hash,
+                limit.unwrap_or(DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT),
+            )
+            .await
+            .map_err(internal_rpc_error)
+    }
+
+    async fn get_transaction_events_by_bundle(
+        &self,
+        bundle_key: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        self.transaction_event_store()?
+            .events_by_bundle(&bundle_key, limit.unwrap_or(DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT))
+            .await
+            .map_err(internal_rpc_error)
+    }
+
+    async fn get_rejected_transaction_events(
+        &self,
+        query: RejectedTransactionEventQuery,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        self.transaction_event_store()?
+            .rejected_transaction_events(query)
+            .await
+            .map_err(internal_rpc_error)
+    }
+}
+
+fn internal_rpc_error(error: anyhow::Error) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(ErrorCode::InternalError.code(), error.to_string(), None::<()>)
+}
+
+async fn persist_rejected_transaction_event(
+    store: &PgTransactionEventSink,
+    tx: &RejectedTransaction,
+) -> anyhow::Result<()> {
+    let event_time = Utc.timestamp_opt(tx.timestamp as i64, 0).single().unwrap_or_else(Utc::now);
+    let event_id = EventIdBuilder::new()
+        .part("producer", TransactionEventProducer::BaseBuilder)
+        .part("event_type", TransactionEventType::BuilderRejected)
+        .part("tx_hash", tx.tx_hash)
+        .part("block_number", tx.block_number)
+        .part("timestamp", tx.timestamp)
+        .finish();
+
+    let mut data = serde_json::Map::from_iter([
+        ("reason".to_string(), serde_json::to_value(&tx.reason)?),
+        ("bundle_hash".to_string(), serde_json::json!(tx.metering.bundle_hash.to_string())),
+        ("state_block_number".to_string(), serde_json::json!(tx.metering.state_block_number)),
+        ("total_gas_used".to_string(), serde_json::json!(tx.metering.total_gas_used)),
+        (
+            "total_execution_time_us".to_string(),
+            serde_json::json!(tx.metering.total_execution_time_us.to_string()),
+        ),
+        (
+            "state_root_time_us".to_string(),
+            serde_json::json!(tx.metering.state_root_time_us.to_string()),
+        ),
+    ]);
+    data.insert(
+        "results".to_string(),
+        serde_json::json!(
+            tx.metering
+                .results
+                .iter()
+                .map(|result| {
+                    serde_json::json!({
+                        "txHash": result.tx_hash.to_string(),
+                        "fromAddress": result.from_address.to_string(),
+                        "toAddress": result.to_address.map(|address| address.to_string()),
+                        "gasUsed": result.gas_used,
+                        "executionTimeUs": result.execution_time_us.to_string(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        ),
+    );
+
+    let event = TransactionEvent::new(
+        event_id,
+        event_time,
+        TransactionEventProducer::BaseBuilder,
+        TransactionEventType::BuilderRejected,
+    )
+    .with_tx_hash(tx.tx_hash)
+    .with_block_number(tx.block_number)
+    .with_data(data);
+
+    store.insert_events(&[event]).await?;
+    Ok(())
 }
 
 #[cfg(test)]

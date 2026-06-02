@@ -16,13 +16,19 @@ pub use service::{IngressApiServer, IngressService, Providers};
 mod validation;
 use std::{
     net::{IpAddr, SocketAddr},
+    path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 use alloy_primitives::TxHash;
 use alloy_provider::{Provider, RootProvider};
 use base_bundles::MeterBundleResponse;
 use base_common_network::Base;
+use base_observability_events::{
+    DEFAULT_FLUSH_INTERVAL, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
+    TransactionEventWriterConfig,
+};
 use clap::Args;
 use tokio::{
     sync::{Semaphore, broadcast},
@@ -118,6 +124,57 @@ pub struct Config {
     /// Enable sending to builder
     #[arg(long, env = "TIPS_INGRESS_SEND_TO_BUILDER", default_value = "false")]
     pub send_to_builder: bool,
+
+    /// Enables transaction observability JSONL journal writes.
+    #[arg(long, env = "TIPS_INGRESS_TRANSACTION_EVENTS_ENABLED", default_value = "false")]
+    pub transaction_events_enabled: bool,
+
+    /// Dedicated JSONL file path tailed by the transaction-events sidecar.
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_TRANSACTION_EVENTS_FILE_PATH",
+        default_value = "/var/log/base/transaction-events.jsonl"
+    )]
+    pub transaction_events_file_path: PathBuf,
+
+    /// Bounded in-process queue capacity for journal writes.
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_TRANSACTION_EVENTS_QUEUE_CAPACITY",
+        default_value_t = DEFAULT_QUEUE_CAPACITY
+    )]
+    pub transaction_events_queue_capacity: usize,
+
+    /// Background journal flush interval in milliseconds.
+    #[arg(long, env = "TIPS_INGRESS_TRANSACTION_EVENTS_FLUSH_INTERVAL_MS", default_value = "1000")]
+    pub transaction_events_flush_interval_ms: u64,
+
+    /// Fail service initialization if the journal file cannot be opened.
+    #[arg(long, env = "TIPS_INGRESS_TRANSACTION_EVENTS_REQUIRED", default_value = "false")]
+    pub transaction_events_required: bool,
+
+    /// Network label written into transaction observability events.
+    #[arg(long, env = "TIPS_INGRESS_TRANSACTION_EVENTS_NETWORK", default_value = "base-mainnet")]
+    pub transaction_events_network: String,
+}
+
+impl Config {
+    /// Builds the shared JSONL writer config for ingress transaction events.
+    pub fn transaction_event_writer_config(&self) -> TransactionEventWriterConfig {
+        TransactionEventWriterConfig {
+            enabled: self.transaction_events_enabled,
+            file_path: self.transaction_events_file_path.clone(),
+            queue_capacity: self.transaction_events_queue_capacity,
+            flush_interval: if self.transaction_events_flush_interval_ms == 0 {
+                DEFAULT_FLUSH_INTERVAL
+            } else {
+                Duration::from_millis(self.transaction_events_flush_interval_ms)
+            },
+            required: self.transaction_events_required,
+            producer: TransactionEventProducer::IngressRpc,
+            network: self.transaction_events_network.clone(),
+        }
+    }
 }
 
 /// Maximum number of concurrent RPC calls per builder URL.

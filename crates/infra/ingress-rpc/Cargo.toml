@@ -15,6 +15,7 @@ url.workspace = true
 base-common-evm.workspace = true
 async-trait.workspace = true
 base-bundles.workspace = true
+base-observability-events.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-signer-local.workspace = true
 base-execution-evm.workspace = true
@@ -30,6 +31,7 @@ tracing = { workspace = true, features = ["std"] }
 moka = { workspace = true, features = ["future"] }
 serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
+chrono = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 base-metrics = { workspace = true, features = ["metrics"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }

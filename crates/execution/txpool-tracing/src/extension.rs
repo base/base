@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use base_flashblocks::{FlashblocksConfig, FlashblocksState};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
+use base_observability_events::{TransactionEventWriter, TransactionEventWriterConfig};
 use reth_provider::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::tracex_subscription;
 
@@ -18,6 +19,10 @@ pub struct TxpoolConfig {
     pub tracing_enabled: bool,
     /// Emits `info`-level logs for transaction tracing when enabled.
     pub tracing_logs_enabled: bool,
+    /// Optional durable transaction event journal writer configuration.
+    pub transaction_event_writer_config: Option<TransactionEventWriterConfig>,
+    /// Optional node role label attached to durable transaction events.
+    pub transaction_event_node_role: Option<String>,
     /// Optional Flashblocks configuration (includes state).
     pub flashblocks_config: Option<FlashblocksConfig>,
 }
@@ -43,6 +48,8 @@ impl BaseNodeExtension for TxPoolExtension {
 
         let tracing_enabled = config.tracing_enabled;
         let logs_enabled = config.tracing_logs_enabled;
+        let writer_config = config.transaction_event_writer_config;
+        let node_role = config.transaction_event_node_role;
         let flashblocks_config = config.flashblocks_config;
 
         // Start tracing subscription if enabled
@@ -60,7 +67,28 @@ impl BaseNodeExtension for TxPoolExtension {
             let fb_state: Arc<FlashblocksState> =
                 flashblocks_config.as_ref().map(|cfg| Arc::clone(&cfg.state)).unwrap_or_default();
 
-            tokio::spawn(tracex_subscription(canonical_stream, fb_state, pool, logs_enabled));
+            tokio::spawn(async move {
+                let event_writer = match writer_config {
+                    Some(config) => match TransactionEventWriter::from_config(config).await {
+                        Ok(writer) => Some(writer),
+                        Err(err) => {
+                            warn!(error = %err, "transaction event journal disabled");
+                            None
+                        }
+                    },
+                    None => None,
+                };
+
+                tracex_subscription(
+                    canonical_stream,
+                    fb_state,
+                    pool,
+                    logs_enabled,
+                    event_writer,
+                    node_role,
+                )
+                .await;
+            });
 
             Ok(())
         })

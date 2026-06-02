@@ -34,6 +34,18 @@ pub use storage::{
     S3Key, TransactionMetadata,
 };
 
+mod transaction_events;
+pub use transaction_events::{
+    DEFAULT_TRANSACTION_EVENT_BATCH_PATH, DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE,
+    DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES,
+    DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES, DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT,
+    PgTransactionEventSink, RejectedTransactionEventQuery, TransactionEventBatchRequest,
+    TransactionEventBatchResponse, TransactionEventBatchStatus, TransactionEventIngestConfig,
+    TransactionEventInsertOutcome, TransactionEventItemResult, TransactionEventItemStatus,
+    TransactionEventRecord, TransactionEventSink, TransactionEventStorageError,
+    serve_transaction_event_ingest,
+};
+
 mod types;
 use core::time::Duration;
 

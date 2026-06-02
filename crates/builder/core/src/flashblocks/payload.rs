@@ -26,6 +26,8 @@ use base_common_flashblocks::{
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use base_observability_events::TransactionEventType;
+use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -59,6 +61,7 @@ use crate::{
         generator::{BlockCell, BuildArguments},
     },
     traits::{ClientBounds, PoolBounds},
+    transaction_events::{BuilderTransactionEventContext, emit_builder_transaction_event},
 };
 
 type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
@@ -876,6 +879,7 @@ where
         let (final_payload, _) = build_block(state, ctx, info, FlashblockId::default(), true)?;
 
         ctx.flush_rejected_txs(info);
+        self.emit_final_inclusion_events(ctx, &final_payload);
 
         let elapsed = start_time.elapsed();
         info!(
@@ -889,6 +893,49 @@ where
         finalized_cell.set(final_payload);
 
         Ok(())
+    }
+
+    fn emit_final_inclusion_events(
+        &self,
+        ctx: &BasePayloadBuilderCtx,
+        final_payload: &BaseBuiltPayload,
+    ) {
+        let Some(sink) = ctx.builder_config.transaction_event_sink.as_ref() else {
+            return;
+        };
+
+        let block = final_payload.block();
+        let block_hash = block.hash();
+        let block_number = block.number;
+        for (position, tx) in block.body().transactions.iter().enumerate() {
+            let event_ctx = BuilderTransactionEventContext {
+                network: ctx.builder_config.transaction_event_network.clone(),
+                payload_id: ctx.payload_id().to_string(),
+                block_number,
+                block_hash: Some(block_hash),
+                parent_hash: ctx.parent_hash(),
+                flashblock_index: None,
+                target_flashblock_count: ctx.target_flashblock_count(),
+                ordering_position: Some(position as u64),
+                builder_mode: "flashblocks",
+                source_queue: "finalized_payload",
+            };
+            emit_builder_transaction_event(
+                Some(sink),
+                event_ctx,
+                TransactionEventType::BuilderIncluded,
+                tx.tx_hash(),
+                serde_json::Map::from_iter([
+                    ("position".to_string(), serde_json::json!(position)),
+                    ("gas_used".to_string(), serde_json::json!(block.gas_used)),
+                    (
+                        "inclusion_signal".to_string(),
+                        serde_json::json!("builder_finalized_payload"),
+                    ),
+                    ("canonicality".to_string(), serde_json::json!("not_observed_by_builder")),
+                ]),
+            );
+        }
     }
 
     /// Calculate number of flashblocks, taking time drift into account.

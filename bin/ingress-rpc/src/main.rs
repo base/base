@@ -7,6 +7,7 @@ use audit_archiver_lib::{AuditConnector, BundleEvent, RpcBundleEventPublisher};
 use base_bundles::MeterBundleResponse;
 use base_cli_utils::LogConfig;
 use base_common_network::Base;
+use base_observability_events::TransactionEventWriter;
 use clap::Parser;
 use ingress_rpc_lib::{
     BuilderConnector, Config, HealthServer, IngressApiServer, IngressService, Providers,
@@ -60,10 +61,15 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let providers = Providers {
-        mempool: RootProvider::<Base>::new_http(config.mempool_url),
-        simulation: RootProvider::<Base>::new_http(config.simulation_rpc),
+        mempool: RootProvider::<Base>::new_http(config.mempool_url.clone()),
+        simulation: RootProvider::<Base>::new_http(config.simulation_rpc.clone()),
         raw_tx_forward: config.raw_tx_forward_rpc.clone().map(RootProvider::<Base>::new_http),
     };
+
+    let transaction_event_writer =
+        TransactionEventWriter::from_config(config.transaction_event_writer_config())
+            .await
+            .map_err(|err| anyhow::anyhow!("{err}"))?;
 
     let audit_publisher = RpcBundleEventPublisher::new(
         config.audit_rpc_url.as_str(),
@@ -97,7 +103,13 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let bind_addr = format!("{}:{}", config.address, config.port);
-    let service = IngressService::new(providers, audit_tx, builder_tx, cli.config);
+    let service = IngressService::new_with_transaction_event_writer(
+        providers,
+        audit_tx,
+        builder_tx,
+        cli.config,
+        transaction_event_writer,
+    );
 
     let server = Server::builder().build(&bind_addr).await?;
     let addr = server.local_addr()?;
