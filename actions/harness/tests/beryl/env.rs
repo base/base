@@ -191,11 +191,6 @@ impl BerylTestEnv {
         ActivationFeature::B20Factory.id()
     }
 
-    /// Activation registry feature ID for the B-20 token precompile.
-    pub(crate) const fn b20_token_feature() -> B256 {
-        ActivationFeature::B20Token.id()
-    }
-
     /// Activation registry feature ID for the B-20 stablecoin precompile.
     pub(crate) const fn b20_stablecoin_feature() -> B256 {
         ActivationFeature::B20Stablecoin.id()

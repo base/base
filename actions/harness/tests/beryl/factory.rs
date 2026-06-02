@@ -141,28 +141,28 @@ async fn b20_creation_reverts_while_variant_feature_is_deactivated() {
     let block2 = env.sequencer.build_next_block_with_transactions(vec![create_first_token]).await;
     assert!(env.user_tx_succeeded(&block2, 0), "first B-20 creation must succeed");
 
-    let deactivate_b20_token = env.deactivate_feature_tx(BerylTestEnv::b20_token_feature());
-    let block3 = env.sequencer.build_next_block_with_transactions(vec![deactivate_b20_token]).await;
-    assert!(env.user_tx_succeeded(&block3, 0), "B20_TOKEN deactivation must succeed");
+    let deactivate_b20_asset = env.deactivate_feature_tx(BerylTestEnv::b20_asset_feature());
+    let block3 = env.sequencer.build_next_block_with_transactions(vec![deactivate_b20_asset]).await;
+    assert!(env.user_tx_succeeded(&block3, 0), "B20_ASSET deactivation must succeed");
 
     let create_while_deactivated = env.create_b20_token_with_salt_tx(BerylTestEnv::ALT_SALT);
     let block4 =
         env.sequencer.build_next_block_with_transactions(vec![create_while_deactivated]).await;
     assert!(
         !env.user_tx_succeeded(&block4, 0),
-        "B-20 creation must revert when B20_TOKEN variant is deactivated"
+        "B-20 creation must revert when B20_ASSET variant is deactivated"
     );
 
-    let reactivate_b20_token = env.activate_feature_tx(BerylTestEnv::b20_token_feature());
-    let block5 = env.sequencer.build_next_block_with_transactions(vec![reactivate_b20_token]).await;
-    assert!(env.user_tx_succeeded(&block5, 0), "B20_TOKEN re-activation must succeed");
+    let reactivate_b20_asset = env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
+    let block5 = env.sequencer.build_next_block_with_transactions(vec![reactivate_b20_asset]).await;
+    assert!(env.user_tx_succeeded(&block5, 0), "B20_ASSET re-activation must succeed");
 
     let create_after_reactivate = env.create_b20_token_with_salt_tx(BerylTestEnv::ALT_SALT);
     let block6 =
         env.sequencer.build_next_block_with_transactions(vec![create_after_reactivate]).await;
     assert!(
         env.user_tx_succeeded(&block6, 0),
-        "B-20 creation must succeed after B20_TOKEN variant is re-activated"
+        "B-20 creation must succeed after B20_ASSET variant is re-activated"
     );
 
     env.derive_blocks(
@@ -302,14 +302,14 @@ struct B20FactoryPrecompiles;
 impl B20FactoryPrecompiles {
     async fn activate(env: &mut BerylTestEnv) -> BaseBlock {
         let activate_factory = env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
-        let activate_b20 = env.activate_feature_tx(BerylTestEnv::b20_token_feature());
+        let activate_b20_asset = env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
         let block = env
             .sequencer
-            .build_next_block_with_transactions(vec![activate_factory, activate_b20])
+            .build_next_block_with_transactions(vec![activate_factory, activate_b20_asset])
             .await;
 
         assert!(env.user_tx_succeeded(&block, 0), "TOKEN_FACTORY activation must succeed");
-        assert!(env.user_tx_succeeded(&block, 1), "B20_TOKEN activation must succeed");
+        assert!(env.user_tx_succeeded(&block, 1), "B20_ASSET activation must succeed");
 
         block
     }

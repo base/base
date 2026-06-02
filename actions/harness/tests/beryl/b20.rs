@@ -219,10 +219,10 @@ async fn b20_staticcall_abi_returns_storage_values() {
 async fn b20_transfer_succeeds_while_token_feature_is_deactivated() {
     let mut scenario = B20TokenScenario::new().await;
 
-    let deactivate_b20 = scenario.env.deactivate_feature_tx(BerylTestEnv::b20_token_feature());
+    let deactivate_b20 = scenario.env.deactivate_feature_tx(BerylTestEnv::b20_asset_feature());
     let block = scenario.build_block_with_transactions(vec![deactivate_b20]).await;
 
-    assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_TOKEN deactivation must succeed");
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_ASSET deactivation must succeed");
 
     let transfer_while_deactivated =
         scenario.env.transfer_b20_tx(scenario.token, BerylTestEnv::bob(), U256::from(1));
@@ -230,7 +230,7 @@ async fn b20_transfer_succeeds_while_token_feature_is_deactivated() {
 
     assert!(
         scenario.env.user_tx_succeeded(&block, 0),
-        "existing token transfer must succeed even when B20_TOKEN is deactivated"
+        "existing token transfer must succeed even when B20_ASSET is deactivated"
     );
     scenario.assert_transfer_log(&block, BerylTestEnv::alice(), BerylTestEnv::bob(), 1);
     scenario.assert_balances(BerylTestEnv::B20_INITIAL_SUPPLY - 1, 1, 0);
@@ -600,12 +600,12 @@ impl B20TokenScenario {
 
         let activate_factory =
             scenario.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
-        let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_token_feature());
+        let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
         let block =
             scenario.build_block_with_transactions(vec![activate_factory, activate_b20]).await;
 
         assert!(scenario.env.user_tx_succeeded(&block, 0), "TOKEN_FACTORY activation must succeed");
-        assert!(scenario.env.user_tx_succeeded(&block, 1), "B20_TOKEN activation must succeed");
+        assert!(scenario.env.user_tx_succeeded(&block, 1), "B20_ASSET activation must succeed");
 
         let create = scenario.env.create_b20_token_tx();
         let block = scenario.build_block_with_transactions(vec![create]).await;
