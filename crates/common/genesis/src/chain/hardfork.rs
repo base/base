@@ -114,6 +114,72 @@ impl Display for HardForkConfig {
 }
 
 impl HardForkConfig {
+    /// Clears all timestamp-based hardfork activation times.
+    pub fn clear_activation_timestamps(&mut self) {
+        self.regolith_time = None;
+        self.canyon_time = None;
+        self.delta_time = None;
+        self.ecotone_time = None;
+        self.fjord_time = None;
+        self.granite_time = None;
+        self.holocene_time = None;
+        self.pectra_blob_schedule_time = None;
+        self.isthmus_time = None;
+        self.jovian_time = None;
+        self.base = HardforkConfig::default();
+    }
+
+    /// Clears a timestamp-based hardfork activation time by contract hardfork ID.
+    pub fn clear_activation_timestamp(&mut self, hardfork_id: &str) -> bool {
+        match Self::normalized_hardfork_id(hardfork_id).as_str() {
+            "regolith" => self.regolith_time = None,
+            "canyon" => self.canyon_time = None,
+            "delta" => self.delta_time = None,
+            "ecotone" => self.ecotone_time = None,
+            "fjord" => self.fjord_time = None,
+            "granite" => self.granite_time = None,
+            "holocene" => self.holocene_time = None,
+            "pectrablobschedule" => self.pectra_blob_schedule_time = None,
+            "isthmus" => self.isthmus_time = None,
+            "jovian" => self.jovian_time = None,
+            "azul" | "baseazul" | "v1" => self.base.azul = None,
+            "beryl" | "baseberyl" | "v2" => self.base.beryl = None,
+            _ => return false,
+        }
+
+        true
+    }
+
+    /// Sets a timestamp-based hardfork activation time by contract hardfork ID.
+    pub fn set_activation_timestamp(&mut self, hardfork_id: &str, timestamp: u64) -> bool {
+        match Self::normalized_hardfork_id(hardfork_id).as_str() {
+            "regolith" => self.regolith_time = Some(timestamp),
+            "canyon" => self.canyon_time = Some(timestamp),
+            "delta" => self.delta_time = Some(timestamp),
+            "ecotone" => self.ecotone_time = Some(timestamp),
+            "fjord" => self.fjord_time = Some(timestamp),
+            "granite" => self.granite_time = Some(timestamp),
+            "holocene" => self.holocene_time = Some(timestamp),
+            "pectrablobschedule" => self.pectra_blob_schedule_time = Some(timestamp),
+            "isthmus" => self.isthmus_time = Some(timestamp),
+            "jovian" => self.jovian_time = Some(timestamp),
+            "azul" | "baseazul" | "v1" => self.base.azul = Some(timestamp),
+            "beryl" | "baseberyl" | "v2" => self.base.beryl = Some(timestamp),
+            _ => return false,
+        }
+
+        true
+    }
+
+    /// Normalizes a contract hardfork ID for matching.
+    pub fn normalized_hardfork_id(hardfork_id: &str) -> String {
+        hardfork_id
+            .bytes()
+            .filter(|b| !matches!(b, b'_' | b'-' | b' '))
+            .map(|b| b.to_ascii_lowercase() as char)
+            .collect()
+    }
+
     /// Returns an iterator of hardfork names -> their activation times (if scheduled.)
     pub fn iter(&self) -> impl Iterator<Item = (&'static str, Option<u64>)> {
         [
@@ -261,5 +327,30 @@ mod tests {
         assert_eq!(iter.next(), Some(("Azul", Some(11))));
         assert_eq!(iter.next(), Some(("Beryl", Some(12))));
         assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_set_activation_timestamp_by_hardfork_id() {
+        let mut hardforks = HardForkConfig::default();
+
+        assert!(hardforks.set_activation_timestamp("regolith", 1));
+        assert!(hardforks.set_activation_timestamp("pectra-blob-schedule", 2));
+        assert!(hardforks.set_activation_timestamp("base_azul", 3));
+        assert!(hardforks.set_activation_timestamp("v2", 4));
+        assert!(!hardforks.set_activation_timestamp("unknown", 5));
+
+        assert_eq!(hardforks.regolith_time, Some(1));
+        assert_eq!(hardforks.pectra_blob_schedule_time, Some(2));
+        assert_eq!(hardforks.base.azul, Some(3));
+        assert_eq!(hardforks.base.beryl, Some(4));
+
+        assert!(hardforks.clear_activation_timestamp("base_azul"));
+        assert_eq!(hardforks.base.azul, None);
+        assert_eq!(hardforks.base.beryl, Some(4));
+        assert!(!hardforks.clear_activation_timestamp("unknown"));
+
+        hardforks.clear_activation_timestamps();
+
+        assert_eq!(hardforks, HardForkConfig::default());
     }
 }

@@ -8,13 +8,26 @@ use url::Url;
 /// Default wall-clock interval used to check whether another L1 block polling window has elapsed.
 pub const DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL: Duration = Duration::from_secs(12);
 
+/// Default hardfork IDs read from the L1 upgrade signal contract.
+pub const DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS: &[&str] = &[
+    "regolith",
+    "canyon",
+    "delta",
+    "ecotone",
+    "fjord",
+    "granite",
+    "holocene",
+    "pectra_blob_schedule",
+    "isthmus",
+    "jovian",
+    "azul",
+    "beryl",
+];
+
 /// Error returned when CLI arguments cannot form an upgrade signal configuration.
 #[derive(Debug, thiserror::Error)]
 pub enum UpgradeSignalConfigError {
-    /// A contract address was set without a hardfork ID.
-    #[error("upgrade signal contract requires --upgrade-signal.hardfork-id")]
-    MissingHardforkId,
-    /// A hardfork ID was set without a contract address.
+    /// Hardfork IDs were set without a contract address.
     #[error("upgrade signal hardfork ID requires --upgrade-signal.contract")]
     MissingContractAddress,
     /// The hardfork ID is empty.
@@ -29,45 +42,75 @@ pub struct UpgradeSignalArgs {
     #[arg(long = "upgrade-signal.contract", env = "BASE_NODE_UPGRADE_SIGNAL_CONTRACT")]
     pub contract_address: Option<Address>,
 
-    /// Hardfork ID to pass to the L1 upgrade signal contract.
-    #[arg(long = "upgrade-signal.hardfork-id", env = "BASE_NODE_UPGRADE_SIGNAL_HARDFORK_ID")]
-    pub hardfork_id: Option<String>,
+    /// Hardfork IDs to pass to the L1 upgrade signal contract.
+    ///
+    /// If omitted while the contract is configured, all timestamp-based Base rollup hardfork IDs
+    /// are read.
+    #[arg(
+        long = "upgrade-signal.hardfork-id",
+        env = "BASE_NODE_UPGRADE_SIGNAL_HARDFORK_ID",
+        value_delimiter = ','
+    )]
+    pub hardfork_ids: Vec<String>,
 }
 
 impl UpgradeSignalArgs {
     /// Builds an observer configuration if the upgrade signal is enabled.
     pub fn config(&self) -> Result<Option<UpgradeSignalConfig>, UpgradeSignalConfigError> {
         let Some(contract_address) = self.contract_address else {
-            if self.hardfork_id.is_some() {
+            if !self.hardfork_ids.is_empty() {
                 return Err(UpgradeSignalConfigError::MissingContractAddress);
             }
             return Ok(None);
         };
 
-        let Some(hardfork_id) = self.hardfork_id.clone() else {
-            return Err(UpgradeSignalConfigError::MissingHardforkId);
+        let hardfork_ids = Self::configured_hardfork_ids(&self.hardfork_ids)?;
+
+        Ok(Some(UpgradeSignalConfig { contract_address, hardfork_ids }))
+    }
+
+    /// Returns the configured hardfork IDs, or the default contract-backed hardfork schedule.
+    pub fn configured_hardfork_ids(
+        hardfork_ids: &[String],
+    ) -> Result<Vec<String>, UpgradeSignalConfigError> {
+        let source = if hardfork_ids.is_empty() {
+            DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS.iter().copied().collect::<Vec<_>>()
+        } else {
+            hardfork_ids.iter().map(String::as_str).collect::<Vec<_>>()
         };
-        if hardfork_id.is_empty() {
-            return Err(UpgradeSignalConfigError::EmptyHardforkId);
+        let mut ids = Vec::new();
+        for hardfork_id in source {
+            let hardfork_id = hardfork_id.trim();
+            if hardfork_id.is_empty() {
+                return Err(UpgradeSignalConfigError::EmptyHardforkId);
+            }
+            if !ids.iter().any(|existing: &String| existing.eq_ignore_ascii_case(hardfork_id)) {
+                ids.push(hardfork_id.to_string());
+            }
         }
 
-        Ok(Some(UpgradeSignalConfig { contract_address, hardfork_id }))
+        Ok(ids)
     }
 }
 
-/// Runtime configuration for observing one hardfork ID on an L1 upgrade signal contract.
+/// Runtime configuration for observing hardfork IDs on an L1 upgrade signal contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpgradeSignalConfig {
     /// L1 upgrade signal contract or proxy address.
     pub contract_address: Address,
-    /// Hardfork ID to pass to the contract.
-    pub hardfork_id: String,
+    /// Hardfork IDs to pass to the contract.
+    pub hardfork_ids: Vec<String>,
 }
 
 impl UpgradeSignalConfig {
     /// Creates a new observer configuration with default polling settings.
     pub fn new(contract_address: Address, hardfork_id: impl Into<String>) -> Self {
-        Self { contract_address, hardfork_id: hardfork_id.into() }
+        Self { contract_address, hardfork_ids: vec![hardfork_id.into()] }
+    }
+
+    /// Creates a new observer configuration for multiple hardfork IDs.
+    pub fn new_many(contract_address: Address, hardfork_ids: Vec<String>) -> Self {
+        Self { contract_address, hardfork_ids }
     }
 }
 
@@ -93,19 +136,21 @@ mod tests {
     }
 
     #[test]
-    fn rejects_contract_without_hardfork_id() {
+    fn uses_default_ids_for_contract_without_hardfork_id() {
         let args = UpgradeSignalArgs {
             contract_address: Some(address!("0000000000000000000000000000000000000001")),
             ..Default::default()
         };
 
-        assert!(matches!(args.config().unwrap_err(), UpgradeSignalConfigError::MissingHardforkId));
+        let config = args.config().unwrap().unwrap();
+
+        assert_eq!(config.hardfork_ids, DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS);
     }
 
     #[test]
     fn rejects_hardfork_id_without_contract() {
         let args =
-            UpgradeSignalArgs { hardfork_id: Some("azul".to_string()), ..Default::default() };
+            UpgradeSignalArgs { hardfork_ids: vec!["azul".to_string()], ..Default::default() };
 
         assert!(matches!(
             args.config().unwrap_err(),
@@ -118,12 +163,12 @@ mod tests {
         let contract = address!("0000000000000000000000000000000000000001");
         let args = UpgradeSignalArgs {
             contract_address: Some(contract),
-            hardfork_id: Some("azul".to_string()),
+            hardfork_ids: vec!["azul".to_string()],
         };
 
         let config = args.config().unwrap().unwrap();
 
         assert_eq!(config.contract_address, contract);
-        assert_eq!(config.hardfork_id, "azul");
+        assert_eq!(config.hardfork_ids, ["azul"]);
     }
 }

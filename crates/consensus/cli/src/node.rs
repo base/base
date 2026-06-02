@@ -10,14 +10,14 @@ use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder};
 use base_upgrade_signal::{
-    AlloyUpgradeSignalReader, UpgradeSignal, UpgradeSignalArgs, UpgradeSignalConfig,
-    UpgradeSignalReader,
+    AlloyUpgradeSignalReader, UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalReader,
+    UpgradeSignalSchedule,
 };
 use clap::Args;
 use eyre::Context;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use url::Url;
 
 use crate::{
@@ -339,28 +339,65 @@ impl ConsensusNodeArgs {
             RootProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone()),
             signal_config.contract_address,
         );
-        let signal = reader.read_signal(&signal_config.hardfork_id).await?;
+        let schedule = reader.read_schedule(&signal_config.hardfork_ids).await?;
 
-        Self::apply_signal_to_rollup_config(cfg, &signal);
+        Self::apply_schedule_to_rollup_config(cfg, &schedule);
 
         Ok(())
     }
 
-    /// Applies a positive Azul activation timestamp to a rollup config.
-    pub fn apply_signal_to_rollup_config(cfg: &mut RollupConfig, signal: &UpgradeSignal) -> bool {
-        let Some(timestamp) = signal.azul_activation_timestamp() else {
-            return false;
-        };
-
-        cfg.set_base_azul_activation_timestamp(timestamp);
+    /// Applies a contract-backed hardfork activation schedule to a rollup config.
+    pub fn apply_schedule_to_rollup_config(
+        cfg: &mut RollupConfig,
+        schedule: &UpgradeSignalSchedule,
+    ) -> usize {
+        let mut applied = 0;
+        let mut cleared = 0;
+        for signal in &schedule.signals {
+            let Some(timestamp) = signal.positive_activation_timestamp() else {
+                if !cfg.clear_hardfork_activation_timestamp(&signal.hardfork_id) {
+                    debug!(
+                        target: "upgrade_signal",
+                        hardfork_id = %signal.hardfork_id,
+                        activation_timestamp = signal.activation_timestamp,
+                        "ignored unsupported rollup hardfork signal"
+                    );
+                    continue;
+                }
+                cleared += 1;
+                info!(
+                    target: "upgrade_signal",
+                    hardfork_id = %signal.hardfork_id,
+                    "cleared upgrade signal from rollup config"
+                );
+                continue;
+            };
+            if !cfg.set_hardfork_activation_timestamp(&signal.hardfork_id, timestamp) {
+                debug!(
+                    target: "upgrade_signal",
+                    hardfork_id = %signal.hardfork_id,
+                    activation_timestamp = timestamp,
+                    "ignored unsupported rollup hardfork signal"
+                );
+                continue;
+            }
+            applied += 1;
+            info!(
+                target: "upgrade_signal",
+                hardfork_id = %signal.hardfork_id,
+                activation_timestamp = timestamp,
+                "applied upgrade signal to rollup config"
+            );
+        }
         info!(
             target: "upgrade_signal",
-            hardfork_id = %signal.hardfork_id,
-            activation_timestamp = %timestamp,
-            "applied upgrade signal to rollup config"
+            applied_hardforks = applied,
+            cleared_hardforks = cleared,
+            configured_hardforks = schedule.signals.len(),
+            "applied upgrade signal schedule to rollup config"
         );
 
-        true
+        applied
     }
 
     /// Starts a rollup node with default external endpoint configuration.
@@ -467,50 +504,63 @@ mod tests {
             args.upgrade_signal.contract_address,
             Some(address!("0000000000000000000000000000000000000001"))
         );
-        assert_eq!(args.upgrade_signal.hardfork_id.as_deref(), Some("azul"));
+        assert_eq!(args.upgrade_signal.hardfork_ids, ["azul"]);
     }
 
-    fn upgrade_signal(hardfork_id: &str, activation_timestamp: u64) -> UpgradeSignal {
-        UpgradeSignal {
-            hardfork_id: hardfork_id.to_string(),
-            activation_timestamp,
-            protocol_version: U256::from(7),
-            l1_block_number: 1,
-        }
+    fn upgrade_schedule(signals: &[(&str, u64)]) -> UpgradeSignalSchedule {
+        UpgradeSignalSchedule::new(
+            signals
+                .iter()
+                .map(|(hardfork_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
+                    hardfork_id: hardfork_id.to_string(),
+                    activation_timestamp: *activation_timestamp,
+                    protocol_version: U256::from(7),
+                    l1_block_number: 1,
+                })
+                .collect(),
+        )
     }
 
     #[test]
-    fn applies_positive_azul_signal_to_rollup_config() {
+    fn applies_positive_schedule_to_rollup_config() {
         let mut cfg = RollupConfig::default();
 
-        let applied =
-            ConsensusNodeArgs::apply_signal_to_rollup_config(&mut cfg, &upgrade_signal("azul", 42));
+        let applied = ConsensusNodeArgs::apply_schedule_to_rollup_config(
+            &mut cfg,
+            &upgrade_schedule(&[("delta", 40), ("azul", 42)]),
+        );
 
-        assert!(applied);
+        assert_eq!(applied, 2);
+        assert_eq!(cfg.hardforks.delta_time, Some(40));
         assert_eq!(cfg.hardforks.base.azul, Some(42));
     }
 
     #[test]
-    fn ignores_zero_azul_signal_for_rollup_config() {
+    fn zero_signal_clears_existing_rollup_config() {
         let mut cfg = RollupConfig::default();
+        cfg.hardforks.base.azul = Some(42);
+        cfg.hardforks.delta_time = Some(40);
 
-        let applied =
-            ConsensusNodeArgs::apply_signal_to_rollup_config(&mut cfg, &upgrade_signal("azul", 0));
+        let applied = ConsensusNodeArgs::apply_schedule_to_rollup_config(
+            &mut cfg,
+            &upgrade_schedule(&[("azul", 0)]),
+        );
 
-        assert!(!applied);
+        assert_eq!(applied, 0);
         assert_eq!(cfg.hardforks.base.azul, None);
+        assert_eq!(cfg.hardforks.delta_time, Some(40));
     }
 
     #[test]
-    fn ignores_non_azul_signal_for_rollup_config() {
+    fn ignores_unsupported_signal_for_rollup_config() {
         let mut cfg = RollupConfig::default();
 
-        let applied = ConsensusNodeArgs::apply_signal_to_rollup_config(
+        let applied = ConsensusNodeArgs::apply_schedule_to_rollup_config(
             &mut cfg,
-            &upgrade_signal("beryl", 42),
+            &upgrade_schedule(&[("unknown", 42)]),
         );
 
-        assert!(!applied);
+        assert_eq!(applied, 0);
         assert_eq!(cfg.hardforks.base.azul, None);
     }
 

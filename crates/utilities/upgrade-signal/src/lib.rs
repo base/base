@@ -9,8 +9,8 @@
 
 mod config;
 pub use config::{
-    DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalArgs, UpgradeSignalConfig,
-    UpgradeSignalConfigError, UpgradeSignalL1RpcArgs,
+    DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS, DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalArgs,
+    UpgradeSignalConfig, UpgradeSignalConfigError, UpgradeSignalL1RpcArgs,
 };
 
 mod contract;
@@ -27,6 +27,6 @@ pub use observer::{L2TimestampSource, UpgradeSignalPollingObserver};
 
 mod state;
 pub use state::{
-    AZUL_HARDFORK_ID, UpgradeActivation, UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalState,
-    UpgradeSignalStateUpdate,
+    UpgradeActivation, UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalSchedule,
+    UpgradeSignalState, UpgradeSignalStateUpdate,
 };

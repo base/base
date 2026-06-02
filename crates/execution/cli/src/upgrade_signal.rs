@@ -4,12 +4,12 @@ use alloy_provider::RootProvider;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
-    AlloyUpgradeSignalReader, DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignal,
-    UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMonitor, UpgradeSignalReader,
+    AlloyUpgradeSignalReader, DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalConfig,
+    UpgradeSignalError, UpgradeSignalMonitor, UpgradeSignalReader, UpgradeSignalSchedule,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use url::Url;
 
 /// Configuration for the execution-node upgrade signal extension.
@@ -43,31 +43,66 @@ impl ExecutionUpgradeSignalExtension {
             RootProvider::new_http(config.l1_rpc.clone()),
             config.signal_config.contract_address,
         );
-        let signal = reader.read_signal(&config.signal_config.hardfork_id).await?;
+        let schedule = reader.read_schedule(&config.signal_config.hardfork_ids).await?;
 
-        Self::apply_signal_to_chain_spec(chain_spec, &signal);
+        Self::apply_schedule_to_chain_spec(chain_spec, &schedule);
 
         Ok(())
     }
 
-    /// Applies a positive Azul activation timestamp to an execution chain spec.
-    pub fn apply_signal_to_chain_spec(
+    /// Applies a contract-backed hardfork activation schedule to an execution chain spec.
+    pub fn apply_schedule_to_chain_spec(
         chain_spec: &mut BaseChainSpec,
-        signal: &UpgradeSignal,
-    ) -> bool {
-        let Some(timestamp) = signal.azul_activation_timestamp() else {
-            return false;
-        };
-
-        chain_spec.set_azul_activation_timestamp(timestamp);
+        schedule: &UpgradeSignalSchedule,
+    ) -> usize {
+        let mut applied = 0;
+        let mut cleared = 0;
+        for signal in &schedule.signals {
+            let Some(timestamp) = signal.positive_activation_timestamp() else {
+                if !chain_spec.clear_hardfork_activation_timestamp(&signal.hardfork_id) {
+                    debug!(
+                        target: "upgrade_signal",
+                        hardfork_id = %signal.hardfork_id,
+                        activation_timestamp = signal.activation_timestamp,
+                        "ignored unsupported execution hardfork signal"
+                    );
+                    continue;
+                }
+                cleared += 1;
+                info!(
+                    target: "upgrade_signal",
+                    hardfork_id = %signal.hardfork_id,
+                    "cleared upgrade signal from execution chain spec"
+                );
+                continue;
+            };
+            if !chain_spec.set_hardfork_activation_timestamp(&signal.hardfork_id, timestamp) {
+                debug!(
+                    target: "upgrade_signal",
+                    hardfork_id = %signal.hardfork_id,
+                    activation_timestamp = timestamp,
+                    "ignored unsupported execution hardfork signal"
+                );
+                continue;
+            }
+            applied += 1;
+            info!(
+                target: "upgrade_signal",
+                hardfork_id = %signal.hardfork_id,
+                activation_timestamp = timestamp,
+                "applied upgrade signal to execution chain spec"
+            );
+        }
+        chain_spec.refresh_genesis_header();
         info!(
             target: "upgrade_signal",
-            hardfork_id = %signal.hardfork_id,
-            activation_timestamp = %timestamp,
-            "applied upgrade signal to execution chain spec"
+            applied_hardforks = applied,
+            cleared_hardforks = cleared,
+            configured_hardforks = schedule.signals.len(),
+            "applied upgrade signal schedule to execution chain spec"
         );
 
-        true
+        applied
     }
 
     /// Polls L1 upgrade signal state.
@@ -75,9 +110,9 @@ impl ExecutionUpgradeSignalExtension {
         monitor: &mut UpgradeSignalMonitor,
         reader: &AlloyUpgradeSignalReader,
     ) {
-        match reader.read_signal(&monitor.config.hardfork_id).await {
-            Ok(signal) => {
-                monitor.update_signal(signal);
+        match reader.read_schedule(&monitor.config.hardfork_ids).await {
+            Ok(schedule) => {
+                monitor.update_schedule(schedule);
             }
             Err(error) => {
                 monitor.record_l1_read_error(&error);
@@ -153,62 +188,75 @@ mod tests {
 
     use super::*;
 
-    fn signal(hardfork_id: &str, activation_timestamp: u64) -> UpgradeSignal {
-        UpgradeSignal {
-            hardfork_id: hardfork_id.to_string(),
-            activation_timestamp,
-            protocol_version: Default::default(),
-            l1_block_number: 1,
-        }
+    fn schedule(signals: &[(&str, u64)]) -> UpgradeSignalSchedule {
+        UpgradeSignalSchedule::new(
+            signals
+                .iter()
+                .map(|(hardfork_id, activation_timestamp)| base_upgrade_signal::UpgradeSignal {
+                    hardfork_id: hardfork_id.to_string(),
+                    activation_timestamp: *activation_timestamp,
+                    protocol_version: Default::default(),
+                    l1_block_number: 1,
+                })
+                .collect(),
+        )
     }
 
     #[test]
-    fn applies_positive_azul_signal_to_chain_spec() {
+    fn applies_positive_schedule_to_chain_spec() {
         let mut chain_spec = BaseChainSpec::devnet();
 
+        chain_spec.set_fork(EthereumHardfork::Shanghai, ForkCondition::Never);
+        chain_spec.set_fork(BaseUpgrade::Canyon, ForkCondition::Never);
         chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
 
-        let applied = ExecutionUpgradeSignalExtension::apply_signal_to_chain_spec(
+        let applied = ExecutionUpgradeSignalExtension::apply_schedule_to_chain_spec(
             &mut chain_spec,
-            &signal("azul", 42),
+            &schedule(&[("canyon", 40), ("azul", 42)]),
         );
 
-        assert!(applied);
+        assert_eq!(applied, 2);
+        assert_eq!(chain_spec.fork(EthereumHardfork::Shanghai), ForkCondition::Timestamp(40));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Canyon), ForkCondition::Timestamp(40));
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Timestamp(42));
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(42));
     }
 
     #[test]
-    fn ignores_zero_azul_signal_for_chain_spec() {
+    fn zero_signal_clears_existing_chain_spec_forks() {
         let mut chain_spec = BaseChainSpec::devnet();
 
-        chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
-        chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
+        chain_spec.set_fork(EthereumHardfork::Shanghai, ForkCondition::Timestamp(40));
+        chain_spec.set_fork(BaseUpgrade::Canyon, ForkCondition::Timestamp(40));
+        chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Timestamp(42));
+        chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Timestamp(42));
 
-        let applied = ExecutionUpgradeSignalExtension::apply_signal_to_chain_spec(
+        let applied = ExecutionUpgradeSignalExtension::apply_schedule_to_chain_spec(
             &mut chain_spec,
-            &signal("azul", 0),
+            &schedule(&[("azul", 0)]),
         );
 
-        assert!(!applied);
+        assert_eq!(applied, 0);
+        assert_eq!(chain_spec.fork(EthereumHardfork::Shanghai), ForkCondition::Timestamp(40));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Canyon), ForkCondition::Timestamp(40));
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
     }
 
     #[test]
-    fn ignores_non_azul_signal_for_chain_spec() {
+    fn ignores_unsupported_signal_for_chain_spec() {
         let mut chain_spec = BaseChainSpec::devnet();
 
         chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
 
-        let applied = ExecutionUpgradeSignalExtension::apply_signal_to_chain_spec(
+        let applied = ExecutionUpgradeSignalExtension::apply_schedule_to_chain_spec(
             &mut chain_spec,
-            &signal("beryl", 42),
+            &schedule(&[("delta", 42)]),
         );
 
-        assert!(!applied);
+        assert_eq!(applied, 0);
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
     }

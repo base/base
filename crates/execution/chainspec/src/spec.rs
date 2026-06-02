@@ -273,12 +273,92 @@ impl BaseChainSpec {
         self.inner.hardforks.insert(fork, condition);
     }
 
-    /// Sets the Base Azul activation timestamp and matching Ethereum Osaka timestamp.
-    pub fn set_azul_activation_timestamp(&mut self, timestamp: u64) {
-        let condition = ForkCondition::Timestamp(timestamp);
+    /// Recomputes the sealed genesis header from the current genesis and hardfork schedule.
+    pub fn refresh_genesis_header(&mut self) {
+        self.inner.genesis_header = SealedHeader::seal_slow(Self::make_genesis_header(
+            &self.inner.genesis,
+            &self.inner.hardforks,
+        ));
+    }
 
-        self.set_fork(EthereumHardfork::Osaka, condition);
-        self.set_fork(BaseUpgrade::Azul, condition);
+    /// Clears all timestamp-based Base hardfork activation conditions.
+    pub fn clear_hardfork_activation_timestamps(&mut self) {
+        for fork in [
+            BaseUpgrade::Regolith,
+            BaseUpgrade::Canyon,
+            BaseUpgrade::Ecotone,
+            BaseUpgrade::Fjord,
+            BaseUpgrade::Granite,
+            BaseUpgrade::Holocene,
+            BaseUpgrade::Isthmus,
+            BaseUpgrade::Jovian,
+            BaseUpgrade::Azul,
+            BaseUpgrade::Beryl,
+        ] {
+            self.set_fork(fork, ForkCondition::Never);
+        }
+        for fork in [
+            EthereumHardfork::Shanghai,
+            EthereumHardfork::Cancun,
+            EthereumHardfork::Prague,
+            EthereumHardfork::Osaka,
+        ] {
+            self.set_fork(fork, ForkCondition::Never);
+        }
+    }
+
+    /// Clears a timestamp-based hardfork activation condition by contract hardfork ID.
+    pub fn clear_hardfork_activation_timestamp(&mut self, hardfork_id: &str) -> bool {
+        self.set_hardfork_activation_condition(hardfork_id, ForkCondition::Never)
+    }
+
+    /// Sets a timestamp-based hardfork activation condition by contract hardfork ID.
+    pub fn set_hardfork_activation_timestamp(&mut self, hardfork_id: &str, timestamp: u64) -> bool {
+        self.set_hardfork_activation_condition(hardfork_id, ForkCondition::Timestamp(timestamp))
+    }
+
+    /// Sets a hardfork activation condition by contract hardfork ID.
+    pub fn set_hardfork_activation_condition(
+        &mut self,
+        hardfork_id: &str,
+        condition: ForkCondition,
+    ) -> bool {
+        match Self::normalized_hardfork_id(hardfork_id).as_str() {
+            "regolith" => self.set_fork(BaseUpgrade::Regolith, condition),
+            "canyon" => {
+                self.set_fork(EthereumHardfork::Shanghai, condition);
+                self.set_fork(BaseUpgrade::Canyon, condition);
+            }
+            "ecotone" => {
+                self.set_fork(EthereumHardfork::Cancun, condition);
+                self.set_fork(BaseUpgrade::Ecotone, condition);
+            }
+            "fjord" => self.set_fork(BaseUpgrade::Fjord, condition),
+            "granite" => self.set_fork(BaseUpgrade::Granite, condition),
+            "holocene" => self.set_fork(BaseUpgrade::Holocene, condition),
+            "isthmus" => {
+                self.set_fork(EthereumHardfork::Prague, condition);
+                self.set_fork(BaseUpgrade::Isthmus, condition);
+            }
+            "jovian" => self.set_fork(BaseUpgrade::Jovian, condition),
+            "azul" | "baseazul" | "v1" => {
+                self.set_fork(EthereumHardfork::Osaka, condition);
+                self.set_fork(BaseUpgrade::Azul, condition);
+            }
+            "beryl" | "baseberyl" | "v2" => self.set_fork(BaseUpgrade::Beryl, condition),
+            _ => return false,
+        }
+
+        true
+    }
+
+    /// Normalizes a contract hardfork ID for matching.
+    pub fn normalized_hardfork_id(hardfork_id: &str) -> String {
+        hardfork_id
+            .bytes()
+            .filter(|b| !matches!(b, b'_' | b'-' | b' '))
+            .map(|b| b.to_ascii_lowercase() as char)
+            .collect()
     }
 }
 
@@ -897,15 +977,20 @@ mod tests {
     }
 
     #[test]
-    fn set_azul_activation_timestamp_updates_osaka() {
+    fn set_hardfork_activation_timestamp_updates_matching_eth_fork() {
         let mut chain_spec = BaseChainSpec::devnet();
 
         chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
-        chain_spec.set_azul_activation_timestamp(42);
+        assert!(chain_spec.set_hardfork_activation_timestamp("azul", 42));
 
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Timestamp(42));
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(42));
+
+        chain_spec.clear_hardfork_activation_timestamps();
+
+        assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
+        assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
     }
 
     #[test]

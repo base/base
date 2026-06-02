@@ -324,7 +324,7 @@ mod tests {
         .args;
 
         assert_eq!(args.upgrade_signal.contract_address, Some(contract));
-        assert_eq!(args.upgrade_signal.hardfork_id.as_deref(), Some("azul"));
+        assert_eq!(args.upgrade_signal.hardfork_ids, ["azul"]);
         assert_eq!(
             args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.as_ref().map(|url| url.as_str()),
             Some("http://localhost:8545/")

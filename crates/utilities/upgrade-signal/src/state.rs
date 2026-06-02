@@ -1,12 +1,11 @@
 //! Upgrade signal state tracking.
 
+use std::collections::BTreeMap;
+
 use alloy_primitives::U256;
 use tracing::{debug, info, warn};
 
 use crate::{UpgradeSignalConfig, UpgradeSignalMetrics};
-
-/// Hardfork ID used by the L1 upgrade signal contract for Base Azul.
-pub const AZUL_HARDFORK_ID: &str = "azul";
 
 /// L1 upgrade signal values for one hardfork ID.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -22,14 +21,30 @@ pub struct UpgradeSignal {
 }
 
 impl UpgradeSignal {
-    /// Returns the positive activation timestamp announced for Base Azul.
-    pub fn azul_activation_timestamp(&self) -> Option<u64> {
-        if self.hardfork_id.eq_ignore_ascii_case(AZUL_HARDFORK_ID) && self.activation_timestamp > 0
-        {
-            Some(self.activation_timestamp)
-        } else {
-            None
-        }
+    /// Returns the positive activation timestamp announced for this hardfork.
+    pub fn positive_activation_timestamp(&self) -> Option<u64> {
+        (self.activation_timestamp > 0).then_some(self.activation_timestamp)
+    }
+
+    /// Returns true if both signals contain the same contract-backed upgrade values.
+    pub fn has_same_contract_values(&self, other: &Self) -> bool {
+        self.hardfork_id == other.hardfork_id
+            && self.activation_timestamp == other.activation_timestamp
+            && self.protocol_version == other.protocol_version
+    }
+}
+
+/// L1 upgrade signal values for a configured hardfork schedule.
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct UpgradeSignalSchedule {
+    /// Signals read from L1.
+    pub signals: Vec<UpgradeSignal>,
+}
+
+impl UpgradeSignalSchedule {
+    /// Creates a new upgrade signal schedule.
+    pub fn new(signals: Vec<UpgradeSignal>) -> Self {
+        Self { signals }
     }
 }
 
@@ -72,13 +87,18 @@ impl UpgradeSignalState {
 
     /// Applies a newly read signal.
     pub fn update_signal(&mut self, signal: UpgradeSignal) -> UpgradeSignalStateUpdate {
-        if self.signal.as_ref() == Some(&signal) {
-            return UpgradeSignalStateUpdate::Unchanged;
-        }
+        let changed = match self.signal.as_ref() {
+            Some(previous) => !previous.has_same_contract_values(&signal),
+            None => true,
+        };
 
         self.signal = Some(signal);
-        self.activation_observed = false;
-        UpgradeSignalStateUpdate::Changed
+        if changed {
+            self.activation_observed = false;
+            UpgradeSignalStateUpdate::Changed
+        } else {
+            UpgradeSignalStateUpdate::Unchanged
+        }
     }
 
     /// Observes an L2 timestamp and returns an activation event if this timestamp activates.
@@ -110,25 +130,31 @@ impl UpgradeSignalState {
 pub struct UpgradeSignalMonitor {
     /// Observer configuration.
     pub config: UpgradeSignalConfig,
-    /// Activation state.
-    pub state: UpgradeSignalState,
+    /// Activation state by hardfork ID.
+    pub states: BTreeMap<String, UpgradeSignalState>,
 }
 
 impl UpgradeSignalMonitor {
     /// Creates a monitor for the provided configuration.
     pub fn new(config: UpgradeSignalConfig) -> Self {
         UpgradeSignalMetrics::init();
-        UpgradeSignalMetrics::activation_observed(config.hardfork_id.clone()).set(0.0);
-        Self { config, state: UpgradeSignalState::new() }
+        let mut states = BTreeMap::new();
+        for hardfork_id in &config.hardfork_ids {
+            UpgradeSignalMetrics::activation_observed(hardfork_id.clone()).set(0.0);
+            states.insert(hardfork_id.clone(), UpgradeSignalState::new());
+        }
+        Self { config, states }
     }
 
     /// Records an L1 read error.
     pub fn record_l1_read_error(&self, error: &impl core::fmt::Display) {
-        UpgradeSignalMetrics::l1_read_errors_total(self.config.hardfork_id.clone()).increment(1);
+        for hardfork_id in &self.config.hardfork_ids {
+            UpgradeSignalMetrics::l1_read_errors_total(hardfork_id.clone()).increment(1);
+        }
         warn!(
             target: "upgrade_signal",
             error = %error,
-            hardfork_id = %self.config.hardfork_id,
+            hardfork_ids = ?self.config.hardfork_ids,
             contract_address = %self.config.contract_address,
             "failed to read L1 upgrade signal"
         );
@@ -136,28 +162,31 @@ impl UpgradeSignalMonitor {
 
     /// Records an L2 timestamp read error.
     pub fn record_l2_timestamp_error(&self, error: &impl core::fmt::Display) {
-        UpgradeSignalMetrics::l2_timestamp_errors_total(self.config.hardfork_id.clone())
-            .increment(1);
+        for hardfork_id in &self.config.hardfork_ids {
+            UpgradeSignalMetrics::l2_timestamp_errors_total(hardfork_id.clone()).increment(1);
+        }
         warn!(
             target: "upgrade_signal",
             error = %error,
-            hardfork_id = %self.config.hardfork_id,
+            hardfork_ids = ?self.config.hardfork_ids,
             "failed to read L2 timestamp"
         );
     }
 
     /// Applies a signal read from L1 and records corresponding metrics.
     pub fn update_signal(&mut self, signal: UpgradeSignal) -> UpgradeSignalStateUpdate {
-        UpgradeSignalMetrics::activation_timestamp(self.config.hardfork_id.clone())
+        let hardfork_id = signal.hardfork_id.clone();
+        UpgradeSignalMetrics::activation_timestamp(hardfork_id.clone())
             .set(signal.activation_timestamp as f64);
-        UpgradeSignalMetrics::expected_protocol_version(self.config.hardfork_id.clone())
+        UpgradeSignalMetrics::expected_protocol_version(hardfork_id.clone())
             .set(Self::protocol_version_to_f64(signal.protocol_version));
-        UpgradeSignalMetrics::last_l1_read_block(self.config.hardfork_id.clone())
+        UpgradeSignalMetrics::last_l1_read_block(hardfork_id.clone())
             .set(signal.l1_block_number as f64);
 
-        let update = self.state.update_signal(signal.clone());
+        let update =
+            self.states.entry(hardfork_id.clone()).or_default().update_signal(signal.clone());
         if matches!(update, UpgradeSignalStateUpdate::Changed) {
-            UpgradeSignalMetrics::activation_observed(self.config.hardfork_id.clone()).set(0.0);
+            UpgradeSignalMetrics::activation_observed(hardfork_id).set(0.0);
             info!(
                 target: "upgrade_signal",
                 hardfork_id = %signal.hardfork_id,
@@ -181,24 +210,39 @@ impl UpgradeSignalMonitor {
         update
     }
 
+    /// Applies signals read from L1 and records corresponding metrics.
+    pub fn update_schedule(&mut self, schedule: UpgradeSignalSchedule) {
+        for signal in schedule.signals {
+            self.update_signal(signal);
+        }
+    }
+
     /// Observes an L2 timestamp and records activation if the timestamp crosses the signal.
-    pub fn observe_l2_timestamp(&mut self, l2_timestamp: u64) -> Option<UpgradeActivation> {
-        let activation = self.state.observe_l2_timestamp(l2_timestamp)?;
+    pub fn observe_l2_timestamp(&mut self, l2_timestamp: u64) -> Vec<UpgradeActivation> {
+        let mut activations = Vec::new();
 
-        UpgradeSignalMetrics::activation_observed(self.config.hardfork_id.clone()).set(1.0);
-        UpgradeSignalMetrics::activation_observed_total(self.config.hardfork_id.clone())
-            .increment(1);
+        for state in self.states.values_mut() {
+            let Some(activation) = state.observe_l2_timestamp(l2_timestamp) else {
+                continue;
+            };
 
-        info!(
-            target: "upgrade_signal",
-            hardfork_id = %activation.hardfork_id,
-            l2_timestamp = activation.l2_timestamp,
-            protocol_version = %activation.protocol_version,
-            activation_timestamp = activation.activation_timestamp,
-            "upgrade activation timestamp reached"
-        );
+            UpgradeSignalMetrics::activation_observed(activation.hardfork_id.clone()).set(1.0);
+            UpgradeSignalMetrics::activation_observed_total(activation.hardfork_id.clone())
+                .increment(1);
 
-        Some(activation)
+            info!(
+                target: "upgrade_signal",
+                hardfork_id = %activation.hardfork_id,
+                l2_timestamp = activation.l2_timestamp,
+                protocol_version = %activation.protocol_version,
+                activation_timestamp = activation.activation_timestamp,
+                "upgrade activation timestamp reached"
+            );
+
+            activations.push(activation);
+        }
+
+        activations
     }
 
     /// Converts a protocol version to a metric gauge value.
@@ -226,23 +270,14 @@ mod tests {
         }
     }
 
-    fn signal_with_hardfork_id(hardfork_id: &str, timestamp: u64) -> UpgradeSignal {
-        UpgradeSignal { hardfork_id: hardfork_id.to_string(), ..signal(timestamp) }
+    #[test]
+    fn signal_returns_positive_activation_timestamp() {
+        assert_eq!(signal(10).positive_activation_timestamp(), Some(10));
     }
 
     #[test]
-    fn signal_returns_positive_azul_timestamp() {
-        assert_eq!(signal(10).azul_activation_timestamp(), Some(10));
-    }
-
-    #[test]
-    fn signal_ignores_zero_azul_timestamp() {
-        assert_eq!(signal(0).azul_activation_timestamp(), None);
-    }
-
-    #[test]
-    fn signal_ignores_non_azul_timestamp() {
-        assert_eq!(signal_with_hardfork_id("beryl", 10).azul_activation_timestamp(), None);
+    fn signal_ignores_zero_activation_timestamp() {
+        assert_eq!(signal(0).positive_activation_timestamp(), None);
     }
 
     #[test]
@@ -277,12 +312,26 @@ mod tests {
     }
 
     #[test]
+    fn l1_block_update_does_not_reset_activation() {
+        let mut state = UpgradeSignalState::new();
+        let mut updated_signal = signal(10);
+
+        state.update_signal(signal(10));
+        assert!(state.observe_l2_timestamp(10).is_some());
+
+        updated_signal.l1_block_number = 2;
+
+        assert_eq!(state.update_signal(updated_signal), UpgradeSignalStateUpdate::Unchanged);
+        assert_eq!(state.observe_l2_timestamp(11), None);
+    }
+
+    #[test]
     fn monitor_records_activation() {
         let mut monitor = UpgradeSignalMonitor::new(config());
 
         monitor.update_signal(signal(10));
 
-        assert!(monitor.observe_l2_timestamp(10).is_some());
-        assert_eq!(monitor.observe_l2_timestamp(12), None);
+        assert_eq!(monitor.observe_l2_timestamp(10).len(), 1);
+        assert!(monitor.observe_l2_timestamp(12).is_empty());
     }
 }

@@ -60,9 +60,9 @@ where
 
     /// Polls the L1 signal.
     pub async fn poll_l1_signal(&mut self) {
-        match self.reader.read_signal(&self.monitor.config.hardfork_id).await {
-            Ok(signal) => {
-                self.monitor.update_signal(signal);
+        match self.reader.read_schedule(&self.monitor.config.hardfork_ids).await {
+            Ok(schedule) => {
+                self.monitor.update_schedule(schedule);
             }
             Err(error) => {
                 self.monitor.record_l1_read_error(&error);

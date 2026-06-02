@@ -182,9 +182,19 @@ macro_rules! rollup_fork_methods {
 }
 
 impl RollupConfig {
-    /// Sets the Base Azul activation timestamp.
-    pub fn set_base_azul_activation_timestamp(&mut self, timestamp: u64) {
-        self.hardforks.base.azul = Some(timestamp);
+    /// Clears all timestamp-based hardfork activation times.
+    pub fn clear_hardfork_activation_timestamps(&mut self) {
+        self.hardforks.clear_activation_timestamps();
+    }
+
+    /// Clears a timestamp-based hardfork activation time by contract hardfork ID.
+    pub fn clear_hardfork_activation_timestamp(&mut self, hardfork_id: &str) -> bool {
+        self.hardforks.clear_activation_timestamp(hardfork_id)
+    }
+
+    /// Sets a timestamp-based hardfork activation time by contract hardfork ID.
+    pub fn set_hardfork_activation_timestamp(&mut self, hardfork_id: &str, timestamp: u64) -> bool {
+        self.hardforks.set_activation_timestamp(hardfork_id, timestamp)
     }
 
     rollup_fork_methods! {
@@ -778,10 +788,10 @@ mod tests {
     }
 
     #[test]
-    fn set_base_azul_activation_timestamp_updates_osaka_activation() {
+    fn set_hardfork_activation_timestamp_updates_osaka_activation() {
         let mut cfg = RollupConfig::default();
 
-        cfg.set_base_azul_activation_timestamp(700);
+        assert!(cfg.set_hardfork_activation_timestamp("azul", 700));
 
         assert_eq!(cfg.hardforks.base.azul, Some(700));
         assert!(cfg.is_base_azul_active(700));
@@ -789,6 +799,10 @@ mod tests {
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(700)
         );
+
+        cfg.clear_hardfork_activation_timestamps();
+
+        assert_eq!(cfg.hardforks, HardForkConfig::default());
     }
 
     #[test]
