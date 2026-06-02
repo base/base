@@ -34,8 +34,8 @@ Opens the interactive TUI. With no subcommand, opens the Home view.
 ### `basectl flashblocks --json`
 
 Streams live flashblocks as newline-delimited JSON to stdout. This is the only
-non-TUI subcommand. Running `basectl flashblocks` without `--json` will print a
-helpful error.
+non-TUI subcommand. Running `basectl flashblocks` without `--json` is rejected
+by the CLI usage parser; use `basectl monitor flashblocks` for the TUI.
 
 ## Examples
 
