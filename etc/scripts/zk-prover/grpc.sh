@@ -25,6 +25,10 @@ Targets:
   mainnet  -> ZK_PROVER_MAINNET_ENDPOINT
 
 Any other target value is treated as a literal grpc endpoint.
+
+Proof types:
+  compressed -> PROOF_TYPE_COMPRESSED
+  snark      -> PROOF_TYPE_SNARK_GROTH16
 EOF
 }
 
@@ -132,6 +136,24 @@ print(json.dumps(payload, separators=(",", ":")))
 PY
 }
 
+normalize_proof_type() {
+  local proof_type="$1"
+  proof_type="${proof_type#proof_type=}"
+
+  case "$proof_type" in
+    compressed | PROOF_TYPE_COMPRESSED)
+      echo "PROOF_TYPE_COMPRESSED"
+      ;;
+    snark | groth16 | snark-groth16 | PROOF_TYPE_SNARK_GROTH16)
+      echo "PROOF_TYPE_SNARK_GROTH16"
+      ;;
+    *)
+      echo "unknown proof_type: $proof_type (use compressed or snark)" >&2
+      exit 1
+      ;;
+  esac
+}
+
 main() {
   require_grpcurl
 
@@ -155,7 +177,8 @@ main() {
       local start_block="${1:?start_block is required}"
       local number_of_blocks="${2:-1}"
       local target="${3:-devnet}"
-      local proof_type="${4:-PROOF_TYPE_SNARK_GROTH16}"
+      local proof_type
+      proof_type="$(normalize_proof_type "${4:-compressed}")"
       local prover_address="${5:-${ZK_PROVER_ADDRESS:-}}"
       if [ "$proof_type" = "PROOF_TYPE_SNARK_GROTH16" ] && [ -z "$prover_address" ]; then
         prover_address="0x0000000000000000000000000000000000000000"
