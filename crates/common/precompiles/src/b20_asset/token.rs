@@ -223,10 +223,10 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
 
     // --- Security Redeem Operations ---
 
-    /// Performs a security-specific redeem: share-based floor check, burn, security `Redeemed` event.
+    /// Performs a security-specific redeem: multiplier floor check, burn, security `Redeemed` event.
     pub fn security_redeem(&mut self, caller: Address, amount: U256) -> Result<()> {
-        let ratio = self.security_redeem_burn(caller, amount)?;
-        self.emit_redeemed(caller, amount, ratio)
+        let multiplier = self.security_redeem_burn(caller, amount)?;
+        self.emit_redeemed(caller, amount, multiplier)
     }
 
     /// [`Self::security_redeem`] with a memo emitted between `Transfer` and `Redeemed`.
@@ -236,24 +236,24 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
         amount: U256,
         memo: B256,
     ) -> Result<()> {
-        let ratio = self.security_redeem_burn(caller, amount)?;
+        let multiplier = self.security_redeem_burn(caller, amount)?;
         self.accounting_mut().emit_event(IB20::Memo { caller, memo }.encode_log_data())?;
-        self.emit_redeemed(caller, amount, ratio)
+        self.emit_redeemed(caller, amount, multiplier)
     }
 
     /// Performs the shared security redeem burn and returns the multiplier used for the floor check.
     fn security_redeem_burn(&mut self, caller: Address, amount: U256) -> Result<U256> {
         B20Guards::ensure_not_paused::<Self>(self, IB20::PausableFeature::REDEEM)?;
         B20Guards::ensure_policy::<Self>(self, Self::REDEEM_SENDER_POLICY, caller)?;
-        let ratio = self.accounting().multiplier()?;
+        let multiplier = self.accounting().multiplier()?;
         if !amount.is_zero() {
-            let shares =
-                amount.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)?
+            let scaled =
+                amount.checked_mul(multiplier).ok_or_else(BasePrecompileError::under_overflow)?
                     / B20AssetStorage::WAD;
             let minimum = self.accounting().minimum_redeemable()?;
-            if shares == U256::ZERO || shares < minimum {
+            if scaled == U256::ZERO || scaled < minimum {
                 return Err(BasePrecompileError::revert(IB20Asset::BelowMinimumRedeemable {
-                    shares,
+                    shares: scaled,
                     minimum,
                 }));
             }
@@ -274,12 +274,12 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
         self.accounting_mut().emit_event(
             IB20::Transfer { from: caller, to: Address::ZERO, amount }.encode_log_data(),
         )?;
-        Ok(ratio)
+        Ok(multiplier)
     }
 
-    fn emit_redeemed(&mut self, caller: Address, amount: U256, ratio: U256) -> Result<()> {
+    fn emit_redeemed(&mut self, caller: Address, amount: U256, multiplier: U256) -> Result<()> {
         self.accounting_mut().emit_event(
-            IB20Asset::Redeemed { from: caller, amt: amount, multiplier: ratio }.encode_log_data(),
+            IB20Asset::Redeemed { from: caller, amt: amount, multiplier }.encode_log_data(),
         )
     }
 

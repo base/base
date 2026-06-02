@@ -56,7 +56,7 @@ decimals, while stablecoin and security variants use 6 decimals.
 
 Default B-20 tokens implement the ERC-20 surface plus roles, pausing, supply caps, memo transfers,
 policy hooks, EIP-2612 permits, ERC-5267 domain reporting, and ERC-7572 contract metadata. The
-stablecoin variant adds currency metadata. The security variant adds share-ratio accounting,
+stablecoin variant adds currency metadata. The security variant adds multiplier-based scaling,
 minimum redeemable checks, batched mint and burn operations, security identifiers, and announcement
 flows that can execute internal token calls.
 
