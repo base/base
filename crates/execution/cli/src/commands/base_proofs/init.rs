@@ -44,8 +44,10 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
         info!(target: "reth::cli", path = ?self.storage_path, "Initializing Base proofs storage");
 
-        // Initialize the environment with read-only access
-        let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RO)?;
+        // `proofs init` only reads the canonical source data. Skip the static-file
+        // preflight because read-write node startup can heal recoverable states.
+        let Environment { provider_factory, .. } =
+            self.env.init::<N>(AccessRights::RoInconsistent)?;
 
         // Create the proofs storage
         let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
