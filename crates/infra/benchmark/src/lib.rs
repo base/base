@@ -1,5 +1,8 @@
 #![doc = include_str!("../README.md")]
 
+mod compare;
+pub use compare::{compare_run_groups, CompareOutcome, CompareResult, GroupStats};
+
 mod config;
 pub use config::{
     BenchmarkConfig, BenchmarkDefinition, DatadirConfig, FlashblocksConfig, LoadTestPayloadParams,

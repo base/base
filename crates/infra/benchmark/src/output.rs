@@ -9,7 +9,7 @@ use chrono::{SecondsFormat, Utc};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use rand::Rng;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::warn;
 
@@ -218,7 +218,7 @@ pub fn average_metric_seconds(metrics: &[BlockMetrics], metric_name: &str) -> f6
 }
 
 /// One-line-per-run index entry appended to `results.jsonl`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ResultsIndexEntry {
     /// Unique run identifier.
     pub run_id: String,
