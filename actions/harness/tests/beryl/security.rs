@@ -116,6 +116,11 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                     IB20Asset::OPERATOR_ROLECall {}.abi_encode(),
                     security_operator_role(),
                 ),
+                StaticcallCase::bytes32(
+                    "METADATA_ROLE",
+                    IB20Asset::METADATA_ROLECall {}.abi_encode(),
+                    metadata_role(),
+                ),
                 StaticcallCase::returndata(
                     "pausedFeatures",
                     IB20::pausedFeaturesCall {}.abi_encode(),
@@ -131,7 +136,9 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
 #[tokio::test]
 async fn security_mutations_update_state_and_emit_events() {
     let mut scenario = B20AssetScenario::new().await;
-    scenario.grant_roles([security_operator_role(), B20TokenRole::Mint.id()]).await;
+    scenario
+        .grant_roles([security_operator_role(), metadata_role(), B20TokenRole::Mint.id()])
+        .await;
 
     let update_ratio =
         scenario.call_tx(IB20Asset::updateMultiplierCall { newMultiplier: UPDATED_RATIO });
@@ -281,7 +288,9 @@ async fn security_mutations_update_state_and_emit_events() {
 #[tokio::test]
 async fn security_mutations_revert_on_invalid_inputs() {
     let mut scenario = B20AssetScenario::new().await;
-    scenario.grant_roles([security_operator_role(), B20TokenRole::Mint.id()]).await;
+    scenario
+        .grant_roles([security_operator_role(), metadata_role(), B20TokenRole::Mint.id()])
+        .await;
 
     let first_announcement = scenario.call_tx(IB20Asset::announceCall {
         internalCalls: Vec::new(),
@@ -550,4 +559,8 @@ impl B20AssetScenario {
 
 fn security_operator_role() -> B256 {
     keccak256("OPERATOR_ROLE")
+}
+
+fn metadata_role() -> B256 {
+    keccak256("METADATA_ROLE")
 }

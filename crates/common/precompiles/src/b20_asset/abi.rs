@@ -56,8 +56,11 @@ sol! {
 
         // ── Role / precision identifiers ─────────────────────────────────────
 
-        /// `keccak256("OPERATOR_ROLE")` — required for `announce`, `updateMultiplier`, `updateExtraMetadata`.
+        /// `keccak256("OPERATOR_ROLE")` — required for `announce` and `updateMultiplier`.
         function OPERATOR_ROLE() external view returns (bytes32);
+
+        /// `keccak256("METADATA_ROLE")` — required for `updateExtraMetadata`.
+        function METADATA_ROLE() external view returns (bytes32);
 
         /// Fixed-point precision for `multiplier`: `1e18` (one WAD).
         function WAD_PRECISION() external view returns (uint256);
@@ -116,7 +119,7 @@ sol! {
         /// Returns the value of the named identifier (e.g. ISIN, CUSIP). Empty string if not set.
         function extraMetadata(string calldata identifierType) external view returns (string);
 
-        /// Sets, updates, or removes a security identifier. Empty `value` removes the entry.
+        /// Sets, updates, or removes a security identifier. Empty `value` removes the entry. Requires `METADATA_ROLE`.
         function updateExtraMetadata(
             string calldata identifierType,
             string calldata value
@@ -129,6 +132,7 @@ impl IB20Asset::IB20AssetCalls {
     pub const fn as_label(&self) -> &'static str {
         match self {
             Self::OPERATOR_ROLE(_) => "precompile-b20-asset-OPERATOR_ROLE",
+            Self::METADATA_ROLE(_) => "precompile-b20-asset-METADATA_ROLE",
             Self::WAD_PRECISION(_) => "precompile-b20-asset-WAD_PRECISION",
             Self::REDEEM_SENDER_POLICY(_) => "precompile-b20-asset-REDEEM_SENDER_POLICY",
             Self::announce(_) => "precompile-b20-asset-announce",

@@ -47,7 +47,7 @@ pub struct InMemoryTokenAccounting {
     pub decimals: u8,
     /// Stablecoin currency identifier.
     pub currency: String,
-    /// Security ISIN identifier (legacy field; prefer `security_identifiers` map for security tokens).
+    /// Security ISIN identifier (legacy field; prefer `extra_metadata` map for asset tokens).
     pub security_isin: String,
     /// Bitmask of active pause vectors.
     pub paused: U256,

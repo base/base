@@ -341,6 +341,7 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
         let encoded: Bytes = match call {
             // --- Role / precision constants ---
             SC::OPERATOR_ROLE(_) => Self::OPERATOR_ROLE.abi_encode().into(),
+            SC::METADATA_ROLE(_) => Self::METADATA_ROLE.abi_encode().into(),
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
             SC::REDEEM_SENDER_POLICY(_) => Self::REDEEM_SENDER_POLICY.abi_encode().into(),
 
