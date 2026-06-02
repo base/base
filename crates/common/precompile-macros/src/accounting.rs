@@ -19,10 +19,10 @@ pub(crate) fn derive_asset(input: DeriveInput) -> proc_macro::TokenStream {
 fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
     require_field(&input, "b20")?;
     let has_redeem = has_field(&input, "redeem");
-    let has_security = has_field(&input, "security");
+    let has_security = has_field(&input, "asset");
     let name = input.ident;
     let decimals_impl = if has_security {
-        quote! { crate::SecurityAccounting::decimals(self) }
+        quote! { crate::AssetAccounting::decimals(self) }
     } else {
         quote! {
             Ok(crate::B20Variant::from_address(
@@ -398,7 +398,7 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
             }
 
             fn decimals(&self) -> ::base_precompile_storage::Result<u8> {
-                let stored = self.security.decimals()?;
+                let stored = self.asset.decimals()?;
                 Ok(if stored == 0 { 6 } else { stored })
             }
         }
