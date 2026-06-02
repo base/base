@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+receipt_response_file=""
+receipt_file=""
+
+cleanup_receipt_files() {
+  rm -f "$receipt_response_file" "$receipt_file"
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -203,19 +210,19 @@ main() {
           ;;
       esac
 
-      local response_file receipt_file payload status
-      response_file="$(mktemp)"
+      local payload status
+      receipt_response_file="$(mktemp)"
       receipt_file="$(mktemp)"
-      trap 'rm -f "$response_file" "$receipt_file"' EXIT
+      trap cleanup_receipt_files EXIT
       payload="$(json_payload "sessionId=$session_id" "receiptType=$request_receipt_type")"
-      run_grpcurl_with_data "$target" "$payload" prover.ProverService/GetProof > "$response_file"
-      status="$(jq -r '.status // ""' "$response_file")"
+      run_grpcurl_with_data "$target" "$payload" prover.ProverService/GetProof > "$receipt_response_file"
+      status="$(jq -r '.status // ""' "$receipt_response_file")"
       if [ "$status" != "STATUS_SUCCEEDED" ]; then
         echo "receipt is not ready; status=${status:-unknown}" >&2
-        jq . "$response_file" >&2 || true
+        jq . "$receipt_response_file" >&2 || true
         exit 1
       fi
-      if ! jq -er '.receipt // empty' "$response_file" | base64_decode > "$receipt_file"; then
+      if ! jq -er '.receipt // empty' "$receipt_response_file" | base64_decode > "$receipt_file"; then
         echo "receipt is empty or invalid" >&2
         exit 1
       fi
