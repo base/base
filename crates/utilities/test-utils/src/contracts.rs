@@ -71,3 +71,22 @@ sol!(
     Logic2,
     concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/Proxy.sol/Logic2.json")
 );
+
+sol!(
+    #[allow(clippy::too_many_arguments)]
+    #[sol(rpc)]
+    FreeTransferERC20,
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/contracts/out/FreeTransferERC20.sol/FreeTransferERC20.json"
+    )
+);
+
+sol!(
+    #[sol(rpc)]
+    MockUniswapV3Router,
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/contracts/out/MockUniswapV3Router.sol/MockUniswapV3Router.json"
+    )
+);

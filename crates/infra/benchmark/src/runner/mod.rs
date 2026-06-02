@@ -12,6 +12,7 @@ use tracing::{info, warn};
 
 use crate::client::{setup_node, ClientOptions, InternalClientOptions};
 use crate::config::{BenchmarkConfig, TestRun};
+use crate::deploy::deploy_uniswap_v3;
 use crate::consensus::{
     BaseConsensusClient, FakeMempool, SequencerConsensusClient, SyncingConsensusClient,
 };
@@ -76,7 +77,7 @@ impl NetworkBenchmark {
         Ok(results)
     }
 
-    async fn run_one(&mut self, run: TestRun) -> Result<RunResult, BenchmarkError> {
+    async fn run_one(&mut self, mut run: TestRun) -> Result<RunResult, BenchmarkError> {
         info!(run_id = %run.id, "starting benchmark run");
 
         let test_dir = tempfile::Builder::new()
@@ -167,6 +168,24 @@ impl NetworkBenchmark {
             version = %node.get_version().await.unwrap_or_default(),
             "sequencer started"
         );
+
+        if run.definition.setup.as_ref().is_some_and(|s| s.deploy_uniswap_v3) {
+            let addrs =
+                deploy_uniswap_v3(node.rpc_url(), &self.options.prefund_key).await?;
+            for tx in &mut run.payload.params.transactions {
+                if tx.tx_type == "uniswap_v3" {
+                    if tx.router.is_none() {
+                        tx.router = Some(addrs.router.to_string());
+                    }
+                    if tx.token_in.is_none() {
+                        tx.token_in = Some(addrs.token_in.to_string());
+                    }
+                    if tx.token_out.is_none() {
+                        tx.token_out = Some(addrs.token_out.to_string());
+                    }
+                }
+            }
+        }
 
         let proxy_port = self.port_manager.acquire()?;
         let cancel = CancellationToken::new();

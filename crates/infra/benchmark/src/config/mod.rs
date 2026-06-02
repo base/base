@@ -82,6 +82,8 @@ pub struct BenchmarkDefinition {
     pub datadir: DatadirConfig,
     /// Snapshot creation configuration.
     pub snapshot: Option<SnapshotConfig>,
+    /// Devnet contract setup configuration.
+    pub setup: Option<SetupConfig>,
     /// Prometheus threshold configuration.
     pub metrics: Option<MetricsConfig>,
     /// Extra CLI arguments for the node binary.
@@ -93,6 +95,16 @@ pub struct BenchmarkDefinition {
     /// Matrix variables for combinatorial expansion.
     #[serde(default)]
     pub variables: Vec<Variable>,
+}
+
+/// Contract deployment configuration for devnet benchmark runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetupConfig {
+    /// Deploy a mock Uniswap V3 router and two `FreeTransferERC20` tokens, then
+    /// inject their addresses into any `uniswap_v3` transaction entries that do not
+    /// already have explicit addresses.
+    #[serde(default)]
+    pub deploy_uniswap_v3: bool,
 }
 
 /// Explicit datadir paths for sequencer and validator. When set, snapshot
@@ -172,35 +184,73 @@ pub struct LoadTestPayloadParams {
 }
 
 /// A weighted transaction type entry for the load-test configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WeightedTx {
     /// Relative weight in the transaction mix.
     pub weight: u64,
-    /// Transaction kind: `"transfer"`, `"calldata"`, `"precompile"`, etc.
+    /// Transaction kind: `"transfer"`, `"calldata"`, `"erc20"`, `"precompile"`,
+    /// `"uniswap_v3"`, `"aerodrome_cl"`, etc.
     #[serde(rename = "type")]
     pub tx_type: String,
-    /// Maximum calldata size in bytes.
+    /// Maximum calldata size in bytes (`calldata` type only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_size: Option<u64>,
-    /// Target contract or precompile name.
+    /// Repeat count for the calldata payload (`calldata` type only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repeat_count: Option<u64>,
+    /// Target contract address or precompile name (`precompile`, `osaka`, `erc20` types).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    /// Deployed ERC-20 contract address (`erc20` type only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract: Option<String>,
+    /// Iteration count for precompile benchmarking (`precompile` type only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iterations: Option<u64>,
+    /// Swap router address (`uniswap_v3`, `aerodrome_cl` types).
+    /// Filled in automatically when `setup.deploy_uniswap_v3` is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub router: Option<String>,
+    /// Input token address for swaps (`uniswap_v3`, `aerodrome_cl` types).
+    /// Filled in automatically when `setup.deploy_uniswap_v3` is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_in: Option<String>,
+    /// Output token address for swaps (`uniswap_v3`, `aerodrome_cl` types).
+    /// Filled in automatically when `setup.deploy_uniswap_v3` is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_out: Option<String>,
+    /// Uniswap V3 fee tier in hundredths of a basis point (e.g. `3000` = 0.3%).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fee: Option<u32>,
+    /// Minimum swap input amount in wei (`uniswap_v3`, `aerodrome_cl` types).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_amount: Option<String>,
+    /// Maximum swap input amount in wei (`uniswap_v3`, `aerodrome_cl` types).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_amount: Option<String>,
+    /// Tick spacing for Aerodrome CL pools (`aerodrome_cl` type only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tick_spacing: Option<i32>,
 }
 
 fn default_transactions() -> Vec<WeightedTx> {
     vec![
-        WeightedTx { weight: 70, tx_type: "transfer".into(), max_size: None, target: None },
+        WeightedTx {
+            weight: 70,
+            tx_type: "transfer".into(),
+            ..Default::default()
+        },
         WeightedTx {
             weight: 20,
             tx_type: "calldata".into(),
             max_size: Some(256),
-            target: None,
+            ..Default::default()
         },
         WeightedTx {
             weight: 10,
             tx_type: "precompile".into(),
-            max_size: None,
             target: Some("sha256".into()),
+            ..Default::default()
         },
     ]
 }
@@ -262,6 +312,7 @@ mod tests {
                 node_type: "base-reth-node".into(),
                 datadir: DatadirConfig::default(),
                 snapshot: None,
+                setup: None,
                 metrics: None,
                 node_args: None,
                 tags: HashMap::new(),

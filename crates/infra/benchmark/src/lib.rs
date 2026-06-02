@@ -3,8 +3,8 @@
 mod config;
 pub use config::{
     BenchmarkConfig, BenchmarkDefinition, DatadirConfig, FlashblocksConfig, LoadTestPayloadParams,
-    MetricsConfig, MetricsThreshold, SnapshotConfig, TestRun, TransactionPayloadDef, Variable,
-    WeightedTx,
+    MetricsConfig, MetricsThreshold, SetupConfig, SnapshotConfig, TestRun, TransactionPayloadDef,
+    Variable, WeightedTx,
 };
 
 mod error;
@@ -58,6 +58,9 @@ pub use runner::{NetworkBenchmark, RunResult, RunnerOptions};
 
 mod service;
 pub use service::{parse_config, run_benchmark, BenchmarkArgs, DEFAULT_CONFIG_YAML};
+
+mod deploy;
+pub use deploy::{deploy_uniswap_v3, UniswapV3Addresses};
 
 mod params;
 pub use params::{
