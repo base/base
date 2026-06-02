@@ -232,12 +232,6 @@ mod tests {
         );
     }
 
-    /// Regression for G-01: transferFrom with from=address(0) must revert with InvalidSender.
-    ///
-    /// Commit 3937941a removed a duplicate outer zero-sender pre-check from
-    /// transfer_from that was redundant with the guard already inside transfer.
-    /// This test ensures the zero-sender guard is always enforced on the
-    /// transfer_from code path and cannot be silently dropped.
     #[test]
     fn transfer_from_with_zero_from_address_reverts() {
         let mut token = make_token();
