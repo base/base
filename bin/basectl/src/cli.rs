@@ -34,16 +34,28 @@ pub(crate) struct Cli {
 /// Subcommands for the basectl CLI.
 #[derive(Debug, Subcommand)]
 pub(crate) enum Commands {
-    /// Chain configuration operations
-    #[command(visible_alias = "c")]
-    Config,
+    /// Open the interactive TUI monitor.
+    Monitor {
+        #[command(subcommand)]
+        command: Option<MonitorCommands>,
+    },
     /// Flashblocks operations
-    #[command(visible_alias = "f")]
     Flashblocks {
-        /// Output flashblocks as JSON lines instead of the TUI
+        /// Output flashblocks as JSON lines
         #[arg(long)]
         json: bool,
     },
+}
+
+/// TUI monitor views.
+#[derive(Debug, Subcommand)]
+pub(crate) enum MonitorCommands {
+    /// Chain configuration operations
+    #[command(visible_alias = "c")]
+    Config,
+    /// Flashblocks monitor
+    #[command(visible_alias = "f")]
+    Flashblocks,
     /// DA (Data Availability) backlog monitor
     #[command(visible_alias = "d")]
     Da,
