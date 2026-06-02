@@ -1187,7 +1187,7 @@ mod tests {
                 initialAdmin: Address::repeat_byte(0xAB),
                 isin: String::new(),
                 minimumRedeemable: U256::ZERO,
-            decimals: 6,
+                decimals: 6,
             }
             .abi_encode()
             .into(),

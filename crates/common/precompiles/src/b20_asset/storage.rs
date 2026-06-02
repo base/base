@@ -131,7 +131,7 @@ mod tests {
         __packing_b20_asset_extension_storage, __packing_b20_redeem_storage,
         B20AssetExtensionStorage, B20AssetInit, B20AssetStorage, B20RedeemStorage, slots,
     };
-    use crate::{B20CoreStorage, PolicyRegistryStorage, AssetAccounting, TokenAccounting};
+    use crate::{AssetAccounting, B20CoreStorage, PolicyRegistryStorage, TokenAccounting};
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b021");
     const B20_ROOT: U256 =
