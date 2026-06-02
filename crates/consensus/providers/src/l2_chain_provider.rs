@@ -1,6 +1,6 @@
 //! Providers that use alloy provider types on the backend.
 
-use std::{future::Future, num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
 use alloy_eips::BlockId;
 use alloy_primitives::{B256, Bytes};
@@ -187,63 +187,6 @@ impl AlloyL2ChainProvider {
     }
 }
 
-fn l2_block_visibility_retry_delay(attempt: usize) -> Option<Duration> {
-    (attempt + 1 < L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS).then_some(L2_BLOCK_VISIBILITY_RETRY_DELAY)
-}
-
-// The local execution RPC can briefly return `null` for a just-imported L2 block while the
-// canonical block is still becoming visible through the RPC cache/DB path.
-async fn fetch_l2_block_with_visibility_retries<F, Fut, Sleep, SleepFut>(
-    number: u64,
-    mut fetch: F,
-    mut sleep: Sleep,
-) -> Result<Option<BaseBlock>, AlloyL2ChainProviderError>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<Option<BaseBlock>, AlloyL2ChainProviderError>>,
-    Sleep: FnMut(Duration) -> SleepFut,
-    SleepFut: Future<Output = ()>,
-{
-    for attempt in 0..L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS {
-        if let Some(block) = fetch().await? {
-            return Ok(Some(block));
-        }
-
-        if let Some(delay) = l2_block_visibility_retry_delay(attempt) {
-            Metrics::l2_block_visibility_retries().increment(1);
-            tracing::debug!(
-                target: "l2_chain_provider",
-                number,
-                attempt = attempt + 1,
-                attempts = L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS,
-                ?delay,
-                "L2 block not visible yet; retrying"
-            );
-            sleep(delay).await;
-        }
-    }
-
-    Ok(None)
-}
-
-async fn fetch_block_by_number_once(
-    inner: RootProvider<Base>,
-    number: u64,
-) -> Result<Option<BaseBlock>, AlloyL2ChainProviderError> {
-    Metrics::l2_chain_requests(L2_BLOCK_REF_BY_NUMBER_METHOD).increment(1);
-
-    base_metrics::time!(Metrics::request_duration(L2_BLOCK_REF_BY_NUMBER_METHOD), {
-        inner.get_block_by_number(number.into()).full().await
-    })
-    .map_err(|e| {
-        Metrics::l2_chain_errors(L2_BLOCK_REF_BY_NUMBER_METHOD).increment(1);
-        AlloyL2ChainProviderError::Transport(e)
-    })
-    .map(|block| {
-        block.map(|block| block.into_consensus().map_transactions(|t| t.inner.inner.into_inner()))
-    })
-}
-
 /// An error for the [`AlloyL2ChainProvider`].
 #[derive(Debug, thiserror::Error)]
 pub enum AlloyL2ChainProviderError {
@@ -298,20 +241,39 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
             return Ok(block.clone());
         }
 
-        let inner = self.inner.clone();
-        let block = fetch_l2_block_with_visibility_retries(
-            number,
-            || {
-                let inner = inner.clone();
-                async move { fetch_block_by_number_once(inner, number).await }
-            },
-            tokio::time::sleep,
-        )
-        .await?
-        .ok_or(AlloyL2ChainProviderError::BlockNotFound(number))?;
+        for attempt in 1..=L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS {
+            Metrics::l2_chain_requests(L2_BLOCK_REF_BY_NUMBER_METHOD).increment(1);
 
-        self.block_by_number_cache.put(number, block.clone());
-        Ok(block)
+            let block =
+                base_metrics::time!(Metrics::request_duration(L2_BLOCK_REF_BY_NUMBER_METHOD), {
+                    self.inner.get_block_by_number(number.into()).full().await
+                })
+                .map_err(|e| {
+                    Metrics::l2_chain_errors(L2_BLOCK_REF_BY_NUMBER_METHOD).increment(1);
+                    AlloyL2ChainProviderError::Transport(e)
+                })?;
+
+            if let Some(block) = block {
+                let block = block.into_consensus().map_transactions(|t| t.inner.inner.into_inner());
+                self.block_by_number_cache.put(number, block.clone());
+                return Ok(block);
+            }
+
+            if attempt < L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS {
+                Metrics::l2_block_visibility_retries().increment(1);
+                tracing::debug!(
+                    target: "l2_chain_provider",
+                    number,
+                    attempt,
+                    attempts = L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS,
+                    delay = ?L2_BLOCK_VISIBILITY_RETRY_DELAY,
+                    "L2 block not visible yet; retrying"
+                );
+                tokio::time::sleep(L2_BLOCK_VISIBILITY_RETRY_DELAY).await;
+            }
+        }
+
+        Err(AlloyL2ChainProviderError::BlockNotFound(number))
     }
 }
 
@@ -335,6 +297,15 @@ impl L2ChainProvider for AlloyL2ChainProvider {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use alloy_provider::RootProvider;
+    use httpmock::{HttpMockRequest, HttpMockResponse, Method::POST, MockServer};
+    use serde_json::{Value, json};
+
     use super::*;
 
     #[test]
@@ -364,86 +335,141 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_l2_block_visibility_retry_delay() {
-        assert_eq!(l2_block_visibility_retry_delay(0), Some(L2_BLOCK_VISIBILITY_RETRY_DELAY));
-        assert_eq!(
-            l2_block_visibility_retry_delay(L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS - 2),
-            Some(L2_BLOCK_VISIBILITY_RETRY_DELAY)
-        );
-        assert_eq!(l2_block_visibility_retry_delay(L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS - 1), None);
+    fn block_json(number: u64) -> Value {
+        json!({
+            "hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "parentHash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+            "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+            "miner": "0x0000000000000000000000000000000000000000",
+            "stateRoot": "0x3333333333333333333333333333333333333333333333333333333333333333",
+            "transactionsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+            "receiptsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+            "logsBloom": format!("0x{}", "00".repeat(256)),
+            "difficulty": "0x0",
+            "number": format!("0x{number:x}"),
+            "gasLimit": "0x1c9c380",
+            "gasUsed": "0x0",
+            "timestamp": "0x1",
+            "extraData": "0x",
+            "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "nonce": "0x0000000000000000",
+            "baseFeePerGas": "0x1",
+            "transactions": [],
+            "uncles": [],
+            "withdrawals": [],
+            "blobGasUsed": "0x0",
+            "excessBlobGas": "0x0"
+        })
     }
 
-    #[tokio::test]
-    async fn test_l2_block_visibility_retry_succeeds_after_transient_misses() {
-        let mut attempts = 0;
-        let mut sleeps = 0;
-
-        let result = fetch_l2_block_with_visibility_retries(
-            42,
-            || {
-                attempts += 1;
-                let block = (attempts == 3).then(BaseBlock::default);
-                std::future::ready(Ok(block))
-            },
-            |_| {
-                sleeps += 1;
-                std::future::ready(())
-            },
-        )
-        .await
-        .unwrap();
-
-        assert!(result.is_some());
-        assert_eq!(attempts, 3);
-        assert_eq!(sleeps, 2);
+    fn json_rpc_response(req: &HttpMockRequest, result: Value) -> String {
+        let id = serde_json::from_slice::<Value>(&req.body_vec())
+            .ok()
+            .and_then(|body| body.get("id").cloned())
+            .unwrap_or(Value::Null);
+        json!({ "jsonrpc": "2.0", "id": id, "result": result }).to_string()
     }
 
-    #[tokio::test]
-    async fn test_l2_block_visibility_retry_stops_after_attempt_budget() {
-        let mut attempts = 0;
-        let mut sleeps = 0;
-
-        let result = fetch_l2_block_with_visibility_retries(
-            42,
-            || {
-                attempts += 1;
-                std::future::ready(Ok(None))
-            },
-            |_| {
-                sleeps += 1;
-                std::future::ready(())
-            },
-        )
-        .await
-        .unwrap();
-
-        assert!(result.is_none());
-        assert_eq!(attempts, L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS);
-        assert_eq!(sleeps, L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS - 1);
+    fn json_rpc_error_response(req: &HttpMockRequest) -> String {
+        let id = serde_json::from_slice::<Value>(&req.body_vec())
+            .ok()
+            .and_then(|body| body.get("id").cloned())
+            .unwrap_or(Value::Null);
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": -32000, "message": "backend unavailable" }
+        })
+        .to_string()
     }
 
-    #[tokio::test]
-    async fn test_l2_block_visibility_retry_returns_errors_without_retrying() {
-        let mut attempts = 0;
-        let mut sleeps = 0;
-
-        let err = fetch_l2_block_with_visibility_retries(
-            42,
-            || {
-                attempts += 1;
-                std::future::ready(Err(AlloyL2ChainProviderError::BlockNotFound(42)))
-            },
-            |_| {
-                sleeps += 1;
-                std::future::ready(())
-            },
+    fn l2_provider(server: &MockServer) -> AlloyL2ChainProvider {
+        AlloyL2ChainProvider::new(
+            RootProvider::<Base>::new_http(server.url("/").parse().unwrap()),
+            Arc::new(RollupConfig::default()),
+            16,
         )
-        .await
-        .unwrap_err();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_block_by_number_retries_nulls_then_succeeds() {
+        let server = MockServer::start_async().await;
+        let hits = Arc::new(AtomicUsize::new(0));
+        let block_number = 42;
+        let block = block_json(block_number);
+        let hits_clone = Arc::clone(&hits);
+        let mock = server
+            .mock_async(move |when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByNumber"}"#);
+                then.respond_with(move |req| {
+                    let hit = hits_clone.fetch_add(1, Ordering::SeqCst);
+                    let result = if hit < 2 { Value::Null } else { block.clone() };
+                    HttpMockResponse::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(json_rpc_response(req, result))
+                        .build()
+                });
+            })
+            .await;
+
+        let mut provider = l2_provider(&server);
+        let block = provider.block_by_number(block_number).await.unwrap();
+
+        assert_eq!(block.header.number, block_number);
+        mock.assert_calls_async(3).await;
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_block_by_number_exhausts_null_retry_budget() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByNumber"}"#);
+                then.respond_with(|req| {
+                    HttpMockResponse::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(json_rpc_response(req, Value::Null))
+                        .build()
+                });
+            })
+            .await;
+
+        let mut provider = l2_provider(&server);
+        let err = provider.block_by_number(42).await.unwrap_err();
 
         assert!(matches!(err, AlloyL2ChainProviderError::BlockNotFound(42)));
-        assert_eq!(attempts, 1);
-        assert_eq!(sleeps, 0);
+        mock.assert_calls_async(L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_block_by_number_transport_error_does_not_retry() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByNumber"}"#);
+                then.respond_with(|req| {
+                    HttpMockResponse::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(json_rpc_error_response(req))
+                        .build()
+                });
+            })
+            .await;
+
+        let mut provider = l2_provider(&server);
+        let err = provider.block_by_number(42).await.unwrap_err();
+
+        assert!(matches!(err, AlloyL2ChainProviderError::Transport(_)));
+        mock.assert_calls_async(1).await;
     }
 }
