@@ -428,23 +428,16 @@ impl B20AssetScenario {
 
         scenario.build_block_with_transactions(Vec::new()).await;
 
-        let activate_factory =
-            scenario.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let activate_security = scenario.env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
         let activate_policy =
             scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
         let block = scenario
-            .build_block_with_transactions(vec![
-                activate_factory,
-                activate_security,
-                activate_policy,
-            ])
+            .build_block_with_transactions(vec![activate_security, activate_policy])
             .await;
 
-        assert!(scenario.env.user_tx_succeeded(&block, 0), "TOKEN_FACTORY activation must succeed");
-        assert!(scenario.env.user_tx_succeeded(&block, 1), "B20_SECURITY activation must succeed");
+        assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_SECURITY activation must succeed");
         assert!(
-            scenario.env.user_tx_succeeded(&block, 2),
+            scenario.env.user_tx_succeeded(&block, 1),
             "POLICY_REGISTRY activation must succeed"
         );
 

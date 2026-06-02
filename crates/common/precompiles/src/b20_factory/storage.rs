@@ -346,7 +346,6 @@ mod tests {
     fn activate_precompiles(storage: &mut HashMapStorageProvider) {
         storage.set_caller(ACTIVATION_ADMIN);
         for key in [
-            ActivationFeature::B20Factory.id(),
             ActivationFeature::B20Token.id(),
             ActivationFeature::B20Stablecoin.id(),
             ActivationFeature::B20Asset.id(),

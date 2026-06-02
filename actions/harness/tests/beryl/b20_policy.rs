@@ -237,14 +237,12 @@ impl B20PolicyScenario {
 
         scenario.build_block(vec![]).await;
 
-        let act_factory = scenario.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let act_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
         let act_policy = scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
-        let block = scenario.build_block(vec![act_factory, act_b20, act_policy]).await;
-        assert!(scenario.env.user_tx_succeeded(&block, 0), "TOKEN_FACTORY activation must succeed");
-        assert!(scenario.env.user_tx_succeeded(&block, 1), "B20_ASSET activation must succeed");
+        let block = scenario.build_block(vec![act_b20, act_policy]).await;
+        assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_ASSET activation must succeed");
         assert!(
-            scenario.env.user_tx_succeeded(&block, 2),
+            scenario.env.user_tx_succeeded(&block, 1),
             "POLICY_REGISTRY activation must succeed"
         );
 

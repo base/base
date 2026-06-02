@@ -30,7 +30,6 @@ async fn activated_b20_client<'a>(
 ) -> Result<B20PrecompileClient<'a>> {
     let b20 = B20PrecompileClient::new(provider, admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
-    b20.activate_feature(ActivationFeature::B20Factory.id()).await?;
     b20.activate_feature(ActivationFeature::B20Asset.id()).await?;
     Ok(b20)
 }

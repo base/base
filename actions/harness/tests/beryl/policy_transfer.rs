@@ -246,19 +246,16 @@ impl PolicyTransferScenario {
         let beryl_boundary = scenario.env.sequencer.build_empty_block().await;
         scenario.push_block(beryl_boundary);
 
-        // Activate all three features in one block.
-        let activate_factory =
-            scenario.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
+        // Activate both features in one block.
         let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
         let activate_registry =
             scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
         let block = scenario
-            .build_block_with_transactions(vec![activate_factory, activate_b20, activate_registry])
+            .build_block_with_transactions(vec![activate_b20, activate_registry])
             .await;
-        assert!(scenario.env.user_tx_succeeded(&block, 0), "TOKEN_FACTORY activation must succeed");
-        assert!(scenario.env.user_tx_succeeded(&block, 1), "B20_ASSET activation must succeed");
+        assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_ASSET activation must succeed");
         assert!(
-            scenario.env.user_tx_succeeded(&block, 2),
+            scenario.env.user_tx_succeeded(&block, 1),
             "POLICY_REGISTRY activation must succeed"
         );
 
@@ -300,18 +297,15 @@ impl PolicyTransferScenario {
         let beryl_boundary = scenario.env.sequencer.build_empty_block().await;
         scenario.push_block(beryl_boundary);
 
-        let activate_factory =
-            scenario.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
         let activate_registry =
             scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
         let block = scenario
-            .build_block_with_transactions(vec![activate_factory, activate_b20, activate_registry])
+            .build_block_with_transactions(vec![activate_b20, activate_registry])
             .await;
-        assert!(scenario.env.user_tx_succeeded(&block, 0), "TOKEN_FACTORY activation must succeed");
-        assert!(scenario.env.user_tx_succeeded(&block, 1), "B20_ASSET activation must succeed");
+        assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_ASSET activation must succeed");
         assert!(
-            scenario.env.user_tx_succeeded(&block, 2),
+            scenario.env.user_tx_succeeded(&block, 1),
             "POLICY_REGISTRY activation must succeed"
         );
 
@@ -337,13 +331,9 @@ impl PolicyTransferScenario {
         let beryl_boundary = scenario.env.sequencer.build_empty_block().await;
         scenario.push_block(beryl_boundary);
 
-        let activate_factory =
-            scenario.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let activate_b20 = scenario.env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
-        let block =
-            scenario.build_block_with_transactions(vec![activate_factory, activate_b20]).await;
-        assert!(scenario.env.user_tx_succeeded(&block, 0), "TOKEN_FACTORY activation must succeed");
-        assert!(scenario.env.user_tx_succeeded(&block, 1), "B20_ASSET activation must succeed");
+        let block = scenario.build_block_with_transactions(vec![activate_b20]).await;
+        assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_ASSET activation must succeed");
 
         // No updatePolicy init call: the TRANSFER_SENDER_POLICY slot reads zero (ALWAYS_ALLOW).
         let create_token = scenario.create_token_tx(None);

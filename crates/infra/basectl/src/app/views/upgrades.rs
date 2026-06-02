@@ -189,7 +189,6 @@ const BERYL_CHECK_NAMES: &[&str] = &[
     "registry precompile",
     "registry admin",
     "B-20 token feature",
-    "B-20 factory feature",
     "policy registry feature",
     "B-20 stablecoin feature",
     "B-20 asset feature",
@@ -197,7 +196,6 @@ const BERYL_CHECK_NAMES: &[&str] = &[
 
 const BERYL_FEATURE_CHECKS: &[(&str, ActivationFeature)] = &[
     ("B-20 token feature", ActivationFeature::B20Token),
-    ("B-20 factory feature", ActivationFeature::B20Factory),
     ("policy registry feature", ActivationFeature::PolicyRegistry),
     ("B-20 stablecoin feature", ActivationFeature::B20Stablecoin),
     ("B-20 asset feature", ActivationFeature::B20Asset),

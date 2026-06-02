@@ -238,14 +238,12 @@ async fn stablecoin_creation_reverts_for_invalid_currency() {
     let token = env.b20_stablecoin_address();
 
     let block1 = env.sequencer.build_empty_block().await;
-    let activate_factory = env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
     let activate_stablecoin = env.activate_feature_tx(BerylTestEnv::b20_stablecoin_feature());
     let block2 = env
         .sequencer
-        .build_next_block_with_transactions(vec![activate_factory, activate_stablecoin])
+        .build_next_block_with_transactions(vec![activate_stablecoin])
         .await;
-    assert!(env.user_tx_succeeded(&block2, 0), "TOKEN_FACTORY activation must succeed");
-    assert!(env.user_tx_succeeded(&block2, 1), "B20_STABLECOIN activation must succeed");
+    assert!(env.user_tx_succeeded(&block2, 0), "B20_STABLECOIN activation must succeed");
 
     let invalid_currency = create_stablecoin_with_currency_tx(&env, "usd");
     let block3 = env.sequencer.build_next_block_with_transactions(vec![invalid_currency]).await;
@@ -299,14 +297,11 @@ impl StablecoinScenario {
     }
 
     async fn activate_precompiles(&mut self) {
-        let activate_factory = self.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let activate_stablecoin =
             self.env.activate_feature_tx(BerylTestEnv::b20_stablecoin_feature());
-        let block =
-            self.build_block_with_transactions(vec![activate_factory, activate_stablecoin]).await;
+        let block = self.build_block_with_transactions(vec![activate_stablecoin]).await;
 
-        assert!(self.env.user_tx_succeeded(&block, 0), "TOKEN_FACTORY activation must succeed");
-        assert!(self.env.user_tx_succeeded(&block, 1), "B20_STABLECOIN activation must succeed");
+        assert!(self.env.user_tx_succeeded(&block, 0), "B20_STABLECOIN activation must succeed");
     }
 
     async fn build_block_with_transactions(

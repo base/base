@@ -6,7 +6,7 @@ use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, Storage
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant, IB20Factory,
+    B20FactoryStorage, B20Variant, IB20Factory,
     macros::{decode_precompile_call, deduct_calldata_cost},
 };
 
@@ -24,8 +24,6 @@ impl<'a> B20FactoryStorage<'a> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
     ) -> base_precompile_storage::Result<Bytes> {
-        ActivationRegistryStorage::new(ctx).ensure_activated(ActivationFeature::B20Factory.id())?;
-
         match decode_precompile_call!(calldata, IB20Factory::IB20FactoryCalls) {
             IB20Factory::IB20FactoryCalls::createB20(call) => {
                 let caller = ctx.caller();

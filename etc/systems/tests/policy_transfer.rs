@@ -27,15 +27,14 @@ const SALT_ALLOWLIST: B256 = B256::repeat_byte(0x50);
 const SALT_BLOCKLIST: B256 = B256::repeat_byte(0x51);
 const SALT_ALWAYS_BLOCK: B256 = B256::repeat_byte(0x52);
 
-/// Activates `B20_FACTORY`, `B20_TOKEN`, and `POLICY_REGISTRY` features, then
-/// returns a [`B20PrecompileClient`] ready for precompile calls.
+/// Activates `B20_TOKEN` and `POLICY_REGISTRY` features, then returns a
+/// [`B20PrecompileClient`] ready for precompile calls.
 async fn activated_client<'a>(
     provider: &'a RootProvider<Base>,
     admin: &'a PrivateKeySigner,
 ) -> Result<B20PrecompileClient<'a>> {
     let client = B20PrecompileClient::new(provider, admin, common::L2_CHAIN_ID)
         .with_receipt_timeout(common::TX_RECEIPT_TIMEOUT);
-    client.activate_feature(ActivationFeature::B20Factory.id()).await?;
     client.activate_feature(ActivationFeature::B20Asset.id()).await?;
     client.activate_feature(ActivationFeature::PolicyRegistry.id()).await?;
     Ok(client)
