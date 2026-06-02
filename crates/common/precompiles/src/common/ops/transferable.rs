@@ -496,6 +496,24 @@ mod tests {
         assert_eq!(token.accounting().balance_of(BOB).unwrap(), U256::from(20u64));
     }
 
+    #[test]
+    fn transfer_from_privileged_still_reverts_on_insufficient_allowance() {
+        // The allowance *check* is unconditional; only the *decrement* is skipped
+        // for privileged calls. A spender with insufficient allowance is still
+        // rejected even when privileged=true.
+        let mut token = token_with_balance(U256::from(100u64));
+        token.accounting_mut().allowances.insert((ALICE, SPENDER), U256::from(5u64));
+
+        assert_eq!(
+            token.transfer_from(SPENDER, ALICE, BOB, U256::from(10u64), true).unwrap_err(),
+            BasePrecompileError::revert(IB20::InsufficientAllowance {
+                spender: SPENDER,
+                allowance: U256::from(5u64),
+                needed: U256::from(10u64),
+            })
+        );
+    }
+
     // ---- Balance checks ----
 
     #[test]
