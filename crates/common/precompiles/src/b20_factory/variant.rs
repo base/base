@@ -114,7 +114,7 @@ impl B20Variant {
         match self {
             Self::B20 => ActivationFeature::B20Token,
             Self::Stablecoin => ActivationFeature::B20Stablecoin,
-            Self::Security => ActivationFeature::B20Security,
+            Self::Security => ActivationFeature::B20Asset,
         }
     }
 

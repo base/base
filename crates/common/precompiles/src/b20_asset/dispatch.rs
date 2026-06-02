@@ -1,4 +1,4 @@
-//! ABI dispatch for the security B-20 variant.
+//! ABI dispatch for the asset B-20 variant.
 //!
 //! Security-specific selectors are tried first via `IB20Asset::IB20AssetCalls`.
 //! This catches overridden selectors (`redeem`, `redeemWithMemo`) before the
@@ -29,7 +29,7 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
         self.dispatch_with_observer(ctx, calldata, NoopPrecompileCallObserver)
     }
 
-    /// ABI-dispatches `calldata` and observes the decoded security B-20 operation.
+    /// ABI-dispatches `calldata` and observes the decoded asset B-20 operation.
     pub fn dispatch_with_observer<O>(
         &mut self,
         ctx: StorageCtx<'_>,
@@ -106,7 +106,6 @@ impl<S: SecurityAccounting, P: Policy> B20AssetToken<S, P> {
         O: PrecompileCallObserver,
     {
         ActivationRegistryStorage::new(ctx).ensure_activated(ActivationFeature::B20Asset.id())?;
-
 
         // Security-specific and overridden selectors are caught here first.
         if let Ok(call) = IB20Asset::IB20AssetCalls::abi_decode(calldata) {

@@ -1,4 +1,4 @@
-//! Precompile entry point for the security B-20 variant.
+//! Precompile entry point for the asset B-20 variant.
 
 use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::Address;
@@ -8,7 +8,7 @@ use crate::{
     PrecompileCallObserver, macros::base_precompile,
 };
 
-/// Entry point for the security B-20 token precompile.
+/// Entry point for the asset B-20 token precompile.
 ///
 /// Wraps [`B20AssetToken`] dispatch behind a [`DynPrecompile`] for
 /// registration in a [`PrecompilesMap`].
