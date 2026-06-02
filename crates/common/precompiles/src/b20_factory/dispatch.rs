@@ -1,8 +1,8 @@
 //! ABI dispatch for the `B20Factory` precompile.
 
-use alloy_primitives::Bytes;
+use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -33,9 +33,11 @@ impl<'a> B20FactoryStorage<'a> {
                 Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
             }
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {
-                let variant = B20Variant::from_abi(call.variant)
-                    .ok_or_else(|| BasePrecompileError::revert(IB20Factory::InvalidVariant {}))?;
-                let (addr, _) = variant.compute_address(call.sender, call.salt);
+                // Returns zero for an unrecognized variant to match base-std, which documents
+                // this function as "Never reverts."
+                let addr = B20Variant::from_abi(call.variant)
+                    .map(|v| v.compute_address(call.sender, call.salt).0)
+                    .unwrap_or(Address::ZERO);
                 Ok(IB20Factory::getB20AddressCall::abi_encode_returns(&addr).into())
             }
             IB20Factory::IB20FactoryCalls::isB20(call) => {

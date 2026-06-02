@@ -962,7 +962,7 @@ mod tests {
                 IB20Factory::getB20AddressCall::abi_encode_returns(&expected_token),
             );
             assert_output(
-                dispatch_factory_revert(
+                dispatch_factory_success(
                     ctx,
                     IB20Factory::getB20AddressCall {
                         variant: IB20Factory::B20Variant::__Invalid,
@@ -970,7 +970,7 @@ mod tests {
                         salt,
                     },
                 ),
-                IB20Factory::InvalidVariant {}.abi_encode(),
+                IB20Factory::getB20AddressCall::abi_encode_returns(&Address::ZERO),
             );
 
             assert_output(
@@ -1271,5 +1271,27 @@ mod tests {
             .find_map(|l| IB20Factory::B20Created::decode_log_data(l).ok())
             .expect("B20Created must be emitted");
         assert!(event.variantParams.is_empty(), "SECURITY variantParams must be empty");
+    }
+
+    #[test]
+    fn get_b20_address_returns_zero_for_invalid_variant() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let sender = Address::repeat_byte(0x11);
+        let salt = B256::repeat_byte(0xAB);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            assert_output(
+                dispatch_factory_success(
+                    ctx,
+                    IB20Factory::getB20AddressCall {
+                        variant: IB20Factory::B20Variant::__Invalid,
+                        sender,
+                        salt,
+                    },
+                ),
+                IB20Factory::getB20AddressCall::abi_encode_returns(&Address::ZERO),
+            );
+        });
     }
 }
