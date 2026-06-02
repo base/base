@@ -16,10 +16,10 @@
 use std::time::Duration;
 
 use base_prover_service_db::{
-    ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    CreateProofSession, MarkOutboxError, MarkOutboxProcessed, ProofRequestPage, ProofRequestRepo,
-    ProofStatus, ProofType, RetryOutcome, SessionStatus, SessionType, UpdateProofSession,
-    UpdateReceipt, ZkVmKind,
+    ApiProofType, ClaimProofJob, CreateProofRequest, CreateProofRequestError,
+    CreateProofRequestOutcome, CreateProofSession, MarkOutboxError, MarkOutboxProcessed,
+    ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType, RetryOutcome,
+    SessionStatus, SessionType, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
 };
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
@@ -1379,4 +1379,159 @@ async fn test_full_snark_pipeline() {
     assert_eq!(sessions[0].status, SessionStatus::Completed);
     assert_eq!(sessions[1].session_type, SessionType::Snark);
     assert_eq!(sessions[1].status, SessionStatus::Completed);
+}
+
+// ============================================================
+// Worker job claim tests (`claim_next_proof_job`)
+// ============================================================
+
+/// Build a claim with a long lease so claimed jobs stay out of the pool.
+fn claim_job(
+    worker_id: &str,
+    api_proof_type: ApiProofType,
+    tee_kinds: Vec<TeeKind>,
+    zk_vms: Vec<ZkVmKind>,
+    max_attempts: i32,
+) -> ClaimProofJob {
+    ClaimProofJob {
+        worker_id: worker_id.to_owned(),
+        api_proof_type,
+        tee_kinds,
+        zk_vms,
+        lock_duration_seconds: 3600,
+        max_attempts,
+    }
+}
+
+/// A TEE worker claim advertising AWS Nitro capability.
+fn tee_claim(worker_id: &str, max_attempts: i32) -> ClaimProofJob {
+    claim_job(worker_id, ApiProofType::Tee, vec![TeeKind::AwsNitro], vec![], max_attempts)
+}
+
+/// Drain every currently claimable TEE job by claiming it under a long lease, so
+/// each test starts from a known-empty TEE queue. Holding the jobs `CLAIMED` with
+/// an unexpired lock (rather than completing them) keeps this independent of the
+/// worker submit API.
+async fn drain_claimable_tee_jobs(repo: &ProofRequestRepo) {
+    while repo
+        .claim_next_proof_job(tee_claim("drain-worker", i32::MAX))
+        .await
+        .expect("drain claim should not error")
+        .is_some()
+    {}
+}
+
+/// Force a job's lock to appear expired so it becomes reclaimable.
+async fn expire_lock(pool: &PgPool, id: Uuid) {
+    sqlx::query("UPDATE proof_requests SET lock_expires_at = NOW() - INTERVAL '1 hour' WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("expire lock should succeed");
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_claim_next_proof_job_claim_and_capabilities() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    drain_claimable_tee_jobs(&repo).await;
+    let id = repo.create(tee_request()).await.unwrap();
+
+    // A worker advertising no matching capability claims nothing.
+    let no_caps = claim_job("no-caps", ApiProofType::Tee, vec![], vec![], 3);
+    assert!(repo.claim_next_proof_job(no_caps).await.unwrap().is_none());
+
+    // A capable TEE worker claims the pending job and flips it to CLAIMED/RUNNING.
+    let job = repo
+        .claim_next_proof_job(tee_claim("worker-1", 3))
+        .await
+        .unwrap()
+        .expect("the pending TEE job should be claimed");
+    assert_eq!(job.id, id);
+    assert_eq!(job.api_proof_type, ApiProofType::Tee);
+    assert_eq!(job.job_status, ProofJobStatus::Claimed);
+    assert_eq!(job.attempt, 1);
+    assert_eq!(job.worker_id.as_deref(), Some("worker-1"));
+    assert!(job.lock_id.is_some());
+    assert!(job.lock_expires_at.is_some());
+    assert!(job.claimed_at.is_some());
+    assert!(job.last_heartbeat_at.is_some());
+    assert_eq!(repo.get(id).await.unwrap().unwrap().status, ProofStatus::Running);
+
+    // The TEE queue is now drained, and a TEE worker never claims a ZK job.
+    repo.create(compressed_request()).await.unwrap();
+    assert!(repo.claim_next_proof_job(tee_claim("worker-2", 3)).await.unwrap().is_none());
+
+    // A ZK worker can claim the compressed job (oldest-first may surface an earlier
+    // pending ZK job from another test, so we only assert the proof type).
+    let zk = claim_job("zk-worker", ApiProofType::Compressed, vec![], vec![ZkVmKind::Sp1], 3);
+    let job = repo
+        .claim_next_proof_job(zk)
+        .await
+        .unwrap()
+        .expect("a compressed job should be claimable by a ZK worker");
+    assert_eq!(job.api_proof_type, ApiProofType::Compressed);
+    assert_eq!(job.job_status, ProofJobStatus::Claimed);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_claim_next_proof_job_concurrent_workers_never_double_claim() {
+    let pool = test_pool().await;
+    let repo_a = test_repo(pool.clone());
+    let repo_b = test_repo(pool.clone());
+
+    drain_claimable_tee_jobs(&repo_a).await;
+    let id = repo_a.create(tee_request()).await.unwrap();
+
+    let (a, b) = tokio::join!(
+        repo_a.claim_next_proof_job(tee_claim("worker-a", 3)),
+        repo_b.claim_next_proof_job(tee_claim("worker-b", 3)),
+    );
+
+    // Exactly one worker wins the single available job.
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!([&a, &b].into_iter().filter(|j| j.is_some()).count(), 1);
+    let winner = a.or(b).unwrap();
+    assert_eq!(winner.id, id);
+    assert_eq!(winner.attempt, 1);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_claim_next_proof_job_expired_lock_lifecycle() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    drain_claimable_tee_jobs(&repo).await;
+    let id = repo.create(tee_request()).await.unwrap();
+
+    // First claim, then expire the lock so it becomes reclaimable.
+    let first = repo
+        .claim_next_proof_job(tee_claim("worker-a", 2))
+        .await
+        .unwrap()
+        .expect("first claim should succeed");
+    assert_eq!(first.attempt, 1);
+    expire_lock(&pool, id).await;
+
+    // Reclaim issues a fresh lock and increments the attempt (1 < max_attempts 2).
+    let second = repo
+        .claim_next_proof_job(tee_claim("worker-b", 2))
+        .await
+        .unwrap()
+        .expect("expired lock should be reclaimable");
+    assert_eq!(second.id, id);
+    assert_eq!(second.attempt, 2);
+    assert_eq!(second.worker_id.as_deref(), Some("worker-b"));
+    assert_ne!(second.lock_id, first.lock_id, "a fresh fencing token is issued");
+
+    // Once attempts are exhausted (2 == max_attempts), an expired lock is not reclaimed.
+    expire_lock(&pool, id).await;
+    assert!(
+        repo.claim_next_proof_job(tee_claim("worker-c", 2)).await.unwrap().is_none(),
+        "exhausted job must not be reclaimed"
+    );
 }
