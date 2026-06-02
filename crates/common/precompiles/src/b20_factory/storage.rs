@@ -345,10 +345,7 @@ mod tests {
 
     fn activate_precompiles(storage: &mut HashMapStorageProvider) {
         storage.set_caller(ACTIVATION_ADMIN);
-        for key in [
-            ActivationFeature::B20Stablecoin.id(),
-            ActivationFeature::B20Asset.id(),
-        ] {
+        for key in [ActivationFeature::B20Stablecoin.id(), ActivationFeature::B20Asset.id()] {
             StorageCtx::enter(storage, |ctx| {
                 ActivationRegistryStorage::new(ctx).activate(key, Some(ACTIVATION_ADMIN)).unwrap()
             });
