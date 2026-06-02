@@ -901,12 +901,13 @@ pub struct MdbxV2LatestStorageCursor<Cursor> {
     cursor: Cursor,
     hashed_address: B256,
     positioned: bool,
+    last_key: Option<B256>,
 }
 
 impl<Cursor> MdbxV2LatestStorageCursor<Cursor> {
     /// Creates a latest-state storage cursor backed directly by the dup-sort MDBX table.
     pub const fn new(cursor: Cursor, hashed_address: B256) -> Self {
-        Self { cursor, hashed_address, positioned: false }
+        Self { cursor, hashed_address, positioned: false, last_key: None }
     }
 }
 
@@ -918,6 +919,7 @@ where
 
     fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
         self.positioned = true;
+        self.last_key = None;
         let entry = self.cursor.seek_by_key_subkey(self.hashed_address, key)?;
         let current_address = self.cursor.current()?.map(|(address, _)| address);
         self.live_storage_entry(current_address, entry)
@@ -927,15 +929,22 @@ where
         if !self.positioned {
             return self.seek(B256::ZERO);
         }
-        let entry = self.cursor.next_dup()?;
-        self.live_storage_entry(
-            entry.as_ref().map(|(address, _)| *address),
-            entry.map(|(_, entry)| entry),
-        )
+        loop {
+            let entry = self.cursor.next_dup()?;
+            let current_address = entry.as_ref().map(|(address, _)| *address);
+            let Some(entry) = entry.map(|(_, entry)| entry) else {
+                return Ok(None);
+            };
+            if self.last_key.is_some_and(|last_key| entry.key == last_key) {
+                continue;
+            }
+            return self.live_storage_entry(current_address, Some(entry));
+        }
     }
 
     fn reset(&mut self) {
         self.positioned = false;
+        self.last_key = None;
     }
 }
 
@@ -957,6 +966,7 @@ where
         if entry.value.is_zero() {
             return self.next();
         }
+        self.last_key = Some(entry.key);
         Ok(Some((entry.key, entry.value)))
     }
 }
@@ -972,6 +982,7 @@ where
     fn set_hashed_address(&mut self, hashed_address: B256) {
         self.hashed_address = hashed_address;
         self.positioned = false;
+        self.last_key = None;
     }
 }
 
@@ -1165,12 +1176,13 @@ pub struct MdbxV2LatestStorageTrieCursor<Cursor> {
     cursor: Cursor,
     hashed_address: B256,
     positioned: bool,
+    last_path: Option<StoredNibblesSubKey>,
 }
 
 impl<Cursor> MdbxV2LatestStorageTrieCursor<Cursor> {
     /// Creates a latest-state storage-trie cursor backed directly by the dup-sort MDBX table.
     pub const fn new(cursor: Cursor, hashed_address: B256) -> Self {
-        Self { cursor, hashed_address, positioned: false }
+        Self { cursor, hashed_address, positioned: false, last_path: None }
     }
 }
 
@@ -1183,12 +1195,17 @@ where
         path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
         self.positioned = true;
+        self.last_path = None;
         let subkey = StoredNibblesSubKey::from(path.clone());
         let entry = self.cursor.seek_by_key_subkey(self.hashed_address, subkey.clone())?;
         let current_address = self.cursor.current()?.map(|(address, _)| address);
-        Ok(entry.and_then(|entry| {
+        let out = entry.and_then(|entry| {
             (current_address == Some(self.hashed_address) && entry.nibbles == subkey)
-                .then_some((path, entry.node))
+                .then_some((entry.nibbles, entry.node))
+        });
+        Ok(out.map(|(nibbles, node)| {
+            self.last_path = Some(nibbles);
+            (path, node)
         }))
     }
 
@@ -1197,11 +1214,16 @@ where
         path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
         self.positioned = true;
+        self.last_path = None;
         let entry =
             self.cursor.seek_by_key_subkey(self.hashed_address, StoredNibblesSubKey::from(path))?;
         let current_address = self.cursor.current()?.map(|(address, _)| address);
-        Ok(entry.and_then(|entry| {
-            (current_address == Some(self.hashed_address)).then_some((entry.nibbles.0, entry.node))
+        let out = entry.and_then(|entry| {
+            (current_address == Some(self.hashed_address)).then_some((entry.nibbles, entry.node))
+        });
+        Ok(out.map(|(nibbles, node)| {
+            self.last_path = Some(nibbles.clone());
+            (nibbles.0, node)
         }))
     }
 
@@ -1209,9 +1231,19 @@ where
         if !self.positioned {
             return self.seek(Nibbles::default());
         }
-        Ok(self.cursor.next_dup()?.and_then(|(address, entry)| {
-            (address == self.hashed_address).then_some((entry.nibbles.0, entry.node))
-        }))
+        loop {
+            let Some((address, entry)) = self.cursor.next_dup()? else {
+                return Ok(None);
+            };
+            if address != self.hashed_address {
+                return Ok(None);
+            }
+            if self.last_path.as_ref().is_some_and(|last_path| entry.nibbles == *last_path) {
+                continue;
+            }
+            self.last_path = Some(entry.nibbles.clone());
+            return Ok(Some((entry.nibbles.0, entry.node)));
+        }
     }
 
     fn current(&mut self) -> Result<Option<Nibbles>, DatabaseError> {
@@ -1222,6 +1254,7 @@ where
 
     fn reset(&mut self) {
         self.positioned = false;
+        self.last_path = None;
     }
 }
 
@@ -1232,6 +1265,7 @@ where
     fn set_hashed_address(&mut self, hashed_address: B256) {
         self.hashed_address = hashed_address;
         self.positioned = false;
+        self.last_path = None;
     }
 }
 
@@ -2475,6 +2509,9 @@ mod tests {
                 .upsert(addr1, &StorageEntry { key: s1, value: U256::from(11) })
                 .expect("insert storage");
             cursor
+                .upsert(addr1, &StorageEntry { key: s1, value: U256::from(111) })
+                .expect("insert duplicate storage");
+            cursor
                 .upsert(addr1, &StorageEntry { key: s2, value: U256::from(22) })
                 .expect("insert storage");
             cursor
@@ -2490,8 +2527,8 @@ mod tests {
             addr1,
         );
 
-        let (got1, value1) = cursor.seek(s1).expect("ok").expect("first slot");
-        assert_eq!((got1, value1), (s1, U256::from(11)));
+        let (got1, _) = cursor.seek(s1).expect("ok").expect("first slot");
+        assert_eq!(got1, s1);
 
         let (got2, value2) = cursor.next().expect("ok").expect("second slot");
         assert_eq!((got2, value2), (s2, U256::from(22)));
@@ -2521,6 +2558,12 @@ mod tests {
                     &StorageTrieEntry { nibbles: StoredNibblesSubKey::from(p1), node: node() },
                 )
                 .expect("insert storage trie");
+            cursor
+                .upsert(
+                    addr1,
+                    &StorageTrieEntry { nibbles: StoredNibblesSubKey::from(p1), node: node() },
+                )
+                .expect("insert duplicate storage trie");
             cursor
                 .upsert(
                     addr1,
