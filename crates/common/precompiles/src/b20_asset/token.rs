@@ -215,8 +215,16 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     ) -> Result<()> {
         self.ensure_operator_role(caller, privileged)?;
         self.accounting_mut().set_multiplier(new_multiplier)?;
+        // Emit the effective multiplier: zero is the storage sentinel for WAD,
+        // so callers and off-chain indexers always see the value that arithmetic
+        // will actually use. See #3187.
+        let effective = if new_multiplier.is_zero() {
+            B20AssetStorage::WAD
+        } else {
+            new_multiplier
+        };
         self.accounting_mut().emit_event(
-            IB20Asset::MultiplierUpdated { multiplier: new_multiplier }.encode_log_data(),
+            IB20Asset::MultiplierUpdated { multiplier: effective }.encode_log_data(),
         )
     }
 
