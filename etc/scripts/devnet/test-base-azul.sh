@@ -74,9 +74,23 @@ check_eth_config() {
 
     if raw_result="$(cast rpc --rpc-url "$RPC_URL" eth_config 2>&1)"; then
         if [ "$MODE" = "before" ]; then
+            local current_activation
+            local next_activation
+            current_activation="$(printf '%s\n' "$raw_result" | jq -r '.current.activationTime // empty')"
+            next_activation="$(printf '%s\n' "$raw_result" | jq -r '.next.activationTime // empty')"
+
+            if [[ -z "$current_activation" || "$current_activation" = "0" ]]; then
+                pass_check \
+                    "$check_name" \
+                    "available before Azul with current activationTime=${current_activation:-<unset>}" \
+                    "next activationTime=${next_activation:-<unset>}"
+                return
+            fi
+
             fail_check \
                 "$check_name" \
-                "unexpectedly succeeded before Azul on $RPC_URL" \
+                "unexpected active Azul eth_config before activation on $RPC_URL" \
+                "current activationTime=$current_activation" \
                 "$raw_result"
         fi
 
@@ -333,6 +347,12 @@ check_clz_transaction() {
             --json \
             "$contract_addr" "$input_word" 2>&1
     )"; then
+        if [ "$MODE" = "before" ]; then
+            pass_check "$check_name" \
+                "call failed before Azul (CLZ opcode not available)" \
+                "$(printf '%s' "$call_result" | tr '\n\r' ' ' | sed 's/[[:space:]]\+/ /g')"
+            return
+        fi
         fail_check "$check_name" \
             "CLZ call tx failed" \
             "$call_result"
@@ -341,6 +361,22 @@ check_clz_transaction() {
     local call_block tx_hash
     call_block="$(printf '%s' "$call_result" | jq -r '.blockNumber')"
     tx_hash="$(printf '%s' "$call_result" | jq -r '.transactionHash')"
+
+    local call_status
+    call_status="$(printf '%s' "$call_result" | jq -r '.status // empty')"
+    if [[ "$call_status" != "0x1" && "$call_status" != "1" && "$call_status" != "true" ]]; then
+        if [ "$MODE" = "before" ]; then
+            pass_check "$check_name" \
+                "call tx failed before Azul (CLZ opcode not available)" \
+                "receipt status: ${call_status:-<missing>}" \
+                "call tx $tx_hash landed in block $call_block"
+            return
+        fi
+        fail_check "$check_name" \
+            "CLZ call tx failed" \
+            "receipt status: ${call_status:-<missing>}" \
+            "call tx $tx_hash landed in block $call_block"
+    fi
 
     local actual
     actual="$(cast call --rpc-url "$RPC_URL" "$contract_addr" "$input_word" 2>&1)"

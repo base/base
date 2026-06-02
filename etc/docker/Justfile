@@ -50,6 +50,10 @@ smoke:
 # Runs full devnet checks (status + smoke tests)
 checks: status smoke
 
+# Runs a fresh devnet across a contract-driven Azul activation.
+upgrade-signal-test: _build-contracts _build-setup-image (_build-rust-images "devnet" "dev")
+    ./etc/scripts/devnet/test-upgrade-signal.sh
+
 # Stream FB's from the builder via websocket
 flashblocks:
     @command -v flashblocks-websocket-client >/dev/null 2>&1 || go install github.com/danyalprout/flashblocks-websocket-client@latest
