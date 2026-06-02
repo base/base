@@ -65,7 +65,9 @@ where
             return Err(BaseProofsStorageError::NoBlocksFound);
         };
 
-        let parent_block_number = block.number() - 1;
+        let Some(parent_block_number) = block.number().checked_sub(1) else {
+            return Err(BaseProofsStorageError::UnknownParent);
+        };
         if parent_block_number < earliest {
             return Err(BaseProofsStorageError::UnknownParent);
         }
@@ -396,7 +398,9 @@ where
         let block_number = block.number();
         let block_hash = block.hash();
         let parent_hash = block.parent_hash();
-        let parent_block_number = block_number - 1;
+        let Some(parent_block_number) = block_number.checked_sub(1) else {
+            return Err(BaseProofsStorageError::UnknownParent);
+        };
         let block_start = Instant::now();
 
         info!(

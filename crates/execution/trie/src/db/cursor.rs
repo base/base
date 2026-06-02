@@ -452,8 +452,8 @@ impl<K: Ord + Clone, V: Clone> MaterializedCursor<K, V> {
     }
 }
 
-fn first_change_after(list: impl Iterator<Item = u64>, block_number: u64) -> Option<u64> {
-    list.into_iter().find(|changed_at| *changed_at > block_number)
+fn first_change_after(mut list: impl Iterator<Item = u64>, block_number: u64) -> Option<u64> {
+    list.find(|changed_at| *changed_at > block_number)
 }
 
 fn min_change_after(current: &mut Option<u64>, list: impl Iterator<Item = u64>, block_number: u64) {
@@ -963,11 +963,31 @@ where
         let Some(entry) = entry else {
             return Ok(None);
         };
-        if entry.value.is_zero() {
-            return self.next();
+        if !entry.value.is_zero() {
+            self.last_key = Some(entry.key);
+            return Ok(Some((entry.key, entry.value)));
         }
+
         self.last_key = Some(entry.key);
-        Ok(Some((entry.key, entry.value)))
+        loop {
+            let entry = self.cursor.next_dup()?;
+            let current_address = entry.as_ref().map(|(address, _)| *address);
+            if current_address != Some(self.hashed_address) {
+                return Ok(None);
+            }
+            let Some((_, entry)) = entry else {
+                return Ok(None);
+            };
+            if self.last_key.is_some_and(|last_key| entry.key == last_key) {
+                continue;
+            }
+            if entry.value.is_zero() {
+                self.last_key = Some(entry.key);
+                continue;
+            }
+            self.last_key = Some(entry.key);
+            return Ok(Some((entry.key, entry.value)));
+        }
     }
 }
 
@@ -1132,7 +1152,8 @@ impl TrieCursor for MdbxV2StorageTrieCursor {
         path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
         let rows = self.rows();
-        let index = rows.partition_point(|(row_key, _)| row_key.0 < path);
+        let key = StoredNibbles(path);
+        let index = rows.partition_point(|(row_key, _)| row_key < &key);
         if index < rows.len() {
             let row = (rows[index].0.0, rows[index].1.clone());
             self.position = Some(index);
@@ -2541,6 +2562,66 @@ mod tests {
     }
 
     #[test]
+    fn historical_v2_storage_cursor_can_switch_addresses() {
+        let db = setup_db();
+        let addr1 = B256::from([0x31; 32]);
+        let addr2 = B256::from([0x32; 32]);
+        let s1 = B256::from([0x41; 32]);
+        let s2 = B256::from([0x42; 32]);
+
+        {
+            let wtx = db.tx_mut().expect("rw");
+            let mut cursor = wtx.cursor_dup_write::<V2HashedStorages>().expect("dup write");
+            cursor
+                .upsert(addr1, &StorageEntry { key: s1, value: U256::from(11) })
+                .expect("insert addr1 storage");
+            cursor
+                .upsert(addr2, &StorageEntry { key: s2, value: U256::from(22) })
+                .expect("insert addr2 storage");
+            drop(cursor);
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro");
+        let mut cursor = MdbxV2StorageCursor::new(&tx, 100, addr1).expect("historical cursor");
+        assert_eq!(cursor.seek(s1).expect("addr1 seek").expect("addr1 row"), (s1, U256::from(11)));
+
+        cursor.set_hashed_address(addr2);
+        assert_eq!(cursor.seek(s2).expect("addr2 seek").expect("addr2 row"), (s2, U256::from(22)));
+    }
+
+    #[test]
+    fn latest_storage_cursor_skips_zero_rows_iteratively() {
+        let db = setup_db();
+        let addr = B256::from([0x01; 32]);
+        let zero_slot = B256::from([0x11; 32]);
+        let live_slot = B256::from([0x12; 32]);
+
+        {
+            let wtx = db.tx_mut().expect("rw");
+            let mut cursor = wtx.cursor_dup_write::<V2HashedStorages>().expect("dup write");
+            cursor
+                .upsert(addr, &StorageEntry { key: zero_slot, value: U256::ZERO })
+                .expect("insert zero storage");
+            cursor
+                .upsert(addr, &StorageEntry { key: live_slot, value: U256::from(22) })
+                .expect("insert live storage");
+            drop(cursor);
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro");
+        let mut cursor = MdbxV2LatestStorageCursor::new(
+            tx.cursor_dup_read::<V2HashedStorages>().expect("read"),
+            addr,
+        );
+
+        let (got, value) = cursor.seek(zero_slot).expect("ok").expect("live slot");
+        assert_eq!((got, value), (live_slot, U256::from(22)));
+        assert!(cursor.next().expect("ok").is_none());
+    }
+
+    #[test]
     fn latest_storage_trie_cursor_uses_dupsort_and_stops_at_address_boundary() {
         let db = setup_db();
         let addr1 = B256::from([0x01; 32]);
@@ -2597,5 +2678,40 @@ mod tests {
 
         let out = cursor.seek(p3).expect("ok");
         assert!(out.is_none(), "should not expose another address path");
+    }
+
+    #[test]
+    fn historical_v2_storage_trie_cursor_can_switch_addresses() {
+        let db = setup_db();
+        let addr1 = B256::from([0x51; 32]);
+        let addr2 = B256::from([0x52; 32]);
+        let p1 = Nibbles::from_nibbles([0x06]);
+        let p2 = Nibbles::from_nibbles([0x07]);
+
+        {
+            let wtx = db.tx_mut().expect("rw");
+            let mut cursor = wtx.cursor_dup_write::<V2StoragesTrie>().expect("dup write");
+            cursor
+                .upsert(
+                    addr1,
+                    &StorageTrieEntry { nibbles: StoredNibblesSubKey::from(p1), node: node() },
+                )
+                .expect("insert addr1 storage trie");
+            cursor
+                .upsert(
+                    addr2,
+                    &StorageTrieEntry { nibbles: StoredNibblesSubKey::from(p2), node: node() },
+                )
+                .expect("insert addr2 storage trie");
+            drop(cursor);
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro");
+        let mut cursor = MdbxV2StorageTrieCursor::new(&tx, 100, addr1).expect("historical cursor");
+        assert_eq!(cursor.seek(p1).expect("addr1 seek").expect("addr1 row").0, p1);
+
+        cursor.set_hashed_address(addr2);
+        assert_eq!(cursor.seek(p2).expect("addr2 seek").expect("addr2 row").0, p2);
     }
 }

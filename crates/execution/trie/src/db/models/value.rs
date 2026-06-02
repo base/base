@@ -11,8 +11,6 @@ use reth_primitives_traits::{Account, ValueWithSubKey};
 use reth_trie_common::{BranchNodeCompact, StoredNibblesSubKey};
 use serde::{Deserialize, Serialize};
 
-use super::key::NIBBLE_SUBKEY_LEN;
-
 /// Previous account value stored in V2 hashed account changesets.
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct HashedAccountBeforeTx {
@@ -93,7 +91,7 @@ impl Decompress for TrieChangeSetsEntry {
             return Err(DatabaseError::Decode);
         }
 
-        let (nibbles, rest) = StoredNibblesSubKey::from_compact(value, NIBBLE_SUBKEY_LEN);
+        let (nibbles, rest) = StoredNibblesSubKey::from_compact(value, value.len());
         let node = if rest.is_empty() {
             None
         } else {

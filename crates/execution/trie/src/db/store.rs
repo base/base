@@ -14,7 +14,6 @@ use reth_db::{
     transaction::{DbTx, DbTxMut},
 };
 use reth_primitives_traits::{Account, StorageEntry, ValueWithSubKey};
-use reth_trie::{hashed_cursor::HashedCursor, trie_cursor::TrieCursor};
 use reth_trie_common::{
     BranchNodeCompact, HashedPostState, Nibbles, StorageTrieEntry, StoredNibbles,
     StoredNibblesSubKey,
@@ -33,8 +32,10 @@ use crate::{
         WriteCounts,
     },
     db::{
-        MdbxBatchSession, MdbxV2AccountCursor, MdbxV2AccountTrieCursor, MdbxV2StorageCursor,
-        MdbxV2StorageTrieCursor,
+        MdbxBatchSession, MdbxV2AccountCursor, MdbxV2AccountCursorEither, MdbxV2AccountTrieCursor,
+        MdbxV2AccountTrieCursorEither, MdbxV2LatestAccountCursor, MdbxV2LatestAccountTrieCursor,
+        MdbxV2LatestStorageCursor, MdbxV2LatestStorageTrieCursor, MdbxV2StorageCursor,
+        MdbxV2StorageCursorEither, MdbxV2StorageTrieCursor, MdbxV2StorageTrieCursorEither,
         models::{
             AccountTrieHistory, AccountTrieShardedKey, BlockChangeSet, BlockNumberHashedAddress,
             ChangeSet, HashedAccountBeforeTx, HashedAccountHistory, HashedAccountShardedKey,
@@ -69,6 +70,12 @@ struct HistoryDeleteBatch {
 }
 
 const NUM_OF_INDICES_IN_SHARD: usize = 2_000;
+
+type Tx = <DatabaseEnv as Database>::TX;
+type V2AccountTrieCursor = <Tx as DbTx>::Cursor<V2AccountsTrie>;
+type V2StorageTrieCursor = <Tx as DbTx>::DupCursor<V2StoragesTrie>;
+type V2AccountCursor = <Tx as DbTx>::Cursor<V2HashedAccounts>;
+type V2StorageCursor = <Tx as DbTx>::DupCursor<V2HashedStorages>;
 
 trait V2HistoryShardKey: Clone + Ord {
     type LogicalKey: Eq;
@@ -718,6 +725,52 @@ impl MdbxProofsStorage {
         T::Key: V2HistoryShardKey,
     {
         let mut cursor = tx.cursor_write::<T>()?;
+        let last_key = key.with_highest_block(u64::MAX);
+        let mut block_numbers = cursor
+            .seek_exact(last_key.clone())?
+            .map_or_else(BTreeSet::new, |(_, list)| list.iter().collect::<BTreeSet<_>>());
+
+        if block_numbers.first().is_some_and(|first_block| block_number < *first_block) {
+            return Self::rewrite_v2_history::<T>(tx, key, Some(block_number));
+        }
+
+        block_numbers.insert(block_number);
+
+        if block_numbers.len() <= NUM_OF_INDICES_IN_SHARD {
+            cursor.upsert(last_key, &BlockNumberList::new_pre_sorted(block_numbers.into_iter()))?;
+            return Ok(());
+        }
+
+        if cursor.seek_exact(last_key)?.is_some() {
+            cursor.delete_current()?;
+        }
+
+        let blocks = block_numbers.into_iter().collect::<Vec<_>>();
+        let chunk_count = blocks.len().div_ceil(NUM_OF_INDICES_IN_SHARD);
+        for (index, chunk) in blocks.chunks(NUM_OF_INDICES_IN_SHARD).enumerate() {
+            let highest_block_number = if index + 1 == chunk_count {
+                u64::MAX
+            } else {
+                *chunk.last().expect("non-empty history shard")
+            };
+            cursor.upsert(
+                key.with_highest_block(highest_block_number),
+                &BlockNumberList::new_pre_sorted(chunk.iter().copied()),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn rewrite_v2_history<T>(
+        tx: &(impl DbTxMut + DbTx),
+        key: T::Key,
+        block_number: Option<u64>,
+    ) -> BaseProofsStorageResult<()>
+    where
+        T: Table<Value = BlockNumberList>,
+        T::Key: V2HistoryShardKey,
+    {
+        let mut cursor = tx.cursor_write::<T>()?;
         let logical_key = key.logical_key();
         let first_key = key.with_highest_block(0);
         let mut row = cursor.seek(first_key)?;
@@ -733,7 +786,10 @@ impl MdbxProofsStorage {
             row = cursor.next()?;
         }
 
-        block_numbers.insert(block_number);
+        if let Some(block_number) = block_number {
+            block_numbers.insert(block_number);
+        }
+
         for old_key in old_keys {
             if cursor.seek_exact(old_key)?.is_some() {
                 cursor.delete_current()?;
@@ -741,9 +797,6 @@ impl MdbxProofsStorage {
         }
 
         let blocks = block_numbers.into_iter().collect::<Vec<_>>();
-        if blocks.is_empty() {
-            return Ok(());
-        }
         let chunk_count = blocks.len().div_ceil(NUM_OF_INDICES_IN_SHARD);
         for (index, chunk) in blocks.chunks(NUM_OF_INDICES_IN_SHARD).enumerate() {
             let highest_block_number = if index + 1 == chunk_count {
@@ -756,7 +809,69 @@ impl MdbxProofsStorage {
                 &BlockNumberList::new_pre_sorted(chunk.iter().copied()),
             )?;
         }
+
         Ok(())
+    }
+
+    fn should_use_latest_cursor(
+        &self,
+        tx: &impl DbTx,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<bool> {
+        Ok(self
+            .inner_get_latest_block_number_hash(tx)?
+            .is_some_and(|(latest_block_number, _)| latest_block_number == max_block_number))
+    }
+
+    fn inner_account_trie_node(
+        tx: &impl DbTx,
+        path: StoredNibbles,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<BranchNodeCompact>> {
+        if let Some(changed_at) = Self::v2_first_change_after::<V2AccountsTrieHistory>(
+            tx,
+            AccountTrieShardedKey::new(path.clone(), u64::MAX),
+            max_block_number,
+        )? {
+            let subkey = StoredNibblesSubKey::from(path.0);
+            return Ok(tx
+                .cursor_dup_read::<V2AccountTrieChangeSets>()?
+                .seek_by_key_subkey(changed_at, subkey.clone())?
+                .filter(|entry| entry.nibbles == subkey)
+                .and_then(|entry| entry.node));
+        }
+
+        Ok(tx.cursor_read::<V2AccountsTrie>()?.seek_exact(path)?.map(|(_, node)| node))
+    }
+
+    fn inner_storage_trie_node(
+        tx: &impl DbTx,
+        hashed_address: B256,
+        path: StoredNibbles,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Option<BranchNodeCompact>> {
+        if let Some(changed_at) = Self::v2_first_change_after::<V2StoragesTrieHistory>(
+            tx,
+            StorageTrieShardedKey::new(hashed_address, path.clone(), u64::MAX),
+            max_block_number,
+        )? {
+            let subkey = StoredNibblesSubKey::from(path.0);
+            return Ok(tx
+                .cursor_dup_read::<V2StorageTrieChangeSets>()?
+                .seek_by_key_subkey(
+                    BlockNumberHashedAddress((changed_at, hashed_address)),
+                    subkey.clone(),
+                )?
+                .filter(|entry| entry.nibbles == subkey)
+                .and_then(|entry| entry.node));
+        }
+
+        let subkey = StoredNibblesSubKey::from(path.0);
+        Ok(tx
+            .cursor_dup_read::<V2StoragesTrie>()?
+            .seek_by_key_subkey(hashed_address, subkey.clone())?
+            .filter(|entry| entry.nibbles == subkey)
+            .map(|entry| entry.node))
     }
 
     fn remove_v2_history<T>(
@@ -998,19 +1113,19 @@ impl MdbxProofsStorage {
 
 impl BaseProofsStore for MdbxProofsStorage {
     type StorageTrieCursor<'tx>
-        = MdbxV2StorageTrieCursor
+        = MdbxV2StorageTrieCursorEither<V2StorageTrieCursor>
     where
         Self: 'tx;
     type AccountTrieCursor<'tx>
-        = MdbxV2AccountTrieCursor
+        = MdbxV2AccountTrieCursorEither<V2AccountTrieCursor>
     where
         Self: 'tx;
     type StorageCursor<'tx>
-        = MdbxV2StorageCursor
+        = MdbxV2StorageCursorEither<V2StorageCursor>
     where
         Self: 'tx;
     type AccountHashedCursor<'tx>
-        = MdbxV2AccountCursor
+        = MdbxV2AccountCursorEither<V2AccountCursor>
     where
         Self: 'tx;
     type Tx = <DatabaseEnv as Database>::TX;
@@ -1033,7 +1148,11 @@ impl BaseProofsStore for MdbxProofsStorage {
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>> {
         let tx = self.env.tx()?;
-        MdbxV2StorageTrieCursor::new(&tx, max_block_number, hashed_address)
+        Ok(MdbxV2StorageTrieCursorEither::Historical(MdbxV2StorageTrieCursor::new(
+            &tx,
+            max_block_number,
+            hashed_address,
+        )?))
     }
 
     fn account_trie_cursor<'tx>(
@@ -1041,7 +1160,10 @@ impl BaseProofsStore for MdbxProofsStorage {
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>> {
         let tx = self.env.tx()?;
-        MdbxV2AccountTrieCursor::new(&tx, max_block_number)
+        Ok(MdbxV2AccountTrieCursorEither::Historical(MdbxV2AccountTrieCursor::new(
+            &tx,
+            max_block_number,
+        )?))
     }
 
     fn storage_hashed_cursor<'tx>(
@@ -1050,7 +1172,11 @@ impl BaseProofsStore for MdbxProofsStorage {
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>> {
         let tx = self.env.tx()?;
-        MdbxV2StorageCursor::new(&tx, max_block_number, hashed_address)
+        Ok(MdbxV2StorageCursorEither::Historical(MdbxV2StorageCursor::new(
+            &tx,
+            max_block_number,
+            hashed_address,
+        )?))
     }
 
     fn account_hashed_cursor<'tx>(
@@ -1058,7 +1184,7 @@ impl BaseProofsStore for MdbxProofsStorage {
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>> {
         let tx = self.env.tx()?;
-        MdbxV2AccountCursor::new(&tx, max_block_number)
+        Ok(MdbxV2AccountCursorEither::Historical(MdbxV2AccountCursor::new(&tx, max_block_number)?))
     }
 
     fn storage_trie_cursor_with_tx<'tx>(
@@ -1070,7 +1196,17 @@ impl BaseProofsStore for MdbxProofsStorage {
     where
         Self: 'tx,
     {
-        MdbxV2StorageTrieCursor::new(tx, max_block_number, hashed_address)
+        if self.should_use_latest_cursor(tx, max_block_number)? {
+            return Ok(MdbxV2StorageTrieCursorEither::Latest(MdbxV2LatestStorageTrieCursor::new(
+                tx.cursor_dup_read::<V2StoragesTrie>()?,
+                hashed_address,
+            )));
+        }
+        Ok(MdbxV2StorageTrieCursorEither::Historical(MdbxV2StorageTrieCursor::new(
+            tx,
+            max_block_number,
+            hashed_address,
+        )?))
     }
 
     fn account_trie_cursor_with_tx<'tx>(
@@ -1081,7 +1217,15 @@ impl BaseProofsStore for MdbxProofsStorage {
     where
         Self: 'tx,
     {
-        MdbxV2AccountTrieCursor::new(tx, max_block_number)
+        if self.should_use_latest_cursor(tx, max_block_number)? {
+            return Ok(MdbxV2AccountTrieCursorEither::Latest(MdbxV2LatestAccountTrieCursor::new(
+                tx.cursor_read::<V2AccountsTrie>()?,
+            )));
+        }
+        Ok(MdbxV2AccountTrieCursorEither::Historical(MdbxV2AccountTrieCursor::new(
+            tx,
+            max_block_number,
+        )?))
     }
 
     fn storage_hashed_cursor_with_tx<'tx>(
@@ -1093,7 +1237,17 @@ impl BaseProofsStore for MdbxProofsStorage {
     where
         Self: 'tx,
     {
-        MdbxV2StorageCursor::new(tx, max_block_number, hashed_address)
+        if self.should_use_latest_cursor(tx, max_block_number)? {
+            return Ok(MdbxV2StorageCursorEither::Latest(MdbxV2LatestStorageCursor::new(
+                tx.cursor_dup_read::<V2HashedStorages>()?,
+                hashed_address,
+            )));
+        }
+        Ok(MdbxV2StorageCursorEither::Historical(MdbxV2StorageCursor::new(
+            tx,
+            max_block_number,
+            hashed_address,
+        )?))
     }
 
     fn account_hashed_cursor_with_tx<'tx>(
@@ -1104,7 +1258,12 @@ impl BaseProofsStore for MdbxProofsStorage {
     where
         Self: 'tx,
     {
-        MdbxV2AccountCursor::new(tx, max_block_number)
+        if self.should_use_latest_cursor(tx, max_block_number)? {
+            return Ok(MdbxV2AccountCursorEither::Latest(MdbxV2LatestAccountCursor::new(
+                tx.cursor_read::<V2HashedAccounts>()?,
+            )));
+        }
+        Ok(MdbxV2AccountCursorEither::Historical(MdbxV2AccountCursor::new(tx, max_block_number)?))
     }
 
     fn hashed_account(
@@ -1143,7 +1302,6 @@ impl BaseProofsStore for MdbxProofsStorage {
                 .ok_or(BaseProofsStorageError::NoChangeSetForBlock(block_number))?;
 
             let mut trie_updates = TrieUpdates::default();
-            let mut account_trie_cursor = MdbxV2AccountTrieCursor::new(tx, block_number)?;
             for key in change_set.account_trie_keys {
                 if !Self::v2_history_contains::<V2AccountsTrieHistory>(
                     tx,
@@ -1155,14 +1313,13 @@ impl BaseProofsStore for MdbxProofsStorage {
                         block_number,
                     ));
                 }
-                if let Some((_, value)) = account_trie_cursor.seek_exact(key.0)? {
+                if let Some(value) = Self::inner_account_trie_node(tx, key.clone(), block_number)? {
                     trie_updates.account_nodes.insert(key.0, value);
                 } else {
                     trie_updates.removed_nodes.insert(key.0);
                 }
             }
 
-            let mut storage_trie_cursor: Option<(B256, MdbxV2StorageTrieCursor)> = None;
             for key in change_set.storage_trie_keys {
                 if !Self::v2_history_contains::<V2StoragesTrieHistory>(
                     tx,
@@ -1180,18 +1337,12 @@ impl BaseProofsStore for MdbxProofsStorage {
                     .entry(key.hashed_address)
                     .or_insert_with(StorageTrieUpdates::default);
 
-                if !matches!(&storage_trie_cursor, Some((address, _)) if *address == key.hashed_address)
-                {
-                    storage_trie_cursor = Some((
-                        key.hashed_address,
-                        MdbxV2StorageTrieCursor::new(tx, block_number, key.hashed_address)?,
-                    ));
-                }
-                let cursor = &mut storage_trie_cursor
-                    .as_mut()
-                    .expect("storage trie cursor initialized")
-                    .1;
-                if let Some((_, value)) = cursor.seek_exact(key.path.0)? {
+                if let Some(value) = Self::inner_storage_trie_node(
+                    tx,
+                    key.hashed_address,
+                    key.path.clone(),
+                    block_number,
+                )? {
                     stu.storage_nodes.insert(key.path.0, value);
                 } else {
                     stu.removed_nodes.insert(key.path.0);
@@ -1200,7 +1351,6 @@ impl BaseProofsStore for MdbxProofsStorage {
 
             let mut post_state =
                 HashedPostState::with_capacity(change_set.hashed_account_keys.len());
-            let mut hashed_account_cursor = MdbxV2AccountCursor::new(tx, block_number)?;
             for key in change_set.hashed_account_keys {
                 if !Self::v2_history_contains::<V2HashedAccountsHistory>(
                     tx,
@@ -1212,13 +1362,10 @@ impl BaseProofsStore for MdbxProofsStorage {
                         block_number,
                     ));
                 }
-                let entry = hashed_account_cursor
-                    .seek(key)?
-                    .and_then(|(found_key, account)| (found_key == key).then_some(account));
+                let entry = self.inner_hashed_account(tx, key, block_number)?;
                 post_state.accounts.insert(key, entry);
             }
 
-            let mut hashed_storage_cursor: Option<(B256, MdbxV2StorageCursor)> = None;
             for key in change_set.hashed_storage_keys {
                 if !Self::v2_history_contains::<V2HashedStoragesHistory>(
                     tx,
@@ -1236,22 +1383,13 @@ impl BaseProofsStore for MdbxProofsStorage {
                     });
                 }
                 let hs = post_state.storages.entry(key.hashed_address).or_default();
-                if !matches!(&hashed_storage_cursor, Some((address, _)) if *address == key.hashed_address)
-                {
-                    hashed_storage_cursor = Some((
+                let value = self
+                    .inner_hashed_storage(
+                        tx,
                         key.hashed_address,
-                        MdbxV2StorageCursor::new(tx, block_number, key.hashed_address)?,
-                    ));
-                }
-                let cursor = &mut hashed_storage_cursor
-                    .as_mut()
-                    .expect("hashed storage cursor initialized")
-                    .1;
-                let value = cursor
-                    .seek(key.hashed_storage_key)?
-                    .and_then(|(found_key, value)| {
-                        (found_key == key.hashed_storage_key).then_some(value)
-                    })
+                        key.hashed_storage_key,
+                        block_number,
+                    )?
                     .unwrap_or(U256::ZERO);
                 hs.storage.insert(key.hashed_storage_key, value);
             }
@@ -1641,6 +1779,7 @@ mod tests {
     };
     use reth_trie::{
         BranchNodeCompact, HashedPostState, HashedStorage, Nibbles, StoredNibbles,
+        hashed_cursor::HashedCursor,
         updates::{StorageTrieUpdates, TrieUpdates},
     };
     use tempfile::TempDir;
@@ -1791,6 +1930,91 @@ mod tests {
         assert_eq!(store.get_earliest_block_number().unwrap(), Some((anchor.number, anchor.hash)));
         assert_eq!(store.get_latest_block_number().unwrap(), Some((anchor.number, anchor.hash)));
         assert_no_v1_history(&store);
+    }
+
+    #[test]
+    fn with_tx_cursors_use_latest_variants_for_latest_block() {
+        let dir = TempDir::new().unwrap();
+        let store = MdbxProofsStorage::new(dir.path()).expect("env");
+        let anchor = BlockNumHash::new(10, B256::from([0xAA; 32]));
+
+        store.set_initial_state_anchor(anchor).expect("set anchor");
+        store.commit_initial_state().expect("commit initial state");
+
+        let tx = store.env.tx().expect("ro tx");
+        assert!(matches!(
+            store.account_trie_cursor_with_tx(&tx, anchor.number).expect("account trie cursor"),
+            MdbxV2AccountTrieCursorEither::Latest(_),
+        ));
+        assert!(matches!(
+            store
+                .storage_trie_cursor_with_tx(&tx, B256::from([0x01; 32]), anchor.number)
+                .expect("storage trie cursor"),
+            MdbxV2StorageTrieCursorEither::Latest(_),
+        ));
+        assert!(matches!(
+            store.account_hashed_cursor_with_tx(&tx, anchor.number).expect("account cursor"),
+            MdbxV2AccountCursorEither::Latest(_),
+        ));
+        assert!(matches!(
+            store
+                .storage_hashed_cursor_with_tx(&tx, B256::from([0x01; 32]), anchor.number)
+                .expect("storage cursor"),
+            MdbxV2StorageCursorEither::Latest(_),
+        ));
+    }
+
+    #[test]
+    fn append_v2_history_splits_final_shard_and_preserves_out_of_order_fallback() {
+        let dir = TempDir::new().unwrap();
+        let store = MdbxProofsStorage::new(dir.path()).expect("env");
+        let hashed_address = B256::from([0x11; 32]);
+
+        store
+            .env
+            .update(|tx| -> BaseProofsStorageResult<()> {
+                for block_number in 1..=(NUM_OF_INDICES_IN_SHARD as u64 + 1) {
+                    MdbxProofsStorage::append_v2_history::<V2HashedAccountsHistory>(
+                        tx,
+                        HashedAccountShardedKey::new(hashed_address, u64::MAX),
+                        block_number,
+                    )?;
+                }
+                MdbxProofsStorage::append_v2_history::<V2HashedAccountsHistory>(
+                    tx,
+                    HashedAccountShardedKey::new(hashed_address, u64::MAX),
+                    0,
+                )?;
+                Ok(())
+            })
+            .unwrap()
+            .unwrap();
+
+        let tx = store.env.tx().expect("ro tx");
+        let mut cursor = tx.cursor_read::<V2HashedAccountsHistory>().expect("history cursor");
+        let (first_key, first_list) = cursor
+            .seek_exact(HashedAccountShardedKey::new(
+                hashed_address,
+                NUM_OF_INDICES_IN_SHARD as u64 - 1,
+            ))
+            .expect("read first shard")
+            .expect("first shard");
+        assert_eq!(first_key.0.highest_block_number, NUM_OF_INDICES_IN_SHARD as u64 - 1);
+        assert_eq!(
+            first_list.iter().collect::<Vec<_>>(),
+            (0..NUM_OF_INDICES_IN_SHARD as u64).collect::<Vec<_>>()
+        );
+
+        let (last_key, last_list) = cursor
+            .seek_exact(HashedAccountShardedKey::new(hashed_address, u64::MAX))
+            .expect("read final shard")
+            .expect("final shard");
+        assert_eq!(last_key.0.highest_block_number, u64::MAX);
+        assert_eq!(
+            last_list.iter().collect::<Vec<_>>(),
+            vec![NUM_OF_INDICES_IN_SHARD as u64, NUM_OF_INDICES_IN_SHARD as u64 + 1],
+        );
+        assert!(cursor.next().expect("next shard").is_none());
     }
 
     #[test]
