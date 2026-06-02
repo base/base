@@ -197,7 +197,7 @@ impl BerylTestEnv {
     }
 
     /// Activation registry feature ID for the B-20 security precompile.
-    pub(crate) const fn b20_asset_feature() -> B256 {
+    /// Activation registry feature ID for the B-20 asset precompile.
         ActivationFeature::B20Asset.id()
     }
 
