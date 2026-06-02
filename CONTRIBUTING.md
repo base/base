@@ -72,6 +72,8 @@ If you want to work on something that doesn't have an issue yet, open an issue f
 - Foundry (`forge`) for Solidity-based test fixtures
 - Bun and Node.js `22+` if you want to run the spec site locally
 - Docker if you want to use the local devnet or build container images
+- Python `3.8+` for scripts under `etc/scripts/local/` (used by `just succinct`, `just check`, and affected-crate detection)
+- [SP1 toolchain](https://docs.succinct.xyz/docs/sp1/getting-started/install) (`sp1up` → `cargo-prove`) if you want to build SP1 ELFs (`just succinct build-elfs`) or regenerate the ELF manifest
 - Run `just setup` to install other deps
 
 
