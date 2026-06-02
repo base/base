@@ -272,6 +272,14 @@ impl BaseChainSpec {
     pub fn set_fork<H: Hardfork>(&mut self, fork: H, condition: ForkCondition) {
         self.inner.hardforks.insert(fork, condition);
     }
+
+    /// Sets the Base Azul activation timestamp and matching Ethereum Osaka timestamp.
+    pub fn set_azul_activation_timestamp(&mut self, timestamp: u64) {
+        let condition = ForkCondition::Timestamp(timestamp);
+
+        self.set_fork(EthereumHardfork::Osaka, condition);
+        self.set_fork(BaseUpgrade::Azul, condition);
+    }
 }
 
 impl TryFrom<&ChainConfig> for BaseChainSpec {
@@ -886,6 +894,18 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Azul, 55));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 59));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 60));
+    }
+
+    #[test]
+    fn set_azul_activation_timestamp_updates_osaka() {
+        let mut chain_spec = BaseChainSpec::devnet();
+
+        chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
+        chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
+        chain_spec.set_azul_activation_timestamp(42);
+
+        assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Timestamp(42));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(42));
     }
 
     #[test]

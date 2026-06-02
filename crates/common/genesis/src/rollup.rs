@@ -182,6 +182,11 @@ macro_rules! rollup_fork_methods {
 }
 
 impl RollupConfig {
+    /// Sets the Base Azul activation timestamp.
+    pub fn set_base_azul_activation_timestamp(&mut self, timestamp: u64) {
+        self.hardforks.base.azul = Some(timestamp);
+    }
+
     rollup_fork_methods! {
         is_regolith_active,
         is_first_regolith_block,
@@ -679,8 +684,6 @@ mod tests {
 
     #[test]
     fn test_ethereum_fork_activation() {
-        use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
-
         // Pre-Bedrock Ethereum forks always activate at block 0 on Base chains.
         let cfg = RollupConfig::default();
         assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Berlin), ForkCondition::Block(0));
@@ -772,6 +775,20 @@ mod tests {
         let mut cfg = RollupConfig::default();
         cfg.hardforks.jovian_time = Some(900);
         assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);
+    }
+
+    #[test]
+    fn set_base_azul_activation_timestamp_updates_osaka_activation() {
+        let mut cfg = RollupConfig::default();
+
+        cfg.set_base_azul_activation_timestamp(700);
+
+        assert_eq!(cfg.hardforks.base.azul, Some(700));
+        assert!(cfg.is_base_azul_active(700));
+        assert_eq!(
+            cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
+            ForkCondition::Timestamp(700)
+        );
     }
 
     #[test]
