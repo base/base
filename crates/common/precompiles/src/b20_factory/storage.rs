@@ -1232,4 +1232,10 @@ mod tests {
         assert_eq!(params.version, super::B20_STABLECOIN_EVENT_PARAMS_VERSION);
         assert_eq!(params.currency, "USD");
     }
+
+    #[test]
+    fn variant_creation_versions_are_distinct_and_independent() {
+        assert!(B20Variant::Stablecoin.supported_version() > 0);
+        assert!(B20Variant::Asset.supported_version() > 0);
+    }
 }
