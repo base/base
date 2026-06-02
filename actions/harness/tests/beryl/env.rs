@@ -88,7 +88,7 @@ impl BerylTestEnv {
     pub(crate) const B20_ASSET_DECIMALS: u8 = 6;
 
     /// Name for the security B-20 token variant.
-    pub(crate) const B20_ASSET_NAME: &str = "Action Security";
+    pub(crate) const B20_ASSET_NAME: &str = "Action Asset";
 
     /// Symbol for the security B-20 token variant.
     pub(crate) const B20_ASSET_SYMBOL: &str = "ASEC";
