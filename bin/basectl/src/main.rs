@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
             }
             None => run_app(ViewId::Home, config, conductor_rpc).await,
         },
-        Some(cli::Commands::Flashblocks { .. }) => {
+        Some(cli::Commands::Flashblocks) => {
             run_flashblocks_json(MonitoringConfig::load(config).await?).await
         }
         None => {

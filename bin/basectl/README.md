@@ -31,11 +31,10 @@ Opens the interactive TUI. With no subcommand, opens the Home view.
 | `monitor upgrades` | `u` | Network upgrade activation countdown and history |
 | `monitor config` | `c` | Chain configuration view |
 
-### `basectl flashblocks --json`
+### `basectl flashblocks`
 
 Streams live flashblocks as newline-delimited JSON to stdout. This is the only
-non-TUI subcommand. Running `basectl flashblocks` without `--json` is rejected
-by the CLI usage parser; use `basectl monitor flashblocks` for the TUI.
+non-TUI subcommand. For the interactive view, use `basectl monitor flashblocks`.
 
 ## Examples
 
@@ -50,5 +49,5 @@ basectl -c devnet monitor
 basectl monitor conductor
 
 # Stream flashblocks as JSONL on sepolia
-basectl -c sepolia flashblocks --json
+basectl -c sepolia flashblocks
 ```

@@ -18,7 +18,7 @@ pub(crate) struct Cli {
     /// polls all discovered peers via templated ports.
     ///
     /// Only applies to the conductor view (and views that embed it, like the
-    /// command center). Ignored by `flashblocks --json` and other non-TUI
+    /// command center). Ignored by `flashblocks` and other non-TUI
     /// subcommands.
     #[arg(
         long = "conductor-rpc",
@@ -39,13 +39,9 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         command: Option<MonitorCommands>,
     },
-    /// Flashblocks operations
+    /// Stream flashblocks as JSON lines.
     #[command(after_help = "Use `basectl monitor flashblocks` for the TUI.")]
-    Flashblocks {
-        /// Output flashblocks as JSON lines
-        #[arg(long, required = true)]
-        json: bool,
-    },
+    Flashblocks,
 }
 
 /// TUI monitor views.
