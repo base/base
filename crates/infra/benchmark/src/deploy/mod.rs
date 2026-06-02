@@ -9,6 +9,8 @@ use tracing::info;
 
 use crate::error::BenchmarkError;
 
+const DEVNET_GAS_PRICE: u128 = 2_000_000_000;
+
 /// Addresses of a deployed mock Uniswap V3 setup on a devnet.
 #[derive(Debug, Clone)]
 pub struct UniswapV3Addresses {
@@ -44,31 +46,37 @@ pub async fn deploy_uniswap_v3(
 
     info!("deploying mock Uniswap V3 tokens and router");
 
-    let token_in = FreeTransferERC20::deploy(&provider, "Bench Token A".into(), "BTKA".into(), 18)
-        .await
-        .map_err(|e| BenchmarkError::Config(format!("token_in deploy failed: {e}")))?;
-    let token_in_addr = *token_in.address();
+    let token_in_addr =
+        FreeTransferERC20::deploy_builder(&provider, "Bench Token A".into(), "BTKA".into(), 18)
+            .gas_price(DEVNET_GAS_PRICE)
+            .deploy()
+            .await
+            .map_err(|e| BenchmarkError::Config(format!("token_in deploy failed: {e}")))?;
+    let token_in = FreeTransferERC20::new(token_in_addr, &provider);
     info!(address = %token_in_addr, "deployed token_in");
 
-    let token_out =
-        FreeTransferERC20::deploy(&provider, "Bench Token B".into(), "BTKB".into(), 18)
+    let token_out_addr =
+        FreeTransferERC20::deploy_builder(&provider, "Bench Token B".into(), "BTKB".into(), 18)
+            .gas_price(DEVNET_GAS_PRICE)
+            .deploy()
             .await
             .map_err(|e| BenchmarkError::Config(format!("token_out deploy failed: {e}")))?;
-    let token_out_addr = *token_out.address();
+    let token_out = FreeTransferERC20::new(token_out_addr, &provider);
     info!(address = %token_out_addr, "deployed token_out");
 
-    let router = MockUniswapV3Router::deploy(&provider)
+    let router_addr = MockUniswapV3Router::deploy_builder(&provider)
+        .gas_price(DEVNET_GAS_PRICE)
+        .deploy()
         .await
         .map_err(|e| BenchmarkError::Config(format!("router deploy failed: {e}")))?;
-    let router_addr = *router.address();
+    let _router = MockUniswapV3Router::new(router_addr, &provider);
     info!(address = %router_addr, "deployed mock Uniswap V3 router");
 
-    // Pre-fund the router with 1 billion tokens of each type so it always has
-    // sufficient output-token reserves during the benchmark.
     let large_amount = U256::from(1_000_000_000u64) * U256::from(10u64).pow(U256::from(18u64));
 
     token_in
         .mint(router_addr, large_amount)
+        .gas_price(DEVNET_GAS_PRICE)
         .send()
         .await
         .map_err(|e| BenchmarkError::Config(format!("token_in mint failed: {e}")))?
@@ -78,6 +86,7 @@ pub async fn deploy_uniswap_v3(
 
     token_out
         .mint(router_addr, large_amount)
+        .gas_price(DEVNET_GAS_PRICE)
         .send()
         .await
         .map_err(|e| BenchmarkError::Config(format!("token_out mint failed: {e}")))?

@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
+use base_test_utils::build_test_genesis;
 use reqwest::Url;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -157,6 +158,13 @@ impl NetworkBenchmark {
             tokio::fs::write(&chain_cfg_path, genesis_str)
                 .await
                 .map_err(BenchmarkError::Io)?;
+        } else {
+            let genesis = build_test_genesis();
+            let genesis_str = serde_json::to_string_pretty(&genesis)
+                .map_err(|e| BenchmarkError::Config(format!("genesis json error: {e}")))?;
+            tokio::fs::write(&chain_cfg_path, genesis_str)
+                .await
+                .map_err(BenchmarkError::Io)?;
         }
 
         let internal_options = InternalClientOptions {
@@ -181,24 +189,6 @@ impl NetworkBenchmark {
             "sequencer started"
         );
 
-        if run.definition.setup.as_ref().is_some_and(|s| s.deploy_uniswap_v3) {
-            let addrs =
-                deploy_uniswap_v3(node.rpc_url(), &self.options.prefund_key).await?;
-            for tx in &mut run.payload.params.transactions {
-                if tx.tx_type == "uniswap_v3" {
-                    if tx.router.is_none() {
-                        tx.router = Some(addrs.router.to_string());
-                    }
-                    if tx.token_in.is_none() {
-                        tx.token_in = Some(addrs.token_in.to_string());
-                    }
-                    if tx.token_out.is_none() {
-                        tx.token_out = Some(addrs.token_out.to_string());
-                    }
-                }
-            }
-        }
-
         let proxy_port = self.port_manager.acquire()?;
         let cancel = CancellationToken::new();
 
@@ -220,17 +210,6 @@ impl NetworkBenchmark {
         let proxy_url: Url = format!("http://127.0.0.1:{proxy_port}")
             .parse()
             .map_err(|_| BenchmarkError::Config("invalid proxy url".into()))?;
-
-        let worker = LoadTestPayloadWorker::new(LoadTestConfig {
-            bin: self.options.load_test_bin.clone(),
-            rpc_proxy_url: proxy_url,
-            block_watcher_url: None,
-            flashblocks_ws_url: None,
-            params: run.payload.params.clone(),
-            funder_key: self.options.prefund_key.clone(),
-            log_path: Some(sequencer_log_dir.join("load-test.log")),
-            mempool: mempool.clone(),
-        });
 
         let auth_url: Url = node.auth_rpc_url().parse().map_err(|_| {
             BenchmarkError::Config(format!("invalid auth url: {}", node.auth_rpc_url()))
@@ -258,6 +237,45 @@ impl NetworkBenchmark {
 
         let block_time = std::time::Duration::from_millis(self.config.block_time_ms);
         let gas_limit = self.config.gas_limit.unwrap_or(30_000_000);
+
+        if run.definition.setup.as_ref().is_some_and(|s| s.deploy_uniswap_v3) {
+            let deploy_mempool = FakeMempool::new();
+            let rpc_url = node.rpc_url().to_string();
+            let prefund_key = self.options.prefund_key.clone();
+            let mut deploy_fut =
+                std::pin::pin!(deploy_uniswap_v3(&rpc_url, &prefund_key));
+            let addrs = loop {
+                tokio::select! {
+                    biased;
+                    result = &mut deploy_fut => break result?,
+                    result = sequencer.propose(&deploy_mempool, block_time, gas_limit) => { result?; },
+                }
+            };
+            for tx in &mut run.payload.params.transactions {
+                if tx.tx_type == "uniswap_v3" {
+                    if tx.router.is_none() {
+                        tx.router = Some(addrs.router.to_string());
+                    }
+                    if tx.token_in.is_none() {
+                        tx.token_in = Some(addrs.token_in.to_string());
+                    }
+                    if tx.token_out.is_none() {
+                        tx.token_out = Some(addrs.token_out.to_string());
+                    }
+                }
+            }
+        }
+
+        let worker = LoadTestPayloadWorker::new(LoadTestConfig {
+            bin: self.options.load_test_bin.clone(),
+            rpc_proxy_url: proxy_url,
+            block_watcher_url: None,
+            flashblocks_ws_url: None,
+            params: run.payload.params.clone(),
+            funder_key: self.options.prefund_key.clone(),
+            log_path: Some(sequencer_log_dir.join("load-test.log")),
+            mempool: mempool.clone(),
+        });
 
         worker.start().await?;
 
