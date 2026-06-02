@@ -84,14 +84,14 @@ impl BerylTestEnv {
     /// ISO 4217 currency code for the stablecoin B-20 token variant.
     pub(crate) const B20_STABLECOIN_CURRENCY: &str = "USD";
 
-    /// Fixed decimals for the security B-20 token variant.
+    /// Fixed decimals for the asset B-20 token variant.
     pub(crate) const B20_ASSET_DECIMALS: u8 = 6;
 
-    /// Name for the security B-20 token variant.
-    pub(crate) const B20_ASSET_NAME: &str = "Action Security";
+    /// Name for the asset B-20 token variant.
+    pub(crate) const B20_ASSET_NAME: &str = "Action Asset";
 
-    /// Symbol for the security B-20 token variant.
-    pub(crate) const B20_ASSET_SYMBOL: &str = "ASEC";
+    /// Symbol for the asset B-20 token variant.
+    pub(crate) const B20_ASSET_SYMBOL: &str = "AAST";
 
     /// Initial B-20 supply minted to Alice.
     pub(crate) const B20_INITIAL_SUPPLY: u64 = 1_000_000;
@@ -217,8 +217,8 @@ impl BerylTestEnv {
         B256::repeat_byte(0x45)
     }
 
-    /// Returns the deterministic salt used to create the B-20 security token.
-    pub(crate) const fn b20_security_salt() -> B256 {
+    /// Returns the deterministic salt used to create the asset B-20 token.
+    pub(crate) const fn b20_asset_salt() -> B256 {
         B256::repeat_byte(0x46)
     }
 
@@ -232,9 +232,9 @@ impl BerylTestEnv {
         B20Variant::Stablecoin.compute_address(Self::alice(), Self::b20_stablecoin_salt()).0
     }
 
-    /// Returns the deterministic B-20 security token address created by Alice.
-    pub(crate) fn b20_security_address(&self) -> Address {
-        B20Variant::Asset.compute_address(Self::alice(), Self::b20_security_salt()).0
+    /// Returns the deterministic asset B-20 token address created by Alice.
+    pub(crate) fn b20_asset_address(&self) -> Address {
+        B20Variant::Asset.compute_address(Self::alice(), Self::b20_asset_salt()).0
     }
 
     /// Creates a transaction that calls the B-20 token factory with the default salt.
@@ -265,16 +265,16 @@ impl BerylTestEnv {
         )
     }
 
-    /// Creates a transaction that calls the B-20 token factory for a security token.
-    pub(crate) fn create_b20_security_tx(&self) -> BaseTxEnvelope {
-        self.create_b20_security_with_salt_tx(Self::b20_security_salt())
+    /// Creates a transaction that calls the B-20 token factory for an asset token.
+    pub(crate) fn create_b20_asset_tx(&self) -> BaseTxEnvelope {
+        self.create_b20_asset_with_salt_tx(Self::b20_asset_salt())
     }
 
-    /// Creates a security-token factory transaction with the given `salt`.
-    pub(crate) fn create_b20_security_with_salt_tx(&self, salt: B256) -> BaseTxEnvelope {
+    /// Creates an asset-token factory transaction with the given `salt`.
+    pub(crate) fn create_b20_asset_with_salt_tx(&self, salt: B256) -> BaseTxEnvelope {
         self.create_tx(
             TxKind::Call(B20FactoryStorage::ADDRESS),
-            Bytes::from(self.create_b20_security_call_with_salt(salt).abi_encode()),
+            Bytes::from(self.create_b20_asset_call_with_salt(salt).abi_encode()),
             Self::B20_GAS_LIMIT,
         )
     }
@@ -568,7 +568,7 @@ impl BerylTestEnv {
         }
     }
 
-    fn create_b20_security_call_with_salt(&self, salt: B256) -> IB20Factory::createB20Call {
+    fn create_b20_asset_call_with_salt(&self, salt: B256) -> IB20Factory::createB20Call {
         IB20Factory::createB20Call {
             variant: IB20Factory::B20Variant::ASSET,
             salt,

@@ -339,7 +339,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             SC::METADATA_ROLE(_) => Self::METADATA_ROLE.abi_encode().into(),
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
 
-            // --- Share ratio reads ---
+            // --- Multiplier reads ---
             SC::multiplier(_) => self.accounting().multiplier()?.abi_encode().into(),
             SC::toScaledBalance(c) => self.to_scaled_balance(c.rawBalance)?.abi_encode().into(),
             SC::toRawBalance(c) => self.to_raw_balance(c.scaledBalance)?.abi_encode().into(),
@@ -355,7 +355,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
                 self.accounting().extra_metadata(c.identifierType.as_str())?.abi_encode().into()
             }
 
-            // --- Share ratio mutations ---
+            // --- Multiplier mutations ---
             SC::updateMultiplier(c) => {
                 self.update_multiplier(caller, c.newMultiplier, privileged)?;
                 Bytes::new()
@@ -562,12 +562,9 @@ mod tests {
     fn extra_metadata_roundtrip() {
         let mut token = make_token();
 
-        assert_eq!(token.accounting().extra_metadata("ISIN").unwrap(), "");
-        token
-            .accounting_mut()
-            .set_extra_metadata_value("ISIN", "US0000000000".to_string())
-            .unwrap();
-        assert_eq!(token.accounting().extra_metadata("ISIN").unwrap(), "US0000000000".to_string());
+        assert_eq!(token.accounting().extra_metadata("CUSIP").unwrap(), "");
+        token.accounting_mut().set_extra_metadata_value("CUSIP", "037833100".to_string()).unwrap();
+        assert_eq!(token.accounting().extra_metadata("CUSIP").unwrap(), "037833100".to_string());
     }
 
     // --- batchMint: EmptyBatch / LengthMismatch ---
@@ -646,9 +643,9 @@ mod tests {
     #[test]
     fn multiplier_update_persists() {
         let mut token = make_token();
-        let new_ratio = B20AssetStorage::WAD * U256::from(3u64);
-        token.accounting_mut().set_multiplier(new_ratio).unwrap();
-        assert_eq!(token.accounting().multiplier().unwrap(), new_ratio);
+        let new_multiplier = B20AssetStorage::WAD * U256::from(3u64);
+        token.accounting_mut().set_multiplier(new_multiplier).unwrap();
+        assert_eq!(token.accounting().multiplier().unwrap(), new_multiplier);
     }
 
     // --- extraMetadata / updateExtraMetadata ---

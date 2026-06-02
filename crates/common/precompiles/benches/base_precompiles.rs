@@ -446,7 +446,7 @@ fn base_b20_factory_view(c: &mut Criterion) {
         });
     });
 
-    c.bench_function("base_b20_factory_predict_security_address", |b| {
+    c.bench_function("base_b20_factory_predict_asset_address", |b| {
         let caller = BaseTokenBenchSetup::caller();
         let salt = B256::repeat_byte(0x23);
 

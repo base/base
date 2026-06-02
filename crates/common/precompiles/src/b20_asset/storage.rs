@@ -44,7 +44,7 @@ pub struct B20AssetInit {
     pub symbol: String,
     /// Maximum total supply.
     pub supply_cap: U256,
-    /// Share-to-token conversion ratio at WAD precision.
+    /// Multiplier at WAD precision.
     pub multiplier: U256,
     /// Custom decimal precision for this token; must be in `[6, 18]`.
     pub decimals: u8,
@@ -135,10 +135,10 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let token = B20AssetStorage::from_address(TOKEN, ctx);
-            let ratio_slot = ASSET_ROOT
+            let multiplier_slot = ASSET_ROOT
                 + U256::from(__packing_b20_asset_extension_storage::MULTIPLIER_LOC.offset_slots);
 
-            assert_eq!(ctx.sload(TOKEN, ratio_slot).unwrap(), U256::ZERO);
+            assert_eq!(ctx.sload(TOKEN, multiplier_slot).unwrap(), U256::ZERO);
             assert_eq!(token.multiplier().unwrap(), B20AssetStorage::WAD);
         });
     }
@@ -146,17 +146,17 @@ mod tests {
     #[test]
     fn multiplier_preserves_configured_value() {
         let (mut storage, _) = setup_storage();
-        let configured_ratio = B20AssetStorage::WAD * U256::from(3u64);
+        let configured_multiplier = B20AssetStorage::WAD * U256::from(3u64);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut token = B20AssetStorage::from_address(TOKEN, ctx);
-            token.set_multiplier(configured_ratio).unwrap();
+            token.set_multiplier(configured_multiplier).unwrap();
 
-            let ratio_slot = ASSET_ROOT
+            let multiplier_slot = ASSET_ROOT
                 + U256::from(__packing_b20_asset_extension_storage::MULTIPLIER_LOC.offset_slots);
 
-            assert_eq!(ctx.sload(TOKEN, ratio_slot).unwrap(), configured_ratio);
-            assert_eq!(token.multiplier().unwrap(), configured_ratio);
+            assert_eq!(ctx.sload(TOKEN, multiplier_slot).unwrap(), configured_multiplier);
+            assert_eq!(token.multiplier().unwrap(), configured_multiplier);
         });
     }
 

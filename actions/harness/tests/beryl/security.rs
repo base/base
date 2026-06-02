@@ -1,4 +1,4 @@
-//! Security B-20 precompile action tests across the Base Beryl boundary.
+//! Asset B-20 precompile action tests across the Base Beryl boundary.
 
 use alloy_consensus::TxReceipt;
 use alloy_primitives::{Address, B256, Bytes, LogData, TxKind, U256, keccak256};
@@ -22,7 +22,7 @@ const ANNOUNCEMENT_DESCRIPTION: &str = "update FIGI";
 const ANNOUNCEMENT_URI: &str = "ipfs://security-action";
 
 #[tokio::test]
-async fn security_creation_initializes_identifiers_and_factory_views() {
+async fn asset_creation_initializes_identifiers_and_factory_views() {
     let mut scenario = B20AssetScenario::new().await;
 
     scenario
@@ -30,22 +30,22 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
             B20FactoryStorage::ADDRESS,
             vec![
                 StaticcallCase::word(
-                    "factory getB20Address(SECURITY)",
+                    "factory getB20Address(ASSET)",
                     IB20Factory::getB20AddressCall {
                         variant: IB20Factory::B20Variant::ASSET,
                         sender: BerylTestEnv::alice(),
-                        salt: BerylTestEnv::b20_security_salt(),
+                        salt: BerylTestEnv::b20_asset_salt(),
                     }
                     .abi_encode(),
                     word_from_address(scenario.token),
                 ),
                 StaticcallCase::word(
-                    "factory isB20(security)",
+                    "factory isB20(asset)",
                     IB20Factory::isB20Call { token: scenario.token }.abi_encode(),
                     U256::ONE,
                 ),
                 StaticcallCase::word(
-                    "factory isB20Initialized(security)",
+                    "factory isB20Initialized(asset)",
                     IB20Factory::isB20InitializedCall { token: scenario.token }.abi_encode(),
                     U256::ONE,
                 ),
@@ -70,7 +70,7 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                 StaticcallCase::string("contractURI", IB20::contractURICall {}.abi_encode(), ""),
                 StaticcallCase::string(
                     "extraMetadata(unset)",
-                    IB20Asset::extraMetadataCall { identifierType: "ISIN".to_string() }
+                    IB20Asset::extraMetadataCall { identifierType: "CUSIP".to_string() }
                         .abi_encode(),
                     "",
                 ),
@@ -134,7 +134,7 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
 }
 
 #[tokio::test]
-async fn security_mutations_update_state_and_emit_events() {
+async fn asset_mutations_update_state_and_emit_events() {
     let mut scenario = B20AssetScenario::new().await;
     scenario
         .grant_roles([security_operator_role(), metadata_role(), B20TokenRole::Mint.id()])
@@ -167,7 +167,7 @@ async fn security_mutations_update_state_and_emit_events() {
     for index in 0..4 {
         assert!(
             scenario.env.user_tx_succeeded(&block, index),
-            "security mutation {index} must succeed"
+            "asset mutation {index} must succeed"
         );
     }
 
@@ -274,7 +274,7 @@ async fn security_mutations_update_state_and_emit_events() {
                     U256::ONE,
                 ),
                 StaticcallCase::word(
-                    "totalSupply after security mutations",
+                    "totalSupply after asset mutations",
                     IB20::totalSupplyCall {}.abi_encode(),
                     U256::from(1_000_300),
                 ),
@@ -286,7 +286,7 @@ async fn security_mutations_update_state_and_emit_events() {
 }
 
 #[tokio::test]
-async fn security_mutations_revert_on_invalid_inputs() {
+async fn asset_mutations_revert_on_invalid_inputs() {
     let mut scenario = B20AssetScenario::new().await;
     scenario
         .grant_roles([security_operator_role(), metadata_role(), B20TokenRole::Mint.id()])
@@ -348,7 +348,7 @@ async fn security_mutations_revert_on_invalid_inputs() {
     for index in 1..7 {
         assert!(
             !scenario.env.user_tx_succeeded(&block, index),
-            "invalid security mutation {index} must revert"
+            "invalid asset mutation {index} must revert"
         );
     }
     scenario.assert_total_supply(BerylTestEnv::B20_INITIAL_SUPPLY);
@@ -384,19 +384,19 @@ async fn security_mutations_revert_on_invalid_inputs() {
 }
 
 #[tokio::test]
-async fn security_calls_succeed_while_security_feature_is_deactivated() {
+async fn asset_calls_succeed_while_asset_feature_is_deactivated() {
     let mut scenario = B20AssetScenario::new().await;
 
-    let deactivate_security = scenario.env.deactivate_feature_tx(BerylTestEnv::b20_asset_feature());
-    let block = scenario.build_block_with_transactions(vec![deactivate_security]).await;
-    assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_SECURITY deactivation must succeed");
+    let deactivate_asset = scenario.env.deactivate_feature_tx(BerylTestEnv::b20_asset_feature());
+    let block = scenario.build_block_with_transactions(vec![deactivate_asset]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_ASSET deactivation must succeed");
 
     let transfer_while_deactivated =
         scenario.call_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: U256::from(1) });
     let block = scenario.build_block_with_transactions(vec![transfer_while_deactivated]).await;
     assert!(
         scenario.env.user_tx_succeeded(&block, 0),
-        "existing security token call must succeed even when B20_SECURITY is deactivated"
+        "existing asset token call must succeed even when B20_ASSET is deactivated"
     );
     scenario.assert_balances(BerylTestEnv::B20_INITIAL_SUPPLY - 1, 1, 0);
 
@@ -413,7 +413,7 @@ async fn security_calls_succeed_while_security_feature_is_deactivated() {
     assert!(scenario.env.user_tx_succeeded(&block, 0), "probe transaction must succeed");
     assert!(
         scenario.env.probe_call_succeeded(probe),
-        "existing security staticcall must succeed even when B20_SECURITY is deactivated"
+        "existing asset staticcall must succeed even when B20_ASSET is deactivated"
     );
 
     scenario.derive().await;
@@ -428,31 +428,31 @@ struct B20AssetScenario {
 impl B20AssetScenario {
     async fn new() -> Self {
         let env = BerylTestEnv::new();
-        let token = env.b20_security_address();
+        let token = env.b20_asset_address();
         let mut scenario = Self { env, token, blocks: Vec::new() };
 
         scenario.build_block_with_transactions(Vec::new()).await;
 
-        let activate_security = scenario.env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
+        let activate_asset = scenario.env.activate_feature_tx(BerylTestEnv::b20_asset_feature());
         let activate_policy =
             scenario.env.activate_feature_tx(BerylTestEnv::policy_registry_feature());
         let block =
-            scenario.build_block_with_transactions(vec![activate_security, activate_policy]).await;
+            scenario.build_block_with_transactions(vec![activate_asset, activate_policy]).await;
 
-        assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_SECURITY activation must succeed");
+        assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_ASSET activation must succeed");
         assert!(
             scenario.env.user_tx_succeeded(&block, 1),
             "POLICY_REGISTRY activation must succeed"
         );
 
-        let create = scenario.env.create_b20_security_tx();
+        let create = scenario.env.create_b20_asset_tx();
         let block = scenario.build_block_with_transactions(vec![create]).await;
 
         assert!(
             scenario.env.user_tx_succeeded(&block, 0),
-            "security B-20 creation transaction must succeed"
+            "asset B-20 creation transaction must succeed"
         );
-        assert!(scenario.env.sequencer.has_code(token), "security B-20 code must be deployed");
+        assert!(scenario.env.sequencer.has_code(token), "asset B-20 code must be deployed");
         scenario.assert_token_created_log(&block);
         scenario.assert_log(
             &block,
@@ -504,17 +504,17 @@ impl B20AssetScenario {
             &mut self.blocks,
             target,
             cases,
-            "security",
+            "asset",
         )
         .await;
     }
 
     fn assert_total_supply(&self, total_supply: u64) {
-        test_helpers::assert_total_supply(&self.env, self.token, "security B-20", total_supply);
+        test_helpers::assert_total_supply(&self.env, self.token, "asset B-20", total_supply);
     }
 
     fn assert_balances(&self, alice: u64, bob: u64, carol: u64) {
-        test_helpers::assert_balances(&self.env, self.token, "security B-20", alice, bob, carol);
+        test_helpers::assert_balances(&self.env, self.token, "asset B-20", alice, bob, carol);
     }
 
     fn assert_token_created_log(&self, block: &BaseBlock) {
@@ -547,7 +547,7 @@ impl B20AssetScenario {
                 .logs()
                 .iter()
                 .any(|log| log.address == address && log.data == expected),
-            "security B-20 transaction {user_tx_index} must emit the expected event"
+            "asset B-20 transaction {user_tx_index} must emit the expected event"
         );
     }
 

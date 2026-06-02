@@ -94,7 +94,7 @@ sol! {
 
         // ── Asset identifiers ─────────────────────────────────────────────
 
-        /// Returns the value of the named identifier (e.g. ISIN, CUSIP). Empty string if not set.
+        /// Returns the value of the named identifier (e.g. CUSIP, FIGI). Empty string if not set.
         function extraMetadata(string calldata identifierType) external view returns (string);
 
         /// Sets, updates, or removes a asset identifier. Empty `value` removes the entry. Requires `METADATA_ROLE`.

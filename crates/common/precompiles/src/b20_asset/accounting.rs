@@ -9,13 +9,13 @@ use crate::TokenAccounting;
 
 /// Extends [`TokenAccounting`] with asset-token-specific storage slots.
 ///
-/// Asset identifiers (ISIN, CUSIP, etc.) are only exposed through the
+/// Asset identifiers (CUSIP, FIGI, etc.) are only exposed through the
 /// asset-token surface, not the base B-20 surface.
 pub trait AssetAccounting: TokenAccounting {
-    /// Returns the current share-to-tokens ratio scaled to WAD (1e18).
+    /// Returns the current multiplier scaled to WAD (1e18).
     fn multiplier(&self) -> Result<U256>;
-    /// Writes a new share-to-tokens ratio.
-    fn set_multiplier(&mut self, ratio: U256) -> Result<()>;
+    /// Writes a new multiplier.
+    fn set_multiplier(&mut self, multiplier: U256) -> Result<()>;
 
     /// Returns the asset identifier value for `identifier_type`, or an empty string if unset.
     fn extra_metadata(&self, identifier_type: &str) -> Result<String>;

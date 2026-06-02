@@ -380,8 +380,8 @@ impl AssetAccounting for InMemoryTokenAccounting {
         Ok(if self.multiplier.is_zero() { WAD } else { self.multiplier })
     }
 
-    fn set_multiplier(&mut self, ratio: U256) -> Result<()> {
-        self.multiplier = ratio;
+    fn set_multiplier(&mut self, multiplier: U256) -> Result<()> {
+        self.multiplier = multiplier;
         Ok(())
     }
 

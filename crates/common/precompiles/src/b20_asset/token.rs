@@ -16,7 +16,7 @@ use crate::{
 /// EVM precompile for the asset B-20 variant.
 ///
 /// Mirrors the structure of [`crate::B20Token`] but requires `S: AssetAccounting`
-/// so the dispatch layer can read and write asset-specific storage (share ratio,
+/// so the dispatch layer can read and write asset-specific storage (multiplier,
 /// asset identifiers, announcement IDs). The `in_announcement` flag guards against
 /// recursive `announce` calls within a single precompile invocation.
 #[derive(Debug, Clone)]
@@ -181,22 +181,23 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         )
     }
 
-    // --- Share Ratio Operations ---
+    // --- Multiplier Operations ---
 
     /// Converts a token balance to shares: `balance * multiplier / WAD`.
     pub fn to_scaled_balance(&self, balance: U256) -> Result<U256> {
-        let ratio = self.accounting().multiplier()?;
-        let product = balance.checked_mul(ratio).ok_or_else(BasePrecompileError::under_overflow)?;
+        let multiplier = self.accounting().multiplier()?;
+        let product =
+            balance.checked_mul(multiplier).ok_or_else(BasePrecompileError::under_overflow)?;
         Ok(product / B20AssetStorage::WAD)
     }
 
     /// Converts a scaled balance back to its raw representation: `scaled * WAD / multiplier`.
     pub fn to_raw_balance(&self, balance: U256) -> Result<U256> {
-        let ratio = self.accounting().multiplier()?;
+        let multiplier = self.accounting().multiplier()?;
         let product = balance
             .checked_mul(B20AssetStorage::WAD)
             .ok_or_else(BasePrecompileError::under_overflow)?;
-        Ok(product / ratio)
+        Ok(product / multiplier)
     }
 
     /// Returns the shares for an account (balance converted to shares).
@@ -205,17 +206,18 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         self.to_scaled_balance(balance)
     }
 
-    /// Updates the share-to-tokens ratio.
+    /// Updates the multiplier.
     pub fn update_multiplier(
         &mut self,
         caller: Address,
-        new_ratio: U256,
+        new_multiplier: U256,
         privileged: bool,
     ) -> Result<()> {
         self.ensure_operator_role(caller, privileged)?;
-        self.accounting_mut().set_multiplier(new_ratio)?;
-        self.accounting_mut()
-            .emit_event(IB20Asset::MultiplierUpdated { multiplier: new_ratio }.encode_log_data())
+        self.accounting_mut().set_multiplier(new_multiplier)?;
+        self.accounting_mut().emit_event(
+            IB20Asset::MultiplierUpdated { multiplier: new_multiplier }.encode_log_data(),
+        )
     }
 
     // --- Asset Identifier Operations ---
