@@ -380,6 +380,16 @@ mod tests {
     }
 
     #[test]
+    fn grant_role_allows_non_admin_role_after_renounce_last_admin_privileged() {
+        let mut token = token_with_default_admin();
+        token.renounce_last_admin(ADMIN).unwrap();
+
+        token.grant_role(ALICE, B20TokenRole::Mint.id(), ALICE, true).unwrap();
+
+        assert!(token.has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
+    }
+
+    #[test]
     fn revoke_role_allows_non_final_default_admin() {
         let mut token = token_with_default_admin();
         token.grant_role(ADMIN, B20TokenRole::DefaultAdmin.id(), ALICE, false).unwrap();
