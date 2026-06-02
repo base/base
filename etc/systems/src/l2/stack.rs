@@ -125,9 +125,10 @@ impl L2Stack {
         let rollup_config = {
             let mut cfg = rollup_config;
             if cfg.genesis.l2.hash == B256::ZERO {
-                let provider = alloy_provider::ProviderBuilder::new()
-                    .on_http(builder.rpc_url()?);
                 use alloy_provider::Provider;
+                let client = alloy_rpc_client::RpcClient::builder().http(builder.rpc_url()?);
+                let provider =
+                    alloy_provider::RootProvider::<base_common_network::Base>::new(client);
                 let block = provider
                     .get_block_by_number(alloy_eips::BlockNumberOrTag::Earliest)
                     .full()
