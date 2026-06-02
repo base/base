@@ -379,7 +379,7 @@ impl<S: SecurityAccounting, P: Policy> B20SecurityToken<S, P> {
                 Bytes::new()
             }
 
-            // --- Batched mint / burn ---
+            // --- Batched mint ---
             SC::batchMint(c) => {
                 self.batch_mint(caller, c.recipients, c.amounts, privileged)?;
                 Bytes::new()
