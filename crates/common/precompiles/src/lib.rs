@@ -50,8 +50,8 @@ pub use observer::{EndGuard, NoopPrecompileCallObserver, PrecompileCallObserver}
 
 mod b20_asset;
 pub use b20_asset::{
-    B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage, B20AssetToken,
-    B20RedeemStorage, IB20Asset, SecurityAccounting,
+    AssetAccounting, B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage,
+    B20AssetToken, B20RedeemStorage, IB20Asset,
 };
 
 mod b20_stablecoin;

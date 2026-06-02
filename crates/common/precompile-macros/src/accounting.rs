@@ -12,8 +12,8 @@ pub(crate) fn derive_stablecoin(input: DeriveInput) -> proc_macro::TokenStream {
     expand_stablecoin(input).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
-pub(crate) fn derive_security(input: DeriveInput) -> proc_macro::TokenStream {
-    expand_security(input).unwrap_or_else(syn::Error::into_compile_error).into()
+pub(crate) fn derive_asset(input: DeriveInput) -> proc_macro::TokenStream {
+    expand_asset(input).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
 fn expand_token(input: DeriveInput) -> syn::Result<TokenStream> {
@@ -306,16 +306,16 @@ fn expand_stablecoin(input: DeriveInput) -> syn::Result<TokenStream> {
     })
 }
 
-fn expand_security(input: DeriveInput) -> syn::Result<TokenStream> {
-    require_field(&input, "security")?;
+fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
+    require_field(&input, "asset")?;
     require_field(&input, "redeem")?;
     let name = input.ident;
     Ok(quote! {
-        impl crate::SecurityAccounting for #name<'_> {
+        impl crate::AssetAccounting for #name<'_> {
             fn multiplier(
                 &self,
             ) -> ::base_precompile_storage::Result<::alloy_primitives::U256> {
-                let multiplier = self.security.multiplier()?;
+                let multiplier = self.asset.multiplier()?;
                 Ok(if multiplier.is_zero() { Self::WAD } else { multiplier })
             }
 
@@ -323,7 +323,7 @@ fn expand_security(input: DeriveInput) -> syn::Result<TokenStream> {
                 &mut self,
                 multiplier: ::alloy_primitives::U256,
             ) -> ::base_precompile_storage::Result<()> {
-                self.security.set_multiplier(multiplier)
+                self.asset.set_multiplier(multiplier)
             }
 
             fn extra_metadata(
@@ -331,7 +331,7 @@ fn expand_security(input: DeriveInput) -> syn::Result<TokenStream> {
                 identifier_type: &str,
             ) -> ::base_precompile_storage::Result<::alloc::string::String> {
                 ::base_precompile_storage::Handler::read(
-                    self.security
+                    self.asset
                         .identifiers
                         .at(&::alloc::string::String::from(identifier_type)),
                 )
@@ -344,10 +344,10 @@ fn expand_security(input: DeriveInput) -> syn::Result<TokenStream> {
             ) -> ::base_precompile_storage::Result<()> {
                 let key = ::alloc::string::String::from(identifier_type);
                 if value.is_empty() {
-                    ::base_precompile_storage::Handler::delete(self.security.identifiers.at_mut(&key))
+                    ::base_precompile_storage::Handler::delete(self.asset.identifiers.at_mut(&key))
                 } else {
                     ::base_precompile_storage::Handler::write(
-                        self.security.identifiers.at_mut(&key),
+                        self.asset.identifiers.at_mut(&key),
                         value,
                     )
                 }
@@ -371,7 +371,7 @@ fn expand_security(input: DeriveInput) -> syn::Result<TokenStream> {
                 id: &str,
             ) -> ::base_precompile_storage::Result<bool> {
                 ::base_precompile_storage::Handler::read(
-                    self.security
+                    self.asset
                         .used_announcement_ids
                         .at(&::alloc::string::String::from(id)),
                 )
@@ -382,7 +382,7 @@ fn expand_security(input: DeriveInput) -> syn::Result<TokenStream> {
                 id: &str,
             ) -> ::base_precompile_storage::Result<()> {
                 ::base_precompile_storage::Handler::write(
-                    self.security
+                    self.asset
                         .used_announcement_ids
                         .at_mut(&::alloc::string::String::from(id)),
                     true,

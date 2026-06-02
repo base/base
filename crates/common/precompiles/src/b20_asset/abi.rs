@@ -114,12 +114,12 @@ sol! {
         /// Returns the minimum-redeemable threshold in scaled units.
         function minimumRedeemable() external view returns (uint256);
 
-        // ── Security identifiers ─────────────────────────────────────────────
+        // ── Asset metadata ──────────────────────────────────────────────────
 
         /// Returns the value of the named identifier (e.g. ISIN, CUSIP). Empty string if not set.
         function extraMetadata(string calldata identifierType) external view returns (string);
 
-        /// Sets, updates, or removes a security identifier. Empty `value` removes the entry. Requires `METADATA_ROLE`.
+        /// Sets, updates, or removes asset metadata. Empty `value` removes the entry. Requires `METADATA_ROLE`.
         function updateExtraMetadata(
             string calldata identifierType,
             string calldata value
@@ -177,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn security_call_labels_are_stable() {
+    fn asset_call_labels_are_stable() {
         assert_eq!(
             IB20Asset::IB20AssetCalls::minimumRedeemable(IB20Asset::minimumRedeemableCall {},)
                 .as_label(),

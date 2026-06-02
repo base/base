@@ -3,7 +3,7 @@
 use alloc::string::String;
 
 use alloy_primitives::{Address, B256, FixedBytes, U256, b256};
-use base_precompile_macros::{SecurityAccounting, Storable, TokenAccounting, contract};
+use base_precompile_macros::{AssetAccounting, Storable, TokenAccounting, contract};
 use base_precompile_storage::{Handler, Mapping, Result, StorageCtx};
 
 use crate::{B20CoreStorage, PolicyRegistryStorage};
@@ -18,7 +18,7 @@ pub struct B20AssetExtensionStorage {
     pub multiplier: U256, // offset 0
     /// Announcement IDs that have already been consumed.
     pub used_announcement_ids: Mapping<String, bool>, // offset 1
-    /// Security identifier values by identifier type.
+    /// Asset metadata values by identifier type.
     pub identifiers: Mapping<String, String>, // offset 2
 }
 
@@ -40,10 +40,10 @@ pub struct B20RedeemStorage {
 
 /// EVM-backed storage for an asset B-20 token.
 #[contract]
-#[derive(TokenAccounting, SecurityAccounting)]
+#[derive(TokenAccounting, AssetAccounting)]
 pub struct B20AssetStorage {
     pub b20: B20CoreStorage,
-    pub security: B20AssetExtensionStorage,
+    pub asset: B20AssetExtensionStorage,
     pub redeem: B20RedeemStorage,
 }
 
@@ -80,7 +80,7 @@ impl<'a> B20AssetStorage<'a> {
     /// Writes all creation-time fields atomically.
     ///
     /// `isin` may be empty; when non-empty it is stored under the `"ISIN"` key
-    /// in the security identifiers mapping.
+    /// in the asset metadata mapping.
     ///
     /// `REDEEM_SENDER_POLICY` is initialised to `ALWAYS_BLOCK_ID` so redemption
     /// is closed by default; issuers must explicitly open it after creation.
@@ -88,10 +88,10 @@ impl<'a> B20AssetStorage<'a> {
         self.b20.name.write(init.name)?;
         self.b20.symbol.write(init.symbol)?;
         self.b20.supply_cap.write(init.supply_cap)?;
-        self.security.multiplier.write(init.multiplier)?;
+        self.asset.multiplier.write(init.multiplier)?;
         self.redeem.minimum_redeemable.write(init.minimum_redeemable)?;
         if !init.isin.is_empty() {
-            self.security.identifiers.at_mut(&String::from("ISIN")).write(init.isin)?;
+            self.asset.identifiers.at_mut(&String::from("ISIN")).write(init.isin)?;
         }
         self.write_redeem_policy_ids_default()?;
         Ok(())
@@ -118,7 +118,7 @@ mod tests {
         __packing_b20_asset_extension_storage, __packing_b20_redeem_storage,
         B20AssetExtensionStorage, B20AssetInit, B20AssetStorage, B20RedeemStorage, slots,
     };
-    use crate::{B20CoreStorage, PolicyRegistryStorage, SecurityAccounting, TokenAccounting};
+    use crate::{AssetAccounting, B20CoreStorage, PolicyRegistryStorage, TokenAccounting};
 
     const TOKEN: Address = address!("000000000000000000000000000000000000b021");
     const B20_ROOT: U256 =
@@ -145,7 +145,7 @@ mod tests {
         assert_eq!(<B20RedeemStorage as StorableType>::STORAGE_NAMESPACE_ROOT, REDEEM_ROOT);
 
         assert_eq!(slots::B20, B20_ROOT);
-        assert_eq!(slots::SECURITY, ASSET_ROOT);
+        assert_eq!(slots::ASSET, ASSET_ROOT);
         assert_eq!(slots::REDEEM, REDEEM_ROOT);
     }
 
@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn security_string_mapping_slots_use_solidity_string_key_derivation() {
+    fn asset_string_mapping_slots_use_solidity_string_key_derivation() {
         let (mut storage, _) = setup_storage();
         let announcement_id = String::from("2026-Q1-split");
         let identifier_type = String::from("ISIN");
@@ -202,9 +202,9 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut token = B20AssetStorage::from_address(TOKEN, ctx);
-            token.security.used_announcement_ids.at_mut(&announcement_id).write(true).unwrap();
+            token.asset.used_announcement_ids.at_mut(&announcement_id).write(true).unwrap();
             token
-                .security
+                .asset
                 .identifiers
                 .at_mut(&identifier_type)
                 .write(identifier_value.clone())

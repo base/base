@@ -64,10 +64,10 @@ pub fn derive_stablecoin_accounting(input: TokenStream) -> TokenStream {
     accounting::derive_stablecoin(parse_macro_input!(input as DeriveInput))
 }
 
-/// Derives the security-token storage port for contract storage structs.
-#[proc_macro_derive(SecurityAccounting)]
-pub fn derive_security_accounting(input: TokenStream) -> TokenStream {
-    accounting::derive_security(parse_macro_input!(input as DeriveInput))
+/// Derives the asset-token storage port for contract storage structs.
+#[proc_macro_derive(AssetAccounting)]
+pub fn derive_asset_accounting(input: TokenStream) -> TokenStream {
+    accounting::derive_asset(parse_macro_input!(input as DeriveInput))
 }
 
 /// Generate `StorableType` and `Storable` implementations for all standard integer types.

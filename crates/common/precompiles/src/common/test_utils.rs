@@ -10,7 +10,7 @@ use base_precompile_storage::Result;
 
 use crate::{
     B20AssetStorage, IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage,
-    b20_asset::{B20AssetToken, SecurityAccounting},
+    b20_asset::{AssetAccounting, B20AssetToken},
     b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
     common::{Policy, TokenAccounting},
 };
@@ -47,8 +47,8 @@ pub struct InMemoryTokenAccounting {
     pub decimals: u8,
     /// Stablecoin currency identifier.
     pub currency: String,
-    /// Security ISIN identifier (legacy field; prefer `extra_metadata` map for asset tokens).
-    pub security_isin: String,
+    /// Asset ISIN identifier (legacy field; prefer `extra_metadata` map for asset tokens).
+    pub asset_isin: String,
     /// Bitmask of active pause vectors.
     pub paused: U256,
     /// Per-account EIP-2612 nonces.
@@ -65,11 +65,11 @@ pub struct InMemoryTokenAccounting {
     pub role_admins: HashMap<B256, B256>,
     /// Policy IDs keyed by policy type.
     pub policy_ids: HashMap<B256, u64>,
-    /// Multiplier scaled to WAD (1e18). Security tokens only.
+    /// Multiplier scaled to WAD (1e18). Asset tokens only.
     pub multiplier: U256,
-    /// Security identifier values keyed by raw `identifier_type`. Security tokens only.
+    /// Asset metadata values keyed by raw `identifier_type`. Asset tokens only.
     pub extra_metadata: HashMap<String, String>,
-    /// Consumed announcement ids keyed by raw announcement id. Security tokens only.
+    /// Consumed announcement ids keyed by raw announcement id. Asset tokens only.
     pub announcement_ids_used: HashSet<String>,
     /// Events collected by `emit_event`; does not produce real EVM logs.
     pub events: Vec<LogData>,
@@ -89,7 +89,7 @@ impl InMemoryTokenAccounting {
             symbol: String::new(),
             decimals: 18,
             currency: String::new(),
-            security_isin: String::new(),
+            asset_isin: String::new(),
             paused: U256::ZERO,
             nonces: HashMap::new(),
             minimum_redeemable: U256::ZERO,
@@ -385,7 +385,7 @@ impl PolicyRegistry for InMemoryPolicy {
     }
 }
 
-impl SecurityAccounting for InMemoryTokenAccounting {
+impl AssetAccounting for InMemoryTokenAccounting {
     fn multiplier(&self) -> Result<U256> {
         const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
         Ok(if self.multiplier.is_zero() { WAD } else { self.multiplier })
@@ -400,7 +400,7 @@ impl SecurityAccounting for InMemoryTokenAccounting {
         if let Some(val) = self.extra_metadata.get(identifier_type) {
             return Ok(val.clone());
         }
-        if identifier_type == "ISIN" { Ok(self.security_isin.clone()) } else { Ok(String::new()) }
+        if identifier_type == "ISIN" { Ok(self.asset_isin.clone()) } else { Ok(String::new()) }
     }
 
     fn set_extra_metadata_value(&mut self, identifier_type: &str, value: String) -> Result<()> {

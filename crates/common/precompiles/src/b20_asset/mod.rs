@@ -4,7 +4,7 @@ mod abi;
 pub use abi::IB20Asset;
 
 mod accounting;
-pub use accounting::SecurityAccounting;
+pub use accounting::AssetAccounting;
 
 mod dispatch;
 

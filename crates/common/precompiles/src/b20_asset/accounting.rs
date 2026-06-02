@@ -1,4 +1,4 @@
-//! `SecurityAccounting` — storage port extension for security tokens.
+//! `AssetAccounting` — storage port extension for asset tokens.
 
 use alloc::string::String;
 
@@ -7,19 +7,19 @@ use base_precompile_storage::Result;
 
 use crate::TokenAccounting;
 
-/// Extends [`TokenAccounting`] with security-token-specific storage slots.
+/// Extends [`TokenAccounting`] with asset-token-specific storage slots.
 ///
-/// Security identifiers (ISIN, CUSIP, etc.) and redeem parameters are only
-/// exposed through the security-token surface, not the base B-20 surface.
-pub trait SecurityAccounting: TokenAccounting {
+/// Asset metadata (ISIN, CUSIP, etc.) and redeem parameters are only exposed
+/// through the asset-token surface, not the base B-20 surface.
+pub trait AssetAccounting: TokenAccounting {
     /// Returns the current multiplier scaled to WAD (1e18).
     fn multiplier(&self) -> Result<U256>;
     /// Writes a new multiplier.
     fn set_multiplier(&mut self, multiplier: U256) -> Result<()>;
 
-    /// Returns the security identifier value for `identifier_type`, or an empty string if unset.
+    /// Returns the asset metadata value for `identifier_type`, or an empty string if unset.
     fn extra_metadata(&self, identifier_type: &str) -> Result<String>;
-    /// Writes (or removes when `value` is empty) the security identifier for `identifier_type`.
+    /// Writes (or removes when `value` is empty) the asset metadata for `identifier_type`.
     fn set_extra_metadata_value(&mut self, identifier_type: &str, value: String) -> Result<()>;
 
     /// Returns the minimum amount that may be redeemed in a single call.

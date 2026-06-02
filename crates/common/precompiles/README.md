@@ -16,7 +16,7 @@ that lets downstream crates use their own spec wrapper as long as it converts to
 
 The crate also exports the ABI types, storage adapters, entry points, and shared token traits for
 the native B-20 token system. Those exports cover the activation registry, policy registry, B-20
-factory, default B-20 token, stablecoin token, security token, and the reusable role, pause, policy,
+factory, default B-20 token, stablecoin token, asset token, and the reusable role, pause, policy,
 permit, and accounting helpers used by those precompiles.
 
 ## Behavior
@@ -52,12 +52,12 @@ policies, supports staged admin transfer and admin renunciation, and provides bu
 The B-20 factory is the singleton precompile at `0xB20F000000000000000000000000000000000000`. It
 creates deterministic B-20 token addresses from the caller, variant, and salt. B-20 token addresses
 use the `0xb2` prefix with the variant encoded in the address. The default B-20 variant uses 18
-decimals, while stablecoin and security variants use 6 decimals.
+decimals, while stablecoin and asset variants use 6 decimals.
 
 Default B-20 tokens implement the ERC-20 surface plus roles, pausing, supply caps, memo transfers,
 policy hooks, EIP-2612 permits, ERC-5267 domain reporting, and ERC-7572 contract metadata. The
-stablecoin variant adds currency metadata. The security variant adds multiplier-based scaling,
-minimum redeemable checks, batched mint and burn operations, security identifiers, and announcement
+stablecoin variant adds currency metadata. The asset variant adds multiplier-based scaling,
+minimum redeemable checks, batched mint and burn operations, asset metadata, and announcement
 flows that can execute internal token calls.
 
 ## Usage
