@@ -47,15 +47,9 @@ describe:
 prove start_block number_of_blocks='1' proof_type='compressed':
     #!/usr/bin/env bash
     set -euo pipefail
-    number_of_blocks="{{ number_of_blocks }}"
     proof_type="{{ proof_type }}"
-    if [[ "$number_of_blocks" == proof_type=* ]]; then
-      proof_type="$number_of_blocks"
-      number_of_blocks="1"
-    fi
-    number_of_blocks="${number_of_blocks#number_of_blocks=}"
     proof_type="${proof_type#proof_type=}"
-    bash "{{ _script }}" prove "{{ start_block }}" "$number_of_blocks" "{{ _endpoint }}" "$proof_type"
+    bash "{{ _script }}" prove "{{ start_block }}" "{{ number_of_blocks }}" "{{ _endpoint }}" "$proof_type"
 
 # Get proof status and, for dry-run mode, executionStats
 get session_id receipt_type='':
