@@ -32,7 +32,7 @@ sol! {
         error InternalCallFailed(bytes call);
 
         /// `decimals` was not in the allowed range `[6, 18]`.
-        error InvalidDecimals();
+        error InvalidDecimals(uint8 decimals);
 
         // ── Events ───────────────────────────────────────────────────────────
 

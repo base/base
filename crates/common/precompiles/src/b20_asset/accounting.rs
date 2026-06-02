@@ -7,10 +7,10 @@ use base_precompile_storage::Result;
 
 use crate::TokenAccounting;
 
-/// Extends [`TokenAccounting`] with security-token-specific storage slots.
+/// Extends [`TokenAccounting`] with asset-token-specific storage slots.
 ///
 /// Extra metadata entries are only exposed through the
-/// security-token surface, not the base B-20 surface.
+/// asset-token surface, not the base B-20 surface.
 pub trait AssetAccounting: TokenAccounting {
     /// Returns the current multiplier scaled to WAD (1e18).
     fn multiplier(&self) -> Result<U256>;

@@ -59,7 +59,9 @@ impl<'a> B20AssetStorage<'a> {
     /// Writes all creation-time fields atomically.
     pub fn initialize(&mut self, init: B20AssetInit) -> Result<()> {
         if init.decimals < Self::MIN_DECIMALS || init.decimals > Self::MAX_DECIMALS {
-            return Err(BasePrecompileError::revert(IB20Asset::InvalidDecimals {}));
+            return Err(BasePrecompileError::revert(IB20Asset::InvalidDecimals {
+                decimals: init.decimals,
+            }));
         }
         self.b20.name.write(init.name)?;
         self.b20.symbol.write(init.symbol)?;
@@ -158,11 +160,11 @@ mod tests {
     }
 
     #[test]
-    fn security_string_mapping_slots_use_solidity_string_key_derivation() {
+    fn asset_extra_metadata_mapping_slots_use_solidity_string_key_derivation() {
         let (mut storage, _) = setup_storage();
         let announcement_id = String::from("2026-Q1-split");
-        let identifier_type = String::from("ISIN");
-        let identifier_value = String::from("US0000000000");
+        let identifier_type = String::from("category");
+        let identifier_value = String::from("real-world-asset");
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut token = B20AssetStorage::from_address(TOKEN, ctx);
@@ -241,7 +243,7 @@ mod tests {
             assert_eq!(
                 err,
                 base_precompile_storage::BasePrecompileError::revert(
-                    crate::IB20Asset::InvalidDecimals {}
+                    crate::IB20Asset::InvalidDecimals { decimals: 5 }
                 )
             );
         });
@@ -257,7 +259,7 @@ mod tests {
             assert_eq!(
                 err,
                 base_precompile_storage::BasePrecompileError::revert(
-                    crate::IB20Asset::InvalidDecimals {}
+                    crate::IB20Asset::InvalidDecimals { decimals: 19 }
                 )
             );
         });
