@@ -1,4 +1,4 @@
-# The risc0 toolchain ships an older rustc (1.91) than the workspace MSRV (1.93).
+# The risc0 toolchain ships an older rustc (1.91) than the workspace MSRV (1.94).
 # The --ignore-rust-version flag is required when invoking cargo build.
 #
 # IMPORTANT: Always use `just build` / `just bundle` for reproducible builds.
