@@ -27,6 +27,6 @@ pub use observer::{L2TimestampSource, UpgradeSignalPollingObserver};
 
 mod state;
 pub use state::{
-    UpgradeActivation, UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalState,
+    AZUL_HARDFORK_ID, UpgradeActivation, UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalState,
     UpgradeSignalStateUpdate,
 };

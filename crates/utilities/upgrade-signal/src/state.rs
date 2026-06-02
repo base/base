@@ -5,6 +5,9 @@ use tracing::{debug, info, warn};
 
 use crate::{UpgradeSignalConfig, UpgradeSignalMetrics};
 
+/// Hardfork ID used by the L1 upgrade signal contract for Base Azul.
+pub const AZUL_HARDFORK_ID: &str = "azul";
+
 /// L1 upgrade signal values for one hardfork ID.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct UpgradeSignal {
@@ -16,6 +19,18 @@ pub struct UpgradeSignal {
     pub protocol_version: U256,
     /// L1 block number observed before the contract read.
     pub l1_block_number: u64,
+}
+
+impl UpgradeSignal {
+    /// Returns the positive activation timestamp announced for Base Azul.
+    pub fn azul_activation_timestamp(&self) -> Option<u64> {
+        if self.hardfork_id.eq_ignore_ascii_case(AZUL_HARDFORK_ID) && self.activation_timestamp > 0
+        {
+            Some(self.activation_timestamp)
+        } else {
+            None
+        }
+    }
 }
 
 /// Upgrade activation observed locally.
@@ -73,6 +88,9 @@ impl UpgradeSignalState {
         }
 
         let signal = self.signal.as_ref()?;
+        if signal.activation_timestamp == 0 {
+            return None;
+        }
         if l2_timestamp < signal.activation_timestamp {
             return None;
         }
@@ -208,6 +226,25 @@ mod tests {
         }
     }
 
+    fn signal_with_hardfork_id(hardfork_id: &str, timestamp: u64) -> UpgradeSignal {
+        UpgradeSignal { hardfork_id: hardfork_id.to_string(), ..signal(timestamp) }
+    }
+
+    #[test]
+    fn signal_returns_positive_azul_timestamp() {
+        assert_eq!(signal(10).azul_activation_timestamp(), Some(10));
+    }
+
+    #[test]
+    fn signal_ignores_zero_azul_timestamp() {
+        assert_eq!(signal(0).azul_activation_timestamp(), None);
+    }
+
+    #[test]
+    fn signal_ignores_non_azul_timestamp() {
+        assert_eq!(signal_with_hardfork_id("beryl", 10).azul_activation_timestamp(), None);
+    }
+
     #[test]
     fn state_observes_activation_once() {
         let mut state = UpgradeSignalState::new();
@@ -216,6 +253,16 @@ mod tests {
         assert_eq!(state.observe_l2_timestamp(9), None);
         assert!(state.observe_l2_timestamp(10).is_some());
         assert_eq!(state.observe_l2_timestamp(11), None);
+    }
+
+    #[test]
+    fn state_ignores_zero_activation_timestamp() {
+        let mut state = UpgradeSignalState::new();
+
+        state.update_signal(signal(0));
+
+        assert_eq!(state.observe_l2_timestamp(0), None);
+        assert_eq!(state.observe_l2_timestamp(1), None);
     }
 
     #[test]

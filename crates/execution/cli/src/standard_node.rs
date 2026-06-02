@@ -1,11 +1,13 @@
 //! Standard Base execution-node arguments and runner wiring.
 
+use std::sync::Arc;
+
 use base_bundle_extension::BundleExtension;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
 use base_node_core::args::RollupArgs;
-use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode};
+use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
 use base_proofs_extension::ProofsHistoryExtension;
 use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
@@ -198,17 +200,68 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
 pub struct StandardBaseRethNode;
 
 impl StandardBaseRethNode {
+    /// Applies a configured L1 upgrade signal to the execution chain spec before startup.
+    pub async fn apply_initial_upgrade_signal(
+        builder: BaseNodeBuilder,
+        args: &StandardNodeArgs,
+    ) -> eyre::Result<BaseNodeBuilder> {
+        Self::apply_initial_upgrade_signal_from_rollup_args(builder, &args.rpc.rollup_args).await
+    }
+
+    /// Applies a configured L1 upgrade signal from rollup args before startup.
+    pub async fn apply_initial_upgrade_signal_from_rollup_args(
+        mut builder: BaseNodeBuilder,
+        rollup_args: &RollupArgs,
+    ) -> eyre::Result<BaseNodeBuilder> {
+        let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
+            return Ok(builder);
+        };
+
+        let chain_spec = Arc::make_mut(&mut builder.config_mut().chain);
+        ExecutionUpgradeSignalExtension::apply_initial_signal_to_chain_spec(&config, chain_spec)
+            .await?;
+
+        Ok(builder)
+    }
+
+    /// Installs the upgrade signal observer extension when configured.
+    pub fn install_upgrade_signal_extension<SB: PayloadServiceBuilder>(
+        runner: &mut BaseNodeRunner<SB>,
+        rollup_args: &RollupArgs,
+    ) -> eyre::Result<()> {
+        let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
+            return Ok(());
+        };
+
+        runner.install_ext::<ExecutionUpgradeSignalExtension>(config);
+
+        Ok(())
+    }
+
+    fn upgrade_signal_config(
+        rollup_args: &RollupArgs,
+    ) -> eyre::Result<Option<ExecutionUpgradeSignalConfig>> {
+        let Some(signal_config) = rollup_args.upgrade_signal.config()? else {
+            return Ok(None);
+        };
+        let Some(l1_rpc) = rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone() else {
+            eyre::bail!(
+                "--upgrade-signal.contract requires --upgrade-signal.l1-rpc for base-reth-node"
+            );
+        };
+
+        Ok(Some(ExecutionUpgradeSignalConfig { signal_config, l1_rpc }))
+    }
+
     /// Builds a runner with the standard Base execution-node extensions installed.
     pub fn runner(args: StandardNodeArgs) -> eyre::Result<BaseNodeRunner> {
-        let mut runner = BaseNodeRunner::new(args.rpc.rollup_args.clone());
-        let upgrade_signal_config = args.rpc.rollup_args.upgrade_signal.config()?;
-        let upgrade_signal_l1_rpc =
-            args.rpc.rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
+        let rollup_args = args.rpc.rollup_args.clone();
+        let mut runner = BaseNodeRunner::new(rollup_args.clone());
 
         // Create flashblocks config first so we can share its state with metering.
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
 
-        // Feature extensions (FlashblocksExtension must be last - uses replace_configured).
+        // Feature extensions.
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig {
             sequencer_rpc: args.rpc.rollup_args.sequencer.clone(),
         });
@@ -248,18 +301,8 @@ impl StandardBaseRethNode {
         runner.install_ext::<BundleExtension>(());
         runner.install_ext::<TxForwardingExtension>((&args).into());
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
-        runner.install_ext::<ProofsHistoryExtension>(args.rpc.rollup_args);
-        if let Some(signal_config) = upgrade_signal_config {
-            let Some(l1_rpc) = upgrade_signal_l1_rpc else {
-                eyre::bail!(
-                    "--upgrade-signal.contract requires --upgrade-signal.l1-rpc for base-reth-node"
-                );
-            };
-            runner.install_ext::<ExecutionUpgradeSignalExtension>(ExecutionUpgradeSignalConfig {
-                signal_config,
-                l1_rpc,
-            });
-        }
+        runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
+        Self::install_upgrade_signal_extension(&mut runner, &rollup_args)?;
 
         Ok(runner)
     }
@@ -276,6 +319,8 @@ impl StandardBaseRethNode {
 
     /// Launches the node and waits for it to exit.
     pub async fn run(builder: BaseNodeBuilder, args: StandardNodeArgs) -> eyre::Result<()> {
+        let builder = Self::apply_initial_upgrade_signal(builder, &args).await?;
+
         Self::runner_with_version_metrics(args)?.run(builder).await
     }
 
@@ -284,6 +329,8 @@ impl StandardBaseRethNode {
         builder: BaseNodeBuilder,
         args: StandardNodeArgs,
     ) -> eyre::Result<LaunchedBaseNode> {
+        let builder = Self::apply_initial_upgrade_signal(builder, &args).await?;
+
         Self::runner_with_version_metrics(args)?.launch(builder).await
     }
 }

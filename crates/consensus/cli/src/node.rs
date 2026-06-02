@@ -3,12 +3,16 @@
 use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::Address;
+use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder};
-use base_upgrade_signal::UpgradeSignalArgs;
+use base_upgrade_signal::{
+    AlloyUpgradeSignalReader, UpgradeSignal, UpgradeSignalArgs, UpgradeSignalConfig,
+    UpgradeSignalReader,
+};
 use clap::Args;
 use eyre::Context;
 use strum::IntoEnumIterator;
@@ -242,10 +246,14 @@ impl ConsensusNodeArgs {
     /// Builds a rollup node with caller-supplied endpoint overrides.
     pub async fn build_rollup_node_with_overrides(
         &self,
-        cfg: RollupConfig,
+        mut cfg: RollupConfig,
         overrides: ConsensusNodeOverrides,
     ) -> eyre::Result<RollupNode> {
         self.validate_sequencer_key()?;
+        let upgrade_signal_config = self.config.upgrade_signal.config()?;
+        if let Some(signal_config) = &upgrade_signal_config {
+            self.apply_initial_upgrade_signal(&mut cfg, signal_config).await?;
+        }
 
         info!(
             target: "rollup_node",
@@ -291,7 +299,6 @@ impl ConsensusNodeArgs {
             )
             .await?;
         let rpc_config = self.config.rpc_flags.clone().into();
-        let upgrade_signal_config = self.config.upgrade_signal.config()?;
 
         let engine_config = EngineConfig {
             config: Arc::new(cfg.clone()),
@@ -320,6 +327,40 @@ impl ConsensusNodeArgs {
         }
 
         builder.build().await.wrap_err("Failed to build rollup node")
+    }
+
+    /// Applies the configured L1 upgrade signal to the rollup config before startup.
+    pub async fn apply_initial_upgrade_signal(
+        &self,
+        cfg: &mut RollupConfig,
+        signal_config: &UpgradeSignalConfig,
+    ) -> eyre::Result<()> {
+        let reader = AlloyUpgradeSignalReader::new(
+            RootProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone()),
+            signal_config.contract_address,
+        );
+        let signal = reader.read_signal(&signal_config.hardfork_id).await?;
+
+        Self::apply_signal_to_rollup_config(cfg, &signal);
+
+        Ok(())
+    }
+
+    /// Applies a positive Azul activation timestamp to a rollup config.
+    pub fn apply_signal_to_rollup_config(cfg: &mut RollupConfig, signal: &UpgradeSignal) -> bool {
+        let Some(timestamp) = signal.azul_activation_timestamp() else {
+            return false;
+        };
+
+        cfg.set_base_azul_activation_timestamp(timestamp);
+        info!(
+            target: "upgrade_signal",
+            hardfork_id = %signal.hardfork_id,
+            activation_timestamp = %timestamp,
+            "applied upgrade signal to rollup config"
+        );
+
+        true
     }
 
     /// Starts a rollup node with default external endpoint configuration.
@@ -368,7 +409,7 @@ mod tests {
     use std::{path::PathBuf, process::Command};
 
     use alloy_chains::Chain;
-    use alloy_primitives::{B256, address};
+    use alloy_primitives::{B256, U256, address};
     use clap::{Args, Parser};
     use rstest::rstest;
 
@@ -427,6 +468,50 @@ mod tests {
             Some(address!("0000000000000000000000000000000000000001"))
         );
         assert_eq!(args.upgrade_signal.hardfork_id.as_deref(), Some("azul"));
+    }
+
+    fn upgrade_signal(hardfork_id: &str, activation_timestamp: u64) -> UpgradeSignal {
+        UpgradeSignal {
+            hardfork_id: hardfork_id.to_string(),
+            activation_timestamp,
+            protocol_version: U256::from(7),
+            l1_block_number: 1,
+        }
+    }
+
+    #[test]
+    fn applies_positive_azul_signal_to_rollup_config() {
+        let mut cfg = RollupConfig::default();
+
+        let applied =
+            ConsensusNodeArgs::apply_signal_to_rollup_config(&mut cfg, &upgrade_signal("azul", 42));
+
+        assert!(applied);
+        assert_eq!(cfg.hardforks.base.azul, Some(42));
+    }
+
+    #[test]
+    fn ignores_zero_azul_signal_for_rollup_config() {
+        let mut cfg = RollupConfig::default();
+
+        let applied =
+            ConsensusNodeArgs::apply_signal_to_rollup_config(&mut cfg, &upgrade_signal("azul", 0));
+
+        assert!(!applied);
+        assert_eq!(cfg.hardforks.base.azul, None);
+    }
+
+    #[test]
+    fn ignores_non_azul_signal_for_rollup_config() {
+        let mut cfg = RollupConfig::default();
+
+        let applied = ConsensusNodeArgs::apply_signal_to_rollup_config(
+            &mut cfg,
+            &upgrade_signal("beryl", 42),
+        );
+
+        assert!(!applied);
+        assert_eq!(cfg.hardforks.base.azul, None);
     }
 
     #[rstest]

@@ -1,10 +1,11 @@
 //! Execution-node upgrade signal extension.
 
 use alloy_provider::RootProvider;
+use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
-    AlloyUpgradeSignalReader, DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalConfig,
-    UpgradeSignalMonitor, UpgradeSignalReader,
+    AlloyUpgradeSignalReader, DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignal,
+    UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMonitor, UpgradeSignalReader,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
@@ -31,6 +32,42 @@ impl ExecutionUpgradeSignalExtension {
     /// Creates a new execution upgrade signal extension.
     pub const fn new(config: ExecutionUpgradeSignalConfig) -> Self {
         Self { config }
+    }
+
+    /// Applies the configured L1 upgrade signal to the chain spec before startup.
+    pub async fn apply_initial_signal_to_chain_spec(
+        config: &ExecutionUpgradeSignalConfig,
+        chain_spec: &mut BaseChainSpec,
+    ) -> Result<(), UpgradeSignalError> {
+        let reader = AlloyUpgradeSignalReader::new(
+            RootProvider::new_http(config.l1_rpc.clone()),
+            config.signal_config.contract_address,
+        );
+        let signal = reader.read_signal(&config.signal_config.hardfork_id).await?;
+
+        Self::apply_signal_to_chain_spec(chain_spec, &signal);
+
+        Ok(())
+    }
+
+    /// Applies a positive Azul activation timestamp to an execution chain spec.
+    pub fn apply_signal_to_chain_spec(
+        chain_spec: &mut BaseChainSpec,
+        signal: &UpgradeSignal,
+    ) -> bool {
+        let Some(timestamp) = signal.azul_activation_timestamp() else {
+            return false;
+        };
+
+        chain_spec.set_azul_activation_timestamp(timestamp);
+        info!(
+            target: "upgrade_signal",
+            hardfork_id = %signal.hardfork_id,
+            activation_timestamp = %timestamp,
+            "applied upgrade signal to execution chain spec"
+        );
+
+        true
     }
 
     /// Polls L1 upgrade signal state.
@@ -106,5 +143,73 @@ impl FromExtensionConfig for ExecutionUpgradeSignalExtension {
 
     fn from_config(config: Self::Config) -> Self {
         Self::new(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base_common_chains::BaseUpgrade;
+    use reth_chainspec::{EthereumHardfork, ForkCondition, Hardforks};
+
+    use super::*;
+
+    fn signal(hardfork_id: &str, activation_timestamp: u64) -> UpgradeSignal {
+        UpgradeSignal {
+            hardfork_id: hardfork_id.to_string(),
+            activation_timestamp,
+            protocol_version: Default::default(),
+            l1_block_number: 1,
+        }
+    }
+
+    #[test]
+    fn applies_positive_azul_signal_to_chain_spec() {
+        let mut chain_spec = BaseChainSpec::devnet();
+
+        chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
+        chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
+
+        let applied = ExecutionUpgradeSignalExtension::apply_signal_to_chain_spec(
+            &mut chain_spec,
+            &signal("azul", 42),
+        );
+
+        assert!(applied);
+        assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Timestamp(42));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(42));
+    }
+
+    #[test]
+    fn ignores_zero_azul_signal_for_chain_spec() {
+        let mut chain_spec = BaseChainSpec::devnet();
+
+        chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
+        chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
+
+        let applied = ExecutionUpgradeSignalExtension::apply_signal_to_chain_spec(
+            &mut chain_spec,
+            &signal("azul", 0),
+        );
+
+        assert!(!applied);
+        assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
+        assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
+    }
+
+    #[test]
+    fn ignores_non_azul_signal_for_chain_spec() {
+        let mut chain_spec = BaseChainSpec::devnet();
+
+        chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
+        chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
+
+        let applied = ExecutionUpgradeSignalExtension::apply_signal_to_chain_spec(
+            &mut chain_spec,
+            &signal("beryl", 42),
+        );
+
+        assert!(!applied);
+        assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
+        assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
     }
 }
