@@ -26,9 +26,7 @@ pub struct BenchmarkConfig {
     pub parallel_tx_batches: Option<u64>,
     /// Flashblocks replay configuration.
     pub flashblocks: Option<FlashblocksConfig>,
-    /// Payload definitions referenced by benchmark entries.
-    pub transaction_payloads: Vec<TransactionPayloadDef>,
-    /// Node definitions to benchmark (each expanded by variables).
+    /// Test definitions to run (each expanded by variables).
     pub benchmarks: Vec<BenchmarkDefinition>,
 }
 
@@ -39,20 +37,12 @@ impl BenchmarkConfig {
     pub fn expand(&self) -> Result<Vec<TestRun>, BenchmarkError> {
         let mut runs = Vec::new();
         for definition in &self.benchmarks {
-            let payload = self
-                .transaction_payloads
-                .first()
-                .ok_or_else(|| {
-                    BenchmarkError::Config("at least one transaction_payload required".into())
-                })?
-                .clone();
             let expanded = expand_variables(&definition.variables);
             for params in expanded {
                 runs.push(TestRun {
                     id: crate::output::random_id(),
                     params,
                     definition: definition.clone(),
-                    payload: payload.clone(),
                 });
             }
         }
@@ -73,7 +63,7 @@ pub struct FlashblocksConfig {
     pub block_time_ms: u64,
 }
 
-/// A single benchmark definition including node configuration and variable matrix.
+/// A single benchmark definition including node configuration, payload, and variable matrix.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkDefinition {
     /// EL client type: `"base-reth-node"` or `"builder"`.
@@ -82,8 +72,10 @@ pub struct BenchmarkDefinition {
     pub datadir: DatadirConfig,
     /// Snapshot creation configuration.
     pub snapshot: Option<SnapshotConfig>,
-    /// Devnet contract setup configuration.
+    /// Pre-test setup steps (contract deployments, etc.).
     pub setup: Option<SetupConfig>,
+    /// Transaction payload to submit during the benchmark.
+    pub payload: TransactionPayloadDef,
     /// Prometheus threshold configuration.
     pub metrics: Option<MetricsConfig>,
     /// Extra CLI arguments for the node binary.
@@ -262,10 +254,8 @@ pub struct TestRun {
     pub id: String,
     /// Resolved variable bindings for this run.
     pub params: HashMap<String, String>,
-    /// The benchmark definition this run was expanded from.
+    /// The benchmark definition this run was expanded from (includes payload and setup).
     pub definition: BenchmarkDefinition,
-    /// The payload definition used for this run.
-    pub payload: TransactionPayloadDef,
 }
 
 fn expand_variables(variables: &[Variable]) -> Vec<HashMap<String, String>> {
@@ -299,20 +289,20 @@ mod tests {
             num_blocks: 10,
             parallel_tx_batches: None,
             flashblocks: None,
-            transaction_payloads: vec![TransactionPayloadDef {
-                id: "lt".into(),
-                payload_type: "load-test".into(),
-                params: LoadTestPayloadParams {
-                    sender_count: 1,
-                    funding_amount: None,
-                    transactions: default_transactions(),
-                },
-            }],
             benchmarks: vec![BenchmarkDefinition {
                 node_type: "base-reth-node".into(),
                 datadir: DatadirConfig::default(),
                 snapshot: None,
                 setup: None,
+                payload: TransactionPayloadDef {
+                    id: "lt".into(),
+                    payload_type: "load-test".into(),
+                    params: LoadTestPayloadParams {
+                        sender_count: 1,
+                        funding_amount: None,
+                        transactions: default_transactions(),
+                    },
+                },
                 metrics: None,
                 node_args: None,
                 tags: HashMap::new(),
@@ -377,6 +367,6 @@ mod tests {
         let parsed: BenchmarkConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(parsed.name, config.name);
         assert_eq!(parsed.block_time_ms, config.block_time_ms);
-        assert_eq!(parsed.transaction_payloads.len(), 1);
+        assert_eq!(parsed.benchmarks.len(), 1);
     }
 }

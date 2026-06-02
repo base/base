@@ -252,7 +252,7 @@ impl NetworkBenchmark {
                     result = sequencer.propose(&deploy_mempool, block_time, gas_limit) => { result?; },
                 }
             };
-            for tx in &mut run.payload.params.transactions {
+            for tx in &mut run.definition.payload.params.transactions {
                 if tx.tx_type == "uniswap_v3" {
                     if tx.router.is_none() {
                         tx.router = Some(addrs.router.to_string());
@@ -272,7 +272,7 @@ impl NetworkBenchmark {
             rpc_proxy_url: proxy_url,
             block_watcher_url: None,
             flashblocks_ws_url: None,
-            params: run.payload.params.clone(),
+            params: run.definition.payload.params.clone(),
             funder_key: self.options.prefund_key.clone(),
             log_path: Some(sequencer_log_dir.join("load-test.log")),
             mempool: mempool.clone(),

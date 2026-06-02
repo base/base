@@ -4,24 +4,23 @@ description: Measures sequencer throughput using Uniswap V3 swaps on a fresh dev
 block_time_ms: 2000
 num_blocks: 20
 
-transaction_payloads:
-  - id: uniswap-swaps
-    type: load-test
-    params:
-      sender_count: 50
-      funding_amount: "1000000000000000000"
-      transactions:
-        - weight: 1
-          type: uniswap_v3
-          fee: 3000
-          min_amount: "1000000000000"
-          max_amount: "10000000000000"
-
 benchmarks:
   - node_type: reth
     datadir: {}
     setup:
       deploy_uniswap_v3: true
+    payload:
+      id: uniswap-swaps
+      type: load-test
+      params:
+        sender_count: 50
+        funding_amount: "1000000000000000000"
+        transactions:
+          - weight: 1
+            type: uniswap_v3
+            fee: 3000
+            min_amount: "1000000000000"
+            max_amount: "10000000000000"
     metrics:
       warning:
         - metric: gas_per_block
