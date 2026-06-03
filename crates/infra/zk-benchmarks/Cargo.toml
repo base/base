@@ -10,3 +10,11 @@ repository.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+# misc
+eyre.workspace = true
+serde_yaml.workspace = true
+url = { workspace = true, features = ["serde"] }
+clap = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive", "std"] }
