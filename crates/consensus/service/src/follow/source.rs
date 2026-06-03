@@ -1,10 +1,11 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
 use alloy_consensus::Block;
-use alloy_eips::BlockNumberOrTag;
+use alloy_eips::{BlockNumberOrTag, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
+use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use base_protocol::BlockInfo;
@@ -51,13 +52,36 @@ pub trait RemoteClient: Debug + Send + Sync {
 #[derive(Debug, Clone)]
 pub struct RemoteL2Client {
     provider: RootProvider<Base>,
+    rollup_config: Arc<RollupConfig>,
 }
 
 impl RemoteL2Client {
     /// Creates a new [`RemoteL2Client`] from a source L2 node URL.
-    pub fn new(url: Url) -> Self {
+    pub fn new(url: Url, rollup_config: Arc<RollupConfig>) -> Self {
         let provider = RootProvider::<Base>::new_http(url);
-        Self { provider }
+        Self { provider, rollup_config }
+    }
+
+    fn payload_from_consensus_block(
+        &self,
+        block_hash: alloy_primitives::B256,
+        parent_beacon_block_root: Option<alloy_primitives::B256>,
+        mut consensus_block: Block<BaseTxEnvelope>,
+    ) -> BaseExecutionPayloadEnvelope {
+        if self.rollup_config.is_isthmus_active(consensus_block.header.timestamp)
+            && consensus_block.header.requests_hash.is_none()
+        {
+            tracing::trace!(
+                block = %block_hash,
+                "backfilling empty requests_hash on post-Isthmus source block"
+            );
+            consensus_block.header.requests_hash = Some(EMPTY_REQUESTS_HASH);
+        }
+
+        let (execution_payload, _sidecar) =
+            BaseExecutionPayload::from_block_unchecked(block_hash, &consensus_block);
+
+        BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload }
     }
 }
 
@@ -117,9 +141,81 @@ impl RemoteClient for RemoteL2Client {
             },
         };
 
-        let (execution_payload, _sidecar) =
-            BaseExecutionPayload::from_block_unchecked(block_hash, &consensus_block);
+        Ok(self.payload_from_consensus_block(block_hash, parent_beacon_block_root, consensus_block))
+    }
+}
 
-        Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload })
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::{BlockBody, Header, proofs};
+    use alloy_primitives::B256;
+    use base_common_genesis::HardForkConfig;
+
+    use super::*;
+
+    fn client_with_isthmus_at(isthmus_time: Option<u64>) -> RemoteL2Client {
+        let rollup_config = RollupConfig {
+            hardforks: HardForkConfig { isthmus_time, ..Default::default() },
+            ..Default::default()
+        };
+        RemoteL2Client::new(
+            "http://localhost:8545".parse().expect("valid test URL"),
+            Arc::new(rollup_config),
+        )
+    }
+
+    fn block_without_requests_hash(
+        timestamp: u64,
+        withdrawals_root: B256,
+    ) -> Block<BaseTxEnvelope> {
+        Block {
+            header: Header {
+                timestamp,
+                withdrawals_root: Some(withdrawals_root),
+                blob_gas_used: Some(0),
+                excess_blob_gas: Some(0),
+                parent_beacon_block_root: Some(B256::repeat_byte(0x11)),
+                requests_hash: None,
+                base_fee_per_gas: Some(1),
+                ..Default::default()
+            },
+            body: BlockBody {
+                transactions: Vec::new(),
+                ommers: Vec::new(),
+                withdrawals: Some(Vec::new().into()),
+            },
+        }
+    }
+
+    #[test]
+    fn post_isthmus_source_block_missing_requests_hash_still_converts_to_v4() {
+        let client = client_with_isthmus_at(Some(10));
+        let withdrawals_root = B256::repeat_byte(0x42);
+        assert_ne!(withdrawals_root, proofs::calculate_withdrawals_root(&[]));
+
+        let payload = client.payload_from_consensus_block(
+            B256::repeat_byte(0x24),
+            Some(B256::repeat_byte(0x11)),
+            block_without_requests_hash(10, withdrawals_root),
+        );
+
+        let BaseExecutionPayload::V4(payload_v4) = payload.execution_payload else {
+            panic!("post-Isthmus source block should convert into V4 payload");
+        };
+        assert_eq!(payload_v4.withdrawals_root, withdrawals_root);
+    }
+
+    #[test]
+    fn pre_isthmus_source_block_missing_requests_hash_remains_v3() {
+        let client = client_with_isthmus_at(Some(10));
+        let withdrawals_root = proofs::calculate_withdrawals_root(&[]);
+
+        let payload = client.payload_from_consensus_block(
+            B256::repeat_byte(0x24),
+            Some(B256::repeat_byte(0x11)),
+            block_without_requests_hash(9, withdrawals_root),
+        );
+
+        assert!(matches!(payload.execution_payload, BaseExecutionPayload::V3(_)));
     }
 }
