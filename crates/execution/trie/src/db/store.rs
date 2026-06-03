@@ -1039,16 +1039,34 @@ impl MdbxProofsStorage {
     ) -> BaseProofsStorageResult<WriteCounts> {
         let block_number = block_ref.block.number;
 
-        // Check the latest stored block is the parent of the incoming block
-        let latest_block_hash =
-            self.inner_get_latest_block_number_hash(tx)?.map_or(B256::ZERO, |(_num, hash)| hash);
+        let latest_block = self.inner_get_latest_block_number_hash(tx)?;
+        let latest_block_hash = latest_block.map_or(B256::ZERO, |(_num, hash)| hash);
 
         if latest_block_hash != block_ref.parent {
-            return Err(BaseProofsStorageError::OutOfOrder {
-                block_number,
-                parent_block_hash: block_ref.parent,
-                latest_block_hash,
-            });
+            if let Some((latest_block_number, latest_block_hash)) = latest_block
+                && latest_block_hash == B256::ZERO
+                && block_ref.parent != B256::ZERO
+                && latest_block_number.checked_add(1) == Some(block_number)
+            {
+                if let Some((earliest_block_number, earliest_block_hash)) =
+                    self.inner_get_earliest_block_number_hash(tx)?
+                    && earliest_block_number == latest_block_number
+                    && earliest_block_hash == B256::ZERO
+                {
+                    Self::inner_set_earliest_block_number(
+                        tx,
+                        earliest_block_number,
+                        block_ref.parent,
+                    )?;
+                }
+                Self::inner_set_latest_block_number(tx, latest_block_number, block_ref.parent)?;
+            } else {
+                return Err(BaseProofsStorageError::OutOfOrder {
+                    block_number,
+                    parent_block_hash: block_ref.parent,
+                    latest_block_hash,
+                });
+            }
         }
 
         let change_set =
@@ -2714,6 +2732,26 @@ mod tests {
         let res = store.store_trie_updates(bad, BlockStateDiff::default());
         assert!(matches!(res, Err(BaseProofsStorageError::OutOfOrder { .. })));
         assert_eq!(store.get_latest_block_number().unwrap(), Some((1, existing.block.hash)));
+    }
+
+    #[test]
+    fn contiguous_update_repairs_zero_hash_anchor() {
+        let dir = TempDir::new().unwrap();
+        let store = MdbxProofsStorage::new(dir.path()).expect("env");
+        let parent_number = 46_498_711;
+        let parent_hash = B256::repeat_byte(0x12);
+        let block_hash = B256::repeat_byte(0x13);
+
+        store
+            .set_earliest_block_number_hash(parent_number, B256::ZERO)
+            .expect("corrupt zero-hash anchor");
+
+        let block_ref =
+            BlockWithParent::new(parent_hash, NumHash::new(parent_number + 1, block_hash));
+        store.store_trie_updates(block_ref, BlockStateDiff::default()).expect("store block");
+
+        assert_eq!(store.get_earliest_block_number().unwrap(), Some((parent_number, parent_hash)));
+        assert_eq!(store.get_latest_block_number().unwrap(), Some((parent_number + 1, block_hash)));
     }
 
     #[test]
