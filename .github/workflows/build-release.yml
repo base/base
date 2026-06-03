@@ -2,6 +2,7 @@ name: Build Release
 
 on:
   pull_request:
+  workflow_dispatch:
 
 env:
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node-reth-dev
