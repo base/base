@@ -6,10 +6,7 @@ use std::{
 use alloy_primitives::Bytes;
 use chrono::{DateTime, Local};
 
-use crate::{
-    output::{format_duration, truncate_block_number},
-    rpc::{L1BlockInfo, TxSummary},
-};
+use crate::rpc::{L1BlockInfo, TxSummary};
 
 /// Size of a single blob in bytes (128 `KiB`).
 pub const BLOB_SIZE: u64 = 128 * 1024;
@@ -136,11 +133,6 @@ impl L1Block {
         format!("{}/{}", self.base_blobs, self.total_blobs)
     }
 
-    /// Returns the block number truncated to fit within `max_width` characters.
-    pub fn block_display(&self, max_width: usize) -> String {
-        truncate_block_number(self.block_number, max_width)
-    }
-
     /// Returns the number of attributed L2 blocks as a display string.
     pub fn l2_blocks_display(&self) -> String {
         self.l2_blocks_submitted.map_or_else(|| "-".to_string(), |n| n.to_string())
@@ -170,10 +162,6 @@ impl L1Block {
         now.saturating_sub(self.timestamp)
     }
 
-    /// Returns the block age as a human-readable duration string.
-    pub fn age_display(&self) -> String {
-        format_duration(Duration::from_secs(self.age_seconds()))
-    }
 }
 
 /// Filter mode for the L1 blocks table display.

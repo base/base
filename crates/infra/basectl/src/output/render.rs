@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
 use ratatui::{
     prelude::*,
@@ -9,7 +9,7 @@ use crate::{
     app::{DaTracker, FlashblockEntry, L1Block, L1BlockFilter, LoadingState},
     output::{
         COLOR_BASE_BLUE, COLOR_GAS_FILL, COLOR_ROW_SELECTED, COLOR_TARGET, backlog_size_color,
-        block_color, format_bytes, target_usage_color,
+        block_color, format_bytes, format_duration, target_usage_color, truncate_block_number,
     },
     rpc::L1ConnectionMode,
 };
@@ -168,11 +168,11 @@ pub fn render_l1_blocks_table<'a>(
             };
 
             Row::new(vec![
-                Cell::from(l1_block.block_display(l1_col_width)),
+                Cell::from(truncate_block_number(l1_block.block_number, l1_col_width)),
                 Cell::from(l1_block.blobs_display()).style(blobs_style),
                 Cell::from(l1_block.l2_blocks_display()),
                 Cell::from(l1_block.compression_display()),
-                Cell::from(l1_block.age_display()),
+                Cell::from(format_duration(Duration::from_secs(l1_block.age_seconds()))),
             ])
             .style(style)
         })
