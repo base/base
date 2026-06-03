@@ -280,10 +280,11 @@ where
             self.positions.at_mut(&old_value).delete()?;
         }
 
-        let reuse_count = old_len.min(new_len);
+        let overlap_len = old_len.min(new_len);
         for (index, new_value) in value.0.into_iter().enumerate() {
             self.positions.at_mut(&new_value).write(checked_position(index)?)?;
-            if index < reuse_count {
+            let should_write_to_existing_slot = index < overlap_len;
+            if should_write_to_existing_slot {
                 self.values[index].write(new_value)?;
             } else {
                 self.values.push(new_value)?;
