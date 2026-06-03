@@ -50,7 +50,7 @@ struct ZkArgs {
     l1_node_address: String,
 
     #[arg(long, env = "L1_BEACON_ADDRESS")]
-    l1_beacon_address: String,
+    l1_beacon_address: Option<String>,
 
     #[arg(long, env = "L2_NODE_ADDRESS")]
     l2_node_address: String,
@@ -157,6 +157,7 @@ impl ZkArgs {
         let repo = ProofRequestRepo::new(pool);
         info!("database connection initialized");
 
+        let configured_beacon_url = Self::trimmed_optional(&self.l1_beacon_address);
         let (l1_url, l2_url, beacon_url, proxy_handles) = if self.proxy_enable {
             info!("proxy enabled, starting rate-limited RPC proxies");
 
@@ -172,7 +173,7 @@ impl ZkArgs {
                 self.proxy_l2_port,
                 self.l2_node_address.clone(),
                 self.proxy_beacon_port,
-                self.l1_beacon_address.clone(),
+                configured_beacon_url.clone(),
                 rate_limit,
             );
 
@@ -181,7 +182,7 @@ impl ZkArgs {
             (
                 proxy_configs.l1.local_address(),
                 proxy_configs.l2.local_address(),
-                proxy_configs.beacon.local_address(),
+                proxy_configs.beacon.as_ref().map(|beacon| beacon.local_address()),
                 handles,
             )
         } else {
@@ -189,18 +190,20 @@ impl ZkArgs {
             (
                 self.l1_node_address.clone(),
                 self.l2_node_address.clone(),
-                self.l1_beacon_address.clone(),
+                configured_beacon_url,
                 Vec::new(),
             )
         };
 
-        info!(l1_url = %l1_url, l2_url = %l2_url, beacon_url = %beacon_url, "using RPC URLs");
+        let beacon_log = beacon_url.as_deref().unwrap_or("<none>");
+        info!(l1_url = %l1_url, l2_url = %l2_url, beacon_url = %beacon_log, "using RPC URLs");
 
         let rpc_config = RPCConfig {
             l1_rpc: Url::parse(&l1_url).map_err(|e| eyre!("invalid L1 RPC URL: {e}"))?,
-            l1_beacon_rpc: Some(
-                Url::parse(&beacon_url).map_err(|e| eyre!("invalid beacon RPC URL: {e}"))?,
-            ),
+            l1_beacon_rpc: beacon_url
+                .as_deref()
+                .map(|url| Url::parse(url).map_err(|e| eyre!("invalid beacon RPC URL: {e}")))
+                .transpose()?,
             l2_rpc: Url::parse(&l2_url).map_err(|e| eyre!("invalid L2 RPC URL: {e}"))?,
             l2_node_rpc: Url::parse(&self.base_consensus_address)
                 .map_err(|e| eyre!("invalid L2 node RPC URL: {e}"))?,
@@ -558,5 +561,9 @@ impl ZkArgs {
 
     fn non_empty(opt: &Option<String>) -> bool {
         opt.as_ref().is_some_and(|s| !s.is_empty())
+    }
+
+    fn trimmed_optional(opt: &Option<String>) -> Option<String> {
+        opt.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(ToOwned::to_owned)
     }
 }

@@ -28,8 +28,8 @@ pub struct ProverConfig {
     pub l1_eth_url: String,
     /// L2 execution layer RPC URL.
     pub l2_eth_url: String,
-    /// L1 beacon API URL.
-    pub l1_beacon_url: String,
+    /// L1 beacon API URL, or `None` when the L1 parent has no beacon/blob DA endpoint.
+    pub l1_beacon_url: Option<String>,
     /// L2 chain ID.
     pub l2_chain_id: u64,
     /// Rollup configuration.

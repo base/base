@@ -20,8 +20,12 @@ pub struct L1ClientArgs {
     )]
     pub l1_trust_rpc: bool,
     /// URL of the L1 beacon API.
+    ///
+    /// Optional: omit it when the L1 parent chain has no beacon (blob) DA endpoint - e.g. an L2
+    /// settlement layer. Blob-based batches cannot be derived without it, so the parent must use
+    /// calldata (or alt-DA) batching.
     #[arg(long, visible_alias = "l1.beacon", env = "BASE_NODE_L1_BEACON")]
-    pub l1_beacon: Url,
+    pub l1_beacon: Option<Url>,
     /// Duration in seconds of an L1 slot.
     ///
     /// This is an optional argument that can be used to use a fixed slot duration for l1 blocks
@@ -45,7 +49,7 @@ impl Default for L1ClientArgs {
         Self {
             l1_eth_rpc: Url::parse("http://localhost:8545").unwrap(),
             l1_trust_rpc: DEFAULT_L1_TRUST_RPC,
-            l1_beacon: Url::parse("http://localhost:5052").unwrap(),
+            l1_beacon: Some(Url::parse("http://localhost:5052").unwrap()),
             l1_slot_duration_override: None,
             l1_verifier_confs: 0,
         }

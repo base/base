@@ -238,7 +238,12 @@ impl ConsensusFollowNodeArgs {
     pub fn l1_config(&self, cfg: &RollupConfig) -> eyre::Result<L1Config> {
         let l1_chain_config =
             self.config.l1_config.load(cfg.l1_chain_id).map_err(|e| eyre::eyre!(e))?;
-        let l1_beacon = OnlineBeaconClient::new_http(self.config.l1_rpc_args.l1_beacon.to_string());
+        let l1_beacon = self
+            .config
+            .l1_rpc_args
+            .l1_beacon
+            .as_ref()
+            .map(|beacon| OnlineBeaconClient::new_http(beacon.to_string()));
 
         Ok(L1Config {
             chain_config: Arc::new(l1_chain_config),

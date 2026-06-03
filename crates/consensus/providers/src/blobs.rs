@@ -33,10 +33,15 @@ pub struct BlobWithCommitmentAndProof {
 }
 
 /// An online implementation of the [`BlobProvider`] trait.
+///
+/// The beacon client is optional: when the L1 parent chain has no beacon (blob) DA
+/// endpoint - e.g. an L2 settlement layer running in calldata-only mode - the provider is
+/// constructed via [`OnlineBlobProvider::disabled`] and any attempt to actually fetch blobs
+/// returns an error. Calldata-only derivation never requests blobs, so it never hits that path.
 #[derive(Debug, Clone)]
 pub struct OnlineBlobProvider<B: BeaconClient> {
-    /// The Beacon API client.
-    pub beacon_client: B,
+    /// The Beacon API client, or `None` when no beacon endpoint is configured.
+    pub beacon_client: Option<B>,
     /// Beacon Genesis time used for the time to slot conversion.
     pub genesis_time: u64,
     /// Slot interval used for the time to slot conversion.
@@ -65,8 +70,20 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
             .map(|r| r.data.seconds_per_slot)
             .map_err(|e| BlobProviderError::Backend(e.to_string()))
             .expect("Failed to load slot interval from beacon client");
-        Self { beacon_client, genesis_time, slot_interval }
+        Self { beacon_client: Some(beacon_client), genesis_time, slot_interval }
     }
+
+    /// Creates an [`OnlineBlobProvider`] with no beacon backend.
+    ///
+    /// Used when the L1 parent chain exposes no beacon (blob) DA endpoint. Blob fetches return
+    /// [`BlobProviderError::Backend`]; calldata-only derivation never requests blobs.
+    pub const fn disabled() -> Self {
+        Self { beacon_client: None, genesis_time: 0, slot_interval: 0 }
+    }
+
+    /// Error message returned when blobs are requested but no beacon endpoint is configured.
+    const NO_BEACON_ERR: &'static str =
+        "L1 beacon endpoint not configured; cannot fetch blobs (calldata-only mode)";
 
     /// Computes the slot for the given timestamp.
     pub const fn slot(
@@ -86,24 +103,27 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
         slot: u64,
         blob_hashes: &[B256],
     ) -> Result<Vec<BoxedBlob>, BlobProviderError> {
+        let Some(beacon_client) = self.beacon_client.as_ref() else {
+            return Err(BlobProviderError::Backend(Self::NO_BEACON_ERR.to_string()));
+        };
+
         Metrics::blob_fetches().increment(1);
 
-        let result =
-            self.beacon_client.filtered_beacon_blobs(slot, blob_hashes).await.map_err(|e| {
-                // The beacon node returned 404 for this slot. The slot was missed or
-                // orphaned; its blobs will never be available. Map to BlobNotFound so
-                // the pipeline issues a reset rather than retrying indefinitely.
-                let Some(missing_slot) = B::slot_not_found(&e) else {
-                    return BlobProviderError::Backend(e.to_string());
-                };
-                warn!(
-                    target: "blob_provider",
-                    slot = missing_slot,
-                    "Beacon slot not found (404); slot may be missed or orphaned, \
-                     triggering pipeline reset"
-                );
-                BlobProviderError::BlobNotFound { slot: missing_slot, reason: e.to_string() }
-            });
+        let result = beacon_client.filtered_beacon_blobs(slot, blob_hashes).await.map_err(|e| {
+            // The beacon node returned 404 for this slot. The slot was missed or
+            // orphaned; its blobs will never be available. Map to BlobNotFound so
+            // the pipeline issues a reset rather than retrying indefinitely.
+            let Some(missing_slot) = B::slot_not_found(&e) else {
+                return BlobProviderError::Backend(e.to_string());
+            };
+            warn!(
+                target: "blob_provider",
+                slot = missing_slot,
+                "Beacon slot not found (404); slot may be missed or orphaned, \
+                 triggering pipeline reset"
+            );
+            BlobProviderError::BlobNotFound { slot: missing_slot, reason: e.to_string() }
+        });
 
         if result.is_err() {
             Metrics::blob_fetch_errors().increment(1);
@@ -164,6 +184,9 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
         if blob_hashes.is_empty() {
             return Ok(Default::default());
         }
+        if self.beacon_client.is_none() {
+            return Err(BlobProviderError::Backend(Self::NO_BEACON_ERR.to_string()));
+        }
 
         // Calculate the slot for the given timestamp.
         let slot = Self::slot(self.genesis_time, self.slot_interval, block_ref.timestamp)?;
@@ -193,6 +216,9 @@ where
     ) -> Result<Vec<Box<Blob>>, Self::Error> {
         if blob_hashes.is_empty() {
             return Ok(Default::default());
+        }
+        if self.beacon_client.is_none() {
+            return Err(BlobProviderError::Backend(Self::NO_BEACON_ERR.to_string()));
         }
 
         // Calculate the slot for the given timestamp.
@@ -295,13 +321,33 @@ mod tests {
     #[tokio::test]
     async fn test_get_and_validate_blobs_empty() {
         let mut provider = OnlineBlobProvider {
-            beacon_client: MockBeaconClient::default(),
+            beacon_client: Some(MockBeaconClient::default()),
             genesis_time: 0,
             slot_interval: 12,
         };
         let block_ref = BlockInfo::default();
         let result = provider.get_and_validate_blobs(&block_ref, &[]).await.unwrap();
         assert!(result.is_empty(), "empty hashes must return empty blob vec");
+    }
+
+    /// A disabled (no-beacon) provider returns `Ok(vec![])` for empty hashes (the calldata-only
+    /// path) but errors when blobs are actually requested.
+    #[tokio::test]
+    async fn test_disabled_provider() {
+        let mut provider = OnlineBlobProvider::<MockBeaconClient>::disabled();
+        let block_ref = BlockInfo { timestamp: 12, ..Default::default() };
+
+        // Calldata-only derivation never requests blobs: empty hashes must succeed.
+        let empty = provider.get_and_validate_blobs(&block_ref, &[]).await.unwrap();
+        assert!(empty.is_empty(), "empty hashes must return empty blob vec without a beacon");
+
+        // Requesting an actual blob without a beacon must error rather than panic.
+        let hash = versioned_hash_for(&FixedBytes::repeat_byte(1));
+        let result = provider.get_and_validate_blobs(&block_ref, &[hash]).await;
+        assert!(
+            matches!(result, Err(BlobProviderError::Backend(_))),
+            "blob fetch without a beacon must return a Backend error, got {result:?}"
+        );
     }
 
     /// Verifies that `get_and_validate_blobs` preserves the ordering of the input hashes.
@@ -321,7 +367,7 @@ mod tests {
         mock.blobs.insert(hash_b, blob_b);
 
         let mut provider =
-            OnlineBlobProvider { beacon_client: mock, genesis_time: 0, slot_interval: 12 };
+            OnlineBlobProvider { beacon_client: Some(mock), genesis_time: 0, slot_interval: 12 };
         let block_ref = BlockInfo { timestamp: 12, ..Default::default() };
 
         let result = provider.get_and_validate_blobs(&block_ref, &[hash_b, hash_a]).await.unwrap();
@@ -344,7 +390,7 @@ mod tests {
         let mock = MockBeaconClient { fail_with_slot_not_found: true, ..Default::default() };
 
         let mut provider =
-            OnlineBlobProvider { beacon_client: mock, genesis_time: 0, slot_interval: 12 };
+            OnlineBlobProvider { beacon_client: Some(mock), genesis_time: 0, slot_interval: 12 };
         let block_ref = BlockInfo { timestamp: 12, ..Default::default() };
 
         let result = provider.get_and_validate_blobs(&block_ref, &[hash]).await;
@@ -368,7 +414,7 @@ mod tests {
         mock.blobs.insert(hash, blob);
 
         let provider =
-            OnlineBlobProvider { beacon_client: mock, genesis_time: 0, slot_interval: 12 };
+            OnlineBlobProvider { beacon_client: Some(mock), genesis_time: 0, slot_interval: 12 };
         let block_ref = BlockInfo { timestamp: 12, ..Default::default() };
 
         let result: Vec<BlobWithCommitmentAndProof> =

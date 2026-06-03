@@ -191,10 +191,19 @@ impl Host {
     /// Creates the providers required for the host backend.
     pub async fn create_providers(&self) -> Result<HostProviders> {
         let l1_provider = rpc_provider(&self.config.prover.l1_eth_url).await?;
-        let blob_provider = OnlineBlobProvider::init(OnlineBeaconClient::new_http(
-            self.config.prover.l1_beacon_url.clone(),
-        ))
-        .await;
+        let blob_provider = match self
+            .config
+            .prover
+            .l1_beacon_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+        {
+            Some(url) => {
+                OnlineBlobProvider::init(OnlineBeaconClient::new_http(url.to_string())).await
+            }
+            None => OnlineBlobProvider::disabled(),
+        };
         let l2_provider = rpc_provider::<Base>(&self.config.prover.l2_eth_url).await?;
 
         Ok(HostProviders { l1: l1_provider, blobs: blob_provider, l2: l2_provider })

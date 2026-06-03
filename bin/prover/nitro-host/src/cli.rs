@@ -156,7 +156,7 @@ impl ServerArgs {
         let config = ProverConfig {
             l1_eth_url: self.server.l1_eth_url,
             l2_eth_url: self.server.l2_eth_url,
-            l1_beacon_url: self.server.l1_beacon_url,
+            l1_beacon_url: Some(self.server.l1_beacon_url),
             l2_chain_id: self.server.l2_chain_id,
             rollup_config,
             l1_config,
@@ -218,7 +218,7 @@ impl LocalArgs {
         let prover_config = ProverConfig {
             l1_eth_url: self.server.l1_eth_url,
             l2_eth_url: self.server.l2_eth_url,
-            l1_beacon_url: self.server.l1_beacon_url,
+            l1_beacon_url: Some(self.server.l1_beacon_url),
             l2_chain_id: self.server.l2_chain_id,
             rollup_config,
             l1_config,

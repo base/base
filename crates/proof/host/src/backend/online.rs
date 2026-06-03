@@ -212,7 +212,7 @@ mod tests {
         let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
         let beacon = OnlineBeaconClient::new_http("http://127.0.0.1:1".to_string());
         let blobs =
-            OnlineBlobProvider { beacon_client: beacon, genesis_time: 0, slot_interval: 12 };
+            OnlineBlobProvider { beacon_client: Some(beacon), genesis_time: 0, slot_interval: 12 };
         HostProviders { l1, blobs, l2 }
     }
 
@@ -222,7 +222,7 @@ mod tests {
             prover: ProverConfig {
                 l1_eth_url: "http://127.0.0.1:1".to_string(),
                 l2_eth_url: "http://127.0.0.1:1".to_string(),
-                l1_beacon_url: "http://127.0.0.1:1".to_string(),
+                l1_beacon_url: Some("http://127.0.0.1:1".to_string()),
                 l2_chain_id: 0,
                 rollup_config: RollupConfig::default(),
                 l1_config: ChainConfig::default(),

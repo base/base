@@ -783,8 +783,7 @@ impl OPSuccinctDataFetcher {
             .rpc_config
             .l1_beacon_rpc
             .as_ref()
-            .map(|addr| addr.as_str().trim_end_matches('/').to_string())
-            .unwrap_or_default();
+            .map(|addr| addr.as_str().trim_end_matches('/').to_string());
 
         // Load L1 config from file or registry.
         let l1_config = if let Some(ref l1_config_path) = self.l1_config_path {
