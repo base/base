@@ -302,15 +302,11 @@ mod tests {
 
     #[test]
     fn is_beryl_active_at_timestamp() {
-        for forks in [
-            ChainUpgrades::mainnet(),
-            ChainUpgrades::sepolia(),
-            ChainUpgrades::devnet(),
-            ChainUpgrades::zeronet(),
-        ] {
-            assert!(!forks.is_beryl_active_at_timestamp(0));
-            assert!(!forks.is_beryl_active_at_timestamp(u64::MAX));
-        }
+        let zeronet_forks = ChainUpgrades::zeronet();
+        assert!(!zeronet_forks.is_beryl_active_at_timestamp(0));
+        assert!(!zeronet_forks.is_beryl_active_at_timestamp(1_780_678_799));
+        assert!(zeronet_forks.is_beryl_active_at_timestamp(1_780_678_800));
+        assert!(zeronet_forks.is_beryl_active_at_timestamp(u64::MAX));
     }
 
     #[test]
