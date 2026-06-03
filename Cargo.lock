@@ -6375,6 +6375,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cbbc9d0964165b47557570cce6c952866c2678457aca742aafc9fb771d30270"
 
 [[package]]
+name = "base-zk-benchmarks"
+version = "0.0.0"
+
+[[package]]
 name = "base-zk-client"
 version = "0.0.0"
 dependencies = [
