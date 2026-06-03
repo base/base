@@ -31,6 +31,7 @@ jobs:
   # Build native binaries for release artifacts
   build-binaries:
     strategy:
+      fail-fast: false
       matrix:
         target:
           - triple: x86_64-unknown-linux-gnu
@@ -147,6 +148,7 @@ jobs:
   # Build multi-arch Docker images
   build-and-push:
     strategy:
+      fail-fast: false
       matrix:
         settings:
           - arch: linux/amd64
@@ -221,6 +223,7 @@ jobs:
   # Merge manifests and publish
   publish:
     needs: [build-and-push, build-binaries]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
 
     steps:
@@ -268,25 +271,33 @@ jobs:
           fi
 
       - name: Create manifest list and push
-        working-directory: ${{ runner.temp }}/digests
+        id: create-manifest
         run: |
           shopt -s nullglob
-          DIGESTS=(*)
+          DIGEST_DIR="${{ runner.temp }}/digests"
+          DIGESTS=("$DIGEST_DIR"/*)
           if [[ ${#DIGESTS[@]} -eq 0 ]]; then
-            echo "::error::No digests found — build-and-push may have failed"
-            exit 1
+            echo "::warning::No Docker digests found — all Docker builds may have failed, skipping manifest push"
+            echo "pushed=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
           IFS=',' read -ra TAGS <<< "${{ steps.tags.outputs.docker_tags }}"
-          TAG_ARGS=""
+          TAG_ARGS=()
           for tag in "${TAGS[@]}"; do
-            TAG_ARGS="$TAG_ARGS -t $tag"
+            TAG_ARGS+=(-t "$tag")
           done
 
-          docker buildx imagetools create $TAG_ARGS \
-            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' "${DIGESTS[@]}")
+          SOURCES=()
+          for digest in "${DIGESTS[@]}"; do
+            SOURCES+=("${{ env.REGISTRY_IMAGE }}@sha256:${digest##*/}")
+          done
+
+          docker buildx imagetools create "${TAG_ARGS[@]}" "${SOURCES[@]}"
+          echo "pushed=true" >> $GITHUB_OUTPUT
 
       - name: Inspect image
+        if: steps.create-manifest.outputs.pushed == 'true'
         run: |
           docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.tags.outputs.tag }}
 
@@ -316,7 +327,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ inputs.tag }}"
-          gh release upload "$TAG" ${{ runner.temp }}/binaries/*.tar.gz ${{ runner.temp }}/binaries/*.tar.gz.sha256 ${{ runner.temp }}/binaries/*.tar.gz.asc
+          BINARY_DIR="${{ runner.temp }}/binaries"
+          mkdir -p "$BINARY_DIR"
+          shopt -s nullglob
+          files=("$BINARY_DIR"/*.tar.gz "$BINARY_DIR"/*.tar.gz.sha256 "$BINARY_DIR"/*.tar.gz.asc)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "::warning::No binary artifacts found — all binary builds may have failed, skipping upload"
+          else
+            gh release upload "$TAG" "${files[@]}"
+          fi
 
       - name: Summary
         run: |
