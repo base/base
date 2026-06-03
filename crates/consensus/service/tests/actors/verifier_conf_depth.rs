@@ -51,9 +51,9 @@ impl MockL1Fetcher {
 
     fn block_info_for_id(&self, id: BlockId) -> Option<BlockInfo> {
         match id {
-            BlockId::Number(BlockNumberOrTag::Number(number)) => self.blocks.get(&number).cloned(),
+            BlockId::Number(BlockNumberOrTag::Number(number)) => self.blocks.get(&number).copied(),
             BlockId::Number(BlockNumberOrTag::Latest) => {
-                self.blocks.values().max_by_key(|block| block.number).cloned()
+                self.blocks.values().max_by_key(|block| block.number).copied()
             }
             _ => None,
         }
@@ -291,7 +291,7 @@ async fn sync_status_reports_derivation_origin_separately_from_live_head_with_ve
 
     assert_eq!(l1_head_number.load(Ordering::Relaxed), 100);
     let heads = derivation_client.heads.lock().unwrap().clone();
-    let derivation_origin = heads.last().cloned().expect("derivation should receive a head");
+    let derivation_origin = heads.last().copied().expect("derivation should receive a head");
     assert_eq!(derivation_origin.number, 96);
 
     let (_derivation_origin_tx, derivation_origin_rx) = watch::channel(Some(derivation_origin));
