@@ -540,12 +540,13 @@ impl HashedCursor for MdbxV2AccountCursor {
 #[derive(Debug)]
 pub struct MdbxV2LatestAccountCursor<Cursor> {
     cursor: Cursor,
+    positioned: bool,
 }
 
 impl<Cursor> MdbxV2LatestAccountCursor<Cursor> {
     /// Creates a latest-state account cursor backed directly by MDBX.
     pub const fn new(cursor: Cursor) -> Self {
-        Self { cursor }
+        Self { cursor, positioned: false }
     }
 }
 
@@ -556,14 +557,20 @@ where
     type Value = Account;
 
     fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
+        self.positioned = true;
         self.cursor.seek(key)
     }
 
     fn next(&mut self) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
+        if !self.positioned {
+            return self.seek(B256::ZERO);
+        }
         self.cursor.next()
     }
 
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        self.positioned = false;
+    }
 }
 
 /// V2 account cursor that uses direct current-state iteration when possible.
@@ -693,12 +700,13 @@ impl TrieCursor for MdbxV2AccountTrieCursor {
 #[derive(Debug)]
 pub struct MdbxV2LatestAccountTrieCursor<Cursor> {
     cursor: Cursor,
+    positioned: bool,
 }
 
 impl<Cursor> MdbxV2LatestAccountTrieCursor<Cursor> {
     /// Creates a latest-state account-trie cursor backed directly by MDBX.
     pub const fn new(cursor: Cursor) -> Self {
-        Self { cursor }
+        Self { cursor, positioned: false }
     }
 }
 
@@ -710,6 +718,7 @@ where
         &mut self,
         path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        self.positioned = true;
         Ok(self.cursor.seek_exact(StoredNibbles(path))?.map(|(key, node)| (key.0, node)))
     }
 
@@ -717,18 +726,27 @@ where
         &mut self,
         path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        self.positioned = true;
         Ok(self.cursor.seek(StoredNibbles(path))?.map(|(key, node)| (key.0, node)))
     }
 
     fn next(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
+        if !self.positioned {
+            return self.seek(Nibbles::default());
+        }
         Ok(self.cursor.next()?.map(|(key, node)| (key.0, node)))
     }
 
     fn current(&mut self) -> Result<Option<Nibbles>, DatabaseError> {
+        if !self.positioned {
+            return Ok(None);
+        }
         Ok(self.cursor.current()?.map(|(key, _)| key.0))
     }
 
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        self.positioned = false;
+    }
 }
 
 /// V2 account-trie cursor that uses direct current-state iteration when possible.
@@ -2622,6 +2640,38 @@ mod tests {
     }
 
     #[test]
+    fn latest_account_cursor_reset_restarts_iteration() {
+        let db = setup_db();
+        let account1 = B256::from([0x11; 32]);
+        let account2 = B256::from([0x12; 32]);
+
+        {
+            let wtx = db.tx_mut().expect("rw");
+            let mut cursor = wtx.cursor_write::<V2HashedAccounts>().expect("write");
+            cursor
+                .upsert(account1, &Account { nonce: 1, ..Default::default() })
+                .expect("insert account1");
+            cursor
+                .upsert(account2, &Account { nonce: 2, ..Default::default() })
+                .expect("insert account2");
+            drop(cursor);
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro");
+        let mut cursor =
+            MdbxV2LatestAccountCursor::new(tx.cursor_read::<V2HashedAccounts>().expect("read"));
+
+        assert_eq!(cursor.next().expect("first").expect("row").0, account1);
+        assert_eq!(cursor.next().expect("second").expect("row").0, account2);
+        assert!(cursor.next().expect("eof").is_none());
+
+        cursor.reset();
+
+        assert_eq!(cursor.next().expect("reset first").expect("row").0, account1);
+    }
+
+    #[test]
     fn latest_storage_trie_cursor_uses_dupsort_and_stops_at_address_boundary() {
         let db = setup_db();
         let addr1 = B256::from([0x01; 32]);
@@ -2678,6 +2728,36 @@ mod tests {
 
         let out = cursor.seek(p3).expect("ok");
         assert!(out.is_none(), "should not expose another address path");
+    }
+
+    #[test]
+    fn latest_account_trie_cursor_reset_restarts_iteration() {
+        let db = setup_db();
+        let p1 = StoredNibbles(Nibbles::from_nibbles([0x01]));
+        let p2 = StoredNibbles(Nibbles::from_nibbles([0x02]));
+
+        {
+            let wtx = db.tx_mut().expect("rw");
+            let mut cursor = wtx.cursor_write::<V2AccountsTrie>().expect("write");
+            cursor.upsert(p1.clone(), &node()).expect("insert p1");
+            cursor.upsert(p2.clone(), &node()).expect("insert p2");
+            drop(cursor);
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro");
+        let mut cursor = MdbxV2LatestAccountTrieCursor::new(
+            tx.cursor_read::<V2AccountsTrie>().expect("read"),
+        );
+
+        assert_eq!(cursor.next().expect("first").expect("row").0, p1.0);
+        assert_eq!(cursor.next().expect("second").expect("row").0, p2.0);
+        assert!(cursor.next().expect("eof").is_none());
+
+        cursor.reset();
+
+        assert_eq!(cursor.next().expect("reset first").expect("row").0, p1.0);
+        assert_eq!(cursor.current().expect("current after reset"), Some(p1.0));
     }
 
     #[test]
