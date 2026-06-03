@@ -3191,6 +3191,7 @@ dependencies = [
  "base-runtime",
  "base-test-utils",
  "base-tx-manager",
+ "futures",
  "reth-basic-payload-builder",
  "reth-db",
  "reth-db-common",

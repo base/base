@@ -88,6 +88,9 @@ base-blobs.workspace = true
 base-common-precompiles.workspace = true
 base-precompile-storage.workspace = true
 
+# async
+futures.workspace = true
+
 # tokio
 tokio = { workspace = true, features = ["rt", "macros"] }
 
