@@ -280,16 +280,22 @@ where
             self.positions.at_mut(&old_value).delete()?;
         }
 
+        let reuse_count = old_len.min(new_len);
         for (index, new_value) in value.0.into_iter().enumerate() {
             self.positions.at_mut(&new_value).write(checked_position(index)?)?;
-            self.values[index].write(new_value)?;
+            if index < reuse_count {
+                self.values[index].write(new_value)?;
+            } else {
+                self.values.push(new_value)?;
+            }
         }
 
-        Slot::<U256>::new(self.values.len_slot(), self.address, self.storage)
-            .write(U256::from(new_len))?;
-
-        for i in new_len..old_len {
-            self.values[i].delete()?;
+        if new_len < old_len {
+            for i in new_len..old_len {
+                self.values[i].delete()?;
+            }
+            Slot::<U256>::new(self.values.len_slot(), self.address, self.storage)
+                .write(U256::from(new_len))?;
         }
         Ok(())
     }

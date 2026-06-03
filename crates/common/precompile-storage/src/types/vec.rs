@@ -260,6 +260,8 @@ where
 {
     type Output = T::Handler<'a>;
     fn index(&self, index: usize) -> &Self::Output {
+        let len = self.len().expect("failed to read vec length from storage");
+        assert!(index < len, "index {index} out of bounds for VecHandler with length {len}");
         let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
         self.cache
             .get_or_insert(&index, || Self::compute_handler(data_start, address, storage, index))
@@ -271,6 +273,8 @@ where
     T: Storable,
 {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        let len = self.len().expect("failed to read vec length from storage");
+        assert!(index < len, "index {index} out of bounds for VecHandler with length {len}");
         let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
         self.cache.get_or_insert_mut(&index, || {
             Self::compute_handler(data_start, address, storage, index)
@@ -471,6 +475,41 @@ mod tests {
             }
             assert_eq!(handler.len().unwrap(), 0);
             assert_eq!(handler.pop().unwrap(), None);
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "out of bounds")]
+    fn test_vec_index_oob_panics() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let len_slot = U256::from(900u64);
+            let handler = VecHandler::<U256>::new(len_slot, address, ctx);
+            // Vec is empty; indexing any element must panic.
+            let _ = handler[0].read();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "out of bounds")]
+    fn test_vec_index_mut_oob_panics() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let len_slot = U256::from(901u64);
+            let mut handler = VecHandler::<U256>::new(len_slot, address, ctx);
+            handler.push(U256::from(1u64)).unwrap();
+            // Length is 1; index 1 is out of bounds.
+            handler[1].write(U256::from(99u64)).unwrap();
+        });
+    }
+
+    #[test]
+    fn test_vec_at_oob_returns_none() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let len_slot = U256::from(902u64);
+            let handler = VecHandler::<U256>::new(len_slot, address, ctx);
+            assert!(handler.at(0).unwrap().is_none());
         });
     }
 
