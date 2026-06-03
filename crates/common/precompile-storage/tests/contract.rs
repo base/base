@@ -295,13 +295,13 @@ mod type_namespaced_layouts {
         balances: Mapping<Address, U256>,
     }
 
-    /// Security-specific B-20 extension storage.
+    /// Asset-specific B-20 extension storage.
     #[derive(Debug, Clone, Storable)]
-    #[namespace("b20.security")]
+    #[namespace("b20.asset")]
     struct B20AssetStorage {
         multiplier: U256,
         used_announcement_ids: Mapping<String, bool>,
-        security_identifiers: Mapping<String, bool>,
+        extra_metadata: Mapping<String, bool>,
     }
 
     /// Redeem-specific B-20 extension storage.
@@ -312,12 +312,12 @@ mod type_namespaced_layouts {
         redeem_policy_ids: U256,
     }
 
-    /// Security token layout that composes canonical namespaced storage sections.
+    /// Asset token layout that composes canonical namespaced storage sections.
     #[contract(addr = TYPE_NAMESPACE_ADDR)]
     pub struct B20AssetLayout {
         pub local_head: u8,
         pub b20: B20Storage,
-        pub security: B20AssetStorage,
+        pub asset: B20AssetStorage,
         pub redeem: B20RedeemStorage,
         pub local_tail: u16,
     }
@@ -325,36 +325,36 @@ mod type_namespaced_layouts {
     #[test]
     fn type_level_namespaces_mount_layouts_without_repeating_strings() {
         let b20_value = B20Storage { total_supply: U256::ZERO, balances: Mapping::default() };
-        let security_value = B20AssetStorage {
+        let asset_value = B20AssetStorage {
             multiplier: U256::ZERO,
             used_announcement_ids: Mapping::default(),
-            security_identifiers: Mapping::default(),
+            extra_metadata: Mapping::default(),
         };
         let redeem_value =
             B20RedeemStorage { minimum_redeemable: U256::ZERO, redeem_policy_ids: U256::ZERO };
         let _ = (
             &b20_value.total_supply,
             &b20_value.balances,
-            &security_value.multiplier,
-            &security_value.used_announcement_ids,
-            &security_value.security_identifiers,
+            &asset_value.multiplier,
+            &asset_value.used_announcement_ids,
+            &asset_value.extra_metadata,
             &redeem_value.minimum_redeemable,
             &redeem_value.redeem_policy_ids,
         );
 
         let b20_root = erc7201_root("b20");
-        let security_root = erc7201_root("b20.security");
+        let asset_root = erc7201_root("b20.asset");
         let redeem_root = erc7201_root("b20.redeem");
 
         assert_eq!(<B20Storage as StorableType>::STORAGE_NAMESPACE_ID, "b20");
         assert_eq!(<B20Storage as StorableType>::STORAGE_NAMESPACE_ROOT, b20_root);
-        assert_eq!(<B20AssetStorage as StorableType>::STORAGE_NAMESPACE_ROOT, security_root);
+        assert_eq!(<B20AssetStorage as StorableType>::STORAGE_NAMESPACE_ROOT, asset_root);
         assert_eq!(<B20RedeemStorage as StorableType>::STORAGE_NAMESPACE_ROOT, redeem_root);
 
         assert_eq!(slots::LOCAL_HEAD, U256::ZERO);
         assert_eq!(slots::LOCAL_HEAD_OFFSET, 0);
         assert_eq!(slots::B20, b20_root);
-        assert_eq!(slots::SECURITY, security_root);
+        assert_eq!(slots::ASSET, asset_root);
         assert_eq!(slots::REDEEM, redeem_root);
         assert_eq!(slots::LOCAL_TAIL, U256::ZERO);
         assert_eq!(slots::LOCAL_TAIL_OFFSET, 1);
@@ -371,7 +371,7 @@ mod type_namespaced_layouts {
             layout.local_head.write(0x11).unwrap();
             layout.b20.total_supply.write(U256::from(100)).unwrap();
             layout.b20.balances.at_mut(&holder).write(U256::from(25)).unwrap();
-            layout.security.multiplier.write(U256::from(2)).unwrap();
+            layout.asset.multiplier.write(U256::from(2)).unwrap();
             layout.redeem.minimum_redeemable.write(U256::from(10)).unwrap();
             layout.redeem.redeem_policy_ids.write(U256::from(3)).unwrap();
             layout.local_tail.write(0x2233).unwrap();
@@ -379,7 +379,7 @@ mod type_namespaced_layouts {
             assert_eq!(layout.local_head.read().unwrap(), 0x11);
             assert_eq!(layout.b20.total_supply.read().unwrap(), U256::from(100));
             assert_eq!(layout.b20.balances.at(&holder).read().unwrap(), U256::from(25));
-            assert_eq!(layout.security.multiplier.read().unwrap(), U256::from(2));
+            assert_eq!(layout.asset.multiplier.read().unwrap(), U256::from(2));
             assert_eq!(layout.redeem.minimum_redeemable.read().unwrap(), U256::from(10));
             assert_eq!(layout.redeem.redeem_policy_ids.read().unwrap(), U256::from(3));
             assert_eq!(layout.local_tail.read().unwrap(), 0x2233);
@@ -405,7 +405,7 @@ mod type_namespaced_layouts {
             assert_eq!(
                 ctx.sload(
                     TYPE_NAMESPACE_ADDR,
-                    slots::SECURITY
+                    slots::ASSET
                         + U256::from(__packing_b20_asset_storage::MULTIPLIER_LOC.offset_slots,),
                 )
                 .unwrap(),

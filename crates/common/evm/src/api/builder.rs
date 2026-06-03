@@ -1,7 +1,8 @@
 //! [`Builder`] trait for constructing a [`BaseEvm`] directly from a [`BaseContext`].
-use alloy_evm::{Database, precompiles::PrecompilesMap};
+use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
 use revm::{
+    Database,
     context::FrameStack,
     handler::{EthFrame, instructions::EthInstructions},
     interpreter::interpreter::EthInterpreter,
@@ -128,6 +129,8 @@ impl<DB: Database> Builder for BaseContext<DB> {
 
 #[cfg(test)]
 mod tests {
+    use core::convert::Infallible;
+
     use alloy_primitives::{Address, B256};
     use alloy_sol_types::SolCall;
     use base_common_precompiles::{
@@ -135,11 +138,13 @@ mod tests {
         PolicyRegistryStorage,
     };
     use revm::{
-        Context, ExecuteEvm,
+        Context, DatabaseRef, ExecuteEvm,
+        bytecode::Bytecode,
         context::{CfgEnv, TxEnv},
         handler::EvmTr,
         inspector::NoOpInspector,
-        primitives::{Bytes, TxKind},
+        primitives::{Bytes, StorageKey, StorageValue, TxKind},
+        state::AccountInfo,
     };
 
     use super::*;
@@ -207,5 +212,36 @@ mod tests {
         let actual = IActivationRegistry::adminCall::abi_decode_returns(output).unwrap();
 
         assert_eq!(actual, admin);
+    }
+
+    struct ReadOnlyDbAdapter;
+
+    impl DatabaseRef for ReadOnlyDbAdapter {
+        type Error = Infallible;
+
+        fn basic_ref(&self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+            Ok(None)
+        }
+
+        fn code_by_hash_ref(&self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
+            Ok(Bytecode::new())
+        }
+
+        fn storage_ref(
+            &self,
+            _address: Address,
+            _index: StorageKey,
+        ) -> Result<StorageValue, Self::Error> {
+            Ok(StorageValue::ZERO)
+        }
+
+        fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
+            Ok(B256::ZERO)
+        }
+    }
+
+    #[test]
+    fn build_base_accepts_read_only_database_adapters_without_debug() {
+        let _ = BaseContext::base().with_ref_db(ReadOnlyDbAdapter).build_base();
     }
 }

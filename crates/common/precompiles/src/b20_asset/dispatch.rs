@@ -561,12 +561,15 @@ mod tests {
     fn extra_metadata_roundtrip() {
         let mut token = make_token();
 
-        assert_eq!(token.accounting().extra_metadata("ISIN").unwrap(), "");
+        assert_eq!(token.accounting().extra_metadata("category").unwrap(), "");
         token
             .accounting_mut()
-            .set_extra_metadata_value("ISIN", "US0000000000".to_string())
+            .set_extra_metadata_value("category", "real-world-asset".to_string())
             .unwrap();
-        assert_eq!(token.accounting().extra_metadata("ISIN").unwrap(), "US0000000000".to_string());
+        assert_eq!(
+            token.accounting().extra_metadata("category").unwrap(),
+            "real-world-asset".to_string()
+        );
     }
 
     // --- batchMint: EmptyBatch / LengthMismatch ---
@@ -656,20 +659,17 @@ mod tests {
     fn extra_metadata_missing_key_returns_empty() {
         let token = make_token();
         // "Returns the empty string if not set"
-        assert_eq!(token.accounting().extra_metadata("CUSIP").unwrap(), "");
+        assert_eq!(token.accounting().extra_metadata("category").unwrap(), "");
     }
 
     #[test]
     fn extra_metadata_empty_value_clears_entry() {
         let mut token = make_token();
-        token
-            .accounting_mut()
-            .set_extra_metadata_value("FIGI", "BBG000B9XRY4".to_string())
-            .unwrap();
-        assert_eq!(token.accounting().extra_metadata("FIGI").unwrap(), "BBG000B9XRY4");
+        token.accounting_mut().set_extra_metadata_value("region", "us-east".to_string()).unwrap();
+        assert_eq!(token.accounting().extra_metadata("region").unwrap(), "us-east");
         // "passing an empty value removes the entry"
-        token.accounting_mut().set_extra_metadata_value("FIGI", String::new()).unwrap();
-        assert_eq!(token.accounting().extra_metadata("FIGI").unwrap(), "");
+        token.accounting_mut().set_extra_metadata_value("region", String::new()).unwrap();
+        assert_eq!(token.accounting().extra_metadata("region").unwrap(), "");
     }
 
     // --- isAnnouncementIdUsed: fresh state ---

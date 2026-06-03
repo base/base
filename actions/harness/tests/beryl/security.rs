@@ -1,4 +1,4 @@
-//! Security B-20 precompile action tests across the Base Beryl boundary.
+//! Asset B-20 precompile action tests across the Base Beryl boundary.
 
 use alloy_consensus::TxReceipt;
 use alloy_primitives::{Address, B256, Bytes, LogData, TxKind, U256, keccak256};
@@ -12,7 +12,7 @@ use crate::{
 };
 
 const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
-const UPDATED_RATIO: U256 = U256::from_limbs([2_000_000_000_000_000_000, 0, 0, 0]);
+const UPDATED_MULTIPLIER: U256 = U256::from_limbs([2_000_000_000_000_000_000, 0, 0, 0]);
 const BOB_MINT_AMOUNT: u64 = 100;
 const CAROL_MINT_AMOUNT: u64 = 200;
 const CUSIP: &str = "123456789";
@@ -113,7 +113,7 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                 StaticcallCase::bytes32(
                     "OPERATOR_ROLE",
                     IB20Asset::OPERATOR_ROLECall {}.abi_encode(),
-                    security_operator_role(),
+                    operator_role(),
                 ),
                 StaticcallCase::bytes32(
                     "METADATA_ROLE",
@@ -135,12 +135,10 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
 #[tokio::test]
 async fn security_mutations_update_state_and_emit_events() {
     let mut scenario = B20AssetScenario::new().await;
-    scenario
-        .grant_roles([security_operator_role(), metadata_role(), B20TokenRole::Mint.id()])
-        .await;
+    scenario.grant_roles([operator_role(), metadata_role(), B20TokenRole::Mint.id()]).await;
 
-    let update_ratio =
-        scenario.call_tx(IB20Asset::updateMultiplierCall { newMultiplier: UPDATED_RATIO });
+    let update_multiplier =
+        scenario.call_tx(IB20Asset::updateMultiplierCall { newMultiplier: UPDATED_MULTIPLIER });
     let update_cusip = scenario.call_tx(IB20Asset::updateExtraMetadataCall {
         key: "CUSIP".to_string(),
         value: CUSIP.to_string(),
@@ -158,7 +156,7 @@ async fn security_mutations_update_state_and_emit_events() {
         uri: ANNOUNCEMENT_URI.to_string(),
     });
     let block = scenario
-        .build_block_with_transactions(vec![update_ratio, update_cusip, batch_mint, announce])
+        .build_block_with_transactions(vec![update_multiplier, update_cusip, batch_mint, announce])
         .await;
 
     for index in 0..4 {
@@ -171,7 +169,7 @@ async fn security_mutations_update_state_and_emit_events() {
     scenario.assert_log(
         &block,
         0,
-        IB20Asset::MultiplierUpdated { multiplier: UPDATED_RATIO }.encode_log_data(),
+        IB20Asset::MultiplierUpdated { multiplier: UPDATED_MULTIPLIER }.encode_log_data(),
     );
     scenario.assert_log(
         &block,
@@ -234,7 +232,7 @@ async fn security_mutations_update_state_and_emit_events() {
                 StaticcallCase::word(
                     "multiplier after update",
                     IB20Asset::multiplierCall {}.abi_encode(),
-                    UPDATED_RATIO,
+                    UPDATED_MULTIPLIER,
                 ),
                 StaticcallCase::word(
                     "toScaledBalance after update",
@@ -277,9 +275,7 @@ async fn security_mutations_update_state_and_emit_events() {
 #[tokio::test]
 async fn security_mutations_revert_on_invalid_inputs() {
     let mut scenario = B20AssetScenario::new().await;
-    scenario
-        .grant_roles([security_operator_role(), metadata_role(), B20TokenRole::Mint.id()])
-        .await;
+    scenario.grant_roles([operator_role(), metadata_role(), B20TokenRole::Mint.id()]).await;
 
     let first_announcement = scenario.call_tx(IB20Asset::announceCall {
         internalCalls: Vec::new(),
@@ -544,7 +540,7 @@ impl B20AssetScenario {
     }
 }
 
-fn security_operator_role() -> B256 {
+fn operator_role() -> B256 {
     keccak256("OPERATOR_ROLE")
 }
 

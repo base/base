@@ -84,14 +84,14 @@ impl BerylTestEnv {
     /// ISO 4217 currency code for the stablecoin B-20 token variant.
     pub(crate) const B20_STABLECOIN_CURRENCY: &str = "USD";
 
-    /// Fixed decimals for the security B-20 token variant.
+    /// Fixed decimals for the asset B-20 token variant.
     pub(crate) const B20_ASSET_DECIMALS: u8 = 6;
 
-    /// Name for the security B-20 token variant.
-    pub(crate) const B20_ASSET_NAME: &str = "Action Security";
+    /// Name for the asset B-20 token variant.
+    pub(crate) const B20_ASSET_NAME: &str = "Action Asset";
 
-    /// Symbol for the security B-20 token variant.
-    pub(crate) const B20_ASSET_SYMBOL: &str = "ASEC";
+    /// Symbol for the asset B-20 token variant.
+    pub(crate) const B20_ASSET_SYMBOL: &str = "AAST";
 
     /// Initial B-20 supply minted to Alice.
     pub(crate) const B20_INITIAL_SUPPLY: u64 = 1_000_000;

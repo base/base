@@ -5,12 +5,12 @@ use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
-    ApiProofType, CompleteProofResult, CreateOutboxEntry, CreateProofRequest,
+    ApiProofType, ClaimProofJob, CompleteProofResult, CreateOutboxEntry, CreateProofRequest,
     CreateProofRequestError, CreateProofRequestOutcome, CreateProofRequestValidationError,
-    CreateProofSession, MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofRequest,
-    ProofRequestListItem, ProofRequestPage, ProofSession, ProofStatus, ProofType, RetryOutcome,
-    SessionStatus, SessionType, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
-    canonical_session_id,
+    CreateProofSession, MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofJob,
+    ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession,
+    ProofStatus, ProofType, RetryOutcome, SessionStatus, SessionType, TeeKind, UpdateProofSession,
+    UpdateReceipt, ZkVmKind, canonical_session_id,
 };
 
 /// Repository for proof request database operations
@@ -226,6 +226,7 @@ impl ProofRequestRepo {
                     r#"
                     UPDATE proof_requests
                     SET status = $1,
+                        job_status = 'PENDING',
                         retry_count = retry_count + 1,
                         error_message = NULL,
                         stark_receipt = NULL,
@@ -233,7 +234,13 @@ impl ProofRequestRepo {
                         result_payload = NULL,
                         submitted_by_worker_id = NULL,
                         submitted_lock_id = NULL,
-                        completed_at = NULL
+                        completed_at = NULL,
+                        worker_id = NULL,
+                        lock_id = NULL,
+                        lock_expires_at = NULL,
+                        claimed_at = NULL,
+                        last_heartbeat_at = NULL,
+                        attempt = 0
                     WHERE id = $2
                     "#,
                 )
@@ -545,6 +552,39 @@ impl ProofRequestRepo {
         Ok(result.rows_affected() > 0)
     }
 
+    // ========== Worker Job API Methods ==========
+
+    /// Atomically claim the next eligible worker proof job (`getNextProof`).
+    ///
+    /// Selects the lowest-start-block job whose `api_proof_type` matches the
+    /// worker and whose capability discriminator (`tee_kind` for TEE, `zk_vm` for
+    /// ZK) is in the worker's advertised set. A job is claimable when it is
+    /// `PENDING`, or when it is `CLAIMED` with an expired lock and still under the
+    /// reclaim budget (`attempt < max_attempts`). The row is locked with
+    /// `FOR UPDATE SKIP LOCKED` so concurrent workers never claim the same job.
+    ///
+    /// On success the job transitions to `job_status = 'CLAIMED'` and requester
+    /// `status = 'RUNNING'`, with a freshly rotated `lock_id`, incremented
+    /// `attempt`, and an extended `lock_expires_at`. Returns `None` when no job is
+    /// eligible (including when the worker advertises no matching capabilities).
+    pub async fn claim_next_proof_job(&self, req: ClaimProofJob) -> Result<Option<ProofJob>> {
+        let lock_id = Uuid::new_v4();
+        let sql = claim_query(req.api_proof_type);
+        let cap_values = worker_capability_values(&req);
+
+        let row = sqlx::query(&sql)
+            .bind(&req.worker_id)
+            .bind(lock_id)
+            .bind(i64::from(req.lock_duration_seconds))
+            .bind(req.api_proof_type.as_str())
+            .bind(&cap_values)
+            .bind(i64::from(req.max_attempts))
+            .fetch_optional(&self.pool)
+            .await?;
+
+        row.as_ref().map(row_to_proof_job).transpose()
+    }
+
     /// Retry a stuck PENDING request if under the retry limit, otherwise fail it permanently.
     ///
     /// If `retry_count < max_retries`: atomically resets to CREATED, increments `retry_count`,
@@ -636,6 +676,7 @@ impl ProofRequestRepo {
             r#"
             UPDATE proof_requests
             SET status = $1,
+                job_status = 'PENDING',
                 retry_count = retry_count + 1,
                 error_message = NULL,
                 stark_receipt = NULL,
@@ -643,7 +684,13 @@ impl ProofRequestRepo {
                 result_payload = NULL,
                 submitted_by_worker_id = NULL,
                 submitted_lock_id = NULL,
-                completed_at = NULL
+                completed_at = NULL,
+                worker_id = NULL,
+                lock_id = NULL,
+                lock_expires_at = NULL,
+                claimed_at = NULL,
+                last_heartbeat_at = NULL,
+                attempt = 0
             WHERE id = $2
             "#,
         )
@@ -1725,6 +1772,125 @@ fn parse_zk_vm_kind(value: &str) -> Result<ZkVmKind> {
 fn parse_tee_kind(value: &str) -> Result<TeeKind> {
     TeeKind::try_from(value)
         .map_err(|e| sqlx::Error::Protocol(format!("Unknown tee_kind '{value}': {e}")))
+}
+
+/// Columns returned by the claim query.
+const PROOF_JOB_RETURNING_COLUMNS: &str = "id, COALESCE(session_id, id::text) AS session_id, \
+     request_payload, api_proof_type, zk_vm, tee_kind, \
+     start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, \
+     stark_receipt, snark_receipt, result_payload, \
+     submitted_by_worker_id, submitted_lock_id, status, error_message, \
+     prover_address, l1_head, intermediate_root_interval, \
+     created_at, updated_at, completed_at, retry_count, \
+     job_status, worker_id, lock_id, lock_expires_at, claimed_at, attempt, last_heartbeat_at";
+
+/// Capability values bound (as `$5`) into the claim query.
+///
+/// TEE workers contribute their `tee_kinds`, ZK workers their `zk_vms`. An empty
+/// list binds `ANY('{}')`, which matches no rows, so a worker that advertises no
+/// matching capabilities simply claims nothing.
+fn worker_capability_values(req: &ClaimProofJob) -> Vec<String> {
+    match req.api_proof_type {
+        ApiProofType::Tee => req.tee_kinds.iter().map(|kind| kind.as_str().to_owned()).collect(),
+        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => {
+            req.zk_vms.iter().map(|vm| vm.as_str().to_owned()).collect()
+        }
+    }
+}
+
+/// Build the atomic claim query for a proof type.
+///
+/// The capability column (`tee_kind` for TEE, `zk_vm` for ZK) is hardcoded as a
+/// literal in each variant rather than interpolated from a value, so no
+/// caller-derived string can ever reach the SQL as a column name. The only
+/// interpolated token is the fixed [`PROOF_JOB_RETURNING_COLUMNS`] constant.
+fn claim_query(api_proof_type: ApiProofType) -> String {
+    let columns = PROOF_JOB_RETURNING_COLUMNS;
+    match api_proof_type {
+        ApiProofType::Tee => format!(
+            r#"
+            UPDATE proof_requests
+            SET job_status = 'CLAIMED',
+                status = 'RUNNING',
+                worker_id = $1,
+                lock_id = $2,
+                attempt = attempt + 1,
+                claimed_at = NOW(),
+                last_heartbeat_at = NOW(),
+                lock_expires_at = NOW() + ($3)::double precision * INTERVAL '1 second'
+            WHERE id = (
+                SELECT id FROM proof_requests
+                WHERE api_proof_type = $4
+                  AND tee_kind = ANY($5::text[])
+                  AND (
+                      job_status = 'PENDING'
+                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $6)
+                  )
+                ORDER BY start_block_number ASC, created_at ASC, id ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING {columns}
+            "#,
+        ),
+        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => format!(
+            r#"
+            UPDATE proof_requests
+            SET job_status = 'CLAIMED',
+                status = 'RUNNING',
+                worker_id = $1,
+                lock_id = $2,
+                attempt = attempt + 1,
+                claimed_at = NOW(),
+                last_heartbeat_at = NOW(),
+                lock_expires_at = NOW() + ($3)::double precision * INTERVAL '1 second'
+            WHERE id = (
+                SELECT id FROM proof_requests
+                WHERE api_proof_type = $4
+                  AND zk_vm = ANY($5::text[])
+                  AND (
+                      job_status = 'PENDING'
+                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $6)
+                  )
+                ORDER BY start_block_number ASC, created_at ASC, id ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING {columns}
+            "#,
+        ),
+    }
+}
+
+/// Convert a database row into a [`ProofJob`], reusing [`row_to_proof_request`]
+/// for the requester fields (including protocol payload synthesis for legacy rows).
+fn row_to_proof_job(row: &sqlx::postgres::PgRow) -> Result<ProofJob> {
+    let base = row_to_proof_request(row)?;
+
+    let job_status_str: &str = row.get("job_status");
+    let job_status = ProofJobStatus::try_from(job_status_str).map_err(|e| {
+        sqlx::Error::Protocol(format!("Unknown job_status '{job_status_str}': {e}"))
+    })?;
+
+    Ok(ProofJob {
+        id: base.id,
+        session_id: base.session_id,
+        request_payload: base.request_payload,
+        api_proof_type: base.api_proof_type,
+        zk_vm: base.zk_vm,
+        tee_kind: base.tee_kind,
+        job_status,
+        attempt: row.get("attempt"),
+        worker_id: row.get("worker_id"),
+        lock_id: row.get("lock_id"),
+        lock_expires_at: row.get("lock_expires_at"),
+        claimed_at: row.get("claimed_at"),
+        last_heartbeat_at: row.get("last_heartbeat_at"),
+        error_message: base.error_message,
+        created_at: base.created_at,
+        updated_at: base.updated_at,
+        completed_at: base.completed_at,
+    })
 }
 
 /// Helper function to convert a database row to `ProofSession`

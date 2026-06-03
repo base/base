@@ -16,10 +16,10 @@
 use std::time::Duration;
 
 use base_prover_service_db::{
-    ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    CreateProofSession, MarkOutboxError, MarkOutboxProcessed, ProofRequestPage, ProofRequestRepo,
-    ProofStatus, ProofType, RetryOutcome, SessionStatus, SessionType, UpdateProofSession,
-    UpdateReceipt, ZkVmKind,
+    ApiProofType, ClaimProofJob, CreateProofRequest, CreateProofRequestError,
+    CreateProofRequestOutcome, CreateProofSession, MarkOutboxError, MarkOutboxProcessed,
+    ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType, RetryOutcome,
+    SessionStatus, SessionType, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
 };
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
@@ -53,10 +53,14 @@ const fn test_repo(pool: PgPool) -> ProofRequestRepo {
 }
 
 fn compressed_request() -> CreateProofRequest {
+    compressed_request_at(100)
+}
+
+fn compressed_request_at(start_block_number: u64) -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: None,
         request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
-            start_block_number: 100,
+            start_block_number,
             number_of_blocks_to_prove: 5,
             sequence_window: Some(50),
             l1_head: None,
@@ -421,33 +425,50 @@ async fn test_update_receipt_if_running() {
 
     let (id, _backend_id) = setup_running_request(&repo).await;
 
+    // Intermediate receipt update while RUNNING succeeds and keeps status RUNNING.
     let updated = repo
         .update_receipt_if_running(UpdateReceipt {
             id,
             stark_receipt: Some(vec![1, 2, 3]),
             snark_receipt: None,
-            status: ProofStatus::Succeeded,
+            status: ProofStatus::Running,
             error_message: None,
         })
         .await
         .unwrap();
     assert!(updated);
+    let req = repo.get(id).await.unwrap().unwrap();
+    assert_eq!(req.status, ProofStatus::Running);
+    assert_eq!(req.stark_receipt.as_deref(), Some(&[1u8, 2, 3][..]));
 
-    // Now that it's SUCCEEDED, a second update should be skipped
+    // A later intermediate update overwrites the receipt while still RUNNING.
     let updated = repo
         .update_receipt_if_running(UpdateReceipt {
             id,
             stark_receipt: Some(vec![4, 5, 6]),
             snark_receipt: None,
-            status: ProofStatus::Succeeded,
+            status: ProofStatus::Running,
             error_message: None,
         })
         .await
         .unwrap();
-    assert!(!updated);
-
+    assert!(updated);
     let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.stark_receipt.as_deref(), Some(&[1u8, 2, 3][..])); // first write won
+    assert_eq!(req.stark_receipt.as_deref(), Some(&[4u8, 5, 6][..]));
+
+    // Once the request leaves RUNNING, intermediate updates are skipped.
+    assert!(repo.transition_running_to_failed(id, Some("done".into())).await.unwrap());
+    let updated = repo
+        .update_receipt_if_running(UpdateReceipt {
+            id,
+            stark_receipt: Some(vec![7, 8, 9]),
+            snark_receipt: None,
+            status: ProofStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(!updated, "updates must be skipped once not RUNNING");
 }
 
 // ============================================================
@@ -806,8 +827,8 @@ async fn test_retry_or_fail_stuck_request_retries() {
         WHERE id = $6
         "#,
     )
-    .bind(vec![0x01, 0x02])
-    .bind(vec![0x03, 0x04])
+    .bind(vec![0x01u8, 0x02u8])
+    .bind(vec![0x03u8, 0x04u8])
     .bind(serde_json::json!({"proof_type": "compressed"}))
     .bind("stale-worker")
     .bind("stale-lock")
@@ -962,8 +983,9 @@ async fn test_outbox_process_and_cleanup() {
     let id =
         repo.create_with_outbox(compressed_request(), TEST_MAX_PROOF_RETRIES).await.unwrap().id();
 
-    // Get unprocessed entries
-    let entries = repo.get_unprocessed_outbox_entries(10, 3).await.unwrap();
+    // Get unprocessed entries. Use a high limit because the shared test DB accumulates
+    // unprocessed entries from other tests, and this entry is the newest (FIFO order).
+    let entries = repo.get_unprocessed_outbox_entries(100, 3).await.unwrap();
     let entry = entries.iter().find(|e| e.proof_request_id == id).expect("should find our entry");
     assert!(!entry.processed);
     let seq = entry.sequence_id;
@@ -1028,7 +1050,7 @@ async fn drive_to_failed(repo: &ProofRequestRepo, id: Uuid, error_message: &str)
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
 async fn test_create_with_outbox_requeues_failed_row() {
     let pool = test_pool().await;
-    let repo = test_repo(pool);
+    let repo = test_repo(pool.clone());
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
@@ -1038,6 +1060,18 @@ async fn test_create_with_outbox_requeues_failed_row() {
     let first = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
     drive_to_failed(&repo, explicit_id, "transient backend error").await;
+
+    // Simulate stale worker-claim state on the row (as if it had been claimed and
+    // failed through the worker API) so the requeue must reset the job lifecycle too.
+    sqlx::query(
+        "UPDATE proof_requests SET job_status = 'FAILED', worker_id = 'stale-worker', \
+         lock_id = gen_random_uuid(), lock_expires_at = NOW(), claimed_at = NOW(), \
+         last_heartbeat_at = NOW(), attempt = 4 WHERE id = $1",
+    )
+    .bind(explicit_id)
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // Sanity: the row is FAILED and the original outbox row exists.
     let before = repo.get(explicit_id).await.unwrap().unwrap();
@@ -1059,6 +1093,18 @@ async fn test_create_with_outbox_requeues_failed_row() {
     assert!(after.completed_at.is_none(), "stale completed_at must be cleared");
     assert!(after.stark_receipt.is_none(), "stale stark_receipt must be cleared");
     assert!(after.snark_receipt.is_none(), "stale snark_receipt must be cleared");
+
+    // The worker job lifecycle must also be reset so the requeued row is claimable
+    // again and carries no stale claim metadata.
+    let (job_status, attempt, worker_id): (String, i32, Option<String>) =
+        sqlx::query_as("SELECT job_status, attempt, worker_id FROM proof_requests WHERE id = $1")
+            .bind(explicit_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(job_status, "PENDING", "job_status must reset so workers can re-claim");
+    assert_eq!(attempt, 0, "stale claim attempt must be cleared");
+    assert!(worker_id.is_none(), "stale worker_id must be cleared");
 
     // A new outbox entry must be present so the worker can claim the task again.
     let after_outbox =
@@ -1379,4 +1425,197 @@ async fn test_full_snark_pipeline() {
     assert_eq!(sessions[0].status, SessionStatus::Completed);
     assert_eq!(sessions[1].session_type, SessionType::Snark);
     assert_eq!(sessions[1].status, SessionStatus::Completed);
+}
+
+// ============================================================
+// Worker job claim tests (`claim_next_proof_job`)
+// ============================================================
+
+/// Build a claim with a long lease so claimed jobs stay out of the pool.
+fn claim_job(
+    worker_id: &str,
+    api_proof_type: ApiProofType,
+    tee_kinds: Vec<TeeKind>,
+    zk_vms: Vec<ZkVmKind>,
+    max_attempts: u32,
+) -> ClaimProofJob {
+    ClaimProofJob {
+        worker_id: worker_id.to_owned(),
+        api_proof_type,
+        tee_kinds,
+        zk_vms,
+        lock_duration_seconds: 3600,
+        max_attempts,
+    }
+}
+
+/// A TEE worker claim advertising AWS Nitro capability.
+fn tee_claim(worker_id: &str, max_attempts: u32) -> ClaimProofJob {
+    claim_job(worker_id, ApiProofType::Tee, vec![TeeKind::AwsNitro], vec![], max_attempts)
+}
+
+/// A compressed ZK worker claim advertising SP1 capability.
+fn compressed_claim(worker_id: &str, max_attempts: u32) -> ClaimProofJob {
+    claim_job(worker_id, ApiProofType::Compressed, vec![], vec![ZkVmKind::Sp1], max_attempts)
+}
+
+/// Drain every currently claimable TEE job by claiming it under a long lease, so
+/// each test starts from a known-empty TEE queue. Holding the jobs `CLAIMED` with
+/// an unexpired lock (rather than completing them) keeps this independent of the
+/// worker submit API.
+async fn drain_claimable_tee_jobs(repo: &ProofRequestRepo) {
+    while repo
+        .claim_next_proof_job(tee_claim("drain-worker", u32::MAX))
+        .await
+        .expect("drain claim should not error")
+        .is_some()
+    {}
+}
+
+/// Drain every currently claimable compressed job by claiming it under a long lease.
+async fn drain_claimable_compressed_jobs(repo: &ProofRequestRepo) {
+    while repo
+        .claim_next_proof_job(compressed_claim("drain-zk-worker", u32::MAX))
+        .await
+        .expect("drain claim should not error")
+        .is_some()
+    {}
+}
+
+/// Force a job's lock to appear expired so it becomes reclaimable.
+async fn expire_lock(pool: &PgPool, id: Uuid) {
+    sqlx::query(
+        "UPDATE proof_requests SET lock_expires_at = NOW() - INTERVAL '1 hour' WHERE id = $1",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .expect("expire lock should succeed");
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_claim_next_proof_job_claim_and_capabilities() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    drain_claimable_tee_jobs(&repo).await;
+    let id = repo.create(tee_request()).await.unwrap();
+
+    // A worker advertising no matching capability claims nothing.
+    let no_caps = claim_job("no-caps", ApiProofType::Tee, vec![], vec![], 3);
+    assert!(repo.claim_next_proof_job(no_caps).await.unwrap().is_none());
+
+    // A capable TEE worker claims the pending job and flips it to CLAIMED/RUNNING.
+    let job = repo
+        .claim_next_proof_job(tee_claim("worker-1", 3))
+        .await
+        .unwrap()
+        .expect("the pending TEE job should be claimed");
+    assert_eq!(job.id, id);
+    assert_eq!(job.api_proof_type, ApiProofType::Tee);
+    assert_eq!(job.job_status, ProofJobStatus::Claimed);
+    assert_eq!(job.attempt, 1);
+    assert_eq!(job.worker_id.as_deref(), Some("worker-1"));
+    assert!(job.lock_id.is_some());
+    assert!(job.lock_expires_at.is_some());
+    assert!(job.claimed_at.is_some());
+    assert!(job.last_heartbeat_at.is_some());
+    assert_eq!(repo.get(id).await.unwrap().unwrap().status, ProofStatus::Running);
+
+    // The TEE queue is now drained, and a TEE worker never claims a ZK job.
+    repo.create(compressed_request()).await.unwrap();
+    assert!(repo.claim_next_proof_job(tee_claim("worker-2", 3)).await.unwrap().is_none());
+
+    // A ZK worker can claim a compressed job (block-number ordering may surface a
+    // lower-block pending ZK job from another test, so we only assert the proof type).
+    let zk = claim_job("zk-worker", ApiProofType::Compressed, vec![], vec![ZkVmKind::Sp1], 3);
+    let job = repo
+        .claim_next_proof_job(zk)
+        .await
+        .unwrap()
+        .expect("a compressed job should be claimable by a ZK worker");
+    assert_eq!(job.api_proof_type, ApiProofType::Compressed);
+    assert_eq!(job.job_status, ProofJobStatus::Claimed);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_claim_next_proof_job_concurrent_workers_never_double_claim() {
+    let pool = test_pool().await;
+    let repo_a = test_repo(pool.clone());
+    let repo_b = test_repo(pool.clone());
+
+    drain_claimable_tee_jobs(&repo_a).await;
+    let id = repo_a.create(tee_request()).await.unwrap();
+
+    let (a, b) = tokio::join!(
+        repo_a.claim_next_proof_job(tee_claim("worker-a", 3)),
+        repo_b.claim_next_proof_job(tee_claim("worker-b", 3)),
+    );
+
+    // Exactly one worker wins the single available job.
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!([&a, &b].into_iter().filter(|j| j.is_some()).count(), 1);
+    let winner = a.or(b).unwrap();
+    assert_eq!(winner.id, id);
+    assert_eq!(winner.attempt, 1);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_claim_next_proof_job_orders_by_start_block_number() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let high_block_id = repo.create(compressed_request_at(200)).await.unwrap();
+    let low_block_id = repo.create(compressed_request_at(100)).await.unwrap();
+
+    let job = repo
+        .claim_next_proof_job(compressed_claim("block-order-worker", 3))
+        .await
+        .unwrap()
+        .expect("a compressed job should be claimable");
+
+    assert_eq!(job.id, low_block_id);
+    assert_ne!(job.id, high_block_id);
+    assert_eq!(job.api_proof_type, ApiProofType::Compressed);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_claim_next_proof_job_expired_lock_lifecycle() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    drain_claimable_tee_jobs(&repo).await;
+    let id = repo.create(tee_request()).await.unwrap();
+
+    // First claim, then expire the lock so it becomes reclaimable.
+    let first = repo
+        .claim_next_proof_job(tee_claim("worker-a", 2))
+        .await
+        .unwrap()
+        .expect("first claim should succeed");
+    assert_eq!(first.attempt, 1);
+    expire_lock(&pool, id).await;
+
+    // Reclaim issues a fresh lock and increments the attempt (1 < max_attempts 2).
+    let second = repo
+        .claim_next_proof_job(tee_claim("worker-b", 2))
+        .await
+        .unwrap()
+        .expect("expired lock should be reclaimable");
+    assert_eq!(second.id, id);
+    assert_eq!(second.attempt, 2);
+    assert_eq!(second.worker_id.as_deref(), Some("worker-b"));
+    assert_ne!(second.lock_id, first.lock_id, "a fresh fencing token is issued");
+
+    // Once attempts are exhausted (2 == max_attempts), an expired lock is not reclaimed.
+    expire_lock(&pool, id).await;
+    assert!(
+        repo.claim_next_proof_job(tee_claim("worker-c", 2)).await.unwrap().is_none(),
+        "exhausted job must not be reclaimed"
+    );
 }

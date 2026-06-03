@@ -333,59 +333,7 @@ where
         safe_head: u64,
         state: &mut PipelineState,
     ) -> Result<()> {
-        let mut cursor = recovered
-            .l2_block_number
-            .checked_add(self.config.driver.block_interval)
-            .ok_or_else(|| {
-            eyre::eyre!(
-                "overflow: l2_block_number {} + block_interval {}",
-                recovered.l2_block_number,
-                self.config.driver.block_interval
-            )
-        })?;
-
-        let mut start_block = recovered.l2_block_number;
-        let mut plans = Vec::new();
-        let mut output_blocks = BTreeSet::new();
-
-        while cursor <= safe_head
-            && state.inflight.len() + plans.len() < self.config.max_parallel_proofs
-        {
-            let mut last_skipped = None;
-            while cursor <= safe_head
-                && (state.inflight.contains(&cursor)
-                    || state.proved.contains_key(&cursor)
-                    || state.submitting == Some(cursor))
-            {
-                last_skipped = Some(cursor);
-                cursor = match cursor.checked_add(self.config.driver.block_interval) {
-                    Some(c) => c,
-                    None => return Ok(()),
-                };
-            }
-
-            if cursor > safe_head {
-                break;
-            }
-
-            if state.inflight.len() + plans.len() >= self.config.max_parallel_proofs {
-                break;
-            }
-
-            if let Some(skipped) = last_skipped {
-                start_block = skipped;
-                output_blocks.insert(skipped);
-            }
-
-            plans.push(ProofPlan { start_block, target_block: cursor });
-            output_blocks.insert(cursor);
-            start_block = cursor;
-
-            cursor = match cursor.checked_add(self.config.driver.block_interval) {
-                Some(c) => c,
-                None => break,
-            };
-        }
+        let (plans, output_blocks) = self.plan_proofs(recovered, safe_head, state)?;
 
         if plans.is_empty() {
             state.record_gauges();
@@ -446,6 +394,68 @@ where
 
         state.record_gauges();
         Ok(())
+    }
+
+    fn plan_proofs(
+        &self,
+        recovered: &RecoveredState,
+        safe_head: u64,
+        state: &PipelineState,
+    ) -> Result<(Vec<ProofPlan>, BTreeSet<u64>)> {
+        let mut cursor = recovered
+            .l2_block_number
+            .checked_add(self.config.driver.block_interval)
+            .ok_or_else(|| {
+            eyre::eyre!(
+                "overflow: l2_block_number {} + block_interval {}",
+                recovered.l2_block_number,
+                self.config.driver.block_interval
+            )
+        })?;
+
+        let mut start_block = recovered.l2_block_number;
+        let mut plans = Vec::new();
+        let mut output_blocks = BTreeSet::new();
+
+        while cursor <= safe_head
+            && state.inflight.len() + plans.len() < self.config.max_parallel_proofs
+        {
+            let mut last_skipped = None;
+            while cursor <= safe_head
+                && (state.inflight.contains(&cursor)
+                    || state.proved.contains_key(&cursor)
+                    || state.submitting == Some(cursor))
+            {
+                last_skipped = Some(cursor);
+                cursor = match cursor.checked_add(self.config.driver.block_interval) {
+                    Some(c) => c,
+                    None => return Ok((plans, output_blocks)),
+                };
+            }
+
+            if cursor > safe_head {
+                break;
+            }
+
+            if state.inflight.len() + plans.len() >= self.config.max_parallel_proofs {
+                break;
+            }
+
+            if let Some(skipped) = last_skipped {
+                start_block = skipped;
+                output_blocks.insert(skipped);
+            }
+
+            plans.push(ProofPlan { start_block, target_block: cursor });
+            output_blocks.insert(cursor);
+            start_block = cursor;
+
+            cursor = match cursor.checked_add(self.config.driver.block_interval) {
+                Some(c) => c,
+                None => break,
+            };
+        }
+        Ok((plans, output_blocks))
     }
 
     fn try_submit(&self, state: &mut PipelineState) {

@@ -59,6 +59,56 @@ impl TryFrom<&str> for ProofStatus {
     }
 }
 
+/// Worker-owned job lifecycle status, distinct from the requester [`ProofStatus`].
+///
+/// The worker API (`getNextProof` / `heartbeat` / `submitProof`) drives this field
+/// on the same `proof_requests` row, while `status` continues to model the
+/// requester-facing proof lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ProofJobStatus {
+    /// Job is claimable and not currently owned by any worker.
+    Pending,
+    /// Job is currently claimed by a worker under an unexpired lock.
+    Claimed,
+    /// Job completed successfully through the worker API.
+    Succeeded,
+    /// Job failed terminally.
+    Failed,
+}
+
+impl ProofJobStatus {
+    /// Convert enum to static string representation.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "PENDING",
+            Self::Claimed => "CLAIMED",
+            Self::Succeeded => "SUCCEEDED",
+            Self::Failed => "FAILED",
+        }
+    }
+}
+
+impl std::fmt::Display for ProofJobStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl TryFrom<&str> for ProofJobStatus {
+    type Error = String;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "PENDING" => Ok(Self::Pending),
+            "CLAIMED" => Ok(Self::Claimed),
+            "SUCCEEDED" => Ok(Self::Succeeded),
+            "FAILED" => Ok(Self::Failed),
+            other => Err(format!("Unknown proof job status: {other}")),
+        }
+    }
+}
+
 /// Status of an individual proof session (STARK or SNARK)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
@@ -530,6 +580,46 @@ pub struct ProofRequestListItem {
     pub completed_at: Option<DateTime<Utc>>,
 }
 
+/// Worker-visible proof job, combining requester request data with the
+/// worker-owned claim/lock state needed to build a protocol `ProofJob`.
+#[derive(Debug, Clone)]
+pub struct ProofJob {
+    /// Internal proof request identifier.
+    pub id: Uuid,
+    /// Public protocol session identifier.
+    pub session_id: String,
+    /// Original protocol request payload serialized as JSON.
+    pub request_payload: serde_json::Value,
+    /// Protocol-level proof type requested by API callers.
+    pub api_proof_type: ApiProofType,
+    /// Protocol-level ZK VM discriminator for ZK proofs.
+    pub zk_vm: Option<ZkVmKind>,
+    /// Protocol-level TEE discriminator for TEE proofs.
+    pub tee_kind: Option<TeeKind>,
+    /// Worker-owned job lifecycle status.
+    pub job_status: ProofJobStatus,
+    /// Number of times the job has been claimed.
+    pub attempt: i32,
+    /// Worker that currently holds (or last held) the claim.
+    pub worker_id: Option<String>,
+    /// Active fencing token for the claim.
+    pub lock_id: Option<Uuid>,
+    /// Time when the current claim expires.
+    pub lock_expires_at: Option<DateTime<Utc>>,
+    /// Time when the current claim was acquired.
+    pub claimed_at: Option<DateTime<Utc>>,
+    /// Time of the most recent worker heartbeat.
+    pub last_heartbeat_at: Option<DateTime<Utc>>,
+    /// Error message when the job failed.
+    pub error_message: Option<String>,
+    /// Timestamp when the job was created.
+    pub created_at: DateTime<Utc>,
+    /// Timestamp of the last update.
+    pub updated_at: DateTime<Utc>,
+    /// Timestamp when the job completed.
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
 /// Offset pagination parameters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProofRequestPage {
@@ -852,6 +942,23 @@ pub struct CompleteProofResult {
     pub submitted_lock_id: Option<String>,
     /// Error message to store with the completion. Usually `None`.
     pub error_message: Option<String>,
+}
+
+/// Parameters for claiming the next available worker proof job.
+#[derive(Debug, Clone)]
+pub struct ClaimProofJob {
+    /// Worker identifier acquiring the claim.
+    pub worker_id: String,
+    /// Protocol proof type this worker can execute.
+    pub api_proof_type: ApiProofType,
+    /// TEE implementations this worker can execute (matched for TEE proofs).
+    pub tee_kinds: Vec<TeeKind>,
+    /// ZK virtual machines this worker can execute (matched for ZK proofs).
+    pub zk_vms: Vec<ZkVmKind>,
+    /// Lock duration in seconds. Callers must resolve the server default first.
+    pub lock_duration_seconds: u32,
+    /// Reclaim budget: expired claims are only reclaimable while `attempt < max_attempts`.
+    pub max_attempts: u32,
 }
 
 /// Outbox entry for reliable task processing
