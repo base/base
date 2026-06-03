@@ -115,15 +115,9 @@ skip = [
     "socket2",
     "bitflags",
     "redox_users",
-    "windows",
     "windows-collections",
-    "windows-core",
     "windows-future",
-    "windows-implement",
-    "windows-link",
     "windows-numerics",
-    "windows-result",
-    "windows-strings",
     "windows-threading",
 
     # Network crates
