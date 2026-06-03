@@ -371,6 +371,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
+    use rstest::rstest;
 
     use super::*;
     use crate::{hashmap::setup_storage, storage_ctx::StorageCtx};
@@ -416,6 +417,35 @@ mod tests {
             let loaded = handler.read().unwrap();
             assert_eq!(loaded.len(), addrs.len());
             for addr in &addrs {
+                assert!(handler.contains(addr).unwrap());
+            }
+        });
+    }
+
+    /// (initial_size, final_size) — covers grow, shrink, and equal-size rewrite.
+    #[rstest]
+    #[case(3, 7)]  // grow
+    #[case(7, 3)]  // shrink
+    #[case(4, 4)]  // same size, different contents
+    fn test_set_write_len_slot_updated(#[case] initial: u8, #[case] final_size: u8) {
+        let (mut storage, contract_addr) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(700u64);
+            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
+
+            let first: Vec<Address> = (0..initial).map(|i| Address::from([i; 20])).collect();
+            handler.write(Set::from(first)).unwrap();
+            assert_eq!(handler.len().unwrap(), initial as usize);
+
+            // Use a disjoint range so positions mapping is fully replaced.
+            let second: Vec<Address> =
+                (100..100 + final_size).map(|i| Address::from([i; 20])).collect();
+            handler.write(Set::from(second.clone())).unwrap();
+
+            assert_eq!(handler.len().unwrap(), final_size as usize);
+            let loaded = handler.read().unwrap();
+            assert_eq!(loaded.len(), final_size as usize);
+            for addr in &second {
                 assert!(handler.contains(addr).unwrap());
             }
         });
