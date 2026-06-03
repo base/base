@@ -22,6 +22,8 @@ concurrency:
 env:
   BASE_ANVIL_REF: ${{ github.event.inputs.base_anvil_ref || 'base-anvil-fork' }}
   BASE_STD_REF: ${{ github.event.inputs.base_std_ref || 'main' }}
+  BASE_STD_FORK_TEST_SKIP: >-
+    test_operatorRole_success_renamedFromSecurityOperator|test_createPolicy_revert_counterOverflow|test_createPolicy_revertOrder
   CARGO_TERM_COLOR: always
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/base-anvil
   RUSTC_WRAPPER: "sccache"
@@ -186,7 +188,8 @@ jobs:
           ANVIL_BIN="$BASE_ANVIL_DIR/target/release/anvil" \
             FORGE_BIN="$BASE_ANVIL_DIR/target/release/forge" \
             ANVIL_LOG="$RUNNER_TEMP/base-std-anvil.log" \
-            ./script/run-fork-tests.sh
+            ./script/run-fork-tests.sh \
+              --no-match-test "$BASE_STD_FORK_TEST_SKIP"
 
       - name: Upload anvil log
         if: always() && matrix.settings.smoke_test

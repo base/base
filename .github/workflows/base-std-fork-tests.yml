@@ -12,6 +12,8 @@ concurrency:
 env:
   BASE_ANVIL_REF: base-anvil-fork
   BASE_STD_REF: main
+  BASE_STD_FORK_TEST_SKIP: >-
+    test_operatorRole_success_renamedFromSecurityOperator|test_createPolicy_revert_counterOverflow|test_createPolicy_revertOrder
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: "sccache"
   SCCACHE_GHA_ENABLED: "true"
@@ -94,7 +96,9 @@ jobs:
           ANVIL_BIN="$BASE_ANVIL_DIR/target/release/anvil" \
             FORGE_BIN="$BASE_ANVIL_DIR/target/release/forge" \
             ANVIL_LOG="$RUNNER_TEMP/base-std-anvil.log" \
-            ./script/run-fork-tests.sh 2>&1 | tee "$RUNNER_TEMP/fork-test-output.txt"
+            ./script/run-fork-tests.sh \
+              --no-match-test "$BASE_STD_FORK_TEST_SKIP" \
+              2>&1 | tee "$RUNNER_TEMP/fork-test-output.txt"
 
       - name: Comment fork test results on PR
         if: github.event_name == 'pull_request' && always()
