@@ -1,5 +1,6 @@
 //! Contains the CLI arguments for the basectl binary.
 
+use basectl_cli::ViewId;
 use clap::{Parser, Subcommand};
 use url::Url;
 
@@ -65,4 +66,17 @@ pub(crate) enum MonitorCommands {
     /// Network upgrade activation countdown and history
     #[command(visible_alias = "u")]
     Upgrades,
+}
+
+impl MonitorCommands {
+    pub(crate) const fn view_id(&self) -> ViewId {
+        match self {
+            Self::Config => ViewId::Config,
+            Self::Flashblocks => ViewId::Flashblocks,
+            Self::Da => ViewId::DaMonitor,
+            Self::CommandCenter => ViewId::CommandCenter,
+            Self::Conductor => ViewId::Conductor,
+            Self::Upgrades => ViewId::Upgrades,
+        }
+    }
 }
