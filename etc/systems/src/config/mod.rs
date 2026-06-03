@@ -7,10 +7,6 @@ pub use accounts::{
     BATCHER, BUILDER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER, TEST_MNEMONIC, anvil_addresses,
 };
 
-mod deploy_config;
-/// Deploy config JSON generator for base/contracts forge scripts.
-pub use deploy_config::deploy_config_json;
-
 mod l1_beacon;
 /// L1 beacon chain configuration generator.
 pub use l1_beacon::l1_beacon_config_yaml;

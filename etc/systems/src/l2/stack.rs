@@ -207,6 +207,24 @@ impl L2Stack {
             .await
             .wrap_err("Failed to start in-process builder")?;
 
+        // Patch the L2 genesis hash in the rollup config if it is a zero placeholder.
+        // The devnet's base/contracts forge-based genesis flow cannot compute the L2
+        // genesis hash at deploy time, so it writes a zero placeholder; the real hash is
+        // only known after reth initializes from genesis.json. This mirrors the
+        // patch-genesis-hash step used by the Docker devnet.
+        if rollup_config.genesis.l2.hash == B256::ZERO {
+            let provider = RootProvider::<Base>::new_http(builder.rpc_url()?);
+            let block = provider
+                .get_block_by_number(BlockNumberOrTag::Earliest)
+                .full()
+                .await
+                .wrap_err("Failed to fetch L2 genesis block")?
+                .ok_or_else(|| eyre::eyre!("L2 genesis block not found"))?;
+            let hash = block.header.hash;
+            tracing::info!(%hash, "Patched L2 genesis hash in rollup config");
+            rollup_config.genesis.l2.hash = hash;
+        }
+
         // 2. Start builder consensus (in-process CL, Sequencer mode).
         //    The sequencer starts in stopped mode so that blocks are not produced until the
         //    validator is connected via P2P — otherwise the first blocks would be lost via gossip
