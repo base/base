@@ -313,18 +313,14 @@ where
             self.positions.at_mut(&old_value).delete()?;
         }
 
-        let overlap_len = old_len.min(new_len);
         for (index, new_value) in value.0.into_iter().enumerate() {
             self.positions.at_mut(&new_value).write(checked_position(index)?)?;
-            if index < overlap_len {
-                self.values
-                    .at_mut_with_len(index, old_len)
-                    .ok_or_else(position_invariant_violated)?
-                    .write(new_value)?;
-            } else {
-                self.values.push(new_value)?;
-            }
+            self.values
+                .at_mut_with_len(index, new_len)
+                .ok_or_else(position_invariant_violated)?
+                .write(new_value)?;
         }
+
         if new_len < old_len {
             for i in new_len..old_len {
                 self.values
@@ -332,9 +328,13 @@ where
                     .ok_or_else(position_invariant_violated)?
                     .delete()?;
             }
+        }
+
+        if new_len != old_len {
             Slot::<U256>::new(self.values.len_slot(), self.address, self.storage)
                 .write(U256::from(new_len))?;
         }
+
         Ok(())
     }
 
