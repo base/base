@@ -223,7 +223,7 @@ jobs:
   # Merge manifests and publish
   publish:
     needs: [build-and-push, build-binaries]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (needs.build-and-push.result == 'success' || needs.build-binaries.result == 'success') }}
     runs-on: ubuntu-latest
 
     steps:
