@@ -8,11 +8,25 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use anyhow::Result;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_network::Base;
+use futures::{StreamExt, stream};
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use super::l1::BlockDaInfo;
+use super::fetch_safe_and_latest;
 use crate::tui::Toast;
+
+const CONCURRENT_BLOCK_FETCHES: usize = 16;
+
+/// DA and gas information for a single L2 block.
+#[derive(Debug, Clone)]
+pub struct BlockDaInfo {
+    /// L2 block number.
+    pub block_number: u64,
+    /// Total DA bytes from all transactions.
+    pub da_bytes: u64,
+    /// Unix timestamp of the block.
+    pub timestamp: u64,
+}
 
 /// Summary of the initial DA backlog between safe and latest blocks.
 #[derive(Debug, Clone)]
@@ -111,6 +125,84 @@ pub async fn run_block_fetcher(
             if result_tx.send(block_info).await.is_err() {
                 break;
             }
+        }
+    }
+}
+
+/// Fetches the initial DA backlog, sending progress updates and block data.
+pub async fn fetch_initial_backlog_with_progress(
+    l2_rpc: String,
+    progress_tx: tokio::sync::mpsc::Sender<BacklogFetchResult>,
+) {
+    let result = async {
+        let (safe_block, unsafe_block) = fetch_safe_and_latest(&l2_rpc).await?;
+
+        if unsafe_block <= safe_block {
+            return Ok(InitialBacklog { safe_block, da_bytes: 0 });
+        }
+
+        let total_blocks = unsafe_block - safe_block;
+        let provider = Arc::new(
+            ProviderBuilder::new()
+                .disable_recommended_fillers()
+                .network::<Base>()
+                .connect(&l2_rpc)
+                .await?,
+        );
+
+        let block_numbers: Vec<u64> = ((safe_block + 1)..=unsafe_block).collect();
+
+        let mut total_da_bytes: u64 = 0;
+        let mut blocks_fetched: u64 = 0;
+        let mut blocks: Vec<BacklogBlock> = Vec::with_capacity(block_numbers.len());
+
+        let mut fetch_stream = stream::iter(block_numbers)
+            .map(|block_num| {
+                let provider = Arc::clone(&provider);
+                async move {
+                    fetch_raw_block_info(&*provider, block_num).await.map_or(
+                        BacklogBlock { block_number: block_num, da_bytes: 0, timestamp: 0 },
+                        |info| BacklogBlock {
+                            block_number: block_num,
+                            da_bytes: info.da_bytes,
+                            timestamp: info.timestamp,
+                        },
+                    )
+                }
+            })
+            .buffer_unordered(CONCURRENT_BLOCK_FETCHES);
+
+        while let Some(block) = fetch_stream.next().await {
+            total_da_bytes = total_da_bytes.saturating_add(block.da_bytes);
+            blocks.push(block);
+            blocks_fetched += 1;
+
+            if blocks_fetched.is_multiple_of(10) {
+                let _ = progress_tx
+                    .send(BacklogFetchResult::Progress(BacklogProgress {
+                        current_block: blocks_fetched,
+                        total_blocks,
+                    }))
+                    .await;
+            }
+        }
+
+        blocks.sort_by_key(|b| b.block_number);
+        for block in blocks {
+            let _ = progress_tx.send(BacklogFetchResult::Block(block)).await;
+        }
+
+        Ok::<_, anyhow::Error>(InitialBacklog { safe_block, da_bytes: total_da_bytes })
+    }
+    .await;
+
+    match result {
+        Ok(backlog) => {
+            let _ = progress_tx.send(BacklogFetchResult::Complete(backlog)).await;
+        }
+        Err(e) => {
+            warn!(error = %e, "Backlog fetch failed");
+            let _ = progress_tx.send(BacklogFetchResult::Error).await;
         }
     }
 }

@@ -14,18 +14,16 @@ pub use conductor::{
 
 mod el;
 pub use el::{
-    BacklogBlock, BacklogFetchResult, BacklogProgress, InitialBacklog, TxSummary,
-    decode_flashblock_transactions, fetch_block_transactions, run_block_fetcher,
+    BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, InitialBacklog, TxSummary,
+    decode_flashblock_transactions, fetch_block_transactions, fetch_initial_backlog_with_progress,
+    run_block_fetcher,
 };
 
 mod flashblocks;
 pub use flashblocks::{TimestampedFlashblock, run_flashblock_ws, run_flashblock_ws_timestamped};
 
 mod l1;
-pub use l1::{
-    BlockDaInfo, L1BlockInfo, L1ConnectionMode, fetch_full_system_config,
-    fetch_initial_backlog_with_progress, run_l1_blob_watcher,
-};
+pub use l1::{L1BlockInfo, L1ConnectionMode, fetch_full_system_config, run_l1_blob_watcher};
 
 mod p2p;
 
