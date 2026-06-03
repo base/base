@@ -290,8 +290,8 @@ where
                 self.values.push(new_value)?;
             }
         }
-        let is_shrunk = new_len < old_len;
-        if is_shrunk {
+        let has_shruk = new_len < old_len;
+        if has_shruk {
             for i in new_len..old_len {
                 self.values[i].delete()?;
             }
