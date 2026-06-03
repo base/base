@@ -72,15 +72,15 @@ pub enum BacklogFetchResult {
 
 /// Raw DA bytes and timestamp for a single L2 block, decoupled from the higher-level
 /// shapes (`BlockDaInfo`, `BacklogBlock`) that wrap it for different consumers.
-pub(super) struct RawBlockInfo {
-    pub(super) da_bytes: u64,
-    pub(super) timestamp: u64,
+struct RawBlockInfo {
+    da_bytes: u64,
+    timestamp: u64,
 }
 
 /// Fetches a single L2 block and computes its DA bytes.
 ///
 /// Returns `None` if the RPC call fails or the block does not exist.
-pub(super) async fn fetch_raw_block_info<P: Provider<Base>>(
+async fn fetch_raw_block_info<P: Provider<Base>>(
     provider: &P,
     block_num: u64,
 ) -> Option<RawBlockInfo> {
