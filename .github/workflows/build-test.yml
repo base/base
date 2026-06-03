@@ -92,16 +92,6 @@ jobs:
             shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
           fi
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: binaries-${{ matrix.binary }}-${{ matrix.target.triple }}
-          path: |
-            *.tar.gz
-            *.tar.gz.sha256
-          if-no-files-found: error
-          retention-days: 1
-
   # Build multi-arch Docker images (no push)
   build-and-push:
     strategy:
