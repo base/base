@@ -7,6 +7,37 @@ CHAIN_ID="${CHAIN_ID:-1337}"
 SLOT_DURATION="${SLOT_DURATION:-2}"
 L1_DATA_DIR="${L1_DATA_DIR:-/data}"
 TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
+L1_MODE="${L1_MODE:-eth}"
+
+# =============================================================================
+# Base L1 mode (L3 devnet): base-anvil generates and serves its own genesis, so we only
+# emit the artifacts the L2 services still consume - the engine JWT, the L1 chain-config
+# (for --l1-config-file), and an empty l2/ mountpoint for the nested read-only bind mount
+# (L2 services mount l1/configs -> /genesis:ro and l2/configs -> /genesis/l2:ro, so the
+# /genesis/l2 mountpoint must already exist inside l1/configs).
+# =============================================================================
+if [ "$L1_MODE" = "base" ]; then
+  if [ -f "$OUTPUT_DIR/jwt.hex" ] && [ -f "$OUTPUT_DIR/el/chain-config.json" ]; then
+    echo "=== L1 (base) config already exists, skipping generation ==="
+    exit 0
+  fi
+  echo "=== L1 (base-anvil) config generator ==="
+  echo "Chain ID: $CHAIN_ID"
+  mkdir -p "$OUTPUT_DIR/el" "$OUTPUT_DIR/l2"
+  openssl rand -hex 32 > "$OUTPUT_DIR/jwt.hex"
+  echo "JWT secret written to $OUTPUT_DIR/jwt.hex"
+  export CHAIN_ID
+  export GENESIS_TIME_HEX="0x0"
+  export BALANCE="0x0"
+  envsubst < "$TEMPLATE_DIR/l1-el-genesis.json.template" | jq '.config' > "$OUTPUT_DIR/el/chain-config.json"
+  echo "L1 chain config written to $OUTPUT_DIR/el/chain-config.json"
+  echo "=== L1 (base) config generation complete ==="
+  exit 0
+fi
+
+# =============================================================================
+# Ethereum L1 mode (default): full reth + lighthouse genesis below.
+# =============================================================================
 
 # Skip if L1 genesis already exists (for restarts)
 if [ -f "$OUTPUT_DIR/el/genesis.json" ] && [ -f "$OUTPUT_DIR/cl/genesis.ssz" ]; then

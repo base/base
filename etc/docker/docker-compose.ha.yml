@@ -59,8 +59,6 @@ services:
       - ${L2_CHAIN_ID}
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
-      - --l1-beacon
-      - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2-engine-rpc
       - ws://base-builder:${L2_BUILDER_AUTH_PORT}
       - --l2-engine-jwt-secret
@@ -69,8 +67,6 @@ services:
       - /genesis/l2/rollup.json
       - --l1-config-file
       - /genesis/el/chain-config.json
-      - --l1-slot-duration-override
-      - "4"
       - --rpc.port
       - "${L2_BUILDER_CL_RPC_PORT}"
       - --rpc.enable-admin
@@ -214,14 +210,17 @@ services:
       - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
+    environment:
+      # L1 beacon + slot duration are mode-driven (eth/l3 env file). Unset beacon in base-l1.
+      - BASE_NODE_L1_BEACON
+      - BASE_NODE_L1_CALLDATA_ONLY
+      - BASE_NODE_L1_SLOT_DURATION_OVERRIDE
     command:
       - node
       - --chain
       - ${L2_CHAIN_ID}
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
-      - --l1-beacon
-      - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2-engine-rpc
       - ws://base-sequencer-1:${L2_SEQ1_AUTH_PORT}
       - --l2-engine-jwt-secret
@@ -230,8 +229,6 @@ services:
       - /genesis/l2/rollup.json
       - --l1-config-file
       - /genesis/el/chain-config.json
-      - --l1-slot-duration-override
-      - "4"
       - --rpc.port
       - "${L2_SEQ1_CL_RPC_PORT}"
       - --rpc.enable-admin
@@ -352,14 +349,17 @@ services:
       - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
+    environment:
+      # L1 beacon + slot duration are mode-driven (eth/l3 env file). Unset beacon in base-l1.
+      - BASE_NODE_L1_BEACON
+      - BASE_NODE_L1_CALLDATA_ONLY
+      - BASE_NODE_L1_SLOT_DURATION_OVERRIDE
     command:
       - node
       - --chain
       - ${L2_CHAIN_ID}
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
-      - --l1-beacon
-      - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2-engine-rpc
       - ws://base-sequencer-2:${L2_SEQ2_AUTH_PORT}
       - --l2-engine-jwt-secret
@@ -368,8 +368,6 @@ services:
       - /genesis/l2/rollup.json
       - --l1-config-file
       - /genesis/el/chain-config.json
-      - --l1-slot-duration-override
-      - "4"
       - --rpc.port
       - "${L2_SEQ2_CL_RPC_PORT}"
       - --rpc.enable-admin

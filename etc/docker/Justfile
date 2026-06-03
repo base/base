@@ -5,6 +5,14 @@ _ha := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ha.yml"
 _base := "-f etc/docker/docker-compose.yml"
 _env := "--env-file etc/docker/devnet-env"
 _yaml_to_env := "etc/scripts/yaml-to-compose-env.py"
+# Mode-specific env layers + compose profiles.
+# eth-l1 (default): Ethereum L1 (reth + lighthouse), blob batches.
+# base-l1 (L3):     Base L1 (base-anvil), beaconless, calldata batches.
+_env_eth := "--env-file etc/docker/devnet-env --env-file etc/docker/devnet-eth-env"
+_env_l3 := "--env-file etc/docker/devnet-env --env-file etc/docker/devnet-l3-env"
+_eth := "--profile eth-l1"
+_l3 := "--profile base-l1"
+_all_profiles := "--profile eth-l1 --profile base-l1 --profile profiling"
 
 # Show devnet commands
 default:
@@ -12,19 +20,27 @@ default:
 
 # Stops devnet, deletes data, and starts fresh (3-node HA conductor cluster)
 up zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "ha" {{ quote(zk) }}
+    just --justfile {{ source_file() }} _up-devnet "ha" "eth" {{ quote(zk) }}
 
 # Stops devnet, deletes data, and starts fresh with a single sequencer (no conductor)
 up-single zk='dry-run':
-    just --justfile {{ source_file() }} _up-devnet "base" {{ quote(zk) }}
+    just --justfile {{ source_file() }} _up-devnet "base" "eth" {{ quote(zk) }}
+
+# Stops devnet, starts fresh as an L3 settling to Base (base-anvil L1, HA conductor cluster)
+up-l3 zk='dry-run':
+    just --justfile {{ source_file() }} _up-devnet "ha" "l3" {{ quote(zk) }}
+
+# Stops devnet, starts fresh as an L3 settling to Base with a single sequencer (no conductor)
+up-l3-single zk='dry-run':
+    just --justfile {{ source_file() }} _up-devnet "base" "l3" {{ quote(zk) }}
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
 profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
-    docker compose {{ _env }} {{ _ha }} --profile profiling up -d --no-build
+    docker compose {{ _env_eth }} {{ _ha }} {{ _eth }} --profile profiling up -d --no-build
 
-# Stops devnet and deletes all data
+# Stops devnet and deletes all data (covers both L1 modes)
 down:
-    -docker compose {{ _env }} {{ _ha }} --profile profiling down
+    -docker compose {{ _env }} {{ _ha }} {{ _all_profiles }} down
     -docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
 
 # Shows devnet block numbers and sync status
@@ -37,7 +53,7 @@ peer-status:
 
 # Shows devnet container status
 ps *services:
-    docker compose {{ _env }} {{ _ha }} ps {{ services }}
+    docker compose {{ _env }} {{ _ha }} {{ _all_profiles }} ps {{ services }}
 
 # Shows funded test accounts with live balances and nonces
 accounts:
@@ -57,7 +73,7 @@ flashblocks:
 
 # Stream logs from devnet containers (optionally specify container names)
 logs *containers:
-    docker compose {{ _env }} {{ _ha }} logs -f {{ containers }}
+    docker compose {{ _env }} {{ _ha }} {{ _all_profiles }} logs -f {{ containers }}
 
 # Stream logs from the sequencer's execution (EL) and consensus (CL) layers
 sequencer-logs:
@@ -122,6 +138,7 @@ pull-images:
         $(if [ -n "$CONTRACTS_COMMIT" ]; then echo "--build-arg CONTRACTS_COMMIT=$CONTRACTS_COMMIT"; fi) .
     docker pull ghcr.io/paradigmxyz/reth:v1.11.4
     docker pull sigp/lighthouse:v8.0.1
+    docker pull ghcr.io/base/base-anvil:main
 
 # Runs system tests (requires Docker)
 tests: _install-nextest _build-contracts
@@ -170,10 +187,11 @@ _build-rust-images group profile='dev':
     PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
-_up-devnet compose_profile zk:
+_up-devnet compose_profile l1_mode zk:
     #!/usr/bin/env bash
     set -euo pipefail
     compose_profile={{ quote(compose_profile) }}
+    l1_mode={{ quote(l1_mode) }}
     zk_mode={{ quote(zk) }}
     zk_mode="${zk_mode#zk=}"
 
@@ -186,12 +204,23 @@ _up-devnet compose_profile zk:
         ;;
     esac
 
+    # Select the L1 parent stack: eth (reth + lighthouse, blob DA) or l3 (base-anvil,
+    # calldata DA). Each layers its own env file and activates the matching compose profile.
+    case "$l1_mode" in
+      eth) env_files=({{ _env_eth }}); l1_profile=({{ _eth }}) ;;
+      l3)  env_files=({{ _env_l3 }}); l1_profile=({{ _l3 }}) ;;
+      *)
+        echo "ERROR: l1 mode must be 'eth' or 'l3' (got '${l1_mode}')" >&2
+        exit 1
+        ;;
+    esac
+
     case "$zk_mode" in
       dry-run)
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        SP1_PROVER=dry-run docker compose {{ _env }} "${compose_files[@]}" up -d --no-build
+        SP1_PROVER=dry-run docker compose "${env_files[@]}" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build
         ;;
       cluster)
         if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
@@ -241,7 +270,7 @@ _up-devnet compose_profile zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        docker compose {{ _env }} --env-file "$cluster_env" "${compose_files[@]}" up -d --no-build
+        docker compose "${env_files[@]}" --env-file "$cluster_env" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build
         ;;
       *)
         echo "ERROR: zk must be 'dry-run' or 'cluster' (got '${zk_mode}')" >&2

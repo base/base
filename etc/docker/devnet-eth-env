@@ -1,0 +1,13 @@
+# Ethereum-L1 devnet overrides (layered on top of devnet-env via a second --env-file).
+# L1 = reth (l1-el) + lighthouse (l1-cl/l1-vc); batches use blobs (OP-stack default).
+# Used by `just devnet up` (the default, stock devnet).
+
+# Select the Ethereum L1 stack (setup-l1 generates a full reth+lighthouse genesis).
+L1_MODE=eth
+
+# L2 consensus nodes: beacon API on the lighthouse node, 4s L1 slots.
+BASE_NODE_L1_BEACON=http://l1-cl:4052
+BASE_NODE_L1_SLOT_DURATION_OVERRIDE=4
+
+# zk prover L1 beacon address.
+L1_BEACON_ADDRESS=http://l1-cl:4052
