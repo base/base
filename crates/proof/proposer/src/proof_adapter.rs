@@ -2,6 +2,7 @@
 
 use std::{fmt, sync::Arc, time::Duration};
 
+use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_proof_primitives::{
     ProofRequest as PrimitiveProofRequest, ProofResult as PrimitiveProofResult, ProverClient,
@@ -182,11 +183,12 @@ impl ProposerProofAdapter {
     /// `proof type + root`. Other request fields are excluded so redeploys or
     /// retries for the same proof identity re-use the same prover-service session.
     pub fn tee_session_id(request: &PrimitiveProofRequest, tee_kind: TeeKind) -> String {
-        ProofSessionId::derive(
-            Self::SESSION_NAMESPACE,
-            Self::tee_session_label(tee_kind),
-            request.claimed_l2_output_root,
-        )
+        Self::tee_session_id_for_root(request.claimed_l2_output_root, tee_kind)
+    }
+
+    /// Derives an idempotent TEE proof session ID from proof subtype and claimed root.
+    pub fn tee_session_id_for_root(root: B256, tee_kind: TeeKind) -> String {
+        ProofSessionId::derive(Self::SESSION_NAMESPACE, Self::tee_session_label(tee_kind), root)
     }
 
     /// Builds a prover-service request for a TEE proposal proof.

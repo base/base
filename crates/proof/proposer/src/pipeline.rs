@@ -42,6 +42,8 @@ use base_proof_contracts::{
 };
 use base_proof_primitives::{ProofJournal, ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider, RpcError};
+use base_prover_service_client::ProofRequesterProvider;
+use base_prover_service_protocol::{GetProofRequest, ProofStatus, TeeKind};
 use eyre::Result;
 use futures::{FutureExt, StreamExt, stream};
 use tokio::task::JoinSet;
@@ -53,6 +55,7 @@ use crate::{
     driver::{DriverConfig, RecoveredState},
     error::ProposerError,
     output_proposer::OutputProposer,
+    proof_adapter::{ProofRequesterDispatcher, ProposerProofAdapter},
 };
 
 /// Configuration for the parallel proving pipeline.
@@ -99,7 +102,10 @@ struct CachedRecovery {
 /// Mutable state for the coordinator loop.
 struct PipelineState {
     /// Running proof tasks, each yielding `(target_block, result)`.
+    /// TODO(P6): remove after the transitional `ProverClient` path is deleted.
     prove_tasks: JoinSet<(u64, Result<ProofResult, ProposerError>)>,
+    /// Running proof dispatch tasks, each accepting a prover-service session.
+    dispatch_tasks: JoinSet<ProofDispatchOutcome>,
     /// At most one concurrent submission task.
     submit_tasks: JoinSet<SubmitOutcome>,
     /// Completed proofs waiting for sequential submission, keyed by target block.
@@ -120,10 +126,16 @@ struct ProofPlan {
     target_block: u64,
 }
 
+enum ProofDispatchOutcome {
+    Accepted { plan: ProofPlan, session_id: String },
+    Failed { plan: ProofPlan, error: ProposerError },
+}
+
 impl PipelineState {
     fn new() -> Self {
         Self {
             prove_tasks: JoinSet::new(),
+            dispatch_tasks: JoinSet::new(),
             submit_tasks: JoinSet::new(),
             proved: BTreeMap::new(),
             inflight: BTreeSet::new(),
@@ -167,6 +179,8 @@ where
 {
     config: PipelineConfig,
     prover: Arc<dyn ProverClient>,
+    proof_requester: Arc<dyn ProofRequesterProvider>,
+    proof_dispatcher: ProofRequesterDispatcher,
     l1_client: Arc<L1>,
     l2_client: Arc<L2>,
     rollup_client: Arc<R>,
@@ -189,6 +203,8 @@ where
         Self {
             config: self.config.clone(),
             prover: Arc::clone(&self.prover),
+            proof_requester: Arc::clone(&self.proof_requester),
+            proof_dispatcher: self.proof_dispatcher.clone(),
             l1_client: Arc::clone(&self.l1_client),
             l2_client: Arc::clone(&self.l2_client),
             rollup_client: Arc::clone(&self.rollup_client),
@@ -227,6 +243,7 @@ where
     pub fn new(
         config: PipelineConfig,
         prover: Arc<dyn ProverClient>,
+        proof_requester: Arc<dyn ProofRequesterProvider>,
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
         rollup_client: Arc<R>,
@@ -239,6 +256,8 @@ where
         Self {
             config,
             prover,
+            proof_requester: Arc::clone(&proof_requester),
+            proof_dispatcher: ProofRequesterDispatcher::aws_nitro(proof_requester),
             l1_client,
             l2_client,
             rollup_client,
@@ -279,8 +298,13 @@ where
 
                 () = self.cancel.cancelled() => {
                     state.prove_tasks.abort_all();
+                    state.dispatch_tasks.abort_all();
                     state.submit_tasks.abort_all();
                     break;
+                }
+
+                Some(result) = state.dispatch_tasks.join_next() => {
+                    self.handle_dispatch_result(result, &mut state);
                 }
 
                 Some(result) = state.submit_tasks.join_next() => {
@@ -318,6 +342,7 @@ where
             Metrics::safe_head().set(safe_head as f64);
             Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
             state.prune_stale(recovered.l2_block_number);
+            self.collect_proofs(&recovered, safe_head, state).await;
             self.dispatch_proofs(&recovered, safe_head, state).await?;
         }
         Ok(())
@@ -353,42 +378,60 @@ where
         };
 
         for (plan, request) in requests {
-            let prover = Arc::clone(&self.prover);
+            let retry_count = state.retry_counts.get(&plan.target_block).copied().unwrap_or(0);
+            let session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
+            let dispatcher = self.proof_dispatcher.clone();
             let cancel = self.cancel.child_token();
 
             info!(
+                session_id = %session_id,
                 from_block = plan.start_block,
                 to_block = plan.target_block,
                 blocks = plan.target_block.saturating_sub(plan.start_block),
+                retry_count,
                 "Dispatching proof task"
             );
             state.inflight.insert(plan.target_block);
-            state.prove_tasks.spawn(async move {
-                let target = plan.target_block;
+            state.dispatch_tasks.spawn(async move {
                 let inner = async move {
-                    let mut proof_timer = base_metrics::timed!(Metrics::proof_duration_seconds());
                     tokio::select! {
                         () = cancel.cancelled() => {
-                            proof_timer.disarm();
-                            Err(ProposerError::Internal("cancelled".into()))
+                            ProofDispatchOutcome::Failed {
+                                plan,
+                                error: ProposerError::Internal("cancelled".into()),
+                            }
                         }
-                        result = prover.prove(request) => {
-                            drop(proof_timer);
-                            result.map_err(|e| ProposerError::Prover(e.to_string()))
+                        result = dispatcher.dispatch_tee(request) => {
+                            match result {
+                                Ok(dispatched) if dispatched.session_id == session_id => {
+                                    ProofDispatchOutcome::Accepted { plan, session_id }
+                                }
+                                Ok(dispatched) => ProofDispatchOutcome::Failed {
+                                    plan,
+                                    error: ProposerError::Prover(format!(
+                                        "prover service returned mismatched session_id: expected {}, got {}",
+                                        session_id,
+                                        dispatched.session_id
+                                    )),
+                                },
+                                Err(error) => ProofDispatchOutcome::Failed { plan, error },
+                            }
                         }
                     }
                 };
-                // Catch panics inside the prove future so a single bad task
+                // Catch panics inside the dispatch future so a single bad task
                 // never bubbles up as a tokio JoinError that the coordinator
                 // can't attribute to a specific target.
-                let result = match AssertUnwindSafe(inner).catch_unwind().await {
-                    Ok(r) => r,
-                    Err(panic) => Err(ProposerError::Internal(format!(
-                        "proof task panicked: {}",
-                        panic_message(&panic)
-                    ))),
-                };
-                (target, result)
+                match AssertUnwindSafe(inner).catch_unwind().await {
+                    Ok(outcome) => outcome,
+                    Err(panic) => ProofDispatchOutcome::Failed {
+                        plan,
+                        error: ProposerError::Internal(format!(
+                            "proof dispatch task panicked: {}",
+                            panic_message(&panic),
+                        )),
+                    },
+                }
             });
         }
 
@@ -456,6 +499,227 @@ where
             };
         }
         Ok((plans, output_blocks))
+    }
+
+    fn handle_dispatch_result(
+        &self,
+        join_result: Result<ProofDispatchOutcome, tokio::task::JoinError>,
+        state: &mut PipelineState,
+    ) {
+        let outcome = match join_result {
+            Ok(outcome) => outcome,
+            Err(join_err) if join_err.is_cancelled() => {
+                debug!(error = %join_err, "Proof dispatch task cancelled");
+                return;
+            }
+            Err(join_err) => {
+                // Panics inside dispatch futures are caught and returned as
+                // `ProofDispatchOutcome::Failed` with target context. A raw
+                // join error here has no target block, so stale inflight
+                // cleanup falls back to `prune_stale`.
+                warn!(error = %join_err, "Proof dispatch task join error");
+                state.record_gauges();
+                return;
+            }
+        };
+
+        match outcome {
+            ProofDispatchOutcome::Accepted { plan, session_id } => {
+                if !state.inflight.contains(&plan.target_block)
+                    || state.proved.contains_key(&plan.target_block)
+                {
+                    debug!(
+                        target_block = plan.target_block,
+                        session_id = %session_id,
+                        "Ignoring stale proof dispatch result"
+                    );
+                    return;
+                }
+
+                info!(
+                    target_block = plan.target_block,
+                    session_id = %session_id,
+                    from_block = plan.start_block,
+                    "Proof request accepted by prover service"
+                );
+                state.record_gauges();
+            }
+            ProofDispatchOutcome::Failed { plan, error } => {
+                if !state.inflight.contains(&plan.target_block)
+                    || state.proved.contains_key(&plan.target_block)
+                {
+                    debug!(
+                        target_block = plan.target_block,
+                        error = %error,
+                        "Ignoring stale proof dispatch failure"
+                    );
+                    return;
+                }
+
+                self.handle_proof_failure(plan.target_block, error, state);
+            }
+        }
+    }
+
+    async fn collect_proofs(
+        &self,
+        recovered: &RecoveredState,
+        safe_head: u64,
+        state: &mut PipelineState,
+    ) {
+        let targets = self.collectable_targets(recovered, safe_head, state);
+        let roots = self.fetch_canonical_root_results_with(targets.clone(), false).await;
+
+        for target in targets {
+            let Some(Ok(root)) = roots.get(&target) else { continue };
+            let session_id =
+                ProposerProofAdapter::tee_session_id_for_root(*root, TeeKind::AwsNitro);
+
+            let response = match self
+                .proof_requester
+                .get_proof(GetProofRequest { session_id: session_id.clone() })
+                .await
+            {
+                Ok(response) => response,
+                Err(e) => {
+                    debug!(
+                        error = %e,
+                        target_block = target,
+                        session_id = %session_id,
+                        "Failed to poll proof status"
+                    );
+                    continue;
+                }
+            };
+
+            match response.status {
+                ProofStatus::Queued | ProofStatus::Running => {
+                    debug!(
+                        target_block = target,
+                        session_id = %session_id,
+                        status = ?response.status,
+                        "Proof request still pending"
+                    );
+                }
+                ProofStatus::Failed => {
+                    if !state.inflight.contains(&target) {
+                        debug!(
+                            target_block = target,
+                            session_id = %session_id,
+                            "Ignoring failed proof result for non-inflight target"
+                        );
+                        continue;
+                    }
+
+                    let message = response.error_message.unwrap_or_else(|| {
+                        format!("proof session {session_id} failed without an error message")
+                    });
+                    self.handle_proof_failure(target, ProposerError::Prover(message), state);
+                }
+                ProofStatus::Succeeded => {
+                    let result = match response.result {
+                        Some(result) => result,
+                        None => {
+                            if !state.inflight.contains(&target) {
+                                debug!(
+                                    target_block = target,
+                                    session_id = %session_id,
+                                    "Ignoring malformed proof success for non-inflight target"
+                                );
+                                continue;
+                            }
+
+                            self.handle_proof_failure(
+                                target,
+                                ProposerError::Prover(format!(
+                                    "proof session {session_id} succeeded without a result"
+                                )),
+                                state,
+                            );
+                            continue;
+                        }
+                    };
+
+                    match ProposerProofAdapter::tee_proof_result(result, TeeKind::AwsNitro) {
+                        Ok(proof_result) => {
+                            state.inflight.remove(&target);
+                            state.retry_counts.remove(&target);
+                            state.proved.insert(target, proof_result);
+                            state.record_gauges();
+                            info!(
+                                target_block = target,
+                                session_id = %session_id,
+                                "Proof completed successfully"
+                            );
+                        }
+                        Err(error) => {
+                            if !state.inflight.contains(&target) {
+                                debug!(
+                                    target_block = target,
+                                    session_id = %session_id,
+                                    error = %error,
+                                    "Ignoring malformed proof result for non-inflight target"
+                                );
+                                continue;
+                            }
+
+                            self.handle_proof_failure(target, error, state);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn collectable_targets(
+        &self,
+        recovered: &RecoveredState,
+        safe_head: u64,
+        state: &PipelineState,
+    ) -> Vec<u64> {
+        let mut cursor =
+            match recovered.l2_block_number.checked_add(self.config.driver.block_interval) {
+                Some(cursor) => cursor,
+                None => return Vec::new(),
+            };
+        let mut targets = Vec::new();
+
+        while cursor <= safe_head && targets.len() < self.config.max_parallel_proofs {
+            if !state.proved.contains_key(&cursor) && state.submitting != Some(cursor) {
+                targets.push(cursor);
+            }
+            cursor = match cursor.checked_add(self.config.driver.block_interval) {
+                Some(cursor) => cursor,
+                None => break,
+            };
+        }
+
+        targets
+    }
+
+    fn handle_proof_failure(&self, target: u64, error: ProposerError, state: &mut PipelineState) {
+        Metrics::errors_total(error.metric_label()).increment(1);
+        state.inflight.remove(&target);
+        let count = state.retry_counts.entry(target).or_insert(0);
+        *count += 1;
+        if *count >= self.config.max_retries {
+            error!(
+                target_block = target,
+                attempts = *count,
+                error = %error,
+                "Proof failed after max retries, dropping cached recovery"
+            );
+            state.retry_counts.remove(&target);
+            state.cached_recovery = None;
+        } else {
+            warn!(
+                target_block = target,
+                attempt = *count,
+                error = %error,
+                "Proof failed, will retry next tick"
+            );
+        }
+        state.record_gauges();
     }
 
     fn try_submit(&self, state: &mut PipelineState) {
@@ -1591,8 +1855,8 @@ mod tests {
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-        MockOutputProposer, MockProver, MockRollupClient, test_anchor_root, test_proposal,
-        test_sync_status,
+        MockOutputProposer, MockProofRequester, MockProver, MockRollupClient, test_anchor_root,
+        test_proposal, test_sync_status,
     };
 
     // ---- Named constants for test data ----
@@ -1756,6 +2020,7 @@ mod tests {
         ProvingPipeline::new(
             pipeline_config,
             prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
@@ -1875,6 +2140,7 @@ mod tests {
                 },
             },
             prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
@@ -2050,6 +2316,7 @@ mod tests {
                 },
             },
             prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
@@ -2174,6 +2441,7 @@ mod tests {
                 },
             },
             prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
@@ -2459,6 +2727,7 @@ mod tests {
                 },
             },
             prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
@@ -2533,6 +2802,7 @@ mod tests {
                 },
             },
             prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
@@ -2592,6 +2862,7 @@ mod tests {
                 },
             },
             prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
