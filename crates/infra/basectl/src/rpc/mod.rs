@@ -8,8 +8,8 @@ pub use admin::{
 mod conductor;
 pub use conductor::{
     ConductorNodeStatus, ConductorPollUpdate, PausedPeers, conductor_pause_all_nodes,
-    conductor_pause_node, conductor_resume_all_nodes, conductor_resume_node, restart_conductor_node,
-    run_conductor_poller, transfer_conductor_leader,
+    conductor_pause_node, conductor_resume_all_nodes, conductor_resume_node,
+    restart_conductor_node, run_conductor_poller, transfer_conductor_leader,
 };
 
 mod el;
