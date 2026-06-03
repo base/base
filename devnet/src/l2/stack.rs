@@ -6,13 +6,16 @@
 //! - Batcher (in-process, submits L2 transaction batches to L1)
 //! - Client execution layer (in-process, follows the L2 and builds pending state using Flashblocks)
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
+use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
+use base_common_network::Base;
 use base_consensus_node::NodeMode;
 use base_tx_forwarding::TxForwardingConfig;
-use eyre::{Result, WrapErr};
+use eyre::{Result, WrapErr, eyre};
 use url::Url;
 
 use super::{
@@ -99,7 +102,7 @@ impl L2Stack {
         let l1_rpc_url: Url = config.l1_rpc_url.parse().wrap_err("Invalid L1 RPC URL")?;
         let l1_beacon_url: Url = config.l1_beacon_url.parse().wrap_err("Invalid L1 beacon URL")?;
 
-        let rollup_config: RollupConfig = serde_json::from_slice(&config.rollup_config)
+        let mut rollup_config: RollupConfig = serde_json::from_slice(&config.rollup_config)
             .wrap_err("Failed to parse rollup config")?;
         let l1_chain_config: ChainConfig = serde_json::from_slice(&config.l1_genesis)
             .wrap_err("Failed to parse L1 chain config")?;
@@ -117,6 +120,18 @@ impl L2Stack {
         let builder = InProcessBuilder::start(builder_config)
             .await
             .wrap_err("Failed to start in-process builder")?;
+
+        // Patch the rollup config's L2 genesis hash with the builder's actual genesis hash.
+        // The forge-script deployer writes a zero placeholder (the true hash is only known
+        // once an EL initializes from genesis.json); mirror the docker-compose
+        // `patch-genesis-hash` service so the consensus node accepts reth's genesis.
+        let builder_provider: RootProvider<Base> = RootProvider::new_http(builder.rpc_url()?);
+        let genesis_block = builder_provider
+            .get_block_by_number(BlockNumberOrTag::Number(0))
+            .await
+            .wrap_err("Failed to query builder genesis block")?
+            .ok_or_else(|| eyre!("Builder returned no genesis block"))?;
+        rollup_config.genesis.l2.hash = genesis_block.header.hash;
 
         // 2. Start builder consensus (in-process CL, Sequencer mode).
         //    The sequencer starts in stopped mode so that blocks are not produced until the
