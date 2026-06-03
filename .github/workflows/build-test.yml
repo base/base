@@ -1,7 +1,9 @@
 name: Build Release
 
 on:
-  pull_request:
+  push:
+    branches:
+      - 'pellekrab/**'
   workflow_dispatch:
 
 env:
