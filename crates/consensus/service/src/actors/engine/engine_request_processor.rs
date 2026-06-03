@@ -1,6 +1,6 @@
 use std::{fmt, sync::Arc};
 
-use alloy_eips::BlockNumberOrTag;
+use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
@@ -10,6 +10,7 @@ use base_consensus_engine::{
     ForkchoiceCheckpointReader, InsertTask, InsertTaskResult, Metrics as EngineMetrics,
     NoopForkchoiceCheckpointReader, SealTaskError,
 };
+use base_consensus_safedb::{DisabledSafeDB, SafeDBError, SafeDBReader};
 use base_protocol::L2BlockInfo;
 use tokio::{
     sync::{mpsc, watch},
@@ -131,6 +132,8 @@ where
     checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader>,
     /// Writes checkpointed forkchoice state after engine state changes.
     checkpoint_writer: Arc<dyn CheckpointWriter>,
+    /// Reads SafeDB reset anchor hints when SafeDB is configured.
+    safe_db_reader: Arc<dyn SafeDBReader>,
 }
 
 impl<EngineClient_, DerivationClient> EngineProcessor<EngineClient_, DerivationClient>
@@ -167,9 +170,33 @@ where
         checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader>,
         checkpoint_writer: Arc<dyn CheckpointWriter>,
     ) -> Self {
+        Self::new_with_checkpoint_and_safedb(
+            client,
+            config,
+            derivation_client,
+            engine,
+            options,
+            checkpoint_reader,
+            checkpoint_writer,
+            Arc::new(DisabledSafeDB),
+        )
+    }
+
+    /// Constructs a new [`EngineProcessor`] with checkpoint persistence and SafeDB reset hints.
+    pub fn new_with_checkpoint_and_safedb(
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        derivation_client: DerivationClient,
+        engine: Engine<EngineClient_>,
+        options: EngineProcessorOptions,
+        checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader>,
+        checkpoint_writer: Arc<dyn CheckpointWriter>,
+        safe_db_reader: Arc<dyn SafeDBReader>,
+    ) -> Self {
         Self {
             checkpoint_reader,
             checkpoint_writer,
+            safe_db_reader,
             client,
             conductor: options.conductor,
             derivation_client,
@@ -182,6 +209,39 @@ where
             rollup: config,
             sequencer_stopped: options.sequencer_stopped,
             unsafe_head_tx: options.unsafe_head_tx,
+        }
+    }
+
+    async fn reset_anchor_hint(&self, l2_safe_head: L2BlockInfo) -> Option<BlockNumHash> {
+        let safe_head_ts = l2_safe_head.block_info.timestamp;
+        let l1_origin_ts_lower_bound =
+            safe_head_ts.saturating_sub(self.rollup.max_sequencer_drift(safe_head_ts));
+        let channel_timeout = self.rollup.channel_timeout(l1_origin_ts_lower_bound);
+        let query_l1_number = l2_safe_head.l1_origin.number.saturating_sub(channel_timeout);
+
+        match self.safe_db_reader.safe_head_at_l1(query_l1_number).await {
+            Ok(response) => {
+                debug!(
+                    target: "engine",
+                    safe_l2 = l2_safe_head.block_info.number,
+                    safe_l1_origin = l2_safe_head.l1_origin.number,
+                    query_l1_number,
+                    hint_l1 = response.l1_block.number,
+                    hint_l2 = response.safe_head.number,
+                    "found SafeDB reset anchor hint"
+                );
+                Some(response.safe_head)
+            }
+            Err(SafeDBError::Disabled | SafeDBError::NotFound) => None,
+            Err(err) => {
+                warn!(
+                    target: "engine",
+                    error = %err,
+                    query_l1_number,
+                    "failed to query SafeDB reset anchor hint; continuing without hint"
+                );
+                None
+            }
         }
     }
 
@@ -200,8 +260,10 @@ where
 
         self.checkpoint_forkchoice_state_if_updated().await;
 
+        let l2_reset_anchor_hint = self.reset_anchor_hint(l2_safe_head).await;
+
         // Signal the derivation actor to reset.
-        let signal = ResetSignal { l2_safe_head };
+        let signal = ResetSignal { l2_safe_head, l2_reset_anchor_hint };
         match self.derivation_client.send_signal(signal.signal()).await {
             Ok(_) => info!(target: "engine", "Sent reset signal to derivation actor"),
             Err(err) => {
@@ -873,12 +935,13 @@ mod tests {
     use base_consensus_derive::Signal;
     use base_consensus_engine::{
         Engine, EngineState, EngineTaskError, EngineTaskErrorSeverity, ForkchoiceCheckpointError,
-        ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
+        ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader, NoopForkchoiceCheckpointReader,
         test_utils::{
             TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
             test_engine_client_builder,
         },
     };
+    use base_consensus_safedb::{SafeDBError, SafeDBReader, SafeHeadResponse};
     use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     use rstest::rstest;
     use tokio::sync::{mpsc, watch};
@@ -910,6 +973,23 @@ mod tests {
                 ForkchoiceCheckpointLabel::Safe => self.safe,
                 ForkchoiceCheckpointLabel::Finalized => self.finalized,
             })
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestSafeDBReader {
+        expected_l1_number: u64,
+        response: SafeHeadResponse,
+    }
+
+    #[async_trait]
+    impl SafeDBReader for TestSafeDBReader {
+        async fn safe_head_at_l1(
+            &self,
+            l1_block_num: u64,
+        ) -> Result<SafeHeadResponse, SafeDBError> {
+            assert_eq!(l1_block_num, self.expected_l1_number);
+            Ok(self.response)
         }
     }
 
@@ -1023,6 +1103,48 @@ mod tests {
             ),
             queue_rx,
         )
+    }
+
+    #[tokio::test]
+    async fn reset_anchor_hint_queries_safedb_at_channel_timeout_cutoff() {
+        let client = Arc::new(test_engine_client_builder().build());
+        let config = Arc::new(RollupConfig { channel_timeout: 10, ..Default::default() });
+        let derivation_client = MockEngineDerivationClient::new();
+        let initial_state = EngineState::default();
+        let (state_tx, _) = watch::channel(initial_state);
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(initial_state, state_tx, queue_tx);
+        let hint = BlockNumHash { number: 40, hash: B256::with_last_byte(40) };
+
+        let processor = EngineProcessor::new_with_checkpoint_and_safedb(
+            client,
+            Arc::clone(&config),
+            derivation_client,
+            engine,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Validator,
+                unsafe_head_tx: None,
+                conductor: None,
+                sequencer_stopped: false,
+            },
+            Arc::new(NoopForkchoiceCheckpointReader),
+            Arc::new(NoopCheckpointWriter),
+            Arc::new(TestSafeDBReader {
+                expected_l1_number: 90,
+                response: SafeHeadResponse {
+                    l1_block: BlockNumHash { number: 90, hash: B256::with_last_byte(90) },
+                    safe_head: hint,
+                },
+            }),
+        );
+
+        let l2_safe_head = L2BlockInfo {
+            block_info: BlockInfo { number: 100, timestamp: 100, ..Default::default() },
+            l1_origin: BlockNumHash { number: 100, hash: B256::with_last_byte(100) },
+            seq_num: 0,
+        };
+
+        assert_eq!(processor.reset_anchor_hint(l2_safe_head).await, Some(hint));
     }
 
     #[rstest]

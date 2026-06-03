@@ -65,6 +65,7 @@ where
     async fn initial_reset(
         &mut self,
         l2_safe_head: L2BlockInfo,
+        l2_reset_anchor_hint: Option<BlockNumHash>,
     ) -> PipelineResult<(BlockNumHash, SystemConfig)>
     where
         <P as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
@@ -73,22 +74,9 @@ where
         let l1_origin_ts_lower_bound =
             l2_safe_head_ts.saturating_sub(self.rollup_config.max_sequencer_drift(l2_safe_head_ts));
         let channel_timeout = self.rollup_config.channel_timeout(l1_origin_ts_lower_bound);
-        let l1_origin_number = l2_safe_head.l1_origin.number;
-        let mut current = l2_safe_head;
-
-        loop {
-            if current.block_info.number == self.rollup_config.genesis.l2.number {
-                break;
-            }
-            if current.l1_origin.number + channel_timeout <= l1_origin_number {
-                break;
-            }
-            current = self
-                .l2_chain_provider
-                .l2_block_info_by_number(current.block_info.number - 1)
-                .await
-                .map_err(Into::into)?;
-        }
+        let current = self
+            .find_initial_reset_block(l2_safe_head, l2_reset_anchor_hint, channel_timeout)
+            .await?;
 
         let system_config = self
             .l2_chain_provider
@@ -97,6 +85,147 @@ where
             .map_err(Into::into)?;
 
         Ok((current.l1_origin, system_config))
+    }
+
+    async fn find_initial_reset_block(
+        &mut self,
+        l2_safe_head: L2BlockInfo,
+        l2_reset_anchor_hint: Option<BlockNumHash>,
+        channel_timeout: u64,
+    ) -> PipelineResult<L2BlockInfo>
+    where
+        <P as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
+    {
+        let l1_origin_number = l2_safe_head.l1_origin.number;
+        let genesis_l2_number = self.rollup_config.genesis.l2.number;
+
+        if self.is_initial_reset_block(l2_safe_head, channel_timeout, l1_origin_number) {
+            return Ok(l2_safe_head);
+        }
+
+        if let Some(hint) = l2_reset_anchor_hint
+            && hint.number <= l2_safe_head.block_info.number
+        {
+            match self
+                .l2_chain_provider
+                .l2_block_info_by_number(hint.number)
+                .await
+                .map_err(Into::into)
+            {
+                Ok(block)
+                    if block.block_info.hash == hint.hash
+                        && self.is_initial_reset_block(
+                            block,
+                            channel_timeout,
+                            l1_origin_number,
+                        ) =>
+                {
+                    tracing::debug!(
+                        target: "pipeline",
+                        hint_l2 = hint.number,
+                        safe_l2 = l2_safe_head.block_info.number,
+                        "accepted reset anchor hint"
+                    );
+                    return self
+                        .find_highest_initial_reset_block(
+                            block,
+                            l2_safe_head.block_info.number,
+                            channel_timeout,
+                            l1_origin_number,
+                        )
+                        .await;
+                }
+                Ok(block) => {
+                    tracing::debug!(
+                        target: "pipeline",
+                        hint_l2 = hint.number,
+                        hint_hash = %hint.hash,
+                        actual_hash = %block.block_info.hash,
+                        actual_l1_origin = block.l1_origin.number,
+                        safe_l1_origin = l1_origin_number,
+                        channel_timeout,
+                        "ignored invalid reset anchor hint"
+                    );
+                }
+                Err(err) => {
+                    tracing::debug!(
+                        target: "pipeline",
+                        hint_l2 = hint.number,
+                        error = ?err,
+                        "ignored unavailable reset anchor hint"
+                    );
+                }
+            }
+        }
+
+        let mut step = 1_u64;
+        let lower_bound = loop {
+            let candidate_number =
+                l2_safe_head.block_info.number.saturating_sub(step).max(genesis_l2_number);
+            let candidate = self
+                .l2_chain_provider
+                .l2_block_info_by_number(candidate_number)
+                .await
+                .map_err(Into::into)?;
+
+            if self.is_initial_reset_block(candidate, channel_timeout, l1_origin_number) {
+                break candidate;
+            }
+
+            if candidate_number == genesis_l2_number {
+                break candidate;
+            }
+
+            step = step.saturating_mul(2);
+        };
+
+        self.find_highest_initial_reset_block(
+            lower_bound,
+            l2_safe_head.block_info.number,
+            channel_timeout,
+            l1_origin_number,
+        )
+        .await
+    }
+
+    async fn find_highest_initial_reset_block(
+        &mut self,
+        mut lower_bound: L2BlockInfo,
+        mut upper_number: u64,
+        channel_timeout: u64,
+        l1_origin_number: u64,
+    ) -> PipelineResult<L2BlockInfo>
+    where
+        <P as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
+    {
+        while lower_bound.block_info.number + 1 < upper_number {
+            let mid = lower_bound.block_info.number
+                + ((upper_number - lower_bound.block_info.number) / 2);
+            let block =
+                self.l2_chain_provider.l2_block_info_by_number(mid).await.map_err(Into::into)?;
+
+            if self.is_initial_reset_block(block, channel_timeout, l1_origin_number) {
+                lower_bound = block;
+            } else {
+                upper_number = mid;
+            }
+        }
+
+        Ok(lower_bound)
+    }
+
+    fn is_initial_reset_block(
+        &self,
+        block: L2BlockInfo,
+        channel_timeout: u64,
+        l1_origin_number: u64,
+    ) -> bool {
+        block.block_info.number == self.rollup_config.genesis.l2.number
+            || block
+                .l1_origin
+                .number
+                .checked_add(channel_timeout)
+                .is_some_and(|timeout_l1| timeout_l1 <= l1_origin_number)
     }
 }
 
@@ -143,8 +272,9 @@ where
     /// [`initial_reset`]: Self::initial_reset
     async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
         match signal {
-            Signal::Reset(ResetSignal { l2_safe_head }) => {
-                let (l1_origin, system_config) = self.initial_reset(l2_safe_head).await?;
+            Signal::Reset(ResetSignal { l2_safe_head, l2_reset_anchor_hint }) => {
+                let (l1_origin, system_config) =
+                    self.initial_reset(l2_safe_head, l2_reset_anchor_hint).await?;
                 match self.attributes.reset(l1_origin, system_config).await {
                     Ok(()) => trace!(target: "pipeline", "Stages reset"),
                     Err(err) => {
@@ -297,6 +427,45 @@ mod tests {
         }
     }
 
+    fn test_l2_block(number: u64) -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: BlockInfo {
+                number,
+                hash: B256::with_last_byte((number & 0xff) as u8),
+                parent_hash: if number == 0 {
+                    B256::ZERO
+                } else {
+                    B256::with_last_byte(((number - 1) & 0xff) as u8)
+                },
+                timestamp: number,
+            },
+            l1_origin: BlockNumHash {
+                number,
+                hash: B256::with_last_byte(((number ^ 0x80) & 0xff) as u8),
+            },
+            seq_num: 0,
+        }
+    }
+
+    fn reset_search_pipeline(
+        safe_l2_number: u64,
+        channel_timeout: u64,
+    ) -> DerivationPipeline<TestNextAttributes, TestL2ChainProvider> {
+        let rollup_config = Arc::new(RollupConfig { channel_timeout, ..Default::default() });
+        let mut l2_chain_provider = TestL2ChainProvider::default();
+        for n in 0..=safe_l2_number {
+            l2_chain_provider.blocks.push(test_l2_block(n));
+            l2_chain_provider.system_configs.insert(
+                n,
+                SystemConfig {
+                    batcher_address: Address::repeat_byte((n & 0xff) as u8),
+                    ..Default::default()
+                },
+            );
+        }
+        DerivationPipeline::new(TestNextAttributes::default(), rollup_config, l2_chain_provider)
+    }
+
     #[test]
     fn test_pipeline_next_attributes_empty() {
         let mut pipeline = new_test_pipeline();
@@ -423,8 +592,67 @@ mod tests {
             l1_origin: BlockNumHash { number: 5, hash: Default::default() },
             ..Default::default()
         };
-        let result = pipeline.initial_reset(l2_safe_head).await;
+        let result = pipeline.initial_reset(l2_safe_head, None).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_derivation_pipeline_initial_reset_search_finds_highest_valid_block() {
+        const SAFE_HEAD: u64 = 50;
+        const CHANNEL_TIMEOUT: u64 = 10;
+        const EXPECTED_RESET_BLOCK: u64 = SAFE_HEAD - CHANNEL_TIMEOUT;
+
+        let mut pipeline = reset_search_pipeline(SAFE_HEAD, CHANNEL_TIMEOUT);
+
+        let (l1_origin, system_config) =
+            pipeline.initial_reset(test_l2_block(SAFE_HEAD), None).await.unwrap();
+
+        assert_eq!(l1_origin.number, EXPECTED_RESET_BLOCK);
+        assert_eq!(system_config.batcher_address, Address::repeat_byte(EXPECTED_RESET_BLOCK as u8));
+    }
+
+    #[tokio::test]
+    async fn test_derivation_pipeline_initial_reset_uses_valid_hint_as_search_floor() {
+        const SAFE_HEAD: u64 = 50;
+        const CHANNEL_TIMEOUT: u64 = 10;
+        const EXPECTED_RESET_BLOCK: u64 = SAFE_HEAD - CHANNEL_TIMEOUT;
+
+        let mut pipeline = reset_search_pipeline(SAFE_HEAD, CHANNEL_TIMEOUT);
+        let hint_block = test_l2_block(EXPECTED_RESET_BLOCK);
+
+        let (l1_origin, system_config) = pipeline
+            .initial_reset(
+                test_l2_block(SAFE_HEAD),
+                Some(BlockNumHash {
+                    number: hint_block.block_info.number,
+                    hash: hint_block.block_info.hash,
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(l1_origin.number, EXPECTED_RESET_BLOCK);
+        assert_eq!(system_config.batcher_address, Address::repeat_byte(EXPECTED_RESET_BLOCK as u8));
+    }
+
+    #[tokio::test]
+    async fn test_derivation_pipeline_initial_reset_ignores_invalid_hint() {
+        const SAFE_HEAD: u64 = 50;
+        const CHANNEL_TIMEOUT: u64 = 10;
+        const EXPECTED_RESET_BLOCK: u64 = SAFE_HEAD - CHANNEL_TIMEOUT;
+
+        let mut pipeline = reset_search_pipeline(SAFE_HEAD, CHANNEL_TIMEOUT);
+
+        let (l1_origin, system_config) = pipeline
+            .initial_reset(
+                test_l2_block(SAFE_HEAD),
+                Some(BlockNumHash { number: EXPECTED_RESET_BLOCK, hash: B256::ZERO }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(l1_origin.number, EXPECTED_RESET_BLOCK);
+        assert_eq!(system_config.batcher_address, Address::repeat_byte(EXPECTED_RESET_BLOCK as u8));
     }
 
     /// On a Granite-straddle safe head — L2 timestamp post-Granite while its L1 origin
@@ -461,7 +689,7 @@ mod tests {
         });
 
         let mut l2_chain_provider = TestL2ChainProvider::default();
-        for n in SPEC_STOP_L1_ORIGIN..=L1_HEAD {
+        for n in 0..=L1_HEAD {
             let timestamp = if n == L1_HEAD { L2_SAFE_HEAD_TIMESTAMP } else { 0 };
             l2_chain_provider.blocks.push(L2BlockInfo {
                 block_info: BlockInfo {
@@ -503,7 +731,7 @@ mod tests {
             seq_num: 0,
         };
 
-        let (l1_origin, system_config) = pipeline.initial_reset(safe_head).await.unwrap();
+        let (l1_origin, system_config) = pipeline.initial_reset(safe_head, None).await.unwrap();
         assert_eq!(
             l1_origin.number, SPEC_STOP_L1_ORIGIN,
             "spec walk-back must stop at L1 origin {SPEC_STOP_L1_ORIGIN} (pre-Granite=300), not at {CODE_STOP_L1_ORIGIN} (Granite=50)"

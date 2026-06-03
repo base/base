@@ -64,6 +64,7 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
     );
 
     // Search for the highest `unsafe` block, relative to the initial `unsafe` block's L1 origin,
+    let mut unsafe_walk_depth = 0_u64;
     loop {
         let l1_origin =
             engine_client.get_l1_block(current_fc.un_safe.l1_origin.hash.into()).await?;
@@ -80,11 +81,13 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
                 info!(
                     target: "sync_start",
                     l2_unsafe = %current_fc.un_safe.block_info.number,
+                    unsafe_walk_depth,
                     "Found L2 unsafe block with canonical L1 origin"
                 );
                 break;
             }
             None => {
+                unsafe_walk_depth = unsafe_walk_depth.saturating_add(1);
                 let l2_parent_hash = current_fc.un_safe.block_info.parent_hash.into();
                 let l2_parent = engine_client
                     .get_l2_block(l2_parent_hash)
@@ -103,6 +106,7 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
     // Search for the highest `safe` block that's L1 origin is at least older than the sequencing
     // window, relative to the L1 origin of the `unsafe` block.
     let mut safe_cursor = current_fc.un_safe;
+    let mut safe_walk_depth = 0_u64;
     loop {
         info!(
             target: "sync_start",
@@ -125,16 +129,19 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
                 is_labeled_safe,
                 is_finalized,
                 is_genesis,
+                safe_walk_depth,
                 "Found suitable L2 safe block"
             );
             current_fc.safe = safe_cursor;
             break;
         }
         if safe_cursor.block_info.parent_hash == current_fc.safe.block_info.hash {
+            safe_walk_depth = safe_walk_depth.saturating_add(1);
             safe_cursor = current_fc.safe;
             continue;
         }
         if safe_cursor.block_info.parent_hash == current_fc.finalized.block_info.hash {
+            safe_walk_depth = safe_walk_depth.saturating_add(1);
             safe_cursor = current_fc.finalized;
             continue;
         }
@@ -147,6 +154,7 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
             &block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
             &cfg.genesis,
         )?;
+        safe_walk_depth = safe_walk_depth.saturating_add(1);
     }
 
     // Leave the finalized block as-is, and return the current forkchoice.

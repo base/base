@@ -4,6 +4,7 @@
 //! of the pipeline. They allow the pipeline driver to perform actions such as
 //! resetting all stages in the pipeline through message passing.
 
+use alloy_eips::BlockNumHash;
 use base_protocol::L2BlockInfo;
 
 /// A signal to send to the pipeline.
@@ -32,6 +33,11 @@ impl core::fmt::Display for Signal {
 pub struct ResetSignal {
     /// The L2 safe head to reset to.
     pub l2_safe_head: L2BlockInfo,
+    /// Optional L2 block hint for the pipeline's reset walk-back target.
+    ///
+    /// The pipeline validates this hint against the local L2 chain before using it. Invalid,
+    /// missing, or too-new hints are ignored and the pipeline falls back to searching.
+    pub l2_reset_anchor_hint: Option<BlockNumHash>,
 }
 
 impl ResetSignal {

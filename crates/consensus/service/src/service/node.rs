@@ -240,6 +240,7 @@ impl RollupNode {
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
         conductor: Option<Arc<dyn Conductor>>,
         checkpoint_client: CheckpointClient,
+        safe_db_reader: Arc<dyn SafeDBReader>,
     ) -> (EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>>, EngineRpcProcessor<E>)
     {
         let engine_state = EngineState::default();
@@ -251,7 +252,7 @@ impl RollupNode {
         let checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader> =
             Arc::new(checkpoint_client.clone());
         let checkpoint_writer: Arc<dyn CheckpointWriter> = Arc::new(checkpoint_client);
-        let engine_processor = EngineProcessor::new_with_checkpoint(
+        let engine_processor = EngineProcessor::new_with_checkpoint_and_safedb(
             Arc::clone(&engine_client),
             Arc::clone(&self.config),
             derivation_client,
@@ -264,6 +265,7 @@ impl RollupNode {
             },
             checkpoint_reader,
             checkpoint_writer,
+            safe_db_reader,
         );
 
         let engine_rpc_processor = EngineRpcProcessor::new(
@@ -434,6 +436,7 @@ impl RollupNode {
             unsafe_head_tx,
             engine_conductor,
             checkpoint_client,
+            Arc::clone(&safe_db_reader),
         );
 
         // Select the concrete derivation actor implementation based on

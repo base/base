@@ -69,7 +69,7 @@ impl OnlinePipeline {
 
         // Reset the pipeline to populate the initial L1/L2 cursor and system configuration in L1
         // Traversal.
-        pipeline.signal(ResetSignal { l2_safe_head }.signal()).await?;
+        pipeline.signal(ResetSignal { l2_safe_head, l2_reset_anchor_hint: None }.signal()).await?;
 
         Ok(pipeline)
     }
