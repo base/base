@@ -83,10 +83,8 @@ impl ProxyConfigs {
         Self {
             l1: ProxyConfig::new(l1_port, l1_backend, &rate_limit),
             l2: ProxyConfig::new(l2_port, l2_backend, &rate_limit),
-            beacon: match beacon_backend {
-                Some(backend) => Some(ProxyConfig::new(beacon_port, backend, &rate_limit)),
-                None => None,
-            },
+            beacon: beacon_backend
+                .map(|backend| ProxyConfig::new(beacon_port, backend, &rate_limit)),
         }
     }
 

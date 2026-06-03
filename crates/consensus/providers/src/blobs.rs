@@ -78,6 +78,8 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
     /// Used when the L1 parent chain exposes no beacon (blob) DA endpoint. Blob fetches return
     /// [`BlobProviderError::Backend`]; calldata-only derivation never requests blobs.
     pub const fn disabled() -> Self {
+        // slot_interval is 0 so that `Self::slot()` returns an error rather than dividing by
+        // zero if ever reached without the `beacon_client.is_none()` guard.
         Self { beacon_client: None, genesis_time: 0, slot_interval: 0 }
     }
 
@@ -92,6 +94,9 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
         timestamp: u64,
     ) -> Result<u64, BlobProviderError> {
         if timestamp < genesis {
+            return Err(BlobProviderError::SlotDerivation);
+        }
+        if slot_time == 0 {
             return Err(BlobProviderError::SlotDerivation);
         }
         Ok((timestamp - genesis) / slot_time)
@@ -347,6 +352,18 @@ mod tests {
         assert!(
             matches!(result, Err(BlobProviderError::Backend(_))),
             "blob fetch without a beacon must return a Backend error, got {result:?}"
+        );
+    }
+
+    /// `slot()` must return an error rather than divide by zero when `slot_time` is 0, the value
+    /// a [`OnlineBlobProvider::disabled`] provider carries. This guards external callers that reach
+    /// `slot()` without the `beacon_client.is_none()` check.
+    #[test]
+    fn test_slot_zero_slot_time_errors() {
+        let result = OnlineBlobProvider::<MockBeaconClient>::slot(0, 0, 12);
+        assert!(
+            matches!(result, Err(BlobProviderError::SlotDerivation)),
+            "slot() with slot_time=0 must return SlotDerivation, got {result:?}"
         );
     }
 
