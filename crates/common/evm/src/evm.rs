@@ -1,10 +1,10 @@
 use core::ops::{Deref, DerefMut};
 
-use alloy_evm::{Database, Evm, EvmEnv};
+use alloy_evm::{Database as AlloyDatabase, Evm, EvmEnv};
 use alloy_primitives::{Address, Bytes};
 use revm::{
-    DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm, InspectEvm,
-    InspectSystemCallEvm, Inspector, SystemCallEvm,
+    Database as RevmDatabase, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm,
+    InspectEvm, InspectSystemCallEvm, Inspector, SystemCallEvm,
     context::{
         BlockEnv, CfgEnv, ContextError, ContextSetters, Evm as RevmEvm, FrameStack, TxEnv,
         result::ExecResultAndState,
@@ -47,7 +47,7 @@ type InnerEvm<DB, I, P> = RevmEvm<
 /// [`Evm::transact`]. When `false`, the inspector is present in the type but silent,
 /// enabling zero-cost tracing toggling at runtime without type changes.
 #[allow(missing_debug_implementations)] // revm::Context does not implement Debug
-pub struct BaseEvm<DB: Database, I, P = BasePrecompiles> {
+pub struct BaseEvm<DB: RevmDatabase, I, P = BasePrecompiles> {
     /// Inner revm EVM with Base-specific context, fixed [`EthInstructions`] and
     /// [`EthFrame`], and generic precompile set [`P`].
     pub(crate) inner: InnerEvm<DB, I, P>,
@@ -55,7 +55,7 @@ pub struct BaseEvm<DB: Database, I, P = BasePrecompiles> {
     pub(crate) inspect: bool,
 }
 
-impl<DB: Database, I, P> BaseEvm<DB, I, P> {
+impl<DB: RevmDatabase, I, P> BaseEvm<DB, I, P> {
     /// Constructs a [`BaseEvm`] from a pre-built [`RevmEvm`] and an inspect flag.
     ///
     /// Prefer [`crate::Builder::build_base`] or [`crate::Builder::build_with_inspector`]
@@ -98,7 +98,7 @@ impl<DB: Database, I, P> BaseEvm<DB, I, P> {
     }
 }
 
-impl<DB: Database, I, P> Deref for BaseEvm<DB, I, P> {
+impl<DB: RevmDatabase, I, P> Deref for BaseEvm<DB, I, P> {
     type Target = BaseContext<DB>;
 
     #[inline]
@@ -107,7 +107,7 @@ impl<DB: Database, I, P> Deref for BaseEvm<DB, I, P> {
     }
 }
 
-impl<DB: Database, I, P> DerefMut for BaseEvm<DB, I, P> {
+impl<DB: RevmDatabase, I, P> DerefMut for BaseEvm<DB, I, P> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.ctx_mut()
@@ -116,7 +116,7 @@ impl<DB: Database, I, P> DerefMut for BaseEvm<DB, I, P> {
 
 impl<DB, I, P> EvmTr for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type Context = BaseContext<DB>;
@@ -167,7 +167,7 @@ where
 
 impl<DB, I, P> InspectorEvmTr for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: ContextTr<Journal: JournalExt> + ContextSetters,
     I: Inspector<BaseContext<DB>>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
@@ -203,7 +203,7 @@ where
 
 impl<DB, I, P> ExecuteEvm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: crate::BaseContextTr
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -242,7 +242,7 @@ where
 
 impl<DB, I, P> ExecuteCommitEvm for BaseEvm<DB, I, P>
 where
-    DB: Database + DatabaseCommit,
+    DB: RevmDatabase + DatabaseCommit,
     BaseContext<DB>: crate::BaseContextTr
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -255,7 +255,7 @@ where
 
 impl<DB, I, P> InspectEvm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt>
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -277,7 +277,7 @@ where
 
 impl<DB, I, P> InspectCommitEvm for BaseEvm<DB, I, P>
 where
-    DB: Database + DatabaseCommit,
+    DB: RevmDatabase + DatabaseCommit,
     BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt>
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -288,7 +288,7 @@ where
 
 impl<DB, I, P> SystemCallEvm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: crate::BaseContextTr<Tx: SystemCallTx>
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -317,7 +317,7 @@ where
 
 impl<DB, I, P> InspectSystemCallEvm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt, Tx: SystemCallTx>
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -347,7 +347,7 @@ where
 
 impl<DB, I, P> Evm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: AlloyDatabase,
     I: Inspector<BaseContext<DB>>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     BaseContext<DB>: crate::BaseContextTr
