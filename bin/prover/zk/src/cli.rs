@@ -157,7 +157,14 @@ impl ZkArgs {
         let repo = ProofRequestRepo::new(pool);
         info!("database connection initialized");
 
-        let configured_beacon_url = Self::trimmed_optional(&self.l1_beacon_address);
+        // Normalize an absent/blank beacon address to `None` so the prover runs in
+        // calldata-only mode.
+        let configured_beacon_url = self
+            .l1_beacon_address
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(ToOwned::to_owned);
         let (l1_url, l2_url, beacon_url, proxy_handles) = if self.proxy_enable {
             info!("proxy enabled, starting rate-limited RPC proxies");
 
@@ -561,9 +568,5 @@ impl ZkArgs {
 
     fn non_empty(opt: &Option<String>) -> bool {
         opt.as_ref().is_some_and(|s| !s.is_empty())
-    }
-
-    fn trimmed_optional(opt: &Option<String>) -> Option<String> {
-        opt.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(ToOwned::to_owned)
     }
 }
