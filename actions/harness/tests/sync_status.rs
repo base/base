@@ -72,7 +72,7 @@ async fn sync_status_current_l1_should_track_verifier_depth_origin_not_l1_head()
 
     assert_eq!(l1_head_number.load(Ordering::Relaxed), L1_HEAD);
     assert_eq!(
-        derivation_client.heads.lock().unwrap().last().cloned(),
+        derivation_client.heads.lock().unwrap().last().copied(),
         Some(expected_derivation_origin)
     );
 
