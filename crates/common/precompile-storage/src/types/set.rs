@@ -321,13 +321,11 @@ where
                 .write(new_value)?;
         }
 
-        if new_len < old_len {
-            for i in new_len..old_len {
-                self.values
-                    .at_mut_with_len(i, old_len)
-                    .ok_or_else(position_invariant_violated)?
-                    .delete()?;
-            }
+        for i in new_len..old_len {
+            self.values
+                .at_mut_with_len(i, old_len)
+                .ok_or_else(position_invariant_violated)?
+                .delete()?;
         }
 
         if new_len != old_len {
