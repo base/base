@@ -11,7 +11,6 @@ pub use app::{
     run_flashblocks_json, start_background_services,
 };
 
-mod commands;
 mod output;
 pub use output::{
     COLOR_ACTIVE_BORDER, COLOR_BASE_BLUE, COLOR_BURN, COLOR_GAS_FILL, COLOR_GROWTH,
