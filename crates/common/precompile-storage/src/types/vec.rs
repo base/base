@@ -270,9 +270,9 @@ where
             ));
         }
         let (data_start, address, storage) = (self.data_slot(), self.address, self.storage);
-        Ok(self.cache.get_or_insert(&index, || {
-            Self::compute_handler(data_start, address, storage, index)
-        }))
+        Ok(self
+            .cache
+            .get_or_insert(&index, || Self::compute_handler(data_start, address, storage, index)))
     }
 
     /// Mutable variant of [`at_with_len`].

@@ -149,7 +149,6 @@ fn checked_position(index: usize) -> Result<u32> {
         .ok_or_else(BasePrecompileError::under_overflow)
 }
 
-
 impl<'a, T> SetHandler<'a, T>
 where
     T: Storable + StorageKey + Eq + Clone + Ord,
@@ -384,9 +383,9 @@ mod tests {
 
     /// (initial_size, final_size) — covers grow, shrink, and equal-size rewrite.
     #[rstest]
-    #[case(3, 7)]  // grow
-    #[case(7, 3)]  // shrink
-    #[case(4, 4)]  // same size, different contents
+    #[case(3, 7)] // grow
+    #[case(7, 3)] // shrink
+    #[case(4, 4)] // same size, different contents
     fn test_set_write_len_slot_updated(#[case] initial: u8, #[case] final_size: u8) {
         let (mut storage, contract_addr) = setup_storage();
         StorageCtx::enter(&mut storage, |ctx| {
