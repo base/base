@@ -149,6 +149,11 @@ fn checked_position(index: usize) -> Result<u32> {
         .ok_or_else(BasePrecompileError::under_overflow)
 }
 
+#[inline]
+fn position_invariant_violated() -> BasePrecompileError {
+    BasePrecompileError::Fatal("set position invariant violated".into())
+}
+
 impl<'a, T> SetHandler<'a, T>
 where
     T: Storable + StorageKey + Eq + Clone + Ord,
@@ -218,12 +223,21 @@ where
         let index = (position - 1) as usize;
 
         if index != last_index {
-            let last_value = self.values[last_index].read()?;
+            let last_value = self.values
+                .at_with_len(last_index, len)
+                .ok_or_else(position_invariant_violated)?
+                .read()?;
             self.positions.at_mut(&last_value).write(position)?;
-            self.values[index].write(last_value)?;
+            self.values
+                .at_mut_with_len(index, len)
+                .ok_or_else(position_invariant_violated)?
+                .write(last_value)?;
         }
 
-        self.values[last_index].delete()?;
+        self.values
+            .at_mut_with_len(last_index, len)
+            .ok_or_else(position_invariant_violated)?
+            .delete()?;
         Slot::<U256>::new(self.values.len_slot(), self.address, self.storage)
             .write(U256::from(last_index))?;
         self.positions.at_mut(value).delete()?;
@@ -235,10 +249,16 @@ where
     where
         T::Handler<'a>: Handler<T>,
     {
-        if index >= self.len()? {
+        let len = self.len()?;
+        if index >= len {
             return Ok(None);
         }
-        Ok(Some(self.values[index].read()?))
+        Ok(Some(
+            self.values
+                .at_with_len(index, len)
+                .ok_or_else(position_invariant_violated)?
+                .read()?,
+        ))
     }
 
     /// Reads a contiguous range of elements from the set.
@@ -251,7 +271,12 @@ where
         let start = start.min(end);
         let mut result = Vec::new();
         for i in start..end {
-            result.push(self.values[i].read()?);
+            result.push(
+                self.values
+                    .at_with_len(i, len)
+                    .ok_or_else(position_invariant_violated)?
+                    .read()?,
+            );
         }
         Ok(result)
     }
@@ -266,7 +291,12 @@ where
         let len = self.len()?;
         let mut vec = Vec::new();
         for i in 0..len {
-            vec.push(self.values[i].read()?);
+            vec.push(
+                self.values
+                    .at_with_len(i, len)
+                    .ok_or_else(position_invariant_violated)?
+                    .read()?,
+            );
         }
         Ok(Set(vec))
     }
@@ -276,24 +306,31 @@ where
         let new_len = value.0.len();
 
         for i in 0..old_len {
-            let old_value = self.values[i].read()?;
+            let old_value = self.values
+                .at_with_len(i, old_len)
+                .ok_or_else(position_invariant_violated)?
+                .read()?;
             self.positions.at_mut(&old_value).delete()?;
         }
 
         let overlap_len = old_len.min(new_len);
         for (index, new_value) in value.0.into_iter().enumerate() {
             self.positions.at_mut(&new_value).write(checked_position(index)?)?;
-            let should_write_to_existing_slot = index < overlap_len;
-            if should_write_to_existing_slot {
-                self.values[index].write(new_value)?;
+            if index < overlap_len {
+                self.values
+                    .at_mut_with_len(index, old_len)
+                    .ok_or_else(position_invariant_violated)?
+                    .write(new_value)?;
             } else {
                 self.values.push(new_value)?;
             }
         }
-        let has_shrunk = new_len < old_len;
-        if has_shruk {
+        if new_len < old_len {
             for i in new_len..old_len {
-                self.values[i].delete()?;
+                self.values
+                    .at_mut_with_len(i, old_len)
+                    .ok_or_else(position_invariant_violated)?
+                    .delete()?;
             }
             Slot::<U256>::new(self.values.len_slot(), self.address, self.storage)
                 .write(U256::from(new_len))?;
@@ -304,7 +341,10 @@ where
     fn delete(&mut self) -> Result<()> {
         let len = self.len()?;
         for i in 0..len {
-            let value = self.values[i].read()?;
+            let value = self.values
+                .at_with_len(i, len)
+                .ok_or_else(position_invariant_violated)?
+                .read()?;
             self.positions.at_mut(&value).delete()?;
         }
         self.values.delete()
