@@ -386,7 +386,9 @@ async fn find_latest_proposal<P: Provider + Clone>(
     let scan_end = count.saturating_sub(50);
 
     for idx in (scan_end..=scan_start).rev() {
-        let game = factory.gameAtIndex(alloy_primitives::U256::from(idx)).call().await.ok()?;
+        let Ok(game) = factory.gameAtIndex(alloy_primitives::U256::from(idx)).call().await else {
+            continue;
+        };
 
         if game.gameType != game_type {
             continue;
