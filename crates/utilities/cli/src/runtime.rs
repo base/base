@@ -58,7 +58,6 @@ impl RuntimeManager {
         tokio::spawn(async move {
             #[cfg(unix)]
             {
-                use tokio::signal::unix::{SignalKind, signal};
                 let mut sigterm =
                     signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
                 tokio::select! {
