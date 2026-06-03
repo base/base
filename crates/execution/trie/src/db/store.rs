@@ -73,9 +73,17 @@ const NUM_OF_INDICES_IN_SHARD: usize = 2_000;
 
 type Tx = <DatabaseEnv as Database>::TX;
 type V2AccountTrieCursor = <Tx as DbTx>::Cursor<V2AccountsTrie>;
+type V2AccountTrieHistoryCursor = <Tx as DbTx>::Cursor<V2AccountsTrieHistory>;
+type V2AccountTrieChangesetCursor = <Tx as DbTx>::DupCursor<V2AccountTrieChangeSets>;
 type V2StorageTrieCursor = <Tx as DbTx>::DupCursor<V2StoragesTrie>;
+type V2StorageTrieHistoryCursor = <Tx as DbTx>::Cursor<V2StoragesTrieHistory>;
+type V2StorageTrieChangesetCursor = <Tx as DbTx>::DupCursor<V2StorageTrieChangeSets>;
 type V2AccountCursor = <Tx as DbTx>::Cursor<V2HashedAccounts>;
+type V2AccountHistoryCursor = <Tx as DbTx>::Cursor<V2HashedAccountsHistory>;
+type V2AccountChangesetCursor = <Tx as DbTx>::DupCursor<V2HashedAccountChangeSets>;
 type V2StorageCursor = <Tx as DbTx>::DupCursor<V2HashedStorages>;
+type V2StorageHistoryCursor = <Tx as DbTx>::Cursor<V2HashedStoragesHistory>;
+type V2StorageChangesetCursor = <Tx as DbTx>::DupCursor<V2HashedStorageChangeSets>;
 
 trait V2HistoryShardKey: Clone + Ord {
     type LogicalKey: Eq;
@@ -1131,19 +1139,35 @@ impl MdbxProofsStorage {
 
 impl BaseProofsStore for MdbxProofsStorage {
     type StorageTrieCursor<'tx>
-        = MdbxV2StorageTrieCursorEither<V2StorageTrieCursor>
+        = MdbxV2StorageTrieCursorEither<
+            V2StorageTrieCursor,
+            V2StorageTrieHistoryCursor,
+            V2StorageTrieChangesetCursor,
+        >
     where
         Self: 'tx;
     type AccountTrieCursor<'tx>
-        = MdbxV2AccountTrieCursorEither<V2AccountTrieCursor>
+        = MdbxV2AccountTrieCursorEither<
+            V2AccountTrieCursor,
+            V2AccountTrieHistoryCursor,
+            V2AccountTrieChangesetCursor,
+        >
     where
         Self: 'tx;
     type StorageCursor<'tx>
-        = MdbxV2StorageCursorEither<V2StorageCursor>
+        = MdbxV2StorageCursorEither<
+            V2StorageCursor,
+            V2StorageHistoryCursor,
+            V2StorageChangesetCursor,
+        >
     where
         Self: 'tx;
     type AccountHashedCursor<'tx>
-        = MdbxV2AccountCursorEither<V2AccountCursor>
+        = MdbxV2AccountCursorEither<
+            V2AccountCursor,
+            V2AccountHistoryCursor,
+            V2AccountChangesetCursor,
+        >
     where
         Self: 'tx;
     type Tx = <DatabaseEnv as Database>::TX;

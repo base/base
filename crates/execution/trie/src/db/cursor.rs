@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, marker::PhantomData};
+use std::marker::PhantomData;
 
 use alloy_primitives::{B256, U256};
 use reth_db::{
@@ -7,6 +7,9 @@ use reth_db::{
     table::{DupSort, Table},
     transaction::DbTx,
 };
+
+/// Generic alias for dup cursor for T
+pub type Dup<'tx, T> = <<DatabaseEnv as Database>::TX as DbTx>::DupCursor<T>;
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
@@ -26,9 +29,6 @@ use crate::{
         VersionedValue,
     },
 };
-
-/// Generic alias for dup cursor for T
-pub type Dup<'tx, T> = <<DatabaseEnv as Database>::TX as DbTx>::DupCursor<T>;
 
 /// Iterates versioned dup-sorted rows and returns the latest value (<= `max_block_number`),
 /// skipping tombstones.
@@ -410,129 +410,153 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
-struct MaterializedCursor<K, V> {
-    rows: Vec<(K, V)>,
-    position: Option<usize>,
-}
-
-impl<K, V> MaterializedCursor<K, V> {
-    const fn new(rows: Vec<(K, V)>) -> Self {
-        Self { rows, position: None }
-    }
-}
-
-impl<K: Ord + Clone, V: Clone> MaterializedCursor<K, V> {
-    fn seek(&mut self, key: K) -> Option<(K, V)> {
-        let index = self.rows.partition_point(|(row_key, _)| row_key < &key);
-        if index < self.rows.len() {
-            self.position = Some(index);
-            return Some(self.rows[index].clone());
-        }
-        self.position = None;
-        None
-    }
-
-    fn next(&mut self) -> Option<(K, V)> {
-        let index = self.position.map_or(0, |position| position + 1);
-        if index < self.rows.len() {
-            self.position = Some(index);
-            return Some(self.rows[index].clone());
-        }
-        self.position = None;
-        None
-    }
-
-    fn current_key(&self) -> Option<K> {
-        self.position.and_then(|position| self.rows.get(position).map(|(key, _)| key.clone()))
-    }
-
-    const fn reset(&mut self) {
-        self.position = None;
-    }
-}
-
 fn first_change_after(mut list: impl Iterator<Item = u64>, block_number: u64) -> Option<u64> {
     list.find(|changed_at| *changed_at > block_number)
 }
 
-fn min_change_after(current: &mut Option<u64>, list: impl Iterator<Item = u64>, block_number: u64) {
-    // History shards are read in order. `None` means no future change was found for this key, so
-    // the materialized current-state value is already valid at `block_number`.
-    if let Some(changed_at) = first_change_after(list, block_number) {
-        *current = current.map_or(Some(changed_at), |existing| Some(existing.min(changed_at)));
-    }
-}
-
-fn trie_changeset_subkey(path: &StoredNibbles) -> StoredNibblesSubKey {
-    StoredNibblesSubKey::from(path.0)
-}
-
 /// V2 MDBX implementation of [`HashedCursor`] for account state.
-#[derive(Debug, Clone)]
-pub struct MdbxV2AccountCursor {
-    inner: MaterializedCursor<B256, Account>,
+#[derive(Debug)]
+pub struct MdbxV2AccountCursor<Current, History, Changeset> {
+    current: Current,
+    history: History,
+    changeset: Changeset,
+    max_block_number: u64,
+    position: Option<B256>,
 }
 
-impl MdbxV2AccountCursor {
-    /// Builds a materialized V2 account cursor at `max_block_number`.
-    pub fn new(tx: &impl DbTx, max_block_number: u64) -> BaseProofsStorageResult<Self> {
-        let mut rows: BTreeMap<B256, Option<Account>> = BTreeMap::new();
-        let mut current = tx.cursor_read::<V2HashedAccounts>()?;
-        let mut current_row = current.seek(B256::ZERO)?;
-        while let Some((key, account)) = current_row {
-            rows.insert(key, Some(account));
-            current_row = current.next()?;
-        }
-
-        let mut future_changes: BTreeMap<B256, Option<u64>> = BTreeMap::new();
-        let mut history = tx.cursor_read::<V2HashedAccountsHistory>()?;
-        let mut history_row = history.seek(HashedAccountShardedKey::new(B256::ZERO, 0))?;
-        while let Some((key, list)) = history_row {
-            let account_key = key.0.key;
-            min_change_after(
-                future_changes.entry(account_key).or_default(),
-                list.iter(),
-                max_block_number,
-            );
-            rows.entry(account_key).or_insert(None);
-            history_row = history.next()?;
-        }
-
-        let mut changeset = tx.cursor_dup_read::<V2HashedAccountChangeSets>()?;
-        for (key, changed_at) in future_changes {
-            if let Some(block_number) = changed_at {
-                let old = changeset
-                    .seek_by_key_subkey(block_number, key)?
-                    .filter(|entry| entry.hashed_address == key)
-                    .and_then(|entry| entry.info);
-                rows.insert(key, old);
-            }
-        }
-
+impl<Current, History, Changeset> MdbxV2AccountCursor<Current, History, Changeset>
+where
+    Current: DbCursorRO<V2HashedAccounts>,
+    History: DbCursorRO<V2HashedAccountsHistory>,
+    Changeset: DbCursorRO<V2HashedAccountChangeSets>
+        + DbDupCursorRO<V2HashedAccountChangeSets>,
+{
+    /// Builds a direct V2 account cursor at `max_block_number`.
+    pub fn new(tx: &impl DbTx<Cursor<V2HashedAccounts> = Current, Cursor<V2HashedAccountsHistory> = History, DupCursor<V2HashedAccountChangeSets> = Changeset>, max_block_number: u64) -> BaseProofsStorageResult<Self> {
         Ok(Self {
-            inner: MaterializedCursor::new(
-                rows.into_iter()
-                    .filter_map(|(key, account)| account.map(|value| (key, value)))
-                    .collect(),
-            ),
+            current: tx.cursor_read::<V2HashedAccounts>()?,
+            history: tx.cursor_read::<V2HashedAccountsHistory>()?,
+            changeset: tx.cursor_dup_read::<V2HashedAccountChangeSets>()?,
+            max_block_number,
+            position: None,
         })
     }
+
+    fn first_future_change(&mut self, key: B256) -> BaseProofsStorageResult<Option<u64>> {
+        let mut row = self.history.seek(HashedAccountShardedKey::new(key, 0))?;
+        while let Some((history_key, list)) = row {
+            if history_key.0.key != key {
+                break;
+            }
+            if let Some(changed_at) = first_change_after(list.iter(), self.max_block_number) {
+                return Ok(Some(changed_at));
+            }
+            row = self.history.next()?;
+        }
+        Ok(None)
+    }
+
+    fn resolve_key(&mut self, key: B256) -> BaseProofsStorageResult<Option<Account>> {
+        if let Some(changed_at) = self.first_future_change(key)? {
+            return Ok(self
+                .changeset
+                .seek_by_key_subkey(changed_at, key)?
+                .filter(|entry| entry.hashed_address == key)
+                .and_then(|entry| entry.info));
+        }
+
+        Ok(self.current.seek_exact(key)?.map(|(_, account)| account))
+    }
+
+    fn next_current_at_or_after(&mut self, key: B256) -> BaseProofsStorageResult<Option<B256>> {
+        Ok(self.current.seek(key)?.map(|(row_key, _)| row_key))
+    }
+
+    fn next_current_after(&mut self, key: B256) -> BaseProofsStorageResult<Option<B256>> {
+        let row = self.current.seek(key)?;
+        match row {
+            Some((row_key, _)) if row_key == key => Ok(self.current.next()?.map(|(next_key, _)| next_key)),
+            Some((row_key, _)) => Ok(Some(row_key)),
+            None => Ok(None),
+        }
+    }
+
+    fn next_history_at_or_after(&mut self, key: B256) -> BaseProofsStorageResult<Option<B256>> {
+        Ok(self
+            .history
+            .seek(HashedAccountShardedKey::new(key, 0))?
+            .map(|(history_key, _)| history_key.0.key))
+    }
+
+    fn next_history_after(&mut self, key: B256) -> BaseProofsStorageResult<Option<B256>> {
+        let mut row = self.history.seek(HashedAccountShardedKey::new(key, u64::MAX))?;
+        while let Some((history_key, _)) = row {
+            if history_key.0.key > key {
+                return Ok(Some(history_key.0.key));
+            }
+            row = self.history.next()?;
+        }
+        Ok(None)
+    }
+
+    fn seek_from_candidates(
+        &mut self,
+        mut current_key: Option<B256>,
+        mut history_key: Option<B256>,
+    ) -> BaseProofsStorageResult<Option<(B256, Account)>> {
+        loop {
+            let candidate = match (current_key, history_key) {
+                (Some(left), Some(right)) => Some(left.min(right)),
+                (Some(left), None) => Some(left),
+                (None, Some(right)) => Some(right),
+                (None, None) => None,
+            };
+
+            let Some(candidate) = candidate else {
+                self.position = None;
+                return Ok(None);
+            };
+
+            if let Some(account) = self.resolve_key(candidate)? {
+                self.position = Some(candidate);
+                return Ok(Some((candidate, account)));
+            }
+
+            current_key = self.next_current_after(candidate)?;
+            history_key = self.next_history_after(candidate)?;
+        }
+    }
 }
 
-impl HashedCursor for MdbxV2AccountCursor {
+impl<Current, History, Changeset> HashedCursor for MdbxV2AccountCursor<Current, History, Changeset>
+where
+    Current: DbCursorRO<V2HashedAccounts> + Send + Sync,
+    History: DbCursorRO<V2HashedAccountsHistory> + Send + Sync,
+    Changeset: DbCursorRO<V2HashedAccountChangeSets>
+        + DbDupCursorRO<V2HashedAccountChangeSets>
+        + Send
+        + Sync,
+{
     type Value = Account;
 
     fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
-        Ok(self.inner.seek(key))
+        let current_key = self.next_current_at_or_after(key)?;
+        let history_key = self.next_history_at_or_after(key)?;
+        Ok(self.seek_from_candidates(current_key, history_key)?)
     }
 
     fn next(&mut self) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
-        Ok(self.inner.next())
+        if let Some(position) = self.position {
+            let current_key = self.next_current_after(position)?;
+            let history_key = self.next_history_after(position)?;
+            return Ok(self.seek_from_candidates(current_key, history_key)?);
+        }
+
+        self.seek(B256::ZERO)
     }
 
     fn reset(&mut self) {
-        self.inner.reset();
+        self.position = None;
     }
 }
 
@@ -575,16 +599,21 @@ where
 
 /// V2 account cursor that uses direct current-state iteration when possible.
 #[derive(Debug)]
-pub enum MdbxV2AccountCursorEither<Cursor> {
+pub enum MdbxV2AccountCursorEither<Cursor, History, Changeset> {
     /// Latest proof block, backed by the current-state table cursor.
     Latest(MdbxV2LatestAccountCursor<Cursor>),
-    /// Historical block, backed by the existing materialized history view.
-    Historical(MdbxV2AccountCursor),
+    /// Historical block, backed by direct current/history index reads.
+    Historical(MdbxV2AccountCursor<Cursor, History, Changeset>),
 }
 
-impl<Cursor> HashedCursor for MdbxV2AccountCursorEither<Cursor>
+impl<Cursor, History, Changeset> HashedCursor for MdbxV2AccountCursorEither<Cursor, History, Changeset>
 where
     Cursor: DbCursorRO<V2HashedAccounts> + Send + Sync,
+    History: DbCursorRO<V2HashedAccountsHistory> + Send + Sync,
+    Changeset: DbCursorRO<V2HashedAccountChangeSets>
+        + DbDupCursorRO<V2HashedAccountChangeSets>
+        + Send
+        + Sync,
 {
     type Value = Account;
 
@@ -611,68 +640,158 @@ where
 }
 
 /// V2 MDBX implementation of [`TrieCursor`] for account trie nodes.
-#[derive(Debug, Clone)]
-pub struct MdbxV2AccountTrieCursor {
-    inner: MaterializedCursor<StoredNibbles, BranchNodeCompact>,
+#[derive(Debug)]
+pub struct MdbxV2AccountTrieCursor<Current, History, Changeset> {
+    current: Current,
+    history: History,
+    changeset: Changeset,
+    max_block_number: u64,
+    position: Option<StoredNibbles>,
 }
 
-impl MdbxV2AccountTrieCursor {
-    /// Builds a materialized V2 account trie cursor at `max_block_number`.
-    pub fn new(tx: &impl DbTx, max_block_number: u64) -> BaseProofsStorageResult<Self> {
-        let mut rows: BTreeMap<StoredNibbles, Option<BranchNodeCompact>> = BTreeMap::new();
-        let mut current = tx.cursor_read::<V2AccountsTrie>()?;
-        let mut current_row = current.seek(StoredNibbles::default())?;
-        while let Some((key, node)) = current_row {
-            rows.insert(key, Some(node));
-            current_row = current.next()?;
-        }
-
-        let mut future_changes: BTreeMap<StoredNibbles, Option<u64>> = BTreeMap::new();
-        let mut history = tx.cursor_read::<V2AccountsTrieHistory>()?;
-        let mut history_row =
-            history.seek(AccountTrieShardedKey::new(StoredNibbles::default(), 0))?;
-        while let Some((key, list)) = history_row {
-            min_change_after(
-                future_changes.entry(key.key.clone()).or_default(),
-                list.iter(),
-                max_block_number,
-            );
-            rows.entry(key.key).or_insert(None);
-            history_row = history.next()?;
-        }
-
-        let mut changeset = tx.cursor_dup_read::<V2AccountTrieChangeSets>()?;
-        for (key, changed_at) in future_changes {
-            if let Some(block_number) = changed_at {
-                let subkey = trie_changeset_subkey(&key);
-                let old = changeset
-                    .seek_by_key_subkey(block_number, subkey.clone())?
-                    .filter(|entry| entry.nibbles == subkey)
-                    .and_then(|entry| entry.node);
-                rows.insert(key, old);
-            }
-        }
-
+impl<Current, History, Changeset> MdbxV2AccountTrieCursor<Current, History, Changeset>
+where
+    Current: DbCursorRO<V2AccountsTrie>,
+    History: DbCursorRO<V2AccountsTrieHistory>,
+    Changeset: DbCursorRO<V2AccountTrieChangeSets>
+        + DbDupCursorRO<V2AccountTrieChangeSets>,
+{
+    /// Builds a direct V2 account trie cursor at `max_block_number`.
+    pub fn new(tx: &impl DbTx<Cursor<V2AccountsTrie> = Current, Cursor<V2AccountsTrieHistory> = History, DupCursor<V2AccountTrieChangeSets> = Changeset>, max_block_number: u64) -> BaseProofsStorageResult<Self> {
         Ok(Self {
-            inner: MaterializedCursor::new(
-                rows.into_iter().filter_map(|(key, node)| node.map(|value| (key, value))).collect(),
-            ),
+            current: tx.cursor_read::<V2AccountsTrie>()?,
+            history: tx.cursor_read::<V2AccountsTrieHistory>()?,
+            changeset: tx.cursor_dup_read::<V2AccountTrieChangeSets>()?,
+            max_block_number,
+            position: None,
         })
+    }
+
+    fn first_future_change(
+        &mut self,
+        key: &StoredNibbles,
+    ) -> BaseProofsStorageResult<Option<u64>> {
+        let mut row = self.history.seek(AccountTrieShardedKey::new(key.clone(), 0))?;
+        while let Some((history_key, list)) = row {
+            if history_key.key != *key {
+                break;
+            }
+            if let Some(changed_at) = first_change_after(list.iter(), self.max_block_number) {
+                return Ok(Some(changed_at));
+            }
+            row = self.history.next()?;
+        }
+        Ok(None)
+    }
+
+    fn resolve_key(
+        &mut self,
+        key: &StoredNibbles,
+    ) -> BaseProofsStorageResult<Option<BranchNodeCompact>> {
+        if let Some(changed_at) = self.first_future_change(key)? {
+            let subkey = StoredNibblesSubKey::from(key.0.clone());
+            return Ok(self
+                .changeset
+                .seek_by_key_subkey(changed_at, subkey.clone())?
+                .filter(|entry| entry.nibbles == subkey)
+                .and_then(|entry| entry.node));
+        }
+
+        Ok(self.current.seek_exact(key.clone())?.map(|(_, node)| node))
+    }
+
+    fn next_current_at_or_after(
+        &mut self,
+        key: &StoredNibbles,
+    ) -> BaseProofsStorageResult<Option<StoredNibbles>> {
+        Ok(self.current.seek(key.clone())?.map(|(row_key, _)| row_key))
+    }
+
+    fn next_current_after(
+        &mut self,
+        key: &StoredNibbles,
+    ) -> BaseProofsStorageResult<Option<StoredNibbles>> {
+        let row = self.current.seek(key.clone())?;
+        match row {
+            Some((row_key, _)) if row_key == *key => Ok(self.current.next()?.map(|(next_key, _)| next_key)),
+            Some((row_key, _)) => Ok(Some(row_key)),
+            None => Ok(None),
+        }
+    }
+
+    fn next_history_at_or_after(
+        &mut self,
+        key: &StoredNibbles,
+    ) -> BaseProofsStorageResult<Option<StoredNibbles>> {
+        Ok(self
+            .history
+            .seek(AccountTrieShardedKey::new(key.clone(), 0))?
+            .map(|(history_key, _)| history_key.key))
+    }
+
+    fn next_history_after(
+        &mut self,
+        key: &StoredNibbles,
+    ) -> BaseProofsStorageResult<Option<StoredNibbles>> {
+        let mut row = self.history.seek(AccountTrieShardedKey::new(key.clone(), u64::MAX))?;
+        while let Some((history_key, _)) = row {
+            if history_key.key > *key {
+                return Ok(Some(history_key.key));
+            }
+            row = self.history.next()?;
+        }
+        Ok(None)
+    }
+
+    fn seek_from_candidates(
+        &mut self,
+        mut current_key: Option<StoredNibbles>,
+        mut history_key: Option<StoredNibbles>,
+    ) -> BaseProofsStorageResult<Option<(StoredNibbles, BranchNodeCompact)>> {
+        loop {
+            let candidate = match (current_key.clone(), history_key.clone()) {
+                (Some(left), Some(right)) => Some(left.min(right)),
+                (Some(left), None) => Some(left),
+                (None, Some(right)) => Some(right),
+                (None, None) => None,
+            };
+
+            let Some(candidate) = candidate else {
+                self.position = None;
+                return Ok(None);
+            };
+
+            if let Some(node) = self.resolve_key(&candidate)? {
+                self.position = Some(candidate.clone());
+                return Ok(Some((candidate, node)));
+            }
+
+            current_key = self.next_current_after(&candidate)?;
+            history_key = self.next_history_after(&candidate)?;
+        }
     }
 }
 
-impl TrieCursor for MdbxV2AccountTrieCursor {
+impl<Current, History, Changeset> TrieCursor
+    for MdbxV2AccountTrieCursor<Current, History, Changeset>
+where
+    Current: DbCursorRO<V2AccountsTrie> + Send + Sync,
+    History: DbCursorRO<V2AccountsTrieHistory> + Send + Sync,
+    Changeset: DbCursorRO<V2AccountTrieChangeSets>
+        + DbDupCursorRO<V2AccountTrieChangeSets>
+        + Send
+        + Sync,
+{
     fn seek_exact(
         &mut self,
         path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
         let key = StoredNibbles(path);
-        if let Some((row_key, node)) = self.inner.seek(key.clone())
-            && row_key == key
-        {
-            return Ok(Some((row_key.0, node)));
+        if let Some(node) = self.resolve_key(&key)? {
+            self.position = Some(key.clone());
+            return Ok(Some((key.0, node)));
         }
-        self.inner.reset();
+        self.position = None;
         Ok(None)
     }
 
@@ -680,19 +799,27 @@ impl TrieCursor for MdbxV2AccountTrieCursor {
         &mut self,
         path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
-        Ok(self.inner.seek(StoredNibbles(path)).map(|(key, node)| (key.0, node)))
+        let current_key = self.next_current_at_or_after(&StoredNibbles(path.clone()))?;
+        let history_key = self.next_history_at_or_after(&StoredNibbles(path))?;
+        Ok(self.seek_from_candidates(current_key, history_key)?.map(|(key, node)| (key.0, node)))
     }
 
     fn next(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
-        Ok(self.inner.next().map(|(key, node)| (key.0, node)))
+        if let Some(position) = self.position.clone() {
+            let current_key = self.next_current_after(&position)?;
+            let history_key = self.next_history_after(&position)?;
+            return Ok(self.seek_from_candidates(current_key, history_key)?.map(|(key, node)| (key.0, node)));
+        }
+
+        self.seek(Nibbles::default())
     }
 
     fn current(&mut self) -> Result<Option<Nibbles>, DatabaseError> {
-        Ok(self.inner.current_key().map(|key| key.0))
+        Ok(self.position.as_ref().map(|key| key.0.clone()))
     }
 
     fn reset(&mut self) {
-        self.inner.reset();
+        self.position = None;
     }
 }
 
@@ -751,16 +878,22 @@ where
 
 /// V2 account-trie cursor that uses direct current-state iteration when possible.
 #[derive(Debug)]
-pub enum MdbxV2AccountTrieCursorEither<Cursor> {
+pub enum MdbxV2AccountTrieCursorEither<Cursor, History, Changeset> {
     /// Latest proof block, backed by the current-state table cursor.
     Latest(MdbxV2LatestAccountTrieCursor<Cursor>),
-    /// Historical block, backed by the existing materialized history view.
-    Historical(MdbxV2AccountTrieCursor),
+    /// Historical block, backed by direct current/history index reads.
+    Historical(MdbxV2AccountTrieCursor<Cursor, History, Changeset>),
 }
 
-impl<Cursor> TrieCursor for MdbxV2AccountTrieCursorEither<Cursor>
+impl<Cursor, History, Changeset> TrieCursor
+    for MdbxV2AccountTrieCursorEither<Cursor, History, Changeset>
 where
-    Cursor: DbCursorRO<V2AccountsTrie>,
+    Cursor: DbCursorRO<V2AccountsTrie> + Send + Sync,
+    History: DbCursorRO<V2AccountsTrieHistory> + Send + Sync,
+    Changeset: DbCursorRO<V2AccountTrieChangeSets>
+        + DbDupCursorRO<V2AccountTrieChangeSets>
+        + Send
+        + Sync,
 {
     fn seek_exact(
         &mut self,
@@ -805,96 +938,185 @@ where
 }
 
 /// V2 MDBX implementation of [`HashedCursor`] for storage state.
-#[derive(Debug, Clone)]
-pub struct MdbxV2StorageCursor {
-    entries: BTreeMap<B256, Vec<(B256, U256)>>,
+#[derive(Debug)]
+pub struct MdbxV2StorageCursor<Current, History, Changeset> {
+    current: Current,
+    history: History,
+    changeset: Changeset,
+    max_block_number: u64,
     hashed_address: B256,
-    position: Option<usize>,
+    position: Option<B256>,
 }
 
-impl MdbxV2StorageCursor {
-    /// Builds a materialized V2 storage cursor at `max_block_number`.
+impl<Current, History, Changeset> MdbxV2StorageCursor<Current, History, Changeset>
+where
+    Current: DbCursorRO<V2HashedStorages> + DbDupCursorRO<V2HashedStorages>,
+    History: DbCursorRO<V2HashedStoragesHistory>,
+    Changeset: DbCursorRO<V2HashedStorageChangeSets>
+        + DbDupCursorRO<V2HashedStorageChangeSets>,
+{
+    /// Builds a direct V2 storage cursor at `max_block_number`.
     pub fn new(
-        tx: &impl DbTx,
+        tx: &impl DbTx<Cursor<V2HashedStoragesHistory> = History, DupCursor<V2HashedStorages> = Current, DupCursor<V2HashedStorageChangeSets> = Changeset>,
         max_block_number: u64,
         hashed_address: B256,
     ) -> BaseProofsStorageResult<Self> {
-        let mut rows: BTreeMap<(B256, B256), Option<U256>> = BTreeMap::new();
-        let mut current = tx.cursor_read::<V2HashedStorages>()?;
-        let mut current_row = current.seek(B256::ZERO)?;
-        while let Some((key, entry)) = current_row {
-            rows.insert((key, entry.key), (!entry.value.is_zero()).then_some(entry.value));
-            current_row = current.next()?;
-        }
-
-        let mut future_changes: BTreeMap<(B256, B256), Option<u64>> = BTreeMap::new();
-        let mut history = tx.cursor_read::<V2HashedStoragesHistory>()?;
-        let mut history_row =
-            history.seek(HashedStorageShardedKey::new(B256::ZERO, B256::ZERO, 0))?;
-        while let Some((key, list)) = history_row {
-            let storage_key = (key.hashed_address, key.sharded_key.key);
-            min_change_after(
-                future_changes.entry(storage_key).or_default(),
-                list.iter(),
-                max_block_number,
-            );
-            rows.entry(storage_key).or_insert(None);
-            history_row = history.next()?;
-        }
-
-        let mut changeset = tx.cursor_dup_read::<V2HashedStorageChangeSets>()?;
-        for ((address, slot), changed_at) in future_changes {
-            if let Some(block_number) = changed_at {
-                let old = changeset
-                    .seek_by_key_subkey(BlockNumberHashedAddress((block_number, address)), slot)?
-                    .filter(|entry| entry.key == slot)
-                    .and_then(|entry| (!entry.value.is_zero()).then_some(entry.value));
-                rows.insert((address, slot), old);
-            }
-        }
-
-        let mut entries: BTreeMap<B256, Vec<(B256, U256)>> = BTreeMap::new();
-        for ((address, slot), value) in rows {
-            if let Some(value) = value
-                && !value.is_zero()
-            {
-                entries.entry(address).or_default().push((slot, value));
-            }
-        }
-
-        Ok(Self { entries, hashed_address, position: None })
+        Ok(Self {
+            current: tx.cursor_dup_read::<V2HashedStorages>()?,
+            history: tx.cursor_read::<V2HashedStoragesHistory>()?,
+            changeset: tx.cursor_dup_read::<V2HashedStorageChangeSets>()?,
+            max_block_number,
+            hashed_address,
+            position: None,
+        })
     }
 
-    fn rows(&self) -> &[(B256, U256)] {
-        self.entries.get(&self.hashed_address).map(Vec::as_slice).unwrap_or_default()
+    fn first_future_change(&mut self, slot: B256) -> BaseProofsStorageResult<Option<u64>> {
+        let mut row =
+            self.history.seek(HashedStorageShardedKey::new(self.hashed_address, slot, 0))?;
+        while let Some((history_key, list)) = row {
+            if history_key.hashed_address != self.hashed_address || history_key.sharded_key.key != slot {
+                break;
+            }
+            if let Some(changed_at) = first_change_after(list.iter(), self.max_block_number) {
+                return Ok(Some(changed_at));
+            }
+            row = self.history.next()?;
+        }
+        Ok(None)
+    }
+
+    fn current_entry_at_or_after(
+        &mut self,
+        slot: B256,
+    ) -> BaseProofsStorageResult<Option<StorageEntry>> {
+        let entry = self.current.seek_by_key_subkey(self.hashed_address, slot)?;
+        let current_address = self.current.current()?.map(|(address, _)| address);
+        Ok((current_address == Some(self.hashed_address)).then_some(entry).flatten())
+    }
+
+    fn next_current_at_or_after(&mut self, slot: B256) -> BaseProofsStorageResult<Option<B256>> {
+        Ok(self.current_entry_at_or_after(slot)?.map(|entry| entry.key))
+    }
+
+    fn next_current_after(&mut self, slot: B256) -> BaseProofsStorageResult<Option<B256>> {
+        let Some(entry) = self.current_entry_at_or_after(slot)? else {
+            return Ok(None);
+        };
+        if entry.key > slot {
+            return Ok(Some(entry.key));
+        }
+
+        loop {
+            let next = self.current.next_dup()?;
+            let current_address = next.as_ref().map(|(address, _)| *address);
+            if current_address != Some(self.hashed_address) {
+                return Ok(None);
+            }
+            let Some((_, entry)) = next else {
+                return Ok(None);
+            };
+            if entry.key > slot {
+                return Ok(Some(entry.key));
+            }
+        }
+    }
+
+    fn next_history_at_or_after(&mut self, slot: B256) -> BaseProofsStorageResult<Option<B256>> {
+        Ok(self
+            .history
+            .seek(HashedStorageShardedKey::new(self.hashed_address, slot, 0))?
+            .and_then(|(history_key, _)| {
+                (history_key.hashed_address == self.hashed_address)
+                    .then_some(history_key.sharded_key.key)
+            }))
+    }
+
+    fn next_history_after(&mut self, slot: B256) -> BaseProofsStorageResult<Option<B256>> {
+        let mut row = self
+            .history
+            .seek(HashedStorageShardedKey::new(self.hashed_address, slot, u64::MAX))?;
+        while let Some((history_key, _)) = row {
+            if history_key.hashed_address != self.hashed_address {
+                break;
+            }
+            if history_key.sharded_key.key > slot {
+                return Ok(Some(history_key.sharded_key.key));
+            }
+            row = self.history.next()?;
+        }
+        Ok(None)
+    }
+
+    fn resolve_key(&mut self, slot: B256) -> BaseProofsStorageResult<Option<U256>> {
+        if let Some(changed_at) = self.first_future_change(slot)? {
+            return Ok(self
+                .changeset
+                .seek_by_key_subkey(BlockNumberHashedAddress((changed_at, self.hashed_address)), slot)?
+                .filter(|entry| entry.key == slot)
+                .and_then(|entry| (!entry.value.is_zero()).then_some(entry.value)));
+        }
+
+        Ok(self
+            .current_entry_at_or_after(slot)?
+            .filter(|entry| entry.key == slot && !entry.value.is_zero())
+            .map(|entry| entry.value))
+    }
+
+    fn seek_from_candidates(
+        &mut self,
+        mut current_key: Option<B256>,
+        mut history_key: Option<B256>,
+    ) -> BaseProofsStorageResult<Option<(B256, U256)>> {
+        loop {
+            let candidate = match (current_key, history_key) {
+                (Some(left), Some(right)) => Some(left.min(right)),
+                (Some(left), None) => Some(left),
+                (None, Some(right)) => Some(right),
+                (None, None) => None,
+            };
+
+            let Some(candidate) = candidate else {
+                self.position = None;
+                return Ok(None);
+            };
+
+            if let Some(value) = self.resolve_key(candidate)? {
+                self.position = Some(candidate);
+                return Ok(Some((candidate, value)));
+            }
+
+            current_key = self.next_current_after(candidate)?;
+            history_key = self.next_history_after(candidate)?;
+        }
     }
 }
 
-impl HashedCursor for MdbxV2StorageCursor {
+impl<Current, History, Changeset> HashedCursor for MdbxV2StorageCursor<Current, History, Changeset>
+where
+    Current: DbCursorRO<V2HashedStorages> + DbDupCursorRO<V2HashedStorages> + Send + Sync,
+    History: DbCursorRO<V2HashedStoragesHistory> + Send + Sync,
+    Changeset: DbCursorRO<V2HashedStorageChangeSets>
+        + DbDupCursorRO<V2HashedStorageChangeSets>
+        + Send
+        + Sync,
+{
     type Value = U256;
 
     fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
-        let rows = self.rows();
-        let index = rows.partition_point(|(row_key, _)| row_key < &key);
-        if index < rows.len() {
-            let row = rows[index];
-            self.position = Some(index);
-            return Ok(Some(row));
-        }
-        self.position = None;
-        Ok(None)
+        let current_key = self.next_current_at_or_after(key)?;
+        let history_key = self.next_history_at_or_after(key)?;
+        Ok(self.seek_from_candidates(current_key, history_key)?)
     }
 
     fn next(&mut self) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
-        let rows = self.rows();
-        let index = self.position.map_or(0, |position| position + 1);
-        if index < rows.len() {
-            let row = rows[index];
-            self.position = Some(index);
-            return Ok(Some(row));
+        if let Some(position) = self.position {
+            let current_key = self.next_current_after(position)?;
+            let history_key = self.next_history_after(position)?;
+            return Ok(self.seek_from_candidates(current_key, history_key)?);
         }
-        self.position = None;
-        Ok(None)
+
+        self.seek(B256::ZERO)
     }
 
     fn reset(&mut self) {
@@ -902,9 +1124,18 @@ impl HashedCursor for MdbxV2StorageCursor {
     }
 }
 
-impl HashedStorageCursor for MdbxV2StorageCursor {
+impl<Current, History, Changeset> HashedStorageCursor
+    for MdbxV2StorageCursor<Current, History, Changeset>
+where
+    Current: DbCursorRO<V2HashedStorages> + DbDupCursorRO<V2HashedStorages> + Send + Sync,
+    History: DbCursorRO<V2HashedStoragesHistory> + Send + Sync,
+    Changeset: DbCursorRO<V2HashedStorageChangeSets>
+        + DbDupCursorRO<V2HashedStorageChangeSets>
+        + Send
+        + Sync,
+{
     fn is_storage_empty(&mut self) -> Result<bool, DatabaseError> {
-        Ok(self.rows().is_empty())
+        Ok(self.seek(B256::ZERO)?.is_none())
     }
 
     fn set_hashed_address(&mut self, hashed_address: B256) {
@@ -1026,16 +1257,22 @@ where
 
 /// V2 storage cursor that uses direct current-state iteration when possible.
 #[derive(Debug)]
-pub enum MdbxV2StorageCursorEither<Cursor> {
+pub enum MdbxV2StorageCursorEither<Cursor, History, Changeset> {
     /// Latest proof block, backed by the current-state table cursor.
     Latest(MdbxV2LatestStorageCursor<Cursor>),
-    /// Historical block, backed by the existing materialized history view.
-    Historical(MdbxV2StorageCursor),
+    /// Historical block, backed by direct current/history index reads.
+    Historical(MdbxV2StorageCursor<Cursor, History, Changeset>),
 }
 
-impl<Cursor> HashedCursor for MdbxV2StorageCursorEither<Cursor>
+impl<Cursor, History, Changeset> HashedCursor
+    for MdbxV2StorageCursorEither<Cursor, History, Changeset>
 where
     Cursor: DbCursorRO<V2HashedStorages> + DbDupCursorRO<V2HashedStorages> + Send + Sync,
+    History: DbCursorRO<V2HashedStoragesHistory> + Send + Sync,
+    Changeset: DbCursorRO<V2HashedStorageChangeSets>
+        + DbDupCursorRO<V2HashedStorageChangeSets>
+        + Send
+        + Sync,
 {
     type Value = U256;
 
@@ -1061,9 +1298,15 @@ where
     }
 }
 
-impl<Cursor> HashedStorageCursor for MdbxV2StorageCursorEither<Cursor>
+impl<Cursor, History, Changeset> HashedStorageCursor
+    for MdbxV2StorageCursorEither<Cursor, History, Changeset>
 where
     Cursor: DbCursorRO<V2HashedStorages> + DbDupCursorRO<V2HashedStorages> + Send + Sync,
+    History: DbCursorRO<V2HashedStoragesHistory> + Send + Sync,
+    Changeset: DbCursorRO<V2HashedStorageChangeSets>
+        + DbDupCursorRO<V2HashedStorageChangeSets>
+        + Send
+        + Sync,
 {
     fn is_storage_empty(&mut self) -> Result<bool, DatabaseError> {
         match self {
@@ -1081,85 +1324,197 @@ where
 }
 
 /// V2 MDBX implementation of [`TrieCursor`] for storage trie nodes.
-#[derive(Debug, Clone)]
-pub struct MdbxV2StorageTrieCursor {
-    entries: BTreeMap<B256, Vec<(StoredNibbles, BranchNodeCompact)>>,
+#[derive(Debug)]
+pub struct MdbxV2StorageTrieCursor<Current, History, Changeset> {
+    current: Current,
+    history: History,
+    changeset: Changeset,
+    max_block_number: u64,
     hashed_address: B256,
-    position: Option<usize>,
+    position: Option<StoredNibbles>,
 }
 
-impl MdbxV2StorageTrieCursor {
-    /// Builds a materialized V2 storage trie cursor at `max_block_number`.
+impl<Current, History, Changeset> MdbxV2StorageTrieCursor<Current, History, Changeset>
+where
+    Current: DbCursorRO<V2StoragesTrie> + DbDupCursorRO<V2StoragesTrie>,
+    History: DbCursorRO<V2StoragesTrieHistory>,
+    Changeset: DbCursorRO<V2StorageTrieChangeSets> + DbDupCursorRO<V2StorageTrieChangeSets>,
+{
+    /// Builds a direct V2 storage trie cursor at `max_block_number`.
     pub fn new(
-        tx: &impl DbTx,
+        tx: &impl DbTx<Cursor<V2StoragesTrieHistory> = History, DupCursor<V2StoragesTrie> = Current, DupCursor<V2StorageTrieChangeSets> = Changeset>,
         max_block_number: u64,
         hashed_address: B256,
     ) -> BaseProofsStorageResult<Self> {
-        let mut rows: BTreeMap<(B256, StoredNibbles), Option<BranchNodeCompact>> = BTreeMap::new();
-        let mut current = tx.cursor_read::<V2StoragesTrie>()?;
-        let mut current_row = current.seek(B256::ZERO)?;
-        while let Some((address, entry)) = current_row {
-            rows.insert((address, StoredNibbles(entry.nibbles.0)), Some(entry.node));
-            current_row = current.next()?;
-        }
-
-        let mut future_changes: BTreeMap<(B256, StoredNibbles), Option<u64>> = BTreeMap::new();
-        let mut history = tx.cursor_read::<V2StoragesTrieHistory>()?;
-        let mut history_row =
-            history.seek(StorageTrieShardedKey::new(B256::ZERO, StoredNibbles::default(), 0))?;
-        while let Some((key, list)) = history_row {
-            let storage_key = (key.hashed_address, key.key.clone());
-            min_change_after(
-                future_changes.entry(storage_key.clone()).or_default(),
-                list.iter(),
-                max_block_number,
-            );
-            rows.entry(storage_key).or_insert(None);
-            history_row = history.next()?;
-        }
-
-        let mut changeset = tx.cursor_dup_read::<V2StorageTrieChangeSets>()?;
-        for ((address, path), changed_at) in future_changes {
-            if let Some(block_number) = changed_at {
-                let subkey = trie_changeset_subkey(&path);
-                let old = changeset
-                    .seek_by_key_subkey(
-                        BlockNumberHashedAddress((block_number, address)),
-                        subkey.clone(),
-                    )?
-                    .filter(|entry| entry.nibbles == subkey)
-                    .and_then(|entry| entry.node);
-                rows.insert((address, path), old);
-            }
-        }
-
-        let mut entries: BTreeMap<B256, Vec<(StoredNibbles, BranchNodeCompact)>> = BTreeMap::new();
-        for ((address, path), node) in rows {
-            if let Some(node) = node {
-                entries.entry(address).or_default().push((path, node));
-            }
-        }
-
-        Ok(Self { entries, hashed_address, position: None })
+        Ok(Self {
+            current: tx.cursor_dup_read::<V2StoragesTrie>()?,
+            history: tx.cursor_read::<V2StoragesTrieHistory>()?,
+            changeset: tx.cursor_dup_read::<V2StorageTrieChangeSets>()?,
+            max_block_number,
+            hashed_address,
+            position: None,
+        })
     }
 
-    fn rows(&self) -> &[(StoredNibbles, BranchNodeCompact)] {
-        self.entries.get(&self.hashed_address).map(Vec::as_slice).unwrap_or_default()
+    fn first_future_change(
+        &mut self,
+        path: &StoredNibbles,
+    ) -> BaseProofsStorageResult<Option<u64>> {
+        let mut row =
+            self.history.seek(StorageTrieShardedKey::new(self.hashed_address, path.clone(), 0))?;
+        while let Some((history_key, list)) = row {
+            if history_key.hashed_address != self.hashed_address || history_key.key != *path {
+                break;
+            }
+            if let Some(changed_at) = first_change_after(list.iter(), self.max_block_number) {
+                return Ok(Some(changed_at));
+            }
+            row = self.history.next()?;
+        }
+        Ok(None)
+    }
+
+    fn current_entry_at_or_after(
+        &mut self,
+        path: &StoredNibbles,
+    ) -> BaseProofsStorageResult<Option<(StoredNibblesSubKey, BranchNodeCompact)>> {
+        let subkey = StoredNibblesSubKey::from(path.0.clone());
+        let entry = self.current.seek_by_key_subkey(self.hashed_address, subkey)?;
+        let current_address = self.current.current()?.map(|(address, _)| address);
+        Ok((current_address == Some(self.hashed_address))
+            .then_some(entry.map(|entry| (entry.nibbles, entry.node)))
+            .flatten())
+    }
+
+    fn next_current_at_or_after(
+        &mut self,
+        path: &StoredNibbles,
+    ) -> BaseProofsStorageResult<Option<StoredNibbles>> {
+        Ok(self.current_entry_at_or_after(path)?.map(|(nibbles, _)| StoredNibbles(nibbles.0)))
+    }
+
+    fn next_current_after(
+        &mut self,
+        path: &StoredNibbles,
+    ) -> BaseProofsStorageResult<Option<StoredNibbles>> {
+        let Some((nibbles, _)) = self.current_entry_at_or_after(path)? else {
+            return Ok(None);
+        };
+        if nibbles.0 > path.0 {
+            return Ok(Some(StoredNibbles(nibbles.0)));
+        }
+
+        loop {
+            let next = self.current.next_dup()?;
+            let current_address = next.as_ref().map(|(address, _)| *address);
+            if current_address != Some(self.hashed_address) {
+                return Ok(None);
+            }
+            let Some((_, entry)) = next else {
+                return Ok(None);
+            };
+            if entry.nibbles.0 > path.0 {
+                return Ok(Some(StoredNibbles(entry.nibbles.0)));
+            }
+        }
+    }
+
+    fn next_history_at_or_after(
+        &mut self,
+        path: &StoredNibbles,
+    ) -> BaseProofsStorageResult<Option<StoredNibbles>> {
+        Ok(self
+            .history
+            .seek(StorageTrieShardedKey::new(self.hashed_address, path.clone(), 0))?
+            .and_then(|(history_key, _)| {
+                (history_key.hashed_address == self.hashed_address).then_some(history_key.key)
+            }))
+    }
+
+    fn next_history_after(
+        &mut self,
+        path: &StoredNibbles,
+    ) -> BaseProofsStorageResult<Option<StoredNibbles>> {
+        let mut row = self
+            .history
+            .seek(StorageTrieShardedKey::new(self.hashed_address, path.clone(), u64::MAX))?;
+        while let Some((history_key, _)) = row {
+            if history_key.hashed_address != self.hashed_address {
+                break;
+            }
+            if history_key.key > *path {
+                return Ok(Some(history_key.key));
+            }
+            row = self.history.next()?;
+        }
+        Ok(None)
+    }
+
+    fn resolve_key(
+        &mut self,
+        path: &StoredNibbles,
+    ) -> BaseProofsStorageResult<Option<BranchNodeCompact>> {
+        if let Some(changed_at) = self.first_future_change(path)? {
+            let subkey = StoredNibblesSubKey::from(path.0.clone());
+            return Ok(self
+                .changeset
+                .seek_by_key_subkey(BlockNumberHashedAddress((changed_at, self.hashed_address)), subkey.clone())?
+                .filter(|entry| entry.nibbles == subkey)
+                .and_then(|entry| entry.node));
+        }
+
+        Ok(self
+            .current_entry_at_or_after(path)?
+            .filter(|(nibbles, _)| nibbles.0 == path.0)
+            .map(|(_, node)| node))
+    }
+
+    fn seek_from_candidates(
+        &mut self,
+        mut current_key: Option<StoredNibbles>,
+        mut history_key: Option<StoredNibbles>,
+    ) -> BaseProofsStorageResult<Option<(StoredNibbles, BranchNodeCompact)>> {
+        loop {
+            let candidate = match (current_key.clone(), history_key.clone()) {
+                (Some(left), Some(right)) => Some(left.min(right)),
+                (Some(left), None) => Some(left),
+                (None, Some(right)) => Some(right),
+                (None, None) => None,
+            };
+
+            let Some(candidate) = candidate else {
+                self.position = None;
+                return Ok(None);
+            };
+
+            if let Some(node) = self.resolve_key(&candidate)? {
+                self.position = Some(candidate.clone());
+                return Ok(Some((candidate, node)));
+            }
+
+            current_key = self.next_current_after(&candidate)?;
+            history_key = self.next_history_after(&candidate)?;
+        }
     }
 }
 
-impl TrieCursor for MdbxV2StorageTrieCursor {
+impl<Current, History, Changeset> TrieCursor for MdbxV2StorageTrieCursor<Current, History, Changeset>
+where
+    Current: DbCursorRO<V2StoragesTrie> + DbDupCursorRO<V2StoragesTrie> + Send + Sync,
+    History: DbCursorRO<V2StoragesTrieHistory> + Send + Sync,
+    Changeset: DbCursorRO<V2StorageTrieChangeSets>
+        + DbDupCursorRO<V2StorageTrieChangeSets>
+        + Send
+        + Sync,
+{
     fn seek_exact(
         &mut self,
         path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
         let key = StoredNibbles(path);
-        let rows = self.rows();
-        let index = rows.partition_point(|(row_key, _)| row_key < &key);
-        if index < rows.len() && rows[index].0 == key {
-            let row = (rows[index].0.0, rows[index].1.clone());
-            self.position = Some(index);
-            return Ok(Some(row));
+        if let Some(node) = self.resolve_key(&key)? {
+            self.position = Some(key.clone());
+            return Ok(Some((key.0, node)));
         }
         self.position = None;
         Ok(None)
@@ -1169,32 +1524,23 @@ impl TrieCursor for MdbxV2StorageTrieCursor {
         &mut self,
         path: Nibbles,
     ) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
-        let rows = self.rows();
-        let key = StoredNibbles(path);
-        let index = rows.partition_point(|(row_key, _)| row_key < &key);
-        if index < rows.len() {
-            let row = (rows[index].0.0, rows[index].1.clone());
-            self.position = Some(index);
-            return Ok(Some(row));
-        }
-        self.position = None;
-        Ok(None)
+        let current_key = self.next_current_at_or_after(&StoredNibbles(path.clone()))?;
+        let history_key = self.next_history_at_or_after(&StoredNibbles(path))?;
+        Ok(self.seek_from_candidates(current_key, history_key)?.map(|(key, node)| (key.0, node)))
     }
 
     fn next(&mut self) -> Result<Option<(Nibbles, BranchNodeCompact)>, DatabaseError> {
-        let rows = self.rows();
-        let index = self.position.map_or(0, |position| position + 1);
-        if index < rows.len() {
-            let row = (rows[index].0.0, rows[index].1.clone());
-            self.position = Some(index);
-            return Ok(Some(row));
+        if let Some(position) = self.position.clone() {
+            let current_key = self.next_current_after(&position)?;
+            let history_key = self.next_history_after(&position)?;
+            return Ok(self.seek_from_candidates(current_key, history_key)?.map(|(key, node)| (key.0, node)));
         }
-        self.position = None;
-        Ok(None)
+
+        self.seek(Nibbles::default())
     }
 
     fn current(&mut self) -> Result<Option<Nibbles>, DatabaseError> {
-        Ok(self.position.and_then(|position| self.rows().get(position).map(|(key, _)| key.0)))
+        Ok(self.position.as_ref().map(|key| key.0.clone()))
     }
 
     fn reset(&mut self) {
@@ -1202,7 +1548,16 @@ impl TrieCursor for MdbxV2StorageTrieCursor {
     }
 }
 
-impl TrieStorageCursor for MdbxV2StorageTrieCursor {
+impl<Current, History, Changeset> TrieStorageCursor
+    for MdbxV2StorageTrieCursor<Current, History, Changeset>
+where
+    Current: DbCursorRO<V2StoragesTrie> + DbDupCursorRO<V2StoragesTrie> + Send + Sync,
+    History: DbCursorRO<V2StoragesTrieHistory> + Send + Sync,
+    Changeset: DbCursorRO<V2StorageTrieChangeSets>
+        + DbDupCursorRO<V2StorageTrieChangeSets>
+        + Send
+        + Sync,
+{
     fn set_hashed_address(&mut self, hashed_address: B256) {
         self.hashed_address = hashed_address;
         self.position = None;
@@ -1310,16 +1665,22 @@ where
 
 /// V2 storage-trie cursor that uses direct current-state iteration when possible.
 #[derive(Debug)]
-pub enum MdbxV2StorageTrieCursorEither<Cursor> {
+pub enum MdbxV2StorageTrieCursorEither<Cursor, History, Changeset> {
     /// Latest proof block, backed by the current-state table cursor.
     Latest(MdbxV2LatestStorageTrieCursor<Cursor>),
-    /// Historical block, backed by the existing materialized history view.
-    Historical(MdbxV2StorageTrieCursor),
+    /// Historical block, backed by direct current/history index reads.
+    Historical(MdbxV2StorageTrieCursor<Cursor, History, Changeset>),
 }
 
-impl<Cursor> TrieCursor for MdbxV2StorageTrieCursorEither<Cursor>
+impl<Cursor, History, Changeset> TrieCursor
+    for MdbxV2StorageTrieCursorEither<Cursor, History, Changeset>
 where
-    Cursor: DbCursorRO<V2StoragesTrie> + DbDupCursorRO<V2StoragesTrie>,
+    Cursor: DbCursorRO<V2StoragesTrie> + DbDupCursorRO<V2StoragesTrie> + Send + Sync,
+    History: DbCursorRO<V2StoragesTrieHistory> + Send + Sync,
+    Changeset: DbCursorRO<V2StorageTrieChangeSets>
+        + DbDupCursorRO<V2StorageTrieChangeSets>
+        + Send
+        + Sync,
 {
     fn seek_exact(
         &mut self,
@@ -1363,9 +1724,15 @@ where
     }
 }
 
-impl<Cursor> TrieStorageCursor for MdbxV2StorageTrieCursorEither<Cursor>
+impl<Cursor, History, Changeset> TrieStorageCursor
+    for MdbxV2StorageTrieCursorEither<Cursor, History, Changeset>
 where
-    Cursor: DbCursorRO<V2StoragesTrie> + DbDupCursorRO<V2StoragesTrie>,
+    Cursor: DbCursorRO<V2StoragesTrie> + DbDupCursorRO<V2StoragesTrie> + Send + Sync,
+    History: DbCursorRO<V2StoragesTrieHistory> + Send + Sync,
+    Changeset: DbCursorRO<V2StorageTrieChangeSets>
+        + DbDupCursorRO<V2StorageTrieChangeSets>
+        + Send
+        + Sync,
 {
     fn set_hashed_address(&mut self, hashed_address: B256) {
         match self {
@@ -1391,7 +1758,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::db::{StorageValue, models};
+    use crate::db::{HashedAccountBeforeTx, StorageValue, TrieChangeSetsEntry, models};
 
     fn setup_db() -> DatabaseEnv {
         let tmp = TempDir::new().expect("create tmpdir");
@@ -1452,6 +1819,174 @@ mod tests {
         let mut c = wtx.cursor_dup_write::<HashedAccountHistory>().expect("dup write");
         let vv = VersionedValue { block_number: block, value: MaybeDeleted(val) };
         c.append_dup(key, vv).expect("append dup");
+    }
+
+    fn upsert_v2_account_current(wtx: &<DatabaseEnv as Database>::TXMut, key: B256, account: Account) {
+        wtx.cursor_write::<V2HashedAccounts>()
+            .expect("write cursor")
+            .upsert(key, &account)
+            .expect("upsert account");
+    }
+
+    fn upsert_v2_account_history(
+        wtx: &<DatabaseEnv as Database>::TXMut,
+        key: B256,
+        blocks: impl IntoIterator<Item = u64>,
+    ) {
+        wtx.cursor_write::<V2HashedAccountsHistory>()
+            .expect("write cursor")
+            .upsert(
+                HashedAccountShardedKey::new(key, 0),
+                &reth_db::BlockNumberList::new_pre_sorted(blocks),
+            )
+            .expect("upsert account history");
+    }
+
+    fn upsert_v2_account_changeset(
+        wtx: &<DatabaseEnv as Database>::TXMut,
+        block: u64,
+        key: B256,
+        account: Option<Account>,
+    ) {
+        wtx.cursor_dup_write::<V2HashedAccountChangeSets>()
+            .expect("dup write cursor")
+            .upsert(block, &HashedAccountBeforeTx::new(key, account))
+            .expect("upsert account changeset");
+    }
+
+    fn upsert_v2_account_trie_current(
+        wtx: &<DatabaseEnv as Database>::TXMut,
+        path: Nibbles,
+        node: BranchNodeCompact,
+    ) {
+        wtx.cursor_write::<V2AccountsTrie>()
+            .expect("write cursor")
+            .upsert(StoredNibbles(path), &node)
+            .expect("upsert account trie node");
+    }
+
+    fn upsert_v2_account_trie_history(
+        wtx: &<DatabaseEnv as Database>::TXMut,
+        path: Nibbles,
+        blocks: impl IntoIterator<Item = u64>,
+    ) {
+        wtx.cursor_write::<V2AccountsTrieHistory>()
+            .expect("write cursor")
+            .upsert(
+                AccountTrieShardedKey::new(StoredNibbles(path), 0),
+                &reth_db::BlockNumberList::new_pre_sorted(blocks),
+            )
+            .expect("upsert account trie history");
+    }
+
+    fn upsert_v2_account_trie_changeset(
+        wtx: &<DatabaseEnv as Database>::TXMut,
+        block: u64,
+        path: Nibbles,
+        node: Option<BranchNodeCompact>,
+    ) {
+        wtx.cursor_dup_write::<V2AccountTrieChangeSets>()
+            .expect("dup write cursor")
+            .upsert(
+                block,
+                &TrieChangeSetsEntry {
+                    nibbles: StoredNibblesSubKey::from(path),
+                    node,
+                },
+            )
+            .expect("upsert account trie changeset");
+    }
+
+    fn upsert_v2_storage_current(
+        wtx: &<DatabaseEnv as Database>::TXMut,
+        address: B256,
+        slot: B256,
+        value: U256,
+    ) {
+        wtx.cursor_dup_write::<V2HashedStorages>()
+            .expect("dup write cursor")
+            .upsert(address, &StorageEntry { key: slot, value })
+            .expect("upsert storage current");
+    }
+
+    fn upsert_v2_storage_history(
+        wtx: &<DatabaseEnv as Database>::TXMut,
+        address: B256,
+        slot: B256,
+        blocks: impl IntoIterator<Item = u64>,
+    ) {
+        wtx.cursor_write::<V2HashedStoragesHistory>()
+            .expect("write cursor")
+            .upsert(
+                HashedStorageShardedKey::new(address, slot, 0),
+                &reth_db::BlockNumberList::new_pre_sorted(blocks),
+            )
+            .expect("upsert storage history");
+    }
+
+    fn upsert_v2_storage_changeset(
+        wtx: &<DatabaseEnv as Database>::TXMut,
+        block: u64,
+        address: B256,
+        slot: B256,
+        value: U256,
+    ) {
+        wtx.cursor_dup_write::<V2HashedStorageChangeSets>()
+            .expect("dup write cursor")
+            .upsert(BlockNumberHashedAddress((block, address)), &StorageEntry { key: slot, value })
+            .expect("upsert storage changeset");
+    }
+
+    fn upsert_v2_storage_trie_current(
+        wtx: &<DatabaseEnv as Database>::TXMut,
+        address: B256,
+        path: Nibbles,
+        node: BranchNodeCompact,
+    ) {
+        wtx.cursor_dup_write::<V2StoragesTrie>()
+            .expect("dup write cursor")
+            .upsert(
+                address,
+                &StorageTrieEntry {
+                    nibbles: StoredNibblesSubKey::from(path),
+                    node,
+                },
+            )
+            .expect("upsert storage trie current");
+    }
+
+    fn upsert_v2_storage_trie_history(
+        wtx: &<DatabaseEnv as Database>::TXMut,
+        address: B256,
+        path: Nibbles,
+        blocks: impl IntoIterator<Item = u64>,
+    ) {
+        wtx.cursor_write::<V2StoragesTrieHistory>()
+            .expect("write cursor")
+            .upsert(
+                StorageTrieShardedKey::new(address, StoredNibbles(path), 0),
+                &reth_db::BlockNumberList::new_pre_sorted(blocks),
+            )
+            .expect("upsert storage trie history");
+    }
+
+    fn upsert_v2_storage_trie_changeset(
+        wtx: &<DatabaseEnv as Database>::TXMut,
+        block: u64,
+        address: B256,
+        path: Nibbles,
+        node: Option<BranchNodeCompact>,
+    ) {
+        wtx.cursor_dup_write::<V2StorageTrieChangeSets>()
+            .expect("dup write cursor")
+            .upsert(
+                BlockNumberHashedAddress((block, address)),
+                &TrieChangeSetsEntry {
+                    nibbles: StoredNibblesSubKey::from(path),
+                    node,
+                },
+            )
+            .expect("upsert storage trie changeset");
     }
 
     // Open a dup-RO cursor and wrap it in a BlockNumberVersionedCursor with a given bound.
@@ -2606,6 +3141,131 @@ mod tests {
 
         cursor.set_hashed_address(addr2);
         assert_eq!(cursor.seek(s2).expect("addr2 seek").expect("addr2 row"), (s2, U256::from(22)));
+    }
+
+    #[test]
+    fn historical_v2_account_cursor_merges_current_and_changesets() {
+        let db = setup_db();
+        let account1 = B256::from([0x41; 32]);
+        let account2 = B256::from([0x42; 32]);
+        let account3 = B256::from([0x43; 32]);
+        let old1 = Account { nonce: 1, ..Default::default() };
+        let old2 = Account { nonce: 2, ..Default::default() };
+        let current2 = Account { nonce: 20, ..Default::default() };
+        let current3 = Account { nonce: 3, ..Default::default() };
+
+        {
+            let wtx = db.tx_mut().expect("rw");
+            upsert_v2_account_current(&wtx, account2, current2);
+            upsert_v2_account_current(&wtx, account3, current3);
+            upsert_v2_account_history(&wtx, account1, [20]);
+            upsert_v2_account_history(&wtx, account2, [20]);
+            upsert_v2_account_changeset(&wtx, 20, account1, Some(old1));
+            upsert_v2_account_changeset(&wtx, 20, account2, Some(old2));
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro");
+        let mut cursor = MdbxV2AccountCursor::new(&tx, 10).expect("historical cursor");
+
+        assert_eq!(cursor.seek(account1).expect("seek").expect("row"), (account1, old1));
+        assert_eq!(cursor.next().expect("next").expect("row"), (account2, old2));
+        assert_eq!(cursor.next().expect("next").expect("row"), (account3, current3));
+        assert!(cursor.next().expect("eof").is_none());
+    }
+
+    #[test]
+    fn historical_v2_account_trie_cursor_merges_current_and_changesets() {
+        let db = setup_db();
+        let path1 = Nibbles::from_nibbles([0x04]);
+        let path2 = Nibbles::from_nibbles([0x05]);
+        let path3 = Nibbles::from_nibbles([0x06]);
+        let old1 = node();
+        let old2 = node();
+        let current2 = node();
+        let current3 = node();
+
+        {
+            let wtx = db.tx_mut().expect("rw");
+            upsert_v2_account_trie_current(&wtx, path2, current2.clone());
+            upsert_v2_account_trie_current(&wtx, path3, current3.clone());
+            upsert_v2_account_trie_history(&wtx, path1, [20]);
+            upsert_v2_account_trie_history(&wtx, path2, [20]);
+            upsert_v2_account_trie_changeset(&wtx, 20, path1, Some(old1.clone()));
+            upsert_v2_account_trie_changeset(&wtx, 20, path2, Some(old2.clone()));
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro");
+        let mut cursor = MdbxV2AccountTrieCursor::new(&tx, 10).expect("historical cursor");
+
+        assert_eq!(TrieCursor::seek(&mut cursor, path1).expect("seek").expect("row"), (path1, old1));
+        assert_eq!(TrieCursor::next(&mut cursor).expect("next").expect("row"), (path2, old2));
+        assert_eq!(TrieCursor::next(&mut cursor).expect("next").expect("row"), (path3, current3));
+        assert!(TrieCursor::next(&mut cursor).expect("eof").is_none());
+    }
+
+    #[test]
+    fn historical_v2_storage_cursor_merges_current_and_changesets() {
+        let db = setup_db();
+        let addr = B256::from([0x51; 32]);
+        let slot1 = B256::from([0x61; 32]);
+        let slot2 = B256::from([0x62; 32]);
+        let slot3 = B256::from([0x63; 32]);
+
+        {
+            let wtx = db.tx_mut().expect("rw");
+            upsert_v2_storage_current(&wtx, addr, slot2, U256::from(20));
+            upsert_v2_storage_current(&wtx, addr, slot3, U256::from(3));
+            upsert_v2_storage_history(&wtx, addr, slot1, [20]);
+            upsert_v2_storage_history(&wtx, addr, slot2, [20]);
+            upsert_v2_storage_history(&wtx, addr, B256::from([0x64; 32]), [20]);
+            upsert_v2_storage_changeset(&wtx, 20, addr, slot1, U256::from(1));
+            upsert_v2_storage_changeset(&wtx, 20, addr, slot2, U256::from(2));
+            upsert_v2_storage_changeset(&wtx, 20, addr, B256::from([0x64; 32]), U256::ZERO);
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro");
+        let mut cursor = MdbxV2StorageCursor::new(&tx, 10, addr).expect("historical cursor");
+
+        assert_eq!(cursor.seek(slot1).expect("seek").expect("row"), (slot1, U256::from(1)));
+        assert_eq!(cursor.next().expect("next").expect("row"), (slot2, U256::from(2)));
+        assert_eq!(cursor.next().expect("next").expect("row"), (slot3, U256::from(3)));
+        assert!(cursor.next().expect("eof").is_none());
+    }
+
+    #[test]
+    fn historical_v2_storage_trie_cursor_merges_current_and_changesets() {
+        let db = setup_db();
+        let addr = B256::from([0x71; 32]);
+        let path1 = Nibbles::from_nibbles([0x07]);
+        let path2 = Nibbles::from_nibbles([0x08]);
+        let path3 = Nibbles::from_nibbles([0x09]);
+        let old1 = node();
+        let old2 = node();
+        let current3 = node();
+
+        {
+            let wtx = db.tx_mut().expect("rw");
+            upsert_v2_storage_trie_current(&wtx, addr, path2, node());
+            upsert_v2_storage_trie_current(&wtx, addr, path3, current3.clone());
+            upsert_v2_storage_trie_history(&wtx, addr, path1, [20]);
+            upsert_v2_storage_trie_history(&wtx, addr, path2, [20]);
+            upsert_v2_storage_trie_history(&wtx, addr, Nibbles::from_nibbles([0x0A]), [20]);
+            upsert_v2_storage_trie_changeset(&wtx, 20, addr, path1, Some(old1.clone()));
+            upsert_v2_storage_trie_changeset(&wtx, 20, addr, path2, Some(old2.clone()));
+            upsert_v2_storage_trie_changeset(&wtx, 20, addr, Nibbles::from_nibbles([0x0A]), None);
+            wtx.commit().expect("commit");
+        }
+
+        let tx = db.tx().expect("ro");
+        let mut cursor = MdbxV2StorageTrieCursor::new(&tx, 10, addr).expect("historical cursor");
+
+        assert_eq!(TrieCursor::seek(&mut cursor, path1).expect("seek").expect("row"), (path1, old1));
+        assert_eq!(TrieCursor::next(&mut cursor).expect("next").expect("row"), (path2, old2));
+        assert_eq!(TrieCursor::next(&mut cursor).expect("next").expect("row"), (path3, current3));
+        assert!(TrieCursor::next(&mut cursor).expect("eof").is_none());
     }
 
     #[test]

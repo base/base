@@ -16,15 +16,26 @@ use crate::{
         MdbxV2AccountTrieCursorEither, MdbxV2LatestAccountCursor, MdbxV2LatestAccountTrieCursor,
         MdbxV2LatestStorageCursor, MdbxV2LatestStorageTrieCursor, MdbxV2StorageCursor,
         MdbxV2StorageCursorEither, MdbxV2StorageTrieCursor, MdbxV2StorageTrieCursorEither,
-        V2AccountsTrie, V2HashedAccounts, V2HashedStorages, V2StoragesTrie,
+        V2AccountTrieChangeSets, V2AccountsTrie, V2AccountsTrieHistory,
+        V2HashedAccountChangeSets, V2HashedAccounts, V2HashedAccountsHistory,
+        V2HashedStorageChangeSets, V2HashedStorages, V2HashedStoragesHistory,
+        V2StorageTrieChangeSets, V2StoragesTrie, V2StoragesTrieHistory,
     },
 };
 
 type TxMut = <DatabaseEnv as Database>::TXMut;
 type V2AccountTrieCursor = <TxMut as DbTx>::Cursor<V2AccountsTrie>;
+type V2AccountTrieHistoryCursor = <TxMut as DbTx>::Cursor<V2AccountsTrieHistory>;
+type V2AccountTrieChangesetCursor = <TxMut as DbTx>::DupCursor<V2AccountTrieChangeSets>;
 type V2StorageTrieCursor = <TxMut as DbTx>::DupCursor<V2StoragesTrie>;
+type V2StorageTrieHistoryCursor = <TxMut as DbTx>::Cursor<V2StoragesTrieHistory>;
+type V2StorageTrieChangesetCursor = <TxMut as DbTx>::DupCursor<V2StorageTrieChangeSets>;
 type V2AccountCursor = <TxMut as DbTx>::Cursor<V2HashedAccounts>;
+type V2AccountHistoryCursor = <TxMut as DbTx>::Cursor<V2HashedAccountsHistory>;
+type V2AccountChangesetCursor = <TxMut as DbTx>::DupCursor<V2HashedAccountChangeSets>;
 type V2StorageCursor = <TxMut as DbTx>::DupCursor<V2HashedStorages>;
+type V2StorageHistoryCursor = <TxMut as DbTx>::Cursor<V2HashedStoragesHistory>;
+type V2StorageChangesetCursor = <TxMut as DbTx>::DupCursor<V2HashedStorageChangeSets>;
 
 /// Active write batch holding one MDBX RW transaction across multiple block writes.
 #[derive(Debug)]
@@ -58,19 +69,35 @@ impl<'tx> MdbxBatchSession<'tx> {
 
 impl BaseProofsBatchSession for MdbxBatchSession<'_> {
     type StorageTrieCursor<'a>
-        = MdbxV2StorageTrieCursorEither<V2StorageTrieCursor>
+        = MdbxV2StorageTrieCursorEither<
+            V2StorageTrieCursor,
+            V2StorageTrieHistoryCursor,
+            V2StorageTrieChangesetCursor,
+        >
     where
         Self: 'a;
     type AccountTrieCursor<'a>
-        = MdbxV2AccountTrieCursorEither<V2AccountTrieCursor>
+        = MdbxV2AccountTrieCursorEither<
+            V2AccountTrieCursor,
+            V2AccountTrieHistoryCursor,
+            V2AccountTrieChangesetCursor,
+        >
     where
         Self: 'a;
     type StorageCursor<'a>
-        = MdbxV2StorageCursorEither<V2StorageCursor>
+        = MdbxV2StorageCursorEither<
+            V2StorageCursor,
+            V2StorageHistoryCursor,
+            V2StorageChangesetCursor,
+        >
     where
         Self: 'a;
     type AccountHashedCursor<'a>
-        = MdbxV2AccountCursorEither<V2AccountCursor>
+        = MdbxV2AccountCursorEither<
+            V2AccountCursor,
+            V2AccountHistoryCursor,
+            V2AccountChangesetCursor,
+        >
     where
         Self: 'a;
 
