@@ -691,8 +691,6 @@ mod tests {
 
     #[test]
     fn test_ethereum_fork_activation() {
-        use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
-
         // Pre-Bedrock Ethereum forks always activate at block 0 on Base chains.
         let cfg = RollupConfig::default();
         assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Berlin), ForkCondition::Block(0));
