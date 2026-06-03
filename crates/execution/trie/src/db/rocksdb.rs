@@ -40,7 +40,10 @@ use crate::{
     BaseProofsStorageError,
     BaseProofsStorageError::NoBlocksFound,
     BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,
-    api::{BaseProofsInitialStateStore, InitialStateAnchor, InitialStateStatus, WriteCounts},
+    api::{
+        BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsInitialStateStore,
+        InitialStateAnchor, InitialStateStatus, WriteCounts,
+    },
     db::{
         AccountTrieHistory, BlockChangeSet, ChangeSet, HashedAccountHistory, HashedStorageHistory,
         HashedStorageKey, IntoKV, MaybeDeleted, StorageTrieHistory, StorageTrieKey, StorageValue,
@@ -288,6 +291,15 @@ pub struct RocksdbStorageCursor<'db> {
 /// `RocksDB` implementation of [`HashedCursor`] for account state.
 pub struct RocksdbAccountCursor<'db> {
     inner: RocksdbVersionedCursor<'db, HashedAccountHistory>,
+}
+
+/// Degenerate batch session for [`RocksdbProofsStorage`].
+///
+/// Writes commit immediately, so this provides the batch-session API surface the sync loop
+/// expects without transactional rollback semantics.
+#[derive(Debug)]
+pub struct RocksdbBatchSession<'a> {
+    storage: &'a RocksdbProofsStorage,
 }
 
 #[derive(Debug, Default)]
@@ -2036,6 +2048,86 @@ impl BaseProofsStore for RocksdbProofsStorage {
     }
 }
 
+impl BaseProofsBatchSession for RocksdbBatchSession<'_> {
+    type StorageTrieCursor<'a>
+        = RocksdbTrieCursor<'a, StorageTrieHistory>
+    where
+        Self: 'a;
+    type AccountTrieCursor<'a>
+        = RocksdbTrieCursor<'a, AccountTrieHistory>
+    where
+        Self: 'a;
+    type StorageCursor<'a>
+        = RocksdbStorageCursor<'a>
+    where
+        Self: 'a;
+    type AccountHashedCursor<'a>
+        = RocksdbAccountCursor<'a>
+    where
+        Self: 'a;
+
+    fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
+        self.storage.get_earliest_block_number()
+    }
+
+    fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
+        self.storage.get_latest_block_number()
+    }
+
+    fn storage_trie_cursor(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'_>> {
+        self.storage.storage_trie_cursor(hashed_address, max_block_number)
+    }
+
+    fn account_trie_cursor(
+        &self,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'_>> {
+        self.storage.account_trie_cursor(max_block_number)
+    }
+
+    fn storage_hashed_cursor(
+        &self,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'_>> {
+        self.storage.storage_hashed_cursor(hashed_address, max_block_number)
+    }
+
+    fn account_hashed_cursor(
+        &self,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'_>> {
+        self.storage.account_hashed_cursor(max_block_number)
+    }
+
+    fn store_trie_updates(
+        &mut self,
+        block_ref: BlockWithParent,
+        block_state_diff: BlockStateDiff,
+    ) -> BaseProofsStorageResult<WriteCounts> {
+        self.storage.store_trie_updates(block_ref, block_state_diff)
+    }
+}
+
+impl BaseProofsBatchStore for RocksdbProofsStorage {
+    type BatchSession<'a>
+        = RocksdbBatchSession<'a>
+    where
+        Self: 'a;
+
+    fn with_batch_session<R, F>(&self, f: F) -> BaseProofsStorageResult<R>
+    where
+        F: FnOnce(&mut Self::BatchSession<'_>) -> BaseProofsStorageResult<R>,
+    {
+        let mut session = RocksdbBatchSession { storage: self };
+        f(&mut session)
+    }
+}
+
 impl BaseProofsInitialStateStore for RocksdbProofsStorage {
     fn initial_state_anchor(&self) -> BaseProofsStorageResult<InitialStateAnchor> {
         let Some(block) = self.get_initial_state_anchor()? else {
@@ -2305,7 +2397,7 @@ where
 
         let (decoded_key, _) = decode_history_key::<T>(raw_key)?;
         let raw_value = iter.value().ok_or(DatabaseError::Decode)?;
-        let value = T::Value::decompress(raw_value)?;
+        let value = T::Value::decompress(raw_value).map_err(|_| DatabaseError::Decode)?;
         Ok(Some((decoded_key, value)))
     }
 
@@ -2326,7 +2418,7 @@ where
         }
 
         let raw_value = iter.value().ok_or(DatabaseError::Decode)?;
-        T::Value::decompress(raw_value).map(Some)
+        Ok(T::Value::decompress(raw_value).map(Some).map_err(|_| DatabaseError::Decode)?)
     }
 
     fn seek_exact(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
@@ -3314,10 +3406,7 @@ mod tests {
 
             let mut trie_updates = TrieUpdates::default();
             let mut storage_updates = StorageTrieUpdates::default();
-            storage_updates.storage_nodes.insert(
-                path.clone(),
-                branch.clone(),
-            );
+            storage_updates.storage_nodes.insert(path.clone(), branch.clone());
             trie_updates.storage_tries.insert(address, storage_updates);
 
             let diff = BlockStateDiff {
@@ -3334,29 +3423,20 @@ mod tests {
         // seek_exact uses exact_prefix_read_options (with prefix_same_as_start)
         // and should find each entry individually.
         for path in &nibble_paths {
-            let mut cursor = storage
-                .storage_trie_cursor(address, u64::MAX)
-                .expect("cursor should open");
-            let result = cursor
-                .seek_exact(path.clone())
-                .expect("seek_exact should succeed");
-            assert!(
-                result.is_some(),
-                "seek_exact should find entry for path {path:?}"
-            );
+            let mut cursor =
+                storage.storage_trie_cursor(address, u64::MAX).expect("cursor should open");
+            let result = cursor.seek_exact(path.clone()).expect("seek_exact should succeed");
+            assert!(result.is_some(), "seek_exact should find entry for path {path:?}");
         }
 
         // seek/next use prefix_read_options with a 32-byte address prefix
         // on a CF with a 65-byte prefix extractor. After flush, the bloom
         // filter can cause the iterator to skip SST blocks whose 65-byte
         // prefix doesn't match the one extracted from the seek key.
-        let mut cursor = storage
-            .storage_trie_cursor(address, u64::MAX)
-            .expect("cursor should open");
+        let mut cursor =
+            storage.storage_trie_cursor(address, u64::MAX).expect("cursor should open");
 
-        let first = cursor
-            .seek(Nibbles::default())
-            .expect("seek should succeed");
+        let first = cursor.seek(Nibbles::default()).expect("seek should succeed");
         assert!(first.is_some(), "seek should find at least one entry");
 
         let mut found = vec![first.unwrap().0];

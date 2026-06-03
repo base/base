@@ -6,7 +6,8 @@ use base_execution_rpc::{
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
 use base_execution_trie::{
-    BaseProofsStorage, BaseProofsStore, MdbxProofsStorage, RocksdbProofsStorage,
+    BaseProofsBatchStore, BaseProofsStorage, BaseProofsStore, MdbxProofsStorage,
+    RocksdbProofsStorage,
 };
 use base_node_core::args::{ProofsHistoryDbBackend, RollupArgs};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
@@ -127,7 +128,7 @@ fn install_proofs_history<S>(
     proofs_history_verification_interval: u64,
 ) -> NodeHooks
 where
-    S: BaseProofsStore + DatabaseMetrics + Send + Sync + 'static,
+    S: BaseProofsBatchStore + BaseProofsStore + DatabaseMetrics + Send + Sync + 'static,
 {
     let storage: BaseProofsStorage<Arc<S>> = Arc::clone(&storage_backend).into();
     let storage_exec = storage.clone();
@@ -156,7 +157,7 @@ where
                 ctx.node().provider().clone(),
                 ctx.registry.eth_api().clone(),
                 storage,
-                Box::new(ctx.node().task_executor().clone()),
+                ctx.node().task_executor().clone(),
                 ctx.node().evm_config().clone(),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;

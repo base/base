@@ -105,7 +105,12 @@ impl<'a, Storage: BaseProofsStore + Clone> BaseProofsStateProviderRef<'a, Storag
     ) -> ProviderResult<Option<StorageValue>> {
         let tx = self.tx()?;
         self.storage
-            .storage_by_hashed_key_with_tx(tx, keccak256(address.0), hashed_key, self.block_number)
+            .storage_by_hashed_key_with_tx(
+                tx,
+                self.hashed_address(address),
+                hashed_key,
+                self.block_number,
+            )
             .map_err(Into::<ProviderError>::into)
     }
 }
@@ -234,8 +239,8 @@ impl<'a, Storage: BaseProofsStore + Clone> StateProofProvider
             target,
             mode,
         )
-            .map_err(ProviderError::from)
-            .map(|hm| hm.into_values().collect())
+        .map_err(ProviderError::from)
+        .map(|hm| hm.into_values().collect())
     }
 }
 
@@ -264,22 +269,6 @@ where
     fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {
         let hashed_key = keccak256(storage_key);
         self.storage_by_hashed_key(address, hashed_key)
-    }
-
-    fn storage_by_hashed_key(
-        &self,
-        address: Address,
-        hashed_key: B256,
-    ) -> ProviderResult<Option<StorageValue>> {
-        let tx = self.tx()?;
-        self.storage
-            .storage_by_hashed_key_with_tx(
-                tx,
-                self.hashed_address(address),
-                hashed_key,
-                self.block_number,
-            )
-            .map_err(Into::<ProviderError>::into)
     }
 }
 
