@@ -241,6 +241,11 @@ mod tests {
                 ChainConfig::sepolia().azul_timestamp.unwrap(),
                 BaseUpgrade::Azul,
             ),
+            (
+                Chain::from_id(ChainConfig::zeronet().chain_id),
+                ChainConfig::zeronet().beryl_timestamp.unwrap(),
+                BaseUpgrade::Beryl,
+            ),
         ];
 
         for (chain_id, timestamp, expected) in test_cases {
