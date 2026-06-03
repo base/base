@@ -165,7 +165,7 @@ pub async fn unpause_sequencer_node(
             }
         }
 
-        if cl_ok != peers.cl_addrs.len() || el_ok != peers.el_enodes.len() {
+        if cl_ok != peers.cl_addrs.len() || (node.el_rpc.is_some() && el_ok != peers.el_enodes.len()) {
             anyhow::bail!(
                 "unpaused {} — reconnected {cl_ok}/{} CL peer(s), {el_ok}/{} EL peer(s); saved peers kept for retry",
                 node.name,

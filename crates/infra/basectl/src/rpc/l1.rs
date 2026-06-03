@@ -180,14 +180,13 @@ async fn run_l1_blob_watcher_ws(
             }
         }
 
-        if block_num > last_block.unwrap_or(0) {
-            if let Ok(Some(block)) =
+        if block_num > last_block.unwrap_or(0)
+            && let Ok(Some(block)) =
                 provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await
-            {
-                let info = extract_l1_block_info(&block, batcher_address);
-                if result_tx.send(info).await.is_err() {
-                    return Ok(());
-                }
+        {
+            let info = extract_l1_block_info(&block, batcher_address);
+            if result_tx.send(info).await.is_err() {
+                return Ok(());
             }
         }
 
