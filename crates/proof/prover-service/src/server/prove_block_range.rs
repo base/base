@@ -1,6 +1,5 @@
 use base_prover_service_db::{
-    ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    canonical_session_id,
+    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, canonical_session_id,
 };
 use base_prover_service_protocol::{ProveBlockRangeRequest, ProveBlockRangeResponse};
 use jsonrpsee::core::RpcResult;
@@ -61,7 +60,7 @@ impl ProverServiceServer {
 
         let outcome = self
             .repo
-            .create_with_outbox(db_request, self.max_proof_retries)
+            .create_for_worker_queue(db_request, self.max_proof_retries)
             .await
             .map_err(|e| match e {
                 CreateProofRequestError::IdCollision { id, field } => {
@@ -84,14 +83,6 @@ impl ProverServiceServer {
                     ))
                 }
                 CreateProofRequestError::Validation(e) => invalid_argument(format!("{e}")),
-                CreateProofRequestError::UnsupportedOutboxProofType {
-                    api_proof_type: ApiProofType::Tee,
-                } => invalid_argument("TEE proof requests are not supported by this ZK service"),
-                CreateProofRequestError::UnsupportedOutboxProofType { api_proof_type } => {
-                    invalid_argument(format!(
-                        "{api_proof_type} proof requests are not supported by this outbox service"
-                    ))
-                }
                 CreateProofRequestError::Sqlx(e) => internal(format!("Database error: {e}")),
             })?;
 
@@ -110,7 +101,7 @@ impl ProverServiceServer {
             CreateProofRequestOutcome::Created(id) => {
                 info!(
                     proof_request_id = %id,
-                    "Created proof request and outbox entry"
+                    "Created proof request for worker queue"
                 );
             }
             CreateProofRequestOutcome::Requeued(id) => {

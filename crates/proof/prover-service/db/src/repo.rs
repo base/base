@@ -6,13 +6,12 @@ use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
-    ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CompleteProofResult, CreateOutboxEntry,
-    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    CreateProofRequestValidationError, CreateProofSession, FailExpiredProofJobs, HeartbeatOutcome,
-    HeartbeatProofJob, MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofJob, ProofJobStatus,
-    ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession, ProofStatus, ProofType,
-    RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession,
-    UpdateReceipt, ZkVmKind, canonical_session_id,
+    ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CompleteProofResult, CreateProofRequest,
+    CreateProofRequestError, CreateProofRequestOutcome, CreateProofRequestValidationError,
+    CreateProofSession, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob, ProofJob,
+    ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession,
+    ProofStatus, ProofType, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
+    UpdateProofSession, UpdateReceipt, ZkVmKind, canonical_session_id,
 };
 
 /// Repository for proof request database operations
@@ -64,37 +63,24 @@ impl ProofRequestRepo {
         Ok(prepared.id)
     }
 
-    /// Atomically create a proof request and outbox entry in a transaction.
+    /// Atomically create a proof request for the worker API queue.
     ///
-    /// On `id` conflict, lock the row `FOR UPDATE` and branch on state:
-    /// parameter mismatch → [`CreateProofRequestError::IdCollision`];
-    /// `CREATED` / `PENDING` / `RUNNING` / `SUCCEEDED` → [`CreateProofRequestOutcome::Replayed`];
-    /// `FAILED` with room under `max_retries` → reset, bump `retry_count`, new outbox row
-    /// ([`CreateProofRequestOutcome::Requeued`]); `FAILED` at cap → [`CreateProofRequestOutcome::RetryExhausted`].
+    /// New requests are inserted into `proof_requests` with `job_status = 'PENDING'`
+    /// by the schema default. External workers claim these rows via
+    /// [`Self::claim_next_proof_job`].
     ///
-    /// Use the same `max_retries` as [`Self::retry_or_fail_stuck_request`] (shared `retry_count` cap).
-    pub async fn create_with_outbox(
+    /// On `session_id` conflict, lock the row `FOR UPDATE` and branch on state:
+    /// parameter mismatch -> [`CreateProofRequestError::IdCollision`];
+    /// `CREATED` / `PENDING` / `RUNNING` / `SUCCEEDED` -> [`CreateProofRequestOutcome::Replayed`];
+    /// `FAILED` with room under `max_retries` -> reset, bump `retry_count`,
+    /// and make the job claimable again ([`CreateProofRequestOutcome::Requeued`]);
+    /// `FAILED` at cap -> [`CreateProofRequestOutcome::RetryExhausted`].
+    pub async fn create_for_worker_queue(
         &self,
         req: CreateProofRequest,
         max_retries: i32,
     ) -> std::result::Result<CreateProofRequestOutcome, CreateProofRequestError> {
         let prepared = PreparedProofRequest::try_from(req)?;
-        let Some(proof_type) = prepared.proof_type else {
-            return Err(CreateProofRequestError::UnsupportedOutboxProofType {
-                api_proof_type: prepared.api_proof_type,
-            });
-        };
-
-        let request_params = build_outbox_params(
-            prepared.start_block_number,
-            prepared.number_of_blocks_to_prove,
-            prepared.sequence_window,
-            Some(proof_type.as_str()),
-            prepared.prover_address.as_deref(),
-            prepared.l1_head.as_deref(),
-            prepared.intermediate_root_interval,
-        );
-
         let mut tx = self.pool.begin().await?;
 
         let insert_result = sqlx::query(
@@ -117,7 +103,7 @@ impl ProofRequestRepo {
         .bind(prepared.start_block_number)
         .bind(prepared.number_of_blocks_to_prove)
         .bind(prepared.sequence_window)
-        .bind(Some(proof_type.as_str()))
+        .bind(prepared.proof_type.map(|proof_type| proof_type.as_str()))
         .bind(ProofStatus::Created.as_str())
         .bind(&prepared.prover_address)
         .bind(&prepared.l1_head)
@@ -126,22 +112,11 @@ impl ProofRequestRepo {
         .await?;
 
         if insert_result.rows_affected() > 0 {
-            sqlx::query(
-                r#"
-                INSERT INTO proof_request_outbox (proof_request_id, request_params)
-                VALUES ($1, $2)
-                "#,
-            )
-            .bind(prepared.id)
-            .bind(&request_params)
-            .execute(&mut *tx)
-            .await?;
-
             tx.commit().await?;
             return Ok(CreateProofRequestOutcome::Created(prepared.id));
         }
 
-        // Conflict path: `FOR UPDATE` serializes with stuck recovery and workers.
+        // Conflict path: `FOR UPDATE` serializes with retries and workers.
         let row = sqlx::query(
             r#"
             SELECT id, COALESCE(session_id, id::text) AS session_id,
@@ -166,7 +141,7 @@ impl ProofRequestRepo {
         };
 
         let existing_id: Uuid = row.get("id");
-        let params = CreateOutboxRequestParams {
+        let params = CreateRequestParams {
             request_payload: &prepared.request_payload,
             api_proof_type: prepared.api_proof_type.as_str(),
             zk_vm: prepared.zk_vm.map(|zk_vm| zk_vm.as_str()),
@@ -204,9 +179,6 @@ impl ProofRequestRepo {
                     return Ok(CreateProofRequestOutcome::RetryExhausted(existing_id));
                 }
 
-                // Fail any active sessions before resetting so the requeued run cannot
-                // collide with `idx_proof_sessions_request_type_active_unique`. Mirrors
-                // the cleanup in `retry_or_fail_stuck_request`.
                 sqlx::query(
                     r#"
                     UPDATE proof_sessions
@@ -217,7 +189,7 @@ impl ProofRequestRepo {
                     "#,
                 )
                 .bind(SessionStatus::Failed.as_str())
-                .bind("cleared during create_with_outbox requeue")
+                .bind("cleared during worker-queue requeue")
                 .bind(existing_id)
                 .bind(SessionStatus::Submitting.as_str())
                 .bind(SessionStatus::Running.as_str())
@@ -248,17 +220,6 @@ impl ProofRequestRepo {
                 )
                 .bind(ProofStatus::Created.as_str())
                 .bind(existing_id)
-                .execute(&mut *tx)
-                .await?;
-
-                sqlx::query(
-                    r#"
-                    INSERT INTO proof_request_outbox (proof_request_id, request_params)
-                    VALUES ($1, $2)
-                    "#,
-                )
-                .bind(existing_id)
-                .bind(&request_params)
                 .execute(&mut *tx)
                 .await?;
 
@@ -787,9 +748,7 @@ impl ProofRequestRepo {
     /// Retry a stuck PENDING request if under the retry limit, otherwise fail it permanently.
     ///
     /// If `retry_count < max_retries`: atomically resets to CREATED, increments `retry_count`,
-    /// and creates a new outbox entry for backend-backed requests so a worker picks it up again.
-    /// Requests without a backend `proof_type` are left unchanged because the legacy outbox cannot
-    /// make progress on them.
+    /// and resets the worker job lifecycle so the request can be claimed again.
     /// If `retry_count >= max_retries`: transitions to FAILED.
     pub async fn retry_or_fail_stuck_request(
         &self,
@@ -825,11 +784,6 @@ impl ProofRequestRepo {
         }
 
         let retry_count: i32 = row.get("retry_count");
-        let proof_type = row.get::<Option<&str>, _>("proof_type");
-        if proof_type.is_none() {
-            tx.rollback().await?;
-            return Ok(RetryOutcome::Unsupported);
-        }
 
         // Fail any active sessions before resetting so the retried run cannot collide with
         // `idx_proof_sessions_request_type_active_unique`. No-op on the normal reaper path,
@@ -897,46 +851,6 @@ impl ProofRequestRepo {
         .bind(id)
         .execute(&mut *tx)
         .await?;
-
-        // Copy the most recent outbox entry for this request. If the outbox was
-        // already cleaned up (0 rows), reconstruct request_params from the
-        // proof_request row we hold under FOR UPDATE.
-        let outbox_copy = sqlx::query(
-            r#"
-            INSERT INTO proof_request_outbox (proof_request_id, request_params)
-            SELECT proof_request_id, request_params
-            FROM proof_request_outbox
-            WHERE proof_request_id = $1
-            ORDER BY sequence_id DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-
-        if outbox_copy.rows_affected() == 0 {
-            let request_params = build_outbox_params(
-                row.get::<i64, _>("start_block_number"),
-                row.get::<i64, _>("number_of_blocks_to_prove"),
-                row.get::<Option<i64>, _>("sequence_window"),
-                proof_type,
-                row.get::<Option<&str>, _>("prover_address"),
-                row.get::<Option<&str>, _>("l1_head"),
-                row.get::<Option<i64>, _>("intermediate_root_interval"),
-            );
-
-            sqlx::query(
-                r#"
-                INSERT INTO proof_request_outbox (proof_request_id, request_params)
-                VALUES ($1, $2)
-                "#,
-            )
-            .bind(id)
-            .bind(&request_params)
-            .execute(&mut *tx)
-            .await?;
-        }
 
         tx.commit().await?;
         Ok(RetryOutcome::Retried)
@@ -1521,109 +1435,6 @@ impl ProofRequestRepo {
 
         Ok((rows, count.0.max(0) as u64))
     }
-
-    // ========== Outbox Methods ==========
-
-    /// Create an outbox entry for background task processing.
-    /// This should be called in the same transaction as creating the proof request.
-    pub async fn create_outbox_entry(&self, entry: CreateOutboxEntry) -> Result<i64> {
-        let row = sqlx::query(
-            r#"
-            INSERT INTO proof_request_outbox (proof_request_id, request_params)
-            VALUES ($1, $2)
-            RETURNING sequence_id
-            "#,
-        )
-        .bind(entry.proof_request_id)
-        .bind(&entry.request_params)
-        .fetch_one(&self.pool)
-        .await?;
-
-        let sequence_id: i64 = row.get("sequence_id");
-
-        Ok(sequence_id)
-    }
-
-    /// Get the next batch of unprocessed outbox entries.
-    ///
-    /// Returns entries in order by `sequence_id` (FIFO), excluding entries that
-    /// have exceeded `max_retries` attempts.
-    pub async fn get_unprocessed_outbox_entries(
-        &self,
-        limit: i64,
-        max_retries: i32,
-    ) -> Result<Vec<OutboxEntry>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT sequence_id, proof_request_id, request_params,
-                   processed, processed_at, retry_count, last_error, created_at
-            FROM proof_request_outbox
-            WHERE processed = FALSE
-              AND retry_count < $2
-            ORDER BY sequence_id ASC
-            LIMIT $1
-            "#,
-        )
-        .bind(limit)
-        .bind(max_retries)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows.iter().map(row_to_outbox_entry).collect())
-    }
-
-    /// Mark an outbox entry as processed
-    pub async fn mark_outbox_processed(&self, mark: MarkOutboxProcessed) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE proof_request_outbox
-            SET processed = TRUE,
-                processed_at = NOW()
-            WHERE sequence_id = $1
-            "#,
-        )
-        .bind(mark.sequence_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Record an error for an outbox entry and increment retry count
-    pub async fn mark_outbox_error(&self, mark: MarkOutboxError) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE proof_request_outbox
-            SET retry_count = retry_count + 1,
-                last_error = $1
-            WHERE sequence_id = $2
-            "#,
-        )
-        .bind(&mark.error_message)
-        .bind(mark.sequence_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Delete old processed outbox entries (for cleanup)
-    pub async fn delete_old_processed_outbox_entries(&self, older_than_days: i32) -> Result<u64> {
-        let result = sqlx::query(
-            r#"
-            DELETE FROM proof_request_outbox
-            WHERE processed = TRUE
-              AND processed_at < NOW() - INTERVAL '1 day' * $1
-            "#,
-        )
-        .bind(older_than_days)
-        .execute(&self.pool)
-        .await?;
-
-        let rows_deleted = result.rows_affected();
-
-        Ok(rows_deleted)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -2119,7 +1930,7 @@ fn row_to_proof_session(row: &sqlx::postgres::PgRow) -> Result<ProofSession> {
 
 /// Incoming fields compared to a locked `proof_requests` row for idempotency checks.
 #[derive(Debug, Clone)]
-struct CreateOutboxRequestParams<'a> {
+struct CreateRequestParams<'a> {
     request_payload: &'a serde_json::Value,
     api_proof_type: &'a str,
     zk_vm: Option<&'a str>,
@@ -2133,7 +1944,7 @@ struct CreateOutboxRequestParams<'a> {
     intermediate_root_interval: Option<i64>,
 }
 
-impl CreateOutboxRequestParams<'_> {
+impl CreateRequestParams<'_> {
     /// First field name that disagrees with `row`, or `None`. Stable for [`CreateProofRequestError::IdCollision`].
     fn first_mismatch(&self, row: &sqlx::postgres::PgRow) -> Option<&'static str> {
         if row.get::<i64, _>("start_block_number") != self.start_block_number {
@@ -2180,45 +1991,6 @@ impl CreateOutboxRequestParams<'_> {
             return Some("request_payload");
         }
         None
-    }
-}
-
-/// Build the canonical JSON payload for outbox entries.
-///
-/// Both [`ProofRequestRepo::create_with_outbox`] and
-/// [`ProofRequestRepo::retry_or_fail_stuck_request`] must produce the same
-/// shape so the downstream worker can parse either identically.
-fn build_outbox_params(
-    start_block_number: i64,
-    number_of_blocks_to_prove: i64,
-    sequence_window: Option<i64>,
-    proof_type: Option<&str>,
-    prover_address: Option<&str>,
-    l1_head: Option<&str>,
-    intermediate_root_interval: Option<i64>,
-) -> serde_json::Value {
-    serde_json::json!({
-        "start_block_number": start_block_number,
-        "number_of_blocks_to_prove": number_of_blocks_to_prove,
-        "sequence_window": sequence_window,
-        "proof_type": proof_type,
-        "prover_address": prover_address,
-        "l1_head": l1_head,
-        "intermediate_root_interval": intermediate_root_interval,
-    })
-}
-
-/// Helper function to convert a database row to `OutboxEntry`
-fn row_to_outbox_entry(row: &sqlx::postgres::PgRow) -> OutboxEntry {
-    OutboxEntry {
-        sequence_id: row.get("sequence_id"),
-        proof_request_id: row.get("proof_request_id"),
-        request_params: row.get("request_params"),
-        processed: row.get("processed"),
-        processed_at: row.get("processed_at"),
-        retry_count: row.get("retry_count"),
-        last_error: row.get("last_error"),
-        created_at: row.get("created_at"),
     }
 }
 

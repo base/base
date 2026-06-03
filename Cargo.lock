@@ -5974,7 +5974,6 @@ dependencies = [
  "base-proof-succinct-host-utils",
  "base-proof-succinct-proof-utils",
  "base-prover-service-db",
- "base-prover-service-outbox",
  "base-prover-service-protocol",
  "bincode 2.0.1",
  "chrono",
@@ -6026,20 +6025,6 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "base-prover-service-outbox"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base-prover-service-db",
- "serde_json",
- "tokio",
- "tokio-util",
  "tracing",
  "uuid",
 ]

@@ -124,12 +124,6 @@ impl StatusPoller {
                         metrics::inc_stuck_requests(proof_type_label);
                         metrics::inc_proof_requests_completed("failed", proof_type_label);
                     }
-                    Ok(RetryOutcome::Unsupported) => {
-                        warn!(
-                            proof_request_id = %request.id,
-                            "Stuck request cannot be retried by the legacy outbox flow"
-                        );
-                    }
                     Ok(RetryOutcome::Skipped) => {
                         warn!(
                             proof_request_id = %request.id,

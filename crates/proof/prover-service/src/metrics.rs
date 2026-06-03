@@ -25,8 +25,6 @@ pub const PROOF_REQUESTS_COMPLETED: &str = "zk_prover_service.proof_requests_com
 pub const STUCK_REQUESTS: &str = "zk_prover_service.stuck_requests";
 /// Stuck requests retried (reset to CREATED). Tags: `proof_type`
 pub const RETRIED_REQUESTS: &str = "zk_prover_service.retried_requests";
-/// Outbox task submission outcomes. Tags: status (submitted/failed), `proof_type`
-pub const OUTBOX_TASKS_PROCESSED: &str = "zk_prover_service.outbox_tasks_processed";
 
 // ---------------------------------------------------------------------------
 // ProverMetrics — metric descriptions (called once at init)
@@ -53,7 +51,6 @@ impl ProverMetrics {
         describe_counter!(PROOF_REQUESTS_COMPLETED, "Terminal proof request outcomes");
         describe_counter!(STUCK_REQUESTS, "Stuck requests detected and failed");
         describe_counter!(RETRIED_REQUESTS, "Stuck requests retried (reset to CREATED)");
-        describe_counter!(OUTBOX_TASKS_PROCESSED, "Outbox task submission outcomes");
     }
 }
 
@@ -115,15 +112,6 @@ pub fn inc_stuck_requests(proof_type: &str) {
 /// Increment retried requests counter.
 pub fn inc_retried_requests(proof_type: &str) {
     counter!(RETRIED_REQUESTS, "proof_type" => proof_type.to_string()).increment(1);
-}
-
-/// Increment outbox task processed counter.
-pub fn inc_outbox_tasks_processed(status: &str, proof_type: &str) {
-    counter!(OUTBOX_TASKS_PROCESSED,
-        "status" => status.to_string(),
-        "proof_type" => proof_type.to_string(),
-    )
-    .increment(1);
 }
 
 // ---------------------------------------------------------------------------

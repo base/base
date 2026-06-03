@@ -17,10 +17,10 @@ use std::time::Duration;
 
 use base_prover_service_db::{
     ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
-    CreateProofRequestError, CreateProofRequestOutcome, CreateProofSession, FailExpiredProofJobs,
-    HeartbeatOutcome, HeartbeatProofJob, MarkOutboxError, MarkOutboxProcessed, ProofJobStatus,
-    ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType, RetryOutcome, SessionStatus,
-    SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
+    CreateProofRequestOutcome, CreateProofSession, FailExpiredProofJobs, HeartbeatOutcome,
+    HeartbeatProofJob, ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType,
+    RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession,
+    UpdateReceipt, ZkVmKind,
 };
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
@@ -30,11 +30,8 @@ use base_prover_service_protocol::{
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-/// `create_with_outbox` retry cap; must match prover `MAX_PROOF_RETRIES` default (`3`).
+/// Proof request retry cap; must match prover `MAX_PROOF_RETRIES` default (`3`).
 const TEST_MAX_PROOF_RETRIES: i32 = 3;
-
-/// Outbox reader attempt cap (not proof `retry_count`).
-const TEST_OUTBOX_MAX_ATTEMPTS: i32 = 3;
 
 /// Connect to the test database using `DATABASE_URL` env var.
 async fn test_pool() -> PgPool {
@@ -267,7 +264,7 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
     assert_eq!(listed.api_proof_type, ApiProofType::Compressed);
     assert_eq!(listed.zk_vm, Some(ZkVmKind::Sp1));
 
-    let outcome = repo.create_with_outbox(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
     assert_eq!(outcome, CreateProofRequestOutcome::Replayed(explicit_id));
 }
 
@@ -855,7 +852,7 @@ async fn test_retry_or_fail_stuck_request_retries() {
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_retry_or_fail_stuck_request_skips_null_proof_type() {
+async fn test_retry_or_fail_stuck_request_retries_tee_request() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
 
@@ -865,20 +862,16 @@ async fn test_retry_or_fail_stuck_request_skips_null_proof_type() {
     let stuck_requests = repo.get_stuck_requests(-1).await.unwrap();
     assert!(
         stuck_requests.iter().all(|request| request.id != id),
-        "NULL proof_type requests must not enter legacy stuck retry detection"
+        "TEE requests should not enter legacy backend-session stuck detection"
     );
 
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck in PENDING").await.unwrap();
-    assert_eq!(outcome, RetryOutcome::Unsupported);
+    assert_eq!(outcome, RetryOutcome::Retried);
 
     let req = repo.get(id).await.unwrap().unwrap();
-    assert_eq!(req.status, ProofStatus::Pending);
-    assert_eq!(req.retry_count, 0);
+    assert_eq!(req.status, ProofStatus::Created);
+    assert_eq!(req.retry_count, 1);
     assert!(req.proof_type.is_none());
-
-    let entries = repo.get_unprocessed_outbox_entries(100, 3).await.unwrap();
-    let outbox_count = entries.iter().filter(|entry| entry.proof_request_id == id).count();
-    assert_eq!(outbox_count, 0, "NULL proof_type requests must not enter the legacy outbox");
 }
 
 #[tokio::test]
@@ -926,119 +919,10 @@ async fn test_retry_or_fail_stuck_request_wrong_state() {
 }
 
 // ============================================================
-// Outbox tests
+// Worker queue create tests
 // ============================================================
 
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_create_with_outbox() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let outcome =
-        repo.create_with_outbox(compressed_request(), TEST_MAX_PROOF_RETRIES).await.unwrap();
-    let id = match outcome {
-        CreateProofRequestOutcome::Created(id) => id,
-        other => panic!("expected Created outcome, got {other:?}"),
-    };
-
-    // Verify proof request exists
-    let req = repo.get(id).await.unwrap().expect("should find request");
-    assert_eq!(req.status, ProofStatus::Created);
-
-    // Verify outbox entry was created
-    let entries = repo.get_unprocessed_outbox_entries(100, 3).await.unwrap();
-    let found = entries.iter().any(|e| e.proof_request_id == id);
-    assert!(found, "outbox entry should exist for this request");
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_create_with_outbox_idempotent() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let explicit_id = Uuid::new_v4();
-    let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
-
-    let first = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
-    let second = repo.create_with_outbox(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
-
-    assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
-    assert!(matches!(second, CreateProofRequestOutcome::Replayed(id) if id == explicit_id));
-
-    // The second call must NOT enqueue a fresh outbox entry while the row is
-    // still in a non-terminal state.
-    let entries = repo.get_unprocessed_outbox_entries(100, 3).await.unwrap();
-    let outbox_count = entries.iter().filter(|e| e.proof_request_id == explicit_id).count();
-    assert_eq!(outbox_count, 1, "in-flight replay must not create another outbox row");
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_outbox_process_and_cleanup() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let id =
-        repo.create_with_outbox(compressed_request(), TEST_MAX_PROOF_RETRIES).await.unwrap().id();
-
-    // Get unprocessed entries. Use a high limit because the shared test DB accumulates
-    // unprocessed entries from other tests, and this entry is the newest (FIFO order).
-    let entries = repo.get_unprocessed_outbox_entries(100, 3).await.unwrap();
-    let entry = entries.iter().find(|e| e.proof_request_id == id).expect("should find our entry");
-    assert!(!entry.processed);
-    let seq = entry.sequence_id;
-
-    // Mark processed
-    repo.mark_outbox_processed(MarkOutboxProcessed { sequence_id: seq }).await.unwrap();
-
-    // Should no longer appear in unprocessed
-    let entries = repo.get_unprocessed_outbox_entries(100, 3).await.unwrap();
-    let found = entries.iter().any(|e| e.proof_request_id == id);
-    assert!(!found, "processed entry should not appear in unprocessed");
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_outbox_error_tracking() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let id =
-        repo.create_with_outbox(compressed_request(), TEST_MAX_PROOF_RETRIES).await.unwrap().id();
-
-    let entries = repo.get_unprocessed_outbox_entries(100, 3).await.unwrap();
-    let entry = entries.iter().find(|e| e.proof_request_id == id).expect("should find our entry");
-    let seq = entry.sequence_id;
-    assert_eq!(entry.retry_count, 0);
-
-    // Record errors
-    repo.mark_outbox_error(MarkOutboxError {
-        sequence_id: seq,
-        error_message: "first error".into(),
-    })
-    .await
-    .unwrap();
-
-    repo.mark_outbox_error(MarkOutboxError {
-        sequence_id: seq,
-        error_message: "second error".into(),
-    })
-    .await
-    .unwrap();
-
-    // Verify retry count incremented
-    let entries = repo.get_unprocessed_outbox_entries(100, 3).await.unwrap();
-    let entry = entries.iter().find(|e| e.sequence_id == seq).expect("should still find entry");
-    assert_eq!(entry.retry_count, 2);
-    assert_eq!(entry.last_error.as_deref(), Some("second error"));
-}
-
-// create_with_outbox FAILED retry (CHAIN-4297 / Immunefi #75829)
-
-/// `CREATED` → `PENDING` → `FAILED` (same transitions as the worker on backend failure).
+/// `CREATED` -> `PENDING` -> `FAILED` (same transitions as a failed worker attempt).
 async fn drive_to_failed(repo: &ProofRequestRepo, id: Uuid, error_message: &str) {
     assert!(repo.atomic_claim_task(id).await.unwrap(), "claim CREATED -> PENDING");
     assert!(
@@ -1049,7 +933,74 @@ async fn drive_to_failed(repo: &ProofRequestRepo, id: Uuid, error_message: &str)
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_create_with_outbox_requeues_failed_row() {
+async fn test_create_for_worker_queue_creates_claimable_job() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let explicit_id = Uuid::new_v4();
+    let mut req = compressed_request();
+    req.session_id = Some(explicit_id.to_string());
+
+    let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    assert!(matches!(outcome, CreateProofRequestOutcome::Created(id) if id == explicit_id));
+
+    let job = repo
+        .claim_next_proof_job(compressed_claim("worker-queue-create", 3))
+        .await
+        .unwrap()
+        .expect("worker-created compressed job should be claimable");
+    assert_eq!(job.id, explicit_id);
+    assert_eq!(job.job_status, ProofJobStatus::Claimed);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_create_for_worker_queue_accepts_tee_requests() {
+    let repo = test_repo(test_pool().await);
+
+    drain_claimable_tee_jobs(&repo).await;
+    let explicit_id = format!("tee-worker-queue-{}", Uuid::new_v4());
+    let mut req = tee_request();
+    req.session_id = Some(explicit_id.clone());
+
+    let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let id = outcome.id();
+
+    let row = repo.get(id).await.unwrap().expect("TEE request should be stored");
+    assert_eq!(row.session_id, explicit_id);
+    assert_eq!(row.api_proof_type, ApiProofType::Tee);
+    assert!(row.proof_type.is_none());
+
+    let job = repo
+        .claim_next_proof_job(tee_claim("tee-worker-queue-create", 3))
+        .await
+        .unwrap()
+        .expect("worker-created TEE job should be claimable");
+    assert_eq!(job.id, id);
+    assert_eq!(job.job_status, ProofJobStatus::Claimed);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_create_for_worker_queue_idempotent() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    let explicit_id = Uuid::new_v4();
+    let mut req = compressed_request();
+    req.session_id = Some(explicit_id.to_string());
+
+    let first = repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+
+    assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
+    assert!(matches!(second, CreateProofRequestOutcome::Replayed(id) if id == explicit_id));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_create_for_worker_queue_requeues_failed_row() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
 
@@ -1057,13 +1008,10 @@ async fn test_create_with_outbox_requeues_failed_row() {
     let mut req = compressed_request();
     req.session_id = Some(explicit_id.to_string());
 
-    // First attempt: create the row, then fail it via the same path the worker uses.
-    let first = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let first = repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
     drive_to_failed(&repo, explicit_id, "transient backend error").await;
 
-    // Simulate stale worker-claim state on the row (as if it had been claimed and
-    // failed through the worker API) so the requeue must reset the job lifecycle too.
     sqlx::query(
         "UPDATE proof_requests SET job_status = 'FAILED', worker_id = 'stale-worker', \
          lock_id = gen_random_uuid(), lock_expires_at = NOW(), claimed_at = NOW(), \
@@ -1074,174 +1022,24 @@ async fn test_create_with_outbox_requeues_failed_row() {
     .await
     .unwrap();
 
-    // Sanity: the row is FAILED and the original outbox row exists.
-    let before = repo.get(explicit_id).await.unwrap().unwrap();
-    assert_eq!(before.status, ProofStatus::Failed);
-    assert_eq!(before.retry_count, 0);
-    let original_outbox =
-        repo.get_unprocessed_outbox_entries(100, TEST_OUTBOX_MAX_ATTEMPTS).await.unwrap();
-    let original_outbox_count =
-        original_outbox.iter().filter(|e| e.proof_request_id == explicit_id).count();
-
-    // Retry: same request, same id. The DB must reset the row and enqueue a new outbox entry.
-    let second = repo.create_with_outbox(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
     assert!(matches!(second, CreateProofRequestOutcome::Requeued(id) if id == explicit_id));
 
     let after = repo.get(explicit_id).await.unwrap().unwrap();
-    assert_eq!(after.status, ProofStatus::Created, "row must be reset to CREATED for re-claim");
-    assert_eq!(after.retry_count, 1, "retry_count must increment");
-    assert!(after.error_message.is_none(), "stale error_message must be cleared");
-    assert!(after.completed_at.is_none(), "stale completed_at must be cleared");
-    assert!(after.stark_receipt.is_none(), "stale stark_receipt must be cleared");
-    assert!(after.snark_receipt.is_none(), "stale snark_receipt must be cleared");
+    assert_eq!(after.status, ProofStatus::Created);
+    assert_eq!(after.retry_count, 1);
+    assert!(after.error_message.is_none());
+    assert!(after.completed_at.is_none());
 
-    // The worker job lifecycle must also be reset so the requeued row is claimable
-    // again and carries no stale claim metadata.
     let (job_status, attempt, worker_id): (String, i32, Option<String>) =
         sqlx::query_as("SELECT job_status, attempt, worker_id FROM proof_requests WHERE id = $1")
             .bind(explicit_id)
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(job_status, "PENDING", "job_status must reset so workers can re-claim");
-    assert_eq!(attempt, 0, "stale claim attempt must be cleared");
-    assert!(worker_id.is_none(), "stale worker_id must be cleared");
-
-    // A new outbox entry must be present so the worker can claim the task again.
-    let after_outbox =
-        repo.get_unprocessed_outbox_entries(100, TEST_OUTBOX_MAX_ATTEMPTS).await.unwrap();
-    let after_outbox_count =
-        after_outbox.iter().filter(|e| e.proof_request_id == explicit_id).count();
-    assert_eq!(
-        after_outbox_count,
-        original_outbox_count + 1,
-        "requeue must insert exactly one new outbox row",
-    );
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_create_with_outbox_rejects_param_mismatch() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let explicit_id = Uuid::new_v4();
-    let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
-    let _ = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
-
-    // Same id, different start_block_number — must be rejected, not silently masked.
-    let mut mismatched_payload = req.request_payload.clone();
-    let ProtocolProofRequestKind::Compressed(proof) = &mut mismatched_payload.request else {
-        panic!("expected compressed request");
-    };
-    proof.start_block_number += 1;
-    let mut mismatched =
-        CreateProofRequest::new(mismatched_payload).expect("mismatched request should validate");
-    mismatched.session_id = Some(explicit_id.to_string());
-
-    let err = repo
-        .create_with_outbox(mismatched, TEST_MAX_PROOF_RETRIES)
-        .await
-        .expect_err("param mismatch must produce IdCollision");
-
-    match err {
-        CreateProofRequestError::IdCollision { id, field } => {
-            assert_eq!(id, explicit_id);
-            assert_eq!(field, "start_block_number");
-        }
-        other => panic!("expected IdCollision, got {other:?}"),
-    }
-
-    // The original row must be untouched (no spurious requeue / state change).
-    let row = repo.get(explicit_id).await.unwrap().unwrap();
-    assert_eq!(row.status, ProofStatus::Created);
-    assert_eq!(row.retry_count, 0);
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_create_with_outbox_retry_cap() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let explicit_id = Uuid::new_v4();
-    let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
-
-    let first = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
-    assert!(matches!(first, CreateProofRequestOutcome::Created(_)));
-
-    for expected in 1..=TEST_MAX_PROOF_RETRIES {
-        drive_to_failed(&repo, explicit_id, "transient backend error").await;
-        let outcome = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
-        assert!(matches!(outcome, CreateProofRequestOutcome::Requeued(_)));
-        let row = repo.get(explicit_id).await.unwrap().unwrap();
-        assert_eq!(row.retry_count, expected, "retry {expected} should reset and bump count");
-    }
-
-    // At cap: next create must not enqueue outbox.
-    drive_to_failed(&repo, explicit_id, "final backend error").await;
-    let outbox_before =
-        repo.get_unprocessed_outbox_entries(100, TEST_OUTBOX_MAX_ATTEMPTS).await.unwrap();
-    let outbox_count_before =
-        outbox_before.iter().filter(|e| e.proof_request_id == explicit_id).count();
-
-    let outcome = repo.create_with_outbox(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
-    assert!(matches!(outcome, CreateProofRequestOutcome::RetryExhausted(id) if id == explicit_id));
-
-    let row = repo.get(explicit_id).await.unwrap().unwrap();
-    assert_eq!(row.status, ProofStatus::Failed, "row must stay FAILED at retry cap");
-    assert_eq!(row.retry_count, TEST_MAX_PROOF_RETRIES, "retry_count must not exceed cap");
-
-    let outbox_after =
-        repo.get_unprocessed_outbox_entries(100, TEST_OUTBOX_MAX_ATTEMPTS).await.unwrap();
-    let outbox_count_after =
-        outbox_after.iter().filter(|e| e.proof_request_id == explicit_id).count();
-    assert_eq!(
-        outbox_count_after, outbox_count_before,
-        "RetryExhausted must not enqueue a new outbox row",
-    );
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_create_with_outbox_idempotent_in_flight() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool);
-
-    let explicit_id = Uuid::new_v4();
-    let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
-    let _ = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
-
-    // CREATED: replay must not insert another outbox row.
-    let replayed = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
-    assert!(matches!(replayed, CreateProofRequestOutcome::Replayed(id) if id == explicit_id));
-
-    // PENDING: claim, then replay.
-    assert!(repo.atomic_claim_task(explicit_id).await.unwrap());
-    let replayed = repo.create_with_outbox(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
-    assert!(matches!(replayed, CreateProofRequestOutcome::Replayed(id) if id == explicit_id));
-
-    // RUNNING: bring the row up via a STARK session, then replay.
-    let backend_id = format!("inflight-{}", Uuid::new_v4());
-    repo.transition_pending_to_running(CreateProofSession {
-        proof_request_id: explicit_id,
-        session_type: SessionType::Stark,
-        backend_session_id: backend_id,
-        metadata: None,
-    })
-    .await
-    .unwrap()
-    .expect("transition PENDING -> RUNNING");
-    let replayed = repo.create_with_outbox(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
-    assert!(matches!(replayed, CreateProofRequestOutcome::Replayed(id) if id == explicit_id));
-
-    // Exactly one outbox row should exist for this id across all three replays.
-    let entries = repo.get_unprocessed_outbox_entries(100, TEST_OUTBOX_MAX_ATTEMPTS).await.unwrap();
-    let outbox_count = entries.iter().filter(|e| e.proof_request_id == explicit_id).count();
-    assert_eq!(outbox_count, 1, "in-flight replays must not enqueue new outbox rows");
+    assert_eq!(job_status, "PENDING");
+    assert_eq!(attempt, 0);
+    assert!(worker_id.is_none());
 }
 
 // ============================================================

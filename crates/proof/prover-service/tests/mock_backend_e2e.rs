@@ -18,8 +18,8 @@ use uuid::Uuid;
 const PROOF_TYPE_COMPRESSED: i32 = 3;
 const PROOF_TYPE_SNARK_GROTH16: i32 = 4;
 
-/// Polling configuration -- mock proofs are instant, but the outbox processor
-/// and status poller run on intervals, so we need a small window.
+/// Polling configuration -- mock proofs are instant, but worker/status polling
+/// runs on intervals, so we need a small window.
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
 const POLL_TIMEOUT: Duration = Duration::from_secs(120);
 

@@ -202,22 +202,20 @@ pub enum RetryOutcome {
     Retried,
     /// Request was permanently marked FAILED (max retries exceeded).
     PermanentlyFailed,
-    /// Request cannot be retried by the legacy outbox flow.
-    Unsupported,
     /// Request was no longer in PENDING state (already claimed or transitioned).
     Skipped,
 }
 
-/// Outcome of a `create_with_outbox` call.
+/// Outcome of creating or replaying a proof request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CreateProofRequestOutcome {
-    /// A new proof request row and outbox entry were inserted.
+    /// A new proof request row was inserted.
     Created(Uuid),
     /// An existing terminal `FAILED` row was reset to `CREATED` and a fresh
-    /// outbox entry was inserted; the worker will pick it up again.
+    /// worker job was made claimable again.
     Requeued(Uuid),
     /// An existing non-terminal or `SUCCEEDED` row was returned unchanged for
-    /// idempotent replay; no new outbox entry was inserted.
+    /// idempotent replay.
     Replayed(Uuid),
     /// An existing terminal `FAILED` row is at the retry cap; no requeue.
     RetryExhausted(Uuid),
@@ -235,18 +233,12 @@ impl CreateProofRequestOutcome {
     }
 }
 
-/// Errors returned by `create_with_outbox`.
+/// Errors returned while creating proof requests.
 #[derive(Debug, thiserror::Error)]
 pub enum CreateProofRequestError {
     /// Request fields are not a supported protocol/backend combination.
     #[error(transparent)]
     Validation(#[from] CreateProofRequestValidationError),
-    /// The outbox flow only supports backend-backed ZK proof requests.
-    #[error("proof type {api_proof_type} cannot be enqueued through the legacy outbox flow")]
-    UnsupportedOutboxProofType {
-        /// Protocol proof type that cannot be handled by the outbox worker.
-        api_proof_type: ApiProofType,
-    },
     /// Persisted row disagrees with the new request for this `session_id`.
     #[error(
         "session_id {id} already exists with a different {field} \
@@ -1033,52 +1025,6 @@ pub struct FailExpiredProofJobs {
     /// Maximum number of expired jobs to fail in this batch.
     pub batch_size: u32,
     /// Error message stored on newly failed jobs.
-    pub error_message: String,
-}
-
-/// Outbox entry for reliable task processing
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
-pub struct OutboxEntry {
-    /// Auto-incrementing sequence identifier (FIFO ordering).
-    pub sequence_id: i64,
-    /// Associated proof request identifier.
-    pub proof_request_id: Uuid,
-    /// Serialized proof request parameters (JSON).
-    pub request_params: serde_json::Value,
-    /// Whether this entry has been processed.
-    pub processed: bool,
-    /// Timestamp when the entry was processed.
-    pub processed_at: Option<DateTime<Utc>>,
-    /// Number of times processing has been retried.
-    pub retry_count: i32,
-    /// Error from the most recent processing attempt.
-    pub last_error: Option<String>,
-    /// Timestamp when the entry was created.
-    pub created_at: DateTime<Utc>,
-}
-
-/// Parameters for creating an outbox entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateOutboxEntry {
-    /// Associated proof request identifier.
-    pub proof_request_id: Uuid,
-    /// Serialized proof request parameters (JSON).
-    pub request_params: serde_json::Value,
-}
-
-/// Parameters for marking an outbox entry as processed
-#[derive(Debug, Clone)]
-pub struct MarkOutboxProcessed {
-    /// Sequence identifier of the outbox entry to mark.
-    pub sequence_id: i64,
-}
-
-/// Parameters for recording a processing error
-#[derive(Debug, Clone)]
-pub struct MarkOutboxError {
-    /// Sequence identifier of the outbox entry.
-    pub sequence_id: i64,
-    /// Error message from the failed processing attempt.
     pub error_message: String,
 }
 

@@ -11,11 +11,11 @@ pub use backends::{
 
 mod metrics;
 pub use metrics::{
-    OUTBOX_TASKS_PROCESSED, PROOF_REQUEST_DURATION_MS, PROOF_REQUESTS_COMPLETED, ProverMetrics,
-    REQUESTS, RESPONSE_LATENCY_MS, RETRIED_REQUESTS, STUCK_REQUESTS,
-    WITNESS_GENERATION_DURATION_MS, inc_outbox_tasks_processed, inc_proof_requests_completed,
-    inc_requests, inc_retried_requests, inc_stuck_requests, proof_type_label,
-    record_proof_request_duration, record_response_latency, record_witness_generation_duration,
+    PROOF_REQUEST_DURATION_MS, PROOF_REQUESTS_COMPLETED, ProverMetrics, REQUESTS,
+    RESPONSE_LATENCY_MS, RETRIED_REQUESTS, STUCK_REQUESTS, WITNESS_GENERATION_DURATION_MS,
+    inc_proof_requests_completed, inc_requests, inc_retried_requests, inc_stuck_requests,
+    proof_type_label, record_proof_request_duration, record_response_latency,
+    record_witness_generation_duration,
 };
 
 mod proof_request_manager;
@@ -38,4 +38,4 @@ mod snark_e2e;
 pub use snark_e2e::SnarkE2e;
 
 mod worker;
-pub use worker::{ProverWorker, ProverWorkerPool, StatusPoller};
+pub use worker::StatusPoller;

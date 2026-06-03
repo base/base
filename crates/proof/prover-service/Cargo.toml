@@ -10,7 +10,6 @@ repository.workspace = true
 
 [dependencies]
 base-prover-service-db.workspace = true
-base-prover-service-outbox.workspace = true
 base-prover-service-protocol.workspace = true
 
 # Succinct / SP1
