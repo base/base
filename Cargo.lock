@@ -5104,6 +5104,7 @@ dependencies = [
  "derive_more 2.1.1",
  "proptest",
  "revm",
+ "rstest",
  "thiserror 2.0.18",
 ]
 
