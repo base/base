@@ -152,7 +152,7 @@ pub fn target_usage_color(usage: f64) -> Color {
     }
 }
 
-const fn lerp_rgb(a: (u8, u8, u8), b: (u8, u8, u8), t: f64) -> Color {
+pub(super) const fn lerp_rgb(a: (u8, u8, u8), b: (u8, u8, u8), t: f64) -> Color {
     Color::Rgb(
         (a.0 as f64 + (b.0 as f64 - a.0 as f64) * t) as u8,
         (a.1 as f64 + (b.1 as f64 - a.1 as f64) * t) as u8,

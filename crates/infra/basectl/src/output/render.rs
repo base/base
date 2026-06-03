@@ -14,6 +14,8 @@ use crate::{
     rpc::L1ConnectionMode,
 };
 
+use super::format::lerp_rgb;
+
 const EIGHTH_BLOCKS: [char; 8] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
 const GAS_COLOR_WARM: (u8, u8, u8) = (255, 200, 80);
 const GAS_COLOR_HOT: (u8, u8, u8) = (255, 60, 60);
@@ -431,12 +433,4 @@ const fn dim_color(color: Color, opacity: f64) -> Color {
         return color;
     };
     Color::Rgb((r as f64 * opacity) as u8, (g as f64 * opacity) as u8, (b as f64 * opacity) as u8)
-}
-
-const fn lerp_rgb(a: (u8, u8, u8), b: (u8, u8, u8), t: f64) -> Color {
-    Color::Rgb(
-        (a.0 as f64 + (b.0 as f64 - a.0 as f64) * t) as u8,
-        (a.1 as f64 + (b.1 as f64 - a.1 as f64) * t) as u8,
-        (a.2 as f64 + (b.2 as f64 - a.2 as f64) * t) as u8,
-    )
 }
