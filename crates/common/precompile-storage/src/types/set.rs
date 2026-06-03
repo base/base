@@ -433,11 +433,11 @@ mod tests {
             let base = U256::from(700u64);
             let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
 
+            // Use disjoint ranges so first and second share no elements.
             let first: Vec<Address> = (0..initial).map(|i| Address::from([i; 20])).collect();
-            handler.write(Set::from(first)).unwrap();
+            handler.write(Set::from(first.clone())).unwrap();
             assert_eq!(handler.len().unwrap(), initial as usize);
 
-            // Use a disjoint range so positions mapping is fully replaced.
             let second: Vec<Address> =
                 (100..100 + final_size).map(|i| Address::from([i; 20])).collect();
             handler.write(Set::from(second.clone())).unwrap();
@@ -447,6 +447,9 @@ mod tests {
             assert_eq!(loaded.len(), final_size as usize);
             for addr in &second {
                 assert!(handler.contains(addr).unwrap());
+            }
+            for addr in &first {
+                assert!(!handler.contains(addr).unwrap());
             }
         });
     }
