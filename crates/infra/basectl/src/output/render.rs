@@ -5,6 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
 };
 
+use super::format::lerp_rgb;
 use crate::{
     app::{DaTracker, FlashblockEntry, L1Block, L1BlockFilter, LoadingState},
     output::{
@@ -13,8 +14,6 @@ use crate::{
     },
     rpc::L1ConnectionMode,
 };
-
-use super::format::lerp_rgb;
 
 const EIGHTH_BLOCKS: [char; 8] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
 const GAS_COLOR_WARM: (u8, u8, u8) = (255, 200, 80);

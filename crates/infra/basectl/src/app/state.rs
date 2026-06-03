@@ -161,7 +161,6 @@ impl L1Block {
             .unwrap_or(0);
         now.saturating_sub(self.timestamp)
     }
-
 }
 
 /// Filter mode for the L1 blocks table display.
