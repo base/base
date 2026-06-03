@@ -3166,24 +3166,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-access-lists"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus 2.0.5",
- "alloy-contract 2.0.5",
- "alloy-eip7928 0.4.2",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-sol-types",
- "base-common-evm",
- "base-test-utils",
- "eyre",
- "revm",
- "serde",
- "tracing",
-]
-
-[[package]]
 name = "base-action-harness"
 version = "0.0.0"
 dependencies = [
@@ -3450,7 +3432,6 @@ dependencies = [
  "alloy-transport 2.0.5",
  "alloy-transport-http 2.0.5",
  "async-trait",
- "base-access-lists",
  "base-builder-core",
  "base-builder-publish",
  "base-bundles",

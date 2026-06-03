@@ -11,7 +11,6 @@ use alloy_evm::Database;
 use alloy_primitives::B256;
 use alloy_primitives::{BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
-use base_access_lists::FBALBuilderDb;
 use base_bundles::{MeterBundleResponse, RejectedTransaction, RejectionReason};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
@@ -38,7 +37,7 @@ use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{Level, debug, error, span, trace, warn};
+use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
@@ -551,10 +550,7 @@ impl BasePayloadBuilderCtx {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
         let no_tx_pool = self.attributes().no_tx_pool;
 
-        let mut fbal_db = FBALBuilderDb::new(&mut *db);
-        let min_tx_index = info.executed_transactions.iter().len() as u64;
-        fbal_db.set_index(min_tx_index);
-        let mut evm = self.evm_config.evm_with_env(&mut fbal_db, self.evm_env.clone());
+        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         for sequencer_tx in &self.attributes().transactions {
             // A sequencer's block should never contain blob transactions.
@@ -580,7 +576,6 @@ impl BasePayloadBuilderCtx {
             let depositor_nonce = (self.is_regolith_active() && sequencer_tx.is_deposit())
                 .then(|| {
                     evm.db_mut()
-                        .db_mut()
                         .load_cache_account(sequencer_tx.signer())
                         .map(|acc| acc.account_info().unwrap_or_default().nonce)
                 })
@@ -631,10 +626,8 @@ impl BasePayloadBuilderCtx {
             evm.db_mut().commit(state);
 
             // append sender and transaction to the respective lists
-            // and increment the next txn index for the access list
             info.executed_senders.push(sequencer_tx.signer());
             info.executed_transactions.push(sequencer_tx.into_inner());
-            evm.db_mut().inc_index();
         }
 
         let da_footprint_gas_scalar = self
@@ -646,13 +639,6 @@ impl BasePayloadBuilderCtx {
             });
 
         info.da_footprint_scalar = da_footprint_gas_scalar;
-
-        match fbal_db.finish() {
-            Ok(fbal_builder) => info.extra.access_list_builder = fbal_builder,
-            Err(err) => {
-                error!(error = %err, "Failed to finalize FBALBuilder");
-            }
-        }
 
         Ok(info)
     }
@@ -676,10 +662,8 @@ impl BasePayloadBuilderCtx {
         let base_fee = self.base_fee();
         let mut diag = FlashblockDiagnostics::default();
 
-        let mut fbal_db = FBALBuilderDb::new(&mut *db);
         let min_tx_index = info.executed_transactions.len() as u64;
-        fbal_db.set_index(min_tx_index);
-        let mut evm = self.evm_config.evm_with_env(&mut fbal_db, self.evm_env.clone());
+        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         debug!(
             target: "payload_builder",
@@ -1059,19 +1043,8 @@ impl BasePayloadBuilderCtx {
             }
 
             // append sender and transaction to the respective lists
-            // and increment the next txn index for the access list
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
-            evm.db_mut().inc_index();
-        }
-
-        match fbal_db.finish() {
-            Ok(fbal_builder) => {
-                info.extra.access_list_builder.merge(fbal_builder);
-            }
-            Err(err) => {
-                error!(error = %err, "Failed to finalize FBALBuilder");
-            }
         }
 
         // Record cumulative state root gas for the block

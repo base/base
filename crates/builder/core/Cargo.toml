@@ -15,7 +15,6 @@ workspace = true
 # workspace
 base-bundles.workspace = true
 base-node-runner.workspace = true
-base-access-lists.workspace = true
 base-builder-publish.workspace = true
 base-common-flashblocks.workspace = true
 
