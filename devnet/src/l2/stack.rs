@@ -118,6 +118,30 @@ impl L2Stack {
             .await
             .wrap_err("Failed to start in-process builder")?;
 
+        // Patch the L2 genesis hash in the rollup config if it's a zero placeholder.
+        // This happens when the devnet uses base/contracts forge scripts (which can't
+        // compute the genesis hash at deploy time). The real hash is only known after
+        // reth initializes from genesis.json.
+        let rollup_config = {
+            let mut cfg = rollup_config;
+            if cfg.genesis.l2.hash == B256::ZERO {
+                use alloy_provider::Provider;
+                let client = alloy_rpc_client::RpcClient::builder().http(builder.rpc_url()?);
+                let provider =
+                    alloy_provider::RootProvider::<base_common_network::Base>::new(client);
+                let block = provider
+                    .get_block_by_number(alloy_eips::BlockNumberOrTag::Earliest)
+                    .full()
+                    .await
+                    .wrap_err("Failed to fetch L2 genesis block")?
+                    .ok_or_else(|| eyre::eyre!("L2 genesis block not found"))?;
+                let hash = block.header.hash;
+                tracing::info!(%hash, "Patched L2 genesis hash in rollup config");
+                cfg.genesis.l2.hash = hash;
+            }
+            cfg
+        };
+
         // 2. Start builder consensus (in-process CL, Sequencer mode).
         //    The sequencer starts in stopped mode so that blocks are not produced until the
         //    validator is connected via P2P — otherwise the first blocks would be lost via gossip
