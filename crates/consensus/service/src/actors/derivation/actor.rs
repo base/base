@@ -11,7 +11,10 @@ use base_consensus_derive::{
 use base_consensus_safedb::SafeHeadListener;
 use base_protocol::{AttributesWithParent, BlockInfo};
 use thiserror::Error;
-use tokio::{select, sync::mpsc};
+use tokio::{
+    select,
+    sync::{mpsc, watch},
+};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use crate::{
@@ -40,6 +43,8 @@ where
 
     /// The derivation pipeline.
     pipeline: PipelineSignalReceiver,
+    /// Publishes the L1 origin the derivation pipeline has advanced to.
+    derivation_origin_tx: watch::Sender<Option<BlockInfo>>,
     /// The state machine controlling when derivation can occur.
     derivation_state_machine: DerivationStateMachine,
     /// The [`L2Finalizer`] tracks derived L2 blocks awaiting finalization.
@@ -81,10 +86,12 @@ where
         inbound_request_rx: mpsc::Receiver<DerivationActorRequest>,
         pipeline: PipelineSignalReceiver,
         safe_head_listener: Arc<dyn SafeHeadListener>,
+        derivation_origin_tx: watch::Sender<Option<BlockInfo>>,
     ) -> Self {
         Self {
             cancellation_token,
             pipeline,
+            derivation_origin_tx,
             inbound_request_rx,
             engine_client,
             derivation_state_machine: DerivationStateMachine::default(),
@@ -92,6 +99,10 @@ where
             safe_head_listener,
             pending_derived_from: None,
         }
+    }
+
+    fn publish_derivation_origin(&self) {
+        self.derivation_origin_tx.send_replace(self.pipeline.origin());
     }
 
     /// Handles a [`Signal`] received over the derivation signal receiver channel.
@@ -123,7 +134,10 @@ where
         }
 
         match self.pipeline.signal(signal).await {
-            Ok(_) => info!(target: "derivation", ?signal, "[SIGNAL] Executed Successfully"),
+            Ok(_) => {
+                self.publish_derivation_origin();
+                info!(target: "derivation", ?signal, "[SIGNAL] Executed Successfully");
+            }
             Err(e) => {
                 error!(target: "derivation", ?e, ?signal, "Failed to signal derivation pipeline")
             }
@@ -147,10 +161,11 @@ where
                 StepResult::PreparedAttributes => { /* continue; attributes will be sent off. */ }
                 StepResult::AdvancedOrigin => {
                     let origin =
-                        self.pipeline.origin().ok_or(PipelineError::MissingOrigin.crit())?.number;
+                        self.pipeline.origin().ok_or(PipelineError::MissingOrigin.crit())?;
 
-                    Metrics::derivation_l1_origin().absolute(origin);
-                    debug!(target: "derivation", l1_block = origin, "Advanced L1 origin");
+                    Metrics::derivation_l1_origin().absolute(origin.number);
+                    self.derivation_origin_tx.send_replace(Some(origin));
+                    debug!(target: "derivation", l1_block = origin.number, "Advanced L1 origin");
                 }
                 StepResult::OriginAdvanceErr(e) | StepResult::StepFailed(e) => {
                     match e {
