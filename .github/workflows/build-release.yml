@@ -221,24 +221,20 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Merge manifests and publish
-  publish:
+  # Check which release artifacts exist after partial matrix failures
+  find-release-artifacts:
     needs: [build-and-push, build-binaries]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    outputs:
+      has_digests: ${{ steps.artifacts.outputs.has_digests }}
+      has_binaries: ${{ steps.artifacts.outputs.has_binaries }}
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.tag }}
-          fetch-depth: 0
-          fetch-tags: true
 
       - name: Find release artifacts
         id: artifacts
@@ -258,8 +254,27 @@ jobs:
           echo "has_digests=$has_digests" >> "$GITHUB_OUTPUT"
           echo "has_binaries=$has_binaries" >> "$GITHUB_OUTPUT"
 
+  # Merge manifests and publish
+  publish:
+    needs: [find-release-artifacts]
+    if: ${{ !cancelled() && (needs.find-release-artifacts.outputs.has_digests == 'true' || (inputs.is_final && needs.find-release-artifacts.outputs.has_binaries == 'true')) }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+
       - name: Download digests
-        if: steps.artifacts.outputs.has_digests == 'true'
+        if: needs.find-release-artifacts.outputs.has_digests == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: ${{ runner.temp }}/digests
@@ -267,7 +282,7 @@ jobs:
           merge-multiple: true
 
       - name: Login to GHCR
-        if: steps.artifacts.outputs.has_digests == 'true'
+        if: needs.find-release-artifacts.outputs.has_digests == 'true'
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
@@ -275,11 +290,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        if: steps.artifacts.outputs.has_digests == 'true'
+        if: needs.find-release-artifacts.outputs.has_digests == 'true'
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - name: Determine Docker tags
-        if: steps.artifacts.outputs.has_digests == 'true'
+        if: needs.find-release-artifacts.outputs.has_digests == 'true'
         id: tags
         run: |
           TAG="${{ inputs.tag }}"
@@ -294,6 +309,7 @@ jobs:
           fi
 
       - name: Create manifest list and push
+        if: needs.find-release-artifacts.outputs.has_digests == 'true'
         id: create-manifest
         run: |
           shopt -s nullglob
@@ -320,12 +336,12 @@ jobs:
           echo "pushed=true" >> $GITHUB_OUTPUT
 
       - name: Inspect image
-        if: steps.artifacts.outputs.has_digests == 'true' && steps.create-manifest.outputs.pushed == 'true'
+        if: needs.find-release-artifacts.outputs.has_digests == 'true' && steps.create-manifest.outputs.pushed == 'true'
         run: |
           docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.tags.outputs.tag }}
 
       - name: Create GitHub Release
-        if: inputs.is_final && (steps.create-manifest.outputs.pushed == 'true' || steps.artifacts.outputs.has_binaries == 'true')
+        if: inputs.is_final && (steps.create-manifest.outputs.pushed == 'true' || needs.find-release-artifacts.outputs.has_binaries == 'true')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -337,7 +353,7 @@ jobs:
           fi
 
       - name: Download binary artifacts
-        if: inputs.is_final && steps.artifacts.outputs.has_binaries == 'true'
+        if: inputs.is_final && needs.find-release-artifacts.outputs.has_binaries == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: ${{ runner.temp }}/binaries
@@ -345,7 +361,7 @@ jobs:
           merge-multiple: true
 
       - name: Upload binaries to GitHub Release
-        if: inputs.is_final
+        if: inputs.is_final && needs.find-release-artifacts.outputs.has_binaries == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -372,9 +388,11 @@ jobs:
           else
             echo "**Type**: Release Candidate" >> $GITHUB_STEP_SUMMARY
           fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ${{ env.REGISTRY_IMAGE }}:${TAG}" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ steps.create-manifest.outputs.pushed }}" == "true" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.REGISTRY_IMAGE }}:${TAG}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
