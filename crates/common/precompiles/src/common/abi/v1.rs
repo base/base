@@ -203,6 +203,7 @@ impl IB20::IB20Calls {
 
 #[cfg(test)]
 mod tests {
+<<<<<<<< HEAD:crates/common/precompiles/src/common/abi/v1.rs
     use alloy_sol_types::SolInterface;
 
     use super::IB20;
@@ -213,5 +214,25 @@ mod tests {
     #[test]
     fn interface_name_is_frozen() {
         assert_eq!(IB20::IB20Calls::NAME, "IB20Calls");
+========
+    use alloy_primitives::{Address, U256};
+
+    use crate::IB20;
+
+    #[test]
+    fn b20_call_labels_are_stable() {
+        assert_eq!(
+            IB20::IB20Calls::transfer(IB20::transferCall { to: Address::ZERO, amount: U256::ZERO })
+                .as_label(),
+            "precompile-b20-transfer"
+        );
+        assert_eq!(
+            IB20::IB20Calls::updateSupplyCap(IB20::updateSupplyCapCall {
+                newSupplyCap: U256::ZERO,
+            })
+            .as_label(),
+            "precompile-b20-updateSupplyCap"
+        );
+>>>>>>>> c45fd19d5 (chore: merge main into privacy (#3236)):crates/common/precompiles/src/common/abi.rs
     }
 }

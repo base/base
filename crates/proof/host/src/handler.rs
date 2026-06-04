@@ -1368,6 +1368,11 @@ mod tests {
         test_providers_with_l1(l1, l2)
     }
 
+    fn test_providers(l2: RootProvider<Base>) -> HostProviders {
+        let l1 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        test_providers_with_l1(l1, l2)
+    }
+
     fn test_prefetcher() -> PayloadWitnessPrefetcher {
         let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
         PayloadWitnessPrefetcher::new(Arc::new(test_cfg()), Arc::new(test_providers(l2)))
