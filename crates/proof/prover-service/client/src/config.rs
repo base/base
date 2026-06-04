@@ -10,6 +10,8 @@ use thiserror::Error;
 use tracing::debug;
 use url::Url;
 
+use crate::ProofRequesterRetryConfig;
+
 /// Errors that can occur during prover-service client configuration validation.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ProverServiceClientConfigError {
@@ -54,6 +56,7 @@ pub struct ProverServiceClientConfig {
     request_timeout: Duration,
     poll_interval: Duration,
     max_wait: Duration,
+    retry: ProofRequesterRetryConfig,
 }
 
 impl ProverServiceClientConfig {
@@ -73,6 +76,7 @@ impl ProverServiceClientConfig {
             request_timeout: Self::DEFAULT_REQUEST_TIMEOUT,
             poll_interval: Self::DEFAULT_POLL_INTERVAL,
             max_wait: Self::DEFAULT_MAX_WAIT,
+            retry: ProofRequesterRetryConfig::default(),
         }
     }
 
@@ -96,6 +100,14 @@ impl ProverServiceClientConfig {
         self.max_wait
     }
 
+    /// Return the retry configuration applied by [`ProofRequesterClient`] when calling
+    /// requester JSON-RPC methods.
+    ///
+    /// [`ProofRequesterClient`]: crate::ProofRequesterClient
+    pub const fn retry_config(&self) -> ProofRequesterRetryConfig {
+        self.retry
+    }
+
     /// Set the per-request timeout used by the JSON-RPC HTTP client.
     pub const fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
         self.request_timeout = request_timeout;
@@ -111,6 +123,15 @@ impl ProverServiceClientConfig {
     /// Set the maximum time to wait for proof completion.
     pub const fn with_max_wait(mut self, max_wait: Duration) -> Self {
         self.max_wait = max_wait;
+        self
+    }
+
+    /// Set the retry configuration applied by [`ProofRequesterClient`] when calling
+    /// requester JSON-RPC methods.
+    ///
+    /// [`ProofRequesterClient`]: crate::ProofRequesterClient
+    pub const fn with_retry_config(mut self, retry: ProofRequesterRetryConfig) -> Self {
+        self.retry = retry;
         self
     }
 

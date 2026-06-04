@@ -1,16 +1,8 @@
-//! Retrying proof requester provider.
+//! Retry configuration for proof requester RPC operations.
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-use async_trait::async_trait;
-use backon::{ExponentialBuilder, Retryable};
-use base_prover_service_protocol::{
-    GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    ProveBlockRangeRequest, ProveBlockRangeResponse,
-};
-use tracing::warn;
-
-use crate::{ProofRequesterProvider, ProverServiceClientError};
+use backon::ExponentialBuilder;
 
 /// Minimum delay used to avoid tight retry loops.
 pub const MIN_PROOF_REQUESTER_RETRY_DELAY: Duration = Duration::from_millis(1);
@@ -79,277 +71,35 @@ impl Default for ProofRequesterRetryConfig {
     }
 }
 
-/// Proof requester wrapper that retries transient requester RPC failures.
-#[derive(Clone)]
-pub struct RetryingProofRequester {
-    inner: Arc<dyn ProofRequesterProvider>,
-    retry: ProofRequesterRetryConfig,
-}
-
-impl RetryingProofRequester {
-    /// Creates a retrying proof requester with default retry settings.
-    pub fn new(inner: Arc<dyn ProofRequesterProvider>) -> Self {
-        Self { inner, retry: ProofRequesterRetryConfig::default() }
-    }
-
-    /// Creates a retrying proof requester with the provided retry settings.
-    pub const fn with_retry_config(
-        inner: Arc<dyn ProofRequesterProvider>,
-        retry: ProofRequesterRetryConfig,
-    ) -> Self {
-        Self { inner, retry }
-    }
-}
-
-impl std::fmt::Debug for RetryingProofRequester {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RetryingProofRequester").field("retry", &self.retry).finish_non_exhaustive()
-    }
-}
-
-#[async_trait]
-impl ProofRequesterProvider for RetryingProofRequester {
-    async fn prove_block_range(
-        &self,
-        request: ProveBlockRangeRequest,
-    ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
-        (|| {
-            let request = request.clone();
-
-            async move { self.inner.prove_block_range(request).await }
-        })
-        .retry(self.retry.to_backoff_builder())
-        .when(ProverServiceClientError::is_retryable)
-        .notify(|error, delay| {
-            warn!(
-                session_id = ?request.proof.session_id,
-                backoff_ms = delay.as_millis(),
-                error = %error,
-                "prove block range failed; retrying"
-            );
-        })
-        .await
-    }
-
-    async fn get_proof(
-        &self,
-        request: GetProofRequest,
-    ) -> Result<GetProofResponse, ProverServiceClientError> {
-        (|| {
-            let request = request.clone();
-
-            async move { self.inner.get_proof(request).await }
-        })
-        .retry(self.retry.to_backoff_builder())
-        .when(ProverServiceClientError::is_retryable)
-        .notify(|error, delay| {
-            warn!(
-                session_id = %request.session_id,
-                backoff_ms = delay.as_millis(),
-                error = %error,
-                "get proof failed; retrying"
-            );
-        })
-        .await
-    }
-
-    async fn list_proofs(
-        &self,
-        request: ListProofsRequest,
-    ) -> Result<ListProofsResponse, ProverServiceClientError> {
-        (|| async { self.inner.list_proofs(request).await })
-            .retry(self.retry.to_backoff_builder())
-            .when(ProverServiceClientError::is_retryable)
-            .notify(|error, delay| {
-                warn!(
-                    offset = request.offset,
-                    limit = request.limit,
-                    status_filter = ?request.status_filter,
-                    backoff_ms = delay.as_millis(),
-                    error = %error,
-                    "list proofs failed; retrying"
-                );
-            })
-            .await
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, sync::Mutex, time::Duration};
-
-    use base_prover_service_protocol::{ProofRequest, ProofRequestKind, ZkProofRequest, ZkVm};
-
     use super::*;
 
-    enum MockOutcome<T> {
-        Ok(T),
-        Retryable,
-        Fatal,
+    #[test]
+    fn normalized_max_attempts_clamps_zero_to_one() {
+        let config =
+            ProofRequesterRetryConfig::new(0, Duration::from_millis(10), Duration::from_millis(20));
+        assert_eq!(config.normalized_max_attempts(), 1);
     }
 
-    struct MockRequester {
-        prove_outcomes: Mutex<VecDeque<MockOutcome<ProveBlockRangeResponse>>>,
-        get_outcomes: Mutex<VecDeque<MockOutcome<GetProofResponse>>>,
-        list_outcomes: Mutex<VecDeque<MockOutcome<ListProofsResponse>>>,
-        prove_calls: Mutex<u32>,
-        get_calls: Mutex<u32>,
-        list_calls: Mutex<u32>,
+    #[test]
+    fn normalized_initial_delay_is_clamped_to_max_delay() {
+        let config =
+            ProofRequesterRetryConfig::new(3, Duration::from_secs(60), Duration::from_millis(50));
+        assert_eq!(config.normalized_initial_delay(), Duration::from_millis(50));
     }
 
-    impl MockRequester {
-        fn new() -> Self {
-            Self {
-                prove_outcomes: Mutex::new(VecDeque::new()),
-                get_outcomes: Mutex::new(VecDeque::new()),
-                list_outcomes: Mutex::new(VecDeque::new()),
-                prove_calls: Mutex::new(0),
-                get_calls: Mutex::new(0),
-                list_calls: Mutex::new(0),
-            }
-        }
-
-        fn outcome<T>(outcome: MockOutcome<T>) -> Result<T, ProverServiceClientError> {
-            match outcome {
-                MockOutcome::Ok(value) => Ok(value),
-                MockOutcome::Retryable => {
-                    Err(ProverServiceClientError::Timeout("retryable".to_owned()))
-                }
-                MockOutcome::Fatal => {
-                    Err(ProverServiceClientError::ProofFailure { message: "fatal".to_owned() })
-                }
-            }
-        }
+    #[test]
+    fn normalized_max_delay_is_clamped_to_minimum() {
+        let config = ProofRequesterRetryConfig::new(3, Duration::ZERO, Duration::ZERO);
+        assert_eq!(config.normalized_max_delay(), MIN_PROOF_REQUESTER_RETRY_DELAY);
     }
 
-    #[async_trait]
-    impl ProofRequesterProvider for MockRequester {
-        async fn prove_block_range(
-            &self,
-            _request: ProveBlockRangeRequest,
-        ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
-            *self.prove_calls.lock().unwrap() += 1;
-            let outcome = self.prove_outcomes.lock().unwrap().pop_front().expect("missing outcome");
-            Self::outcome(outcome)
-        }
-
-        async fn get_proof(
-            &self,
-            _request: GetProofRequest,
-        ) -> Result<GetProofResponse, ProverServiceClientError> {
-            *self.get_calls.lock().unwrap() += 1;
-            let outcome = self.get_outcomes.lock().unwrap().pop_front().expect("missing outcome");
-            Self::outcome(outcome)
-        }
-
-        async fn list_proofs(
-            &self,
-            _request: ListProofsRequest,
-        ) -> Result<ListProofsResponse, ProverServiceClientError> {
-            *self.list_calls.lock().unwrap() += 1;
-            let outcome = self.list_outcomes.lock().unwrap().pop_front().expect("missing outcome");
-            Self::outcome(outcome)
-        }
-    }
-
-    fn retry_config() -> ProofRequesterRetryConfig {
-        ProofRequesterRetryConfig::new(3, Duration::from_millis(1), Duration::from_millis(1))
-    }
-
-    fn prove_request() -> ProveBlockRangeRequest {
-        ProveBlockRangeRequest {
-            proof: ProofRequest {
-                session_id: Some("session".to_owned()),
-                request: ProofRequestKind::Compressed(ZkProofRequest {
-                    start_block_number: 1,
-                    number_of_blocks_to_prove: 1,
-                    sequence_window: None,
-                    l1_head: None,
-                    intermediate_root_interval: None,
-                    zk_vm: ZkVm::Sp1,
-                }),
-            },
-        }
-    }
-
-    #[tokio::test]
-    async fn retrying_requester_retries_retryable_prove_block_range() {
-        let inner = Arc::new(MockRequester::new());
-        inner.prove_outcomes.lock().unwrap().extend([
-            MockOutcome::Retryable,
-            MockOutcome::Ok(ProveBlockRangeResponse { session_id: "session".to_owned() }),
-        ]);
-        let requester = RetryingProofRequester::with_retry_config(
-            Arc::clone(&inner) as Arc<dyn ProofRequesterProvider>,
-            retry_config(),
-        );
-
-        let response = requester.prove_block_range(prove_request()).await.unwrap();
-
-        assert_eq!(response.session_id, "session");
-        assert_eq!(*inner.prove_calls.lock().unwrap(), 2);
-    }
-
-    #[tokio::test]
-    async fn retrying_requester_propagates_final_error_when_retries_exhausted() {
-        let config = retry_config();
-        let inner = Arc::new(MockRequester::new());
-        // backon's `with_max_times(n)` allows `n` retries on top of the initial call,
-        // so an exhausted run performs `max_attempts + 1` total calls.
-        let total_calls = config.normalized_max_attempts() + 1;
-        inner
-            .prove_outcomes
-            .lock()
-            .unwrap()
-            .extend((0..total_calls).map(|_| MockOutcome::Retryable));
-        let requester = RetryingProofRequester::with_retry_config(
-            Arc::clone(&inner) as Arc<dyn ProofRequesterProvider>,
-            config,
-        );
-
-        let err = requester.prove_block_range(prove_request()).await.unwrap_err();
-
-        assert!(matches!(err, ProverServiceClientError::Timeout(_)));
-        assert!(err.is_retryable());
-        assert_eq!(*inner.prove_calls.lock().unwrap(), total_calls);
-    }
-
-    #[tokio::test]
-    async fn retrying_requester_does_not_retry_fatal_get_proof() {
-        let inner = Arc::new(MockRequester::new());
-        inner.get_outcomes.lock().unwrap().push_back(MockOutcome::Fatal);
-        let requester = RetryingProofRequester::with_retry_config(
-            Arc::clone(&inner) as Arc<dyn ProofRequesterProvider>,
-            retry_config(),
-        );
-
-        let err = requester
-            .get_proof(GetProofRequest { session_id: "session".to_owned() })
-            .await
-            .unwrap_err();
-
-        assert!(!err.is_retryable());
-        assert_eq!(*inner.get_calls.lock().unwrap(), 1);
-    }
-
-    #[tokio::test]
-    async fn retrying_requester_retries_list_proofs() {
-        let inner = Arc::new(MockRequester::new());
-        inner.list_outcomes.lock().unwrap().extend([
-            MockOutcome::Retryable,
-            MockOutcome::Ok(ListProofsResponse { proofs: Vec::new(), total_count: 0 }),
-        ]);
-        let requester = RetryingProofRequester::with_retry_config(
-            Arc::clone(&inner) as Arc<dyn ProofRequesterProvider>,
-            retry_config(),
-        );
-
-        let response = requester
-            .list_proofs(ListProofsRequest { offset: 0, limit: 10, status_filter: None })
-            .await
-            .unwrap();
-
-        assert_eq!(response.total_count, 0);
-        assert_eq!(*inner.list_calls.lock().unwrap(), 2);
+    #[test]
+    fn default_config_uses_documented_constants() {
+        let config = ProofRequesterRetryConfig::default();
+        assert_eq!(config.max_attempts, DEFAULT_PROOF_REQUESTER_MAX_ATTEMPTS);
+        assert_eq!(config.initial_delay, DEFAULT_PROOF_REQUESTER_INITIAL_DELAY);
+        assert_eq!(config.max_delay, DEFAULT_PROOF_REQUESTER_MAX_DELAY);
     }
 }

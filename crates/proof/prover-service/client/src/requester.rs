@@ -1,14 +1,18 @@
 //! Client for proof requester JSON-RPC methods.
 
 use async_trait::async_trait;
+use backon::Retryable;
 use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
     ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiClient,
 };
 use jsonrpsee::http_client::HttpClient;
-use tracing::debug;
+use tracing::{debug, warn};
 
-use crate::{ProverServiceClientBuildError, ProverServiceClientConfig, ProverServiceClientError};
+use crate::{
+    ProofRequesterRetryConfig, ProverServiceClientBuildError, ProverServiceClientConfig,
+    ProverServiceClientError,
+};
 
 /// Abstraction over proof requester JSON-RPC methods.
 ///
@@ -38,27 +42,48 @@ pub trait ProofRequesterProvider: Send + Sync {
 }
 
 /// JSON-RPC client for proof requester methods.
+///
+/// Each requester operation is wrapped in a `backon` exponential backoff that retries
+/// transient JSON-RPC failures (per [`ProverServiceClientError::is_retryable`]). Retry
+/// behavior is controlled by the [`ProofRequesterRetryConfig`] passed at construction
+/// time, defaulting to [`ProofRequesterRetryConfig::default`].
 #[derive(Clone, Debug)]
 pub struct ProofRequesterClient {
     inner: HttpClient,
+    retry: ProofRequesterRetryConfig,
 }
 
 impl ProofRequesterClient {
-    /// Create a requester client from an existing JSON-RPC HTTP client.
-    pub const fn new(inner: HttpClient) -> Self {
-        Self { inner }
+    /// Create a requester client from an existing JSON-RPC HTTP client. Retries use
+    /// [`ProofRequesterRetryConfig::default`]; call [`Self::with_retry_config`] to
+    /// override.
+    pub fn new(inner: HttpClient) -> Self {
+        Self { inner, retry: ProofRequesterRetryConfig::default() }
     }
 
-    /// Connect a requester client using the provided configuration.
+    /// Connect a requester client using the provided configuration. The retry
+    /// configuration is taken from [`ProverServiceClientConfig::retry_config`].
     pub fn connect(
         config: &ProverServiceClientConfig,
     ) -> Result<Self, ProverServiceClientBuildError> {
-        Ok(Self::new(config.build_http_client()?))
+        Ok(Self::new(config.build_http_client()?).with_retry_config(config.retry_config()))
+    }
+
+    /// Override the retry configuration applied to requester operations.
+    #[must_use]
+    pub const fn with_retry_config(mut self, retry: ProofRequesterRetryConfig) -> Self {
+        self.retry = retry;
+        self
     }
 
     /// Return the underlying JSON-RPC HTTP client.
     pub const fn inner(&self) -> &HttpClient {
         &self.inner
+    }
+
+    /// Return the retry configuration applied to requester operations.
+    pub const fn retry_config(&self) -> ProofRequesterRetryConfig {
+        self.retry
     }
 
     /// Submit a prove-block-range proof request.
@@ -70,7 +95,22 @@ impl ProofRequesterClient {
             session_id = ?request.proof.session_id,
             "proving block range"
         );
-        Ok(self.inner.prove_block_range(request).await?)
+        (|| {
+            let request = request.clone();
+
+            async move { Ok(self.inner.prove_block_range(request).await?) }
+        })
+        .retry(self.retry.to_backoff_builder())
+        .when(ProverServiceClientError::is_retryable)
+        .notify(|error, delay| {
+            warn!(
+                session_id = ?request.proof.session_id,
+                backoff_ms = delay.as_millis(),
+                error = %error,
+                "prove block range failed; retrying"
+            );
+        })
+        .await
     }
 
     /// Return proof status and result data for a submitted proof request.
@@ -79,7 +119,22 @@ impl ProofRequesterClient {
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ProverServiceClientError> {
         debug!(session_id = %request.session_id, "fetching proof");
-        Ok(self.inner.get_proof(request).await?)
+        (|| {
+            let request = request.clone();
+
+            async move { Ok(self.inner.get_proof(request).await?) }
+        })
+        .retry(self.retry.to_backoff_builder())
+        .when(ProverServiceClientError::is_retryable)
+        .notify(|error, delay| {
+            warn!(
+                session_id = %request.session_id,
+                backoff_ms = delay.as_millis(),
+                error = %error,
+                "get proof failed; retrying"
+            );
+        })
+        .await
     }
 
     /// List submitted proof requests.
@@ -93,7 +148,20 @@ impl ProofRequesterClient {
             status_filter = ?request.status_filter,
             "listing proofs"
         );
-        Ok(self.inner.list_proofs(request).await?)
+        (|| async move { Ok(self.inner.list_proofs(request).await?) })
+            .retry(self.retry.to_backoff_builder())
+            .when(ProverServiceClientError::is_retryable)
+            .notify(|error, delay| {
+                warn!(
+                    offset = request.offset,
+                    limit = request.limit,
+                    status_filter = ?request.status_filter,
+                    backoff_ms = delay.as_millis(),
+                    error = %error,
+                    "list proofs failed; retrying"
+                );
+            })
+            .await
     }
 }
 
@@ -124,8 +192,13 @@ impl ProofRequesterProvider for ProofRequesterClient {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::VecDeque,
         net::SocketAddr,
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicU32, Ordering},
+        },
+        time::Duration,
     };
 
     use async_trait::async_trait;
@@ -140,16 +213,29 @@ mod tests {
         core::{RpcResult, client::Error as JsonRpcClientError},
         http_client::HttpClientBuilder,
         server::{Server, ServerHandle},
-        types::ErrorObjectOwned,
+        types::{ErrorObjectOwned, error::ErrorCode},
     };
 
     use super::{ProofRequesterClient, ProofRequesterProvider};
-    use crate::ProverServiceClientError;
+    use crate::{ProofRequesterRetryConfig, ProverServiceClientError};
+
+    /// Outcome script for a single requester call when the test wants to drive
+    /// retry behavior. The server returns the head of the queue per call.
+    #[derive(Debug)]
+    enum ScriptedOutcome {
+        Retryable,
+        Fatal,
+        Success,
+    }
 
     #[derive(Clone, Debug)]
     struct MockRequesterApi {
         state: Arc<Mutex<MockRequesterState>>,
         reject_get_proof: bool,
+        prove_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
+        get_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
+        prove_calls: Arc<AtomicU32>,
+        get_calls: Arc<AtomicU32>,
     }
 
     #[derive(Debug, Default)]
@@ -170,19 +256,42 @@ mod tests {
             Self {
                 state: Arc::new(Mutex::new(MockRequesterState::default())),
                 reject_get_proof: false,
+                prove_script: Arc::new(Mutex::new(VecDeque::new())),
+                get_script: Arc::new(Mutex::new(VecDeque::new())),
+                prove_calls: Arc::new(AtomicU32::new(0)),
+                get_calls: Arc::new(AtomicU32::new(0)),
             }
         }
 
         fn rejecting_get_proof() -> Self {
-            Self {
-                state: Arc::new(Mutex::new(MockRequesterState::default())),
-                reject_get_proof: true,
-            }
+            let mut api = Self::new();
+            api.reject_get_proof = true;
+            api
+        }
+
+        fn queue_prove_outcomes<I: IntoIterator<Item = ScriptedOutcome>>(&self, outcomes: I) {
+            self.prove_script.lock().expect("script lock").extend(outcomes);
+        }
+
+        fn queue_get_outcomes<I: IntoIterator<Item = ScriptedOutcome>>(&self, outcomes: I) {
+            self.get_script.lock().expect("script lock").extend(outcomes);
+        }
+
+        fn prove_calls(&self) -> u32 {
+            self.prove_calls.load(Ordering::SeqCst)
+        }
+
+        fn get_calls(&self) -> u32 {
+            self.get_calls.load(Ordering::SeqCst)
         }
     }
 
     impl RunningRequesterServer {
         async fn spawn(api: MockRequesterApi) -> Self {
+            Self::spawn_with_retry(api, ProofRequesterRetryConfig::default()).await
+        }
+
+        async fn spawn_with_retry(api: MockRequesterApi, retry: ProofRequesterRetryConfig) -> Self {
             let addr: SocketAddr = "127.0.0.1:0".parse().expect("test address should parse");
             let server = Server::builder().build(addr).await.expect("server should bind");
             let local_addr = server.local_addr().expect("server should have local address");
@@ -190,7 +299,7 @@ mod tests {
             let endpoint = format!("http://{local_addr}");
             let inner = HttpClientBuilder::default().build(endpoint).expect("client should build");
 
-            Self { client: ProofRequesterClient::new(inner), handle }
+            Self { client: ProofRequesterClient::new(inner).with_retry_config(retry), handle }
         }
 
         async fn shutdown(self) {
@@ -199,29 +308,66 @@ mod tests {
         }
     }
 
+    fn unavailable_error(message: impl Into<String>) -> ErrorObjectOwned {
+        ErrorObjectOwned::owned(
+            ProverServiceClientError::ERROR_UNAVAILABLE,
+            message.into(),
+            None::<()>,
+        )
+    }
+
+    fn invalid_params_error(message: impl Into<String>) -> ErrorObjectOwned {
+        ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), message.into(), None::<()>)
+    }
+
+    fn fast_retry_config() -> ProofRequesterRetryConfig {
+        ProofRequesterRetryConfig::new(3, Duration::from_millis(1), Duration::from_millis(1))
+    }
+
     #[async_trait]
     impl ProverRequesterApiServer for MockRequesterApi {
         async fn prove_block_range(
             &self,
             request: ProveBlockRangeRequest,
         ) -> RpcResult<ProveBlockRangeResponse> {
+            self.prove_calls.fetch_add(1, Ordering::SeqCst);
             self.state.lock().expect("state lock should not be poisoned").prove_request =
                 Some(request.clone());
 
-            let session_id = request.proof.session_id.expect("test request should set session_id");
-            Ok(ProveBlockRangeResponse { session_id })
+            let scripted = self.prove_script.lock().expect("script lock").pop_front();
+            match scripted {
+                Some(ScriptedOutcome::Retryable) => {
+                    Err(unavailable_error("scripted prove_block_range retryable failure"))
+                }
+                Some(ScriptedOutcome::Fatal) => {
+                    Err(invalid_params_error("scripted prove_block_range fatal failure"))
+                }
+                None | Some(ScriptedOutcome::Success) => {
+                    let session_id =
+                        request.proof.session_id.expect("test request should set session_id");
+                    Ok(ProveBlockRangeResponse { session_id })
+                }
+            }
         }
 
         async fn get_proof(&self, request: GetProofRequest) -> RpcResult<GetProofResponse> {
+            self.get_calls.fetch_add(1, Ordering::SeqCst);
             self.state.lock().expect("state lock should not be poisoned").get_request =
                 Some(request.clone());
 
-            if self.reject_get_proof {
-                return Err(ErrorObjectOwned::owned(
-                    ProverServiceClientError::ERROR_UNAVAILABLE,
-                    format!("session_id {} is temporarily unavailable", request.session_id),
-                    None::<()>,
-                ));
+            let scripted = self.get_script.lock().expect("script lock").pop_front();
+            if let Some(ScriptedOutcome::Fatal) = scripted {
+                return Err(invalid_params_error(format!(
+                    "session_id {} is invalid",
+                    request.session_id
+                )));
+            }
+
+            if self.reject_get_proof || matches!(scripted, Some(ScriptedOutcome::Retryable)) {
+                return Err(unavailable_error(format!(
+                    "session_id {} is temporarily unavailable",
+                    request.session_id
+                )));
             }
 
             Ok(GetProofResponse {
@@ -315,7 +461,11 @@ mod tests {
     #[tokio::test]
     async fn requester_rpc_errors_preserve_call_context_and_retryability() {
         let api = MockRequesterApi::rejecting_get_proof();
-        let server = RunningRequesterServer::spawn(api).await;
+        let server = RunningRequesterServer::spawn_with_retry(
+            api,
+            ProofRequesterRetryConfig::new(0, Duration::from_millis(1), Duration::from_millis(1)),
+        )
+        .await;
         let provider: &dyn ProofRequesterProvider = &server.client;
 
         let err = provider
@@ -332,6 +482,67 @@ mod tests {
             }
             other => panic!("unexpected error variant: {other:?}"),
         }
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn requester_retries_retryable_prove_block_range_until_success() {
+        let api = MockRequesterApi::new();
+        api.queue_prove_outcomes([ScriptedOutcome::Retryable, ScriptedOutcome::Success]);
+        let api_clone = api.clone();
+        let server = RunningRequesterServer::spawn_with_retry(api, fast_retry_config()).await;
+
+        let response = server
+            .client
+            .prove_block_range(sample_prove_request("session-retry"))
+            .await
+            .expect("prove_block_range should succeed after retry");
+
+        assert_eq!(response.session_id, "session-retry");
+        assert_eq!(api_clone.prove_calls(), 2);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn requester_propagates_final_error_when_retries_exhausted() {
+        let config = fast_retry_config();
+        let api = MockRequesterApi::new();
+        // backon's `with_max_times(n)` allows `n` retries on top of the initial call,
+        // so an exhausted run performs `max_attempts + 1` total calls.
+        let total_calls = config.normalized_max_attempts() + 1;
+        api.queue_prove_outcomes((0..total_calls).map(|_| ScriptedOutcome::Retryable));
+        let api_clone = api.clone();
+        let server = RunningRequesterServer::spawn_with_retry(api, config).await;
+
+        let err = server
+            .client
+            .prove_block_range(sample_prove_request("session-exhaust"))
+            .await
+            .expect_err("retries should be exhausted");
+
+        assert!(err.is_retryable());
+        assert_eq!(api_clone.prove_calls(), total_calls);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn requester_does_not_retry_fatal_get_proof() {
+        let api = MockRequesterApi::new();
+        api.queue_get_outcomes([ScriptedOutcome::Fatal]);
+        let api_clone = api.clone();
+        let server = RunningRequesterServer::spawn_with_retry(api, fast_retry_config()).await;
+
+        let err = server
+            .client
+            .get_proof(GetProofRequest { session_id: "session-fatal".to_owned() })
+            .await
+            .expect_err("fatal error should not be retried");
+
+        assert!(!err.is_retryable());
+        assert_eq!(api_clone.get_calls(), 1);
 
         server.shutdown().await;
     }
