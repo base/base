@@ -16,7 +16,7 @@ pub struct UpgradeSignal {
     pub activation_timestamp: u64,
     /// Expected protocol version announced on L1.
     pub protocol_version: U256,
-    /// L1 block number observed before the contract read.
+    /// L1 block number used for the contract read.
     pub l1_block_number: u64,
 }
 

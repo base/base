@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
+use alloy_rpc_types_eth::{BlockId, BlockNumberOrTag, TransactionInput, TransactionRequest};
 use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
 
@@ -47,14 +47,42 @@ impl AlloyUpgradeSignalReader {
     where
         C: SolCall,
     {
+        self.call_at_block(call, BlockId::latest(), context).await
+    }
+
+    /// Executes an `eth_call` against the upgrade signal contract at a specific L1 block.
+    pub async fn call_at_block<C>(
+        &self,
+        call: C,
+        block: BlockId,
+        context: &'static str,
+    ) -> Result<Bytes, UpgradeSignalError>
+    where
+        C: SolCall,
+    {
         let request = TransactionRequest::default()
             .to(self.contract_address)
             .input(TransactionInput::new(Bytes::from(call.abi_encode())));
 
         self.provider
             .call(request)
+            .block(block)
             .await
             .map_err(|error| UpgradeSignalError::provider(context, error))
+    }
+
+    /// Returns the latest L1 block number and concrete block ID for pinned reads.
+    pub async fn latest_l1_block_id(&self) -> Result<(u64, BlockId), UpgradeSignalError> {
+        let block = self
+            .provider
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await
+            .map_err(|error| UpgradeSignalError::provider("get latest L1 block failed", error))?
+            .ok_or_else(|| {
+                UpgradeSignalError::provider("get latest L1 block failed", "missing latest block")
+            })?;
+
+        Ok((block.header.number, BlockId::hash(block.header.hash)))
     }
 
     /// Converts an ABI uint256 timestamp into the node's `u64` timestamp representation.
@@ -68,9 +96,25 @@ impl AlloyUpgradeSignalReader {
         hardfork_id: &str,
         l1_block_number: u64,
     ) -> Result<UpgradeSignal, UpgradeSignalError> {
+        self.read_signal_at_l1_block_id(
+            hardfork_id,
+            l1_block_number,
+            BlockId::number(l1_block_number),
+        )
+        .await
+    }
+
+    /// Reads one hardfork signal using a previously observed concrete L1 block.
+    pub async fn read_signal_at_l1_block_id(
+        &self,
+        hardfork_id: &str,
+        l1_block_number: u64,
+        l1_block: BlockId,
+    ) -> Result<UpgradeSignal, UpgradeSignalError> {
         let timestamp_output = self
-            .call(
+            .call_at_block(
                 IUpgradeSignal::getTimestampCall { hardforkId: hardfork_id.to_string() },
+                l1_block,
                 "getTimestamp failed",
             )
             .await?;
@@ -80,8 +124,9 @@ impl AlloyUpgradeSignalReader {
         let activation_timestamp = Self::decode_timestamp(timestamp)?;
 
         let version_output = self
-            .call(
+            .call_at_block(
                 IUpgradeSignal::getProtocolVersionCall { hardforkId: hardfork_id.to_string() },
+                l1_block,
                 "getProtocolVersion failed",
             )
             .await?;
@@ -122,24 +167,20 @@ pub trait UpgradeSignalReader: Send + Sync {
 #[async_trait]
 impl UpgradeSignalReader for AlloyUpgradeSignalReader {
     async fn read_signal(&self, hardfork_id: &str) -> Result<UpgradeSignal, UpgradeSignalError> {
-        let l1_block_number =
-            self.provider.get_block_number().await.map_err(|error| {
-                UpgradeSignalError::provider("get L1 block number failed", error)
-            })?;
-        self.read_signal_at_l1_block(hardfork_id, l1_block_number).await
+        let (l1_block_number, l1_block) = self.latest_l1_block_id().await?;
+        self.read_signal_at_l1_block_id(hardfork_id, l1_block_number, l1_block).await
     }
 
     async fn read_schedule(
         &self,
         hardfork_ids: &[String],
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
-        let l1_block_number =
-            self.provider.get_block_number().await.map_err(|error| {
-                UpgradeSignalError::provider("get L1 block number failed", error)
-            })?;
+        let (l1_block_number, l1_block) = self.latest_l1_block_id().await?;
         let mut signals = Vec::with_capacity(hardfork_ids.len());
         for hardfork_id in hardfork_ids {
-            signals.push(self.read_signal_at_l1_block(hardfork_id, l1_block_number).await?);
+            signals.push(
+                self.read_signal_at_l1_block_id(hardfork_id, l1_block_number, l1_block).await?,
+            );
         }
         Ok(UpgradeSignalSchedule::new(signals))
     }
