@@ -309,12 +309,29 @@ impl BaseChainSpec {
 
     /// Clears a timestamp-based hardfork activation condition by contract hardfork ID.
     pub fn clear_hardfork_activation_timestamp(&mut self, hardfork_id: &str) -> bool {
-        self.set_hardfork_activation_condition(hardfork_id, ForkCondition::Never)
+        self.try_clear_hardfork_activation_timestamp(hardfork_id).unwrap_or(false)
+    }
+
+    /// Clears a timestamp-based hardfork activation condition by contract hardfork ID.
+    pub fn try_clear_hardfork_activation_timestamp(
+        &mut self,
+        hardfork_id: &str,
+    ) -> Result<bool, BaseChainSpecError> {
+        self.try_set_hardfork_activation_condition(hardfork_id, ForkCondition::Never)
     }
 
     /// Sets a timestamp-based hardfork activation condition by contract hardfork ID.
     pub fn set_hardfork_activation_timestamp(&mut self, hardfork_id: &str, timestamp: u64) -> bool {
-        self.set_hardfork_activation_condition(hardfork_id, ForkCondition::Timestamp(timestamp))
+        self.try_set_hardfork_activation_timestamp(hardfork_id, timestamp).unwrap_or(false)
+    }
+
+    /// Sets a timestamp-based hardfork activation condition by contract hardfork ID.
+    pub fn try_set_hardfork_activation_timestamp(
+        &mut self,
+        hardfork_id: &str,
+        timestamp: u64,
+    ) -> Result<bool, BaseChainSpecError> {
+        self.try_set_hardfork_activation_condition(hardfork_id, ForkCondition::Timestamp(timestamp))
     }
 
     /// Sets a hardfork activation condition by contract hardfork ID.
@@ -323,29 +340,71 @@ impl BaseChainSpec {
         hardfork_id: &str,
         condition: ForkCondition,
     ) -> bool {
+        self.try_set_hardfork_activation_condition(hardfork_id, condition).unwrap_or(false)
+    }
+
+    /// Sets a hardfork activation condition by contract hardfork ID after validating invariants.
+    pub fn try_set_hardfork_activation_condition(
+        &mut self,
+        hardfork_id: &str,
+        condition: ForkCondition,
+    ) -> Result<bool, BaseChainSpecError> {
+        let mut hardforks = self.inner.hardforks.clone();
+        if !Self::set_hardfork_activation_condition_for(&mut hardforks, hardfork_id, condition) {
+            return Ok(false);
+        }
+
+        Self::validate_beryl_activation_admin(
+            &hardforks,
+            self.activation_admin_address,
+            self.inner.chain.id(),
+        )?;
+        self.inner.hardforks = hardforks;
+
+        Ok(true)
+    }
+
+    /// Sets a hardfork activation condition by contract hardfork ID on a hardfork collection.
+    pub fn set_hardfork_activation_condition_for(
+        hardforks: &mut ChainHardforks,
+        hardfork_id: &str,
+        condition: ForkCondition,
+    ) -> bool {
         match Self::normalized_hardfork_id(hardfork_id).as_str() {
-            "regolith" => self.set_fork(BaseUpgrade::Regolith, condition),
+            "regolith" => {
+                hardforks.insert(BaseUpgrade::Regolith, condition);
+            }
             "canyon" => {
-                self.set_fork(EthereumHardfork::Shanghai, condition);
-                self.set_fork(BaseUpgrade::Canyon, condition);
+                hardforks.insert(EthereumHardfork::Shanghai, condition);
+                hardforks.insert(BaseUpgrade::Canyon, condition);
             }
             "ecotone" => {
-                self.set_fork(EthereumHardfork::Cancun, condition);
-                self.set_fork(BaseUpgrade::Ecotone, condition);
+                hardforks.insert(EthereumHardfork::Cancun, condition);
+                hardforks.insert(BaseUpgrade::Ecotone, condition);
             }
-            "fjord" => self.set_fork(BaseUpgrade::Fjord, condition),
-            "granite" => self.set_fork(BaseUpgrade::Granite, condition),
-            "holocene" => self.set_fork(BaseUpgrade::Holocene, condition),
+            "fjord" => {
+                hardforks.insert(BaseUpgrade::Fjord, condition);
+            }
+            "granite" => {
+                hardforks.insert(BaseUpgrade::Granite, condition);
+            }
+            "holocene" => {
+                hardforks.insert(BaseUpgrade::Holocene, condition);
+            }
             "isthmus" => {
-                self.set_fork(EthereumHardfork::Prague, condition);
-                self.set_fork(BaseUpgrade::Isthmus, condition);
+                hardforks.insert(EthereumHardfork::Prague, condition);
+                hardforks.insert(BaseUpgrade::Isthmus, condition);
             }
-            "jovian" => self.set_fork(BaseUpgrade::Jovian, condition),
+            "jovian" => {
+                hardforks.insert(BaseUpgrade::Jovian, condition);
+            }
             "azul" | "baseazul" | "v1" => {
-                self.set_fork(EthereumHardfork::Osaka, condition);
-                self.set_fork(BaseUpgrade::Azul, condition);
+                hardforks.insert(EthereumHardfork::Osaka, condition);
+                hardforks.insert(BaseUpgrade::Azul, condition);
             }
-            "beryl" | "baseberyl" | "v2" => self.set_fork(BaseUpgrade::Beryl, condition),
+            "beryl" | "baseberyl" | "v2" => {
+                hardforks.insert(BaseUpgrade::Beryl, condition);
+            }
             _ => return false,
         }
 
@@ -991,6 +1050,19 @@ mod tests {
 
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
+    }
+
+    #[test]
+    fn set_beryl_activation_timestamp_without_activation_admin_is_rejected() {
+        let mut chain_spec = BaseChainSpec::from(ChainSpec::default());
+
+        let err = chain_spec
+            .try_set_hardfork_activation_timestamp("beryl", 42)
+            .expect_err("Beryl schedule without activation admin should be rejected");
+
+        assert!(matches!(err, BaseChainSpecError::MissingActivationAdminAddress { .. }));
+        assert!(!chain_spec.set_hardfork_activation_timestamp("beryl", 42));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Beryl), ForkCondition::Never);
     }
 
     #[test]

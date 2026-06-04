@@ -186,10 +186,6 @@ pub struct EmbeddedConsensusNodeConfigArgs {
     /// Path to the checkpoint database. If not set, a default path under `~/.base` is used.
     #[arg(long = "checkpoint.path", env = "BASE_NODE_CHECKPOINT_PATH")]
     pub checkpoint_path: Option<PathBuf>,
-
-    /// L1 upgrade signal observer arguments.
-    #[command(flatten)]
-    pub upgrade_signal: UpgradeSignalArgs,
 }
 
 impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
@@ -205,7 +201,7 @@ impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
             sequencer_flags: SequencerArgs::default(),
             safedb_path: args.safedb_path,
             checkpoint_path: args.checkpoint_path,
-            upgrade_signal: args.upgrade_signal,
+            upgrade_signal: UpgradeSignalArgs::default(),
         }
     }
 }

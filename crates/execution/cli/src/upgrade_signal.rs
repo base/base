@@ -5,7 +5,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
     AlloyUpgradeSignalReader, DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalConfig,
-    UpgradeSignalError, UpgradeSignalMonitor, UpgradeSignalReader, UpgradeSignalSchedule,
+    UpgradeSignalMonitor, UpgradeSignalReader, UpgradeSignalSchedule,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
@@ -38,14 +38,14 @@ impl ExecutionUpgradeSignalExtension {
     pub async fn apply_initial_signal_to_chain_spec(
         config: &ExecutionUpgradeSignalConfig,
         chain_spec: &mut BaseChainSpec,
-    ) -> Result<(), UpgradeSignalError> {
+    ) -> eyre::Result<()> {
         let reader = AlloyUpgradeSignalReader::new(
             RootProvider::new_http(config.l1_rpc.clone()),
             config.signal_config.contract_address,
         );
         let schedule = reader.read_schedule(&config.signal_config.hardfork_ids).await?;
 
-        Self::apply_schedule_to_chain_spec(chain_spec, &schedule);
+        Self::apply_schedule_to_chain_spec(chain_spec, &schedule)?;
 
         Ok(())
     }
@@ -54,12 +54,12 @@ impl ExecutionUpgradeSignalExtension {
     pub fn apply_schedule_to_chain_spec(
         chain_spec: &mut BaseChainSpec,
         schedule: &UpgradeSignalSchedule,
-    ) -> usize {
+    ) -> eyre::Result<usize> {
         let mut applied = 0;
         let mut cleared = 0;
         for signal in &schedule.signals {
             let Some(timestamp) = signal.positive_activation_timestamp() else {
-                if !chain_spec.clear_hardfork_activation_timestamp(&signal.hardfork_id) {
+                if !chain_spec.try_clear_hardfork_activation_timestamp(&signal.hardfork_id)? {
                     debug!(
                         target: "upgrade_signal",
                         hardfork_id = %signal.hardfork_id,
@@ -76,7 +76,7 @@ impl ExecutionUpgradeSignalExtension {
                 );
                 continue;
             };
-            if !chain_spec.set_hardfork_activation_timestamp(&signal.hardfork_id, timestamp) {
+            if !chain_spec.try_set_hardfork_activation_timestamp(&signal.hardfork_id, timestamp)? {
                 debug!(
                     target: "upgrade_signal",
                     hardfork_id = %signal.hardfork_id,
@@ -102,7 +102,7 @@ impl ExecutionUpgradeSignalExtension {
             "applied upgrade signal schedule to execution chain spec"
         );
 
-        applied
+        Ok(applied)
     }
 
     /// Polls L1 upgrade signal state.
@@ -184,7 +184,7 @@ impl FromExtensionConfig for ExecutionUpgradeSignalExtension {
 #[cfg(test)]
 mod tests {
     use base_common_chains::BaseUpgrade;
-    use reth_chainspec::{EthereumHardfork, ForkCondition, Hardforks};
+    use reth_chainspec::{ChainSpec, EthereumHardfork, ForkCondition, Hardforks};
 
     use super::*;
 
@@ -214,7 +214,8 @@ mod tests {
         let applied = ExecutionUpgradeSignalExtension::apply_schedule_to_chain_spec(
             &mut chain_spec,
             &schedule(&[("canyon", 40), ("azul", 42)]),
-        );
+        )
+        .unwrap();
 
         assert_eq!(applied, 2);
         assert_eq!(chain_spec.fork(EthereumHardfork::Shanghai), ForkCondition::Timestamp(40));
@@ -235,7 +236,8 @@ mod tests {
         let applied = ExecutionUpgradeSignalExtension::apply_schedule_to_chain_spec(
             &mut chain_spec,
             &schedule(&[("azul", 0)]),
-        );
+        )
+        .unwrap();
 
         assert_eq!(applied, 0);
         assert_eq!(chain_spec.fork(EthereumHardfork::Shanghai), ForkCondition::Timestamp(40));
@@ -254,10 +256,25 @@ mod tests {
         let applied = ExecutionUpgradeSignalExtension::apply_schedule_to_chain_spec(
             &mut chain_spec,
             &schedule(&[("delta", 42)]),
-        );
+        )
+        .unwrap();
 
         assert_eq!(applied, 0);
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
+    }
+
+    #[test]
+    fn rejects_beryl_schedule_without_activation_admin() {
+        let mut chain_spec = BaseChainSpec::from(ChainSpec::default());
+
+        let error = ExecutionUpgradeSignalExtension::apply_schedule_to_chain_spec(
+            &mut chain_spec,
+            &schedule(&[("beryl", 42)]),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("missing activation admin address"));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Beryl), ForkCondition::Never);
     }
 }

@@ -3,7 +3,8 @@
 use std::{path::Path, sync::Arc};
 
 use base_consensus_cli::{
-    ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedConsensusNodeConfigArgs,
+    ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
+    EmbeddedConsensusNodeConfigArgs,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
@@ -38,15 +39,18 @@ pub(crate) struct RpcCommand {
 impl RpcCommand {
     /// Runs the `rpc` flavor.
     pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
-        let execution_chain = match self.execution_chain {
+        let Self { execution_chain, execution, consensus } = self;
+        let execution_chain = match execution_chain {
             Some(chain) => chain,
             None => resolved_chain.execution_chain_spec()?,
         };
         let consensus_chain = resolved_chain.consensus_chain_args();
-        let consensus_args = ConsensusNodeArgs::new(consensus_chain, self.consensus.into());
+        let mut consensus_config: ConsensusNodeConfigArgs = consensus.into();
+        consensus_config.upgrade_signal = execution.standard.rollup_args.upgrade_signal.clone();
+        let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
         let rollup_config = consensus_args.load_rollup_config()?;
 
-        let execution = self.execution.into_launch_config(execution_chain).with_auth_ipc();
+        let execution = execution.into_launch_config(execution_chain).with_auth_ipc();
         let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
@@ -138,6 +142,33 @@ mod tests {
 
         assert_eq!(rpc.execution.network.port, 30333);
         assert_eq!(rpc.consensus.rpc_flags.listen_port, 9546);
+    }
+
+    #[test]
+    fn parses_upgrade_signal_args_once() {
+        let cli = BaseCli::parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--upgrade-signal.contract",
+            "0x0000000000000000000000000000000000000001",
+            "--upgrade-signal.hardfork-id",
+            "azul",
+        ]));
+
+        let BaseCommand::Rpc(rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+
+        assert_eq!(
+            rpc.execution
+                .standard
+                .rollup_args
+                .upgrade_signal
+                .contract_address
+                .map(|address| address.to_string()),
+            Some("0x0000000000000000000000000000000000000001".to_string())
+        );
+        assert_eq!(rpc.execution.standard.rollup_args.upgrade_signal.hardfork_ids, ["azul"]);
     }
 
     #[test]
