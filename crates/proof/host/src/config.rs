@@ -4,7 +4,7 @@ use alloy_genesis::ChainConfig;
 use alloy_provider::RootProvider;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+use base_consensus_providers::L1BlobProvider;
 use base_proof_primitives::ProofRequest;
 use serde::Serialize;
 
@@ -13,8 +13,8 @@ use serde::Serialize;
 pub struct HostProviders {
     /// The L1 EL provider.
     pub l1: RootProvider,
-    /// The L1 beacon node provider.
-    pub blobs: OnlineBlobProvider<OnlineBeaconClient>,
+    /// The L1 blob provider (beacon-backed, or calldata-only when no beacon is configured).
+    pub blobs: L1BlobProvider,
     /// The L2 EL provider.
     pub l2: RootProvider<Base>,
 }

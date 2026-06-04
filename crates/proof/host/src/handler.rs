@@ -987,7 +987,7 @@ mod tests {
     use alloy_provider::{RootProvider, builder as provider_builder, mock::Asserter};
     use base_common_genesis::RollupConfig;
     use base_common_network::Base;
-    use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+    use base_consensus_providers::{L1BlobProvider, OnlineBeaconClient, OnlineBlobProvider};
     use base_proof_primitives::ProofRequest;
     use tokio::sync::RwLock;
 
@@ -1029,8 +1029,11 @@ mod tests {
     fn test_providers(l2: RootProvider<Base>) -> HostProviders {
         let l1 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
         let beacon = OnlineBeaconClient::new_http("http://127.0.0.1:1".to_string());
-        let blobs =
-            OnlineBlobProvider { beacon_client: Some(beacon), genesis_time: 0, slot_interval: 12 };
+        let blobs = L1BlobProvider::beacon(OnlineBlobProvider {
+            beacon_client: beacon,
+            genesis_time: 0,
+            slot_interval: 12,
+        });
         HostProviders { l1, blobs, l2 }
     }
 

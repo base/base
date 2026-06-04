@@ -3,7 +3,7 @@ use std::sync::Arc;
 use alloy_provider::{Network, RootProvider};
 use base_common_evm::BaseEvmFactory;
 use base_common_network::Base;
-use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+use base_consensus_providers::{L1BlobProvider, OnlineBeaconClient, OnlineBlobProvider};
 use base_proof::HintType;
 use base_proof_client::{FaultProofProgramError, Prologue};
 use base_proof_preimage::{
@@ -199,10 +199,10 @@ impl Host {
             .map(str::trim)
             .filter(|url| !url.is_empty())
         {
-            Some(url) => {
-                OnlineBlobProvider::init(OnlineBeaconClient::new_http(url.to_string())).await
-            }
-            None => OnlineBlobProvider::disabled(),
+            Some(url) => L1BlobProvider::beacon(
+                OnlineBlobProvider::init(OnlineBeaconClient::new_http(url.to_string())).await,
+            ),
+            None => L1BlobProvider::calldata_only(),
         };
         let l2_provider = rpc_provider::<Base>(&self.config.prover.l2_eth_url).await?;
 

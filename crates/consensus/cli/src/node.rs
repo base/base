@@ -227,6 +227,8 @@ impl ConsensusNodeArgs {
         overrides: ConsensusNodeOverrides,
     ) -> eyre::Result<RollupNode> {
         self.validate_sequencer_key()?;
+        self.config.l1_rpc_args.validate()?;
+        self.config.l1_rpc_args.log_derivation_mode();
 
         info!(
             target: "rollup_node",

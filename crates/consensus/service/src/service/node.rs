@@ -15,8 +15,8 @@ use base_common_network::Base;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState};
 use base_consensus_providers::{
-    AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
-    OnlinePipeline,
+    AlloyChainProvider, AlloyL2ChainProvider, L1BlobProvider, OnlineBeaconClient,
+    OnlineBlobProvider, OnlinePipeline,
 };
 use base_consensus_rpc::RpcBuilder;
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
@@ -216,8 +216,10 @@ impl RollupNode {
         );
 
         let blob_provider = match self.l1_config.beacon_client.clone() {
-            Some(beacon_client) => OnlineBlobProvider::init(beacon_client).await,
-            None => OnlineBlobProvider::disabled(),
+            Some(beacon_client) => {
+                L1BlobProvider::beacon(OnlineBlobProvider::init(beacon_client).await)
+            }
+            None => L1BlobProvider::calldata_only(),
         };
 
         OnlinePipeline::new_polled(
