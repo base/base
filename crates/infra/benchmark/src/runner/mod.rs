@@ -59,6 +59,7 @@ struct ValidatorPhaseArgs<'a> {
     rollup_cfg: &'a Arc<RollupConfig>,
     validator_log_dir: &'a std::path::Path,
     test_dir: &'a tempfile::TempDir,
+    run_dir: &'a std::path::Path,
 }
 
 /// Filesystem paths and keys needed by the benchmark runner.
@@ -121,6 +122,9 @@ impl NetworkBenchmark {
     async fn run_one(&mut self, mut run: TestRun) -> Result<RunResult, BenchmarkError> {
         info!(run_id = %run.id, "starting benchmark run");
 
+        let run_dir = self.options.output_dir.join(&run.id);
+        std::fs::create_dir_all(&run_dir)?;
+
         let test_dir = tempfile::Builder::new()
             .prefix(&format!("base-bench-{}-", run.id))
             .tempdir()
@@ -159,7 +163,7 @@ impl NetworkBenchmark {
             Arc::new(RollupConfig::default())
         };
 
-        let validator_log_dir = self.options.output_dir.join("validator");
+        let validator_log_dir = run_dir.join("validator");
         std::fs::create_dir_all(&validator_log_dir)?;
 
         if let BenchmarkMode::ValidatorOnly { payloads_path } = &self.options.mode {
@@ -173,6 +177,7 @@ impl NetworkBenchmark {
                     rollup_cfg: &rollup_cfg,
                     validator_log_dir: &validator_log_dir,
                     test_dir: &test_dir,
+                    run_dir: &run_dir,
                 })
                 .await;
         }
@@ -207,7 +212,7 @@ impl NetworkBenchmark {
             client_options.extra_args.extend(node_args.split_whitespace().map(ToString::to_string));
         }
 
-        let sequencer_log_dir = self.options.output_dir.join("sequencer");
+        let sequencer_log_dir = run_dir.join("sequencer");
         std::fs::create_dir_all(&sequencer_log_dir)?;
 
         let internal_options = InternalClientOptions {
@@ -349,7 +354,7 @@ impl NetworkBenchmark {
 
         self.port_manager.release(proxy_port);
 
-        write_payloads_json(&self.options.output_dir, &payloads)?;
+        write_payloads_json(&run_dir, &payloads)?;
 
         if matches!(self.options.mode, BenchmarkMode::SequencerOnly) {
             let violations = run
@@ -358,7 +363,7 @@ impl NetworkBenchmark {
                 .as_ref()
                 .map_or_else(Vec::new, |mc| check_thresholds(&block_metrics_vec, mc));
             let success = violations.iter().all(|v| v.severity != Severity::Error);
-            write_metrics_file(&self.options.output_dir, "sequencer", &block_metrics_vec)?;
+            write_metrics_file(&run_dir, "sequencer", &block_metrics_vec)?;
             let ctx = RunContext {
                 run_group_id: &self.options.run_group_id,
                 git_sha: &self.options.git_info.sha,
@@ -367,6 +372,7 @@ impl NetworkBenchmark {
                 success,
             };
             write_metadata_json(
+                &run_dir,
                 &self.options.output_dir,
                 self.options.config_path.as_deref(),
                 &run,
@@ -393,6 +399,7 @@ impl NetworkBenchmark {
                 rollup_cfg: &rollup_cfg,
                 validator_log_dir: &validator_log_dir,
                 test_dir: &test_dir,
+                run_dir: &run_dir,
             })
             .await?;
 
@@ -402,7 +409,7 @@ impl NetworkBenchmark {
             .as_ref()
             .map_or_else(Vec::new, |mc| check_thresholds(&block_metrics_vec, mc));
         let success = violations.iter().all(|v| v.severity != Severity::Error);
-        write_metrics_file(&self.options.output_dir, "sequencer", &block_metrics_vec)?;
+        write_metrics_file(&run_dir, "sequencer", &block_metrics_vec)?;
         let ctx = RunContext {
             run_group_id: &self.options.run_group_id,
             git_sha: &self.options.git_info.sha,
@@ -411,6 +418,7 @@ impl NetworkBenchmark {
             success,
         };
         write_metadata_json(
+            &run_dir,
             &self.options.output_dir,
             self.options.config_path.as_deref(),
             &run,
@@ -442,6 +450,7 @@ impl NetworkBenchmark {
             rollup_cfg,
             validator_log_dir,
             test_dir,
+            run_dir,
         } = args;
         let validator_data_dir = test_dir.path().join("validator-data");
         std::fs::create_dir_all(&validator_data_dir)?;
@@ -497,7 +506,7 @@ impl NetworkBenchmark {
                 .as_ref()
                 .map_or_else(Vec::new, |mc| check_thresholds(&validator_metrics, mc));
             let success = violations.iter().all(|v| v.severity != Severity::Error);
-            write_metrics_file(&self.options.output_dir, "validator", &validator_metrics)?;
+            write_metrics_file(run_dir, "validator", &validator_metrics)?;
             let ctx = RunContext {
                 run_group_id: &self.options.run_group_id,
                 git_sha: &self.options.git_info.sha,
@@ -506,6 +515,7 @@ impl NetworkBenchmark {
                 success,
             };
             write_metadata_json(
+                run_dir,
                 &self.options.output_dir,
                 self.options.config_path.as_deref(),
                 run,

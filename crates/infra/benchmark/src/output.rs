@@ -119,11 +119,14 @@ pub struct RunContext<'a> {
     pub global_tags: &'a HashMap<String, String>,
     /// Whether the run passed all thresholds.
     pub success: bool,
+    /// Root results directory (used to compute relative `outputDir`).
+    pub results_root: &'a Path,
 }
 
 /// Write a `metadata.json` summarising the run, config, and metrics.
 pub fn write_metadata_json(
     output_dir: &Path,
+    results_root: &Path,
     config_path: Option<&Path>,
     run: &TestRun,
     config: &BenchmarkConfig,
@@ -133,9 +136,9 @@ pub fn write_metadata_json(
 ) -> Result<(), BenchmarkError> {
     let gas_limit = config.gas_limit.unwrap_or(30_000_000);
     let output_dir_name = output_dir
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| output_dir.display().to_string());
+        .strip_prefix(results_root)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| output_dir.display().to_string());
     let source_file =
         config_path.map(|p| p.display().to_string()).unwrap_or_else(|| "<default>".to_string());
 
