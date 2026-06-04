@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, watch};
 use url::Url;
 
 use crate::{
-    commands::{DaTracker, FlashblockEntry, LoadingState},
+    app::{DaTracker, FlashblockEntry, LoadingState},
     config::{ConductorNodeConfig, MonitoringConfig},
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, ConductorPollUpdate, L1BlockInfo,

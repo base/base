@@ -66,24 +66,25 @@ pub struct ProxyConfigs {
     /// Proxy config for L2 RPC traffic.
     pub l2: ProxyConfig,
     /// Proxy config for beacon API traffic.
-    pub beacon: ProxyConfig,
+    pub beacon: Option<ProxyConfig>,
 }
 
 impl ProxyConfigs {
-    /// Creates a bundled proxy config for L1, L2, and beacon endpoints.
-    pub const fn new(
+    /// Creates a bundled proxy config for L1, L2, and optional beacon endpoints.
+    pub fn new(
         l1_port: u16,
         l1_backend: String,
         l2_port: u16,
         l2_backend: String,
         beacon_port: u16,
-        beacon_backend: String,
+        beacon_backend: Option<String>,
         rate_limit: RateLimitConfig,
     ) -> Self {
         Self {
             l1: ProxyConfig::new(l1_port, l1_backend, &rate_limit),
             l2: ProxyConfig::new(l2_port, l2_backend, &rate_limit),
-            beacon: ProxyConfig::new(beacon_port, beacon_backend, &rate_limit),
+            beacon: beacon_backend
+                .map(|backend| ProxyConfig::new(beacon_port, backend, &rate_limit)),
         }
     }
 
@@ -91,7 +92,9 @@ impl ProxyConfigs {
     pub fn validate(&self) -> anyhow::Result<()> {
         self.l1.validate()?;
         self.l2.validate()?;
-        self.beacon.validate()?;
+        if let Some(beacon) = &self.beacon {
+            beacon.validate()?;
+        }
         Ok(())
     }
 }

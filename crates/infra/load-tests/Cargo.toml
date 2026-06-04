@@ -28,6 +28,7 @@ base-tx-manager.workspace = true
 base-common-network.workspace = true
 base-common-consensus.workspace = true
 base-common-flashblocks.workspace = true
+base-common-precompiles = { workspace = true, default-features = false }
 
 # display
 indicatif.workspace = true

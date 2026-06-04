@@ -3,7 +3,7 @@ use std::sync::Arc;
 use alloy_provider::{Network, RootProvider};
 use base_common_evm::BaseEvmFactory;
 use base_common_network::Base;
-use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+use base_consensus_providers::{L1BlobProvider, OnlineBeaconClient, OnlineBlobProvider};
 use base_proof::HintType;
 use base_proof_client::{FaultProofProgramError, Prologue};
 use base_proof_preimage::{
@@ -21,7 +21,7 @@ use crate::DiskKeyValueStore;
 use crate::{
     BootKeyValueStore, HostConfig, HostError, HostProviders, MemoryKeyValueStore, Metrics,
     OfflineHostBackend, OnlineHostBackend, PreimageServer, RecordingOracle, Result,
-    SharedKeyValueStore, SplitKeyValueStore,
+    SharedKeyValueStore, SplitKeyValueStore, handler::L1HeaderCache,
 };
 
 /// The proof host orchestrator.
@@ -83,13 +83,29 @@ impl Host {
     where
         W: WitnessOracle + std::fmt::Debug + 'static,
     {
+        self.build_witness_with_l1_header_cache(witness, L1HeaderCache::new()).await
+    }
+
+    pub(crate) async fn build_witness_with_l1_header_cache<W>(
+        &self,
+        witness: W,
+        l1_header_cache: L1HeaderCache,
+    ) -> Result<W>
+    where
+        W: WitnessOracle + std::fmt::Debug + 'static,
+    {
         let witness = Arc::new(witness);
 
         let kv_store = self.create_key_value_store()?;
         let providers = self.create_providers().await?;
         let backend = Arc::new(
-            OnlineHostBackend::new(self.config.clone(), Arc::clone(&kv_store), providers)
-                .with_proactive_hint(HintType::L2PayloadWitness),
+            OnlineHostBackend::new_with_l1_header_cache(
+                self.config.clone(),
+                Arc::clone(&kv_store),
+                providers,
+                l1_header_cache,
+            )
+            .with_proactive_hint(HintType::L2PayloadWitness),
         );
 
         let preimage_chan = BidirectionalChannel::new().map_err(HostError::Io)?;
@@ -191,10 +207,19 @@ impl Host {
     /// Creates the providers required for the host backend.
     pub async fn create_providers(&self) -> Result<HostProviders> {
         let l1_provider = rpc_provider(&self.config.prover.l1_eth_url).await?;
-        let blob_provider = OnlineBlobProvider::init(OnlineBeaconClient::new_http(
-            self.config.prover.l1_beacon_url.clone(),
-        ))
-        .await;
+        let blob_provider = match self
+            .config
+            .prover
+            .l1_beacon_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+        {
+            Some(url) => L1BlobProvider::beacon(
+                OnlineBlobProvider::init(OnlineBeaconClient::new_http(url.to_string())).await,
+            ),
+            None => L1BlobProvider::calldata_only(),
+        };
         let l2_provider = rpc_provider::<Base>(&self.config.prover.l2_eth_url).await?;
 
         Ok(HostProviders { l1: l1_provider, blobs: blob_provider, l2: l2_provider })

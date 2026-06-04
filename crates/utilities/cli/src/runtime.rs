@@ -96,4 +96,22 @@ impl RuntimeManager {
             }
         })
     }
+
+    /// Run a fallible future with a cancellation token wired to shutdown signals.
+    pub fn run_until_shutdown<F, Fut>(&self, make_fut: F) -> eyre::Result<()>
+    where
+        F: FnOnce(CancellationToken) -> Fut,
+        Fut: Future<Output = eyre::Result<()>>,
+    {
+        let rt = self.tokio_runtime().map_err(|e| eyre::eyre!(e))?;
+        rt.block_on(async move {
+            let cancel = CancellationToken::new();
+            let signal_handle = Self::install_signal_handler(cancel.clone());
+            let result = make_fut(cancel.clone()).await;
+
+            cancel.cancel();
+            signal_handle.abort();
+            result
+        })
+    }
 }

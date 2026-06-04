@@ -13,10 +13,10 @@ use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
-use base_consensus_engine::{Engine, EngineClient, EngineState};
+use base_consensus_engine::{Engine, EngineClient, EngineState, ForkchoiceCheckpointReader};
 use base_consensus_providers::{
-    AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
-    OnlinePipeline,
+    AlloyChainProvider, AlloyL2ChainProvider, L1BlobProvider, OnlineBeaconClient,
+    OnlineBlobProvider, OnlinePipeline,
 };
 use base_consensus_rpc::RpcBuilder;
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
@@ -25,15 +25,15 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AlloyL1BlockFetcher, Conductor, ConductorClient, DelayedL1OriginSelectorProvider,
-    DelegateDerivationActor, DerivationActor, DerivationDelegateClient, DerivationError,
-    EngineActor, EngineActorRequest, EngineConfig, EngineProcessor, EngineProcessorOptions,
-    EngineRpcProcessor, L1OriginSelector, L1WatcherActor, L1WatcherQueryProcessor, NetworkActor,
-    NetworkBuilder, NetworkConfig, NodeActor, NodeMode, PayloadBuilder,
-    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
-    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
-    QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
-    SequencerConfig,
+    AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
+    Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
+    DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
+    EngineConfig, EngineProcessor, EngineProcessorOptions, EngineRpcProcessor, L1OriginSelector,
+    L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
+    NodeActor, NodeMode, PayloadBuilder, QueuedDerivationEngineClient,
+    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
+    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
+    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -48,8 +48,9 @@ pub struct L1Config {
     pub chain_config: Arc<GenesisChainConfig>,
     /// Whether to trust the L1 RPC.
     pub trust_rpc: bool,
-    /// The L1 beacon client.
-    pub beacon_client: OnlineBeaconClient,
+    /// The L1 beacon client, or `None` when no beacon endpoint is configured (e.g. an L2
+    /// parent chain with no blob DA, running calldata-only).
+    pub beacon_client: Option<OnlineBeaconClient>,
     /// The L1 engine provider.
     pub engine_provider: RootProvider,
     /// How frequently to poll L1 for a new finalized block.
@@ -104,6 +105,11 @@ pub struct RollupNode {
     pub sequencer_config: SequencerConfig,
     /// Optional derivation delegate provider.
     pub derivation_delegate_provider: Option<DerivationDelegateClient>,
+    /// Path to the mandatory checkpoint database.
+    ///
+    /// The node records safe/finalized forkchoice checkpoints here so restart can recover
+    /// `L2BlockInfo` when reth has pruned old block bodies.
+    pub checkpoint_path: PathBuf,
     /// Optional path to the safe head database.
     ///
     /// When set, the node records L1→L2 safe head mappings to a persistent redb database and
@@ -214,10 +220,17 @@ impl RollupNode {
             self.l2_trust_rpc,
         );
 
+        let blob_provider = match self.l1_config.beacon_client.clone() {
+            Some(beacon_client) => {
+                L1BlobProvider::beacon(OnlineBlobProvider::init(beacon_client).await)
+            }
+            None => L1BlobProvider::calldata_only(),
+        };
+
         OnlinePipeline::new_polled(
             Arc::clone(&self.config),
             Arc::clone(&self.l1_config.chain_config),
-            OnlineBlobProvider::init(self.l1_config.beacon_client.clone()).await,
+            blob_provider,
             l1_derivation_provider,
             l2_derivation_provider,
             l1_head_number,
@@ -225,6 +238,7 @@ impl RollupNode {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_engine_actor<E: EngineClient + 'static>(
         &self,
         engine_client: Arc<E>,
@@ -233,6 +247,7 @@ impl RollupNode {
         derivation_client: QueuedEngineDerivationClient,
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
         conductor: Option<Arc<dyn Conductor>>,
+        checkpoint_client: CheckpointClient,
     ) -> (EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>>, EngineRpcProcessor<E>)
     {
         let engine_state = EngineState::default();
@@ -241,7 +256,10 @@ impl RollupNode {
         let engine = Engine::new(engine_state, engine_state_tx, engine_queue_length_tx);
 
         let mode = self.mode();
-        let engine_processor = EngineProcessor::new(
+        let checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader> =
+            Arc::new(checkpoint_client.clone());
+        let checkpoint_writer: Arc<dyn CheckpointWriter> = Arc::new(checkpoint_client);
+        let engine_processor = EngineProcessor::new_with_checkpoint(
             Arc::clone(&engine_client),
             Arc::clone(&self.config),
             derivation_client,
@@ -252,6 +270,8 @@ impl RollupNode {
                 conductor,
                 sequencer_stopped: self.sequencer_config.sequencer_stopped,
             },
+            checkpoint_reader,
+            checkpoint_writer,
         );
 
         let engine_rpc_processor = EngineRpcProcessor::new(
@@ -384,6 +404,12 @@ impl RollupNode {
         let (engine_actor_request_tx, engine_actor_request_rx) = mpsc::channel(1024);
         let (engine_rpc_request_tx, engine_rpc_request_rx) = mpsc::channel(1024);
         let (unsafe_head_tx, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
+        let (derivation_origin_tx, derivation_origin_rx) = watch::channel(None);
+        let (checkpoint_request_tx, checkpoint_request_rx) = mpsc::channel(1024);
+        let checkpoint_db = CheckpointDB::open(&self.checkpoint_path)
+            .map_err(|e| format!("failed to open checkpoint database: {e}"))?;
+        let checkpoint_actor = CheckpointActor::new(checkpoint_db, checkpoint_request_rx);
+        let checkpoint_client = CheckpointClient::new(checkpoint_request_tx);
 
         // Create the conductor client early — the engine processor needs it for the
         // bootstrap leadership check and the sequencer actor needs it for block building.
@@ -416,6 +442,7 @@ impl RollupNode {
             QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
             unsafe_head_tx,
             engine_conductor,
+            checkpoint_client,
         );
 
         // Select the concrete derivation actor implementation based on
@@ -435,6 +462,7 @@ impl RollupNode {
                     derivation_actor_request_rx,
                     provider,
                     l1_provider,
+                    derivation_origin_tx,
                 )))
             } else {
                 ConfiguredDerivationActor::Normal(Box::new(DerivationActor::<_, P>::new(
@@ -445,6 +473,7 @@ impl RollupNode {
                     derivation_actor_request_rx,
                     pipeline,
                     safe_head_listener,
+                    derivation_origin_tx,
                 )))
             };
 
@@ -508,7 +537,7 @@ impl RollupNode {
             Arc::clone(&self.config),
             AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
             l1_query_rx,
-            l1_head_updates_tx.subscribe(),
+            derivation_origin_rx,
             cancellation.clone(),
         );
 
@@ -584,6 +613,7 @@ impl RollupNode {
                 Some((l1_watcher, ())),
                 Some((l1_query_processor, ())),
                 Some((derivation, ())),
+                Some((checkpoint_actor, cancellation.clone())),
                 Some((engine_actor, ())),
                 engine_rpc_actor,
             ]

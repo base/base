@@ -28,8 +28,7 @@
     "isthmusTime": 0,
     "jovianTime": 0,
     "base": {
-      "azul": 1775152800,
-      "beryl": 1780333200
+      "azul": 1775152800
     },
     "terminalTotalDifficulty": 0,
     "depositContractAddress": "0x0000000000000000000000000000000000000000",

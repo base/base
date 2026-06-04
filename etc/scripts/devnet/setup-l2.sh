@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 L1_RPC_URL="${L1_RPC_URL:-http://l1-el:4545}"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
@@ -15,6 +15,10 @@ L2_EL_BOOTNODE_ENODE_ID="${L2_EL_BOOTNODE_ENODE_ID:-4f355bdcb7cc0af728ef3cceb961
 L2_EL_BOOTNODE_ENODE="${L2_EL_BOOTNODE_ENODE:-enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303}"
 L2_CL_BOOTNODE_P2P_KEY="${L2_CL_BOOTNODE_P2P_KEY:-2222222222222222222222222222222222222222222222222222222222222222}"
 L2_CL_BOOTNODE_ENR_PATH="${L2_CL_BOOTNODE_ENR_PATH:-/bootnodes/cl-bootnode.enr}"
+BUILDER_P2P_KEY="${BUILDER_P2P_KEY:-2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6}"
+BUILDER_ENODE_ID="${BUILDER_ENODE_ID:-3255458e24278e31d5940f304b16300fdff3f6efd3e2a030b5818310ac67af45e28d057e6a332d07e0c5ab09d6947fd4eed1a646edbf224e2d2fec6f49f90abc}"
+SEQ1_P2P_KEY="${SEQ1_P2P_KEY:-7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6}"
+SEQ2_P2P_KEY="${SEQ2_P2P_KEY:-47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a}"
 
 if [ -n "$L2_BASE_AZUL_BLOCK" ] && ! [[ "$L2_BASE_AZUL_BLOCK" =~ ^[0-9]+$ ]]; then
   echo "ERROR: L2_BASE_AZUL_BLOCK must be a non-negative integer when set, got: $L2_BASE_AZUL_BLOCK"
@@ -69,6 +73,10 @@ L1_HASH=$(echo "$L1_GENESIS" | jq -r '.hash')
 L1_TIMESTAMP=$(echo "$L1_GENESIS" | jq -r '.timestamp')
 echo "L1 genesis hash: $L1_HASH"
 echo "L1 genesis timestamp: $L1_TIMESTAMP"
+
+# Validate L1 genesis data before proceeding
+[ -n "$L1_HASH" ] && [ "$L1_HASH" != "null" ] || { echo "ERROR: failed to fetch L1 genesis hash"; exit 1; }
+[ -n "$L1_TIMESTAMP" ] && [ "$L1_TIMESTAMP" != "null" ] || { echo "ERROR: failed to fetch L1 genesis timestamp"; exit 1; }
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
@@ -137,7 +145,6 @@ OUTPUT_DIR="$OUTPUT_DIR" \
 L1_RPC_URL="$L1_RPC_URL" \
 L1_CHAIN_ID="$L1_CHAIN_ID" \
 L2_CHAIN_ID="$L2_CHAIN_ID" \
-FOUNDRY_SCRIPT_EXECUTION_PROTECTION=false \
     DEPLOY_CONFIG_PATH="$WORKDIR/deploy-config/devnet.json" \
   /usr/local/bin/extract-artifacts.sh
 
@@ -233,6 +240,8 @@ else
   echo "Base Beryl activation block is unset; leaving base.beryl unchanged"
 fi
 
+# Strip fields that op-conductor's RollupConfig does not recognize.
+# granite_channel_timeout is a base/base extension not present in op-conductor's schema.
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."
 jq 'del(.base, .granite_channel_timeout)' "$OUTPUT_DIR/rollup.json" >"$OUTPUT_DIR/rollup-conductor.json"
 echo "rollup-conductor.json written to $OUTPUT_DIR/rollup-conductor.json"

@@ -94,18 +94,18 @@ pub enum RPCMode {
 ///
 /// `L1_RPC`: The L1 RPC URL.
 /// `L1_BEACON_RPC`: The L1 beacon RPC URL.
+/// `L1_CALLDATA_ONLY`: Whether to run without an L1 beacon RPC URL.
 /// `L2_RPC`: The L2 RPC URL.
 /// `L2_NODE_RPC`: The L2 node RPC URL.
 pub fn get_rpcs_from_env() -> RPCConfig {
     let l1_rpc = env::var("L1_RPC").expect("L1_RPC must be set");
     let maybe_l1_beacon_rpc = env::var("L1_BEACON_RPC").ok();
-
-    // L1_BEACON_RPC is optional. If not set or empty, set to None.
-    let l1_beacon_rpc = maybe_l1_beacon_rpc
+    let l1_calldata_only = env::var("L1_CALLDATA_ONLY")
+        .ok()
         .as_deref()
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| Url::parse(s).expect("L1_BEACON_RPC must be a valid URL"));
+        .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+    let l1_beacon_rpc = l1_beacon_rpc_from_env(maybe_l1_beacon_rpc.as_deref(), l1_calldata_only);
 
     let l2_rpc = env::var("L2_RPC").expect("L2_RPC must be set");
     let l2_node_rpc = env::var("L2_NODE_RPC").expect("L2_NODE_RPC must be set");
@@ -115,6 +115,24 @@ pub fn get_rpcs_from_env() -> RPCConfig {
         l1_beacon_rpc,
         l2_rpc: Url::parse(&l2_rpc).expect("L2_RPC must be a valid URL"),
         l2_node_rpc: Url::parse(&l2_node_rpc).expect("L2_NODE_RPC must be a valid URL"),
+    }
+}
+
+fn l1_beacon_rpc_from_env(
+    maybe_l1_beacon_rpc: Option<&str>,
+    l1_calldata_only: bool,
+) -> Option<Url> {
+    let l1_beacon_rpc = maybe_l1_beacon_rpc.map(str::trim).filter(|url| !url.is_empty());
+
+    match (l1_beacon_rpc, l1_calldata_only) {
+        (Some(url), false) => Some(Url::parse(url).expect("L1_BEACON_RPC must be a valid URL")),
+        (None, true) => None,
+        (None, false) => {
+            panic!("provide L1_BEACON_RPC for blob-backed proving or set L1_CALLDATA_ONLY=true")
+        }
+        (Some(_), true) => {
+            panic!("L1_BEACON_RPC and L1_CALLDATA_ONLY=true are mutually exclusive")
+        }
     }
 }
 
@@ -284,7 +302,7 @@ impl OPSuccinctDataFetcher {
         if let Some(block) = block {
             Ok(block.header.inner)
         } else {
-            bail!("Failed to get L1 header for block {block_number}");
+            bail!("Failed to get L2 header for block {block_number}");
         }
     }
 
@@ -783,8 +801,7 @@ impl OPSuccinctDataFetcher {
             .rpc_config
             .l1_beacon_rpc
             .as_ref()
-            .map(|addr| addr.as_str().trim_end_matches('/').to_string())
-            .unwrap_or_default();
+            .map(|addr| addr.as_str().trim_end_matches('/').to_string());
 
         // Load L1 config from file or registry.
         let l1_config = if let Some(ref l1_config_path) = self.l1_config_path {
@@ -825,5 +842,42 @@ impl OPSuccinctDataFetcher {
         };
 
         Ok(HostConfig { request, prover, data_dir: None })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::l1_beacon_rpc_from_env;
+
+    #[test]
+    fn beacon_mode_is_valid() {
+        let l1_beacon_rpc = l1_beacon_rpc_from_env(Some("http://localhost:5052"), false);
+
+        assert_eq!(l1_beacon_rpc.unwrap().as_str(), "http://localhost:5052/");
+    }
+
+    #[test]
+    fn calldata_only_mode_is_valid() {
+        let l1_beacon_rpc = l1_beacon_rpc_from_env(None, true);
+
+        assert_eq!(l1_beacon_rpc, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "provide L1_BEACON_RPC")]
+    fn neither_mode_panics() {
+        let _ = l1_beacon_rpc_from_env(None, false);
+    }
+
+    #[test]
+    #[should_panic(expected = "mutually exclusive")]
+    fn both_modes_panic() {
+        let _ = l1_beacon_rpc_from_env(Some("http://localhost:5052"), true);
+    }
+
+    #[test]
+    #[should_panic(expected = "provide L1_BEACON_RPC")]
+    fn empty_beacon_url_is_treated_as_missing() {
+        let _ = l1_beacon_rpc_from_env(Some("  "), false);
     }
 }

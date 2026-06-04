@@ -38,8 +38,8 @@ pub struct L1ConfigBuilder {
     pub chain_config: ChainConfig,
     /// Whether to trust the L1 RPC.
     pub trust_rpc: bool,
-    /// The L1 beacon API.
-    pub beacon: Url,
+    /// The L1 beacon API, or `None` when the L1 parent has no beacon (blob) DA endpoint.
+    pub beacon: Option<Url>,
     /// The L1 RPC URL.
     pub rpc_url: Url,
     /// The duration in seconds of an L1 slot. This can be used to hardcode a fixed slot
@@ -74,6 +74,10 @@ pub struct RollupNodeBuilder {
     /// When `None`, [`L1Config::default_finalized_poll_interval`] is used to select a
     /// chain-appropriate default derived from `config.l1_chain_id`.
     pub finalized_poll_interval: Option<Duration>,
+    /// Optional path to the checkpoint database file.
+    ///
+    /// When `None`, the node stores checkpoints under the default consensus data directory.
+    pub checkpoint_path: Option<PathBuf>,
     /// Optional path to the safe head database file.
     ///
     /// When set, enables persistent safe head tracking via redb and serves
@@ -115,6 +119,7 @@ impl RollupNodeBuilder {
             sequencer_config: None,
             derivation_delegate_config: None,
             finalized_poll_interval: None,
+            checkpoint_path: None,
             safedb_path: None,
         }
     }
@@ -157,6 +162,11 @@ impl RollupNodeBuilder {
         Self { safedb_path: Some(path), ..self }
     }
 
+    /// Sets the checkpoint database path.
+    pub fn with_checkpoint_path(self, path: PathBuf) -> Self {
+        Self { checkpoint_path: Some(path), ..self }
+    }
+
     /// Assembles the [`RollupNode`] service.
     ///
     /// Returns an error if the internal L2 provider transport cannot be constructed. WebSocket
@@ -164,10 +174,13 @@ impl RollupNodeBuilder {
     /// remains lazy during startup. `file://` URLs still connect eagerly because IPC is an
     /// explicit opt-in transport.
     pub async fn build(self) -> TransportResult<RollupNode> {
-        let mut l1_beacon = OnlineBeaconClient::new_http(self.l1_config_builder.beacon.to_string());
-        if let Some(l1_slot_duration) = self.l1_config_builder.slot_duration_override {
-            l1_beacon = l1_beacon.with_l1_slot_duration_override(l1_slot_duration);
-        }
+        let l1_beacon = self.l1_config_builder.beacon.as_ref().map(|beacon| {
+            let mut client = OnlineBeaconClient::new_http(beacon.to_string());
+            if let Some(l1_slot_duration) = self.l1_config_builder.slot_duration_override {
+                client = client.with_l1_slot_duration_override(l1_slot_duration);
+            }
+            client
+        });
 
         let finalized_poll_interval = self
             .finalized_poll_interval
@@ -190,6 +203,9 @@ impl RollupNodeBuilder {
         .await?;
 
         let rollup_config = Arc::new(self.config);
+        let checkpoint_path = self.checkpoint_path.unwrap_or_else(|| {
+            Self::default_checkpoint_path(self.engine_config.config.l2_chain_id.id())
+        });
 
         let p2p_config = self.p2p_config;
         let sequencer_config = self.sequencer_config.unwrap_or_default();
@@ -210,8 +226,18 @@ impl RollupNodeBuilder {
             p2p_config,
             sequencer_config,
             derivation_delegate_provider,
+            checkpoint_path,
             safedb_path: self.safedb_path,
         })
+    }
+
+    fn default_checkpoint_path(l2_chain_id: u64) -> PathBuf {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".base")
+            .join(l2_chain_id.to_string())
+            .join("checkpoint.redb")
     }
 }
 
@@ -236,7 +262,7 @@ mod tests {
         let l1_config_builder = L1ConfigBuilder {
             chain_config: ChainConfig::default(),
             trust_rpc: true,
-            beacon: Url::parse("http://127.0.0.1:5052").unwrap(),
+            beacon: Some(Url::parse("http://127.0.0.1:5052").unwrap()),
             rpc_url: Url::parse("http://127.0.0.1:8545").unwrap(),
             slot_duration_override: None,
             verifier_l1_confs: 0,

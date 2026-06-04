@@ -17,6 +17,8 @@ base-health.workspace = true
 base-proof-host.workspace = true
 base-proof-preimage.workspace = true
 base-proof-contracts.workspace = true
+base-prover-service-client.workspace = true
+base-prover-service-protocol.workspace = true
 base-proof-tee-nitro-enclave.workspace = true
 base-proof-primitives = { workspace = true, features = ["std", "serde", "rpc-server"] }
 
@@ -26,6 +28,8 @@ alloy-primitives.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 
 # async
+backon.workspace = true
+tokio-util.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "io-util", "net"] }
 
@@ -41,7 +45,10 @@ jsonrpsee = { workspace = true, features = ["server", "macros"] }
 tokio-vsock.workspace = true
 
 [dev-dependencies]
+chrono.workspace = true
+alloy-genesis.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
+base-common-genesis = { workspace = true, features = ["serde", "std"] }
 
 [features]
 metrics = [ "base-proof-host/metrics" ]

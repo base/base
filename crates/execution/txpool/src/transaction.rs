@@ -12,7 +12,7 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
-use base_common_consensus::BaseTransactionSigned;
+use base_common_consensus::{BaseTransactionSigned, Eip8130Signed};
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
@@ -328,16 +328,29 @@ where
 pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Returns the EIP-2718 encoded bytes of the transaction.
     fn encoded_2718(&self) -> Cow<'_, Bytes>;
+
+    /// Returns the signed EIP-8130 payload when this transaction carries one.
+    ///
+    /// Required for the mempool validator's structural admission checks; the
+    /// default returns `None` for implementers that never carry EIP-8130
+    /// (account abstraction) transactions.
+    fn as_eip8130(&self) -> Option<&Eip8130Signed> {
+        None
+    }
 }
 
-impl<Cons, Pooled> BasePooledTx for BasePooledTransaction<Cons, Pooled>
+impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
 where
-    Cons: SignedTransaction + From<Pooled>,
-    Pooled: SignedTransaction + TryFrom<Cons>,
-    <Pooled as TryFrom<Cons>>::Error: core::error::Error,
+    BaseTransactionSigned: From<Pooled>,
+    Pooled: SignedTransaction + TryFrom<BaseTransactionSigned>,
+    <Pooled as TryFrom<BaseTransactionSigned>>::Error: core::error::Error,
 {
     fn encoded_2718(&self) -> Cow<'_, Bytes> {
         Cow::Borrowed(self.encoded_2718())
+    }
+
+    fn as_eip8130(&self) -> Option<&Eip8130Signed> {
+        self.inner.transaction().inner().as_eip8130()
     }
 }
 

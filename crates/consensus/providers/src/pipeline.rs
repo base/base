@@ -14,8 +14,7 @@ use base_consensus_derive::{
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 use crate::{
-    AlloyChainProvider, AlloyL2ChainProvider, ConfDepthProvider, L1HeadNumber, OnlineBeaconClient,
-    OnlineBlobProvider,
+    AlloyChainProvider, AlloyL2ChainProvider, ConfDepthProvider, L1BlobProvider, L1HeadNumber,
 };
 
 /// An online polled derivation pipeline.
@@ -30,8 +29,7 @@ type OnlinePolledDerivationPipeline = DerivationPipeline<
 >;
 
 /// An RPC-backed Ethereum data source.
-type OnlineDataProvider =
-    EthereumDataSource<ConfDepthProvider, OnlineBlobProvider<OnlineBeaconClient>>;
+type OnlineDataProvider = EthereumDataSource<ConfDepthProvider, L1BlobProvider>;
 
 /// An RPC-backed payload attributes builder for the `AttributesQueue` stage of the derivation
 /// pipeline.
@@ -51,7 +49,7 @@ impl OnlinePipeline {
         cfg: Arc<RollupConfig>,
         l1_cfg: Arc<ChainConfig>,
         l2_safe_head: L2BlockInfo,
-        blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
+        blob_provider: L1BlobProvider,
         chain_provider: AlloyChainProvider,
         l2_chain_provider: AlloyL2ChainProvider,
         l1_head_number: L1HeadNumber,
@@ -85,7 +83,7 @@ impl OnlinePipeline {
     pub fn new_polled(
         cfg: Arc<RollupConfig>,
         l1_cfg: Arc<ChainConfig>,
-        blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
+        blob_provider: L1BlobProvider,
         chain_provider: AlloyChainProvider,
         l2_chain_provider: AlloyL2ChainProvider,
         l1_head_number: L1HeadNumber,

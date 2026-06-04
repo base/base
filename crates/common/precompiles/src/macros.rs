@@ -1,5 +1,6 @@
 //! Runtime helpers for wrapping native precompile dispatch.
 
+/// Wraps a stateful native precompile body in the Base storage-provider setup.
 macro_rules! base_precompile {
     ($id:expr, |$ctx:ident, $calldata:ident| $impl:expr $(,)?) => {{
         ::alloy_evm::precompiles::DynPrecompile::new_stateful(
@@ -45,6 +46,7 @@ macro_rules! base_precompile {
 
 pub(crate) use base_precompile;
 
+/// Deducts the per-word calldata gas charged by Base native precompile dispatch.
 macro_rules! deduct_calldata_cost {
     ($ctx:expr, $calldata:expr $(,)?) => {{
         const G_SHA3WORD: u64 = 6;
@@ -59,30 +61,7 @@ macro_rules! deduct_calldata_cost {
 
 pub(crate) use deduct_calldata_cost;
 
-macro_rules! track_precompile_cycles {
-    ($tracker:ty, $calldata:expr, $body:block $(,)?) => {{
-        #[cfg(target_os = "zkvm")]
-        let cycle_tracker_key =
-            <$tracker as $crate::CalldataCycleTracker>::key_for_calldata($calldata);
-        #[cfg(target_os = "zkvm")]
-        if let Some(key) = cycle_tracker_key {
-            ::std::println!("cycle-tracker-report-start: {key}");
-        }
-
-        // NOTE: The closure keeps `?` from skipping the end marker.
-        let cycle_tracker_result = (|| $body)();
-
-        #[cfg(target_os = "zkvm")]
-        if let Some(key) = cycle_tracker_key {
-            ::std::println!("cycle-tracker-report-end: {key}");
-        }
-
-        cycle_tracker_result
-    }};
-}
-
-pub(crate) use track_precompile_cycles;
-
+/// Decodes calldata into the requested ABI interface call or returns an unknown selector error.
 macro_rules! decode_precompile_call {
     ($calldata:expr, $call_ty:ty $(,)?) => {{
         let calldata = $calldata;

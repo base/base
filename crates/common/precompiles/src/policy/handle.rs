@@ -9,8 +9,7 @@ use core::fmt;
 use alloy_primitives::Address;
 use base_precompile_storage::{Result, StorageCtx};
 
-use super::storage::PolicyRegistryStorage;
-use crate::{IPolicyRegistry::PolicyType, Policy, PolicyRegistry};
+use crate::{IPolicyRegistry::PolicyType, Policy, PolicyRegistry, PolicyRegistryStorage};
 
 /// Wraps [`PolicyRegistryStorage`] and implements [`Policy`] and [`PolicyRegistry`],
 /// separating authorization decisions from raw storage reads.
@@ -99,8 +98,7 @@ mod tests {
     use alloy_primitives::{Address, address};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use super::*;
-    use crate::{IPolicyRegistry, Policy, PolicyRegistry};
+    use crate::{IPolicyRegistry, Policy, PolicyHandle, PolicyRegistry, PolicyRegistryStorage};
 
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
     const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
@@ -109,7 +107,10 @@ mod tests {
     fn storage() -> HashMapStorageProvider {
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
-        StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).write_builtins()).unwrap();
+        StorageCtx::enter(&mut s, |ctx| {
+            PolicyRegistryStorage::new(ctx).ensure_initialized_and_get_counter()
+        })
+        .unwrap();
         s
     }
 

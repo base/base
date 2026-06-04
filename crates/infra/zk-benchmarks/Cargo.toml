@@ -1,0 +1,12 @@
+[package]
+name = "base-zk-benchmarks"
+description = "ZK proving benchmark scenarios for Base devnets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true

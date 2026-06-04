@@ -1,7 +1,7 @@
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.93"
+rust-version = "1.94"
 license = "MIT"
 homepage = "https://github.com/base/base"
 repository = "https://github.com/base/base"
@@ -14,8 +14,8 @@ members = [
   "bin/*",
   "bin/prover/nitro-host",
   "bin/prover/nitro-enclave",
-  "bin/prover/zk",
   "bin/prover/snark-e2e",
+  "bin/prover/zk",
   "crates/consensus/*",
   "crates/proof/mpt",
   "crates/proof/proof",
@@ -25,6 +25,10 @@ members = [
   "crates/proof/preimage",
   "crates/proof/primitives",
   "crates/proof/host",
+  "crates/proof/prover-service",
+  "crates/proof/prover-service/client",
+  "crates/proof/prover-service/protocol",
+  "crates/proof/prover-service/db",
   "crates/proof/tee/nitro-host",
   "crates/proof/tee/nitro-enclave",
   "crates/proof/tee/registrar",
@@ -56,7 +60,7 @@ members = [
   "crates/common/*",
   "crates/execution/*",
   "etc/tools/*",
-  "devnet",
+  "etc/systems",
   "actions/*",
 ]
 default-members = [
@@ -214,13 +218,13 @@ base-execution-payload-builder = { path = "crates/execution/payload" }
 base-flashblocks-node = { path = "crates/execution/flashblocks-node" }
 
 # Infra
-based = { path = "crates/infra/based" }
 basectl-cli = { path = "crates/infra/basectl" }
 audit-archiver-lib = { path = "crates/infra/audit" }
 base-load-tests = { path = "crates/infra/load-tests" }
 ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 base-snapshotter = { path = "crates/infra/snapshotter" }
 websocket-proxy = { path = "crates/infra/websocket-proxy" }
+base-zk-benchmarks = { path = "crates/infra/zk-benchmarks" }
 
 # Proof
 base-proof-rpc = { path = "crates/proof/rpc" }
@@ -231,15 +235,19 @@ base-zk-outbox = { path = "crates/proof/zk/outbox" }
 base-zk-service = { path = "crates/proof/zk/service" }
 base-challenger = { path = "crates/proof/challenge" }
 base-proof-contracts = { path = "crates/proof/contracts" }
+base-prover-service = { path = "crates/proof/prover-service" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
+base-prover-service-db = { path = "crates/proof/prover-service/db" }
 base-proof-tee-nitro-host = { path = "crates/proof/tee/nitro-host" }
 base-proof = { path = "crates/proof/proof", default-features = false }
 base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
 base-proof-tee-nitro-enclave = { path = "crates/proof/tee/nitro-enclave" }
 base-proof-host = { path = "crates/proof/host", default-features = false }
+base-prover-service-client = { path = "crates/proof/prover-service/client" }
 base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier" }
 base-proof-client = { path = "crates/proof/client", default-features = false }
 base-proof-driver = { path = "crates/proof/driver", default-features = false }
+base-prover-service-protocol = { path = "crates/proof/prover-service/protocol" }
 base-proof-executor = { path = "crates/proof/executor", default-features = false }
 base-proof-preimage = { path = "crates/proof/preimage", default-features = false }
 base-proof-primitives = { path = "crates/proof/primitives", default-features = false }
@@ -286,7 +294,7 @@ base-runtime = { path = "crates/utilities/runtime", default-features = false }
 revm = { version = "38.0.0", default-features = false }
 revm-bytecode = { version = "10.0.0", default-features = false }
 revm-database = { version = "13.0.0", default-features = false }
-revm-inspectors = { version = "0.39.0", default-features = false }
+revm-inspectors = { version = "0.39.1", default-features = false }
 revm-precompile = { version = "34.0.0", default-features = false }
 revm-primitives = { version = "23.0.0", default-features = false }
 revm-context-interface = { version = "17.0.1", default-features = false }
@@ -410,6 +418,7 @@ async-trait = "0.1.83"
 prost = "0.14"
 tonic = "0.14"
 tonic-web = "0.14"
+prost-types = "0.14"
 tonic-prost = "0.14"
 tonic-prost-build = "0.14"
 tonic-reflection = "0.14"
@@ -448,13 +457,13 @@ boundless-market = "1.1"
 risc0-ethereum-contracts = "3.0.1"
 risc0-zkvm = { version = "^3.0", default-features = false }
 
-# SP1 v6.1.0 (Hypercube) — used by crates/proof/succinct
-sp1-sdk = { version = "=6.2.1" }
+# SP1 v6.2.1 (Hypercube) — used by crates/proof/succinct
 sp1-build = "=6.2.1"
 sp1-prover-types = "=6.2.1"
-sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
-sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
+sp1-sdk = { version = "=6.2.1" }
 sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
+sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
+sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.3.2" }
 
 # crypto
 sha3 = "0.10"
@@ -544,7 +553,6 @@ base64 = "0.22"
 rlimit = "0.11"
 dashmap = "6.1"
 bytes = "1.11.1"
-cadence = "1.7.0"
 arboard = "3.6.1"
 chrono = "0.4.42"
 backoff = "0.4.0"

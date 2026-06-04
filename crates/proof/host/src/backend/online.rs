@@ -11,7 +11,9 @@ use tracing::{debug, error, trace, warn};
 
 use crate::{
     HostConfig, HostProviders, Metrics, SharedKeyValueStore,
-    handler::{PayloadWitnessPrefetcher, handle_hint_with_prefetcher},
+    handler::{
+        L1HeaderCache, L1HeaderPrefetcher, PayloadWitnessPrefetcher, handle_hint_with_prefetchers,
+    },
 };
 
 /// Cap on `handle_hint` attempts before [`OnlineHostBackend::get_preimage`] gives up; previously
@@ -33,6 +35,7 @@ pub struct OnlineHostBackend {
     proactive_hints: HashSet<HintType>,
     last_hint: Arc<RwLock<Option<Hint<HintType>>>>,
     payload_witness_prefetcher: PayloadWitnessPrefetcher,
+    l1_header_prefetcher: L1HeaderPrefetcher,
 }
 
 impl fmt::Debug for OnlineHostBackend {
@@ -44,10 +47,21 @@ impl fmt::Debug for OnlineHostBackend {
 impl OnlineHostBackend {
     /// Creates a new [`OnlineHostBackend`].
     pub fn new(cfg: HostConfig, kv: SharedKeyValueStore, providers: HostProviders) -> Self {
+        Self::new_with_l1_header_cache(cfg, kv, providers, L1HeaderCache::new())
+    }
+
+    /// Creates a new [`OnlineHostBackend`] with a shared L1 header cache.
+    pub(crate) fn new_with_l1_header_cache(
+        cfg: HostConfig,
+        kv: SharedKeyValueStore,
+        providers: HostProviders,
+        l1_header_cache: L1HeaderCache,
+    ) -> Self {
         let cfg = Arc::new(cfg);
         let providers = Arc::new(providers);
         let payload_witness_prefetcher =
             PayloadWitnessPrefetcher::new(Arc::clone(&cfg), Arc::clone(&providers));
+        let l1_header_prefetcher = L1HeaderPrefetcher::new(Arc::clone(&providers), l1_header_cache);
 
         Self {
             cfg,
@@ -56,6 +70,7 @@ impl OnlineHostBackend {
             proactive_hints: HashSet::default(),
             last_hint: Arc::new(RwLock::new(None)),
             payload_witness_prefetcher,
+            l1_header_prefetcher,
         }
     }
 
@@ -76,12 +91,13 @@ impl HintRouter for OnlineHostBackend {
             .map_err(|e| PreimageOracleError::HintParseFailed(e.to_string()))?;
         if self.proactive_hints.contains(&parsed_hint.ty) {
             debug!(target: "host_backend", raw_hint = %hint, "proactive hint received, immediately fetching");
-            handle_hint_with_prefetcher(
+            handle_hint_with_prefetchers(
                 parsed_hint,
                 &self.cfg,
                 &self.providers,
                 Arc::clone(&self.kv),
                 Some(self.payload_witness_prefetcher.clone()),
+                Some(self.l1_header_prefetcher.clone()),
             )
             .await
             .map_err(|e| PreimageOracleError::Other(e.to_string()))?;
@@ -125,12 +141,13 @@ impl PreimageFetcher for OnlineHostBackend {
         let mut backoff = INITIAL_HINT_RETRY_BACKOFF;
         let mut last_error: Option<String> = None;
         for attempt in 1..=MAX_HINT_ATTEMPTS {
-            match handle_hint_with_prefetcher(
+            match handle_hint_with_prefetchers(
                 hint.clone(),
                 &self.cfg,
                 &self.providers,
                 Arc::clone(&self.kv),
                 Some(self.payload_witness_prefetcher.clone()),
+                Some(self.l1_header_prefetcher.clone()),
             )
             .await
             {
@@ -188,7 +205,7 @@ mod tests {
     use alloy_genesis::ChainConfig;
     use alloy_provider::RootProvider;
     use base_common_genesis::RollupConfig;
-    use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+    use base_consensus_providers::{L1BlobProvider, OnlineBeaconClient, OnlineBlobProvider};
     use base_proof::{Hint, HintType};
     use base_proof_preimage::{
         HintRouter, PreimageFetcher, PreimageKey, errors::PreimageOracleError,
@@ -211,8 +228,11 @@ mod tests {
         let l1 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
         let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
         let beacon = OnlineBeaconClient::new_http("http://127.0.0.1:1".to_string());
-        let blobs =
-            OnlineBlobProvider { beacon_client: beacon, genesis_time: 0, slot_interval: 12 };
+        let blobs = L1BlobProvider::beacon(OnlineBlobProvider {
+            beacon_client: beacon,
+            genesis_time: 0,
+            slot_interval: 12,
+        });
         HostProviders { l1, blobs, l2 }
     }
 
@@ -222,7 +242,7 @@ mod tests {
             prover: ProverConfig {
                 l1_eth_url: "http://127.0.0.1:1".to_string(),
                 l2_eth_url: "http://127.0.0.1:1".to_string(),
-                l1_beacon_url: "http://127.0.0.1:1".to_string(),
+                l1_beacon_url: Some("http://127.0.0.1:1".to_string()),
                 l2_chain_id: 0,
                 rollup_config: RollupConfig::default(),
                 l1_config: ChainConfig::default(),

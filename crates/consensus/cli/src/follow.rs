@@ -236,9 +236,15 @@ impl ConsensusFollowNodeArgs {
 
     /// Builds the L1 configuration for the follow node.
     pub fn l1_config(&self, cfg: &RollupConfig) -> eyre::Result<L1Config> {
+        self.config.l1_rpc_args.validate()?;
+
         let l1_chain_config =
             self.config.l1_config.load(cfg.l1_chain_id).map_err(|e| eyre::eyre!(e))?;
-        let l1_beacon = OnlineBeaconClient::new_http(self.config.l1_rpc_args.l1_beacon.to_string());
+        let l1_beacon = self
+            .config
+            .l1_rpc_args
+            .l1_beacon()?
+            .map(|beacon| OnlineBeaconClient::new_http(beacon.to_string()));
 
         Ok(L1Config {
             chain_config: Arc::new(l1_chain_config),
@@ -293,5 +299,14 @@ mod tests {
         let config = parse_config(&["--rpc.disabled"]);
 
         assert!(Option::<RpcBuilder>::from(config.rpc_flags).is_none());
+    }
+
+    #[test]
+    fn l1_config_rejects_conflicting_derivation_modes() {
+        let config = parse_config(&["--l1-calldata-only"]);
+        let args = ConsensusFollowNodeArgs::new(ConsensusChainArgs::default(), config);
+        let cfg = args.load_rollup_config().unwrap();
+
+        assert!(args.l1_config(&cfg).is_err());
     }
 }

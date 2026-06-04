@@ -9,13 +9,16 @@ use ratatui::{
 };
 
 use crate::{
-    app::{Action, Resources, View, views::TransactionPane},
-    commands::{
+    app::{
+        Action, L1_BLOCK_WINDOW, L1BlockFilter, RATE_WINDOW_2M, Resources, View,
+        views::TransactionPane,
+    },
+    output::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED,
-        L1_BLOCK_WINDOW, L1BlockFilter, L1BlocksTableParams, RATE_WINDOW_2M, backlog_size_color,
-        block_color, block_color_bright, build_gas_bar, format_bytes, format_duration, format_gwei,
-        format_rate, render_da_backlog_bar, render_gas_usage_bar, render_l1_blocks_table,
-        target_usage_color, time_diff_color, truncate_block_number,
+        L1BlocksTableParams, backlog_size_color, block_color, block_color_bright, build_gas_bar,
+        format_bytes, format_duration, format_gwei, format_rate, render_da_backlog_bar,
+        render_gas_usage_bar, render_l1_blocks_table, target_usage_color, time_diff_color,
+        truncate_block_number,
     },
     tui::{Keybinding, Toast},
 };

@@ -4,7 +4,7 @@ use alloy_genesis::ChainConfig;
 use alloy_provider::RootProvider;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+use base_consensus_providers::L1BlobProvider;
 use base_proof_primitives::ProofRequest;
 use serde::Serialize;
 
@@ -13,8 +13,8 @@ use serde::Serialize;
 pub struct HostProviders {
     /// The L1 EL provider.
     pub l1: RootProvider,
-    /// The L1 beacon node provider.
-    pub blobs: OnlineBlobProvider<OnlineBeaconClient>,
+    /// The L1 blob provider (beacon-backed, or calldata-only when no beacon is configured).
+    pub blobs: L1BlobProvider,
     /// The L2 EL provider.
     pub l2: RootProvider<Base>,
 }
@@ -28,8 +28,8 @@ pub struct ProverConfig {
     pub l1_eth_url: String,
     /// L2 execution layer RPC URL.
     pub l2_eth_url: String,
-    /// L1 beacon API URL.
-    pub l1_beacon_url: String,
+    /// L1 beacon API URL, or `None` when the L1 parent has no beacon/blob DA endpoint.
+    pub l1_beacon_url: Option<String>,
     /// L2 chain ID.
     pub l2_chain_id: u64,
     /// Rollup configuration.

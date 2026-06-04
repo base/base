@@ -250,6 +250,11 @@ impl RollupConfig {
         is_first_beryl_block,
         [hardforks.base.beryl],
         "Beryl";
+
+        is_cobalt_active,
+        is_first_cobalt_block,
+        [hardforks.base.cobalt],
+        "Cobalt";
     }
 
     /// Returns the max sequencer drift for the given timestamp.
@@ -354,6 +359,8 @@ impl RollupConfig {
             tracing::info!(target: "upgrades", block_number, "Activating azul upgrade");
         } else if self.is_first_beryl_block(timestamp) {
             tracing::info!(target: "upgrades", block_number, "Activating beryl upgrade");
+        } else if self.is_first_cobalt_block(timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating cobalt upgrade");
         }
     }
 }
@@ -413,7 +420,7 @@ mod tests {
                 pectra_blob_schedule_time: Some(80),
                 isthmus_time: Some(90),
                 jovian_time: Some(100),
-                base: HardforkConfig { azul: Some(110), beryl: Some(120) },
+                base: HardforkConfig { azul: Some(110), beryl: Some(120), cobalt: Some(130) },
             },
             block_time: 2,
             ..Default::default()
@@ -478,6 +485,11 @@ mod tests {
         assert!(!cfg.is_first_beryl_block(118));
         assert!(cfg.is_first_beryl_block(120));
         assert!(!cfg.is_first_beryl_block(122));
+
+        // Cobalt
+        assert!(!cfg.is_first_cobalt_block(128));
+        assert!(cfg.is_first_cobalt_block(130));
+        assert!(!cfg.is_first_cobalt_block(132));
     }
 
     #[test]
@@ -747,7 +759,7 @@ mod tests {
 
         // Osaka↔Azul: azul drives Osaka activation; standalone (not cascaded from Jovian).
         let mut cfg = RollupConfig::default();
-        cfg.hardforks.base = HardforkConfig { azul: Some(700), beryl: None };
+        cfg.hardforks.base = HardforkConfig { azul: Some(700), beryl: None, cobalt: None };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(700)
@@ -755,7 +767,7 @@ mod tests {
 
         // Beryl follows Azul; Osaka still activates at Azul when both are configured.
         let mut cfg = RollupConfig::default();
-        cfg.hardforks.base = HardforkConfig { azul: Some(700), beryl: Some(800) };
+        cfg.hardforks.base = HardforkConfig { azul: Some(700), beryl: Some(800), cobalt: None };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(700)
@@ -765,7 +777,7 @@ mod tests {
 
         // Beryl requires Azul, and does not independently activate Osaka.
         let mut cfg = RollupConfig::default();
-        cfg.hardforks.base = HardforkConfig { azul: None, beryl: Some(800) };
+        cfg.hardforks.base = HardforkConfig { azul: None, beryl: Some(800), cobalt: None };
         assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);
 
         // Jovian set but Azul unset → Osaka is Never.

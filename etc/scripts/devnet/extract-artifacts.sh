@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # extract-artifacts.sh — Extract l1-addresses.json and assemble genesis.json
 # from forge deployment output (base/contracts).

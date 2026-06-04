@@ -45,4 +45,26 @@ impl IPolicyRegistry::PolicyType {
     pub const fn as_discriminant(self) -> u8 {
         self as u8
     }
+
+    /// Returns whether this value is one of the supported policy types.
+    pub const fn is_valid(self) -> bool {
+        matches!(self, Self::BLOCKLIST | Self::ALLOWLIST)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_sol_types::SolEnum;
+
+    use super::IPolicyRegistry;
+
+    #[test]
+    fn all_policy_type_variants_are_valid() {
+        for discriminant in 0..IPolicyRegistry::PolicyType::COUNT {
+            let policy_type = IPolicyRegistry::PolicyType::try_from(discriminant as u8)
+                .expect("generated PolicyType discriminant should decode");
+
+            assert!(policy_type.is_valid());
+        }
+    }
 }
