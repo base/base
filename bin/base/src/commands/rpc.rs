@@ -45,7 +45,9 @@ impl RpcCommand {
             None => resolved_chain.execution_chain_spec()?,
         };
         let consensus_chain = resolved_chain.consensus_chain_args();
+        let mut execution = execution;
         let mut consensus_config: ConsensusNodeConfigArgs = consensus.into();
+        Self::derive_execution_upgrade_signal_l1_rpc(&mut execution, &consensus_config);
         consensus_config.upgrade_signal = execution.standard.rollup_args.upgrade_signal.clone();
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
         let rollup_config = consensus_args.load_rollup_config()?;
@@ -99,6 +101,16 @@ impl RpcCommand {
             result
         })
     }
+
+    fn derive_execution_upgrade_signal_l1_rpc(
+        execution: &mut ExecutionNodeArgs,
+        consensus_config: &ConsensusNodeConfigArgs,
+    ) {
+        // The integrated command has one L1 RPC source of truth. Standalone execution nodes need
+        // `--upgrade-signal.l1-rpc`, but `base rpc` derives it from the consensus L1 RPC.
+        execution.standard.rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc =
+            Some(consensus_config.l1_rpc_args.l1_eth_rpc.clone());
+    }
 }
 
 fn engine_ipc_url(path: &str) -> eyre::Result<Url> {
@@ -112,8 +124,10 @@ fn engine_ipc_url(path: &str) -> eyre::Result<Url> {
 
 #[cfg(test)]
 mod tests {
+    use base_consensus_cli::ConsensusNodeConfigArgs;
     use clap::Parser;
 
+    use super::RpcCommand;
     use crate::{cli::BaseCli, commands::BaseCommand, config::ChainArg};
 
     const REQUIRED_CONSENSUS_ARGS: &[&str] =
@@ -169,6 +183,34 @@ mod tests {
             Some("0x0000000000000000000000000000000000000001".to_string())
         );
         assert_eq!(rpc.execution.standard.rollup_args.upgrade_signal.hardfork_ids, ["azul"]);
+    }
+
+    #[test]
+    fn derives_upgrade_signal_l1_rpc_from_integrated_consensus_args() {
+        let cli = BaseCli::parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--upgrade-signal.contract",
+            "0x0000000000000000000000000000000000000001",
+        ]));
+
+        let BaseCommand::Rpc(mut rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+        let consensus_config: ConsensusNodeConfigArgs = rpc.consensus.clone().into();
+
+        RpcCommand::derive_execution_upgrade_signal_l1_rpc(&mut rpc.execution, &consensus_config);
+
+        assert_eq!(
+            rpc.execution
+                .standard
+                .rollup_args
+                .upgrade_signal_l1_rpc
+                .upgrade_signal_l1_rpc
+                .as_ref()
+                .map(|url| url.as_str()),
+            Some("http://localhost:8545/")
+        );
     }
 
     #[test]
