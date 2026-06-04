@@ -1,76 +1,20 @@
 use std::{fmt, path::Path, time::Duration};
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
-use revm::precompile::PrecompileId;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as SerdeError};
 use url::Url;
 
+use super::{
+    parsing::{parse_address, parse_amount, validate_swap_amounts},
+    precompile::PrecompileTarget,
+    real_token::{RealTokenSetupConfig, parse_real_token_setup},
+};
 use crate::{
     metrics::ConfigSummary,
-    runner::{TxConfig, TxType},
+    runner::{RealTokenSetup, TxConfig, TxType},
     utils::{BaselineError, Result},
 };
-
-/// Typed precompile target for load test configuration.
-///
-/// Deserializes from a `target` string field with optional precompile-specific
-/// parameters (e.g. `rounds` for blake2f).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "target", rename_all = "snake_case")]
-pub enum PrecompileTarget {
-    /// ECDSA public key recovery (`ecrecover`, address `0x01`).
-    Ecrecover,
-    /// SHA-256 hash (`sha256`, address `0x02`).
-    Sha256,
-    /// RIPEMD-160 hash (`ripemd160`, address `0x03`).
-    Ripemd160,
-    /// Identity / data copy (`identity`, address `0x04`).
-    Identity,
-    /// Modular exponentiation (`modexp`, address `0x05`).
-    Modexp,
-    /// BN254 elliptic curve addition (`bn254_add`, address `0x06`).
-    Bn254Add,
-    /// BN254 scalar multiplication (`bn254_mul`, address `0x07`).
-    Bn254Mul,
-    /// BN254 pairing check (`bn254_pairing`, address `0x08`).
-    Bn254Pairing,
-    /// `BLAKE2f` compression (`blake2f`, address `0x09`).
-    Blake2f {
-        /// Fixed number of compression rounds. Random if `None`.
-        #[serde(default)]
-        rounds: Option<u32>,
-    },
-    /// KZG point evaluation (`kzg_point_evaluation`, address `0x0a`).
-    #[serde(rename = "kzg_point_evaluation")]
-    KzgPointEvaluation,
-}
-
-impl PrecompileTarget {
-    /// Converts to the corresponding `revm` [`PrecompileId`].
-    pub const fn to_precompile_id(&self) -> PrecompileId {
-        match self {
-            Self::Ecrecover => PrecompileId::EcRec,
-            Self::Sha256 => PrecompileId::Sha256,
-            Self::Ripemd160 => PrecompileId::Ripemd160,
-            Self::Identity => PrecompileId::Identity,
-            Self::Modexp => PrecompileId::ModExp,
-            Self::Bn254Add => PrecompileId::Bn254Add,
-            Self::Bn254Mul => PrecompileId::Bn254Mul,
-            Self::Bn254Pairing => PrecompileId::Bn254Pairing,
-            Self::Blake2f { .. } => PrecompileId::Blake2F,
-            Self::KzgPointEvaluation => PrecompileId::KzgPointEvaluation,
-        }
-    }
-
-    /// Returns the fixed blake2f round count, if configured.
-    pub const fn blake2f_rounds(&self) -> Option<u32> {
-        match self {
-            Self::Blake2f { rounds } => *rounds,
-            _ => None,
-        }
-    }
-}
 
 /// Configuration for a load test, loadable from YAML.
 #[derive(Clone, Serialize, Deserialize)]
@@ -149,6 +93,10 @@ pub struct TestConfig {
     /// Only used when B-20 transaction types are configured.
     #[serde(default = "default_b20_mint_amount")]
     pub b20_mint_amount: String,
+
+    /// Optional real-token setup for mainnet-snapshot bidirectional swap workloads.
+    #[serde(default)]
+    pub real_token_setup: Option<RealTokenSetupConfig>,
 }
 
 impl Default for TestConfig {
@@ -175,6 +123,7 @@ impl Default for TestConfig {
             looper_contract: None,
             swap_token_amount: default_swap_token_amount(),
             b20_mint_amount: default_b20_mint_amount(),
+            real_token_setup: None,
         }
     }
 }
@@ -199,6 +148,7 @@ impl fmt::Debug for TestConfig {
             .field("looper_contract", &self.looper_contract)
             .field("swap_token_amount", &self.swap_token_amount)
             .field("b20_mint_amount", &self.b20_mint_amount)
+            .field("real_token_setup", &self.real_token_setup)
             .finish()
     }
 }
@@ -282,6 +232,12 @@ pub enum TxTypeConfig {
         /// Maximum swap amount in wei.
         #[serde(default = "default_swap_max_amount")]
         max_amount: String,
+        /// Minimum amount when swapping `token_out` to `token_in`.
+        #[serde(default)]
+        reverse_min_amount: Option<String>,
+        /// Maximum amount when swapping `token_out` to `token_in`.
+        #[serde(default)]
+        reverse_max_amount: Option<String>,
     },
     /// B-20 precompile token transfer.
     B20 {
@@ -308,6 +264,12 @@ pub enum TxTypeConfig {
         /// Maximum swap amount in wei.
         #[serde(default = "default_swap_max_amount")]
         max_amount: String,
+        /// Minimum amount when swapping `token_out` to `token_in`.
+        #[serde(default)]
+        reverse_min_amount: Option<String>,
+        /// Maximum amount when swapping `token_out` to `token_in`.
+        #[serde(default)]
+        reverse_max_amount: Option<String>,
     },
 }
 
@@ -497,6 +459,11 @@ impl TestConfig {
         })
     }
 
+    /// Parses the optional real-token setup config.
+    pub fn parse_real_token_setup(&self, chain_id: u64) -> Result<Option<RealTokenSetup>> {
+        parse_real_token_setup(self.real_token_setup.as_ref(), &self.transactions, chain_id)
+    }
+
     /// Returns a summary of the config for JSON output (excludes URLs and secrets).
     pub fn to_summary(&self) -> ConfigSummary {
         ConfigSummary {
@@ -521,6 +488,20 @@ impl TestConfig {
             looper_contract: self.looper_contract.clone(),
             swap_token_amount: self.swap_token_amount.clone(),
             b20_mint_amount: self.b20_mint_amount.clone(),
+            real_token_setup: self
+                .real_token_setup
+                .as_ref()
+                .filter(|setup| setup.enabled)
+                .and_then(|setup| {
+                    serde_json::to_value(setup)
+                        .inspect_err(|e| {
+                            tracing::warn!(
+                                error = %e,
+                                "failed to serialize real-token setup for config summary"
+                            );
+                        })
+                        .ok()
+                }),
         }
     }
 
@@ -636,6 +617,8 @@ impl TestConfig {
                 fee,
                 min_amount,
                 max_amount,
+                reverse_min_amount,
+                reverse_max_amount,
             } => {
                 let router = parse_address(router, "uniswap_v3 router")?;
                 let token_in = parse_address(token_in, "uniswap_v3 token_in")?;
@@ -649,7 +632,29 @@ impl TestConfig {
                 let min_amount = parse_amount(min_amount, "uniswap_v3 min_amount")?;
                 let max_amount = parse_amount(max_amount, "uniswap_v3 max_amount")?;
                 validate_swap_amounts(min_amount, max_amount, "uniswap_v3")?;
-                TxType::UniswapV3 { router, token_in, token_out, fee: *fee, min_amount, max_amount }
+                let reverse_min_amount = match reverse_min_amount {
+                    Some(amount) => parse_amount(amount, "uniswap_v3 reverse_min_amount")?,
+                    None => min_amount,
+                };
+                let reverse_max_amount = match reverse_max_amount {
+                    Some(amount) => parse_amount(amount, "uniswap_v3 reverse_max_amount")?,
+                    None => max_amount,
+                };
+                validate_swap_amounts(
+                    reverse_min_amount,
+                    reverse_max_amount,
+                    "uniswap_v3 reverse",
+                )?;
+                TxType::UniswapV3 {
+                    router,
+                    token_in,
+                    token_out,
+                    fee: *fee,
+                    min_amount,
+                    max_amount,
+                    reverse_min_amount,
+                    reverse_max_amount,
+                }
             }
             TxTypeConfig::AerodromeCl {
                 router,
@@ -658,6 +663,8 @@ impl TestConfig {
                 tick_spacing,
                 min_amount,
                 max_amount,
+                reverse_min_amount,
+                reverse_max_amount,
             } => {
                 let router = parse_address(router, "aerodrome_cl router")?;
                 let token_in = parse_address(token_in, "aerodrome_cl token_in")?;
@@ -665,6 +672,19 @@ impl TestConfig {
                 let min_amount = parse_amount(min_amount, "aerodrome_cl min_amount")?;
                 let max_amount = parse_amount(max_amount, "aerodrome_cl max_amount")?;
                 validate_swap_amounts(min_amount, max_amount, "aerodrome_cl")?;
+                let reverse_min_amount = match reverse_min_amount {
+                    Some(amount) => parse_amount(amount, "aerodrome_cl reverse_min_amount")?,
+                    None => min_amount,
+                };
+                let reverse_max_amount = match reverse_max_amount {
+                    Some(amount) => parse_amount(amount, "aerodrome_cl reverse_max_amount")?,
+                    None => max_amount,
+                };
+                validate_swap_amounts(
+                    reverse_min_amount,
+                    reverse_max_amount,
+                    "aerodrome_cl reverse",
+                )?;
                 if !(-8_388_608..=8_388_607).contains(tick_spacing) {
                     return Err(BaselineError::Config(format!(
                         "aerodrome_cl tick_spacing {tick_spacing} exceeds i24 range"
@@ -677,6 +697,8 @@ impl TestConfig {
                     tick_spacing: *tick_spacing,
                     min_amount,
                     max_amount,
+                    reverse_min_amount,
+                    reverse_max_amount,
                 }
             }
         };
@@ -714,35 +736,6 @@ where
     E: SerdeError,
 {
     Url::parse(url).map_err(|e| E::custom(format!("invalid URL '{url}': {e}")))
-}
-
-fn parse_address(s: &str, field: &str) -> Result<Address> {
-    s.parse::<Address>()
-        .map_err(|e| BaselineError::Config(format!("invalid {field} address '{s}': {e}")))
-}
-
-fn parse_amount(s: &str, field: &str) -> Result<U256> {
-    s.parse::<U256>().map_err(|e| BaselineError::Config(format!("invalid {field} '{s}': {e}")))
-}
-
-fn validate_swap_amounts(min: U256, max: U256, tx_type: &str) -> Result<()> {
-    if min > max {
-        return Err(BaselineError::Config(format!(
-            "{tx_type} min_amount ({min}) exceeds max_amount ({max})"
-        )));
-    }
-    let u128_max = U256::from(u128::MAX);
-    if min > u128_max {
-        return Err(BaselineError::Config(format!(
-            "{tx_type} min_amount ({min}) exceeds u128::MAX — swap calls require u128 amounts"
-        )));
-    }
-    if max > u128_max {
-        return Err(BaselineError::Config(format!(
-            "{tx_type} max_amount ({max}) exceeds u128::MAX — swap calls require u128 amounts"
-        )));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

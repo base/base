@@ -4944,7 +4944,6 @@ dependencies = [
  "revm",
  "revm-bytecode",
  "revm-database",
- "revm-inspectors",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -6360,6 +6359,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cbbc9d0964165b47557570cce6c952866c2678457aca742aafc9fb771d30270"
 
 [[package]]
+name = "base-zk-benchmarks"
+version = "0.0.0"
+
+[[package]]
 name = "base-zk-client"
 version = "0.0.0"
 dependencies = [
@@ -6537,35 +6540,6 @@ dependencies = [
  "tokio-tungstenite 0.28.0",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "based"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus 2.0.5",
- "alloy-primitives",
- "alloy-provider 2.0.5",
- "alloy-rpc-types-eth 2.0.5",
- "alloy-transport-http 2.0.5",
- "anyhow",
- "async-trait",
- "cadence",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "based-bin"
-version = "0.0.0"
-dependencies = [
- "base-cli-utils",
- "based",
- "cadence",
- "clap",
- "serde",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -7284,15 +7258,6 @@ dependencies = [
  "libc",
  "once_cell",
  "serde",
-]
-
-[[package]]
-name = "cadence"
-version = "1.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ca08f6db9f0c963249cf23a27820f9d973d2acaad4d6bfaeb858b58ebd58a6a"
-dependencies = [
- "crossbeam-channel",
 ]
 
 [[package]]

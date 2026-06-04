@@ -72,6 +72,10 @@ pub enum TxType {
         min_amount: U256,
         /// Maximum swap amount.
         max_amount: U256,
+        /// Minimum amount when swapping `token_out` to `token_in`.
+        reverse_min_amount: U256,
+        /// Maximum amount when swapping `token_out` to `token_in`.
+        reverse_max_amount: U256,
     },
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
@@ -87,7 +91,99 @@ pub enum TxType {
         min_amount: U256,
         /// Maximum swap amount.
         max_amount: U256,
+        /// Minimum amount when swapping `token_out` to `token_in`.
+        reverse_min_amount: U256,
+        /// Maximum amount when swapping `token_out` to `token_in`.
+        reverse_max_amount: U256,
     },
+}
+
+/// Real-token setup executed before measured swap workloads.
+#[derive(Debug, Clone)]
+pub struct RealTokenSetup {
+    /// Whether chain ID 8453 is allowed for this setup.
+    pub allow_chain_id_8453: bool,
+    /// WETH contract address.
+    pub weth: Address,
+    /// Target WETH balance to leave each sender with after setup.
+    pub weth_amount_per_sender: U256,
+    /// Non-WETH token setup for bidirectional swap parity.
+    pub pair_token: RealTokenPairTokenSetup,
+    /// Allowance amount to approve for each measured router.
+    pub approval_amount: U256,
+}
+
+/// Summary of real-token balances recovered before native ETH drain.
+#[derive(Debug, Clone, Default)]
+pub struct RealTokenRecoverySummary {
+    /// Pair-token raw units swapped back into WETH.
+    pub pair_token_swapped: U256,
+    /// WETH unwrapped back into native ETH.
+    pub weth_unwrapped: U256,
+}
+
+/// Non-WETH side of the real-token pair.
+#[derive(Debug, Clone)]
+pub struct RealTokenPairTokenSetup {
+    /// Pair token contract address.
+    pub token: Address,
+    /// Target pair-token balance per sender.
+    pub amount_per_sender: U256,
+    /// How to acquire pair-token balances during setup.
+    pub acquisition: RealTokenAcquisition,
+}
+
+/// Explicit setup route for acquiring the pair token.
+#[derive(Debug, Clone)]
+pub enum RealTokenAcquisition {
+    /// Uniswap V3 `exactInputSingle` route.
+    UniswapV3ExactInput {
+        /// Router contract address.
+        router: Address,
+        /// Fee tier.
+        fee: u32,
+        /// WETH input amount per sender.
+        amount_in: U256,
+        /// Minimum pair-token output amount.
+        min_amount_out: U256,
+    },
+    /// Aerodrome Slipstream `exactInputSingle` route.
+    AerodromeClExactInput {
+        /// Router contract address.
+        router: Address,
+        /// Tick spacing.
+        tick_spacing: i32,
+        /// WETH input amount per sender.
+        amount_in: U256,
+        /// Minimum pair-token output amount.
+        min_amount_out: U256,
+    },
+}
+
+impl RealTokenAcquisition {
+    /// Returns the router used by this setup route.
+    pub const fn router(&self) -> Address {
+        match self {
+            Self::UniswapV3ExactInput { router, .. }
+            | Self::AerodromeClExactInput { router, .. } => *router,
+        }
+    }
+
+    /// Returns the input amount consumed by this setup route.
+    pub const fn amount_in(&self) -> U256 {
+        match self {
+            Self::UniswapV3ExactInput { amount_in, .. }
+            | Self::AerodromeClExactInput { amount_in, .. } => *amount_in,
+        }
+    }
+
+    /// Returns the minimum output amount expected by this setup route.
+    pub const fn min_amount_out(&self) -> U256 {
+        match self {
+            Self::UniswapV3ExactInput { min_amount_out, .. }
+            | Self::AerodromeClExactInput { min_amount_out, .. } => *min_amount_out,
+        }
+    }
 }
 
 /// Default maximum gas price cap (1000 gwei).

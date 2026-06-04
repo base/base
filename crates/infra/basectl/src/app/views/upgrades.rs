@@ -28,7 +28,7 @@ use url::Url;
 
 use crate::{
     app::{Action, Resources, View},
-    commands::COLOR_BASE_BLUE,
+    output::COLOR_BASE_BLUE,
     tui::Keybinding,
 };
 

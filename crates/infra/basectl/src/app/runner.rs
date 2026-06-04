@@ -9,10 +9,9 @@ use url::Url;
 use super::{App, Resources, SourceLabel, ViewId, views::create_view};
 use crate::{
     config::{ConductorSource, MonitoringConfig},
-    l1_client::fetch_full_system_config,
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorPollUpdate, L1BlockInfo, L1ConnectionMode,
-        ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
+        ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus, fetch_full_system_config,
         fetch_initial_backlog_with_progress, run_block_fetcher, run_conductor_poller,
         run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher, run_proofs_poller,
         run_safe_head_poller, run_validator_poller,

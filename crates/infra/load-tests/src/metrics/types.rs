@@ -227,4 +227,8 @@ pub struct ConfigSummary {
     pub swap_token_amount: String,
     /// Amount of B-20 tokens to mint per sender (in wei, as string).
     pub b20_mint_amount: String,
+
+    /// Real-token setup configuration, when enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub real_token_setup: Option<serde_json::Value>,
 }

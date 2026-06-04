@@ -14,8 +14,8 @@ members = [
   "bin/*",
   "bin/prover/nitro-host",
   "bin/prover/nitro-enclave",
-  "bin/prover/zk",
   "bin/prover/snark-e2e",
+  "bin/prover/zk",
   "crates/consensus/*",
   "crates/proof/mpt",
   "crates/proof/proof",
@@ -218,13 +218,13 @@ base-execution-payload-builder = { path = "crates/execution/payload" }
 base-flashblocks-node = { path = "crates/execution/flashblocks-node" }
 
 # Infra
-based = { path = "crates/infra/based" }
 basectl-cli = { path = "crates/infra/basectl" }
 audit-archiver-lib = { path = "crates/infra/audit" }
 base-load-tests = { path = "crates/infra/load-tests" }
 ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 base-snapshotter = { path = "crates/infra/snapshotter" }
 websocket-proxy = { path = "crates/infra/websocket-proxy" }
+base-zk-benchmarks = { path = "crates/infra/zk-benchmarks" }
 
 # Proof
 base-proof-rpc = { path = "crates/proof/rpc" }
@@ -553,7 +553,6 @@ base64 = "0.22"
 rlimit = "0.11"
 dashmap = "6.1"
 bytes = "1.11.1"
-cadence = "1.7.0"
 arboard = "3.6.1"
 chrono = "0.4.42"
 backoff = "0.4.0"

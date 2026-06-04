@@ -197,4 +197,4 @@ bench-proof-mpt:
 
 # Run basectl TUI dashboard
 basectl:
-    cargo run -p basectl --release
+    cargo run -p basectl --release -- monitor

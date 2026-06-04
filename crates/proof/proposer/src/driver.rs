@@ -249,7 +249,8 @@ mod tests {
         pipeline::PipelineConfig,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockProver, MockRollupClient, test_anchor_root, test_sync_status,
+            MockOutputProposer, MockProofRequester, MockProver, MockRollupClient, test_anchor_root,
+            test_sync_status,
         },
     };
 
@@ -291,6 +292,7 @@ mod tests {
                 },
             },
             prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,

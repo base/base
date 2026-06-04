@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -27,12 +27,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
 /// Maximum number of concurrent RPC requests during funding/draining operations.
-const FUNDING_CONCURRENCY: usize = 32;
+pub(super) const FUNDING_CONCURRENCY: usize = 32;
 
 /// Maximum number of TXs to send before waiting for confirmation.
 /// Kept below typical per-sender txpool limits (e.g. reth default is 16) to
 /// avoid "txpool is full" rejections when all TXs originate from one funder.
-const BATCH_SIZE: usize = 16;
+const FUNDING_BATCH_SIZE: usize = 16;
+const BATCH_SIZE: usize = FUNDING_BATCH_SIZE;
 
 use super::{
     BlockWatcher, DisplaySnapshot, FlashblockWatcher, LoadConfig, LoadTestDisplay, PreparedBatch,
@@ -59,13 +60,12 @@ const SUBMIT_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(60);
 const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(65);
 const TXPOOL_CLEAR_CONCURRENCY: usize = 64;
-
 /// Executes load tests by generating and submitting transactions at a target rate.
 pub struct LoadRunner {
-    config: LoadConfig,
+    pub(super) config: LoadConfig,
     config_summary: Option<ConfigSummary>,
-    client: QueryProvider,
-    accounts: AccountPool,
+    pub(super) client: QueryProvider,
+    pub(super) accounts: AccountPool,
     generator: WorkloadGenerator,
     collector: MetricsCollector,
     stop_flag: Arc<AtomicBool>,
@@ -228,7 +228,16 @@ impl LoadRunner {
                     generator =
                         generator.with_payload(OsakaPayload::new(target.clone()), weight_pct);
                 }
-                TxType::UniswapV3 { router, token_in, token_out, fee, min_amount, max_amount } => {
+                TxType::UniswapV3 {
+                    router,
+                    token_in,
+                    token_out,
+                    fee,
+                    min_amount,
+                    max_amount,
+                    reverse_min_amount,
+                    reverse_max_amount,
+                } => {
                     generator = generator.with_payload(
                         UniswapV3Payload::new(
                             *router,
@@ -237,6 +246,7 @@ impl LoadRunner {
                             *fee,
                             *min_amount,
                             *max_amount,
+                            Some((*reverse_min_amount, *reverse_max_amount)),
                         ),
                         weight_pct,
                     );
@@ -248,6 +258,8 @@ impl LoadRunner {
                     tick_spacing,
                     min_amount,
                     max_amount,
+                    reverse_min_amount,
+                    reverse_max_amount,
                 } => {
                     generator = generator.with_payload(
                         AerodromeClPayload::new(
@@ -257,6 +269,7 @@ impl LoadRunner {
                             *tick_spacing,
                             *min_amount,
                             *max_amount,
+                            Some((*reverse_min_amount, *reverse_max_amount)),
                         ),
                         weight_pct,
                     );
@@ -622,6 +635,8 @@ impl LoadRunner {
         let addr_to_idx: HashMap<Address, usize> =
             self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
 
+        let refresh_provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
+
         for result in refresh_results {
             let (addr, balance, account_nonce) = result?;
             let idx = addr_to_idx[&addr];
@@ -629,9 +644,9 @@ impl LoadRunner {
             account.balance = balance;
             account.nonce = account_nonce;
 
-            let provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
             let nonce_manager =
-                NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT).with_pending_tag();
+                NonceManager::new(refresh_provider.clone(), addr, NONCE_RPC_TIMEOUT)
+                    .with_pending_tag();
             Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
 
             debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
@@ -643,7 +658,7 @@ impl LoadRunner {
 
     /// Collects unique token addresses from configured swap transaction types.
     pub fn collect_swap_tokens(&self) -> Vec<Address> {
-        let mut tokens = std::collections::HashSet::new();
+        let mut tokens = HashSet::new();
         for tx_config in &self.config.transactions {
             match &tx_config.tx_type {
                 TxType::UniswapV3 { token_in, token_out, .. }
@@ -660,6 +675,25 @@ impl LoadRunner {
             }
         }
         tokens.into_iter().collect()
+    }
+
+    /// Collects unique router addresses from configured swap transaction types.
+    pub fn collect_swap_routers(&self) -> Vec<Address> {
+        let mut routers = HashSet::new();
+        for tx_config in &self.config.transactions {
+            match &tx_config.tx_type {
+                TxType::UniswapV3 { router, .. } | TxType::AerodromeCl { router, .. } => {
+                    routers.insert(*router);
+                }
+                TxType::Transfer
+                | TxType::Calldata { .. }
+                | TxType::Erc20 { .. }
+                | TxType::B20 { .. }
+                | TxType::Precompile { .. }
+                | TxType::Osaka { .. } => {}
+            }
+        }
+        routers.into_iter().collect()
     }
 
     /// Clears pending transactions from all configured txpool nodes for every test sender.
@@ -936,7 +970,7 @@ impl LoadRunner {
         Bytes::from(mintCall { to, amount }.abi_encode())
     }
 
-    fn encode_erc20_balance_of(account: Address) -> Bytes {
+    pub(super) fn encode_erc20_balance_of(account: Address) -> Bytes {
         sol! {
             function balanceOf(address account) external view returns (uint256);
         }
@@ -2043,7 +2077,7 @@ impl LoadRunner {
         Ok(total_drained)
     }
 
-    fn progress_bar(&self, total: u64, prefix: &str) -> ProgressBar {
+    pub(super) fn progress_bar(&self, total: u64, prefix: &str) -> ProgressBar {
         if self.snapshot_tx.is_some() {
             return ProgressBar::hidden();
         }
@@ -2103,7 +2137,7 @@ impl LoadRunner {
     }
 
     /// Waits for token balances to reach a target after mint/distribution transactions.
-    async fn await_token_balances(
+    pub(super) async fn await_token_balances(
         client: &QueryProvider,
         pending_accounts: &mut Vec<(Address, Address)>,
         target_balance: U256,
@@ -2154,6 +2188,57 @@ impl LoadRunner {
         }
 
         Ok(settled)
+    }
+
+    pub(super) async fn refresh_sender_state(&mut self) -> Result<()> {
+        let total_accounts = self.accounts.len();
+        let client = self.client.clone();
+        let pb_refresh = self.progress_bar(total_accounts as u64, "Refreshing account state");
+
+        let refresh_futs: Vec<_> = self
+            .accounts
+            .accounts()
+            .iter()
+            .map(|a| {
+                let client = client.clone();
+                let addr = a.address;
+                async move {
+                    let balance = client.get_balance(addr).await.rpc("get balance")?;
+                    let nonce =
+                        client.get_transaction_count(addr).await.rpc("get transaction count")?;
+                    Ok::<_, BaselineError>((addr, balance, nonce))
+                }
+            })
+            .collect();
+
+        let refresh_results: Vec<_> = stream::iter(refresh_futs)
+            .buffer_unordered(FUNDING_CONCURRENCY)
+            .inspect(|_| pb_refresh.inc(1))
+            .collect()
+            .await;
+        pb_refresh.finish_and_clear();
+
+        let addr_to_idx: HashMap<Address, usize> =
+            self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
+
+        let refresh_provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
+
+        for result in refresh_results {
+            let (addr, balance, account_nonce) = result?;
+            let idx = addr_to_idx[&addr];
+            let account = &mut self.accounts.accounts_mut()[idx];
+            account.balance = balance;
+            account.nonce = account_nonce;
+
+            let nonce_manager =
+                NonceManager::new(refresh_provider.clone(), addr, NONCE_RPC_TIMEOUT)
+                    .with_pending_tag();
+            Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
+
+            debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
+        }
+
+        Ok(())
     }
 
     /// Waits for source account balances to drop to the post-drain dust threshold.

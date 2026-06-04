@@ -43,13 +43,21 @@ list:
 describe:
     bash "{{ _script }}" describe "{{ _endpoint }}"
 
-# Request a proof or dry-run for a block range
-prove start_block number_of_blocks='1' proof_type='PROOF_TYPE_COMPRESSED':
-    bash "{{ _script }}" prove "{{ start_block }}" "{{ number_of_blocks }}" "{{ _endpoint }}" "{{ proof_type }}"
+# Request a proof or dry-run for a block range: proof_type=compressed|snark
+prove start_block number_of_blocks='1' proof_type='compressed':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    proof_type="{{ proof_type }}"
+    proof_type="${proof_type#proof_type=}"
+    bash "{{ _script }}" prove "{{ start_block }}" "{{ number_of_blocks }}" "{{ _endpoint }}" "$proof_type"
 
 # Get proof status and, for dry-run mode, executionStats
 get session_id receipt_type='':
     bash "{{ _script }}" get "{{ session_id }}" "{{ _endpoint }}" "{{ receipt_type }}"
+
+# Fetch and parse a proof receipt
+receipt session_id receipt_type='snark' export_json='':
+    bash "{{ _script }}" receipt "{{ session_id }}" "{{ _endpoint }}" "{{ receipt_type }}" "{{ export_json }}"
 
 # List recent proof requests
 list-proofs limit='20' offset='0' status_filter='':

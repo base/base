@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     app::{Action, Resources, View},
-    commands::COLOR_BASE_BLUE,
+    output::COLOR_BASE_BLUE,
     rpc::{
         ConductorNodeStatus, PausedPeers, ValidatorNodeStatus, conductor_pause_all_nodes,
         conductor_pause_node, conductor_resume_all_nodes, conductor_resume_node,

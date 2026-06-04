@@ -396,6 +396,7 @@ impl RollupNode {
         let (engine_actor_request_tx, engine_actor_request_rx) = mpsc::channel(1024);
         let (engine_rpc_request_tx, engine_rpc_request_rx) = mpsc::channel(1024);
         let (unsafe_head_tx, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
+        let (derivation_origin_tx, derivation_origin_rx) = watch::channel(None);
         let (checkpoint_request_tx, checkpoint_request_rx) = mpsc::channel(1024);
         let checkpoint_db = CheckpointDB::open(&self.checkpoint_path)
             .map_err(|e| format!("failed to open checkpoint database: {e}"))?;
@@ -453,6 +454,7 @@ impl RollupNode {
                     derivation_actor_request_rx,
                     provider,
                     l1_provider,
+                    derivation_origin_tx,
                 )))
             } else {
                 ConfiguredDerivationActor::Normal(Box::new(DerivationActor::<_, P>::new(
@@ -463,6 +465,7 @@ impl RollupNode {
                     derivation_actor_request_rx,
                     pipeline,
                     safe_head_listener,
+                    derivation_origin_tx,
                 )))
             };
 
@@ -526,7 +529,7 @@ impl RollupNode {
             Arc::clone(&self.config),
             AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
             l1_query_rx,
-            l1_head_updates_tx.subscribe(),
+            derivation_origin_rx,
             cancellation.clone(),
         );
 

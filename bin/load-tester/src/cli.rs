@@ -17,7 +17,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_cli_utils::RuntimeManager;
 use base_load_tests::{
     AccountPool, BaselineError, FundedAccount, LoadRunner, LoadTestDisplay, MetricsSummary,
-    QueryProvider, Result as LoadResult, RpcProviders, RpcResultExt, TestConfig,
+    QueryProvider, RealTokenSetup, Result as LoadResult, RpcProviders, RpcResultExt, TestConfig,
     create_wallet_provider,
 };
 use clap::{ArgGroup, Args, Parser, Subcommand};
@@ -72,6 +72,11 @@ impl Cli {
 
 /// Load test command arguments.
 #[derive(Args, Clone, Debug)]
+#[command(group(
+    ArgGroup::new("load_mode")
+        .multiple(false)
+        .args(["drain_only", "recover_real_tokens"])
+))]
 struct LoadArgs {
     /// Run continuously until interrupted.
     #[arg(long)]
@@ -81,9 +86,32 @@ struct LoadArgs {
     #[arg(long)]
     drain_only: bool,
 
+    /// Recover real-token WETH/pair-token balances, then drain native ETH.
+    #[arg(long)]
+    recover_real_tokens: bool,
+
     /// Load test YAML configuration.
     #[arg(value_name = "CONFIG")]
     config: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LoadMode {
+    Run,
+    DrainOnly,
+    RecoverRealTokens,
+}
+
+impl LoadMode {
+    const fn from_args(args: &LoadArgs) -> Self {
+        if args.drain_only {
+            Self::DrainOnly
+        } else if args.recover_real_tokens {
+            Self::RecoverRealTokens
+        } else {
+            Self::Run
+        }
+    }
 }
 
 /// Load tester subcommands.
@@ -95,6 +123,7 @@ enum Command {
 
 async fn run_load_test(args: LoadArgs) -> Result<()> {
     let mp = LoadTestDisplay::init_tracing();
+    let mode = LoadMode::from_args(&args);
     let config_path = args.config;
 
     if !config_path.exists() {
@@ -121,19 +150,52 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
 
     let funding_key = TestConfig::funder_key()?;
 
-    // Drain-only mode: recover funds from a previous interrupted run.
-    if args.drain_only {
-        println!("=== Drain-Only Mode ===");
-        println!(
-            "Re-deriving {} accounts from config and draining to funder...",
-            load_config.account_count
-        );
-        let runner = LoadRunner::new(load_config)?;
-        match runner.drain_accounts(funding_key).await {
-            Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
-            Err(e) => bail!("drain failed: {e}"),
+    match mode {
+        LoadMode::DrainOnly => {
+            println!("=== Drain-Only Mode ===");
+            println!(
+                "Re-deriving {} accounts from config and draining to funder...",
+                load_config.account_count
+            );
+            let runner = LoadRunner::new(load_config)?;
+            match runner.drain_accounts(funding_key).await {
+                Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
+                Err(e) => bail!("drain failed: {e}"),
+            }
+            return Ok(());
         }
-        return Ok(());
+        LoadMode::RecoverRealTokens => {
+            let real_token_setup = test_config.parse_real_token_setup(load_config.chain_id)?;
+            let Some(real_token_setup) = real_token_setup.as_ref() else {
+                bail!(
+                    "--recover-real-tokens requires real_token_setup in {}",
+                    config_path.display()
+                );
+            };
+
+            println!("=== Real-Token Recovery Mode ===");
+            println!(
+                "Re-deriving {} accounts from config and recovering real-token balances to funder...",
+                load_config.account_count
+            );
+            let runner = LoadRunner::new(load_config)?;
+            match runner.recover_real_tokens(real_token_setup).await {
+                Ok(summary) => {
+                    println!(
+                        "Recovered {} pair-token raw units and unwrapped {} WETH.",
+                        summary.pair_token_swapped,
+                        format_ether(summary.weth_unwrapped)
+                    );
+                }
+                Err(e) => bail!("real-token recovery failed: {e}"),
+            }
+            match runner.drain_accounts(funding_key).await {
+                Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
+                Err(e) => bail!("drain failed: {e}"),
+            }
+            return Ok(());
+        }
+        LoadMode::Run => {}
     }
 
     println!("=== Base Load Test Runner ===");
@@ -162,6 +224,7 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     let funding_amount = test_config.parse_funding_amount()?;
     let swap_token_amount = test_config.parse_swap_token_amount()?;
     let b20_mint_amount = test_config.parse_b20_mint_amount()?;
+    let real_token_setup = test_config.parse_real_token_setup(load_config.chain_id)?;
 
     let config_summary = test_config.to_summary();
     let mut runner = LoadRunner::new(load_config.clone())?;
@@ -175,9 +238,12 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     let run_result = run_test_phases(
         &mut runner,
         &funding_key,
-        funding_amount,
-        swap_token_amount,
-        b20_mint_amount,
+        SetupAmounts {
+            funding: funding_amount,
+            swap_token: swap_token_amount,
+            b20_mint: b20_mint_amount,
+        },
+        real_token_setup.as_ref(),
         &mp,
         load_config.duration,
     )
@@ -294,13 +360,18 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     Ok(())
 }
 
+struct SetupAmounts {
+    funding: U256,
+    swap_token: U256,
+    b20_mint: U256,
+}
+
 /// Runs funding, token setup, and the load test loop, returning the metrics summary.
 async fn run_test_phases(
     runner: &mut LoadRunner,
     funding_key: &PrivateKeySigner,
-    funding_amount: U256,
-    swap_token_amount: U256,
-    b20_mint_amount: U256,
+    amounts: SetupAmounts,
+    real_token_setup: Option<&RealTokenSetup>,
     mp: &indicatif::MultiProgress,
     duration: Option<Duration>,
 ) -> LoadResult<MetricsSummary> {
@@ -311,18 +382,22 @@ async fn run_test_phases(
     }
 
     println!("Funding test accounts...");
-    runner.fund_accounts(funding_key.clone(), funding_amount).await?;
+    runner.fund_accounts(funding_key.clone(), amounts.funding).await?;
     println!("Accounts funded.");
 
-    if !runner.collect_swap_tokens().is_empty() {
+    if let Some(setup) = real_token_setup {
+        println!("Preparing real-token swap balances...");
+        runner.setup_real_tokens(setup).await?;
+        println!("Real-token swap balances prepared.");
+    } else if !runner.collect_swap_tokens().is_empty() {
         println!("Distributing swap tokens...");
-        runner.setup_swap_tokens(funding_key.clone(), swap_token_amount).await?;
+        runner.setup_swap_tokens(funding_key.clone(), amounts.swap_token).await?;
         println!("Swap tokens distributed.");
     }
 
     if runner.needs_b20_setup() {
         println!("Setting up B-20 tokens...");
-        runner.setup_b20_tokens(funding_key.clone(), b20_mint_amount).await?;
+        runner.setup_b20_tokens(funding_key.clone(), amounts.b20_mint).await?;
         println!("B-20 tokens ready.");
     }
     println!();

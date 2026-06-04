@@ -2,9 +2,13 @@ use alloy_primitives::BlockHash;
 use async_trait::async_trait;
 use base_consensus_derive::ChainProvider;
 use base_consensus_providers::AlloyChainProvider;
-use base_protocol::{L2BlockInfo, SyncStatus};
+use base_protocol::{BlockInfo, L2BlockInfo, SyncStatus};
 use thiserror::Error;
-use tokio::{select, sync::mpsc, time};
+use tokio::{
+    select,
+    sync::{mpsc, watch},
+    time,
+};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use crate::{
@@ -37,6 +41,8 @@ where
     derivation_delegate_provider: DerivationDelegateClient,
     /// L1 provider for validating L1 info for derivation delegation.
     l1_provider: AlloyChainProvider,
+    /// Publishes the delegate-reported L1 derivation cursor.
+    derivation_origin_tx: watch::Sender<Option<BlockInfo>>,
 
     /// The engine's L2 safe head, according to updates from the Engine.
     engine_l2_safe_head: L2BlockInfo,
@@ -65,6 +71,7 @@ where
         inbound_request_rx: mpsc::Receiver<DerivationActorRequest>,
         derivation_delegate_provider: DerivationDelegateClient,
         l1_provider: AlloyChainProvider,
+        derivation_origin_tx: watch::Sender<Option<BlockInfo>>,
     ) -> Self {
         Self {
             cancellation_token,
@@ -72,6 +79,7 @@ where
             engine_client,
             derivation_delegate_provider,
             l1_provider,
+            derivation_origin_tx,
             engine_l2_safe_head: L2BlockInfo::default(),
             has_engine_sync_completed: false,
         }
@@ -166,6 +174,8 @@ where
             // fatal.
             return Ok(());
         }
+
+        self.derivation_origin_tx.send_replace(Some(sync_status.current_l1));
 
         self.engine_client
             .send_safe_l2_signal(sync_status.safe_l2.into())
