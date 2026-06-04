@@ -36,6 +36,9 @@ pub enum ProverServiceClientConfigError {
     /// The configured poll interval is greater than the maximum wait duration.
     #[error("poll interval must be less than or equal to max wait")]
     PollIntervalExceedsMaxWait,
+    /// The configured retry initial delay is greater than the retry max delay.
+    #[error("retry initial delay must be less than or equal to retry max delay")]
+    RetryInitialDelayExceedsMaxDelay,
 }
 
 /// Errors that can occur when building a prover-service client.
@@ -164,6 +167,17 @@ impl ProverServiceClientConfig {
             return Err(ProverServiceClientConfigError::PollIntervalExceedsMaxWait);
         }
 
+        // Validate retry sub-config. `max_attempts == 0` is intentionally accepted and
+        // documented as equivalent to one attempt by `ProofRequesterRetryConfig`, matching
+        // the workspace's `base_proof_rpc::config::RetryConfig` convention; the broader
+        // API hardening (private fields + construction-time validation) is tracked as
+        // S2 in the consolidation plan. We do reject `initial_delay > max_delay` here so
+        // misconfiguration surfaces as a config error rather than a silent clamp inside
+        // the backoff builder.
+        if self.retry.initial_delay > self.retry.max_delay {
+            return Err(ProverServiceClientConfigError::RetryInitialDelayExceedsMaxDelay);
+        }
+
         Ok(())
     }
 
@@ -254,5 +268,27 @@ mod tests {
         let err = config.validate().expect_err("invalid config should fail validation");
 
         assert!(err.to_string().contains(expected_message));
+    }
+
+    #[test]
+    fn config_validation_rejects_retry_initial_delay_greater_than_max_delay() {
+        let config = ProverServiceClientConfig::new("http://localhost:8545").with_retry_config(
+            ProofRequesterRetryConfig::new(3, Duration::from_secs(60), Duration::from_millis(50)),
+        );
+
+        let err = config.validate().expect_err("invalid retry config should fail validation");
+
+        assert_eq!(err, ProverServiceClientConfigError::RetryInitialDelayExceedsMaxDelay);
+    }
+
+    #[test]
+    fn config_validation_accepts_zero_retry_max_attempts() {
+        // `max_attempts == 0` is documented as equivalent to one attempt by
+        // `ProofRequesterRetryConfig`; validation must not reject it.
+        let config = ProverServiceClientConfig::new("http://localhost:8545").with_retry_config(
+            ProofRequesterRetryConfig::new(0, Duration::from_millis(10), Duration::from_millis(20)),
+        );
+
+        config.validate().expect("zero max_attempts retry config should pass validation");
     }
 }
