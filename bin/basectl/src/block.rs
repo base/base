@@ -1,5 +1,7 @@
 //! Implementation of the `basectl block <ref>` subcommand.
 
+use alloy_eips::BlockId;
+use alloy_primitives::B256;
 use alloy_provider::Network;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use anyhow::{Result, anyhow, bail};
@@ -9,27 +11,29 @@ use basectl_cli::{
     format_gwei, format_unix_timestamp,
 };
 
-/// Parses a CLI block reference into alloy's `BlockNumberOrTag`.
+/// Parses a CLI block reference into alloy's `BlockId`.
 ///
-/// Adds three behaviors on top of `BlockNumberOrTag::FromStr`: bare decimal
-/// numbers (alloy requires `0x` on numbers), explicit rejection of
-/// 64-hex-char block-hash references, and rejection of the `pending` tag
-/// (alloy's typed `Block` can't deserialize a pending block's null number
-/// and hash, so accepting it here would only produce a confusing error
-/// after a wasted RPC round-trip).
-pub(crate) fn parse_block_ref(s: &str) -> Result<BlockNumberOrTag> {
+/// Adds three behaviors on top of alloy's parsers: bare decimal numbers
+/// (alloy requires `0x` on numbers), explicit handling of 64-hex-char block
+/// hashes (returned as `BlockId::Hash`), and rejection of the `pending`
+/// tag (alloy's typed `Block` can't deserialize a pending block's null
+/// number and hash, so accepting it here would only produce a confusing
+/// error after a wasted RPC round-trip).
+pub(crate) fn parse_block_ref(s: &str) -> Result<BlockId> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
         bail!("invalid block reference: empty input");
     }
     if let Ok(number) = trimmed.parse::<u64>() {
-        return Ok(BlockNumberOrTag::Number(number));
+        return Ok(BlockId::Number(BlockNumberOrTag::Number(number)));
     }
     if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X"))
         && hex.len() == 64
         && hex.chars().all(|c| c.is_ascii_hexdigit())
     {
-        bail!("block hash references are not supported; use a block number or tag");
+        let hash: B256 =
+            trimmed.parse().map_err(|_| anyhow!("invalid block reference: malformed hash"))?;
+        return Ok(BlockId::Hash(hash.into()));
     }
     let tag =
         trimmed.parse::<BlockNumberOrTag>().map_err(|e| anyhow!("invalid block reference: {e}"))?;
@@ -38,7 +42,7 @@ pub(crate) fn parse_block_ref(s: &str) -> Result<BlockNumberOrTag> {
             "the `pending` tag is not supported; use `latest`, `safe`, `finalized`, or `earliest`"
         );
     }
-    Ok(tag)
+    Ok(BlockId::Number(tag))
 }
 
 /// Runs the `basectl block` subcommand.
@@ -55,7 +59,7 @@ pub(crate) async fn run(config: MonitoringConfig, reference: &str, json: bool) -
 
 fn print_pretty(
     network: &str,
-    reference: BlockNumberOrTag,
+    reference: BlockId,
     block: &<Base as Network>::BlockResponse,
 ) -> Result<()> {
     let header = &block.header;
@@ -96,28 +100,53 @@ fn print_pretty(
 
 #[cfg(test)]
 mod tests {
+    use alloy_eips::BlockId;
+    use alloy_primitives::B256;
     use alloy_rpc_types_eth::BlockNumberOrTag;
 
     use super::parse_block_ref;
 
     #[test]
     fn parses_decimal() {
-        assert_eq!(parse_block_ref("123").unwrap(), BlockNumberOrTag::Number(123));
-        assert_eq!(parse_block_ref("  42  ").unwrap(), BlockNumberOrTag::Number(42));
+        assert_eq!(parse_block_ref("123").unwrap(), BlockId::Number(BlockNumberOrTag::Number(123)),);
+        assert_eq!(
+            parse_block_ref("  42  ").unwrap(),
+            BlockId::Number(BlockNumberOrTag::Number(42)),
+        );
     }
 
     #[test]
     fn parses_hex() {
-        assert_eq!(parse_block_ref("0x1a").unwrap(), BlockNumberOrTag::Number(26));
-        assert_eq!(parse_block_ref("0X1A").unwrap(), BlockNumberOrTag::Number(26));
+        assert_eq!(parse_block_ref("0x1a").unwrap(), BlockId::Number(BlockNumberOrTag::Number(26)),);
+        assert_eq!(parse_block_ref("0X1A").unwrap(), BlockId::Number(BlockNumberOrTag::Number(26)),);
     }
 
     #[test]
     fn parses_tags() {
-        assert_eq!(parse_block_ref("latest").unwrap(), BlockNumberOrTag::Latest);
-        assert_eq!(parse_block_ref("safe").unwrap(), BlockNumberOrTag::Safe);
-        assert_eq!(parse_block_ref("finalized").unwrap(), BlockNumberOrTag::Finalized);
-        assert_eq!(parse_block_ref("earliest").unwrap(), BlockNumberOrTag::Earliest);
+        assert_eq!(parse_block_ref("latest").unwrap(), BlockId::Number(BlockNumberOrTag::Latest));
+        assert_eq!(parse_block_ref("safe").unwrap(), BlockId::Number(BlockNumberOrTag::Safe));
+        assert_eq!(
+            parse_block_ref("finalized").unwrap(),
+            BlockId::Number(BlockNumberOrTag::Finalized),
+        );
+        assert_eq!(
+            parse_block_ref("earliest").unwrap(),
+            BlockId::Number(BlockNumberOrTag::Earliest),
+        );
+    }
+
+    #[test]
+    fn parses_block_hash() {
+        let canonical = format!("0x{}", "11".repeat(32));
+        let expected = canonical.parse::<B256>().unwrap();
+
+        for input in [canonical.clone(), canonical.replace("0x", "0X"), canonical.to_uppercase()] {
+            let parsed = parse_block_ref(&input).unwrap();
+            let BlockId::Hash(rpc_hash) = parsed else {
+                panic!("expected BlockId::Hash for {input:?}, got {parsed:?}");
+            };
+            assert_eq!(rpc_hash.block_hash, expected, "hash mismatch for {input:?}");
+        }
     }
 
     #[test]
@@ -129,13 +158,6 @@ mod tests {
                 "expected pending rejection for {input:?}, got: {err}",
             );
         }
-    }
-
-    #[test]
-    fn rejects_64_hex_char_hash() {
-        let hash = format!("0x{}", "11".repeat(32));
-        let err = parse_block_ref(&hash).unwrap_err().to_string();
-        assert!(err.contains("hash references are not supported"));
     }
 
     #[test]

@@ -33,8 +33,9 @@ Opens the interactive TUI. With no subcommand, opens the Home view.
 
 ### `basectl block <REF>`
 
-Inspects a single L2 block via `eth_getBlockByNumber` and prints either an
-aligned key-value table (default) or the full block as pretty JSON (`--json`).
+Inspects a single L2 block via `eth_getBlockByHash` or `eth_getBlockByNumber`
+(alloy dispatches based on the reference shape) and prints either an aligned
+key-value table (default) or the full block as pretty JSON (`--json`).
 Visible alias: `b`.
 
 `<REF>` accepts:
@@ -42,9 +43,11 @@ Visible alias: `b`.
 - A decimal block number (e.g. `42417649`)
 - A `0x`-hex block number (e.g. `0x2871c71`)
 - A tag: `latest`, `safe`, `finalized`, `earliest`
+- A 32-byte block hash (`0x` + 64 hex chars)
 
-Block-hash references (a `0x`-prefixed 32-byte hex string) are explicitly
-rejected — pass a number or tag instead.
+Hash lookups can return blocks regardless of canonical-chain status — orphans
+and reorged-out heads are also fetchable by hash. The `pending` tag is not
+supported (alloy's typed block can't deserialize null number/hash).
 
 | Flag | Description |
 |------|-------------|
@@ -89,4 +92,7 @@ basectl -c mainnet block --json finalized | jq '{number, hash, gasUsed, baseFeeP
 
 # Use the visible alias `b`
 basectl -c mainnet b latest
+
+# Look up a block by 32-byte hash (canonical, orphan, or reorged-out)
+basectl -c sepolia block 0x9fa0d82dfdf395d552e92caec6a9d5482c53f1800e8f3ff29994b7a431447148
 ```

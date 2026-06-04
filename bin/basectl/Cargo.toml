@@ -14,10 +14,12 @@ workspace = true
 [dependencies]
 url = { workspace = true }
 anyhow = { workspace = true }
+alloy-eips = { workspace = true }
 basectl-cli = { workspace = true }
 alloy-provider = { workspace = true }
 base-common-network = { workspace = true }
 rustls = { workspace = true, features = ["ring"] }
 clap = { workspace = true, features = ["derive", "env"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
-use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+use alloy_eips::{
+    BlockId,
+    eip2718::{Decodable2718, Encodable2718},
+};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Network, Provider, ProviderBuilder, network::TransactionResponse};
 use alloy_rpc_types_eth::BlockNumberOrTag;
@@ -18,14 +21,16 @@ use crate::tui::Toast;
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
 
-/// Fetches a single L2 block via `eth_getBlockByNumber`.
+/// Fetches a single L2 block via `eth_getBlockByHash` or `eth_getBlockByNumber`.
 ///
-/// Returns the typed block as deserialized by alloy. The `pending` tag is
-/// not supported here because alloy's typed `Block` does not accept a null
-/// number/hash; pass a number, `latest`, `safe`, `finalized`, or `earliest`.
+/// `reference` selects the block by hash, number, or tag (alloy's `BlockId`
+/// dispatches between the two RPC methods internally). The `pending` tag is
+/// not supported because alloy's typed `Block` does not accept a null
+/// number/hash; pass a number, hash, or `latest` / `safe` / `finalized` /
+/// `earliest`.
 pub async fn fetch_block(
     rpc: &Url,
-    reference: BlockNumberOrTag,
+    reference: BlockId,
 ) -> Result<<Base as Network>::BlockResponse> {
     let provider = ProviderBuilder::new()
         .disable_recommended_fillers()
@@ -34,7 +39,7 @@ pub async fn fetch_block(
         .await
         .with_context(|| format!("connecting to L2 RPC at {rpc}"))?;
     provider
-        .get_block_by_number(reference)
+        .get_block(reference)
         .await
         .with_context(|| format!("fetching block {reference}"))?
         .ok_or_else(|| anyhow!("block {reference} not found"))

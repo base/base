@@ -43,7 +43,7 @@ pub(crate) enum Commands {
     /// Inspect a single L2 block.
     #[command(visible_alias = "b")]
     Block {
-        /// Block number (decimal or 0x-hex) or tag: latest, safe, finalized, earliest.
+        /// Block number (decimal or 0x-hex), tag (latest/safe/finalized/earliest), or 32-byte block hash.
         #[arg(value_name = "REF")]
         reference: String,
         /// Emit JSON instead of the pretty table.
