@@ -586,7 +586,7 @@ where
             state.proved.contains_key(&target) || state.submitting == Some(target)
         });
 
-        for outcome in self.proof_collector.collect(targets).await {
+        for outcome in self.proof_collector.collect(&targets).await {
             match outcome {
                 CollectedProof::Ready { target_block, session_id, proof } => {
                     state.inflight.remove(&target_block);

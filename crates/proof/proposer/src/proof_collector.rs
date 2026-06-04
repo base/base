@@ -167,15 +167,15 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
     /// caller to retry on the next tick. Targets whose canonical output root cannot
     /// be fetched are skipped silently; the underlying RPC failure is logged at debug
     /// level via the standard rollup-client error path.
-    pub async fn collect(&self, targets: Vec<u64>) -> Vec<CollectedProof> {
+    pub async fn collect(&self, targets: &[u64]) -> Vec<CollectedProof> {
         if targets.is_empty() {
             return Vec::new();
         }
 
-        let roots = self.fetch_canonical_root_results(targets.clone()).await;
+        let roots = self.fetch_canonical_root_results(targets).await;
 
         let mut outcomes = Vec::new();
-        for target in targets {
+        for &target in targets {
             let Some(Ok(root)) = roots.get(&target) else { continue };
             let session_id = ProposerProofAdapter::tee_session_id_for_root(*root, self.tee_kind);
 
@@ -252,13 +252,13 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
 
     async fn fetch_canonical_root_results(
         &self,
-        blocks: Vec<u64>,
+        blocks: &[u64],
     ) -> HashMap<u64, Result<B256, ProposerError>> {
         if blocks.is_empty() {
             return HashMap::new();
         }
         let rollup = &self.rollup_client;
-        stream::iter(blocks)
+        stream::iter(blocks.iter().copied())
             .map(|block_number| async move {
                 let result = rollup
                     .output_at_block(block_number)
