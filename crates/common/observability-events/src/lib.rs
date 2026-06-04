@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use tokio::{
-    fs::OpenOptions,
+    fs::{OpenOptions, create_dir_all},
     io::{AsyncWrite, AsyncWriteExt, BufWriter},
     sync::mpsc,
     task::JoinHandle,
@@ -475,7 +475,13 @@ impl TransactionEventWriter {
             return Ok(Self::disabled(config));
         }
 
-        let file = OpenOptions::new().create(true).append(true).open(&config.file_path).await;
+        let file = async {
+            if let Some(parent) = config.file_path.parent() {
+                create_dir_all(parent).await?;
+            }
+            OpenOptions::new().create(true).append(true).open(&config.file_path).await
+        }
+        .await;
 
         let file = match file {
             Ok(file) => file,
@@ -864,9 +870,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn required_writer_fails_closed_on_init_error() {
+    async fn writer_creates_parent_directories() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing").join("transaction-events.jsonl");
+        let writer = TransactionEventWriter::from_config(TransactionEventWriterConfig {
+            enabled: true,
+            file_path: path.clone(),
+            queue_capacity: 8,
+            flush_interval: Duration::from_millis(10),
+            required: true,
+            producer: TransactionEventProducer::BaseRethNode,
+            network: "base-mainnet".to_string(),
+        })
+        .await
+        .unwrap();
+
+        writer.try_write(&sample_event()).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(path.exists());
+    }
+
+    #[tokio::test]
+    async fn required_writer_fails_closed_on_init_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transaction-events-dir");
+        fs::create_dir(&path).unwrap();
         let err = TransactionEventWriter::from_config(TransactionEventWriterConfig {
             enabled: true,
             file_path: path,

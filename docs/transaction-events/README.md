@@ -5,6 +5,10 @@ contract for Base transaction observability. Producers write newline-delimited
 JSON records to a dedicated file. Stdout/stderr logs continue through the normal
 Kubernetes Datadog path and must not be reused for this journal.
 
+Vector tails these same JSONL files and ships newline-delimited event records to
+`audit-archiver`. The audit HTTP ingest endpoint is collector-facing and expects
+one event JSON object per line, not a wrapped JSON batch.
+
 ## Configuration Fields
 
 Rust producers should expose these config fields directly or with a
@@ -75,6 +79,20 @@ forwarding headers, or raw client IP forwarding chains.
 The Rust `TransactionEvent::validate` helper rejects the wrong schema version,
 empty `event_id`, and known unsafe `data` keys such as `raw_tx`, `calldata`,
 `authorization`, `api_key`, `headers`, and `x-forwarded-for`.
+
+## Local Devnet Verification
+
+The ingress devnet stack runs a local Postgres, Vector shipper, and
+Postgres-backed `audit-archiver` ingest path:
+
+```bash
+just devnet ingress
+just devnet tx-observability-smoke
+```
+
+The smoke test sends one transaction through ingress, waits for Vector to ship
+the producer JSONL event, and verifies `audit-archiver` can read the persisted
+event back from Postgres by transaction hash.
 
 ## Producer Values
 

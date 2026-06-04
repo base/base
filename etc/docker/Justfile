@@ -50,6 +50,10 @@ smoke:
 # Runs full devnet checks (status + smoke tests)
 checks: status smoke
 
+# Sends an ingress transaction and verifies transaction events reached audit-archiver Postgres
+tx-observability-smoke:
+    ./etc/scripts/devnet/transaction-observability-smoke.sh
+
 # Stream FB's from the builder via websocket
 flashblocks:
     @command -v flashblocks-websocket-client >/dev/null 2>&1 || go install github.com/danyalprout/flashblocks-websocket-client@latest

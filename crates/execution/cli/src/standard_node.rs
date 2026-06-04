@@ -322,7 +322,7 @@ impl StandardBaseRethNode {
 fn transaction_event_writer_config(
     args: &RpcStandardNodeArgs,
 ) -> eyre::Result<Option<TransactionEventWriterConfig>> {
-    if !args.enable_transaction_event_journal {
+    if !args.enable_transaction_event_journal && !transaction_event_journal_env_enabled() {
         return Ok(None);
     }
 
@@ -347,6 +347,13 @@ fn transaction_event_writer_config(
         producer: TransactionEventProducer::BaseRethNode,
         network: transaction_event_network(),
     }))
+}
+
+fn transaction_event_journal_env_enabled() -> bool {
+    env::var("BASE_TRANSACTION_EVENTS_ENABLED")
+        .or_else(|_| env::var("TRANSACTION_EVENTS_ENABLED"))
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "True" | "yes" | "YES"))
+        .unwrap_or(false)
 }
 
 fn transaction_event_network() -> String {
@@ -374,9 +381,13 @@ fn parse_otel_resource_attribute(key: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use clap::{Args, Parser};
 
     use super::*;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[derive(Debug, Parser)]
     struct CommandParser<T: Args> {
@@ -511,6 +522,14 @@ mod tests {
 
     #[test]
     fn transaction_event_journal_requires_path_when_no_env_path_exists() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            env::remove_var("BASE_TRANSACTION_EVENTS_ENABLED");
+            env::remove_var("TRANSACTION_EVENTS_ENABLED");
+            env::remove_var("BASE_TRANSACTION_EVENTS_PATH");
+            env::remove_var("TRANSACTION_EVENTS_PATH");
+        }
+
         let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
             "base-reth",
             "--enable-transaction-event-journal",
@@ -522,5 +541,27 @@ mod tests {
         let config = transaction_event_writer_config(&args).unwrap().unwrap();
         assert_eq!(config.file_path, PathBuf::from("/tmp/events.jsonl"));
         assert_eq!(config.producer, TransactionEventProducer::BaseRethNode);
+    }
+
+    #[test]
+    fn transaction_event_journal_can_be_enabled_by_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            env::set_var("BASE_TRANSACTION_EVENTS_ENABLED", "true");
+            env::set_var("BASE_TRANSACTION_EVENTS_PATH", "/tmp/env-events.jsonl");
+            env::set_var("BASE_TRANSACTION_EVENTS_NETWORK", "base-devnet");
+        }
+
+        let args = CommandParser::<RpcStandardNodeArgs>::parse_from(["base-reth"]).args;
+        let config = transaction_event_writer_config(&args).unwrap().unwrap();
+
+        assert_eq!(config.file_path, PathBuf::from("/tmp/env-events.jsonl"));
+        assert_eq!(config.network, "base-devnet");
+
+        unsafe {
+            env::remove_var("BASE_TRANSACTION_EVENTS_ENABLED");
+            env::remove_var("BASE_TRANSACTION_EVENTS_PATH");
+            env::remove_var("BASE_TRANSACTION_EVENTS_NETWORK");
+        }
     }
 }

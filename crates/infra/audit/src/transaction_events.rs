@@ -11,6 +11,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::{DefaultBodyLimit, State},
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -57,13 +58,6 @@ pub struct TransactionEventIngestConfig {
     pub max_data_bytes: usize,
     /// Maximum request body size in bytes.
     pub max_request_bytes: usize,
-}
-
-/// HTTP request body for batch ingest.
-#[derive(Debug, Clone, Deserialize)]
-pub struct TransactionEventBatchRequest {
-    /// Transaction observability events.
-    pub events: Vec<Value>,
 }
 
 /// Whole-request ingest status.
@@ -437,20 +431,41 @@ fn transaction_event_router(
 
 async fn transaction_event_batch_handler(
     State(state): State<Arc<TransactionEventIngestState>>,
-    Json(request): Json<TransactionEventBatchRequest>,
+    body: Bytes,
 ) -> Response {
-    ingest_transaction_event_batch(&state, request).await.into_response()
+    ingest_transaction_event_batch(&state, body).await.into_response()
 }
 
 async fn ingest_transaction_event_batch(
     state: &TransactionEventIngestState,
-    request: TransactionEventBatchRequest,
+    body: Bytes,
 ) -> (StatusCode, Json<TransactionEventBatchResponse>) {
-    Metrics::transaction_event_batch_size().record(request.events.len() as f64);
-    Metrics::transaction_events_received().increment(request.events.len() as u64);
+    let events = match parse_transaction_event_ndjson(&body) {
+        Ok(events) => events,
+        Err(reason) => {
+            Metrics::transaction_events_rejected().increment(1);
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(TransactionEventBatchResponse {
+                    status: TransactionEventBatchStatus::Rejected,
+                    accepted: 0,
+                    duplicate: 0,
+                    rejected: 1,
+                    results: vec![TransactionEventItemResult {
+                        event_id: None,
+                        status: TransactionEventItemStatus::Rejected,
+                        reason: Some(reason),
+                    }],
+                }),
+            );
+        }
+    };
 
-    let mut results = Vec::with_capacity(request.events.len());
-    if request.events.is_empty() {
+    Metrics::transaction_event_batch_size().record(events.len() as f64);
+    Metrics::transaction_events_received().increment(events.len() as u64);
+
+    let mut results = Vec::with_capacity(events.len());
+    if events.is_empty() {
         Metrics::transaction_events_rejected().increment(1);
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -468,21 +483,21 @@ async fn ingest_transaction_event_batch(
         );
     }
 
-    if request.events.len() > state.config.max_batch_size {
-        Metrics::transaction_events_rejected().increment(request.events.len() as u64);
+    if events.len() > state.config.max_batch_size {
+        Metrics::transaction_events_rejected().increment(events.len() as u64);
         return (
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(TransactionEventBatchResponse {
                 status: TransactionEventBatchStatus::Rejected,
                 accepted: 0,
                 duplicate: 0,
-                rejected: request.events.len(),
+                rejected: events.len(),
                 results: vec![TransactionEventItemResult {
                     event_id: None,
                     status: TransactionEventItemStatus::Rejected,
                     reason: Some(format!(
                         "batch size {} exceeds maximum {}",
-                        request.events.len(),
+                        events.len(),
                         state.config.max_batch_size
                     )),
                 }],
@@ -492,7 +507,7 @@ async fn ingest_transaction_event_batch(
 
     let mut seen = HashSet::new();
     let mut valid_events = Vec::new();
-    for raw_event in request.events {
+    for raw_event in events {
         match validate_transaction_event(raw_event, &state.config) {
             Ok(event) => {
                 if seen.insert(event.event_id.clone()) {
@@ -586,6 +601,37 @@ async fn ingest_transaction_event_batch(
 
     let response = response_from_results(results, &inserted_event_ids);
     (StatusCode::OK, Json(response))
+}
+
+fn parse_transaction_event_ndjson(body: &[u8]) -> std::result::Result<Vec<Value>, String> {
+    let body =
+        std::str::from_utf8(body).map_err(|err| format!("request body is not UTF-8: {err}"))?;
+
+    let mut events = Vec::new();
+    for (line_index, line) in body.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let value: Value = serde_json::from_str(line).map_err(|err| {
+            format!("invalid NDJSON transaction event on line {}: {err}", line_index + 1)
+        })?;
+        if !value.is_object() {
+            return Err(format!(
+                "invalid NDJSON transaction event on line {}: expected JSON object",
+                line_index + 1
+            ));
+        }
+        if value.get("events").is_some() && value.get("schema_version").is_none() {
+            return Err(format!(
+                "unsupported transaction event batch wrapper on line {}; send one event JSON object per line",
+                line_index + 1
+            ));
+        }
+        events.push(value);
+    }
+    Ok(events)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -748,12 +794,21 @@ mod tests {
         })
     }
 
+    fn ndjson(events: Vec<Value>) -> Bytes {
+        let body = events
+            .into_iter()
+            .map(|event| serde_json::to_string(&event).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        Bytes::from(body)
+    }
+
     #[tokio::test]
-    async fn accepts_valid_batch() {
+    async fn accepts_valid_ndjson_batch() {
         let state = state(Arc::new(FakeSink::default()));
         let (status, Json(response)) = ingest_transaction_event_batch(
             &state,
-            TransactionEventBatchRequest { events: vec![event("event-1"), event("event-2")] },
+            ndjson(vec![event("event-1"), event("event-2")]),
         )
         .await;
 
@@ -768,7 +823,7 @@ mod tests {
     async fn reports_duplicates_across_retries() {
         let sink = Arc::new(FakeSink::default());
         let state = state(sink);
-        let request = TransactionEventBatchRequest { events: vec![event("event-1")] };
+        let request = ndjson(vec![event("event-1")]);
         let _ = ingest_transaction_event_batch(&state, request.clone()).await;
 
         let (status, Json(response)) = ingest_transaction_event_batch(&state, request).await;
@@ -786,16 +841,45 @@ mod tests {
         let mut invalid = event("bad-event");
         invalid["tx_hash"] = json!("not-a-hash");
 
-        let (status, Json(response)) = ingest_transaction_event_batch(
-            &state,
-            TransactionEventBatchRequest { events: vec![event("event-1"), invalid] },
-        )
-        .await;
+        let (status, Json(response)) =
+            ingest_transaction_event_batch(&state, ndjson(vec![event("event-1"), invalid])).await;
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(response.status, TransactionEventBatchStatus::Partial);
         assert_eq!(response.accepted, 1);
         assert_eq!(response.rejected, 1);
+    }
+
+    #[tokio::test]
+    async fn rejects_json_batch_wrapper() {
+        let state = state(Arc::new(FakeSink::default()));
+        let body =
+            Bytes::from(serde_json::to_string(&json!({ "events": [event("event-1")] })).unwrap());
+
+        let (status, Json(response)) = ingest_transaction_event_batch(&state, body).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response.status, TransactionEventBatchStatus::Rejected);
+        assert_eq!(response.rejected, 1);
+        assert!(
+            response.results[0]
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("unsupported transaction event batch wrapper")
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_malformed_ndjson() {
+        let state = state(Arc::new(FakeSink::default()));
+
+        let (status, Json(response)) =
+            ingest_transaction_event_batch(&state, Bytes::from("{not-json}\n")).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response.status, TransactionEventBatchStatus::Rejected);
+        assert!(response.results[0].reason.as_deref().unwrap().contains("line 1"));
     }
 
     #[test]
