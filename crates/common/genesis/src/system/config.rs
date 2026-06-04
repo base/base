@@ -12,6 +12,9 @@ use crate::{
     SystemConfigUpdateKind,
 };
 
+#[cfg(feature = "serde")]
+use serde::Serialize;
+
 /// System configuration.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
