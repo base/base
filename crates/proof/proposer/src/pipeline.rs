@@ -1143,7 +1143,8 @@ where
             // element of `intermediate_blocks` is always `expected_block`,
             // so this also provides the canonical output root — no separate
             // `output_at_block` call needed.
-            let intermediate_blocks = self.intermediate_block_numbers(parent_block)?;
+            let intermediate_blocks =
+                self.proof_submitter.intermediate_block_numbers(parent_block)?;
             let intermediate_roots =
                 match self.fetch_canonical_roots(intermediate_blocks.clone()).await {
                     Ok(roots) => roots,
@@ -1242,40 +1243,6 @@ where
             output_root: parent_output_root,
             l2_block_number: parent_block,
         })
-    }
-
-    /// Returns intermediate block numbers between `starting_block_number` and
-    /// the next proposal target, stepping by `intermediate_block_interval`.
-    ///
-    /// Used by the recovery forward walk to build `extraData` for UUID-based
-    /// `games()` lookups. The submitter has its own equivalent helper that is
-    /// driven by [`PipelineConfig`] values cached at construction time.
-    fn intermediate_block_numbers(
-        &self,
-        starting_block_number: u64,
-    ) -> Result<Vec<u64>, ProposerError> {
-        let interval = self.config.driver.intermediate_block_interval;
-        if interval == 0 {
-            return Err(ProposerError::Config(
-                "intermediate_block_interval must not be zero".into(),
-            ));
-        }
-        let count = self.config.driver.block_interval / interval;
-        (1..=count)
-            .map(|i| {
-                starting_block_number
-                    .checked_add(i.checked_mul(interval).ok_or_else(|| {
-                        ProposerError::Internal(
-                            "overflow computing intermediate block number".into(),
-                        )
-                    })?)
-                    .ok_or_else(|| {
-                        ProposerError::Internal(
-                            "overflow computing intermediate block number".into(),
-                        )
-                    })
-            })
-            .collect()
     }
 
     /// Returns the latest safe L2 block number.

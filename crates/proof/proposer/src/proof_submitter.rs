@@ -379,7 +379,11 @@ where
 
     /// Returns intermediate block numbers between `starting_block_number` and
     /// the next proposal target, stepping by `intermediate_block_interval`.
-    fn intermediate_block_numbers(
+    ///
+    /// Shared with [`crate::pipeline::ProvingPipeline`]'s recovery forward walk,
+    /// which calls through this method on the pipeline's owned submitter so the
+    /// stepping logic lives in exactly one place.
+    pub fn intermediate_block_numbers(
         &self,
         starting_block_number: u64,
     ) -> Result<Vec<u64>, ProposerError> {
