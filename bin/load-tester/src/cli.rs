@@ -27,6 +27,14 @@ use indicatif::{ProgressBar, ProgressStyle};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+/// Token amounts and policy settings resolved from the test config for the setup phases.
+struct SetupAmounts {
+    funding_amount: U256,
+    swap_token_amount: U256,
+    b20_mint_amount: U256,
+    b20_policy_size: usize,
+}
+
 /// Accounts to derive and check per batch during rescue.
 const RESCUE_BATCH_SIZE: usize = 100;
 
@@ -159,9 +167,12 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     );
     println!();
 
-    let funding_amount = test_config.parse_funding_amount()?;
-    let swap_token_amount = test_config.parse_swap_token_amount()?;
-    let b20_mint_amount = test_config.parse_b20_mint_amount()?;
+    let setup = SetupAmounts {
+        funding_amount: test_config.parse_funding_amount()?,
+        swap_token_amount: test_config.parse_swap_token_amount()?,
+        b20_mint_amount: test_config.parse_b20_mint_amount()?,
+        b20_policy_size: test_config.b20_policy_size,
+    };
 
     let config_summary = test_config.to_summary();
     let mut runner = LoadRunner::new(load_config.clone())?;
@@ -172,16 +183,8 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     let stop_flag = runner.stop_flag();
     install_signal_handler(stop_flag);
 
-    let run_result = run_test_phases(
-        &mut runner,
-        &funding_key,
-        funding_amount,
-        swap_token_amount,
-        b20_mint_amount,
-        &mp,
-        load_config.duration,
-    )
-    .await;
+    let run_result =
+        run_test_phases(&mut runner, &funding_key, setup, &mp, load_config.duration).await;
 
     let (summary, run_err) = match run_result {
         Ok(summary) => (summary, None),
@@ -298,9 +301,7 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
 async fn run_test_phases(
     runner: &mut LoadRunner,
     funding_key: &PrivateKeySigner,
-    funding_amount: U256,
-    swap_token_amount: U256,
-    b20_mint_amount: U256,
+    setup: SetupAmounts,
     mp: &indicatif::MultiProgress,
     duration: Option<Duration>,
 ) -> LoadResult<MetricsSummary> {
@@ -311,18 +312,20 @@ async fn run_test_phases(
     }
 
     println!("Funding test accounts...");
-    runner.fund_accounts(funding_key.clone(), funding_amount).await?;
+    runner.fund_accounts(funding_key.clone(), setup.funding_amount).await?;
     println!("Accounts funded.");
 
     if !runner.collect_swap_tokens().is_empty() {
         println!("Distributing swap tokens...");
-        runner.setup_swap_tokens(funding_key.clone(), swap_token_amount).await?;
+        runner.setup_swap_tokens(funding_key.clone(), setup.swap_token_amount).await?;
         println!("Swap tokens distributed.");
     }
 
     if runner.needs_b20_setup() {
         println!("Setting up B-20 tokens...");
-        runner.setup_b20_tokens(funding_key.clone(), b20_mint_amount).await?;
+        runner
+            .setup_b20_tokens(funding_key.clone(), setup.b20_mint_amount, setup.b20_policy_size)
+            .await?;
         println!("B-20 tokens ready.");
     }
     println!();

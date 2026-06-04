@@ -15,8 +15,8 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use base_common_network::Base;
 use base_common_precompiles::{
-    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20TokenRole, B20Variant,
-    IActivationRegistry, IB20, IB20Factory,
+    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20PolicyType, B20TokenRole,
+    B20Variant, IActivationRegistry, IB20, IB20Factory, IPolicyRegistry, PolicyRegistryStorage,
 };
 use base_tx_manager::NonceManager;
 use futures::{StreamExt, stream};
@@ -59,6 +59,27 @@ const SUBMIT_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(60);
 const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(65);
 const TXPOOL_CLEAR_CONCURRENCY: usize = 64;
+
+/// Shared transaction parameters used when building funder-signed setup transactions.
+///
+/// Bundles the fields that are constant for the duration of any setup phase — chain ID, gas
+/// price components, and gas limit — so they don't need to be threaded individually through
+/// every helper function.
+struct FunderTxParams {
+    chain_id: u64,
+    max_fee: u128,
+    max_priority_fee: u128,
+    gas_limit: u64,
+}
+
+impl FunderTxParams {
+    fn apply(&self, tx: TransactionRequest) -> TransactionRequest {
+        tx.with_chain_id(self.chain_id)
+            .with_gas_limit(self.gas_limit)
+            .with_max_fee_per_gas(self.max_fee)
+            .with_max_priority_fee_per_gas(self.max_priority_fee)
+    }
+}
 
 /// Executes load tests by generating and submitting transactions at a target rate.
 pub struct LoadRunner {
@@ -953,11 +974,18 @@ impl LoadRunner {
     ///
     /// If all B-20 transaction configs already have a resolved `contract` address, this is a
     /// no-op for creation but still handles role grants and minting.
+    ///
+    /// When `policy_size > 0`, a `TransferReceiver` blocklist policy is created and populated with
+    /// `policy_size` synthetic addresses. The token's receiver policy slot is then pointed at this
+    /// policy so that every B-20 transfer in the load test exercises the policy check path. The
+    /// generated address set is stored in the workload generator so that no transfer inadvertently
+    /// targets a blocked address.
     #[instrument(skip(self, funding_key), fields(accounts = self.accounts.len()))]
     pub async fn setup_b20_tokens(
         &mut self,
         funding_key: PrivateKeySigner,
         amount_per_sender: U256,
+        policy_size: usize,
     ) -> Result<()> {
         let funder_address = funding_key.address();
         let wallet = EthereumWallet::from(funding_key);
@@ -1256,6 +1284,33 @@ impl LoadRunner {
             )));
         }
 
+        // Phase 4: Create a TransferReceiver blocklist policy and attach it to the token.
+        if policy_size > 0 {
+            let tx_params =
+                FunderTxParams { chain_id, max_fee, max_priority_fee, gas_limit: b20_gas_limit };
+            let policy_addresses = Self::generate_policy_addresses(policy_size);
+            let policy_id = self
+                .create_blocklist_policy(&funder_provider, funder_address, &mut nonce, &tx_params)
+                .await?;
+            self.populate_blocklist_policy(
+                &funder_provider,
+                policy_id,
+                &policy_addresses,
+                &mut nonce,
+                &tx_params,
+            )
+            .await?;
+            self.assign_token_policy(
+                &funder_provider,
+                token,
+                policy_id,
+                nonce,
+                &tx_params,
+                policy_size,
+            )
+            .await?;
+        }
+
         // Rebuild the workload generator now that the B-20 contract address is resolved.
         let workload_config = WorkloadConfig::new("load-test").with_seed(self.config.seed);
         self.generator = Self::create_generator(workload_config, &self.config)?;
@@ -1264,7 +1319,186 @@ impl LoadRunner {
             token = %token,
             senders = total_mints,
             amount = %amount_per_sender,
+            policy_size,
             "B-20 token setup complete"
+        );
+        Ok(())
+    }
+
+    /// Generates `count` synthetic addresses for use as blocklist entries.
+    ///
+    /// Addresses are placed in the `0xdead…` prefix space (bytes 0–1) with the index
+    /// encoded in the last 8 bytes.  This range is far from any precompile or plausible
+    /// sender account derived from a mnemonic, so there is no risk of accidental overlap.
+    fn generate_policy_addresses(count: usize) -> Vec<Address> {
+        (0..count)
+            .map(|i| {
+                let mut bytes = [0u8; 20];
+                bytes[0] = 0xde;
+                bytes[1] = 0xad;
+                bytes[12..20].copy_from_slice(&(i as u64).to_be_bytes());
+                Address::from(bytes)
+            })
+            .collect()
+    }
+
+    async fn create_blocklist_policy(
+        &self,
+        funder_provider: &Arc<impl alloy_provider::Provider>,
+        admin: Address,
+        nonce: &mut u64,
+        tx_params: &FunderTxParams,
+    ) -> Result<u64> {
+        let create_call = IPolicyRegistry::createPolicyCall {
+            admin,
+            policyType: IPolicyRegistry::PolicyType::BLOCKLIST,
+        };
+        let tx = tx_params.apply(
+            TransactionRequest::default()
+                .with_to(PolicyRegistryStorage::ADDRESS)
+                .with_input(Bytes::from(create_call.abi_encode()))
+                .with_nonce(*nonce),
+        );
+        *nonce += 1;
+
+        let pending = funder_provider.send_transaction(tx).await.map_err(|e| {
+            BaselineError::Transaction(format!("failed to create blocklist policy: {e}"))
+        })?;
+        let receipt = pending.get_receipt().await.map_err(|e| {
+            BaselineError::Transaction(format!("blocklist policy creation receipt failed: {e}"))
+        })?;
+        if !receipt.status() {
+            return Err(BaselineError::Transaction("blocklist policy creation reverted".into()));
+        }
+
+        // The PolicyCreated event encodes policyId as an indexed topic (topics[1]),
+        // stored as a right-aligned u64 inside a 32-byte word.
+        let policy_id = receipt
+            .logs()
+            .first()
+            .and_then(|log| log.topics().get(1))
+            .map(|topic| u64::from_be_bytes(topic[24..32].try_into().expect("32-byte topic")))
+            .ok_or_else(|| {
+                BaselineError::Transaction(
+                    "createPolicy receipt missing PolicyCreated event".into(),
+                )
+            })?;
+
+        info!(policy_id, "blocklist policy created");
+        Ok(policy_id)
+    }
+
+    /// Populates a BLOCKLIST policy with `addresses` via batched `updateBlocklist` calls.
+    async fn populate_blocklist_policy(
+        &self,
+        funder_provider: &Arc<impl alloy_provider::Provider>,
+        policy_id: u64,
+        addresses: &[Address],
+        nonce: &mut u64,
+        tx_params: &FunderTxParams,
+    ) -> Result<()> {
+        const CHUNK_SIZE: usize = 250;
+        let chunks: Vec<&[Address]> = addresses.chunks(CHUNK_SIZE).collect();
+        let total_txs = chunks.len();
+        let pb = self.progress_bar(total_txs as u64, "Populating blocklist policy");
+
+        let txs: Vec<TransactionRequest> = chunks
+            .iter()
+            .map(|chunk| {
+                let call = IPolicyRegistry::updateBlocklistCall {
+                    policyId: policy_id,
+                    blocked: true,
+                    accounts: chunk.to_vec(),
+                };
+                let tx = tx_params.apply(
+                    TransactionRequest::default()
+                        .with_to(PolicyRegistryStorage::ADDRESS)
+                        .with_input(Bytes::from(call.abi_encode()))
+                        .with_nonce(*nonce),
+                );
+                *nonce += 1;
+                tx
+            })
+            .collect();
+
+        let mut failed = 0usize;
+        let mut txs_remaining = txs.into_iter().peekable();
+        while txs_remaining.peek().is_some() {
+            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
+            let send_futs = batch.into_iter().map(|tx| {
+                let provider = Arc::clone(funder_provider);
+                async move {
+                    let pending = provider.send_transaction(tx).await?;
+                    pending.get_receipt().await
+                }
+            });
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
+            while let Some(result) = send_stream.next().await {
+                match result {
+                    Ok(receipt) if receipt.status() => pb.inc(1),
+                    Ok(receipt) => {
+                        warn!(tx_hash = %receipt.transaction_hash, "blocklist update reverted");
+                        failed += 1;
+                        pb.inc(1);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "blocklist update failed");
+                        failed += 1;
+                        pb.inc(1);
+                    }
+                }
+            }
+        }
+        pb.finish_and_clear();
+
+        if failed > 0 {
+            return Err(BaselineError::Transaction(format!(
+                "{failed}/{total_txs} blocklist update txs failed"
+            )));
+        }
+
+        info!(policy_id, addresses = addresses.len(), "blocklist policy populated");
+        Ok(())
+    }
+
+    /// Assigns `policy_id` as the `TransferReceiver` policy on the B-20 `token`.
+    async fn assign_token_policy(
+        &self,
+        funder_provider: &Arc<impl alloy_provider::Provider>,
+        token: Address,
+        policy_id: u64,
+        nonce: u64,
+        tx_params: &FunderTxParams,
+        policy_size: usize,
+    ) -> Result<()> {
+        let call = IB20::updatePolicyCall {
+            policyScope: B20PolicyType::TransferReceiver.id(),
+            newPolicyId: policy_id,
+        };
+        let tx = tx_params.apply(
+            TransactionRequest::default()
+                .with_to(token)
+                .with_input(Bytes::from(call.abi_encode()))
+                .with_nonce(nonce),
+        );
+
+        let pending = funder_provider.send_transaction(tx).await.map_err(|e| {
+            BaselineError::Transaction(format!(
+                "failed to assign receiver policy to B-20 token: {e}"
+            ))
+        })?;
+        let receipt = pending.get_receipt().await.map_err(|e| {
+            BaselineError::Transaction(format!("receiver policy assignment receipt failed: {e}"))
+        })?;
+        if !receipt.status() {
+            return Err(BaselineError::Transaction("receiver policy assignment reverted".into()));
+        }
+
+        info!(
+            token = %token,
+            policy_id,
+            policy_size,
+            "TransferReceiver blocklist policy assigned to B-20 token"
         );
         Ok(())
     }

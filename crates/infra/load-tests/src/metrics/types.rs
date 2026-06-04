@@ -227,4 +227,6 @@ pub struct ConfigSummary {
     pub swap_token_amount: String,
     /// Amount of B-20 tokens to mint per sender (in wei, as string).
     pub b20_mint_amount: String,
+    /// Number of addresses in the B-20 `TransferReceiver` blocklist policy (0 = no policy).
+    pub b20_policy_size: usize,
 }

@@ -149,6 +149,11 @@ pub struct TestConfig {
     /// Only used when B-20 transaction types are configured.
     #[serde(default = "default_b20_mint_amount")]
     pub b20_mint_amount: String,
+
+    /// Number of addresses to populate in the B-20 `TransferReceiver` blocklist policy during
+    /// setup. Set to 0 (the default) to skip policy creation entirely.
+    #[serde(default)]
+    pub b20_policy_size: usize,
 }
 
 impl Default for TestConfig {
@@ -175,6 +180,7 @@ impl Default for TestConfig {
             looper_contract: None,
             swap_token_amount: default_swap_token_amount(),
             b20_mint_amount: default_b20_mint_amount(),
+            b20_policy_size: 0,
         }
     }
 }
@@ -199,6 +205,7 @@ impl fmt::Debug for TestConfig {
             .field("looper_contract", &self.looper_contract)
             .field("swap_token_amount", &self.swap_token_amount)
             .field("b20_mint_amount", &self.b20_mint_amount)
+            .field("b20_policy_size", &self.b20_policy_size)
             .finish()
     }
 }
@@ -521,6 +528,7 @@ impl TestConfig {
             looper_contract: self.looper_contract.clone(),
             swap_token_amount: self.swap_token_amount.clone(),
             b20_mint_amount: self.b20_mint_amount.clone(),
+            b20_policy_size: self.b20_policy_size,
         }
     }
 
