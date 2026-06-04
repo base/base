@@ -15,6 +15,9 @@ workspace = true
 url = { workspace = true }
 anyhow = { workspace = true }
 basectl-cli = { workspace = true }
+alloy-provider = { workspace = true }
+base-common-network = { workspace = true }
 rustls = { workspace = true, features = ["ring"] }
 clap = { workspace = true, features = ["derive", "env"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

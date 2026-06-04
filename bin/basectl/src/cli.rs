@@ -40,6 +40,16 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         command: Option<MonitorCommands>,
     },
+    /// Inspect a single L2 block.
+    #[command(visible_alias = "b")]
+    Block {
+        /// Block number (decimal or 0x-hex) or tag: latest, safe, finalized, earliest.
+        #[arg(value_name = "REF")]
+        reference: String,
+        /// Emit JSON instead of the pretty table.
+        #[arg(long)]
+        json: bool,
+    },
     /// Stream flashblocks as JSON lines.
     #[command(after_help = "Use `basectl monitor flashblocks` for the TUI.")]
     Flashblocks,
