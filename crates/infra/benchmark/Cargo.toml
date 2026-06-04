@@ -51,7 +51,7 @@ base-consensus-engine.workspace = true
 base-common-flashblocks.workspace = true
 base-protocol.workspace = true
 base-common-consensus.workspace = true
-base-common-rpc-types-engine.workspace = true
+base-common-rpc-types-engine = { workspace = true, features = ["serde"] }
 
 [lints]
 workspace = true

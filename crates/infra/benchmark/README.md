@@ -4,7 +4,7 @@ End-to-end throughput and latency benchmark for Base sequencer and validator nod
 
 ## Architecture
 
-```
+```text
 base-bench
   ├── PortManager           – allocates ephemeral ports per subprocess
   ├── SnapshotManager       – prepares (or caches) chain data dirs before each run

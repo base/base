@@ -16,8 +16,8 @@ pub use git::GitInfo;
 mod output;
 pub use output::{
     average_metric, average_metric_seconds, copy_metrics, create_run_dir, dump_log_tail,
-    gzip_file, random_id, write_metadata_json, write_metrics_file, write_result_json,
-    write_tags_json, RunContext,
+    gzip_file, load_payloads_json, random_id, write_metadata_json, write_metrics_file,
+    write_payloads_json, write_result_json, write_tags_json, RunContext,
 };
 
 mod ports;
@@ -58,7 +58,7 @@ mod flashblocks;
 pub use flashblocks::{FlashblockReplayServer, FlashblocksClient};
 
 mod runner;
-pub use runner::{NetworkBenchmark, RunResult, RunnerOptions};
+pub use runner::{BenchmarkMode, NetworkBenchmark, RunResult, RunnerOptions};
 
 mod service;
 pub use service::{parse_config, run_benchmark, BenchmarkArgs, DEFAULT_CONFIG_YAML};

@@ -8,7 +8,7 @@ use tracing::info;
 use crate::config::BenchmarkConfig;
 use crate::error::BenchmarkError;
 use crate::git::GitInfo;
-use crate::runner::{NetworkBenchmark, RunnerOptions};
+use crate::runner::{BenchmarkMode, NetworkBenchmark, RunnerOptions};
 
 /// The embedded default benchmark config (ERC-20 transfers on a fresh devnet).
 pub const DEFAULT_CONFIG_YAML: &str = include_str!("../examples/devnet.yaml");
@@ -43,6 +43,8 @@ pub struct BenchmarkArgs {
     pub git_info: GitInfo,
     /// User-supplied key-value tags from `--tags`.
     pub tags: HashMap<String, String>,
+    /// Whether to run sequencer only, validator only, or both (default).
+    pub mode: BenchmarkMode,
 }
 
 /// Run all benchmark entries from the pre-parsed config and log results.
@@ -60,6 +62,7 @@ pub async fn run_benchmark(args: BenchmarkArgs) -> Result<(), BenchmarkError> {
         run_group_id: args.run_group_id,
         git_info: args.git_info,
         tags: args.tags,
+        mode: args.mode,
     };
 
     let mut runner = NetworkBenchmark::new(args.config, options, args.snapshot_dir);
@@ -98,6 +101,7 @@ mod tests {
             run_group_id: "test-group-1".into(),
             git_info: GitInfo { sha: "abc123".into(), branch: "main".into() },
             tags: HashMap::new(),
+            mode: BenchmarkMode::Full,
         };
         assert_eq!(args.config_path, Some(PathBuf::from("/tmp/config.yaml")));
     }

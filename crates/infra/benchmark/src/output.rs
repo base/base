@@ -13,6 +13,8 @@ use serde::Serialize;
 use serde_json::json;
 use tracing::warn;
 
+use base_common_rpc_types_engine::BaseExecutionPayloadV4;
+
 use crate::config::{BenchmarkConfig, TestRun};
 use crate::error::BenchmarkError;
 use crate::metrics::{
@@ -215,6 +217,23 @@ pub fn average_metric(metrics: &[BlockMetrics], metric_name: &str) -> f64 {
 /// Like [`average_metric`] but converts nanoseconds to seconds.
 pub fn average_metric_seconds(metrics: &[BlockMetrics], metric_name: &str) -> f64 {
     average_metric(metrics, metric_name) / 1_000_000_000.0
+}
+
+/// Serialize a list of execution payloads to `payloads.json` in `output_dir`.
+pub fn write_payloads_json(
+    output_dir: &Path,
+    payloads: &[BaseExecutionPayloadV4],
+) -> Result<(), BenchmarkError> {
+    let path = output_dir.join("payloads.json");
+    fs::write(path, serde_json::to_string_pretty(payloads)?)?;
+    Ok(())
+}
+
+/// Load execution payloads previously written by [`write_payloads_json`].
+pub fn load_payloads_json(path: &Path) -> Result<Vec<BaseExecutionPayloadV4>, BenchmarkError> {
+    let raw = fs::read_to_string(path)?;
+    serde_json::from_str(&raw)
+        .map_err(|e| BenchmarkError::Config(format!("failed to parse payloads file: {e}")))
 }
 
 /// Print the last `max_bytes` of a log file to stderr, used on test failure.

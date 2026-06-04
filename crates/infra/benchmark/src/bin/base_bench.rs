@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use base_benchmark::BenchmarkMode;
 use clap::Parser;
 use tracing::error;
 
@@ -56,6 +57,14 @@ struct Cli {
     /// Comma-separated key=value tags attached to every run (e.g. `env=ci,pr=123`).
     #[arg(long, env = "BASE_BENCH_TAGS")]
     tags: Option<String>,
+
+    /// Run only the sequencer phase; save payloads to `<output-dir>/payloads.json`.
+    #[arg(long, conflicts_with = "payloads_file")]
+    sequencer_only: bool,
+
+    /// Run only the validator phase using payloads from a previous sequencer-only run.
+    #[arg(long, env = "BASE_BENCH_PAYLOADS_FILE")]
+    payloads_file: Option<PathBuf>,
 }
 
 impl Cli {
@@ -164,6 +173,14 @@ async fn main() {
         })
         .unwrap_or_default();
 
+    let mode = if cli.sequencer_only {
+        BenchmarkMode::SequencerOnly
+    } else if let Some(path) = cli.payloads_file {
+        BenchmarkMode::ValidatorOnly { payloads_path: path }
+    } else {
+        BenchmarkMode::Full
+    };
+
     let args = base_benchmark::BenchmarkArgs {
         config,
         config_path,
@@ -176,6 +193,7 @@ async fn main() {
         run_group_id,
         git_info,
         tags,
+        mode,
     };
 
     if let Err(e) = base_benchmark::run_benchmark(args).await {

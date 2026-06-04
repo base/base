@@ -14,8 +14,8 @@ use tracing::{info, warn};
 
 use crate::client::{setup_node, ClientOptions, InternalClientOptions};
 use crate::config::{BenchmarkConfig, TestRun};
-use crate::git::GitInfo;
 use crate::deploy::deploy_uniswap_v3;
+use crate::git::GitInfo;
 use crate::consensus::{
     BaseConsensusClient, FakeMempool, SequencerConsensusClient, SyncingConsensusClient,
 };
@@ -25,13 +25,31 @@ use crate::metrics::{
     GAS_PER_BLOCK, GAS_PER_SECOND, GET_PAYLOAD_LATENCY, NEW_PAYLOAD_LATENCY,
     TRANSACTIONS_PER_BLOCK,
 };
-use crate::output::{average_metric, write_metadata_json, write_metrics_file, RunContext};
+use crate::output::{
+    average_metric, load_payloads_json, write_metadata_json, write_metrics_file,
+    write_payloads_json, RunContext,
+};
 use crate::payload::{LoadTestConfig, LoadTestPayloadWorker, PayloadWorker};
 use crate::ports::PortManager;
 use crate::proxy::run_proxy;
 use crate::snapshots::SnapshotManager;
 
 const JWT_SECRET: [u8; 32] = [0u8; 32];
+
+/// Controls which phases of the benchmark to execute.
+#[derive(Debug, Default)]
+pub enum BenchmarkMode {
+    /// Run sequencer and validator (default).
+    #[default]
+    Full,
+    /// Run only the sequencer; save payloads to `payloads.json` in the output dir.
+    SequencerOnly,
+    /// Skip sequencer; load payloads from the given file and run only the validator.
+    ValidatorOnly {
+        /// Path to a `payloads.json` file from a previous sequencer-only run.
+        payloads_path: PathBuf,
+    },
+}
 
 /// Filesystem paths and keys needed by the benchmark runner.
 #[derive(Debug)]
@@ -54,6 +72,8 @@ pub struct RunnerOptions {
     pub git_info: GitInfo,
     /// User-supplied key-value tags from `--tags`.
     pub tags: HashMap<String, String>,
+    /// Which phases to run.
+    pub mode: BenchmarkMode,
 }
 
 /// Top-level orchestrator: expands the config matrix, runs each test, and
@@ -101,6 +121,63 @@ impl NetworkBenchmark {
             .await
             .map_err(BenchmarkError::Io)?;
 
+        let chain_cfg_path = test_dir.path().join("genesis.json");
+        let rollup_cfg_path = test_dir.path().join("rollup.json");
+        if let Some(src) = self.config.rollup_config.as_ref() {
+            tokio::fs::copy(src, &rollup_cfg_path)
+                .await
+                .map_err(BenchmarkError::Io)?;
+            let raw = tokio::fs::read_to_string(&rollup_cfg_path)
+                .await
+                .map_err(BenchmarkError::Io)?;
+            let rollup: RollupConfig = serde_json::from_str(&raw)
+                .map_err(|e| BenchmarkError::Config(format!("invalid rollup config: {e}")))?;
+            let genesis_json =
+                genesis_json_from_rollup_config(&rollup, &self.options.prefund_key);
+            let genesis_str = serde_json::to_string_pretty(&genesis_json)
+                .map_err(|e| BenchmarkError::Config(format!("genesis json error: {e}")))?;
+            tokio::fs::write(&chain_cfg_path, genesis_str)
+                .await
+                .map_err(BenchmarkError::Io)?;
+        } else {
+            let genesis = build_test_genesis();
+            let genesis_str = serde_json::to_string_pretty(&genesis)
+                .map_err(|e| BenchmarkError::Config(format!("genesis json error: {e}")))?;
+            tokio::fs::write(&chain_cfg_path, genesis_str)
+                .await
+                .map_err(BenchmarkError::Io)?;
+        }
+
+        let rollup_cfg: Arc<RollupConfig> = if rollup_cfg_path.exists() {
+            let raw = tokio::fs::read_to_string(&rollup_cfg_path)
+                .await
+                .map_err(BenchmarkError::Io)?;
+            Arc::new(
+                serde_json::from_str(&raw)
+                    .map_err(|e| BenchmarkError::Config(format!("invalid rollup config: {e}")))?,
+            )
+        } else {
+            Arc::new(RollupConfig::default())
+        };
+
+        let validator_log_dir = self.options.output_dir.join("validator");
+        std::fs::create_dir_all(&validator_log_dir)?;
+
+        if let BenchmarkMode::ValidatorOnly { payloads_path } = &self.options.mode {
+            let payloads = load_payloads_json(payloads_path)?;
+            return self
+                .run_validator_phase(
+                    &run,
+                    &payloads,
+                    &chain_cfg_path,
+                    &jwt_path,
+                    &rollup_cfg,
+                    &validator_log_dir,
+                    &test_dir,
+                )
+                .await;
+        }
+
         let data_dir = if let Some(snap_cfg) = &run.definition.snapshot {
             self.snapshot_manager
                 .ensure_snapshot(
@@ -134,39 +211,10 @@ impl NetworkBenchmark {
         }
 
         let sequencer_log_dir = self.options.output_dir.join("sequencer");
-        let validator_log_dir = self.options.output_dir.join("validator");
         std::fs::create_dir_all(&sequencer_log_dir)?;
-        std::fs::create_dir_all(&validator_log_dir)?;
-
-        let chain_cfg_path = test_dir.path().join("genesis.json");
-        let rollup_cfg_path = test_dir.path().join("rollup.json");
-        if let Some(src) = self.config.rollup_config.as_ref() {
-            tokio::fs::copy(src, &rollup_cfg_path)
-                .await
-                .map_err(BenchmarkError::Io)?;
-            let raw = tokio::fs::read_to_string(&rollup_cfg_path)
-                .await
-                .map_err(BenchmarkError::Io)?;
-            let rollup: RollupConfig = serde_json::from_str(&raw)
-                .map_err(|e| BenchmarkError::Config(format!("invalid rollup config: {e}")))?;
-            let genesis_json =
-                genesis_json_from_rollup_config(&rollup, &self.options.prefund_key);
-            let genesis_str = serde_json::to_string_pretty(&genesis_json)
-                .map_err(|e| BenchmarkError::Config(format!("genesis json error: {e}")))?;
-            tokio::fs::write(&chain_cfg_path, genesis_str)
-                .await
-                .map_err(BenchmarkError::Io)?;
-        } else {
-            let genesis = build_test_genesis();
-            let genesis_str = serde_json::to_string_pretty(&genesis)
-                .map_err(|e| BenchmarkError::Config(format!("genesis json error: {e}")))?;
-            tokio::fs::write(&chain_cfg_path, genesis_str)
-                .await
-                .map_err(BenchmarkError::Io)?;
-        }
 
         let internal_options = InternalClientOptions {
-            jwt_secret_path: jwt_path,
+            jwt_secret_path: jwt_path.clone(),
             chain_cfg_path: chain_cfg_path.clone(),
             data_dir_path: data_dir,
             test_dir_path: sequencer_log_dir.clone(),
@@ -212,18 +260,6 @@ impl NetworkBenchmark {
         let auth_url: Url = node.auth_rpc_url().parse().map_err(|_| {
             BenchmarkError::Config(format!("invalid auth url: {}", node.auth_rpc_url()))
         })?;
-
-        let rollup_cfg: Arc<RollupConfig> = if rollup_cfg_path.exists() {
-            let raw = tokio::fs::read_to_string(&rollup_cfg_path)
-                .await
-                .map_err(BenchmarkError::Io)?;
-            Arc::new(
-                serde_json::from_str(&raw)
-                    .map_err(|e| BenchmarkError::Config(format!("invalid rollup config: {e}")))?,
-            )
-        } else {
-            Arc::new(RollupConfig::default())
-        };
 
         let jwt = JwtSecret::from_hex(hex::encode(JWT_SECRET))
             .map_err(|e| BenchmarkError::Config(format!("jwt error: {e}")))?;
@@ -284,8 +320,6 @@ impl NetworkBenchmark {
 
         worker.start().await?;
 
-        // Setup phase: propose blocks (unmeasured) until the load test finishes
-        // funding wallets and signals ready via stdout.
         let mut ready = std::pin::pin!(worker.wait_until_ready());
         loop {
             tokio::select! {
@@ -317,6 +351,93 @@ impl NetworkBenchmark {
 
         self.port_manager.release(proxy_port);
 
+        write_payloads_json(&self.options.output_dir, &payloads)?;
+
+        if matches!(self.options.mode, BenchmarkMode::SequencerOnly) {
+            let violations = run.definition.metrics.as_ref().map_or_else(Vec::new, |mc| {
+                check_thresholds(&block_metrics_vec, mc)
+            });
+            let success = violations.iter().all(|v| v.severity != Severity::Error);
+            write_metrics_file(&self.options.output_dir, "sequencer", &block_metrics_vec)?;
+            let ctx = RunContext {
+                run_group_id: &self.options.run_group_id,
+                git_sha: &self.options.git_info.sha,
+                git_branch: &self.options.git_info.branch,
+                global_tags: &self.options.tags,
+                success,
+            };
+            write_metadata_json(
+                &self.options.output_dir,
+                self.options.config_path.as_deref(),
+                &run,
+                &self.config,
+                &block_metrics_vec,
+                &[],
+                &ctx,
+            )?;
+            info!(run_id = %run.id, "sequencer-only run complete");
+            return Ok(RunResult {
+                id: run.id,
+                block_metrics: block_metrics_vec,
+                validator_block_metrics: vec![],
+                violations,
+            });
+        }
+
+        let validator_metrics = self
+            .run_validator_phase(
+                &run,
+                &payloads,
+                &chain_cfg_path,
+                &jwt_path,
+                &rollup_cfg,
+                &validator_log_dir,
+                &test_dir,
+            )
+            .await?;
+
+        let violations = run.definition.metrics.as_ref().map_or_else(Vec::new, |mc| {
+            check_thresholds(&block_metrics_vec, mc)
+        });
+        let success = violations.iter().all(|v| v.severity != Severity::Error);
+        write_metrics_file(&self.options.output_dir, "sequencer", &block_metrics_vec)?;
+        let ctx = RunContext {
+            run_group_id: &self.options.run_group_id,
+            git_sha: &self.options.git_info.sha,
+            git_branch: &self.options.git_info.branch,
+            global_tags: &self.options.tags,
+            success,
+        };
+        write_metadata_json(
+            &self.options.output_dir,
+            self.options.config_path.as_deref(),
+            &run,
+            &self.config,
+            &block_metrics_vec,
+            &validator_metrics.validator_block_metrics,
+            &ctx,
+        )?;
+
+        info!(run_id = %run.id, "run complete");
+
+        Ok(RunResult {
+            id: run.id,
+            block_metrics: block_metrics_vec,
+            validator_block_metrics: validator_metrics.validator_block_metrics,
+            violations,
+        })
+    }
+
+    async fn run_validator_phase(
+        &mut self,
+        run: &TestRun,
+        payloads: &[base_common_rpc_types_engine::BaseExecutionPayloadV4],
+        chain_cfg_path: &std::path::Path,
+        jwt_path: &std::path::Path,
+        rollup_cfg: &Arc<RollupConfig>,
+        validator_log_dir: &std::path::Path,
+        test_dir: &tempfile::TempDir,
+    ) -> Result<RunResult, BenchmarkError> {
         let validator_data_dir = test_dir.path().join("validator-data");
         std::fs::create_dir_all(&validator_data_dir)?;
 
@@ -328,10 +449,10 @@ impl NetworkBenchmark {
             flashblocks_block_time_ms: None,
         };
         let validator_internal_options = InternalClientOptions {
-            jwt_secret_path: test_dir.path().join("jwt.hex"),
-            chain_cfg_path: chain_cfg_path.clone(),
+            jwt_secret_path: jwt_path.to_path_buf(),
+            chain_cfg_path: chain_cfg_path.to_path_buf(),
             data_dir_path: validator_data_dir,
-            test_dir_path: validator_log_dir,
+            test_dir_path: validator_log_dir.to_path_buf(),
             jwt_secret: JWT_SECRET,
             metrics_path: test_dir.path().join("validator-metrics"),
         };
@@ -353,7 +474,7 @@ impl NetworkBenchmark {
         let validator_jwt = JwtSecret::from_hex(hex::encode(JWT_SECRET))
             .map_err(|e| BenchmarkError::Config(format!("validator jwt error: {e}")))?;
         let mut validator_base =
-            BaseConsensusClient::connect(validator_auth_url, validator_jwt, Arc::clone(&rollup_cfg))
+            BaseConsensusClient::connect(validator_auth_url, validator_jwt, Arc::clone(rollup_cfg))
                 .await?;
         validator_base
             .init_from_genesis(validator_node.rpc_url())
@@ -361,43 +482,49 @@ impl NetworkBenchmark {
         let mut validator = SyncingConsensusClient::new(validator_base);
         let mut validator_metrics_collector =
             MetricsCollector::new(validator_node.metrics_port());
+        let block_time = std::time::Duration::from_millis(self.config.block_time_ms);
         let validator_metrics = validator
-            .start(&payloads, 1, block_time, &mut validator_metrics_collector)
+            .start(payloads, 1, block_time, &mut validator_metrics_collector)
             .await?;
 
         validator_node.stop().await?;
 
-        let violations = run.definition.metrics.as_ref().map_or_else(Vec::new, |mc| {
-            check_thresholds(&block_metrics_vec, mc)
-        });
-
-        let success = violations.iter().all(|v| v.severity != Severity::Error);
-        write_metrics_file(&self.options.output_dir, "sequencer", &block_metrics_vec)?;
-        write_metrics_file(&self.options.output_dir, "validator", &validator_metrics)?;
-        let ctx = RunContext {
-            run_group_id: &self.options.run_group_id,
-            git_sha: &self.options.git_info.sha,
-            git_branch: &self.options.git_info.branch,
-            global_tags: &self.options.tags,
-            success,
-        };
-        write_metadata_json(
-            &self.options.output_dir,
-            self.options.config_path.as_deref(),
-            &run,
-            &self.config,
-            &block_metrics_vec,
-            &validator_metrics,
-            &ctx,
-        )?;
-
-        info!(run_id = %run.id, "run complete");
+        if matches!(self.options.mode, BenchmarkMode::ValidatorOnly { .. }) {
+            let violations = run.definition.metrics.as_ref().map_or_else(Vec::new, |mc| {
+                check_thresholds(&validator_metrics, mc)
+            });
+            let success = violations.iter().all(|v| v.severity != Severity::Error);
+            write_metrics_file(&self.options.output_dir, "validator", &validator_metrics)?;
+            let ctx = RunContext {
+                run_group_id: &self.options.run_group_id,
+                git_sha: &self.options.git_info.sha,
+                git_branch: &self.options.git_info.branch,
+                global_tags: &self.options.tags,
+                success,
+            };
+            write_metadata_json(
+                &self.options.output_dir,
+                self.options.config_path.as_deref(),
+                run,
+                &self.config,
+                &[],
+                &validator_metrics,
+                &ctx,
+            )?;
+            info!(run_id = %run.id, "validator-only run complete");
+            return Ok(RunResult {
+                id: run.id.clone(),
+                block_metrics: vec![],
+                validator_block_metrics: validator_metrics,
+                violations,
+            });
+        }
 
         Ok(RunResult {
-            id: run.id,
-            block_metrics: block_metrics_vec,
+            id: run.id.clone(),
+            block_metrics: vec![],
             validator_block_metrics: validator_metrics,
-            violations,
+            violations: vec![],
         })
     }
 }
@@ -570,6 +697,7 @@ mod tests {
             run_group_id: "test-group".into(),
             git_info: GitInfo { sha: "abc".into(), branch: "main".into() },
             tags: HashMap::new(),
+            mode: BenchmarkMode::Full,
         };
         assert_eq!(opts.reth_bin, PathBuf::from("/bin/reth"));
     }
