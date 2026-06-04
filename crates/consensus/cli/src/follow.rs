@@ -243,8 +243,7 @@ impl ConsensusFollowNodeArgs {
         let l1_beacon = self
             .config
             .l1_rpc_args
-            .l1_beacon
-            .as_ref()
+            .l1_beacon()?
             .map(|beacon| OnlineBeaconClient::new_http(beacon.to_string()));
 
         Ok(L1Config {
