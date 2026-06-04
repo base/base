@@ -418,6 +418,8 @@ impl ConsensusNodeArgs {
     ) -> eyre::Result<RollupNode> {
         self.validate_sequencer_key()?;
         self.validate_da_batcher_sender_override()?;
+        self.config.l1_rpc_args.validate()?;
+        self.config.l1_rpc_args.log_derivation_mode();
         if let Some(sender) = self.config.l1_rpc_args.l1_da_batcher_sender_override {
             warn!(
                 %sender,
@@ -452,7 +454,7 @@ impl ConsensusNodeArgs {
         let l1_config = L1ConfigBuilder {
             chain_config: l1_chain_config,
             trust_rpc: self.config.l1_rpc_args.l1_trust_rpc,
-            beacon: self.config.l1_rpc_args.l1_beacon.clone(),
+            beacon: self.config.l1_rpc_args.l1_beacon()?,
             rpc_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
             rpc_timeout: self.config.l1_rpc_args.l1_rpc_timeout,
             slot_duration_override: self.config.l1_rpc_args.l1_slot_duration_override,

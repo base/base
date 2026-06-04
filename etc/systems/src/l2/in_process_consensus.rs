@@ -189,7 +189,7 @@ impl InProcessConsensus {
         let l1_config = L1ConfigBuilder {
             chain_config: l1_chain_config,
             trust_rpc: true,
-            beacon: config.l1_beacon_url,
+            beacon: Some(config.l1_beacon_url),
             rpc_url: config.l1_rpc_url.clone(),
             rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
             slot_duration_override: config.l1_slot_duration_override,

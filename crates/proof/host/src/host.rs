@@ -4,7 +4,7 @@ use alloy_provider::{Network, RootProvider};
 use base_common_evm::BaseEvmFactory;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+use base_consensus_providers::{L1BlobProvider, OnlineBeaconClient, OnlineBlobProvider};
 use base_optimism_rpc::OptimismRollupProviderExt;
 use base_proof::HintType;
 use base_proof_client::{FaultProofProgramError, Prologue};
@@ -238,10 +238,19 @@ impl Host {
     /// Creates the providers required for the host backend.
     pub async fn create_providers(&self) -> Result<HostProviders> {
         let l1_provider = rpc_provider(&self.config.prover.l1_eth_url).await?;
-        let blob_provider = OnlineBlobProvider::init(OnlineBeaconClient::new_http(
-            self.config.prover.l1_beacon_url.clone(),
-        ))
-        .await;
+        let blob_provider = match self
+            .config
+            .prover
+            .l1_beacon_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+        {
+            Some(url) => L1BlobProvider::beacon(
+                OnlineBlobProvider::init(OnlineBeaconClient::new_http(url.to_string())).await,
+            ),
+            None => L1BlobProvider::calldata_only(),
+        };
         let l2_provider = rpc_provider::<Base>(&self.config.prover.l2_eth_url).await?;
         let l2_node_provider = rpc_provider(&self.config.prover.l2_node_url).await?;
 

@@ -1312,7 +1312,7 @@ mod tests {
     use alloy_rlp::Encodable;
     use base_common_genesis::RollupConfig;
     use base_common_network::Base;
-    use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+    use base_consensus_providers::{L1BlobProvider, OnlineBeaconClient, OnlineBlobProvider};
     use base_proof_primitives::ProofRequest;
     use tokio::sync::RwLock;
 
@@ -1342,7 +1342,7 @@ mod tests {
                 l1_eth_url: "http://127.0.0.1:1".to_string(),
                 l2_eth_url: "http://127.0.0.1:1".to_string(),
                 l2_node_url: "http://127.0.0.1:1".to_string(),
-                l1_beacon_url: "http://127.0.0.1:1".to_string(),
+                l1_beacon_url: Some("http://127.0.0.1:1".to_string()),
                 l2_chain_id: 0,
                 rollup_config: RollupConfig::default(),
                 l1_config: ChainConfig::default(),
@@ -1354,8 +1354,11 @@ mod tests {
 
     fn test_providers_with_l1(l1: RootProvider, l2: RootProvider<Base>) -> HostProviders {
         let beacon = OnlineBeaconClient::new_http("http://127.0.0.1:1".to_string());
-        let blobs =
-            OnlineBlobProvider { beacon_client: beacon, genesis_time: 0, slot_interval: 12 };
+        let blobs = L1BlobProvider::beacon(OnlineBlobProvider {
+            beacon_client: beacon,
+            genesis_time: 0,
+            slot_interval: 12,
+        });
         let l2_node = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
         HostProviders { l1, blobs, l2, l2_node }
     }

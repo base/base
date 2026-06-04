@@ -49,8 +49,8 @@ pub struct L1ConfigBuilder {
     pub chain_config: ChainConfig,
     /// Whether to trust the L1 RPC.
     pub trust_rpc: bool,
-    /// The L1 beacon API.
-    pub beacon: Url,
+    /// The L1 beacon API, or `None` when the L1 parent has no beacon (blob) DA endpoint.
+    pub beacon: Option<Url>,
     /// The L1 RPC URL.
     pub rpc_url: Url,
     /// Request timeout for general L1 execution JSON-RPC calls.
@@ -201,10 +201,13 @@ impl RollupNodeBuilder {
     /// explicit opt-in transport.
     pub async fn build(self) -> TransportResult<RollupNode> {
         let sequencer_config = self.sequencer_config.unwrap_or_default();
-        let mut l1_beacon = OnlineBeaconClient::new_http(self.l1_config_builder.beacon.to_string());
-        if let Some(l1_slot_duration) = self.l1_config_builder.slot_duration_override {
-            l1_beacon = l1_beacon.with_l1_slot_duration_override(l1_slot_duration);
-        }
+        let l1_beacon = self.l1_config_builder.beacon.as_ref().map(|beacon| {
+            let mut client = OnlineBeaconClient::new_http(beacon.to_string());
+            if let Some(l1_slot_duration) = self.l1_config_builder.slot_duration_override {
+                client = client.with_l1_slot_duration_override(l1_slot_duration);
+            }
+            client
+        });
 
         let finalized_poll_interval = self
             .finalized_poll_interval
@@ -314,7 +317,7 @@ mod tests {
         let l1_config_builder = L1ConfigBuilder {
             chain_config: ChainConfig::default(),
             trust_rpc: true,
-            beacon: Url::parse("http://127.0.0.1:5052").unwrap(),
+            beacon: Some(Url::parse("http://127.0.0.1:5052").unwrap()),
             rpc_url: Url::parse("http://127.0.0.1:8545").unwrap(),
             rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
             slot_duration_override: None,

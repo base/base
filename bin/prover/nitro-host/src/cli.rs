@@ -90,7 +90,11 @@ struct ProverRuntimeArgs {
 
     /// L1 beacon API URL.
     #[arg(long, env = "L1_BEACON_URL")]
-    l1_beacon_url: String,
+    l1_beacon_url: Option<String>,
+
+    /// Run proving without an L1 beacon API (calldata-only / appchain mode).
+    #[arg(long, env = "L1_CALLDATA_ONLY")]
+    l1_calldata_only: bool,
 
     /// L2 chain ID.
     #[arg(long, env = "L2_CHAIN_ID")]
@@ -108,6 +112,24 @@ struct ProverRuntimeArgs {
 
 #[cfg(any(target_os = "linux", feature = "local"))]
 impl ProverRuntimeArgs {
+    fn l1_beacon_url(&self) -> eyre::Result<Option<String>> {
+        let l1_beacon_url =
+            self.l1_beacon_url.as_deref().map(str::trim).filter(|url| !url.is_empty());
+
+        match (l1_beacon_url, self.l1_calldata_only) {
+            (Some(url), false) => Ok(Some(url.to_string())),
+            (None, true) => Ok(None),
+            (None, false) => Err(eyre!(
+                "no L1 derivation mode selected: provide --l1-beacon-url <url> for blob-backed \
+                 proving, or pass --l1-calldata-only for calldata-only proving"
+            )),
+            (Some(_), true) => Err(eyre!(
+                "conflicting L1 derivation modes: --l1-beacon-url and --l1-calldata-only are \
+                 mutually exclusive"
+            )),
+        }
+    }
+
     fn registration_health_config(&self) -> Option<RegistrationHealthConfig> {
         self.tee_prover_registry_address.map(|address| RegistrationHealthConfig {
             registry_address: address,
@@ -116,6 +138,7 @@ impl ProverRuntimeArgs {
     }
 
     fn prover_config(self) -> eyre::Result<ProverConfig> {
+        let l1_beacon_url = self.l1_beacon_url()?;
         let rollup_config = rollup_config!(self.l2_chain_id)
             .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.l2_chain_id))?;
 
@@ -128,7 +151,7 @@ impl ProverRuntimeArgs {
             l1_eth_url: self.l1_eth_url,
             l2_eth_url: self.l2_eth_url,
             l2_node_url: self.l2_node_url,
-            l1_beacon_url: self.l1_beacon_url,
+            l1_beacon_url,
             l2_chain_id: self.l2_chain_id,
             rollup_config,
             l1_config,
@@ -411,4 +434,51 @@ enum WorkerTransportMode {
     Vsock,
     #[cfg(feature = "local")]
     Local,
+}
+
+#[cfg(all(test, feature = "local"))]
+mod tests {
+    use super::ProverRuntimeArgs;
+
+    fn args(l1_beacon_url: Option<&str>, l1_calldata_only: bool) -> ProverRuntimeArgs {
+        ProverRuntimeArgs {
+            l1_eth_url: "http://localhost:8545".to_string(),
+            l2_eth_url: "http://localhost:9545".to_string(),
+            l2_node_url: "http://localhost:9546".to_string(),
+            l1_beacon_url: l1_beacon_url.map(str::to_string),
+            l1_calldata_only,
+            l2_chain_id: 8453,
+            enable_experimental_witness_endpoint: false,
+            tee_prover_registry_address: None,
+        }
+    }
+
+    #[test]
+    fn beacon_mode_is_valid() {
+        let l1_beacon_url = args(Some("http://localhost:5052"), false).l1_beacon_url().unwrap();
+
+        assert_eq!(l1_beacon_url, Some("http://localhost:5052".to_string()));
+    }
+
+    #[test]
+    fn calldata_only_mode_is_valid() {
+        let l1_beacon_url = args(None, true).l1_beacon_url().unwrap();
+
+        assert_eq!(l1_beacon_url, None);
+    }
+
+    #[test]
+    fn neither_mode_is_an_error() {
+        assert!(args(None, false).l1_beacon_url().is_err());
+    }
+
+    #[test]
+    fn both_modes_are_an_error() {
+        assert!(args(Some("http://localhost:5052"), true).l1_beacon_url().is_err());
+    }
+
+    #[test]
+    fn empty_beacon_url_is_treated_as_missing() {
+        assert!(args(Some("  "), false).l1_beacon_url().is_err());
+    }
 }
