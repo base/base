@@ -28,8 +28,8 @@ where
     rollup_config: Arc<RollupConfig>,
     /// The L1 provider used for live block lookups.
     l1_provider: Arc<L1Provider>,
-    /// Receiver for the most recent L1 head observed by the watcher actor.
-    latest_head: watch::Receiver<Option<BlockInfo>>,
+    /// Receiver for the most recent L1 origin reached by derivation.
+    derivation_origin: watch::Receiver<Option<BlockInfo>>,
 }
 
 impl<L1Provider> Clone for L1WatcherQueryExecutor<L1Provider>
@@ -40,7 +40,7 @@ where
         Self {
             rollup_config: Arc::clone(&self.rollup_config),
             l1_provider: Arc::clone(&self.l1_provider),
-            latest_head: self.latest_head.clone(),
+            derivation_origin: self.derivation_origin.clone(),
         }
     }
 }
@@ -53,9 +53,9 @@ where
     pub const fn new(
         rollup_config: Arc<RollupConfig>,
         l1_provider: Arc<L1Provider>,
-        latest_head: watch::Receiver<Option<BlockInfo>>,
+        derivation_origin: watch::Receiver<Option<BlockInfo>>,
     ) -> Self {
-        Self { rollup_config, l1_provider, latest_head }
+        Self { rollup_config, l1_provider, derivation_origin }
     }
 
     /// Executes a single query.
@@ -102,7 +102,7 @@ where
         query_started_at: Instant,
         sender: oneshot::Sender<L1State>,
     ) {
-        let current_l1 = *self.latest_head.borrow();
+        let current_l1 = *self.derivation_origin.borrow();
         let (head_l1, finalized_l1, safe_l1) = tokio::join!(
             self.query_block(BlockId::latest(), "latest"),
             self.query_block(BlockId::finalized(), "finalized"),
@@ -182,14 +182,14 @@ where
         rollup_config: Arc<RollupConfig>,
         l1_provider: L1Provider,
         inbound_queries: mpsc::Receiver<L1WatcherQueries>,
-        latest_head: watch::Receiver<Option<BlockInfo>>,
+        derivation_origin: watch::Receiver<Option<BlockInfo>>,
         cancellation: CancellationToken,
     ) -> Self {
         Self {
             executor: L1WatcherQueryExecutor::new(
                 rollup_config,
                 Arc::new(l1_provider),
-                latest_head,
+                derivation_origin,
             ),
             inbound_queries,
             cancellation,
@@ -334,19 +334,19 @@ mod tests {
 
     fn executor(
         fetcher: MockFetcher,
-        current_l1: Option<BlockInfo>,
+        derivation_origin: Option<BlockInfo>,
     ) -> L1WatcherQueryExecutor<MockFetcher> {
-        let (_latest_head_tx, latest_head_rx) = watch::channel(current_l1);
+        let (_derivation_origin_tx, derivation_origin_rx) = watch::channel(derivation_origin);
         L1WatcherQueryExecutor::new(
             Arc::new(RollupConfig::default()),
             Arc::new(fetcher),
-            latest_head_rx,
+            derivation_origin_rx,
         )
     }
 
     #[tokio::test]
-    async fn l1_state_query_returns_live_state() {
-        let current_l1 = Some(MockFetcher::block_info(11));
+    async fn l1_state_query_uses_derivation_origin_for_current_l1() {
+        let current_l1 = Some(MockFetcher::block_info(7));
         let executor = executor(MockFetcher::with_delay(Duration::ZERO), current_l1);
         let (sender, receiver) = oneshot::channel();
 
@@ -375,14 +375,14 @@ mod tests {
     #[tokio::test]
     async fn query_processor_handles_multiple_queries_concurrently() {
         let fetcher = MockFetcher::with_delay(Duration::from_millis(20));
-        let (_latest_head_tx, latest_head_rx) = watch::channel(None);
+        let (_derivation_origin_tx, derivation_origin_rx) = watch::channel(None);
         let (query_tx, query_rx) = mpsc::channel(16);
         let cancellation = CancellationToken::new();
         let processor = L1WatcherQueryProcessor::new(
             Arc::new(RollupConfig::default()),
             fetcher,
             query_rx,
-            latest_head_rx,
+            derivation_origin_rx,
             cancellation.clone(),
         )
         .with_query_concurrency(2);
