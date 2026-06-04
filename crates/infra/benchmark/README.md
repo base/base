@@ -2,32 +2,6 @@
 
 End-to-end throughput and latency benchmark for Base sequencer and validator nodes.
 
-## Architecture
-
-```text
-base-bench
-  ├── PortManager           – allocates ephemeral ports per subprocess
-  ├── SnapshotManager       – prepares (or caches) chain data dirs before each run
-  ├── BaseRethNodeClient    – launches sequencer as a subprocess
-  ├── BuilderClient         – wraps BaseRethNodeClient, adds flashblocks WS port
-  ├── RPC Proxy (axum)      – intercepts eth_sendRawTransaction → FakeMempool
-  ├── LoadTestPayloadWorker – spawns base-load-test, shares FakeMempool with proxy
-  ├── SequencerConsensusClient – drives FCU→sleep→getPayload→newPayload loop
-  ├── MetricsCollector      – scrapes Prometheus after each block
-  ├── SyncingConsensusClient   – replays collected payloads through the validator
-  └── NetworkBenchmark      – top-level orchestrator; writes per-run JSON results
-```
-
-The sequencer and validator each run as separate subprocesses. `base-bench` drives
-block production via the Engine API (FCU v3, getPayload v4, newPayload v4).
-Transactions are injected through the RPC proxy so the sequencer's txpool stays
-under `base-bench`'s control. After the sequencer run, all collected payloads are
-replayed through the validator to measure sync latency.
-
-Binary subprocesses (`base-reth-node`, `base-load-test`) are discovered as siblings
-of the `base-bench` executable, or supplied via flags. They are stopped with SIGINT;
-if they don't exit within 5 seconds, SIGKILL is sent.
-
 ## Quick start
 
 ```bash
@@ -38,6 +12,17 @@ base-bench \
 ```
 
 Results are written to `./results/`. See [`examples/devnet.yaml`](examples/devnet.yaml) for a working config.
+
+## Features
+
+- Drives block production via the Engine API (FCU v3, getPayload v4, newPayload v4)
+- Intercepts `eth_sendRawTransaction` through an RPC proxy to control the txpool precisely
+- Scrapes Prometheus metrics after each block for per-block gas, throughput, and latency
+- Replays sequencer payloads through a validator to measure sync latency
+- Auto-deploys mock Uniswap V3 contracts on devnets (no manual setup)
+- YAML matrix expansion for combinatorial parameter sweeps
+- Sequencer-only and validator-only modes for isolated measurement
+- Serializes produced payloads to disk for replay in later validator-only runs
 
 ## Flags
 
