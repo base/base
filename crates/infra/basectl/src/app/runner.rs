@@ -11,10 +11,11 @@ use crate::{
     config::{ConductorSource, MonitoringConfig},
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorPollUpdate, L1BlockInfo, L1ConnectionMode,
-        ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus, fetch_full_system_config,
-        fetch_initial_backlog_with_progress, run_block_fetcher, run_conductor_poller,
-        run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher, run_proofs_poller,
-        run_safe_head_poller, run_validator_poller,
+        PodsSnapshot, ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
+        fetch_full_system_config, fetch_initial_backlog_with_progress, run_block_fetcher,
+        run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped,
+        run_l1_blob_watcher, run_pods_poller, run_proofs_poller, run_safe_head_poller,
+        run_validator_poller,
     },
     tui::Toast,
 };
@@ -199,6 +200,12 @@ pub fn start_background_services(
             proofs_tx,
             proofs_toast_tx,
         ));
+    }
+
+    if let Some(pods_config) = config.pods.clone() {
+        let (pods_tx, pods_rx) = mpsc::channel::<PodsSnapshot>(4);
+        resources.pods.set_channel(pods_rx);
+        tokio::spawn(run_pods_poller(pods_config, pods_tx));
     }
 }
 

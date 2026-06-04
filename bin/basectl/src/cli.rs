@@ -63,6 +63,9 @@ pub(crate) enum MonitorCommands {
     /// HA conductor cluster monitor
     #[command(visible_alias = "co")]
     Conductor,
+    /// Kubernetes pod monitor
+    #[command(visible_alias = "po")]
+    Pods,
     /// Network upgrade activation countdown and history
     #[command(visible_alias = "u")]
     Upgrades,
@@ -76,6 +79,7 @@ impl MonitorCommands {
             Self::Da => ViewId::DaMonitor,
             Self::CommandCenter => ViewId::CommandCenter,
             Self::Conductor => ViewId::Conductor,
+            Self::Pods => ViewId::Pods,
             Self::Upgrades => ViewId::Upgrades,
         }
     }

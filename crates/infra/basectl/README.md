@@ -9,6 +9,22 @@ node sync status, flashblock throughput, and system metrics. `run_app` launches 
 with configurable views. Also supports `run_flashblocks_json` for non-interactive JSON output,
 suitable for piping into other tools.
 
+## Pods View
+
+`basectl monitor pods` displays Kubernetes pod status from groups defined in a
+local network config. Keep environment-specific names, namespaces, contexts, and
+URLs in user-local config; this public crate only stores the generic schema.
+
+```yaml
+pods:
+  refresh_interval_ms: 1000
+  groups:
+    - alias: example
+      label: Example
+      context: example-context
+      namespace: example-namespace
+```
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:

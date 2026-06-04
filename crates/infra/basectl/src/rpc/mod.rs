@@ -27,6 +27,9 @@ pub use l1::{L1BlockInfo, L1ConnectionMode, fetch_full_system_config, run_l1_blo
 
 mod p2p;
 
+mod pods;
+pub use pods::{PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, run_pods_poller};
+
 mod rollup;
 pub use rollup::{
     LatestProposal, ProofsSnapshot, ValidatorNodeStatus, fetch_safe_and_latest, run_proofs_poller,

@@ -15,7 +15,7 @@ use crate::{
     config::{ConductorNodeConfig, MonitoringConfig},
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, ConductorPollUpdate, L1BlockInfo,
-        L1ConnectionMode, ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
+        L1ConnectionMode, PodsSnapshot, ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
     },
     tui::ToastState,
 };
@@ -192,6 +192,29 @@ impl ProofsState {
     }
 }
 
+/// State for Kubernetes pod monitoring.
+#[derive(Debug, Default)]
+pub struct PodsState {
+    /// Most recent Kubernetes pods snapshot.
+    pub snapshot: Option<PodsSnapshot>,
+    rx: Option<mpsc::Receiver<PodsSnapshot>>,
+}
+
+impl PodsState {
+    /// Sets the channel for receiving pods snapshots.
+    pub fn set_channel(&mut self, rx: mpsc::Receiver<PodsSnapshot>) {
+        self.rx = Some(rx);
+    }
+
+    /// Drains the latest pods snapshot from the background poller.
+    pub fn poll(&mut self) {
+        let Some(ref mut rx) = self.rx else { return };
+        while let Ok(snapshot) = rx.try_recv() {
+            self.snapshot = Some(snapshot);
+        }
+    }
+}
+
 /// Shared resources available to all TUI views.
 #[derive(Debug)]
 pub struct Resources {
@@ -209,6 +232,8 @@ pub struct Resources {
     pub validators: ValidatorState,
     /// Proof system monitoring state.
     pub proofs: ProofsState,
+    /// Kubernetes pod monitoring state.
+    pub pods: PodsState,
     /// L1 system config fetched from the contract.
     pub system_config: Option<SystemConfig>,
     sys_config_rx: Option<mpsc::Receiver<SystemConfig>>,
@@ -269,6 +294,7 @@ impl Resources {
             conductor: ConductorState::default(),
             validators: ValidatorState::default(),
             proofs: ProofsState::default(),
+            pods: PodsState::default(),
             system_config: None,
             sys_config_rx: None,
         }

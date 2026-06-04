@@ -9,6 +9,53 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 use url::Url;
 
+/// Configuration for one Kubernetes pod group rendered by the pods view.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PodGroupConfig {
+    /// Short group alias shown in compact tables.
+    pub alias: String,
+    /// Human-readable group label.
+    pub label: String,
+    /// Kubernetes context passed to `kubectl --context`.
+    pub context: String,
+    /// Kubernetes namespace passed to `kubectl --namespace`.
+    pub namespace: String,
+    /// Optional Kubernetes label selector passed to `kubectl -l`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selector: Option<String>,
+}
+
+/// Configuration for the Kubernetes pods view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PodsConfig {
+    /// Optional path to a `kubectl` executable. Defaults to `kubectl` from `PATH`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kubectl: Option<PathBuf>,
+    /// How often to refresh pod status, in milliseconds.
+    #[serde(default = "default_pods_refresh_interval_ms")]
+    pub refresh_interval_ms: u64,
+    /// Static pod groups from the user's local config file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<PodGroupConfig>,
+}
+
+impl PodsConfig {
+    /// Returns the command used to invoke Kubernetes.
+    pub fn kubectl_program(&self) -> PathBuf {
+        self.kubectl.clone().unwrap_or_else(|| PathBuf::from("kubectl"))
+    }
+
+    /// Returns the configured refresh interval, never less than 250 ms.
+    pub const fn refresh_interval(&self) -> std::time::Duration {
+        let millis = if self.refresh_interval_ms < 250 { 250 } else { self.refresh_interval_ms };
+        std::time::Duration::from_millis(millis)
+    }
+}
+
+const fn default_pods_refresh_interval_ms() -> u64 {
+    1_000
+}
+
 /// Configuration for proof system monitoring (proposer + dispute games).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofsConfig {
@@ -294,6 +341,9 @@ pub struct MonitoringConfig {
     /// Proof system monitoring configuration (dispute games, anchor state).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proofs: Option<ProofsConfig>,
+    /// Kubernetes pod groups to display in the pods view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pods: Option<PodsConfig>,
 }
 
 impl MonitoringConfig {
@@ -377,6 +427,7 @@ struct MonitoringConfigOverride {
     discovery: Option<DiscoveryConfig>,
     validators: Option<Vec<ValidatorNodeConfig>>,
     proofs: Option<ProofsConfig>,
+    pods: Option<PodsConfig>,
 }
 
 impl MonitoringConfig {
@@ -424,6 +475,7 @@ impl MonitoringConfig {
             }),
             validators: None,
             proofs: None,
+            pods: None,
         }
     }
 
@@ -447,6 +499,7 @@ impl MonitoringConfig {
             }),
             validators: None,
             proofs: None,
+            pods: None,
         }
     }
 
@@ -528,6 +581,7 @@ impl MonitoringConfig {
             ]),
             discovery: None,
             proofs: None,
+            pods: None,
         }
     }
 
@@ -646,6 +700,7 @@ impl MonitoringConfig {
             discovery: overrides.discovery.or(base.discovery),
             validators: overrides.validators.or(base.validators),
             proofs: overrides.proofs.or(base.proofs),
+            pods: overrides.pods.or(base.pods),
         })
     }
 
