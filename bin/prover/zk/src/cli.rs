@@ -52,6 +52,9 @@ struct ZkArgs {
     #[arg(long, env = "L1_BEACON_ADDRESS")]
     l1_beacon_address: Option<String>,
 
+    #[arg(long, env = "L1_CALLDATA_ONLY")]
+    l1_calldata_only: bool,
+
     #[arg(long, env = "L2_NODE_ADDRESS")]
     l2_node_address: String,
 
@@ -150,6 +153,7 @@ impl ZkArgs {
     /// Runs the ZK prover service.
     async fn run(self) -> eyre::Result<()> {
         self.validate_config()?;
+        let configured_beacon_url = self.l1_beacon_url()?;
 
         info!("initializing database connection");
         let db_config = DatabaseConfig::from_env().map_err(|e| eyre!(e))?;
@@ -157,14 +161,6 @@ impl ZkArgs {
         let repo = ProofRequestRepo::new(pool);
         info!("database connection initialized");
 
-        // Normalize an absent/blank beacon address to `None` so the prover runs in
-        // calldata-only mode.
-        let configured_beacon_url = self
-            .l1_beacon_address
-            .as_deref()
-            .map(str::trim)
-            .filter(|url| !url.is_empty())
-            .map(ToOwned::to_owned);
         let (l1_url, l2_url, beacon_url, proxy_handles) = if self.proxy_enable {
             info!("proxy enabled, starting rate-limited RPC proxies");
 
@@ -203,7 +199,14 @@ impl ZkArgs {
         };
 
         let beacon_log = beacon_url.as_deref().unwrap_or("<none>");
-        info!(l1_url = %l1_url, l2_url = %l2_url, beacon_url = %beacon_log, "using RPC URLs");
+        let l1_derivation_mode = if beacon_url.is_some() { "beacon" } else { "calldata_only" };
+        info!(
+            l1_url = %l1_url,
+            l2_url = %l2_url,
+            beacon_url = %beacon_log,
+            l1_derivation_mode = %l1_derivation_mode,
+            "using RPC URLs"
+        );
 
         let rpc_config = RPCConfig {
             l1_rpc: Url::parse(&l1_url).map_err(|e| eyre!("invalid L1 RPC URL: {e}"))?,
@@ -518,6 +521,24 @@ impl ZkArgs {
         Ok(())
     }
 
+    fn l1_beacon_url(&self) -> eyre::Result<Option<String>> {
+        let l1_beacon_address =
+            self.l1_beacon_address.as_deref().map(str::trim).filter(|url| !url.is_empty());
+
+        match (l1_beacon_address, self.l1_calldata_only) {
+            (Some(url), false) => Ok(Some(url.to_string())),
+            (None, true) => Ok(None),
+            (None, false) => Err(eyre!(
+                "no L1 derivation mode selected: provide --l1-beacon-address <url> for \
+                 blob-backed proving, or pass --l1-calldata-only for calldata-only proving"
+            )),
+            (Some(_), true) => Err(eyre!(
+                "conflicting L1 derivation modes: --l1-beacon-address and --l1-calldata-only are \
+                 mutually exclusive"
+            )),
+        }
+    }
+
     /// Creates the artifact client and its corresponding storage config descriptor.
     async fn create_artifact_client(
         &self,
@@ -568,5 +589,73 @@ impl ZkArgs {
 
     fn non_empty(opt: &Option<String>) -> bool {
         opt.as_ref().is_some_and(|s| !s.is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ZkArgs;
+
+    fn args(l1_beacon_address: Option<&str>, l1_calldata_only: bool) -> ZkArgs {
+        ZkArgs {
+            base_consensus_address: "http://localhost:9546".to_string(),
+            l1_node_address: "http://localhost:8545".to_string(),
+            l1_beacon_address: l1_beacon_address.map(str::to_string),
+            l1_calldata_only,
+            l2_node_address: "http://localhost:9545".to_string(),
+            default_sequence_window: 50,
+            proxy_enable: true,
+            proxy_l2_port: 8545,
+            proxy_l1_port: 8546,
+            proxy_beacon_port: 8547,
+            rate_limit_rps: 50,
+            rate_limit_concurrent: 25,
+            rate_limit_queue_timeout_secs: 90,
+            outbox_poll_interval_secs: 5,
+            outbox_batch_size: 10,
+            outbox_max_retries: 5,
+            status_poller_interval_secs: 30,
+            stuck_request_timeout_mins: 10,
+            max_proof_retries: 3,
+            prover_mode: "mock".to_string(),
+            sp1_cluster_api_endpoint: None,
+            sp1_cluster_timeout_hours: 24,
+            cli_redis_nodes: None,
+            cli_s3_bucket: None,
+            cli_s3_region: None,
+            sp1_network_private_key: None,
+            sp1_fulfillment_strategy: "reserved".to_string(),
+            use_kms_requester: false,
+            grpc_listen_addr: "0.0.0.0:9000".to_string(),
+        }
+    }
+
+    #[test]
+    fn beacon_mode_is_valid() {
+        let l1_beacon_url = args(Some("http://localhost:5052"), false).l1_beacon_url().unwrap();
+
+        assert_eq!(l1_beacon_url, Some("http://localhost:5052".to_string()));
+    }
+
+    #[test]
+    fn calldata_only_mode_is_valid() {
+        let l1_beacon_url = args(None, true).l1_beacon_url().unwrap();
+
+        assert_eq!(l1_beacon_url, None);
+    }
+
+    #[test]
+    fn neither_mode_is_an_error() {
+        assert!(args(None, false).l1_beacon_url().is_err());
+    }
+
+    #[test]
+    fn both_modes_are_an_error() {
+        assert!(args(Some("http://localhost:5052"), true).l1_beacon_url().is_err());
+    }
+
+    #[test]
+    fn empty_beacon_url_is_treated_as_missing() {
+        assert!(args(Some("  "), false).l1_beacon_url().is_err());
     }
 }
