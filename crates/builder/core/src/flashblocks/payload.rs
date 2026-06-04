@@ -219,8 +219,9 @@ where
         } = args;
 
         // We log only every Nth block based on sampling ratio to reduce usage
+        let block_number = config.parent_header.number + 1;
         let span = if config.parent_header.number.is_multiple_of(self.config.sampling_ratio) {
-            span!(Level::INFO, "build_payload")
+            span!(Level::INFO, "build_payload", block_number)
         } else {
             tracing::Span::none()
         };
@@ -417,6 +418,7 @@ where
 
         // Process flashblocks in a blocking loop
         loop {
+            let flashblock_index = ctx.flashblock_index();
             let fb_span = if span.is_none() {
                 tracing::Span::none()
             } else {
@@ -424,6 +426,7 @@ where
                     parent: &span,
                     Level::INFO,
                     "build_flashblock",
+                    flashblock_index,
                 )
             };
             let _entered = fb_span.enter();
