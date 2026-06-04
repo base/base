@@ -228,7 +228,16 @@ impl LoadRunner {
                     generator =
                         generator.with_payload(OsakaPayload::new(target.clone()), weight_pct);
                 }
-                TxType::UniswapV3 { router, token_in, token_out, fee, min_amount, max_amount } => {
+                TxType::UniswapV3 {
+                    router,
+                    token_in,
+                    token_out,
+                    fee,
+                    min_amount,
+                    max_amount,
+                    reverse_min_amount,
+                    reverse_max_amount,
+                } => {
                     generator = generator.with_payload(
                         UniswapV3Payload::new(
                             *router,
@@ -237,6 +246,7 @@ impl LoadRunner {
                             *fee,
                             *min_amount,
                             *max_amount,
+                            Some((*reverse_min_amount, *reverse_max_amount)),
                         ),
                         weight_pct,
                     );
@@ -248,6 +258,8 @@ impl LoadRunner {
                     tick_spacing,
                     min_amount,
                     max_amount,
+                    reverse_min_amount,
+                    reverse_max_amount,
                 } => {
                     generator = generator.with_payload(
                         AerodromeClPayload::new(
@@ -257,6 +269,7 @@ impl LoadRunner {
                             *tick_spacing,
                             *min_amount,
                             *max_amount,
+                            Some((*reverse_min_amount, *reverse_max_amount)),
                         ),
                         weight_pct,
                     );
