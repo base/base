@@ -6,8 +6,9 @@
 L1_MODE=eth
 
 # L2 consensus nodes: beacon API on the lighthouse node, 4s L1 slots.
+# The port must match L1_CL_HTTP_PORT in devnet-env (env files can't interpolate).
 BASE_NODE_L1_BEACON=http://l1-cl:4052
 BASE_NODE_L1_SLOT_DURATION_OVERRIDE=4
 
-# zk prover L1 beacon address.
+# zk prover L1 beacon address. The port must match L1_CL_HTTP_PORT in devnet-env.
 L1_BEACON_ADDRESS=http://l1-cl:4052
