@@ -492,6 +492,11 @@ services:
       # disables the throttle-driven blob fallback so it stays calldata-only.
       - BATCHER_DATA_AVAILABILITY_TYPE
       - BATCHER_NO_FORCE_BLOBS_WHEN_THROTTLING
+      # Channel/pending-tx throughput is mode-driven: defaults (2 / 1) suit blob DA in eth-l1
+      # mode; base-l1 env raises them so low-throughput calldata DA keeps the safe head close
+      # to the unsafe head (each submission packs more L2 blocks, several txs in flight at once).
+      - BATCHER_MAX_CHANNEL_DURATION
+      - BATCHER_MAX_PENDING_TRANSACTIONS
     command:
       - --l1-rpc-url
       - http://l1-el:${L1_HTTP_PORT}
@@ -501,8 +506,6 @@ services:
       - http://base-builder-cl:${L2_BUILDER_CL_RPC_PORT}
       - --private-key
       - ${BATCHER_KEY}
-      - --max-channel-duration
-      - "2"
       - --poll-interval
       - "1"
       - --sub-safety-margin
