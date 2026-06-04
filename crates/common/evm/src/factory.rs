@@ -8,8 +8,8 @@ use revm::{
 };
 
 use crate::{
-    BaseContext, BaseEvm, BaseHaltReason, BasePrecompiles, BaseSpecId, BaseTransaction,
-    BaseTransactionError, Builder, DefaultBase,
+    BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError,
+    Builder, DefaultBase,
 };
 
 /// Factory that produces [`BaseEvm`] instances backed by a [`PrecompilesMap`].
@@ -32,6 +32,24 @@ impl BaseEvmFactory {
     /// Returns the activation registry admin address.
     pub const fn activation_admin_address(&self) -> Option<Address> {
         self.activation_admin_address
+    }
+
+    /// Returns this factory with the activation registry admin address set.
+    #[must_use]
+    pub const fn with_activation_admin_address(
+        mut self,
+        activation_admin_address: Option<Address>,
+    ) -> Self {
+        self.set_activation_admin_address(activation_admin_address);
+        self
+    }
+
+    /// Sets the activation registry admin address.
+    pub const fn set_activation_admin_address(
+        &mut self,
+        activation_admin_address: Option<Address>,
+    ) {
+        self.activation_admin_address = activation_admin_address;
     }
 }
 
@@ -57,17 +75,13 @@ impl EvmFactory for BaseEvmFactory {
         db: DB,
         input: EvmEnv<BaseSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
-        let spec_id = input.cfg_env.spec;
         Context::base()
             .with_db(db)
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
-            .build_base()
-            .with_inspector(NoOpInspector {})
-            .with_precompiles(
-                BasePrecompiles::new_with_spec(spec_id)
-                    .with_activation_admin_address(self.activation_admin_address)
-                    .install(),
+            .build_with_inspector_and_activation_admin_address(
+                NoOpInspector {},
+                self.activation_admin_address,
             )
     }
 
@@ -77,16 +91,13 @@ impl EvmFactory for BaseEvmFactory {
         input: EvmEnv<BaseSpecId>,
         inspector: I,
     ) -> Self::Evm<DB, I> {
-        let spec_id = input.cfg_env.spec;
         Context::base()
             .with_db(db)
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
-            .build_with_inspector(inspector)
-            .with_precompiles(
-                BasePrecompiles::new_with_spec(spec_id)
-                    .with_activation_admin_address(self.activation_admin_address)
-                    .install(),
+            .build_with_inspector_and_activation_admin_address(
+                inspector,
+                self.activation_admin_address,
             )
     }
 }

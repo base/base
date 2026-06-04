@@ -43,7 +43,11 @@ mod metrics;
 pub use metrics::Metrics;
 
 mod sync;
-pub use sync::{L2ForkchoiceState, SyncStartError, find_starting_forkchoice};
+pub use sync::{
+    ForkchoiceCheckpointError, ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader,
+    L2ForkchoiceState, NoopForkchoiceCheckpointReader, SyncStartError, find_starting_forkchoice,
+    find_starting_forkchoice_with_checkpoint_reader,
+};
 
 #[cfg(any(test, feature = "test-utils"))]
 /// Utilities that are useful when creating unit tests using structs within this library.

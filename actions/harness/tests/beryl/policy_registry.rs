@@ -78,7 +78,7 @@ async fn beryl_enables_policy_registry_singleton_precompile() {
 
     assert!(env.user_tx_succeeded(&block4, 0), "POLICY_REGISTRY deactivation must succeed");
 
-    // Block5: probe's staticcall must fail while POLICY_REGISTRY is deactivated.
+    // Block5: probe's staticcall (view function) must succeed even while POLICY_REGISTRY is deactivated.
     let probe_while_deactivated =
         env.create_tx(TxKind::Call(probe), policy_exists_call.clone(), GAS_LIMIT);
     let block5 =
@@ -86,8 +86,8 @@ async fn beryl_enables_policy_registry_singleton_precompile() {
 
     assert_eq!(
         env.sequencer.storage_at(probe, CALL_SUCCESS_SLOT),
-        U256::ZERO,
-        "policy registry staticcall must fail when POLICY_REGISTRY is deactivated"
+        U256::from(1),
+        "policy registry view staticcall must succeed when POLICY_REGISTRY is deactivated"
     );
 
     // Block6: re-activate POLICY_REGISTRY (committed state before block7).

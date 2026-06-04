@@ -20,6 +20,8 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, Bytes, ChainId, TxKind, U256, bytes::BufMut, keccak256};
 use alloy_rlp::{Decodable, Encodable, Header, length_of_length};
+#[cfg(feature = "reth")]
+use reth_primitives_traits::transaction::error::InvalidTransactionError;
 
 use crate::transaction::eip8130::{constants::Eip8130Constants, tx::TxEip8130};
 
@@ -131,6 +133,53 @@ impl Eip8130Signed {
         &self.hash
     }
 
+    /// Validates the static admission rules that depend only on the transaction
+    /// body and the local chain id.
+    ///
+    /// This keeps the chain-id, fee-cap ordering, and non-zero gas/fee-cap
+    /// checks colocated with [`TxEip8130`]'s signed wrapper so txpool callers
+    /// only need to orchestrate pool-specific concerns.
+    #[cfg(feature = "reth")]
+    pub const fn validate_static(
+        &self,
+        local_chain_id: u64,
+    ) -> Result<(), InvalidTransactionError> {
+        let tx = self.tx();
+        if tx.chain_id != local_chain_id {
+            return Err(InvalidTransactionError::ChainIdMismatch);
+        }
+        if tx.max_fee_per_gas < tx.max_priority_fee_per_gas {
+            return Err(InvalidTransactionError::TipAboveFeeCap);
+        }
+        if tx.gas_limit == 0 || tx.max_fee_per_gas == 0 {
+            return Err(InvalidTransactionError::TxTypeNotSupported);
+        }
+        Ok(())
+    }
+
+    /// Validates the timestamp-sensitive admission rules for nonce-bearing and
+    /// nonce-free transactions against a single caller-supplied `now` value.
+    ///
+    /// Txpool passes in one head-block timestamp snapshot so both branches see
+    /// the same wall-clock value even if the tip updates concurrently.
+    #[cfg(feature = "reth")]
+    pub fn validate_timestamp(&self, now: u64) -> Result<(), InvalidTransactionError> {
+        let tx = self.tx();
+        if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            if tx.nonce_sequence != 0 || tx.expiry == 0 {
+                return Err(InvalidTransactionError::TxTypeNotSupported);
+            }
+            if tx.expiry <= now
+                || tx.expiry > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW)
+            {
+                return Err(InvalidTransactionError::TxTypeNotSupported);
+            }
+        } else if tx.expiry != 0 && tx.expiry <= now {
+            return Err(InvalidTransactionError::TxTypeNotSupported);
+        }
+        Ok(())
+    }
+
     fn recompute_hash(&self) -> B256 {
         let mut buf = Vec::with_capacity(self.encode_2718_len());
         self.encode_2718(&mut buf);
@@ -141,6 +190,85 @@ impl Eip8130Signed {
     /// transaction body (configured-owner path).
     pub const fn explicit_sender(&self) -> Option<Address> {
         self.tx.sender
+    }
+
+    /// Recovers the sender for the EOA-path EIP-8130 transaction using the
+    /// **checked** secp256k1 recovery (rejects upper-half `s` values per
+    /// EIP-2).
+    ///
+    /// Returns `Ok(None)` when [`Self::explicit_sender`] is `Some(_)` — the
+    /// configured-owner path does not require ecrecover because the sender
+    /// address is already in the transaction body.
+    ///
+    /// Returns `Ok(Some(addr))` when [`TxEip8130::sender`] is `None`: parses
+    /// the 65-byte `r || s || v` ECDSA payload in [`Self::sender_auth`] and
+    /// recovers the signer against [`TxEip8130::sender_signature_hash`].
+    ///
+    /// Returns `Err(_)` when the EOA payload is malformed (wrong length or
+    /// invalid signature). Callers should treat a missing sender + malformed
+    /// `sender_auth` as a hard rejection.
+    #[cfg(feature = "k256")]
+    pub fn recover_eoa_sender(
+        &self,
+    ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
+        self.recover_eoa_sender_with(alloy_consensus::crypto::secp256k1::recover_signer)
+    }
+
+    /// Same as [`Self::recover_eoa_sender`] but uses the **unchecked** recovery
+    /// path, accepting signatures with non-canonical (upper-half) `s` values.
+    ///
+    /// Intended for use from `SignerRecoverable::recover_signer_unchecked`
+    /// dispatchers where the contract guarantees no upper-half-`s` filtering;
+    /// using the checked variant from those paths would silently tighten the
+    /// validation contract.
+    #[cfg(feature = "k256")]
+    pub fn recover_eoa_sender_unchecked(
+        &self,
+    ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
+        self.recover_eoa_sender_with(alloy_consensus::crypto::secp256k1::recover_signer_unchecked)
+    }
+
+    /// Recovers the sender of this signed transaction by short-circuiting to
+    /// [`Self::explicit_sender`] for the configured-owner path and otherwise
+    /// running checked EOA ecrecover. Flattens the [`Self::recover_eoa_sender`]
+    /// `Option` so call sites in the pooled and envelope `SignerRecoverable`
+    /// implementations stay one-liners and cannot drift.
+    #[cfg(feature = "k256")]
+    pub fn recover_sender(&self) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
+        if let Some(addr) = self.explicit_sender() {
+            return Ok(addr);
+        }
+        self.recover_eoa_sender()?.ok_or_else(alloy_consensus::crypto::RecoveryError::new)
+    }
+
+    /// Same as [`Self::recover_sender`] but uses the unchecked recovery path,
+    /// preserving the upper-half-`s`-accepting contract required by the
+    /// `recover_signer_unchecked` and `recover_unchecked_with_buf` dispatchers.
+    #[cfg(feature = "k256")]
+    pub fn recover_sender_unchecked(
+        &self,
+    ) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
+        if let Some(addr) = self.explicit_sender() {
+            return Ok(addr);
+        }
+        self.recover_eoa_sender_unchecked()?.ok_or_else(alloy_consensus::crypto::RecoveryError::new)
+    }
+
+    #[cfg(feature = "k256")]
+    fn recover_eoa_sender_with(
+        &self,
+        recover: impl FnOnce(
+            &alloy_primitives::Signature,
+            B256,
+        ) -> Result<Address, alloy_consensus::crypto::RecoveryError>,
+    ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
+        if self.tx.sender.is_some() {
+            return Ok(None);
+        }
+        let signature = alloy_primitives::Signature::try_from(self.sender_auth.as_ref())
+            .map_err(|_| alloy_consensus::crypto::RecoveryError::new())?;
+        let hash = self.tx.sender_signature_hash();
+        recover(&signature, hash).map(Some)
     }
 
     fn rlp_payload_length(&self) -> usize {
@@ -444,6 +572,88 @@ mod tests {
             signed.explicit_sender(),
             Some(address!("0x00000000000000000000000000000000000000aa"))
         );
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn recover_eoa_sender_returns_none_for_configured_owner() {
+        let signed = sample_signed(false);
+        assert!(signed.explicit_sender().is_some());
+        assert_eq!(signed.recover_eoa_sender().unwrap(), None);
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn recover_eoa_sender_recovers_eoa_signer() {
+        use alloy_signer::SignerSync;
+        use alloy_signer_local::PrivateKeySigner;
+
+        let signer = PrivateKeySigner::random();
+        let expected = signer.address();
+
+        let mut tx = sample_signed(false).into_tx();
+        tx.sender = None;
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let sender_auth = Bytes::from(signature.as_bytes().to_vec());
+        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+
+        assert_eq!(signed.recover_eoa_sender().unwrap(), Some(expected));
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn recover_eoa_sender_rejects_malformed_payload() {
+        let mut tx = sample_signed(false).into_tx();
+        tx.sender = None;
+        // 64 bytes is one short of a valid ECDSA r||s||v payload.
+        let signed = Eip8130Signed::new(tx, Bytes::from(vec![0u8; 64]), Bytes::new());
+        assert!(signed.recover_eoa_sender().is_err());
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn recover_eoa_sender_unchecked_accepts_high_s_signature() {
+        use alloy_primitives::U256;
+        use alloy_signer::SignerSync;
+        use alloy_signer_local::PrivateKeySigner;
+
+        // secp256k1 curve order N.
+        const SECP256K1_N: U256 = U256::from_be_slice(&[
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c,
+            0xd0, 0x36, 0x41, 0x41,
+        ]);
+
+        let signer = PrivateKeySigner::random();
+        let expected = signer.address();
+
+        let mut tx = sample_signed(false).into_tx();
+        tx.sender = None;
+        let hash = tx.sender_signature_hash();
+
+        // Sign normally (low-s, EIP-2 canonical), then flip s into the upper half
+        // by replacing it with N - s and inverting parity.
+        let canonical = signer.sign_hash_sync(&hash).unwrap();
+        let high_s_sig = alloy_primitives::Signature::new(
+            canonical.r(),
+            SECP256K1_N - canonical.s(),
+            !canonical.v(),
+        );
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(high_s_sig.as_bytes().to_vec()), Bytes::new());
+
+        // The checked recovery rejects the high-s form (EIP-2);
+        // the unchecked recovery accepts it and recovers the same address.
+        assert!(signed.recover_eoa_sender().is_err());
+        assert_eq!(signed.recover_eoa_sender_unchecked().unwrap(), Some(expected));
+    }
+
+    #[cfg(feature = "k256")]
+    #[test]
+    fn recover_eoa_sender_unchecked_returns_none_for_configured_owner() {
+        let signed = sample_signed(false);
+        assert!(signed.explicit_sender().is_some());
+        assert_eq!(signed.recover_eoa_sender_unchecked().unwrap(), None);
     }
 
     #[cfg(feature = "serde")]

@@ -8,7 +8,7 @@ use crate::TokenAccounting;
 
 /// Extends [`TokenAccounting`] with the stablecoin-specific `currency` slot.
 ///
-/// Only [`super::B20StablecoinToken`] requires this bound; default and security
+/// Only [`super::B20StablecoinToken`] requires this bound; default and asset
 /// tokens use the base [`TokenAccounting`] port exclusively.
 pub trait StablecoinAccounting: TokenAccounting {
     /// Returns the stablecoin currency identifier.

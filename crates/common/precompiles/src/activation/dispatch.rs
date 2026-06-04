@@ -5,11 +5,11 @@ use alloy_sol_types::SolCall;
 use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{
+use crate::{
     ActivationRegistryStorage,
     IActivationRegistry::{self, IActivationRegistryCalls as C},
+    macros::{decode_precompile_call, deduct_calldata_cost},
 };
-use crate::macros::{decode_precompile_call, deduct_calldata_cost};
 
 impl ActivationRegistryStorage<'_> {
     /// ABI-dispatches activation registry calldata.
@@ -36,6 +36,10 @@ impl ActivationRegistryStorage<'_> {
             C::isActivated(call) => {
                 let activated = self.is_activated(call.feature)?;
                 Ok(IActivationRegistry::isActivatedCall::abi_encode_returns(&activated).into())
+            }
+            C::checkActivated(call) => {
+                self.ensure_activated(call.feature)?;
+                Ok(Bytes::new())
             }
             C::activate(call) => {
                 self.activate(call.feature, activation_admin_address)?;

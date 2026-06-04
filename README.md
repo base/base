@@ -26,6 +26,12 @@ Use [`baseup`](baseup/README.md) to install the GitHub release binaries for this
 curl -fsSL https://raw.githubusercontent.com/base/base/main/baseup/install | bash
 ```
 
+## Base Anvil Package
+
+Every push to `main` publishes patched `anvil` and `forge` binaries to GHCR
+as `ghcr.io/base/base-anvil`. Use immutable `sha-<commit>` tags for pinned
+downstream tests, or `main` for the latest successful `main` build.
+
 ## License
 
 Licensed under [MIT](LICENSE).

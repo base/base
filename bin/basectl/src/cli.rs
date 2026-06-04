@@ -1,5 +1,6 @@
 //! Contains the CLI arguments for the basectl binary.
 
+use basectl_cli::ViewId;
 use clap::{Parser, Subcommand};
 use url::Url;
 
@@ -18,7 +19,7 @@ pub(crate) struct Cli {
     /// polls all discovered peers via templated ports.
     ///
     /// Only applies to the conductor view (and views that embed it, like the
-    /// command center). Ignored by `flashblocks --json` and other non-TUI
+    /// command center). Ignored by `flashblocks` and other non-TUI
     /// subcommands.
     #[arg(
         long = "conductor-rpc",
@@ -34,16 +35,25 @@ pub(crate) struct Cli {
 /// Subcommands for the basectl CLI.
 #[derive(Debug, Subcommand)]
 pub(crate) enum Commands {
+    /// Open the interactive TUI monitor.
+    Monitor {
+        #[command(subcommand)]
+        command: Option<MonitorCommands>,
+    },
+    /// Stream flashblocks as JSON lines.
+    #[command(after_help = "Use `basectl monitor flashblocks` for the TUI.")]
+    Flashblocks,
+}
+
+/// TUI monitor views.
+#[derive(Debug, Subcommand)]
+pub(crate) enum MonitorCommands {
     /// Chain configuration operations
     #[command(visible_alias = "c")]
     Config,
-    /// Flashblocks operations
+    /// Flashblocks monitor
     #[command(visible_alias = "f")]
-    Flashblocks {
-        /// Output flashblocks as JSON lines instead of the TUI
-        #[arg(long)]
-        json: bool,
-    },
+    Flashblocks,
     /// DA (Data Availability) backlog monitor
     #[command(visible_alias = "d")]
     Da,
@@ -56,4 +66,17 @@ pub(crate) enum Commands {
     /// Network upgrade activation countdown and history
     #[command(visible_alias = "u")]
     Upgrades,
+}
+
+impl MonitorCommands {
+    pub(crate) const fn view_id(&self) -> ViewId {
+        match self {
+            Self::Config => ViewId::Config,
+            Self::Flashblocks => ViewId::Flashblocks,
+            Self::Da => ViewId::DaMonitor,
+            Self::CommandCenter => ViewId::CommandCenter,
+            Self::Conductor => ViewId::Conductor,
+            Self::Upgrades => ViewId::Upgrades,
+        }
+    }
 }

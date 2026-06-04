@@ -1,4 +1,4 @@
-use std::{collections::HashSet, io::Write};
+use std::{borrow::Cow, collections::HashSet, io::Write};
 
 use brotli::DecompressorWriter;
 use serde_json::{self, Value};
@@ -100,17 +100,12 @@ impl FilterType {
                     }
                 }
             }
-            uncompressed_bytes
+            Cow::Owned(uncompressed_bytes)
         } else {
-            payload.to_owned()
+            Cow::Borrowed(payload)
         };
 
-        let value = String::from_utf8(uncompressed_data);
-        if value.is_err() {
-            return false;
-        }
-
-        let json_result: Result<Value, _> = serde_json::from_str(value.unwrap().as_str());
+        let json_result: Result<Value, _> = serde_json::from_slice(uncompressed_data.as_ref());
         match json_result {
             Ok(json) => {
                 let result = self.json_matches(&json);

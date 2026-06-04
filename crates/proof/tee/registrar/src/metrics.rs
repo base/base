@@ -45,6 +45,18 @@ base_metrics::define_metrics! {
 
     #[describe("Registrar Boundless account balance in wei")]
     boundless_balance_wei: gauge,
+
+    #[describe("Total number of proof-generation tasks spawned by the run() loop")]
+    proof_tasks_spawned: counter,
+
+    #[describe("Total number of proof-generation tasks the run() loop intentionally cancelled (vanished/ineligible instances or shutdown). Records the cancel intent; the task still terminates as a `completed` outcome.")]
+    proof_tasks_cancelled: counter,
+
+    #[describe("Total number of proof-generation tasks that ran to terminal state (success, error, panic, or cooperative cancellation)")]
+    proof_tasks_completed: counter,
+
+    #[describe("Number of proof-generation tasks currently in-flight in the run() loop")]
+    proof_tasks_pending: gauge,
 }
 
 impl RegistrarMetrics {

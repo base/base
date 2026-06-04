@@ -2,7 +2,7 @@
 //!
 //! [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256, address};
 
 /// Container for [EIP-8130] protocol constants.
 ///
@@ -90,6 +90,37 @@ impl Eip8130Constants {
 
     /// `owner_change` operation byte: revoke an existing owner.
     pub const OWNER_CHANGE_REVOKE: u8 = 0x02;
+
+    /// Lower-bound verifier address. The `ECRECOVER_VERIFIER` native is fixed at
+    /// `address(1)`; verifier addresses smaller than this are reserved.
+    pub const ECRECOVER_VERIFIER: Address = address!("0x0000000000000000000000000000000000000001");
+
+    /// Sentinel verifier address indicating an owner slot has been revoked
+    /// (`type(uint160).max`). Submitting authentication data prefixed with this
+    /// verifier MUST be rejected.
+    pub const REVOKED_VERIFIER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
+
+    /// Maximum number of `ConfigChange` entries the mempool accepts in a single
+    /// transaction. The spec marks this as a node policy ("Nodes SHOULD enforce
+    /// a configurable per-transaction limit"); we pin a conservative default
+    /// here that downstream operators can revisit once the spec finalises.
+    pub const MAX_CONFIG_CHANGES_PER_TX: usize = 10;
+
+    /// Maximum `expiry` window (in seconds beyond the current wall-clock time)
+    /// the mempool accepts for nonce-free-mode transactions
+    /// (`nonce_key == NONCE_KEY_MAX`). Per the spec ("Nodes SHOULD reject
+    /// `NONCE_KEY_MAX` transactions whose `expiry` exceeds a short window"),
+    /// a tight window bounds the replay surface in the absence of nonce state.
+    pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 10;
+
+    /// Maximum number of owner entries the mempool accepts in a single
+    /// `Create.initial_owners` or `ConfigChange.owner_changes` slice. Bounds
+    /// per-transaction memory and CPU spent on duplicate-owner_id detection
+    /// at admission time. Combined with [`Self::MAX_CONFIG_CHANGES_PER_TX`]
+    /// this caps total owner work per tx at
+    /// `MAX_CONFIG_CHANGES_PER_TX * MAX_OWNERS_PER_ENTRY + MAX_OWNERS_PER_ENTRY`
+    /// (config-change `owner_changes` + one `Create.initial_owners`).
+    pub const MAX_OWNERS_PER_ENTRY: usize = 32;
 }
 
 #[cfg(test)]

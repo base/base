@@ -2,7 +2,10 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Attribute, Data, DataEnum, DataStruct, DeriveInput, Fields, Ident, Type};
+use syn::{
+    Attribute, Data, DataEnum, DataStruct, DeriveInput, Fields, Ident, Token, Type, parenthesized,
+    parse::Parse,
+};
 
 use crate::{
     FieldInfo,
@@ -14,6 +17,19 @@ use crate::{
         extract_storage_namespace, to_snake_case,
     },
 };
+
+struct AccessField {
+    name: Ident,
+    ty: Type,
+    accessor: Option<AccessSpec>,
+    mutator: Option<AccessSpec>,
+}
+
+struct AccessSpec {
+    name: Ident,
+    keys: Vec<Ident>,
+    value: Ident,
+}
 
 /// Entry point called from `lib.rs` — parses input and converts errors to compile errors.
 pub(crate) fn derive(input: DeriveInput) -> proc_macro::TokenStream {
@@ -56,16 +72,24 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
         ));
     }
 
-    let field_infos: Vec<_> = fields
-        .iter()
-        .map(|f| FieldInfo {
-            name: f.ident.as_ref().unwrap().clone(),
-            ty: f.ty.clone(),
+    let mut field_infos = Vec::with_capacity(fields.len());
+    let mut access_fields = Vec::with_capacity(fields.len());
+    for field in fields {
+        let name = field.ident.as_ref().unwrap().clone();
+        field_infos.push(FieldInfo {
+            name: name.clone(),
+            ty: field.ty.clone(),
             slot: None,
             base_slot: None,
             namespace: None,
-        })
-        .collect();
+        });
+        access_fields.push(AccessField {
+            accessor: parse_access_attr(&field.attrs, &name, "accessor", false)?,
+            mutator: parse_access_attr(&field.attrs, &name, "mutator", true)?,
+            name,
+            ty: field.ty.clone(),
+        });
+    }
 
     let layout_fields = packing::allocate_slots(&field_infos)?;
 
@@ -92,7 +116,7 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
     let store_impl = gen_store_impl(&direct_fields, &mod_ident);
     let delete_impl = gen_delete_impl(&direct_fields, &mod_ident);
 
-    let handler_struct = gen_handler_struct(strukt, &layout_fields, &mod_ident);
+    let handler_struct = gen_handler_struct(strukt, &layout_fields, &mod_ident, &access_fields)?;
     let handler_name = format_ident!("{}Handler", strukt);
     let namespace_consts = gen_storage_namespace_consts(namespace.as_ref());
 
@@ -326,15 +350,17 @@ fn gen_handler_struct(
     struct_name: &Ident,
     fields: &[LayoutField<'_>],
     mod_ident: &Ident,
-) -> TokenStream {
+    access_fields: &[AccessField],
+) -> syn::Result<TokenStream> {
     let handler_name = format_ident!("{}Handler", struct_name);
     let handler_fields = fields.iter().map(gen_handler_field_decl);
     let field_inits = fields
         .iter()
         .enumerate()
         .map(|(idx, field)| gen_handler_field_init(field, idx, fields, Some(mod_ident)));
+    let access_methods = gen_access_methods(access_fields)?;
 
-    quote! {
+    Ok(quote! {
         /// Type-safe handler for accessing `#struct_name` in storage.
         #[derive(Debug, Clone)]
         pub struct #handler_name<'a> {
@@ -372,6 +398,8 @@ fn gen_handler_struct(
                     self.storage,
                 )
             }
+
+            #access_methods
         }
 
         impl ::base_precompile_storage::Handler<#struct_name> for #handler_name<'_> {
@@ -400,7 +428,140 @@ fn gen_handler_struct(
                 self.as_slot().t_delete()
             }
         }
+    })
+}
+
+fn parse_access_attr(
+    attrs: &[Attribute],
+    field_name: &Ident,
+    attr_name: &str,
+    mutator: bool,
+) -> syn::Result<Option<AccessSpec>> {
+    let mut parsed = None;
+    for attr in attrs {
+        if !attr.path().is_ident(attr_name) {
+            continue;
+        }
+        if parsed.is_some() {
+            return Err(syn::Error::new_spanned(
+                attr,
+                format!("duplicate `{attr_name}` attribute"),
+            ));
+        }
+        let mut spec = AccessSpec {
+            name: if mutator { format_ident!("set_{}", field_name) } else { field_name.clone() },
+            keys: Vec::new(),
+            value: field_name.clone(),
+        };
+        if !matches!(attr.meta, syn::Meta::Path(_)) {
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("name") {
+                    spec.name = meta.value()?.parse()?;
+                } else if meta.path.is_ident("value") {
+                    spec.value = meta.value()?.parse()?;
+                } else if meta.path.is_ident("keys") {
+                    let content;
+                    parenthesized!(content in meta.input);
+                    spec.keys =
+                        content.parse_terminated(Ident::parse, Token![,])?.into_iter().collect();
+                } else {
+                    return Err(meta.error("supported keys are `name`, `keys`, and `value`"));
+                }
+                Ok(())
+            })?;
+        }
+        parsed = Some(spec);
     }
+    Ok(parsed)
+}
+
+fn gen_access_methods(fields: &[AccessField]) -> syn::Result<TokenStream> {
+    let mut out = TokenStream::new();
+    for field in fields {
+        if let Some(accessor) = &field.accessor {
+            out.extend(gen_access_method(field, accessor)?);
+        }
+        if let Some(mutator) = &field.mutator {
+            out.extend(gen_mutate_method(field, mutator)?);
+        }
+    }
+    Ok(out)
+}
+
+fn gen_access_method(field: &AccessField, spec: &AccessSpec) -> syn::Result<TokenStream> {
+    let (key_tys, value_ty) = access_types(field, spec)?;
+    let (name, args) = (&spec.name, method_args(&spec.keys, &key_tys));
+    let target = access_target(&field.name, &spec.keys, false);
+    let doc = format!("Reads the `{}` storage field.", field.name);
+    Ok(quote! {
+        #[doc = #doc]
+        pub fn #name(&self, #(#args),*) -> ::base_precompile_storage::Result<#value_ty> {
+            ::base_precompile_storage::Handler::read(#target)
+        }
+    })
+}
+
+fn gen_mutate_method(field: &AccessField, spec: &AccessSpec) -> syn::Result<TokenStream> {
+    let (key_tys, value_ty) = access_types(field, spec)?;
+    let (name, value, args) = (&spec.name, &spec.value, method_args(&spec.keys, &key_tys));
+    let target = access_target(&field.name, &spec.keys, true);
+    let doc = format!("Writes the `{}` storage field.", field.name);
+    Ok(quote! {
+        #[doc = #doc]
+        pub fn #name(
+            &mut self,
+            #(#args,)*
+            #value: #value_ty,
+        ) -> ::base_precompile_storage::Result<()> {
+            ::base_precompile_storage::Handler::write(#target, #value)
+        }
+    })
+}
+
+fn access_types<'a>(
+    field: &'a AccessField,
+    spec: &AccessSpec,
+) -> syn::Result<(Vec<&'a Type>, &'a Type)> {
+    let mut key_tys = Vec::new();
+    let mut value_ty = &field.ty;
+    while let Some((key_ty, nested_value_ty)) = extract_mapping_types(value_ty) {
+        key_tys.push(key_ty);
+        value_ty = nested_value_ty;
+    }
+    if key_tys.len() != spec.keys.len() {
+        return Err(syn::Error::new_spanned(
+            &field.name,
+            format!("expected {} `keys(...)` entries", key_tys.len()),
+        ));
+    }
+    Ok((key_tys, value_ty))
+}
+
+fn method_args<'a>(
+    keys: &'a [Ident],
+    key_tys: &'a [&'a Type],
+) -> impl Iterator<Item = TokenStream> + 'a {
+    keys.iter().zip(key_tys).map(|(key, ty)| quote! { #key: #ty })
+}
+
+fn access_target(field_name: &Ident, keys: &[Ident], mutator: bool) -> TokenStream {
+    if keys.is_empty() {
+        return if mutator {
+            quote! { &mut self.#field_name }
+        } else {
+            quote! { &self.#field_name }
+        };
+    }
+
+    let mut target = quote! { self.#field_name };
+    for key in keys {
+        target = if mutator {
+            quote! { #target.at_mut(&#key) }
+        } else {
+            quote! { #target.at(&#key) }
+        };
+    }
+    target
 }
 
 fn gen_storage_namespace_consts(namespace: Option<&NamespaceInfo>) -> TokenStream {

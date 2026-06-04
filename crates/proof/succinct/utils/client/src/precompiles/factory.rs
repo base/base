@@ -64,16 +64,15 @@ impl EvmFactory for ZkvmBaseEvmFactory {
         input: EvmEnv<BaseSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
         let spec_id = input.cfg_env.spec;
+        let precompiles = BaseZkvmPrecompiles::new_with_spec_and_activation_admin_address(
+            spec_id,
+            self.activation_admin_address,
+        );
         Context::base()
             .with_db(db)
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
-            .build_base()
-            .with_inspector(NoOpInspector {})
-            .with_precompiles(BaseZkvmPrecompiles::new_with_spec_and_activation_admin_address(
-                spec_id,
-                self.activation_admin_address,
-            ))
+            .build_with_inspector_and_precompiles(NoOpInspector {}, precompiles)
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -83,14 +82,14 @@ impl EvmFactory for ZkvmBaseEvmFactory {
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let spec_id = input.cfg_env.spec;
+        let precompiles = BaseZkvmPrecompiles::new_with_spec_and_activation_admin_address(
+            spec_id,
+            self.activation_admin_address,
+        );
         Context::base()
             .with_db(db)
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
-            .build_with_inspector(inspector)
-            .with_precompiles(BaseZkvmPrecompiles::new_with_spec_and_activation_admin_address(
-                spec_id,
-                self.activation_admin_address,
-            ))
+            .build_with_inspector_and_precompiles(inspector, precompiles)
     }
 }

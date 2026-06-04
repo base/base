@@ -13,6 +13,7 @@ use std::sync::Arc;
 use alloy_primitives::Bytes;
 use base_proof_tee_nitro_verifier::VerifierInput;
 use risc0_zkvm::{ExecutorEnv, ProverOpts, compute_image_id, default_prover};
+use tokio_util::sync::CancellationToken;
 
 use crate::{AttestationProof, AttestationProofProvider, ProverError, Result};
 
@@ -53,7 +54,25 @@ impl DirectProver {
 
 #[async_trait::async_trait]
 impl AttestationProofProvider for DirectProver {
-    async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<AttestationProof> {
+    /// # Cancellation
+    ///
+    /// `DirectProver` honors the token only at the synchronous boundary
+    /// *before* spawning the blocking prover task: if the token is
+    /// already cancelled, the call returns early. Once the blocking
+    /// task is in flight, dropping the returned future (e.g. via the
+    /// registrar's outer `select!`) abandons the await but the
+    /// underlying RISC Zero proof continues to completion on the
+    /// blocking thread pool until the backend finishes — `spawn_blocking`
+    /// has no abort signal. This is acceptable because the prover has
+    /// no on-chain side effects.
+    async fn generate_proof(
+        &self,
+        attestation_bytes: &[u8],
+        cancel: &CancellationToken,
+    ) -> Result<AttestationProof> {
+        if cancel.is_cancelled() {
+            return Err(ProverError::Risc0("proof generation cancelled before start".into()));
+        }
         let elf = Arc::clone(&self.elf);
         let trusted_certs_prefix_len = self.trusted_certs_prefix_len;
         let attestation_owned = attestation_bytes.to_vec();

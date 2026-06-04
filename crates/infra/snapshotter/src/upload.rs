@@ -4,7 +4,9 @@
 //!
 //! - `{prefix}/static_files/` — static file chunks that are immutable for finalized
 //!   block ranges. Only the tip chunk changes between snapshots. The uploader
-//!   compares local sizes against existing remote objects and skips unchanged chunks.
+//!   compares the per-file BLAKE3 hashes recorded in the previous run's
+//!   `manifest.json` against the freshly generated manifest, and skips chunks
+//!   whose hashes match.
 //!
 //! - `{prefix}/{date}/` — per-run directory for mdbx state, rocksdb, and the manifest.
 //!   These are always re-uploaded since they change every snapshot.
@@ -21,7 +23,9 @@ use aws_sdk_s3::{
     types::{CompletedMultipartUpload, CompletedPart},
 };
 use futures::stream::{self, StreamExt, TryStreamExt};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+
+use crate::snapshot::{ChunkFilename, SnapshotManifest};
 
 /// Maximum number of concurrent file uploads.
 const MAX_CONCURRENT_UPLOADS: usize = 10;
@@ -39,8 +43,9 @@ const MULTIPART_PART_SIZE: u64 = 100 * 1024 * 1024;
 pub enum UploadStrategy {
     /// Always upload to the per-run date directory (mdbx, rocksdb, manifest).
     AlwaysUpload,
-    /// Upload to `static_files/`, skipping if the remote object has the same size.
-    DiffBySize,
+    /// Upload to `static_files/`, skipping if the per-file BLAKE3 hashes
+    /// recorded in the previous run's manifest match the freshly generated ones.
+    DiffByHash,
 }
 
 impl UploadStrategy {
@@ -52,25 +57,8 @@ impl UploadStrategy {
     ///
     /// Everything else (state, rocksdb, manifest) is always uploaded.
     pub fn classify(filename: &str) -> Self {
-        if is_static_file_chunk(filename) { Self::DiffBySize } else { Self::AlwaysUpload }
+        if ChunkFilename::parse(filename).is_some() { Self::DiffByHash } else { Self::AlwaysUpload }
     }
-}
-
-/// Returns `true` if the filename matches the static file chunk pattern:
-/// `{component}-{start}-{end}.tar.zst`.
-fn is_static_file_chunk(filename: &str) -> bool {
-    let Some(stem) = filename.strip_suffix(".tar.zst") else {
-        return false;
-    };
-
-    let parts: Vec<&str> = stem.rsplitn(3, '-').collect();
-    if parts.len() < 3 {
-        return false;
-    }
-
-    let end_ok = parts[0].parse::<u64>().is_ok();
-    let start_ok = parts[1].parse::<u64>().is_ok();
-    end_ok && start_ok
 }
 
 /// Uploads snapshot artifacts to an S3-compatible store (R2, `MinIO`, etc.).
@@ -88,24 +76,105 @@ impl SnapshotUploader {
     }
 
     /// Lists remote static files with their sizes. Call once and pass the result
-    /// to both `generate_manifest` (for skip ranges) and `upload` (for diff).
+    /// to `generate_manifest` for skip-range computation.
     pub async fn list_remote_static_files(&self) -> Result<HashMap<String, u64>> {
         self.list_remote_objects(&self.static_files_prefix()).await
     }
 
+    /// Fetches the most recent `manifest.json` from a prior run, if one exists.
+    ///
+    /// Looks for keys matching `{prefix}/{digits}/manifest.json` (where `{digits}`
+    /// is the run's unix-timestamp directory) and downloads the one with the
+    /// largest timestamp. Returns `None` on a fresh bucket. A parse error on the
+    /// found manifest is logged and treated as no-previous (so we fall back to
+    /// re-uploading everything rather than failing the run).
+    pub async fn fetch_previous_manifest(&self) -> Result<Option<SnapshotManifest>> {
+        let manifest_suffix = "/manifest.json";
+        let list_prefix =
+            if self.prefix.is_empty() { String::new() } else { format!("{}/", self.prefix) };
+
+        let mut best: Option<(u64, String)> = None;
+        let mut continuation_token = None;
+
+        loop {
+            let mut req = self.client.list_objects_v2().bucket(&self.bucket);
+            if !list_prefix.is_empty() {
+                req = req.prefix(&list_prefix);
+            }
+            if let Some(token) = continuation_token.take() {
+                req = req.continuation_token(token);
+            }
+
+            let resp = req
+                .send()
+                .await
+                .with_context(|| format!("failed to list objects under {list_prefix}"))?;
+
+            for obj in resp.contents() {
+                let Some(key) = obj.key() else { continue };
+                let Some(rest) = key.strip_prefix(list_prefix.as_str()) else { continue };
+                let Some(timestamp_str) = rest.strip_suffix(manifest_suffix) else { continue };
+                if timestamp_str.contains('/') {
+                    continue;
+                }
+                let Ok(timestamp) = timestamp_str.parse::<u64>() else { continue };
+                if best.as_ref().is_none_or(|(prev, _)| timestamp > *prev) {
+                    best = Some((timestamp, key.to_string()));
+                }
+            }
+
+            if resp.is_truncated() == Some(true) {
+                continuation_token = resp.next_continuation_token().map(String::from);
+            } else {
+                break;
+            }
+        }
+
+        let Some((timestamp, key)) = best else {
+            debug!("no previous manifest found");
+            return Ok(None);
+        };
+
+        debug!(timestamp, key = %key, "fetching previous manifest");
+        let resp = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .send()
+            .await
+            .with_context(|| format!("failed to fetch previous manifest {key}"))?;
+
+        let bytes = resp
+            .body
+            .collect()
+            .await
+            .with_context(|| format!("failed to read previous manifest body {key}"))?
+            .into_bytes();
+
+        match serde_json::from_slice::<SnapshotManifest>(&bytes) {
+            Ok(manifest) => Ok(Some(manifest)),
+            Err(e) => {
+                warn!(error = %e, key = %key, "failed to parse previous manifest, treating as missing");
+                Ok(None)
+            }
+        }
+    }
+
     /// Uploads snapshot artifacts with diff-based optimization.
     ///
-    /// `remote_static_files` is the pre-fetched listing from `list_remote_static_files`.
-    /// Static file chunks go to `{prefix}/static_files/` and are skipped if the
-    /// remote object already exists with the same size. State, rocksdb, and
-    /// manifest go to `{prefix}/{date}/` and are always re-uploaded.
-    /// `manifest.json` is uploaded last as the "snapshot complete" signal.
+    /// Static file chunks go to `{prefix}/static_files/` and are skipped when
+    /// their per-file BLAKE3 hashes (recorded in `local_manifest`) match those
+    /// from `remote_manifest`. State, rocksdb, and manifest go to
+    /// `{prefix}/{timestamp}/` and are always re-uploaded. `manifest.json` is
+    /// uploaded last as the "snapshot complete" signal.
     pub async fn upload(
         &self,
         output_dir: &Path,
         files: &[PathBuf],
         timestamp: u64,
-        remote_static_files: &HashMap<String, u64>,
+        local_manifest: &SnapshotManifest,
+        remote_manifest: Option<&SnapshotManifest>,
     ) -> Result<String> {
         let static_prefix = self.static_files_prefix();
         let run_prefix = self.run_prefix(timestamp);
@@ -134,18 +203,25 @@ impl SnapshotUploader {
                 .to_string_lossy()
                 .to_string();
 
-            let local_size = tokio::fs::metadata(file).await?.len();
             let strategy = UploadStrategy::classify(&file_name);
 
             match strategy {
-                UploadStrategy::DiffBySize => {
-                    if let Some(&remote_size) = remote_static_files.get(&file_name) {
-                        if remote_size == local_size {
-                            debug!(file = %file_name, size = local_size, "skipping static file (size matches)");
+                UploadStrategy::DiffByHash => {
+                    let local_hashes = local_manifest.chunk_hashes_for_file(&file_name);
+                    let remote_hashes =
+                        remote_manifest.and_then(|m| m.chunk_hashes_for_file(&file_name));
+                    match (&local_hashes, &remote_hashes) {
+                        (Some(local), Some(remote)) if local == remote => {
+                            debug!(file = %file_name, "skipping static file (blake3 matches)");
                             skipped += 1;
                             continue;
                         }
-                        debug!(file = %file_name, local_size, remote_size, "re-uploading static file (size mismatch)");
+                        (Some(_), Some(_)) => {
+                            debug!(file = %file_name, "re-uploading static file (blake3 mismatch)");
+                        }
+                        _ => {
+                            debug!(file = %file_name, "re-uploading static file (no prior hash available)");
+                        }
                     }
                     static_uploads.push(file.clone());
                 }
@@ -406,27 +482,27 @@ mod tests {
     fn static_file_chunks_are_diff_eligible() {
         assert_eq!(
             UploadStrategy::classify("headers-0-499999.tar.zst"),
-            UploadStrategy::DiffBySize
+            UploadStrategy::DiffByHash
         );
         assert_eq!(
             UploadStrategy::classify("transactions-500000-999999.tar.zst"),
-            UploadStrategy::DiffBySize
+            UploadStrategy::DiffByHash
         );
         assert_eq!(
             UploadStrategy::classify("receipts-9500000-9999999.tar.zst"),
-            UploadStrategy::DiffBySize
+            UploadStrategy::DiffByHash
         );
         assert_eq!(
             UploadStrategy::classify("account_changesets-0-499999.tar.zst"),
-            UploadStrategy::DiffBySize
+            UploadStrategy::DiffByHash
         );
         assert_eq!(
             UploadStrategy::classify("storage_changesets-1000000-1499999.tar.zst"),
-            UploadStrategy::DiffBySize
+            UploadStrategy::DiffByHash
         );
         assert_eq!(
             UploadStrategy::classify("transaction_senders-0-499999.tar.zst"),
-            UploadStrategy::DiffBySize
+            UploadStrategy::DiffByHash
         );
     }
 
@@ -442,13 +518,25 @@ mod tests {
     }
 
     #[test]
-    fn is_static_file_chunk_edge_cases() {
-        assert!(!is_static_file_chunk("state.tar.zst"));
-        assert!(!is_static_file_chunk("headers.tar.zst"));
-        assert!(!is_static_file_chunk("headers-abc-def.tar.zst"));
-        assert!(!is_static_file_chunk("headers-0-499999.tar.gz"));
-        assert!(!is_static_file_chunk("headers-0-499999"));
-        assert!(is_static_file_chunk("headers-0-499999.tar.zst"));
-        assert!(is_static_file_chunk("custom_component-100-200.tar.zst"));
+    fn classify_chunk_filename_edge_cases() {
+        assert_eq!(UploadStrategy::classify("state.tar.zst"), UploadStrategy::AlwaysUpload);
+        assert_eq!(UploadStrategy::classify("headers.tar.zst"), UploadStrategy::AlwaysUpload);
+        assert_eq!(
+            UploadStrategy::classify("headers-abc-def.tar.zst"),
+            UploadStrategy::AlwaysUpload
+        );
+        assert_eq!(
+            UploadStrategy::classify("headers-0-499999.tar.gz"),
+            UploadStrategy::AlwaysUpload
+        );
+        assert_eq!(UploadStrategy::classify("headers-0-499999"), UploadStrategy::AlwaysUpload);
+        assert_eq!(
+            UploadStrategy::classify("headers-0-499999.tar.zst"),
+            UploadStrategy::DiffByHash
+        );
+        assert_eq!(
+            UploadStrategy::classify("custom_component-100-200.tar.zst"),
+            UploadStrategy::DiffByHash
+        );
     }
 }

@@ -21,7 +21,7 @@ use crate::DiskKeyValueStore;
 use crate::{
     BootKeyValueStore, HostConfig, HostError, HostProviders, MemoryKeyValueStore, Metrics,
     OfflineHostBackend, OnlineHostBackend, PreimageServer, RecordingOracle, Result,
-    SharedKeyValueStore, SplitKeyValueStore,
+    SharedKeyValueStore, SplitKeyValueStore, handler::L1HeaderCache,
 };
 
 /// The proof host orchestrator.
@@ -83,13 +83,29 @@ impl Host {
     where
         W: WitnessOracle + std::fmt::Debug + 'static,
     {
+        self.build_witness_with_l1_header_cache(witness, L1HeaderCache::new()).await
+    }
+
+    pub(crate) async fn build_witness_with_l1_header_cache<W>(
+        &self,
+        witness: W,
+        l1_header_cache: L1HeaderCache,
+    ) -> Result<W>
+    where
+        W: WitnessOracle + std::fmt::Debug + 'static,
+    {
         let witness = Arc::new(witness);
 
         let kv_store = self.create_key_value_store()?;
         let providers = self.create_providers().await?;
         let backend = Arc::new(
-            OnlineHostBackend::new(self.config.clone(), Arc::clone(&kv_store), providers)
-                .with_proactive_hint(HintType::L2PayloadWitness),
+            OnlineHostBackend::new_with_l1_header_cache(
+                self.config.clone(),
+                Arc::clone(&kv_store),
+                providers,
+                l1_header_cache,
+            )
+            .with_proactive_hint(HintType::L2PayloadWitness),
         );
 
         let preimage_chan = BidirectionalChannel::new().map_err(HostError::Io)?;

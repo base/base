@@ -3,6 +3,7 @@ target/
 .idea/
 .DS_Store
 .devnet/
+.zk-prover/
 .sisyphus/
 eif*.bin
 *.log

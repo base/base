@@ -21,13 +21,13 @@ use base_proof_contracts::{
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
-use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L2Provider, RpcError, RpcResult};
-use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
-use base_zk_client::{
-    GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse, ZkProofError,
-    ZkProofProvider,
+use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
+use base_prover_service_protocol::{
+    GetProofRequest, GetProofResponse, ProofResult as ApiProofResult, ProofStatus,
+    ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkGroth16ProofResult, ZkProofResult, ZkVm,
 };
+use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
 
 use crate::L1HeadProvider;
 
@@ -677,26 +677,40 @@ impl L2Provider for MockL2Provider {
     }
 }
 
-/// Mock ZK proof provider for testing the driver.
+/// Mock prover-service requester for testing ZK proof flows in the driver.
 #[derive(Debug)]
 pub struct MockZkProofProvider {
-    /// Session ID returned by [`prove_block`](ZkProofProvider::prove_block).
+    /// Session ID returned by [`prove_block_range`](ProofRequesterProvider::prove_block_range).
     pub session_id: String,
-    /// Mutable proof state returned by [`get_proof`](ZkProofProvider::get_proof).
+    /// Mutable proof state returned by [`get_proof`](ProofRequesterProvider::get_proof).
     pub state: Mutex<MockZkProofState>,
 }
 
 /// Mutable state for [`MockZkProofProvider`].
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct MockZkProofState {
-    /// Proof job status returned by [`get_proof`](ZkProofProvider::get_proof).
-    pub proof_status: i32,
-    /// Proof receipt bytes returned when status is `Succeeded`.
-    pub receipt: Vec<u8>,
+    /// Proof status returned by [`get_proof`](ProofRequesterProvider::get_proof).
+    pub proof_status: ProofStatus,
+    /// Proof bytes returned when status is [`ProofStatus::Succeeded`].
+    pub proof: Vec<u8>,
+    /// Optional full prover-service result returned when status is [`ProofStatus::Succeeded`].
+    pub result: Option<ApiProofResult>,
     /// Error message returned when status is `Failed`.
     pub error_message: Option<String>,
-    /// Every [`ProveBlockRequest`] received by `prove_block`, in call order.
-    pub prove_block_log: Vec<ProveBlockRequest>,
+    /// Every [`ProveBlockRangeRequest`] received by `prove_block_range`, in call order.
+    pub prove_block_range_log: Vec<ProveBlockRangeRequest>,
+}
+
+impl Default for MockZkProofState {
+    fn default() -> Self {
+        Self {
+            proof_status: ProofStatus::Queued,
+            proof: Vec::new(),
+            result: None,
+            error_message: None,
+            prove_block_range_log: Vec::new(),
+        }
+    }
 }
 
 impl Default for MockZkProofProvider {
@@ -706,52 +720,42 @@ impl Default for MockZkProofProvider {
 }
 
 #[async_trait]
-impl ZkProofProvider for MockZkProofProvider {
-    async fn prove_block(
+impl ProofRequesterProvider for MockZkProofProvider {
+    async fn prove_block_range(
         &self,
-        request: ProveBlockRequest,
-    ) -> Result<ProveBlockResponse, ZkProofError> {
-        self.state.lock().unwrap().prove_block_log.push(request);
-        Ok(ProveBlockResponse { session_id: self.session_id.clone() })
+        request: ProveBlockRangeRequest,
+    ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
+        let session_id =
+            request.proof.session_id.clone().unwrap_or_else(|| self.session_id.clone());
+        self.state.lock().unwrap().prove_block_range_log.push(request);
+        Ok(ProveBlockRangeResponse { session_id })
     }
 
-    async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
+    async fn get_proof(
+        &self,
+        _request: GetProofRequest,
+    ) -> Result<GetProofResponse, ProverServiceClientError> {
         let state = self.state.lock().unwrap().clone();
+        let result = if state.proof_status == ProofStatus::Succeeded {
+            state.result.or_else(|| {
+                Some(ApiProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+                    proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: state.proof.into() },
+                }))
+            })
+        } else {
+            None
+        };
         Ok(GetProofResponse {
             status: state.proof_status,
-            receipt: state.receipt,
             error_message: state.error_message,
-            execution_stats: None,
+            result,
         })
     }
-}
-
-/// Mock TEE proof provider for testing the driver.
-#[derive(Debug)]
-pub struct MockTeeProofProvider {
-    /// Queue of results returned by [`prove`](ProverClient::prove).
-    pub results: Mutex<VecDeque<Result<ProofResult, Box<dyn std::error::Error + Send + Sync>>>>,
-}
-
-impl MockTeeProofProvider {
-    /// Creates a mock that returns a single successful result.
-    pub fn success(result: ProofResult) -> Self {
-        Self { results: Mutex::new(VecDeque::from([Ok(result)])) }
-    }
-
-    /// Creates a mock that returns a single error.
-    pub fn failure(msg: &str) -> Self {
-        Self { results: Mutex::new(VecDeque::from([Err(msg.into())])) }
-    }
-}
-
-#[async_trait]
-impl ProverClient for MockTeeProofProvider {
-    async fn prove(
+    async fn list_proofs(
         &self,
-        _request: ProofRequest,
-    ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>> {
-        self.results.lock().unwrap().pop_front().expect("MockTeeProofProvider has no more results")
+        _request: base_prover_service_protocol::ListProofsRequest,
+    ) -> Result<base_prover_service_protocol::ListProofsResponse, ProverServiceClientError> {
+        unimplemented!("tests do not list proofs")
     }
 }
 

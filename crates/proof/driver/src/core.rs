@@ -96,7 +96,7 @@ where
                 }
                 Err(e) => {
                     error!(target: "client", error = ?e, "Failed to produce payload");
-                    return Err(DriverError::Pipeline(e));
+                    return Err(e.into());
                 }
             };
 

@@ -171,7 +171,7 @@ Good candidates:
 ### 5. Service and Network Coverage
 
 Keep full service lifecycle, RPC servers, P2P mesh behavior, EL/CL coupling,
-and multi-process failures in devnet or e2e tests. Those are outside the fast
+and multi-process failures in Docker-backed system tests. Those are outside the fast
 action-test boundary.
 
 ## Near-Term L1/DA Design Notes
