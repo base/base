@@ -18,7 +18,7 @@ needs them.
 ## Why action tests?
 
 Unit tests for isolated functions are fast but can miss emergent bugs at
-protocol boundaries. End-to-end devnet tests are thorough but slow, fragile,
+protocol boundaries. Docker-backed system tests are thorough but slow, fragile,
 and hard to debug. Action tests sit in the middle: they run in milliseconds,
 they exercise real protocol logic (the same batch encoding, channel
 compression, and derivation pipeline that runs in production), and they fail

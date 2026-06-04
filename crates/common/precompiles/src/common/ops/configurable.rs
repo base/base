@@ -4,8 +4,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use super::guards::B20Guards;
-use crate::{B20TokenRole, IB20, Token, TokenAccounting};
+use crate::{B20Guards, B20TokenRole, IB20, Token, TokenAccounting};
 
 /// Mutable configuration operations: supply cap, metadata, and contract URI updates.
 ///
@@ -79,13 +78,9 @@ mod tests {
     use alloy_primitives::{Address, U256};
     use base_precompile_storage::BasePrecompileError;
 
-    use super::Configurable;
     use crate::{
-        B20TokenRole, IB20,
-        common::{
-            Token, TokenAccounting,
-            test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
-        },
+        B20TokenRole, Configurable, IB20, InMemoryPolicy, InMemoryTokenAccounting, TestToken,
+        Token, TokenAccounting,
     };
 
     const CALLER: Address = Address::repeat_byte(0xaa);
@@ -124,6 +119,20 @@ mod tests {
             BasePrecompileError::revert(IB20::InvalidSupplyCap {
                 currentSupply: U256::from(100u64),
                 proposedCap: U256::from(99u64),
+            })
+        );
+    }
+
+    #[test]
+    fn update_supply_cap_unauthorized_caller_gets_role_error_not_cap_error() {
+        let mut token = make_token();
+        token.accounting_mut().total_supply = U256::from(100u64);
+
+        assert_eq!(
+            token.update_supply_cap(CALLER, U256::from(99u64), false).unwrap_err(),
+            BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+                account: CALLER,
+                neededRole: B20TokenRole::DefaultAdmin.id(),
             })
         );
     }

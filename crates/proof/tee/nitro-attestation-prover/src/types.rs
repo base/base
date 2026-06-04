@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, Bytes};
 use async_trait::async_trait;
+use tokio_util::sync::CancellationToken;
 
 use crate::Result;
 
@@ -19,10 +20,38 @@ pub struct AttestationProof {
 ///
 /// Implementors wrap the attestation verification logic inside a ZK proving
 /// backend and return a proof suitable for on-chain submission.
+///
+/// # Cancellation contract
+///
+/// Every method accepts a [`CancellationToken`] which the caller may fire
+/// at any point. Callers (notably the registrar's `run()` loop) may also
+/// drop the returned future when cancel fires — the trait does **not**
+/// require strict cancel-safety in the "no side effects survive drop"
+/// sense. Implementors should:
+///
+/// 1. **Honor the token cooperatively** between phase boundaries to bound
+///    wasted work on cancel. Polling `cancel.is_cancelled()` between
+///    awaits is sufficient.
+/// 2. **Tolerate drop** of the returned future. Side effects that *do*
+///    survive must be either idempotent or recoverable on the next call
+///    (e.g. via the recovery probe `BoundlessProver` performs when it
+///    detects a prior in-flight request id for the same signer) so the
+///    registrar's spawn-and-reap loop can safely retry.
+///
+/// See the per-impl docs on `DirectProver` and `BoundlessProver` for the
+/// exact survive-on-drop behaviour of each backend.
 #[async_trait]
 pub trait AttestationProofProvider: Send + Sync {
     /// Generates a ZK proof for the given raw attestation document bytes.
-    async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<AttestationProof>;
+    ///
+    /// `cancel` may fire at any point; see the trait-level "Cancellation
+    /// contract" section for the implementor contract. Returning early on
+    /// cancel is allowed but not required.
+    async fn generate_proof(
+        &self,
+        attestation_bytes: &[u8],
+        cancel: &CancellationToken,
+    ) -> Result<AttestationProof>;
 
     /// Generates a ZK proof with knowledge of the target signer address.
     ///
@@ -32,12 +61,16 @@ pub trait AttestationProofProvider: Send + Sync {
     /// resume in-flight proofs after an instance rotation. The default
     /// implementation ignores the address and delegates to
     /// [`generate_proof`](Self::generate_proof).
+    ///
+    /// See the trait-level "Cancellation contract" for the `cancel`
+    /// parameter semantics.
     async fn generate_proof_for_signer(
         &self,
         attestation_bytes: &[u8],
         _signer_address: Address,
+        cancel: &CancellationToken,
     ) -> Result<AttestationProof> {
-        self.generate_proof(attestation_bytes).await
+        self.generate_proof(attestation_bytes, cancel).await
     }
 
     /// Marks a signer's recovered proof as failed on-chain.
@@ -54,16 +87,21 @@ pub trait AttestationProofProvider: Send + Sync {
 
 #[async_trait]
 impl AttestationProofProvider for Box<dyn AttestationProofProvider> {
-    async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<AttestationProof> {
-        (**self).generate_proof(attestation_bytes).await
+    async fn generate_proof(
+        &self,
+        attestation_bytes: &[u8],
+        cancel: &CancellationToken,
+    ) -> Result<AttestationProof> {
+        (**self).generate_proof(attestation_bytes, cancel).await
     }
 
     async fn generate_proof_for_signer(
         &self,
         attestation_bytes: &[u8],
         signer_address: Address,
+        cancel: &CancellationToken,
     ) -> Result<AttestationProof> {
-        (**self).generate_proof_for_signer(attestation_bytes, signer_address).await
+        (**self).generate_proof_for_signer(attestation_bytes, signer_address, cancel).await
     }
 
     fn block_recovery_for_signer(&self, signer: Address) {
@@ -127,7 +165,11 @@ mod tests {
 
     #[async_trait]
     impl AttestationProofProvider for StubProvider {
-        async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<AttestationProof> {
+        async fn generate_proof(
+            &self,
+            attestation_bytes: &[u8],
+            _cancel: &CancellationToken,
+        ) -> Result<AttestationProof> {
             Ok(AttestationProof {
                 output: Bytes::copy_from_slice(attestation_bytes),
                 proof_bytes: Bytes::from_static(STUB_SEAL),
@@ -142,7 +184,11 @@ mod tests {
 
     #[async_trait]
     impl AttestationProofProvider for SignerAwareProvider {
-        async fn generate_proof(&self, _attestation_bytes: &[u8]) -> Result<AttestationProof> {
+        async fn generate_proof(
+            &self,
+            _attestation_bytes: &[u8],
+            _cancel: &CancellationToken,
+        ) -> Result<AttestationProof> {
             panic!(
                 "generate_proof should not be called when generate_proof_for_signer is overridden"
             );
@@ -152,6 +198,7 @@ mod tests {
             &self,
             attestation_bytes: &[u8],
             signer_address: Address,
+            _cancel: &CancellationToken,
         ) -> Result<AttestationProof> {
             // Encode signer address into output to prove override was used.
             let mut output = attestation_bytes.to_vec();
@@ -175,7 +222,9 @@ mod tests {
         #[case] signer: Address,
     ) {
         let provider = StubProvider;
-        let proof = provider.generate_proof_for_signer(STUB_ATTESTATION, signer).await.unwrap();
+        let cancel = CancellationToken::new();
+        let proof =
+            provider.generate_proof_for_signer(STUB_ATTESTATION, signer, &cancel).await.unwrap();
 
         assert_eq!(proof.output, Bytes::copy_from_slice(STUB_ATTESTATION));
         assert_eq!(proof.proof_bytes, Bytes::from_static(STUB_SEAL));
@@ -189,7 +238,9 @@ mod tests {
     #[tokio::test]
     async fn boxed_provider_delegates_generate_proof_for_signer(#[case] signer: Address) {
         let provider: Box<dyn AttestationProofProvider> = Box::new(StubProvider);
-        let proof = provider.generate_proof_for_signer(STUB_ATTESTATION, signer).await.unwrap();
+        let cancel = CancellationToken::new();
+        let proof =
+            provider.generate_proof_for_signer(STUB_ATTESTATION, signer, &cancel).await.unwrap();
 
         assert_eq!(proof.output, Bytes::copy_from_slice(STUB_ATTESTATION));
         assert_eq!(proof.proof_bytes, Bytes::from_static(STUB_SEAL));
@@ -201,7 +252,9 @@ mod tests {
     #[tokio::test]
     async fn custom_override_is_called_instead_of_default() {
         let provider = SignerAwareProvider;
-        let proof = provider.generate_proof_for_signer(STUB_ATTESTATION, SIGNER_A).await.unwrap();
+        let cancel = CancellationToken::new();
+        let proof =
+            provider.generate_proof_for_signer(STUB_ATTESTATION, SIGNER_A, &cancel).await.unwrap();
 
         // Output should contain attestation bytes + signer address,
         // proving the override ran (not the default delegation).
@@ -216,10 +269,27 @@ mod tests {
     #[tokio::test]
     async fn boxed_custom_override_dispatches_correctly() {
         let provider: Box<dyn AttestationProofProvider> = Box::new(SignerAwareProvider);
-        let proof = provider.generate_proof_for_signer(STUB_ATTESTATION, SIGNER_B).await.unwrap();
+        let cancel = CancellationToken::new();
+        let proof =
+            provider.generate_proof_for_signer(STUB_ATTESTATION, SIGNER_B, &cancel).await.unwrap();
 
         let mut expected = STUB_ATTESTATION.to_vec();
         expected.extend_from_slice(SIGNER_B.as_slice());
         assert_eq!(proof.output, Bytes::from(expected));
+    }
+
+    /// A cancelled token does not by itself prevent proof completion —
+    /// implementors are allowed (not required) to honor it. `StubProvider`
+    /// is one such impl: it does the work regardless. This pins the
+    /// contract that cancel is *cooperative*, not a hard interrupt.
+    #[rstest]
+    #[tokio::test]
+    async fn cancelled_token_is_cooperative_not_mandatory() {
+        let provider = StubProvider;
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let proof =
+            provider.generate_proof_for_signer(STUB_ATTESTATION, SIGNER_A, &cancel).await.unwrap();
+        assert_eq!(proof.output, Bytes::copy_from_slice(STUB_ATTESTATION));
     }
 }

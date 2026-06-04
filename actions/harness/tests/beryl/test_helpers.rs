@@ -158,11 +158,6 @@ pub(crate) fn assert_balances(
     );
 }
 
-/// Asserts a probe returned the ABI encoding of `expected`.
-pub(crate) fn assert_probe_string(env: &BerylTestEnv, probe: Address, label: &str, expected: &str) {
-    assert_probe_returndata(env, probe, label, &expected.to_string().abi_encode());
-}
-
 /// ABI-encodes an address as a returned word.
 pub(crate) fn word_from_address(address: Address) -> U256 {
     let mut word = [0u8; 32];
@@ -175,24 +170,6 @@ fn first_word(returndata: &[u8]) -> U256 {
     let copied = returndata.len().min(word.len());
     word[..copied].copy_from_slice(&returndata[..copied]);
     U256::from_be_bytes(word)
-}
-
-fn assert_probe_returndata(
-    env: &BerylTestEnv,
-    probe: Address,
-    label: &str,
-    expected_returndata: &[u8],
-) {
-    assert_eq!(
-        env.probe_return_size(probe),
-        U256::from(expected_returndata.len()),
-        "{label} staticcall must return the expected byte length"
-    );
-    assert_eq!(
-        env.probe_return_hash(probe),
-        returndata_hash(expected_returndata),
-        "{label} staticcall must return the expected ABI payload"
-    );
 }
 
 fn returndata_hash(returndata: &[u8]) -> B256 {

@@ -1,0 +1,409 @@
+name: Base Anvil Package
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      base_anvil_ref:
+        description: "base/base-anvil ref to build from"
+        required: false
+        default: base-anvil-fork
+      base_std_ref:
+        description: "base/base-std ref to smoke test against"
+        required: false
+        default: main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BASE_ANVIL_REF: ${{ github.event.inputs.base_anvil_ref || 'base-anvil-fork' }}
+  BASE_STD_REF: ${{ github.event.inputs.base_std_ref || 'main' }}
+  CARGO_TERM_COLOR: always
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/base-anvil
+  RUSTC_WRAPPER: "sccache"
+  SCCACHE_GHA_ENABLED: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    name: Build and push ${{ matrix.settings.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - platform: linux/amd64
+            runs-on: ubuntu-24.04
+            smoke_test: true
+          - platform: linux/arm64
+            runs-on: ubuntu-24.04-arm
+            smoke_test: false
+
+    runs-on: ${{ matrix.settings.runs-on }}
+    timeout-minutes: 120
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Prepare
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.settings.platform }}
+        run: |
+          set -euo pipefail
+          echo "PLATFORM_PAIR=${PLATFORM//\//-}" >> "$GITHUB_ENV"
+
+      - name: Checkout Base
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - uses: ./.github/actions/setup
+        with:
+          free-disk: "true"
+          foundry: ${{ matrix.settings.smoke_test && 'true' || 'false' }}
+          mold: "true"
+          native-deps: "true"
+          rust-cache-shared-key: "base-anvil-package"
+
+      - name: Clone base-anvil
+        id: base-anvil
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          fetch_ref() {
+            local url="$1"
+            local ref="$2"
+            local dest="$3"
+
+            git init "$dest"
+            git -C "$dest" remote add origin "$url"
+
+            if git ls-remote --exit-code "$url" "refs/heads/$ref" >/dev/null 2>&1; then
+              git -C "$dest" fetch --depth 1 origin "refs/heads/$ref"
+            elif git ls-remote --exit-code "$url" "refs/tags/$ref" >/dev/null 2>&1; then
+              git -C "$dest" fetch --depth 1 origin "refs/tags/$ref"
+            else
+              git -C "$dest" fetch --depth 1 origin "$ref"
+            fi
+
+            git -C "$dest" checkout --detach FETCH_HEAD
+          }
+
+          workdir="$RUNNER_TEMP/base-anvil-package"
+          rm -rf "$workdir"
+          mkdir -p "$workdir/base-anvil"
+
+          fetch_ref https://github.com/base/base-anvil.git "$BASE_ANVIL_REF" "$workdir/base-anvil"
+          base_anvil_sha="$(git -C "$workdir/base-anvil" rev-parse HEAD)"
+
+          echo "BASE_ANVIL_DIR=$workdir/base-anvil" >> "$GITHUB_ENV"
+          echo "sha=$base_anvil_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve base-std ref
+        id: base-std
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if base_std_sha="$(gh api repos/base/base-std/git/ref/heads/"$BASE_STD_REF" --jq '.object.sha' 2>/dev/null)" \
+            && [[ -n "$base_std_sha" ]]; then
+            :
+          elif base_std_sha="$(gh api repos/base/base-std/git/ref/tags/"$BASE_STD_REF" --jq '.object.sha' 2>/dev/null)" \
+            && [[ -n "$base_std_sha" ]]; then
+            :
+          else
+            base_std_sha="$(gh api "repos/base/base-std/git/ref/$BASE_STD_REF" --jq '.object.sha')"
+          fi
+
+          if [[ -z "$base_std_sha" ]]; then
+            echo "::error::Unable to resolve base-std ref $BASE_STD_REF"
+            exit 1
+          fi
+
+          echo "sha=$base_std_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Build patched base-anvil binaries
+        shell: bash
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+        run: |
+          set -euo pipefail
+
+          cd "$BASE_ANVIL_DIR"
+          rustup show active-toolchain
+          cargo \
+            --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\"" \
+            --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\"" \
+            build --release --no-default-features --features anvil/cli -p anvil -p forge
+
+          "$BASE_ANVIL_DIR/target/release/anvil" --version
+          "$BASE_ANVIL_DIR/target/release/forge" --version
+
+      - name: Clone base-std
+        if: matrix.settings.smoke_test
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.BASE_STD_TOKEN }}
+          BASE_STD_SHA: ${{ steps.base-std.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          workdir="$RUNNER_TEMP/base-anvil-package"
+          base_std_dir="$workdir/base-std"
+          mkdir -p "$workdir"
+
+          gh auth setup-git
+          gh repo clone base/base-std "$base_std_dir" -- --filter=blob:none --no-checkout
+          git -C "$base_std_dir" fetch --depth 1 origin "$BASE_STD_SHA"
+          git -C "$base_std_dir" checkout --detach FETCH_HEAD
+          git -C "$base_std_dir" submodule update --init --recursive --depth 1
+
+          echo "BASE_STD_DIR=$base_std_dir" >> "$GITHUB_ENV"
+
+      - name: Run base-std fork tests
+        if: matrix.settings.smoke_test
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$BASE_STD_DIR"
+          ANVIL_BIN="$BASE_ANVIL_DIR/target/release/anvil" \
+            FORGE_BIN="$BASE_ANVIL_DIR/target/release/forge" \
+            ANVIL_LOG="$RUNNER_TEMP/base-std-anvil.log" \
+            ./script/run-fork-tests.sh
+
+      - name: Upload anvil log
+        if: always() && matrix.settings.smoke_test
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: base-anvil-package-smoke-log-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/base-std-anvil.log
+          if-no-files-found: ignore
+
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Prepare package image
+        shell: bash
+        env:
+          BASE_ANVIL_SHA: ${{ steps.base-anvil.outputs.sha }}
+          BASE_STD_SHA: ${{ steps.base-std.outputs.sha }}
+          PLATFORM: ${{ matrix.settings.platform }}
+          SMOKE_TESTED: ${{ matrix.settings.smoke_test }}
+        run: |
+          set -euo pipefail
+
+          image_root="$RUNNER_TEMP/base-anvil-image"
+          rm -rf "$image_root"
+          mkdir -p "$image_root"
+
+          cp "$BASE_ANVIL_DIR/target/release/anvil" "$image_root/anvil"
+          cp "$BASE_ANVIL_DIR/target/release/forge" "$image_root/forge"
+
+          jq -n \
+            --arg package "$REGISTRY_IMAGE" \
+            --arg platform "$PLATFORM" \
+            --arg base_repo "$GITHUB_REPOSITORY" \
+            --arg base_ref "$GITHUB_REF_NAME" \
+            --arg base_sha "$GITHUB_SHA" \
+            --arg anvil_repo "base/base-anvil" \
+            --arg anvil_ref "$BASE_ANVIL_REF" \
+            --arg anvil_sha "$BASE_ANVIL_SHA" \
+            --arg std_repo "base/base-std" \
+            --arg std_ref "$BASE_STD_REF" \
+            --arg std_sha "$BASE_STD_SHA" \
+            --argjson smoke_tested "$SMOKE_TESTED" \
+            '{
+              package: $package,
+              platform: $platform,
+              base: {repo: $base_repo, ref: $base_ref, sha: $base_sha},
+              base_anvil: {repo: $anvil_repo, ref: $anvil_ref, sha: $anvil_sha},
+              base_std: {
+                repo: $std_repo,
+                ref: $std_ref,
+                sha: $std_sha,
+                smoke_tested: $smoke_tested
+              },
+              binaries: ["anvil", "forge"]
+            }' > "$image_root/MANIFEST.json"
+
+          {
+            printf '%s\n' 'FROM public.ecr.aws/docker/library/debian:trixie-slim@sha256:b6e2a152f22a40ff69d92cb397223c906017e1391a73c952b588e51af8883bf8'
+            printf '%s\n' 'RUN apt-get update \'
+            printf '%s\n' '  && apt-get install -y --no-install-recommends ca-certificates \'
+            printf '%s\n' '  && rm -rf /var/lib/apt/lists/*'
+            printf '%s\n' 'COPY anvil forge /usr/local/bin/'
+            printf '%s\n' 'COPY MANIFEST.json /usr/local/share/base-anvil/MANIFEST.json'
+            printf '%s\n' 'ENTRYPOINT ["/usr/local/bin/anvil"]'
+          } > "$image_root/Dockerfile"
+
+      - name: Build and push package image
+        id: image
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.settings.platform }}
+        run: |
+          set -euo pipefail
+
+          created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          image_root="$RUNNER_TEMP/base-anvil-image"
+          metadata_file="$RUNNER_TEMP/base-anvil-metadata.json"
+
+          docker buildx build "$image_root" \
+            --platform "$PLATFORM" \
+            --tag "$REGISTRY_IMAGE" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.created=$created" \
+            --label "org.opencontainers.image.description=Base Anvil binaries built against base/base" \
+            --output=type=image,push-by-digest=true,name-canonical=true,push=true \
+            --metadata-file "$metadata_file"
+
+          digest="$(jq -er '."containerimage.digest"' "$metadata_file")"
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: base-anvil-digest-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Publish manifest
+    needs: build-and-push
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout Base
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: base-anvil-digest-*
+          merge-multiple: true
+
+      - name: Login to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Determine package tags
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          short_sha="${GITHUB_SHA::12}"
+          commit_date="$(git show -s --format=%cd --date=format:%Y%m%d "$GITHUB_SHA")"
+          primary_tag="sha-$GITHUB_SHA"
+          tags=("$REGISTRY_IMAGE:$primary_tag")
+
+          if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_ANVIL_REF" == "base-anvil-fork" && "$BASE_STD_REF" == "main" ]]; then
+            tags+=("$REGISTRY_IMAGE:main")
+            tags+=("$REGISTRY_IMAGE:main-$commit_date-$short_sha")
+          else
+            if [[ "$GITHUB_REF_NAME" == "main" ]]; then
+              ref_tag="manual"
+            else
+              ref_tag="$(printf '%s' "$GITHUB_REF_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^-+|-+$//g')"
+            fi
+            tags+=("$REGISTRY_IMAGE:${ref_tag:-ref}-$commit_date-$short_sha")
+          fi
+
+          {
+            printf 'primary_tag=%s\n' "$primary_tag"
+            printf 'docker_tags<<EOF\n'
+            printf '%s\n' "${tags[@]}"
+            printf 'EOF\n'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create manifest list and push
+        shell: bash
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          DOCKER_TAGS: ${{ steps.tags.outputs.docker_tags }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          digests=(*)
+          if [[ ${#digests[@]} -eq 0 ]]; then
+            echo "::error::No base-anvil digests found"
+            exit 1
+          fi
+
+          tag_args=()
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] || continue
+            tag_args+=("-t" "$tag")
+          done <<< "$DOCKER_TAGS"
+
+          digest_args=()
+          for digest in "${digests[@]}"; do
+            digest_args+=("$REGISTRY_IMAGE@sha256:$digest")
+          done
+
+          docker buildx imagetools create "${tag_args[@]}" "${digest_args[@]}"
+
+      - name: Inspect image
+        shell: bash
+        env:
+          PRIMARY_TAG: ${{ steps.tags.outputs.primary_tag }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$REGISTRY_IMAGE:$PRIMARY_TAG"
+
+      - name: Summary
+        shell: bash
+        env:
+          PRIMARY_TAG: ${{ steps.tags.outputs.primary_tag }}
+        run: |
+          set -euo pipefail
+          echo "## Base Anvil package published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`bash" >> "$GITHUB_STEP_SUMMARY"
+          echo "docker pull $REGISTRY_IMAGE:$PRIMARY_TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"

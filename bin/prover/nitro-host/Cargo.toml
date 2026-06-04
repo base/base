@@ -23,9 +23,12 @@ alloy-primitives.workspace = true
 base-common-chains.workspace = true
 base-proof-tee-nitro-host.workspace = true
 tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true, optional = true }
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
 base-proof-host = { workspace = true, features = ["metrics"] }
+uuid = { workspace = true, features = ["v4"], optional = true }
+base-prover-service-client = { workspace = true, optional = true }
 base-proof-tee-nitro-enclave = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -33,3 +36,4 @@ base-proof-tee-nitro-enclave.workspace = true
 
 [features]
 local = [ "dep:base-proof-tee-nitro-enclave" ]
+worker = [ "dep:base-prover-service-client", "dep:tokio-util", "dep:uuid" ]

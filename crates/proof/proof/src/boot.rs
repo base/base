@@ -141,6 +141,13 @@ pub struct BootInfo {
     ///
     /// **Security**: Verified input committed by the fault proof system.
     pub chain_id: u64,
+    /// The trusted activation registry admin address for Base precompile execution.
+    ///
+    /// **Security**: Derived from the built-in chain config, not from the oracle-provided rollup
+    /// config fallback. This may be `None` only when Beryl is not scheduled; Beryl-enabled configs
+    /// without a static admin are rejected during boot loading.
+    #[serde(default)]
+    pub activation_admin_address: Option<Address>,
     /// The rollup configuration for the L2 chain.
     ///
     /// Contains all the network-specific parameters needed for proper L2 block
@@ -237,10 +244,14 @@ impl BootInfo {
                 .map_err(OracleProviderError::SliceConversion)?,
         );
 
+        let built_in_chain_config = base_common_chains::ChainConfig::by_chain_id(chain_id);
+        let activation_admin_address =
+            built_in_chain_config.and_then(|config| config.activation_admin_address);
+
         // Attempt to load the rollup config from the chain ID. If there is no config for the chain,
         // fall back to loading the config from the preimage oracle.
-        let rollup_config = if let Some(config) = base_common_chains::rollup_config!(chain_id) {
-            config
+        let rollup_config = if let Some(config) = built_in_chain_config {
+            config.rollup_config()
         } else {
             warn!(
                 target: "boot_loader",
@@ -263,9 +274,15 @@ impl BootInfo {
                 rollup_config_chain_id,
             });
         }
+        // The activation registry is installed at Beryl. For built-in chains, the admin comes from
+        // `ChainConfig`; for oracle-provided rollup configs, do not infer an admin from untrusted
+        // fallback data until the admin has an explicit committed source.
+        if activation_admin_address.is_none() && rollup_config.hardforks.base.beryl.is_some() {
+            return Err(OracleProviderError::MissingActivationAdminAddress { chain_id });
+        }
 
-        // Attempt to load the rollup config from the chain ID. If there is no config for the chain,
-        // fall back to loading the config from the preimage oracle.
+        // Attempt to load the L1 config from the rollup config's L1 chain ID. If there is no config
+        // for the chain, fall back to loading the config from the preimage oracle.
         let l1_config = if let Some(config) =
             base_common_chains::L1_CONFIGS.get(&rollup_config.l1_chain_id)
         {
@@ -347,6 +364,7 @@ impl BootInfo {
             claimed_l2_output_root: l2_claim,
             claimed_l2_block_number: l2_claim_block,
             chain_id,
+            activation_admin_address,
             rollup_config,
             l1_config,
             proposer,
@@ -405,6 +423,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn loads_activation_admin_address_from_builtin_chain_config() {
+        let chain_config = BaseChainConfig::ZERONET;
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 40_308_263u64.to_be_bytes().to_vec());
+        oracle.insert(L2_CHAIN_ID_KEY, chain_config.chain_id.to_be_bytes().to_vec());
+
+        let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
+
+        assert_eq!(boot_info.activation_admin_address, chain_config.activation_admin_address);
+    }
+
+    #[tokio::test]
     async fn rejects_oracle_rollup_config_with_mismatched_chain_id() {
         let rollup_config = base_common_chains::rollup_config!(BaseChainConfig::SEPOLIA);
 
@@ -452,6 +486,37 @@ mod tests {
         let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
 
         assert_eq!(boot_info.chain_id, ORACLE_CHAIN_ID);
+        assert_eq!(boot_info.activation_admin_address, None);
         assert_eq!(boot_info.rollup_config.l2_chain_id.id(), ORACLE_CHAIN_ID);
+    }
+
+    #[tokio::test]
+    async fn rejects_oracle_rollup_config_with_beryl_and_no_activation_admin() {
+        const ORACLE_CHAIN_ID: u64 = 999_999_999;
+
+        let rollup_config = base_common_chains::rollup_config!(BaseChainConfig::SEPOLIA);
+        let mut rollup_config_value =
+            serde_json::to_value(&rollup_config).expect("rollup config should convert to value");
+        rollup_config_value["l2_chain_id"] = serde_json::json!(ORACLE_CHAIN_ID);
+        rollup_config_value["base"] = serde_json::json!({ "beryl": 0 });
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 40_308_263u64.to_be_bytes().to_vec());
+        oracle.insert(L2_CHAIN_ID_KEY, ORACLE_CHAIN_ID.to_be_bytes().to_vec());
+        oracle.insert(
+            L2_ROLLUP_CONFIG_KEY,
+            serde_json::to_vec(&rollup_config_value).expect("rollup config should serialize"),
+        );
+
+        let err = BootInfo::load(&oracle)
+            .await
+            .expect_err("Beryl-enabled oracle config without activation admin should fail");
+        assert!(matches!(
+            err,
+            OracleProviderError::MissingActivationAdminAddress { chain_id: ORACLE_CHAIN_ID }
+        ));
     }
 }

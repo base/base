@@ -12,8 +12,9 @@ use url::Url;
 
 use super::{Action, Resources, Router, View, ViewId, runner::start_background_services};
 use crate::{
-    commands::{COLOR_BASE_BLUE, EVENT_POLL_TIMEOUT},
+    app::EVENT_POLL_TIMEOUT,
     config::MonitoringConfig,
+    output::COLOR_BASE_BLUE,
     tui::{AppFrame, Toast, restore_terminal, setup_terminal},
 };
 

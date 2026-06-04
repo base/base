@@ -12,4 +12,4 @@ mod handle;
 pub use handle::PolicyHandle;
 
 mod storage;
-pub use storage::PolicyRegistryStorage;
+pub use storage::{PackedPolicy, PolicyRegistryStorage};

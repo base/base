@@ -11,7 +11,7 @@ pub const L1_COST_FASTLZ_COEF: u64 = 836_500;
 /// Inverted to be used with `saturating_sub`.
 pub const L1_COST_INTERCEPT: u64 = 42_585_600;
 
-/// <https://github.com/ethereum-optimism/op-geth/blob/647c346e2bef36219cc7b47d76b1cb87e7ca29e4/core/types/rollup_cost.go#82>
+/// <https://github.com/ethereum-optimism/op-geth/blob/647c346e2bef36219cc7b47d76b1cb87e7ca29e4/core/types/rollup_cost.go#L82>
 pub const MIN_TX_SIZE_SCALED: u64 = 100 * 1_000_000;
 
 /// Calculate the data gas for posting the transaction on L1.

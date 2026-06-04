@@ -75,6 +75,11 @@ pub trait Upgrades: EthereumHardforks {
     fn is_beryl_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.upgrade_activation(BaseUpgrade::Beryl).active_at_timestamp(timestamp)
     }
+
+    /// Returns `true` if [`Cobalt`](BaseUpgrade::Cobalt) is active at given block timestamp.
+    fn is_cobalt_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.upgrade_activation(BaseUpgrade::Cobalt).active_at_timestamp(timestamp)
+    }
 }
 
 impl Upgrades for RollupConfig {
@@ -133,6 +138,12 @@ impl Upgrades for RollupConfig {
                 .beryl
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
+            BaseUpgrade::Cobalt => self
+                .hardforks
+                .base
+                .cobalt
+                .map(ForkCondition::Timestamp)
+                .unwrap_or(ForkCondition::Never),
         }
     }
 }
@@ -166,5 +177,6 @@ mod tests {
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Jovian), ForkCondition::Never);
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Azul), ForkCondition::Never);
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Beryl), ForkCondition::Never);
+        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Cobalt), ForkCondition::Never);
     }
 }

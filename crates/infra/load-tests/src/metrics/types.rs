@@ -147,6 +147,9 @@ pub struct ThroughputSample {
     pub gps: f64,
 }
 
+/// L2 block interval (2 seconds per block).
+const BLOCK_INTERVAL: Duration = Duration::from_secs(2);
+
 /// Range of block numbers in which test transactions were included.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BlockRange {
@@ -159,6 +162,17 @@ pub struct BlockRange {
     /// Inclusive number of blocks spanned (`last_block - first_block + 1`),
     /// or `0` when no test transactions were confirmed.
     pub block_count: u64,
+}
+
+impl BlockRange {
+    /// Returns the duration spanned by this block range using the fixed L2 block interval,
+    /// or `None` when the range spans fewer than 2 blocks.
+    pub fn block_time_duration(&self) -> Option<Duration> {
+        if self.block_count < 2 {
+            return None;
+        }
+        Some(BLOCK_INTERVAL * (self.block_count - 1) as u32)
+    }
 }
 
 /// Aggregated flashblocks latency percentiles.
@@ -211,4 +225,10 @@ pub struct ConfigSummary {
     pub looper_contract: Option<String>,
     /// Amount of each swap token per sender (in wei, as string).
     pub swap_token_amount: String,
+    /// Amount of B-20 tokens to mint per sender (in wei, as string).
+    pub b20_mint_amount: String,
+
+    /// Real-token setup configuration, when enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub real_token_setup: Option<serde_json::Value>,
 }

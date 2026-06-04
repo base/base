@@ -3,6 +3,17 @@ set positional-arguments
 eif_describe_image := "base-prover-nitro-enclave-describe"
 eif_output := "eif.bin"
 
+# Pinned upstream sources for reproducible enclave artifact builds. Bump in lockstep
+# with etc/docker/Dockerfile.nitro-enclave.
+eif_build_repo := "https://github.com/aws/aws-nitro-enclaves-image-format.git"
+eif_build_commit := "483114f1da3bad913ad1fb7d5c00dadacc6cbae6"
+nitro_cli_repo := "https://github.com/aws/aws-nitro-enclaves-cli.git"
+# v1.3.3
+nitro_cli_commit := "afb7264b477ad241922236dd61f1730154212034"
+# Linuxkit version required by build-enclave-binary-and-ramdisks. Pinned here
+# because ramdisk content varies by linuxkit version, which would change PCR0.
+linuxkit_required_version := "1.8.2"
+
 # Default recipe to display help information
 default:
     @just --list
@@ -31,6 +42,20 @@ nitro-local *args:
         --logs.stdout.format json \
         {{ args }}
 
+# Run worker and enclave in a single process for local development
+nitro-local-worker *args:
+    RUST_LOG=info RUST_BACKTRACE=1 \
+        cargo run --package base-prover-nitro-host --bin base-prover-nitro-host --features local,worker -- local \
+        --l1-eth-url "${L1_ETH_URL:-http://localhost:8545}" \
+        --l2-eth-url "${L2_ETH_URL:-http://localhost:9545}" \
+        --l1-beacon-url "${L1_BEACON_URL:-http://localhost:5052}" \
+        --l2-chain-id "${L2_CHAIN_ID:-8453}" \
+        --prover-service-endpoint "${PROVER_SERVICE_ENDPOINT:?PROVER_SERVICE_ENDPOINT is required}" \
+        --enable-experimental-witness-endpoint \
+        --metrics.enabled \
+        --logs.stdout.format json \
+        {{ args }}
+
 # Build the nitro host Docker image (full runtime image)
 build-host *args="":
     #!/usr/bin/env bash
@@ -44,6 +69,160 @@ build-enclave *args="":
     set -euo pipefail
     cd ../../..
     DOCKER_BUILDKIT=1 docker build --platform linux/amd64 {{ args }} -f etc/docker/Dockerfile.nitro-enclave -t base-prover-nitro-enclave .
+
+# --- Inline build recipes (no docker build) ----------------------------------
+#
+# These recipes do not invoke `docker build` and are intended to be run from a
+# pre-configured build environment (locally or from a downstream Dockerfile that
+# only clones the public base/base repo and invokes the recipes). Together they
+# are the single source of truth for the nitro prover build steps; the existing
+# Dockerfiles (etc/docker/Dockerfile.nitro-*) mirror the same logic for local
+# docker-based workflows.
+#
+# Expected environment:
+#   build-host-inline:                rust toolchain + libclang/pkg-config/mold/protobuf-compiler
+#   build-enclave-binary-and-ramdisks (alpine/musl): rust + musl-dev + openssl-libs-static
+#                                                    + clang/mold/protobuf-dev
+#                                                    + linuxkit v1.8.2 (PCR0-affecting; pinned via linuxkit_required_version, asserted in recipe)
+#   build-enclave-eif-and-cli         (debian/glibc): rust + git + pkg-config + libssl-dev
+
+# Build the nitro host binary inline. Outputs the binary and runtime entrypoint
+# to OUT_DIR.
+build-host-inline OUT_DIR PROFILE='maxperf':
+    #!/usr/bin/env bash
+    set -euxo pipefail
+    cd ../../..
+    REPO_ROOT="$(pwd)"
+    OUT_DIR="$(mkdir -p '{{ OUT_DIR }}' && cd '{{ OUT_DIR }}' && pwd)"
+
+    cargo build --profile {{ PROFILE }} --locked \
+        --package base-prover-nitro-host --bin base-prover-nitro-host
+    PROFILE_DIR=$([ "{{ PROFILE }}" = "dev" ] && echo debug || echo "{{ PROFILE }}")
+    cp "$REPO_ROOT/target/$PROFILE_DIR/base-prover-nitro-host" "$OUT_DIR/"
+    cp "$REPO_ROOT/etc/docker/nitro-host/entrypoint.sh" "$OUT_DIR/"
+
+    echo "Host artifacts in $OUT_DIR:"
+    ls -la "$OUT_DIR"
+
+# Stage 1 of the enclave build: produce the static enclave binary (musl) and
+# the linuxkit init+user ramdisks. Must run in a musl-capable environment
+# (alpine + musl-dev). BOOTSTRAP_DIR must contain the AWS Nitro SDK bootstrap
+# artifacts; this recipe specifically reads `init` and `nsm.ko` (referenced by
+# the linuxkit ramdisk YAMLs). OUT_DIR receives the binary + ramdisk images.
+build-enclave-binary-and-ramdisks BOOTSTRAP_DIR OUT_DIR:
+    #!/usr/bin/env bash
+    set -euxo pipefail
+    cd ../../..
+    REPO_ROOT="$(pwd)"
+    BOOTSTRAP_DIR="$(cd '{{ BOOTSTRAP_DIR }}' && pwd)"
+    OUT_DIR="$(mkdir -p '{{ OUT_DIR }}' && cd '{{ OUT_DIR }}' && pwd)"
+
+    # Reproducibility: pin source date and force static musl linking.
+    export SOURCE_DATE_EPOCH=0
+    export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static -C link-self-contained=yes -C link-arg=-fuse-ld=mold"
+    export OPENSSL_STATIC=1
+    export OPENSSL_LIB_DIR=/usr/lib
+    export OPENSSL_INCLUDE_DIR=/usr/include
+
+    # Reproducibility: ramdisk content depends on the linuxkit version, so any
+    # mismatch would change PCR0. Refuse to proceed if the wrong version is on PATH.
+    LK_REQUIRED="{{ linuxkit_required_version }}"
+    LK_ACTUAL="$(linuxkit version 2>&1 | awk '/^version:/ {print $2; exit} /^linuxkit version/ {print $3; exit}' | sed 's/^v//')"
+    if [ "$LK_ACTUAL" != "$LK_REQUIRED" ]; then
+        echo "ERROR: linuxkit version mismatch (required v$LK_REQUIRED, found '${LK_ACTUAL:-unknown}'). Install the pinned version for PCR0 reproducibility." >&2
+        exit 1
+    fi
+
+    # 1. Compile the static enclave binary.
+    cargo build --release --locked --target x86_64-unknown-linux-musl \
+        --package base-prover-nitro-enclave --bin base-prover-nitro-enclave
+    cp target/x86_64-unknown-linux-musl/release/base-prover-nitro-enclave "$OUT_DIR/"
+
+    # 2. Assemble linuxkit ramdisks. user-ramdisk.yaml expects the enclave
+    #    binary in CWD; init-ramdisk.yaml expects a `bootstrap/` directory.
+    WORK_DIR="$(mktemp -d)"
+    trap 'rm -rf "$WORK_DIR"' EXIT
+    cp "$OUT_DIR/base-prover-nitro-enclave" "$WORK_DIR/base-prover-nitro-enclave"
+    ln -sf "$BOOTSTRAP_DIR" "$WORK_DIR/bootstrap"
+    cd "$WORK_DIR"
+    linuxkit build --format kernel+initrd --no-sbom --name init-ramdisk \
+        "$REPO_ROOT/etc/docker/nitro-enclave/init-ramdisk.yaml"
+    linuxkit build --format kernel+initrd --no-sbom --name user-ramdisk \
+        "$REPO_ROOT/etc/docker/nitro-enclave/user-ramdisk.yaml"
+    cp init-ramdisk-initrd.img user-ramdisk-initrd.img "$OUT_DIR/"
+
+    echo "Stage 1 artifacts in $OUT_DIR:"
+    ls -la "$OUT_DIR"
+
+# Stage 2 of the enclave build: build eif_build (from aws-nitro-enclaves-image-format),
+# assemble eif.bin from the ramdisks + bootstrap kernel, build nitro-cli (from
+# aws-nitro-enclaves-cli) and apply our config patch, and stage the runtime
+# bundle. STAGE1_DIR must contain init-ramdisk-initrd.img and
+# user-ramdisk-initrd.img (from build-enclave-binary-and-ramdisks).
+# BOOTSTRAP_DIR is the AWS Nitro SDK bootstrap artifacts; this recipe reads
+# `bzImage` and `bzImage.config` for the eif_build kernel inputs. The runtime
+# helpers `nitro-cli-config` and `nitro-enclaves-allocator` are NOT sourced
+# from BOOTSTRAP_DIR — they come from the pinned nitro-cli repo's bootstrap/
+# subdirectory after we clone and patch it below, then are copied into OUT_DIR.
+# Must run in a glibc environment with cargo + git + pkg-config + libssl-dev.
+build-enclave-eif-and-cli STAGE1_DIR BOOTSTRAP_DIR OUT_DIR:
+    #!/usr/bin/env bash
+    set -euxo pipefail
+    cd ../../..
+    REPO_ROOT="$(pwd)"
+    STAGE1_DIR="$(cd '{{ STAGE1_DIR }}' && pwd)"
+    BOOTSTRAP_DIR="$(cd '{{ BOOTSTRAP_DIR }}' && pwd)"
+    OUT_DIR="$(mkdir -p '{{ OUT_DIR }}' && cd '{{ OUT_DIR }}' && pwd)"
+
+    # Reproducibility: pin source date for fixed embedded timestamps.
+    export SOURCE_DATE_EPOCH=0
+
+    WORK_DIR="$(mktemp -d)"
+    trap 'rm -rf "$WORK_DIR"' EXIT
+
+    # 1. Build eif_build from the pinned upstream commit using our pinned Cargo.lock.
+    mkdir -p "$WORK_DIR/eif-build-src"
+    cd "$WORK_DIR/eif-build-src"
+    git init -q
+    git remote add origin "{{ eif_build_repo }}"
+    git fetch --depth=1 origin "{{ eif_build_commit }}"
+    git reset --hard FETCH_HEAD
+    cp "$REPO_ROOT/etc/docker/nitro-enclave/aws-nitro-enclaves-image-format.Cargo.lock" Cargo.lock
+    cargo build --all --release --locked
+    cp target/release/eif_build "$WORK_DIR/eif_build"
+
+    # 2. Assemble eif.bin with reproducible build-time.
+    cd "$WORK_DIR"
+    "$WORK_DIR/eif_build" \
+        --kernel "$BOOTSTRAP_DIR/bzImage" \
+        --kernel_config "$BOOTSTRAP_DIR/bzImage.config" \
+        --cmdline "$(cat "$REPO_ROOT/etc/docker/nitro-enclave/cmdline-x86_64")" \
+        --ramdisk "$STAGE1_DIR/init-ramdisk-initrd.img" \
+        --ramdisk "$STAGE1_DIR/user-ramdisk-initrd.img" \
+        --build-time "1970-01-01T00:00:00+00:00" \
+        --output "$OUT_DIR/eif.bin"
+
+    # 3. Build nitro-cli from the pinned upstream commit and apply our patch
+    #    to bootstrap/nitro-cli-config (the patch is applied to the cloned tree,
+    #    then the patched binary is copied to OUT_DIR).
+    mkdir -p "$WORK_DIR/nitro-cli-src"
+    cd "$WORK_DIR/nitro-cli-src"
+    git init -q
+    git remote add origin "{{ nitro_cli_repo }}"
+    git fetch --depth=1 origin "{{ nitro_cli_commit }}"
+    git reset --hard FETCH_HEAD
+    cargo build --release --locked
+    git apply "$REPO_ROOT/etc/docker/nitro-enclave/nitro-cli-config.patch"
+    cp target/release/nitro-cli "$OUT_DIR/"
+    cp bootstrap/nitro-cli-config "$OUT_DIR/"
+    cp bootstrap/nitro-enclaves-allocator "$OUT_DIR/"
+
+    # 4. Stage runtime config + entrypoint.
+    cp "$REPO_ROOT/etc/docker/nitro-enclave/allocator.yaml" "$OUT_DIR/"
+    cp "$REPO_ROOT/etc/docker/nitro-enclave/entrypoint-enclave.sh" "$OUT_DIR/entrypoint.sh"
+
+    echo "Stage 2 artifacts in $OUT_DIR:"
+    ls -la "$OUT_DIR"
 
 # Print config hashes for all supported chains
 config-hashes:

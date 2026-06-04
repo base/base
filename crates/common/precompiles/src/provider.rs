@@ -13,8 +13,8 @@ use revm::{
 };
 
 use crate::{
-    ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup, PolicyRegistryPrecompile,
-    bls12_381, bn254_pair,
+    ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup, NoopPrecompileCallObserver,
+    PolicyRegistryPrecompile, PrecompileCallObserver, bls12_381, bn254_pair,
 };
 
 /// Base precompile provider.
@@ -41,7 +41,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             BaseUpgrade::Granite | BaseUpgrade::Holocene => Self::granite(),
             BaseUpgrade::Isthmus => Self::isthmus(),
             BaseUpgrade::Jovian => Self::jovian(),
-            BaseUpgrade::Azul | BaseUpgrade::Beryl => Self::azul(),
+            BaseUpgrade::Azul | BaseUpgrade::Beryl | BaseUpgrade::Cobalt => Self::azul(),
             upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
         };
 
@@ -53,6 +53,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     }
 
     /// Sets the activation registry admin address.
+    #[must_use = "with_activation_admin_address returns a new BasePrecompiles value"]
     pub const fn with_activation_admin_address(
         mut self,
         activation_admin_address: Option<Address>,
@@ -167,11 +168,23 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     /// Builds a [`PrecompilesMap`] with all Base precompiles for this spec installed.
     ///
     /// For Beryl and later, this also installs the dynamic token and registry precompiles.
+    #[must_use = "install returns the PrecompilesMap containing all installed Base precompiles"]
     pub fn install(self) -> PrecompilesMap {
+        self.install_with_observer(NoopPrecompileCallObserver)
+    }
+
+    /// Builds a [`PrecompilesMap`] with all Base precompiles for this spec installed and observed.
+    ///
+    /// For Beryl and later, this also installs the dynamic token and registry precompiles.
+    #[must_use = "install_with_observer returns the PrecompilesMap containing all installed Base precompiles"]
+    pub fn install_with_observer<O>(self, observer: O) -> PrecompilesMap
+    where
+        O: PrecompileCallObserver,
+    {
         let mut precompiles = PrecompilesMap::from_static(self.precompiles());
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
             B20Factory::install(&mut precompiles);
-            BerylLookup::install(&mut precompiles);
+            BerylLookup::install_with_observer(&mut precompiles, observer);
             PolicyRegistryPrecompile::install(&mut precompiles);
             ActivationRegistry::install(&mut precompiles, self.activation_admin_address);
         }
@@ -227,14 +240,17 @@ mod tests {
     use std::vec;
 
     use alloy_primitives::{Address, B256};
+    use base_common_chains::BaseUpgrade;
     use revm::{
         precompile::{Precompiles, bls12_381_const, bn254, modexp, secp256r1},
         primitives::eip7823,
     };
     use rstest::rstest;
 
-    use super::*;
-    use crate::{ActivationRegistryStorage, B20FactoryStorage, B20Variant, bls12_381, bn254_pair};
+    use crate::{
+        ActivationRegistryStorage, B20FactoryStorage, B20Variant, BasePrecompiles, bls12_381,
+        bn254_pair,
+    };
 
     type TestPrecompiles = BasePrecompiles<BaseUpgrade>;
 
@@ -498,10 +514,11 @@ mod tests {
     #[rstest]
     #[case::azul(BaseUpgrade::Azul, false)]
     #[case::beryl(BaseUpgrade::Beryl, true)]
+    #[case::cobalt(BaseUpgrade::Cobalt, true)]
     fn install_routes_b20_precompiles_by_fork(#[case] spec: BaseUpgrade, #[case] expected: bool) {
         let precompiles = BasePrecompiles::new_with_spec(spec).install();
         let (token, _) =
-            B20Variant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
 
         assert_eq!(precompiles.get(&B20FactoryStorage::ADDRESS).is_some(), expected);
         assert_eq!(precompiles.get(&token).is_some(), expected);

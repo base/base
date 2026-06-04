@@ -7,7 +7,7 @@ use reth_chainspec::ChainSpecBuilder;
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_primitives_traits::SealedHeader;
 
-use crate::BaseChainSpec;
+use crate::{BaseChainSpec, BaseChainSpecError};
 
 /// Chain spec builder for a Base chain.
 #[derive(Debug, Default)]
@@ -152,18 +152,33 @@ impl BaseChainSpecBuilder {
         self
     }
 
-    /// Build the resulting [`BaseChainSpec`].
+    /// Tries to build the resulting [`BaseChainSpec`].
     ///
     /// # Panics
     ///
     /// This function panics if the chain ID and genesis is not set ([`Self::chain`] and
     /// [`Self::genesis`]).
-    pub fn build(self) -> BaseChainSpec {
+    pub fn try_build(self) -> Result<BaseChainSpec, BaseChainSpecError> {
         let mut inner = self.inner.build();
+        BaseChainSpec::validate_beryl_activation_admin(
+            &inner.hardforks,
+            self.activation_admin_address,
+            inner.chain.id(),
+        )?;
         inner.genesis_header = SealedHeader::seal_slow(BaseChainSpec::make_genesis_header(
             &inner.genesis,
             &inner.hardforks,
         ));
-        BaseChainSpec { inner, activation_admin_address: self.activation_admin_address }
+        Ok(BaseChainSpec { inner, activation_admin_address: self.activation_admin_address })
+    }
+
+    /// Build the resulting [`BaseChainSpec`].
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the chain ID and genesis is not set ([`Self::chain`] and
+    /// [`Self::genesis`]), or if Beryl is scheduled without an activation registry admin address.
+    pub fn build(self) -> BaseChainSpec {
+        self.try_build().expect("Beryl-enabled chain spec requires activation admin")
     }
 }
