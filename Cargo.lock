@@ -6003,6 +6003,7 @@ name = "base-prover-service-client"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "backon",
  "base-prover-service-protocol",
  "chrono",
  "jsonrpsee",

@@ -16,6 +16,7 @@ base-prover-service-protocol = { workspace = true, features = ["rpc-client"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 
 # Async
+backon.workspace = true
 async-trait.workspace = true
 
 # URL parsing
