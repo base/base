@@ -185,6 +185,8 @@ pub fn time_diff_color(ms: i64) -> Color {
 ///
 /// Falls back to the raw seconds string when the timestamp is out of range.
 pub fn format_unix_timestamp(secs: u64) -> String {
-    DateTime::from_timestamp(secs as i64, 0)
+    i64::try_from(secs)
+        .ok()
+        .and_then(|s| DateTime::from_timestamp(s, 0))
         .map_or_else(|| secs.to_string(), |t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string())
 }

@@ -38,9 +38,8 @@ pub use rpc::{
     fetch_full_system_config, fetch_initial_backlog_with_progress, fetch_safe_and_latest,
     pause_sequencer_node, restart_conductor_node, run_block_fetcher, run_conductor_poller,
     run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher, run_pods_poller,
-    run_proofs_poller,
-    run_safe_head_poller, run_validator_poller, start_sequencer_node, stop_sequencer_node,
-    transfer_conductor_leader, unpause_sequencer_node,
+    run_proofs_poller, run_safe_head_poller, run_validator_poller, start_sequencer_node,
+    stop_sequencer_node, transfer_conductor_leader, unpause_sequencer_node,
 };
 
 mod tui;

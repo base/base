@@ -127,7 +127,7 @@ struct TimestampJson {
 
 impl TimestampJson {
     fn from_unix(secs: u64) -> Self {
-        let dt = DateTime::from_timestamp(secs as i64, 0);
+        let dt = i64::try_from(secs).ok().and_then(|s| DateTime::from_timestamp(s, 0));
         let utc = dt
             .map(|t| t.to_rfc3339_opts(SecondsFormat::Secs, true))
             .unwrap_or_else(|| secs.to_string());
@@ -258,6 +258,19 @@ mod tests {
         let local_has_offset =
             ts.local.contains('+') || ts.local.matches('-').count() >= 3 || ts.local.ends_with('Z');
         assert!(local_has_offset, "expected local RFC 3339 with offset, got {}", ts.local);
+    }
+
+    #[test]
+    fn timestamp_json_falls_back_on_u64_overflow() {
+        // u64 values above i64::MAX would silently wrap to a negative i64 under
+        // an `as i64` cast, producing a misleading pre-epoch RFC 3339 string.
+        // The try_from guard converts that case to None, triggering the raw
+        // seconds fallback for both utc and local.
+        let oversize = super::TimestampJson::from_unix(u64::MAX);
+
+        assert_eq!(oversize.unix, u64::MAX);
+        assert_eq!(oversize.utc, u64::MAX.to_string());
+        assert_eq!(oversize.local, u64::MAX.to_string());
     }
 
     #[test]
