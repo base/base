@@ -23,6 +23,12 @@ use base_proof_rpc::{
     BaseBlock, L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OutputAtBlock,
     RollupProvider, RpcError, RpcResult, SyncStatus,
 };
+use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
+use base_prover_service_protocol::{
+    GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
+    ProofRequestKind as ApiProofRequestKind, ProofResult as ApiProofResult, ProofStatus,
+    ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
+};
 
 use crate::{error::ProposerError, output_proposer::OutputProposer};
 
@@ -425,6 +431,69 @@ impl ProverClient for MockProver {
         let proposals: Vec<Proposal> = ((start + 1)..=block_number).map(test_proposal).collect();
 
         Ok(ProofResult::Tee { aggregate_proposal: test_proposal(block_number), proposals })
+    }
+}
+
+/// Mock prover-service requester for pipeline tests.
+#[derive(Debug, Default)]
+pub struct MockProofRequester {
+    /// Requests accepted through `prove_block_range`.
+    pub requests: std::sync::Mutex<HashMap<String, ProveBlockRangeRequest>>,
+}
+
+#[async_trait]
+impl ProofRequesterProvider for MockProofRequester {
+    async fn prove_block_range(
+        &self,
+        request: ProveBlockRangeRequest,
+    ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
+        let session_id =
+            request.proof.session_id.clone().expect("proposer tests should set session_id");
+        self.requests.lock().unwrap().insert(session_id.clone(), request);
+        Ok(ProveBlockRangeResponse { session_id })
+    }
+
+    async fn get_proof(
+        &self,
+        request: GetProofRequest,
+    ) -> Result<GetProofResponse, ProverServiceClientError> {
+        let requests = self.requests.lock().unwrap();
+        let request = requests
+            .get(&request.session_id)
+            .ok_or_else(|| ProverServiceClientError::MissingResult("unknown session".to_owned()))?;
+        let ApiProofRequestKind::Tee(tee_request) = &request.proof.request else {
+            return Err(ProverServiceClientError::UnexpectedResultPayload(
+                "expected TEE request".to_owned(),
+            ));
+        };
+        let target = tee_request.proof.claimed_l2_block_number;
+        let interval = tee_request.proof.intermediate_block_interval.max(1);
+        let start = target.saturating_sub(interval);
+        let proposals = ((start + 1)..=target).map(test_proposal).collect::<Vec<_>>();
+        let aggregate_proposal = Proposal {
+            output_root: tee_request.proof.claimed_l2_output_root,
+            l1_origin_hash: tee_request.proof.l1_head,
+            l1_origin_number: tee_request.proof.l1_head_number,
+            l2_block_number: target,
+            prev_output_root: tee_request.proof.agreed_l2_output_root,
+            ..test_proposal(target)
+        };
+        Ok(GetProofResponse {
+            status: ProofStatus::Succeeded,
+            error_message: None,
+            result: Some(ApiProofResult::Tee(TeeProofResult {
+                aggregate_proposal,
+                proposals,
+                tee_kind: TeeKind::AwsNitro,
+            })),
+        })
+    }
+
+    async fn list_proofs(
+        &self,
+        _request: ListProofsRequest,
+    ) -> Result<ListProofsResponse, ProverServiceClientError> {
+        unimplemented!("tests do not list proofs")
     }
 }
 

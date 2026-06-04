@@ -97,7 +97,7 @@ impl ProposerService {
             .wrap_err("failed to create prover-service requester client")?;
         let proof_requester: Arc<dyn ProofRequesterProvider> = Arc::new(proof_requester);
         let prover_client: Arc<dyn ProverClient> = Arc::new(ProofRequesterProver::aws_nitro(
-            proof_requester,
+            Arc::clone(&proof_requester),
             prover_service_config.poll_interval(),
             prover_service_config.max_wait(),
         ));
@@ -227,6 +227,7 @@ impl ProposerService {
         let pipeline = ProvingPipeline::new(
             pipeline_config,
             prover_client,
+            proof_requester,
             l1_client,
             l2_client,
             rollup_client,
