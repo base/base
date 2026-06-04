@@ -11,9 +11,12 @@ use basectl_cli::{
 
 /// Parses a CLI block reference into alloy's `BlockNumberOrTag`.
 ///
-/// Adds two behaviors on top of `BlockNumberOrTag::FromStr`: bare decimal
-/// numbers (alloy requires `0x` on numbers) and explicit rejection of
-/// 64-hex-char block-hash references.
+/// Adds three behaviors on top of `BlockNumberOrTag::FromStr`: bare decimal
+/// numbers (alloy requires `0x` on numbers), explicit rejection of
+/// 64-hex-char block-hash references, and rejection of the `pending` tag
+/// (alloy's typed `Block` can't deserialize a pending block's null number
+/// and hash, so accepting it here would only produce a confusing error
+/// after a wasted RPC round-trip).
 pub(crate) fn parse_block_ref(s: &str) -> Result<BlockNumberOrTag> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
@@ -28,7 +31,14 @@ pub(crate) fn parse_block_ref(s: &str) -> Result<BlockNumberOrTag> {
     {
         bail!("block hash references are not supported; use a block number or tag");
     }
-    trimmed.parse::<BlockNumberOrTag>().map_err(|e| anyhow!("invalid block reference: {e}"))
+    let tag =
+        trimmed.parse::<BlockNumberOrTag>().map_err(|e| anyhow!("invalid block reference: {e}"))?;
+    if tag == BlockNumberOrTag::Pending {
+        bail!(
+            "the `pending` tag is not supported; use `latest`, `safe`, `finalized`, or `earliest`"
+        );
+    }
+    Ok(tag)
 }
 
 /// Runs the `basectl block` subcommand.
@@ -108,7 +118,17 @@ mod tests {
         assert_eq!(parse_block_ref("safe").unwrap(), BlockNumberOrTag::Safe);
         assert_eq!(parse_block_ref("finalized").unwrap(), BlockNumberOrTag::Finalized);
         assert_eq!(parse_block_ref("earliest").unwrap(), BlockNumberOrTag::Earliest);
-        assert_eq!(parse_block_ref("pending").unwrap(), BlockNumberOrTag::Pending);
+    }
+
+    #[test]
+    fn rejects_pending() {
+        for input in ["pending", "Pending", "PENDING"] {
+            let err = parse_block_ref(input).unwrap_err().to_string();
+            assert!(
+                err.contains("`pending` tag is not supported"),
+                "expected pending rejection for {input:?}, got: {err}",
+            );
+        }
     }
 
     #[test]
