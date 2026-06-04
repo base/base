@@ -177,12 +177,12 @@ active hardfork ids:   $ACTIVE_HARDFORK_IDS
 target hardfork id:    $HARDFORK_ID
 $REFERENCE_TIMESTAMP_LABEL:   $L2_TIMESTAMP
 activation timestamp:  $ACTIVATION_TIMESTAMP
-protocol version:      $PROTOCOL_VERSION
+minimum node version:  $PROTOCOL_VERSION
 contract timestamp:    $READ_TIMESTAMP
 contract version:      $READ_VERSION
 env file:              $ENV_OUT
 
-Restart the observer services with:
+Restart the services that consume the schedule with:
   docker compose --env-file etc/docker/devnet-env --env-file .devnet/upgrade-signal.env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.upgrade-signal.yml up -d --no-build --no-deps --force-recreate base-builder base-builder-cl base-client base-client-cl base-rpc
 
 Watch logs with:
