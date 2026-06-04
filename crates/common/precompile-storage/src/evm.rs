@@ -90,10 +90,6 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         let code_len = code.len();
 
         // Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
-        // EIP-3541's 0xef first-byte prohibition applies only to CREATE/CREATE2 finalization
-        // in revm and is intentionally not enforced here — this is a privileged system write
-        // and all target addresses are intercepted by the precompile dispatcher before any
-        // bytecode execution occurs.
         self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
 
         // For new (empty) accounts charge the CREATE equivalent costs (Yellow Paper G_create).
