@@ -27,7 +27,10 @@ pub const DEFAULT_PROOF_REQUESTER_MAX_DELAY: Duration = Duration::from_secs(10);
 /// Exponential backoff configuration for proof requester retries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProofRequesterRetryConfig {
-    /// Maximum number of retry attempts.
+    /// Maximum number of retries performed after the initial call. The total number of
+    /// requester calls in a fully exhausted run is therefore `max_attempts + 1`. Zero is
+    /// treated as one (a single retry); this matches the existing
+    /// `base_proof_rpc::config::RetryConfig` convention in the workspace.
     pub max_attempts: u32,
     /// First delay after a retryable requester failure.
     pub initial_delay: Duration,
@@ -110,9 +113,8 @@ impl ProofRequesterProvider for RetryingProofRequester {
         &self,
         request: ProveBlockRangeRequest,
     ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
-        let request_for_attempt = request.clone();
         (|| {
-            let request = request_for_attempt.clone();
+            let request = request.clone();
 
             async move { self.inner.prove_block_range(request).await }
         })
@@ -133,9 +135,8 @@ impl ProofRequesterProvider for RetryingProofRequester {
         &self,
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ProverServiceClientError> {
-        let request_for_attempt = request.clone();
         (|| {
-            let request = request_for_attempt.clone();
+            let request = request.clone();
 
             async move { self.inner.get_proof(request).await }
         })
