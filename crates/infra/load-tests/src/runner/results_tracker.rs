@@ -73,6 +73,7 @@ struct ResultsTrackerInner {
     flashblocks: HashMap<TxHash, Instant>,
     receipt_eviction_queue: VecDeque<TxHash>,
     flashblock_eviction_queue: VecDeque<TxHash>,
+    pending_age_queue: VecDeque<TxHash>,
     unreported_confirmations: VecDeque<TransactionMetrics>,
     in_flight_per_sender: HashMap<Address, u64>,
     total_in_flight: u64,
@@ -108,6 +109,7 @@ impl ResultsTracker {
                 flashblocks: HashMap::new(),
                 receipt_eviction_queue: VecDeque::new(),
                 flashblock_eviction_queue: VecDeque::new(),
+                pending_age_queue: VecDeque::new(),
                 unreported_confirmations: VecDeque::new(),
                 in_flight_per_sender,
                 total_in_flight: 0,
@@ -129,6 +131,7 @@ impl ResultsTracker {
                 transaction.tx_hash,
                 PendingTransaction { from: transaction.from, submit_time, in_flight_released: false },
             );
+            inner.pending_age_queue.push_back(transaction.tx_hash);
             inner
                 .in_flight_per_sender
                 .entry(transaction.from)
@@ -235,6 +238,11 @@ impl ResultsTracker {
         self.inner.read().in_flight_per_sender.get(address).copied().unwrap_or(0)
     }
 
+    /// Snapshots the in-flight counts for all senders in a single lock acquisition.
+    pub fn snapshot_in_flight(&self) -> HashMap<Address, u64> {
+        self.inner.read().in_flight_per_sender.clone()
+    }
+
     /// Returns the total in-flight count.
     pub fn total_in_flight(&self) -> u64 {
         self.inner.read().total_in_flight
@@ -243,6 +251,37 @@ impl ResultsTracker {
     /// Returns the number of senders at or above the given in-flight limit.
     pub fn senders_at_limit(&self, limit: u64) -> usize {
         self.inner.read().in_flight_per_sender.values().filter(|&&count| count >= limit).count()
+    }
+
+    /// Releases in-flight slots for pending transactions older than `max_age`.
+    ///
+    /// Uses a time-ordered queue for O(released) work instead of scanning all pending.
+    pub fn release_stale_in_flight(&self, max_age: Duration) -> u64 {
+        let now = Instant::now();
+        let mut inner = self.inner.write();
+        let mut released = 0u64;
+
+        while let Some(&tx_hash) = inner.pending_age_queue.front() {
+            let Some(pending) = inner.pending.get(&tx_hash) else {
+                inner.pending_age_queue.pop_front();
+                continue;
+            };
+
+            if now.duration_since(pending.submit_time) <= max_age {
+                break;
+            }
+
+            if !pending.in_flight_released {
+                let from = pending.from;
+                inner.pending.get_mut(&tx_hash).unwrap().in_flight_released = true;
+                inner.decrement_in_flight(&from);
+                released += 1;
+            }
+
+            inner.pending_age_queue.pop_front();
+        }
+
+        released
     }
 }
 

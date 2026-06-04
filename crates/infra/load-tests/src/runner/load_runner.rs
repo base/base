@@ -320,7 +320,7 @@ impl LoadRunner {
                     OsakaTarget::Clz => 80_000,
                     OsakaTarget::P256verifyOsaka | OsakaTarget::ModexpOsaka => 30_000,
                 },
-                TxType::UniswapV3 { .. } | TxType::AerodromeCl { .. } => 250_000,
+                TxType::UniswapV3 { .. } | TxType::AerodromeCl { .. } => 115_000,
             };
             weighted_gas += gas_estimate * tx_config.weight as u64;
         }
@@ -493,7 +493,9 @@ impl LoadRunner {
                     }
                     Err(e) => {
                         let error_str = e.to_string();
-                        if error_str.contains("already known") {
+                        if error_str.contains("already known")
+                            || error_str.contains("replacement transaction underpriced")
+                        {
                             retries.push((address, deficit, nonce));
                         } else if error_str.contains("nonce too low") {
                             info!(to = %address, nonce, "nonce too low, will refresh and retry");
@@ -1538,8 +1540,10 @@ impl LoadRunner {
         let mut last_gas_price_refresh = Instant::now();
         let mut last_rate_limiter_update = Instant::now();
         let mut last_progress_report = Instant::now();
+        let mut last_expiry_check = Instant::now();
         const GAS_PRICE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
         const RATE_LIMITER_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
+        const EXPIRY_CHECK_INTERVAL: Duration = Duration::from_secs(5);
         const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
         const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -1597,9 +1601,15 @@ impl LoadRunner {
             for metrics in results_tracker.drain_confirmed_metrics() {
                 self.collector.record_confirmed(metrics);
             }
-            let expired = results_tracker.expire_pending(PENDING_CONFIRMATION_TIMEOUT);
-            if expired > 0 {
-                self.collector.record_failures("expired without confirmation", expired);
+
+            results_tracker.release_stale_in_flight(Duration::from_secs(2));
+
+            if last_expiry_check.elapsed() >= EXPIRY_CHECK_INTERVAL {
+                let expired = results_tracker.expire_pending(PENDING_CONFIRMATION_TIMEOUT);
+                if expired > 0 {
+                    self.collector.record_failures("expired without confirmation", expired);
+                }
+                last_expiry_check = Instant::now();
             }
 
             if use_live_display || use_snapshot_tx {
@@ -1627,7 +1637,9 @@ impl LoadRunner {
                 let failed = self.collector.failed_count();
                 let reverted = self.collector.reverted_count();
                 let in_flight = results_tracker.total_in_flight();
+                let pending = results_tracker.pending_count();
                 let senders_blocked = results_tracker.senders_at_limit(max_in_flight_per_sender);
+                let total_queued: u64 = queued_per_sender.values().sum();
                 let (p50, p99) = self.collector.rolling_p50_p99();
                 let (block_receipt_delay_p50, block_receipt_delay_p99) =
                     self.collector.rolling_block_receipt_delay_p50_p99();
@@ -1640,6 +1652,8 @@ impl LoadRunner {
                     failed,
                     reverted,
                     in_flight,
+                    pending,
+                    total_queued,
                     senders_blocked,
                     gas_price = self.gas_price,
                     p50_ms = p50.as_millis() as u64,
@@ -1657,12 +1671,16 @@ impl LoadRunner {
 
             let batch_start = Instant::now();
             let mut consecutive_at_limit = 0usize;
+            let in_flight_snapshot = results_tracker.snapshot_in_flight();
 
             while pending_batch.len() < batch_size && batch_start.elapsed() < batch_timeout {
                 let account = &self.accounts.accounts()[current_account_idx];
                 let queued = queued_per_sender.get(&account.address).copied().unwrap_or(0);
-                let sender_in_flight =
-                    results_tracker.in_flight_for(&account.address).saturating_add(queued);
+                let sender_in_flight = in_flight_snapshot
+                    .get(&account.address)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_add(queued);
 
                 if sender_in_flight >= max_in_flight_per_sender {
                     debug!(
