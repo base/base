@@ -290,6 +290,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retrying_requester_propagates_final_error_when_retries_exhausted() {
+        let config = retry_config();
+        let inner = Arc::new(MockRequester::new());
+        // backon's `with_max_times(n)` allows `n` retries on top of the initial call,
+        // so an exhausted run performs `max_attempts + 1` total calls.
+        let total_calls = config.normalized_max_attempts() + 1;
+        inner
+            .prove_outcomes
+            .lock()
+            .unwrap()
+            .extend((0..total_calls).map(|_| MockOutcome::Retryable));
+        let requester = RetryingProofRequester::with_retry_config(
+            Arc::clone(&inner) as Arc<dyn ProofRequesterProvider>,
+            config,
+        );
+
+        let err = requester.prove_block_range(prove_request()).await.unwrap_err();
+
+        assert!(matches!(err, ProverServiceClientError::Timeout(_)));
+        assert!(err.is_retryable());
+        assert_eq!(*inner.prove_calls.lock().unwrap(), total_calls);
+    }
+
+    #[tokio::test]
     async fn retrying_requester_does_not_retry_fatal_get_proof() {
         let inner = Arc::new(MockRequester::new());
         inner.get_outcomes.lock().unwrap().push_back(MockOutcome::Fatal);
