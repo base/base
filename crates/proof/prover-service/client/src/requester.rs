@@ -472,9 +472,14 @@ mod tests {
     #[tokio::test]
     async fn requester_rpc_errors_preserve_call_context_and_retryability() {
         let api = MockRequesterApi::rejecting_get_proof();
+        // Use a single explicit retry with 1ms delays so the test exercises the real
+        // retry code path quickly without relying on the `0 -> 1` clamp inside
+        // `ProofRequesterRetryConfig::normalized_max_attempts`. Call count is not
+        // asserted; this test only verifies the final error variant, code, and
+        // retryability classification.
         let server = RunningRequesterServer::spawn_with_retry(
             api,
-            ProofRequesterRetryConfig::new(0, Duration::from_millis(1), Duration::from_millis(1)),
+            ProofRequesterRetryConfig::new(1, Duration::from_millis(1), Duration::from_millis(1)),
         )
         .await;
         let provider: &dyn ProofRequesterProvider = &server.client;
