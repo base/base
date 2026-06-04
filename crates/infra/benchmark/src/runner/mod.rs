@@ -370,10 +370,10 @@ impl NetworkBenchmark {
                 git_branch: &self.options.git_info.branch,
                 global_tags: &self.options.tags,
                 success,
+                results_root: &self.options.output_dir,
             };
             write_metadata_json(
                 &run_dir,
-                &self.options.output_dir,
                 self.options.config_path.as_deref(),
                 &run,
                 &self.config,
@@ -410,16 +410,17 @@ impl NetworkBenchmark {
             .map_or_else(Vec::new, |mc| check_thresholds(&block_metrics_vec, mc));
         let success = violations.iter().all(|v| v.severity != Severity::Error);
         write_metrics_file(&run_dir, "sequencer", &block_metrics_vec)?;
+        write_metrics_file(&run_dir, "validator", &validator_metrics.validator_block_metrics)?;
         let ctx = RunContext {
             run_group_id: &self.options.run_group_id,
             git_sha: &self.options.git_info.sha,
             git_branch: &self.options.git_info.branch,
             global_tags: &self.options.tags,
             success,
+            results_root: &self.options.output_dir,
         };
         write_metadata_json(
             &run_dir,
-            &self.options.output_dir,
             self.options.config_path.as_deref(),
             &run,
             &self.config,
@@ -513,10 +514,10 @@ impl NetworkBenchmark {
                 git_branch: &self.options.git_info.branch,
                 global_tags: &self.options.tags,
                 success,
+                results_root: &self.options.output_dir,
             };
             write_metadata_json(
                 run_dir,
-                &self.options.output_dir,
                 self.options.config_path.as_deref(),
                 run,
                 &self.config,
