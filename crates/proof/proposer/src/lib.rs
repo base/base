@@ -25,6 +25,9 @@ pub use proof_adapter::{
     DispatchedProof, ProofRequesterDispatcher, ProofRequesterProver, ProposerProofAdapter,
 };
 
+mod proof_collector;
+pub use proof_collector::{CollectedProof, ProofCollector};
+
 mod driver;
 pub use driver::{DriverConfig, PipelineHandle, ProposerDriverControl, RecoveredState};
 
