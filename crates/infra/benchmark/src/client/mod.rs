@@ -503,11 +503,11 @@ mod tests {
     #[test]
     fn setup_node_dispatches_correctly() {
         let mgr = Arc::new(PortManager::new());
-        let node = setup_node(make_options("base-reth-node"), make_internal(), mgr.clone(), 1000);
-        assert_eq!(node.supports_flashblocks(), false);
+        let node = setup_node(make_options("base-reth-node"), make_internal(), Arc::clone(&mgr), 1000);
+        assert!(!node.supports_flashblocks());
         assert!(node.flashblocks_client().is_none());
 
         let builder = setup_node(make_options("builder"), make_internal(), mgr, 1000);
-        assert_eq!(builder.supports_flashblocks(), false);
+        assert!(!builder.supports_flashblocks());
     }
 }
