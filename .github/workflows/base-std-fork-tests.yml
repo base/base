@@ -80,6 +80,10 @@ jobs:
           cargo \
             --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\"" \
             --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\"" \
+            update -p base-common-precompiles -p base-common-chains
+          cargo \
+            --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\"" \
+            --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\"" \
             build --release --no-default-features --features anvil/cli -p anvil -p forge
 
           "$BASE_ANVIL_DIR/target/release/anvil" --version
