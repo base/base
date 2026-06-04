@@ -34,13 +34,11 @@ use std::{
     sync::Arc,
 };
 
-use alloy_primitives::{Address, B256, Signature, keccak256};
-use alloy_sol_types::SolCall;
+use alloy_primitives::{Address, B256};
 use base_proof_contracts::{
-    AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient,
-    ITEEProverRegistry, encode_extra_data,
+    AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, encode_extra_data,
 };
-use base_proof_primitives::{ProofJournal, ProofRequest, ProofResult, ProverClient};
+use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider, RpcError};
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::TeeKind;
@@ -57,6 +55,7 @@ use crate::{
     output_proposer::OutputProposer,
     proof_adapter::{ProofRequesterDispatcher, ProposerProofAdapter},
     proof_collector::{CollectedProof, ProofCollector},
+    proof_submitter::{ProofSubmitter, SubmitAction},
 };
 
 /// Configuration for the parallel proving pipeline.
@@ -183,6 +182,7 @@ where
     proof_requester: Arc<dyn ProofRequesterProvider>,
     proof_dispatcher: ProofRequesterDispatcher,
     proof_collector: ProofCollector<R>,
+    proof_submitter: ProofSubmitter<L1, R>,
     l1_client: Arc<L1>,
     l2_client: Arc<L2>,
     rollup_client: Arc<R>,
@@ -208,6 +208,7 @@ where
             proof_requester: Arc::clone(&self.proof_requester),
             proof_dispatcher: self.proof_dispatcher.clone(),
             proof_collector: self.proof_collector.clone(),
+            proof_submitter: self.proof_submitter.clone(),
             l1_client: Arc::clone(&self.l1_client),
             l2_client: Arc::clone(&self.l2_client),
             rollup_client: Arc::clone(&self.rollup_client),
@@ -263,6 +264,17 @@ where
             config.max_parallel_proofs,
             config.recovery_scan_concurrency,
         );
+        let proof_submitter = ProofSubmitter::new(
+            Arc::clone(&output_proposer),
+            Arc::clone(&rollup_client),
+            Arc::clone(&l1_client),
+            config.driver.proposer_address,
+            config.driver.block_interval,
+            config.driver.intermediate_block_interval,
+            config.driver.tee_image_hash,
+            config.tee_prover_registry_address,
+            config.recovery_scan_concurrency,
+        );
 
         Self {
             config,
@@ -270,6 +282,7 @@ where
             proof_requester: Arc::clone(&proof_requester),
             proof_dispatcher: ProofRequesterDispatcher::aws_nitro(proof_requester),
             proof_collector,
+            proof_submitter,
             l1_client,
             l2_client,
             rollup_client,
@@ -1231,6 +1244,40 @@ where
         })
     }
 
+    /// Returns intermediate block numbers between `starting_block_number` and
+    /// the next proposal target, stepping by `intermediate_block_interval`.
+    ///
+    /// Used by the recovery forward walk to build `extraData` for UUID-based
+    /// `games()` lookups. The submitter has its own equivalent helper that is
+    /// driven by [`PipelineConfig`] values cached at construction time.
+    fn intermediate_block_numbers(
+        &self,
+        starting_block_number: u64,
+    ) -> Result<Vec<u64>, ProposerError> {
+        let interval = self.config.driver.intermediate_block_interval;
+        if interval == 0 {
+            return Err(ProposerError::Config(
+                "intermediate_block_interval must not be zero".into(),
+            ));
+        }
+        let count = self.config.driver.block_interval / interval;
+        (1..=count)
+            .map(|i| {
+                starting_block_number
+                    .checked_add(i.checked_mul(interval).ok_or_else(|| {
+                        ProposerError::Internal(
+                            "overflow computing intermediate block number".into(),
+                        )
+                    })?)
+                    .ok_or_else(|| {
+                        ProposerError::Internal(
+                            "overflow computing intermediate block number".into(),
+                        )
+                    })
+            })
+            .collect()
+    }
+
     /// Returns the latest safe L2 block number.
     async fn latest_safe_block_number(&self) -> Result<u64, ProposerError> {
         let sync_status = self.rollup_client.sync_status().await?;
@@ -1246,36 +1293,16 @@ where
         &self,
         blocks: Vec<u64>,
     ) -> Result<HashMap<u64, B256>, ProposerError> {
-        self.fetch_canonical_roots_with(blocks, false).await
-    }
-
-    /// Concurrently fetches canonical output roots, bypassing the output cache.
-    async fn fetch_fresh_canonical_roots(
-        &self,
-        blocks: Vec<u64>,
-    ) -> Result<HashMap<u64, B256>, ProposerError> {
-        self.fetch_canonical_roots_with(blocks, true).await
-    }
-
-    /// Concurrently fetches canonical output roots with configurable cache usage.
-    ///
-    /// When `bypass_cache` is true, each root is fetched directly from the rollup node.
-    async fn fetch_canonical_roots_with(
-        &self,
-        blocks: Vec<u64>,
-        bypass_cache: bool,
-    ) -> Result<HashMap<u64, B256>, ProposerError> {
-        self.fetch_canonical_root_results_with(blocks, bypass_cache)
+        self.fetch_canonical_root_results(blocks)
             .await
             .into_iter()
             .map(|(block_number, result)| result.map(|root| (block_number, root)))
             .collect()
     }
 
-    async fn fetch_canonical_root_results_with(
+    async fn fetch_canonical_root_results(
         &self,
         blocks: Vec<u64>,
-        bypass_cache: bool,
     ) -> HashMap<u64, Result<B256, ProposerError>> {
         if blocks.is_empty() {
             return HashMap::new();
@@ -1284,12 +1311,12 @@ where
             .map(|block_number| {
                 let rollup = &self.rollup_client;
                 async move {
-                    let output = if bypass_cache {
-                        rollup.fresh_output_at_block(block_number).await
-                    } else {
-                        rollup.output_at_block(block_number).await
-                    };
-                    (block_number, output.map(|out| out.output_root).map_err(ProposerError::Rpc))
+                    let result = rollup
+                        .output_at_block(block_number)
+                        .await
+                        .map(|out| out.output_root)
+                        .map_err(ProposerError::Rpc);
+                    (block_number, result)
                 }
             })
             .buffered(self.config.recovery_scan_concurrency)
@@ -1312,7 +1339,7 @@ where
 
         let (l1_head_result, output_roots, l2_heads) = tokio::join!(
             async { self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc) },
-            self.fetch_canonical_root_results_with(output_blocks, false),
+            self.fetch_canonical_root_results(output_blocks),
             async {
                 stream::iter(start_blocks)
                     .map(|block_number| {
@@ -1424,284 +1451,19 @@ where
         Ok(requests)
     }
 
-    /// Recovers the TEE signer from the aggregate proposal and checks
-    /// `isValidSigner` on the `TEEProverRegistry`.
+    /// Validates the proof and submits it to L1 by delegating to the
+    /// [`ProofSubmitter`].
     ///
-    /// Returns `Ok(true)` if the signer is valid, `Ok(false)` if not,
-    /// or `Err` if the check itself failed (RPC error, parse failure, etc.).
-    async fn check_signer_validity(
-        &self,
-        aggregate_proposal: &base_proof_primitives::Proposal,
-        starting_block_number: u64,
-        intermediate_roots: &[B256],
-        registry_address: Address,
-    ) -> Result<bool, ProposerError> {
-        // Reconstruct the journal that the enclave signed over.
-        let journal = ProofJournal {
-            proposer: self.config.driver.proposer_address,
-            l1_origin_hash: aggregate_proposal.l1_origin_hash,
-            prev_output_root: aggregate_proposal.prev_output_root,
-            starting_l2_block: starting_block_number,
-            output_root: aggregate_proposal.output_root,
-            ending_l2_block: aggregate_proposal.l2_block_number,
-            intermediate_roots: intermediate_roots.to_vec(),
-            config_hash: aggregate_proposal.config_hash,
-            tee_image_hash: self.config.driver.tee_image_hash,
-        };
-        let digest = keccak256(journal.encode());
-
-        // Parse the 65-byte ECDSA signature (r ‖ s ‖ v).
-        let sig_bytes = aggregate_proposal.signature.as_ref();
-        let sig = Signature::try_from(sig_bytes)
-            .map_err(|e| ProposerError::Internal(format!("invalid proposal signature: {e}")))?;
-
-        let signer = sig
-            .recover_address_from_prehash(&digest)
-            .map_err(|e| ProposerError::Internal(format!("signer recovery failed: {e}")))?;
-
-        debug!(signer = %signer, "recovered TEE signer from aggregate proposal");
-
-        // Call isValidSigner on the registry via the L1 provider.
-        let calldata = ITEEProverRegistry::isValidSignerCall { signer }.abi_encode();
-        let result = self
-            .l1_client
-            .call_contract(registry_address, calldata.into(), None)
-            .await
-            .map_err(ProposerError::Rpc)?;
-
-        let is_valid =
-            ITEEProverRegistry::isValidSignerCall::abi_decode_returns(&result).map_err(|e| {
-                ProposerError::Internal(format!("failed to decode isValidSigner response: {e}"))
-            })?;
-        debug!(signer = %signer, is_valid, "isValidSigner check result");
-
-        Ok(is_valid)
-    }
-
-    #[instrument(skip_all, fields(target_block = target_block, parent_address = %parent_address))]
+    /// Kept on the pipeline as a thin wrapper so the spawned submission task
+    /// in [`Self::try_submit`] (and existing tests) can continue to call a
+    /// single entry point.
     async fn validate_and_submit(
         &self,
         proof_result: &ProofResult,
         target_block: u64,
         parent_address: Address,
     ) -> Result<(), SubmitAction> {
-        let (aggregate_proposal, proposals) = match proof_result {
-            ProofResult::Tee { aggregate_proposal, proposals } => (aggregate_proposal, proposals),
-            ProofResult::Zk { .. } => {
-                return Err(SubmitAction::Failed(ProposerError::Prover(
-                    "unexpected ZK proof result from TEE prover".into(),
-                )));
-            }
-        };
-
-        // JIT validation: check that the proved output root still matches canonical.
-        let canonical_output = self
-            .rollup_client
-            .fresh_output_at_block(target_block)
-            .await
-            .map_err(|e| SubmitAction::Failed(ProposerError::Rpc(e)))?;
-
-        if aggregate_proposal.output_root != canonical_output.output_root {
-            warn!(
-                proposal_root = ?aggregate_proposal.output_root,
-                canonical_root = ?canonical_output.output_root,
-                target_block,
-                "Proposal output root does not match canonical chain at submit time"
-            );
-            return Err(SubmitAction::RootMismatch);
-        }
-
-        // Extract intermediate roots.
-        let starting_block_number =
-            target_block.checked_sub(self.config.driver.block_interval).ok_or_else(|| {
-                SubmitAction::Failed(ProposerError::Internal(format!(
-                    "target_block {target_block} < block_interval {}",
-                    self.config.driver.block_interval
-                )))
-            })?;
-        let intermediate_blocks =
-            self.intermediate_block_numbers(starting_block_number).map_err(SubmitAction::Failed)?;
-        let intermediate_roots = self
-            .extract_intermediate_roots(starting_block_number, proposals, &intermediate_blocks)
-            .map_err(SubmitAction::Failed)?;
-
-        // Fetch fresh canonical roots for non-target intermediate blocks only;
-        // the target block was already fetched fresh for the JIT check above.
-        let non_target_blocks: Vec<u64> =
-            intermediate_blocks.iter().copied().filter(|&b| b != target_block).collect();
-
-        let mut canonical_map: HashMap<u64, B256> = self
-            .fetch_fresh_canonical_roots(non_target_blocks)
-            .await
-            .map_err(SubmitAction::Failed)?;
-        canonical_map.insert(target_block, canonical_output.output_root);
-
-        for (root, block) in intermediate_roots.iter().zip(intermediate_blocks.iter()) {
-            let canonical = canonical_map.get(block).ok_or_else(|| {
-                SubmitAction::Failed(ProposerError::Internal(format!(
-                    "missing canonical root for intermediate block {block}"
-                )))
-            })?;
-            if *root != *canonical {
-                warn!(
-                    intermediate_block = *block,
-                    proposal_root = ?root,
-                    canonical_root = ?canonical,
-                    target_block,
-                    "Intermediate output root does not match canonical chain at submit time"
-                );
-                return Err(SubmitAction::RootMismatch);
-            }
-        }
-
-        // Pre-submission signer validation: if a TEE prover registry is
-        // configured, recover the signer from the aggregate proposal signature
-        // and check `isValidSigner` on-chain. If the signer is invalid, skip
-        // submission to avoid wasting gas on a transaction that will revert.
-        if let Some(registry_address) = self.config.tee_prover_registry_address {
-            match self
-                .check_signer_validity(
-                    aggregate_proposal,
-                    starting_block_number,
-                    &intermediate_roots,
-                    registry_address,
-                )
-                .await
-            {
-                Ok(true) => {}
-                Ok(false) => {
-                    // The proof's signer is not registered on-chain. Discard
-                    // this proof so the pipeline re-proves with a (potentially
-                    // different, registered) enclave on the next attempt.
-                    warn!(target_block, "TEE signer is not valid on-chain, discarding proof");
-                    Metrics::tee_signer_invalid_total().increment(1);
-                    return Err(SubmitAction::Discard(ProposerError::Internal(
-                        "TEE signer not registered on-chain".into(),
-                    )));
-                }
-                Err(e) => {
-                    // Proceed on RPC failure: if L1 is unreachable, the
-                    // subsequent propose_output call will also fail and be
-                    // retried naturally. Blocking here would not save gas.
-                    // This also handles the case where the registry contract
-                    // is not yet deployed (rolling out the --tee-prover-registry-address
-                    // config before the contract exists on-chain).
-                    warn!(error = %e, target_block, "signer validity check failed, proceeding anyway");
-                }
-            }
-        }
-
-        info!(
-            target_block,
-            output_root = ?aggregate_proposal.output_root,
-            parent_address = %parent_address,
-            intermediate_roots_count = intermediate_roots.len(),
-            proposals_count = proposals.len(),
-            "Proposing output (creating dispute game)"
-        );
-
-        let mut propose_timer = base_metrics::timed!(Metrics::proposal_l1_tx_duration_seconds());
-        let propose_result = self
-            .output_proposer
-            .propose_output(aggregate_proposal, parent_address, &intermediate_roots)
-            .await;
-
-        match propose_result {
-            Ok(()) => {
-                drop(propose_timer);
-                info!(target_block, "Dispute game created successfully");
-                Metrics::l2_output_proposals_total().increment(1);
-                Ok(())
-            }
-            Err(e) => {
-                if e.is_game_already_exists() {
-                    drop(propose_timer);
-                    info!(
-                        target_block,
-                        "Game already exists, next tick will load fresh state from chain"
-                    );
-                    Err(SubmitAction::GameAlreadyExists)
-                } else if e.is_l1_origin_too_old() {
-                    propose_timer.disarm();
-                    warn!(
-                        error = %e,
-                        target_block,
-                        "Proof L1 origin is too old, discarding proof to re-prove"
-                    );
-                    Err(SubmitAction::Discard(e))
-                } else if e.is_invalid_signer() {
-                    propose_timer.disarm();
-                    warn!(
-                        error = %e,
-                        target_block,
-                        "Proof signer is invalid on-chain, discarding proof to re-prove"
-                    );
-                    Metrics::tee_signer_invalid_total().increment(1);
-                    Err(SubmitAction::Discard(e))
-                } else {
-                    propose_timer.disarm();
-                    Err(SubmitAction::Failed(e))
-                }
-            }
-        }
-    }
-
-    /// Returns intermediate block numbers between `starting_block_number` and
-    /// the next proposal target, stepping by `intermediate_block_interval`.
-    fn intermediate_block_numbers(
-        &self,
-        starting_block_number: u64,
-    ) -> Result<Vec<u64>, ProposerError> {
-        let interval = self.config.driver.intermediate_block_interval;
-        if interval == 0 {
-            return Err(ProposerError::Config(
-                "intermediate_block_interval must not be zero".into(),
-            ));
-        }
-        let count = self.config.driver.block_interval / interval;
-        (1..=count)
-            .map(|i| {
-                starting_block_number
-                    .checked_add(i.checked_mul(interval).ok_or_else(|| {
-                        ProposerError::Internal(
-                            "overflow computing intermediate block number".into(),
-                        )
-                    })?)
-                    .ok_or_else(|| {
-                        ProposerError::Internal(
-                            "overflow computing intermediate block number".into(),
-                        )
-                    })
-            })
-            .collect()
-    }
-
-    /// Extracts intermediate output roots from per-block proposals.
-    ///
-    /// Samples at every `intermediate_block_interval` within the range.
-    fn extract_intermediate_roots(
-        &self,
-        starting_block_number: u64,
-        proposals: &[base_proof_primitives::Proposal],
-        blocks: &[u64],
-    ) -> Result<Vec<B256>, ProposerError> {
-        let mut roots = Vec::with_capacity(blocks.len());
-        for &target_block in blocks {
-            let idx = target_block.checked_sub(starting_block_number + 1).ok_or_else(|| {
-                ProposerError::Internal(format!(
-                    "underflow computing proposal index for block {target_block}"
-                ))
-            })?;
-            if let Some(p) = proposals.get(idx as usize) {
-                roots.push(p.output_root);
-            } else {
-                return Err(ProposerError::Internal(format!(
-                    "intermediate root at block {target_block} not found in proposals (index {idx}, len {})",
-                    proposals.len()
-                )));
-            }
-        }
-        Ok(roots)
+        self.proof_submitter.submit(proof_result, target_block, parent_address).await
     }
 }
 
@@ -1712,32 +1474,6 @@ fn panic_message(panic: &Box<dyn std::any::Any + Send + 'static>) -> String {
         .map(|s| (*s).to_string())
         .or_else(|| panic.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "non-string panic payload".to_string())
-}
-
-/// Internal action after a submission attempt.
-#[derive(Debug)]
-enum SubmitAction {
-    /// Output root mismatch — proved root no longer matches canonical chain.
-    RootMismatch,
-    /// The dispute game already exists on-chain by a previous attempt whose
-    /// result was lost to an RPC propagation delay. The pipeline must invalidate
-    /// its recovery cache so the next forward walk discovers the existing game.
-    GameAlreadyExists,
-    /// Transient failure — retry later with the same proof.
-    Failed(ProposerError),
-    /// Proof is permanently invalid (e.g. signer not registered) — discard
-    /// and re-prove on the next attempt.
-    Discard(ProposerError),
-}
-
-impl std::fmt::Display for SubmitAction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::RootMismatch => write!(f, "output root mismatch"),
-            Self::GameAlreadyExists => write!(f, "game already exists"),
-            Self::Failed(e) | Self::Discard(e) => write!(f, "{e}"),
-        }
-    }
 }
 
 /// Result of a concurrent submission task, returned to the coordinator.
