@@ -240,7 +240,13 @@ jobs:
         id: artifacts
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GH_RUN_ID: ${{ github.run_id }}
         run: |
+          set -euo pipefail
+
+          artifact_names=$(gh api "repos/$GH_REPO/actions/runs/$GH_RUN_ID/artifacts" --paginate --jq '.artifacts[].name')
+
           has_digests=false
           has_binaries=false
 
@@ -249,7 +255,7 @@ jobs:
               digests-*) has_digests=true ;;
               binaries-*) has_binaries=true ;;
             esac
-          done < <(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --paginate --jq '.artifacts[].name')
+          done <<< "$artifact_names"
 
           echo "has_digests=$has_digests" >> "$GITHUB_OUTPUT"
           echo "has_binaries=$has_binaries" >> "$GITHUB_OUTPUT"
