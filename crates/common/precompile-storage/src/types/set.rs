@@ -381,7 +381,7 @@ mod tests {
         });
     }
 
-    /// (initial_size, final_size) — covers grow, shrink, and equal-size rewrite.
+    /// (`initial_size`, `final_size`) — covers grow, shrink, and equal-size rewrite.
     #[rstest]
     #[case(3, 7)] // grow
     #[case(7, 3)] // shrink
