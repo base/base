@@ -9,7 +9,7 @@ use base_consensus_derive::{BlobProvider, BlobProviderError};
 use base_protocol::BlockInfo;
 use tracing::warn;
 
-use crate::{BeaconClient, Metrics};
+use crate::{BeaconClient, Metrics, OnlineBeaconClient};
 
 /// A boxed blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +32,11 @@ pub struct BlobWithCommitmentAndProof {
     pub kzg_proof: Bytes48,
 }
 
-/// An online implementation of the [`BlobProvider`] trait.
+/// An online implementation of the [`BlobProvider`] trait, backed by an L1 beacon API client.
+///
+/// Used when the L1 parent chain exposes a beacon (blob) DA endpoint - e.g. the main Base chain
+/// running against Ethereum. For a parent chain with no beacon endpoint (e.g. an appchain settling
+/// to Base) use [`NoBlobProvider`] instead. [`L1BlobProvider`] selects between the two at runtime.
 #[derive(Debug, Clone)]
 pub struct OnlineBlobProvider<B: BeaconClient> {
     /// The Beacon API client.
@@ -75,6 +79,9 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
         timestamp: u64,
     ) -> Result<u64, BlobProviderError> {
         if timestamp < genesis {
+            return Err(BlobProviderError::SlotDerivation);
+        }
+        if slot_time == 0 {
             return Err(BlobProviderError::SlotDerivation);
         }
         Ok((timestamp - genesis) / slot_time)
@@ -207,6 +214,110 @@ where
     }
 }
 
+/// A [`BlobProvider`] for parent chains with no beacon (blob) DA endpoint.
+///
+/// Used by calldata-only derivation - e.g. an appchain settling to Base. Calldata-only derivation
+/// never requests blobs, so blob fetches return an empty vector for an empty hash slice; a non-empty
+/// request (which should never occur in calldata-only mode) returns a [`BlobProviderError::Backend`]
+/// error rather than panicking.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoBlobProvider;
+
+impl NoBlobProvider {
+    /// Error message returned when blobs are requested but no beacon endpoint is configured.
+    const NO_BEACON_ERR: &'static str =
+        "calldata-only mode: no L1 beacon endpoint configured; cannot fetch blobs";
+
+    /// Mirrors [`OnlineBlobProvider::fetch_blobs_with_proofs`] for the no-beacon case: an empty
+    /// request succeeds, a non-empty request errors.
+    pub fn fetch_blobs_with_proofs(
+        &self,
+        _block_ref: &BlockInfo,
+        blob_hashes: &[B256],
+    ) -> Result<Vec<BlobWithCommitmentAndProof>, BlobProviderError> {
+        if blob_hashes.is_empty() {
+            return Ok(Default::default());
+        }
+        Err(BlobProviderError::Backend(Self::NO_BEACON_ERR.to_string()))
+    }
+}
+
+#[async_trait]
+impl BlobProvider for NoBlobProvider {
+    type Error = BlobProviderError;
+
+    async fn get_and_validate_blobs(
+        &mut self,
+        _block_ref: &BlockInfo,
+        blob_hashes: &[B256],
+    ) -> Result<Vec<Box<Blob>>, Self::Error> {
+        if blob_hashes.is_empty() {
+            return Ok(Default::default());
+        }
+        Err(BlobProviderError::Backend(Self::NO_BEACON_ERR.to_string()))
+    }
+}
+
+/// The L1 blob provider used by the derivation pipeline, selected at runtime by execution mode.
+///
+/// [`L1BlobProvider::Beacon`] backs the main Base chain (parent chain = Ethereum, with a
+/// beacon/blob DA endpoint); [`L1BlobProvider::CalldataOnly`] backs an appchain (parent chain =
+/// Base, no beacon). Selecting between the two is done once, where the providers are built.
+#[derive(Debug, Clone)]
+pub enum L1BlobProvider {
+    /// Beacon-backed blob provider for a parent chain with a beacon (blob) DA endpoint.
+    Beacon(OnlineBlobProvider<OnlineBeaconClient>),
+    /// No-beacon provider for calldata-only derivation.
+    CalldataOnly(NoBlobProvider),
+}
+
+impl L1BlobProvider {
+    /// Creates a beacon-backed provider.
+    pub const fn beacon(provider: OnlineBlobProvider<OnlineBeaconClient>) -> Self {
+        Self::Beacon(provider)
+    }
+
+    /// Creates a calldata-only (no-beacon) provider.
+    pub const fn calldata_only() -> Self {
+        Self::CalldataOnly(NoBlobProvider)
+    }
+
+    /// Fetches and validates blobs, recomputing their KZG commitments and proofs. See
+    /// [`OnlineBlobProvider::fetch_blobs_with_proofs`].
+    pub async fn fetch_blobs_with_proofs(
+        &self,
+        block_ref: &BlockInfo,
+        blob_hashes: &[B256],
+    ) -> Result<Vec<BlobWithCommitmentAndProof>, BlobProviderError> {
+        match self {
+            Self::Beacon(provider) => {
+                provider.fetch_blobs_with_proofs(block_ref, blob_hashes).await
+            }
+            Self::CalldataOnly(provider) => {
+                provider.fetch_blobs_with_proofs(block_ref, blob_hashes)
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl BlobProvider for L1BlobProvider {
+    type Error = BlobProviderError;
+
+    async fn get_and_validate_blobs(
+        &mut self,
+        block_ref: &BlockInfo,
+        blob_hashes: &[B256],
+    ) -> Result<Vec<Box<Blob>>, Self::Error> {
+        match self {
+            Self::Beacon(provider) => provider.get_and_validate_blobs(block_ref, blob_hashes).await,
+            Self::CalldataOnly(provider) => {
+                provider.get_and_validate_blobs(block_ref, blob_hashes).await
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -217,7 +328,7 @@ mod tests {
     use base_consensus_derive::{BlobProvider, BlobProviderError};
     use base_protocol::BlockInfo;
 
-    use super::{BlobWithCommitmentAndProof, BoxedBlob, OnlineBlobProvider};
+    use super::{BlobWithCommitmentAndProof, BoxedBlob, NoBlobProvider, OnlineBlobProvider};
     use crate::{APIConfigResponse, APIGenesisResponse, BeaconClient};
 
     /// Local error type for [`MockBeaconClient`].
@@ -302,6 +413,37 @@ mod tests {
         let block_ref = BlockInfo::default();
         let result = provider.get_and_validate_blobs(&block_ref, &[]).await.unwrap();
         assert!(result.is_empty(), "empty hashes must return empty blob vec");
+    }
+
+    /// A [`NoBlobProvider`] returns `Ok(vec![])` for empty hashes (the calldata-only path) but
+    /// errors when blobs are actually requested.
+    #[tokio::test]
+    async fn test_no_blob_provider() {
+        let mut provider = NoBlobProvider;
+        let block_ref = BlockInfo { timestamp: 12, ..Default::default() };
+
+        // Calldata-only derivation never requests blobs: empty hashes must succeed.
+        let empty = provider.get_and_validate_blobs(&block_ref, &[]).await.unwrap();
+        assert!(empty.is_empty(), "empty hashes must return empty blob vec without a beacon");
+
+        // Requesting an actual blob without a beacon must error rather than panic.
+        let hash = versioned_hash_for(&FixedBytes::repeat_byte(1));
+        let result = provider.get_and_validate_blobs(&block_ref, &[hash]).await;
+        assert!(
+            matches!(result, Err(BlobProviderError::Backend(_))),
+            "blob fetch without a beacon must return a Backend error, got {result:?}"
+        );
+    }
+
+    /// `slot()` must return an error rather than divide by zero when `slot_time` is 0. This guards
+    /// external callers that reach `slot()` with an unset slot interval.
+    #[test]
+    fn test_slot_zero_slot_time_errors() {
+        let result = OnlineBlobProvider::<MockBeaconClient>::slot(0, 0, 12);
+        assert!(
+            matches!(result, Err(BlobProviderError::SlotDerivation)),
+            "slot() with slot_time=0 must return SlotDerivation, got {result:?}"
+        );
     }
 
     /// Verifies that `get_and_validate_blobs` preserves the ordering of the input hashes.

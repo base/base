@@ -15,8 +15,8 @@ use base_common_network::Base;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState};
 use base_consensus_providers::{
-    AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
-    OnlinePipeline,
+    AlloyChainProvider, AlloyL2ChainProvider, L1BlobProvider, OnlineBeaconClient,
+    OnlineBlobProvider, OnlinePipeline,
 };
 use base_consensus_rpc::RpcBuilder;
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
@@ -48,8 +48,9 @@ pub struct L1Config {
     pub chain_config: Arc<GenesisChainConfig>,
     /// Whether to trust the L1 RPC.
     pub trust_rpc: bool,
-    /// The L1 beacon client.
-    pub beacon_client: OnlineBeaconClient,
+    /// The L1 beacon client, or `None` when no beacon endpoint is configured (e.g. an L2
+    /// parent chain with no blob DA, running calldata-only).
+    pub beacon_client: Option<OnlineBeaconClient>,
     /// The L1 engine provider.
     pub engine_provider: RootProvider,
     /// How frequently to poll L1 for a new finalized block.
@@ -214,10 +215,17 @@ impl RollupNode {
             self.l2_trust_rpc,
         );
 
+        let blob_provider = match self.l1_config.beacon_client.clone() {
+            Some(beacon_client) => {
+                L1BlobProvider::beacon(OnlineBlobProvider::init(beacon_client).await)
+            }
+            None => L1BlobProvider::calldata_only(),
+        };
+
         OnlinePipeline::new_polled(
             Arc::clone(&self.config),
             Arc::clone(&self.l1_config.chain_config),
-            OnlineBlobProvider::init(self.l1_config.beacon_client.clone()).await,
+            blob_provider,
             l1_derivation_provider,
             l2_derivation_provider,
             l1_head_number,

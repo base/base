@@ -174,8 +174,8 @@ pub enum BackendConfig {
         base_consensus_url: String,
         /// L1 execution node RPC URL.
         l1_node_url: String,
-        /// L1 beacon node URL.
-        l1_beacon_url: String,
+        /// L1 beacon node URL, or `None` when the L1 parent has no beacon/blob DA endpoint.
+        l1_beacon_url: Option<String>,
         /// L2 execution node RPC URL.
         l2_node_url: String,
         /// Default sequence window for L1 head calculations.
@@ -199,8 +199,8 @@ pub enum BackendConfig {
         base_consensus_url: String,
         /// L1 execution node RPC URL.
         l1_node_url: String,
-        /// L1 beacon node URL.
-        l1_beacon_url: String,
+        /// L1 beacon node URL, or `None` when the L1 parent has no beacon/blob DA endpoint.
+        l1_beacon_url: Option<String>,
         /// L2 execution node RPC URL.
         l2_node_url: String,
         /// Default sequence window for L1 head calculations.

@@ -227,6 +227,8 @@ impl ConsensusNodeArgs {
         overrides: ConsensusNodeOverrides,
     ) -> eyre::Result<RollupNode> {
         self.validate_sequencer_key()?;
+        self.config.l1_rpc_args.validate()?;
+        self.config.l1_rpc_args.log_derivation_mode();
 
         info!(
             target: "rollup_node",
@@ -242,7 +244,7 @@ impl ConsensusNodeArgs {
         let l1_config = L1ConfigBuilder {
             chain_config: l1_chain_config,
             trust_rpc: self.config.l1_rpc_args.l1_trust_rpc,
-            beacon: self.config.l1_rpc_args.l1_beacon.clone(),
+            beacon: self.config.l1_rpc_args.l1_beacon()?,
             rpc_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
             slot_duration_override: self.config.l1_rpc_args.l1_slot_duration_override,
             verifier_l1_confs: self.config.l1_rpc_args.l1_verifier_confs,
