@@ -141,16 +141,6 @@ benchmarks:
 
 Each combination becomes an independent run. Maximum 100 runs per invocation.
 
-### Hardcoded accounts
-
-All devnet runs use Hardhat well-known test accounts:
-
-- **Batcher key** (account #0): `ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`
-- **Prefund key** (account #1): `59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d`
-- **Prefund amount**: 1e24 wei (1,000,000 ETH)
-
-These accounts are pre-funded in the devnet genesis. Do not use them on any public network.
-
 ## Output
 
 Each run writes three files under `--output-dir/<run-id>/`:
