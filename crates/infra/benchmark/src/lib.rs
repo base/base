@@ -1,8 +1,5 @@
 #![doc = include_str!("../README.md")]
 
-mod compare;
-pub use compare::{compare_run_groups, CompareOutcome, CompareResult, GroupStats};
-
 mod config;
 pub use config::{
     BenchmarkConfig, BenchmarkDefinition, DatadirConfig, FlashblocksConfig, LoadTestPayloadParams,
@@ -20,7 +17,7 @@ mod output;
 pub use output::{
     average_metric, average_metric_seconds, copy_metrics, create_run_dir, dump_log_tail,
     gzip_file, random_id, write_metadata_json, write_metrics_file, write_result_json,
-    write_tags_json, ResultsIndexEntry, RunContext,
+    write_tags_json, RunContext,
 };
 
 mod ports;

@@ -6,40 +6,16 @@ use std::path::PathBuf;
 use clap::Parser;
 use tracing::error;
 
-#[derive(Debug, clap::Subcommand)]
-enum SubCommand {
-    /// Compare two benchmark run groups from a results.jsonl index.
-    Compare(CompareArgs),
-}
-
-#[derive(Debug, clap::Args)]
-struct CompareArgs {
-    /// Path to results.jsonl index file.
-    #[arg(long)]
-    results: PathBuf,
-    /// Run group ID of the baseline.
-    #[arg(long)]
-    baseline: String,
-    /// Run group ID of the challenger.
-    #[arg(long)]
-    challenger: String,
-}
-
 #[derive(Debug, Parser)]
 #[command(
     name = "base-bench",
     about = "Base EL benchmark orchestrator",
     long_about = "Runs a configurable benchmark against a Base EL node. \
-                  All arguments are optional: with no arguments, runs the built-in \
-                  ERC-20 transfer benchmark on a fresh devnet and writes results to ./results/.\n\n\
+                  Use --config to supply a YAML benchmark definition. \
                   Use --tags key=value,key2=value2 to attach metadata tags to each run."
 )]
 struct Cli {
-    #[command(subcommand)]
-    command: Option<SubCommand>,
-
     /// Path to a benchmark YAML config file.
-    /// Defaults to the built-in ERC-20 transfer devnet config.
     #[arg(long, env = "BASE_BENCH_CONFIG")]
     config: Option<PathBuf>,
 
@@ -114,26 +90,6 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    if let Some(SubCommand::Compare(args)) = cli.command {
-        match base_benchmark::compare_run_groups(&args.results, &args.baseline, &args.challenger) {
-            Ok(result) => {
-                for line in &result.summary {
-                    println!("{line}");
-                }
-                let code = match result.outcome {
-                    base_benchmark::CompareOutcome::Better => 0,
-                    base_benchmark::CompareOutcome::Worse => 1,
-                    base_benchmark::CompareOutcome::Neutral => 2,
-                };
-                std::process::exit(code);
-            }
-            Err(e) => {
-                error!(error = %e, "compare failed");
-                std::process::exit(2);
-            }
-        }
-    }
-
     let reth_bin = cli.reth_bin_path();
     let builder_bin = cli.builder_bin_path();
     let load_test_bin = cli.load_test_bin_path();
@@ -187,9 +143,6 @@ async fn main() {
         "starting base-bench",
     );
 
-    let prefund_key = std::env::var("BASE_BENCH_PREFUND_KEY")
-        .unwrap_or_else(|_| base_benchmark::PREFUND_KEY.to_string());
-
     let snapshot_dir = cli.root_dir.join("snapshots");
 
     let git_info = base_benchmark::GitInfo::from_cwd();
@@ -218,7 +171,7 @@ async fn main() {
         reth_bin,
         builder_bin,
         load_test_bin,
-        prefund_key,
+        prefund_key: base_benchmark::PREFUND_KEY.to_string(),
         snapshot_dir,
         run_group_id,
         git_info,

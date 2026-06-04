@@ -6,12 +6,12 @@ End-to-end throughput and latency benchmark for Base sequencer and validator nod
 
 ```bash
 base-bench \
+  --config examples/devnet.yaml \
   --reth-bin /path/to/base-reth-node \
   --load-test-bin /path/to/base-load-test
 ```
 
-No config required. Defaults to 20 blocks of Uniswap V3 swaps on a fresh devnet.
-Results are written to `./results/`.
+Results are written to `./results/`. See [`examples/devnet.yaml`](examples/devnet.yaml) for a working config.
 
 ## Flags
 
@@ -23,7 +23,6 @@ Results are written to `./results/`.
 | `--reth-bin` | `BASE_BENCH_RETH_BIN` | sibling of `base-bench` | Path to `base-reth-node` binary |
 | `--builder-bin` | `BASE_BENCH_BUILDER_BIN` | sibling of `base-bench` | Path to `base-builder` binary |
 | `--load-test-bin` | `BASE_BENCH_LOAD_TEST_BIN` | sibling of `base-bench` | Path to `base-load-test` binary |
-| `--prefund-key` | `BASE_BENCH_PREFUND_KEY` | Hardhat account #1 | Hex private key for pre-funding |
 | `--tags` | `BASE_BENCH_TAGS` | (none) | Comma-separated `key=value` pairs attached to results |
 
 ## Config format
@@ -96,49 +95,9 @@ Each run writes three files under `--output-dir/<run-id>/`:
 
 | File | Contents |
 |------|----------|
-| `metadata.json` | Run config, git SHA/branch, tags, run group ID |
+| `metadata.json` | Run config, git SHA/branch, tags, run group ID, per-metric averages |
 | `metrics-sequencer.json` | Per-block metrics from the sequencer |
 | `metrics-validator.json` | Per-block metrics from the validator |
 
-A summary line is also appended to `--output-dir/results.jsonl`:
+A human-readable summary is also printed to stdout after each run.
 
-```json
-{
-  "run_id": "abc123",
-  "run_group_id": "xyz456",
-  "git_sha": "abcdef",
-  "git_branch": "my-branch",
-  "config_name": "my-benchmark",
-  "node_type": "reth",
-  "success": true,
-  "tags": {"hypothesis": "larger-txpool"},
-  "gas_per_second_sequencer": 481138671,
-  "get_payload_ms": 5.6,
-  "new_payload_ms": 6.9
-}
-```
-
-### Key metrics
-
-| Metric | Description |
-|--------|-------------|
-| `gas_per_second_sequencer` | Average gas throughput over all benchmark blocks |
-| `get_payload_ms` | Average `engine_getPayloadV4` latency (sequencer) |
-| `new_payload_ms` | Average `engine_newPayloadV4` latency (validator) |
-
-## Comparing runs
-
-```bash
-# Tag two runs differently, then compare by group ID
-base-bench --tags hypothesis=baseline ...
-base-bench --tags hypothesis=challenger ...
-
-base-bench compare \
-  --results ./results/results.jsonl \
-  --baseline <baseline-run-group-id> \
-  --challenger <challenger-run-group-id>
-```
-
-Exit code: `0` = challenger is better (>+2%), `1` = worse (>-2%), `2` = neutral.
-
-The `run_group_id` for each invocation is printed in the summary and stored in `results.jsonl`.

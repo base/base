@@ -25,10 +25,7 @@ use crate::metrics::{
     GAS_PER_BLOCK, GAS_PER_SECOND, GET_PAYLOAD_LATENCY, NEW_PAYLOAD_LATENCY,
     TRANSACTIONS_PER_BLOCK,
 };
-use crate::output::{
-    average_metric, average_metric_seconds, write_metadata_json, write_metrics_file,
-    ResultsIndexEntry, RunContext,
-};
+use crate::output::{average_metric, write_metadata_json, write_metrics_file, RunContext};
 use crate::payload::{LoadTestConfig, LoadTestPayloadWorker, PayloadWorker};
 use crate::ports::PortManager;
 use crate::proxy::run_proxy;
@@ -393,23 +390,6 @@ impl NetworkBenchmark {
             &validator_metrics,
             &ctx,
         )?;
-
-        let entry = ResultsIndexEntry {
-            run_id: run.id.clone(),
-            run_group_id: self.options.run_group_id.clone(),
-            timestamp: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
-            git_sha: self.options.git_info.sha.clone(),
-            git_branch: self.options.git_info.branch.clone(),
-            config_name: self.config.name.clone(),
-            node_type: run.definition.node_type.clone(),
-            output_dir: self.options.output_dir.display().to_string(),
-            success,
-            tags: self.options.tags.clone(),
-            gas_per_second_sequencer: average_metric(&block_metrics_vec, GAS_PER_SECOND),
-            get_payload_ms: average_metric_seconds(&block_metrics_vec, GET_PAYLOAD_LATENCY),
-            new_payload_ms: average_metric_seconds(&validator_metrics, NEW_PAYLOAD_LATENCY),
-        };
-        entry.append_to_file(&self.options.output_dir)?;
 
         info!(run_id = %run.id, "run complete");
 
