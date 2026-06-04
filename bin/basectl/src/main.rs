@@ -21,8 +21,8 @@ async fn main() -> anyhow::Result<()> {
             let view = command.map(|c| c.view_id()).unwrap_or(ViewId::Home);
             run_app(view, config, conductor_rpc).await
         }
-        Some(cli::Commands::Block { reference, json }) => {
-            block::run(MonitoringConfig::load(config).await?, &reference, json).await
+        Some(cli::Commands::Block { reference, json, raw }) => {
+            block::run(MonitoringConfig::load(config).await?, &reference, json, raw).await
         }
         Some(cli::Commands::Flashblocks) => {
             run_flashblocks_json(MonitoringConfig::load(config).await?).await

@@ -10,6 +10,8 @@ use basectl_cli::{
     JsonOutput, KeyValueTable, MonitoringConfig, fetch_block, format_bytes, format_gas,
     format_gwei, format_unix_timestamp,
 };
+use chrono::{DateTime, Local, SecondsFormat};
+use serde::Serialize;
 
 /// Parses a CLI block reference into alloy's `BlockId`.
 ///
@@ -46,15 +48,94 @@ pub(crate) fn parse_block_ref(s: &str) -> Result<BlockId> {
 }
 
 /// Runs the `basectl block` subcommand.
-pub(crate) async fn run(config: MonitoringConfig, reference: &str, json: bool) -> Result<()> {
+pub(crate) async fn run(
+    config: MonitoringConfig,
+    reference: &str,
+    json: bool,
+    raw: bool,
+) -> Result<()> {
     let block_ref = parse_block_ref(reference)?;
     let block = fetch_block(&config.rpc, block_ref).await?;
-    if json {
-        JsonOutput::print(&block)?;
-    } else {
-        print_pretty(&config.name, block_ref, &block)?;
+    match (json, raw) {
+        (true, true) => JsonOutput::print(&block)?,
+        (true, false) => {
+            let summary = BlockSummaryJson::from_block(&config.name, block_ref, &block);
+            JsonOutput::print(&summary)?;
+        }
+        (false, _) => print_pretty(&config.name, block_ref, &block)?,
     }
     Ok(())
+}
+
+/// Humanized JSON shape for the `basectl block --json` output.
+///
+/// Mirrors the field selection of `print_pretty`, but with decoded numeric
+/// values instead of the JSON-RPC wire format's hex-string quantities.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BlockSummaryJson {
+    network: String,
+    reference: String,
+    number: u64,
+    hash: B256,
+    parent_hash: B256,
+    timestamp: TimestampJson,
+    transactions: usize,
+    gas_used: u64,
+    gas_limit: u64,
+    base_fee_per_gas_wei: Option<u128>,
+    size_bytes: Option<u64>,
+    blob_gas_used: Option<u64>,
+    excess_blob_gas: Option<u64>,
+    withdrawals: Option<usize>,
+}
+
+impl BlockSummaryJson {
+    fn from_block(
+        network: &str,
+        reference: BlockId,
+        block: &<Base as Network>::BlockResponse,
+    ) -> Self {
+        let header = &block.header;
+        Self {
+            network: network.to_string(),
+            reference: reference.to_string(),
+            number: header.number,
+            hash: header.hash,
+            parent_hash: header.parent_hash,
+            timestamp: TimestampJson::from_unix(header.timestamp),
+            transactions: block.transactions.len(),
+            gas_used: header.gas_used,
+            gas_limit: header.gas_limit,
+            base_fee_per_gas_wei: header.base_fee_per_gas.map(u128::from),
+            size_bytes: header.size.and_then(|size| u64::try_from(size).ok()),
+            blob_gas_used: header.blob_gas_used,
+            excess_blob_gas: header.excess_blob_gas,
+            withdrawals: block.withdrawals.as_ref().map(|w| w.len()),
+        }
+    }
+}
+
+/// Three-form timestamp object: raw unix seconds, UTC RFC 3339, and local
+/// RFC 3339 (operator's machine timezone with offset suffix).
+#[derive(Debug, Clone, Serialize)]
+struct TimestampJson {
+    unix: u64,
+    utc: String,
+    local: String,
+}
+
+impl TimestampJson {
+    fn from_unix(secs: u64) -> Self {
+        let dt = DateTime::from_timestamp(secs as i64, 0);
+        let utc = dt
+            .map(|t| t.to_rfc3339_opts(SecondsFormat::Secs, true))
+            .unwrap_or_else(|| secs.to_string());
+        let local = dt
+            .map(|t| t.with_timezone(&Local).to_rfc3339_opts(SecondsFormat::Secs, false))
+            .unwrap_or_else(|| secs.to_string());
+        Self { unix: secs, utc, local }
+    }
 }
 
 fn print_pretty(
@@ -165,5 +246,56 @@ mod tests {
         assert!(parse_block_ref("notatag").is_err());
         assert!(parse_block_ref("").is_err());
         assert!(parse_block_ref("   ").is_err());
+    }
+
+    #[test]
+    fn timestamp_json_renders_three_forms() {
+        let ts = super::TimestampJson::from_unix(1_780_614_804);
+
+        assert_eq!(ts.unix, 1_780_614_804);
+        assert!(ts.utc.ends_with('Z'), "expected UTC suffix Z, got {}", ts.utc);
+        assert!(ts.utc.starts_with("2026-06-04"), "expected UTC date prefix, got {}", ts.utc);
+        let local_has_offset =
+            ts.local.contains('+') || ts.local.matches('-').count() >= 3 || ts.local.ends_with('Z');
+        assert!(local_has_offset, "expected local RFC 3339 with offset, got {}", ts.local);
+    }
+
+    #[test]
+    fn block_summary_json_serializes_with_camel_case_and_nested_timestamp() {
+        let summary = super::BlockSummaryJson {
+            network: "sepolia".to_string(),
+            reference: "latest".to_string(),
+            number: 42,
+            hash: B256::repeat_byte(0x11),
+            parent_hash: B256::repeat_byte(0x22),
+            timestamp: super::TimestampJson::from_unix(1_780_614_804),
+            transactions: 7,
+            gas_used: 21_000,
+            gas_limit: 30_000_000,
+            base_fee_per_gas_wei: Some(5_000_000),
+            size_bytes: Some(500),
+            blob_gas_used: Some(2),
+            excess_blob_gas: None,
+            withdrawals: Some(3),
+        };
+
+        let value: serde_json::Value = serde_json::to_value(&summary).unwrap();
+
+        assert_eq!(value["network"], "sepolia");
+        assert_eq!(value["reference"], "latest");
+        assert_eq!(value["number"], 42);
+        assert!(value["hash"].as_str().unwrap().starts_with("0x11"));
+        assert!(value["parentHash"].as_str().unwrap().starts_with("0x22"));
+        assert_eq!(value["timestamp"]["unix"], 1_780_614_804u64);
+        assert!(value["timestamp"]["utc"].as_str().unwrap().ends_with('Z'));
+        assert!(value["timestamp"]["local"].is_string());
+        assert_eq!(value["transactions"], 7);
+        assert_eq!(value["gasUsed"], 21_000);
+        assert_eq!(value["gasLimit"], 30_000_000);
+        assert_eq!(value["baseFeePerGasWei"], 5_000_000);
+        assert_eq!(value["sizeBytes"], 500);
+        assert_eq!(value["blobGasUsed"], 2);
+        assert!(value["excessBlobGas"].is_null());
+        assert_eq!(value["withdrawals"], 3);
     }
 }

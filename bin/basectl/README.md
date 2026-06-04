@@ -51,14 +51,16 @@ supported (alloy's typed block can't deserialize null number/hash).
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Emit pretty JSON instead of the key-value table. |
+| `--json` | Emit humanized JSON (decoded numeric values, ISO + local timestamps, `network`/`reference` context fields) instead of the key-value table. |
+| `--raw` | With `--json`, emit the JSON-RPC wire format (camelCase field names, hex-string quantities, no `network`/`reference` wrapper) instead of the humanized form. Useful for round-tripping through `cast` or other JSON-RPC-aware tooling. Errors at parse time if used without `--json`. |
 
 Pretty mode converts hex quantities to decimal and Unix timestamps to
-`YYYY-MM-DD HH:MM:SS UTC`. JSON mode preserves the JSON-RPC wire format —
-camelCase field names, hex-string quantities — so it round-trips cleanly
-through any JSON-RPC-aware tool. All header fields are at the top level of
-the JSON object (no `.header` wrapper), matching the `eth_getBlockByNumber`
-response shape.
+`YYYY-MM-DD HH:MM:SS UTC`. Humanized JSON (`--json`) decodes numeric values
+(`number: 42417649`, `gasUsed: 5345789`, `baseFeePerGasWei: 5000000`) and
+gives you a nested `timestamp` object with `unix`/`utc`/`local` fields so
+the operator's wall clock is readable without timezone math. Raw JSON
+(`--json --raw`) preserves the alloy/JSON-RPC wire format with hex
+quantities at the top level — byte-equivalent to `cast block --json`.
 
 ### `basectl flashblocks`
 
@@ -95,4 +97,10 @@ basectl -c mainnet b latest
 
 # Look up a block by 32-byte hash (canonical, orphan, or reorged-out)
 basectl -c sepolia block 0x9fa0d82dfdf395d552e92caec6a9d5482c53f1800e8f3ff29994b7a431447148
+
+# Humanized JSON: decoded numbers, nested timestamp with utc + local, network context
+basectl -c sepolia block --json latest | jq '{number, gasUsed, baseFeePerGasWei, timestamp}'
+
+# Raw (wire) JSON: same shape as `cast block --json`, useful for round-tripping
+basectl -c mainnet block --json --raw finalized | jq '{number, gasUsed, baseFeePerGas}'
 ```
