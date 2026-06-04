@@ -1,39 +1,29 @@
-//! Execution-node upgrade signal extension.
+//! Execution-node upgrade signal schedule application.
 
 use alloy_provider::RootProvider;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
     AlloyUpgradeSignalReader, DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalConfig,
-    UpgradeSignalMonitor, UpgradeSignalReader, UpgradeSignalSchedule,
+    UpgradeSignalMetrics, UpgradeSignalMonitor, UpgradeSignalSchedule, UpgradeSignalStateUpdate,
 };
-use reth_chain_state::CanonStateSubscriptions;
-use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, info, warn};
 use url::Url;
 
-/// Configuration for the execution-node upgrade signal extension.
+/// Configuration for execution-node upgrade signal schedule reads.
 #[derive(Debug, Clone)]
 pub struct ExecutionUpgradeSignalConfig {
-    /// Shared upgrade signal observer configuration.
+    /// Shared upgrade signal schedule read configuration.
     pub signal_config: UpgradeSignalConfig,
     /// L1 RPC URL used to read the upgrade signal contract.
     pub l1_rpc: Url,
 }
 
-/// Execution-node extension that observes L1 upgrade signals and canonical L2 timestamps.
-#[derive(Debug)]
-pub struct ExecutionUpgradeSignalExtension {
-    /// Extension configuration.
-    pub config: ExecutionUpgradeSignalConfig,
-}
+/// Applies contract-backed upgrade signal schedules to execution node configuration.
+#[derive(Debug, Clone, Copy)]
+pub struct ExecutionUpgradeSignal;
 
-impl ExecutionUpgradeSignalExtension {
-    /// Creates a new execution upgrade signal extension.
-    pub const fn new(config: ExecutionUpgradeSignalConfig) -> Self {
-        Self { config }
-    }
-
+impl ExecutionUpgradeSignal {
     /// Applies the configured L1 upgrade signal to the chain spec before startup.
     pub async fn apply_initial_signal_to_chain_spec(
         config: &ExecutionUpgradeSignalConfig,
@@ -43,7 +33,26 @@ impl ExecutionUpgradeSignalExtension {
             RootProvider::new_http(config.l1_rpc.clone()),
             config.signal_config.contract_address,
         );
-        let schedule = reader.read_schedule(&config.signal_config.hardfork_ids).await?;
+        let schedule = match reader.read_schedule(&config.signal_config.hardfork_ids).await {
+            Ok(schedule) => schedule,
+            Err(error) => {
+                UpgradeSignalMetrics::record_l1_read_errors(&config.signal_config.hardfork_ids);
+                return Err(error.into());
+            }
+        };
+        UpgradeSignalMetrics::record_schedule(&schedule);
+        for signal in &schedule.signals {
+            info!(
+                target: "upgrade_signal",
+                hardfork_id = %signal.hardfork_id,
+                activation_timestamp = signal.activation_timestamp,
+                minimum_protocol_version = %signal.protocol_version,
+                node_protocol_version = %config.signal_config.node_protocol_version,
+                l1_block_number = signal.l1_block_number,
+                "read dynamic upgrade signal for execution startup"
+            );
+        }
+        config.signal_config.validate_schedule_protocol_versions(&schedule)?;
 
         Self::apply_schedule_to_chain_spec(chain_spec, &schedule)?;
 
@@ -104,24 +113,56 @@ impl ExecutionUpgradeSignalExtension {
 
         Ok(applied)
     }
+}
 
-    /// Polls L1 upgrade signal state.
+/// Execution-node extension that records live L1 upgrade signal metrics only.
+#[derive(Debug)]
+pub struct ExecutionUpgradeSignalMetricsExtension {
+    /// Extension configuration.
+    pub config: ExecutionUpgradeSignalConfig,
+}
+
+impl ExecutionUpgradeSignalMetricsExtension {
+    /// Creates a new execution upgrade signal metrics extension.
+    pub const fn new(config: ExecutionUpgradeSignalConfig) -> Self {
+        Self { config }
+    }
+
+    /// Polls L1 upgrade signal state and records metrics without mutating local config.
     pub async fn poll_l1_signal(
         monitor: &mut UpgradeSignalMonitor,
         reader: &AlloyUpgradeSignalReader,
+        hardfork_ids: &[String],
     ) {
-        match reader.read_schedule(&monitor.config.hardfork_ids).await {
+        match reader.read_schedule(hardfork_ids).await {
             Ok(schedule) => {
-                monitor.update_schedule(schedule);
+                let updates = monitor.update_schedule(schedule);
+                let updated_hardforks = updates
+                    .iter()
+                    .filter(|update| matches!(update, UpgradeSignalStateUpdate::Changed))
+                    .count();
+                if updated_hardforks > 0 {
+                    info!(
+                        target: "upgrade_signal",
+                        updated_hardforks,
+                        "observed live L1 upgrade signal update"
+                    );
+                }
             }
             Err(error) => {
-                monitor.record_l1_read_error(&error);
+                UpgradeSignalMetrics::record_l1_read_errors(hardfork_ids);
+                warn!(
+                    target: "upgrade_signal",
+                    error = %error,
+                    hardfork_ids = ?hardfork_ids,
+                    "failed to read live L1 upgrade signal metrics"
+                );
             }
         }
     }
 }
 
-impl BaseNodeExtension for ExecutionUpgradeSignalExtension {
+impl BaseNodeExtension for ExecutionUpgradeSignalMetricsExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         let config = self.config;
 
@@ -130,9 +171,8 @@ impl BaseNodeExtension for ExecutionUpgradeSignalExtension {
                 RootProvider::new_http(config.l1_rpc.clone()),
                 config.signal_config.contract_address,
             );
-            let mut monitor = UpgradeSignalMonitor::new(config.signal_config);
-            let mut canonical_stream =
-                BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
+            let hardfork_ids = config.signal_config.hardfork_ids;
+            let mut monitor = UpgradeSignalMonitor::new(&hardfork_ids);
             let executor = ctx.task_executor;
 
             executor.spawn_with_graceful_shutdown_signal(|signal| {
@@ -144,36 +184,20 @@ impl BaseNodeExtension for ExecutionUpgradeSignalExtension {
                         tokio::select! {
                             _ = &mut signal => break,
                             _ = interval.tick() => {
-                                Self::poll_l1_signal(&mut monitor, &reader).await;
-                            }
-                            update = canonical_stream.next() => {
-                                let Some(update) = update else {
-                                    warn!(
-                                        target: "upgrade_signal",
-                                        "canonical state stream closed"
-                                    );
-                                    break;
-                                };
-                                let Ok(notification) = update else {
-                                    continue;
-                                };
-                                let committed = notification.committed();
-                                for block in committed.blocks_iter() {
-                                    monitor.observe_l2_timestamp(block.timestamp);
-                                }
+                                Self::poll_l1_signal(&mut monitor, &reader, &hardfork_ids).await;
                             }
                         }
                     }
                 })
             });
 
-            info!(target: "upgrade_signal", "execution upgrade signal observer spawned");
+            info!(target: "upgrade_signal", "execution upgrade signal metrics observer spawned");
             Ok(())
         })
     }
 }
 
-impl FromExtensionConfig for ExecutionUpgradeSignalExtension {
+impl FromExtensionConfig for ExecutionUpgradeSignalMetricsExtension {
     type Config = ExecutionUpgradeSignalConfig;
 
     fn from_config(config: Self::Config) -> Self {
@@ -211,7 +235,7 @@ mod tests {
         chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
 
-        let applied = ExecutionUpgradeSignalExtension::apply_schedule_to_chain_spec(
+        let applied = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
             &mut chain_spec,
             &schedule(&[("canyon", 40), ("azul", 42)]),
         )
@@ -233,7 +257,7 @@ mod tests {
         chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Timestamp(42));
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Timestamp(42));
 
-        let applied = ExecutionUpgradeSignalExtension::apply_schedule_to_chain_spec(
+        let applied = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
             &mut chain_spec,
             &schedule(&[("azul", 0)]),
         )
@@ -253,7 +277,7 @@ mod tests {
         chain_spec.set_fork(EthereumHardfork::Osaka, ForkCondition::Never);
         chain_spec.set_fork(BaseUpgrade::Azul, ForkCondition::Never);
 
-        let applied = ExecutionUpgradeSignalExtension::apply_schedule_to_chain_spec(
+        let applied = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
             &mut chain_spec,
             &schedule(&[("delta", 42)]),
         )
@@ -268,7 +292,7 @@ mod tests {
     fn rejects_beryl_schedule_without_activation_admin() {
         let mut chain_spec = BaseChainSpec::from(ChainSpec::default());
 
-        let error = ExecutionUpgradeSignalExtension::apply_schedule_to_chain_spec(
+        let error = ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
             &mut chain_spec,
             &schedule(&[("beryl", 42)]),
         )

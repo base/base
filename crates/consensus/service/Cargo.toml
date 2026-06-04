@@ -66,12 +66,12 @@ async-stream.workspace = true
 tokio-stream.workspace = true
 libp2p-stream.workspace = true
 http-body-util.workspace = true
-tracing = { workspace = true, features = ["std"] }
 strum = { workspace = true, features = ["derive"] }
+tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 tower-http.workspace = true
 derive_more = { workspace = true, features = ["debug", "eq"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 jsonrpsee = { workspace = true, features = ["server", "http-client"] }
 
 # Binary conductor commit endpoint

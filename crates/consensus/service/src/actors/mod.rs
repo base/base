@@ -44,7 +44,7 @@ pub use l1_watcher::{
 };
 
 mod upgrade_signal;
-pub use upgrade_signal::{ConsensusL2TimestampSource, UpgradeSignalActor};
+pub use upgrade_signal::UpgradeSignalMetricsActor;
 
 mod network;
 #[cfg(test)]

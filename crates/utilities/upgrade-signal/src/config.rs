@@ -2,11 +2,22 @@
 
 use core::time::Duration;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use url::Url;
+
+use crate::{
+    error::UpgradeSignalError,
+    state::{UpgradeSignal, UpgradeSignalSchedule},
+};
 
 /// Default wall-clock interval used to check whether another L1 block polling window has elapsed.
 pub const DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL: Duration = Duration::from_secs(12);
+
+/// Node protocol version supported by this binary for contract-backed upgrade signals.
+///
+/// Contract schedules with a higher minimum protocol version are rejected before any timestamp is
+/// applied. Bump this with the node software that fully implements the next dynamic upgrade.
+pub const DEFAULT_UPGRADE_SIGNAL_NODE_PROTOCOL_VERSION: u64 = 7;
 
 /// Default hardfork IDs read from the L1 upgrade signal contract.
 pub const DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS: &[&str] = &[
@@ -35,7 +46,7 @@ pub enum UpgradeSignalConfigError {
     EmptyHardforkId,
 }
 
-/// CLI arguments shared by nodes that observe the L1 upgrade signal contract.
+/// CLI arguments shared by nodes that read the L1 upgrade signal contract.
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
 pub struct UpgradeSignalArgs {
     /// L1 upgrade signal contract or proxy address.
@@ -55,7 +66,7 @@ pub struct UpgradeSignalArgs {
 }
 
 impl UpgradeSignalArgs {
-    /// Builds an observer configuration if the upgrade signal is enabled.
+    /// Builds a schedule read configuration if the upgrade signal is enabled.
     pub fn config(&self) -> Result<Option<UpgradeSignalConfig>, UpgradeSignalConfigError> {
         let Some(contract_address) = self.contract_address else {
             if !self.hardfork_ids.is_empty() {
@@ -66,7 +77,11 @@ impl UpgradeSignalArgs {
 
         let hardfork_ids = Self::configured_hardfork_ids(&self.hardfork_ids)?;
 
-        Ok(Some(UpgradeSignalConfig { contract_address, hardfork_ids }))
+        Ok(Some(UpgradeSignalConfig {
+            contract_address,
+            hardfork_ids,
+            node_protocol_version: U256::from(DEFAULT_UPGRADE_SIGNAL_NODE_PROTOCOL_VERSION),
+        }))
     }
 
     /// Returns the configured hardfork IDs, or the default contract-backed hardfork schedule.
@@ -93,24 +108,62 @@ impl UpgradeSignalArgs {
     }
 }
 
-/// Runtime configuration for observing hardfork IDs on an L1 upgrade signal contract.
+/// Configuration for reading hardfork IDs from an L1 upgrade signal contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpgradeSignalConfig {
     /// L1 upgrade signal contract or proxy address.
     pub contract_address: Address,
     /// Hardfork IDs to pass to the contract.
     pub hardfork_ids: Vec<String>,
+    /// Node protocol version supported by this binary.
+    pub node_protocol_version: U256,
 }
 
 impl UpgradeSignalConfig {
-    /// Creates a new observer configuration with default polling settings.
+    /// Creates a new schedule read configuration for one hardfork ID.
     pub fn new(contract_address: Address, hardfork_id: impl Into<String>) -> Self {
-        Self { contract_address, hardfork_ids: vec![hardfork_id.into()] }
+        Self {
+            contract_address,
+            hardfork_ids: vec![hardfork_id.into()],
+            node_protocol_version: U256::from(DEFAULT_UPGRADE_SIGNAL_NODE_PROTOCOL_VERSION),
+        }
     }
 
-    /// Creates a new observer configuration for multiple hardfork IDs.
-    pub fn new_many(contract_address: Address, hardfork_ids: Vec<String>) -> Self {
-        Self { contract_address, hardfork_ids }
+    /// Returns true if this node supports the minimum protocol version attached to `signal`.
+    pub fn supports_signal_protocol_version(&self, signal: &UpgradeSignal) -> bool {
+        signal.protocol_version <= self.node_protocol_version
+    }
+
+    /// Validates the minimum protocol version attached to one signal.
+    pub fn validate_signal_protocol_version(
+        &self,
+        signal: &UpgradeSignal,
+    ) -> Result<(), UpgradeSignalError> {
+        if signal.activation_timestamp > 0 && signal.protocol_version == U256::ZERO {
+            return Err(UpgradeSignalError::missing_protocol_version(signal.hardfork_id.clone()));
+        }
+
+        if self.supports_signal_protocol_version(signal) {
+            return Ok(());
+        }
+
+        Err(UpgradeSignalError::unsupported_protocol_version(
+            signal.hardfork_id.clone(),
+            signal.protocol_version,
+            self.node_protocol_version,
+        ))
+    }
+
+    /// Validates every minimum protocol version in a schedule.
+    pub fn validate_schedule_protocol_versions(
+        &self,
+        schedule: &UpgradeSignalSchedule,
+    ) -> Result<(), UpgradeSignalError> {
+        for signal in &schedule.signals {
+            self.validate_signal_protocol_version(signal)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -124,7 +177,7 @@ pub struct UpgradeSignalL1RpcArgs {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::address;
+    use alloy_primitives::{U256, address};
 
     use super::*;
 
@@ -170,5 +223,51 @@ mod tests {
 
         assert_eq!(config.contract_address, contract);
         assert_eq!(config.hardfork_ids, ["azul"]);
+        assert_eq!(
+            config.node_protocol_version,
+            U256::from(DEFAULT_UPGRADE_SIGNAL_NODE_PROTOCOL_VERSION)
+        );
+    }
+
+    fn signal(protocol_version: U256) -> UpgradeSignal {
+        UpgradeSignal {
+            hardfork_id: "azul".to_string(),
+            activation_timestamp: 42,
+            protocol_version,
+            l1_block_number: 1,
+        }
+    }
+
+    #[test]
+    fn accepts_signal_at_node_protocol_version() {
+        let config =
+            UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"), "azul");
+
+        assert!(
+            config.validate_signal_protocol_version(&signal(config.node_protocol_version)).is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_signal_above_node_protocol_version() {
+        let config =
+            UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"), "azul");
+        let minimum_protocol_version = config.node_protocol_version + U256::from(1);
+
+        assert!(matches!(
+            config.validate_signal_protocol_version(&signal(minimum_protocol_version)).unwrap_err(),
+            UpgradeSignalError::UnsupportedProtocolVersion { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_positive_signal_without_protocol_version() {
+        let config =
+            UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"), "azul");
+
+        assert!(matches!(
+            config.validate_signal_protocol_version(&signal(U256::ZERO)).unwrap_err(),
+            UpgradeSignalError::MissingProtocolVersion(_)
+        ));
     }
 }

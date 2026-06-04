@@ -34,7 +34,8 @@ use crate::{
     NodeActor, NodeMode, PayloadBuilder, QueuedDerivationEngineClient,
     QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
     QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig, UpgradeSignalActor,
+    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
+    UpgradeSignalMetricsActor,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -119,8 +120,8 @@ pub struct RollupNode {
     /// If the path is set but the database cannot be opened (e.g., bad permissions, disk
     /// error, or corrupted file), the node **fails to start** with an error.
     pub safedb_path: Option<PathBuf>,
-    /// Optional L1 upgrade signal observer configuration.
-    pub upgrade_signal_config: Option<UpgradeSignalConfig>,
+    /// Optional L1 upgrade signal metrics observer configuration.
+    pub upgrade_signal_metrics_config: Option<UpgradeSignalConfig>,
 }
 
 /// A RollupNode-level derivation actor wrapper.
@@ -532,15 +533,14 @@ impl RollupNode {
             l1_head_updates_tx.subscribe(),
             cancellation.clone(),
         );
-        let upgrade_signal_actor = self.upgrade_signal_config.clone().map(|config| {
-            UpgradeSignalActor::new(
-                config,
-                self.l1_config.engine_provider.clone(),
-                self.l2_provider.clone(),
-                cancellation.clone(),
-            )
-        });
-
+        let upgrade_signal_metrics_actor =
+            self.upgrade_signal_metrics_config.clone().map(|config| {
+                UpgradeSignalMetricsActor::new(
+                    config,
+                    self.l1_config.engine_provider.clone(),
+                    cancellation.clone(),
+                )
+            });
         // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if self.mode().is_sequencer() {
             let sequencer_engine_client = QueuedSequencerEngineClient {
@@ -612,7 +612,7 @@ impl RollupNode {
                 Some((network, ())),
                 Some((l1_watcher, ())),
                 Some((l1_query_processor, ())),
-                upgrade_signal_actor.map(|actor| (actor, ())),
+                upgrade_signal_metrics_actor.map(|actor| (actor, ())),
                 Some((derivation, ())),
                 Some((checkpoint_actor, cancellation.clone())),
                 Some((engine_actor, ())),

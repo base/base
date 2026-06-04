@@ -84,8 +84,8 @@ pub struct RollupNodeBuilder {
     /// When set, enables persistent safe head tracking via redb and serves
     /// `optimism_safeHeadAtL1Block` RPC requests from the database.
     pub safedb_path: Option<PathBuf>,
-    /// Optional L1 upgrade signal observer configuration.
-    pub upgrade_signal_config: Option<UpgradeSignalConfig>,
+    /// Optional L1 upgrade signal metrics observer configuration.
+    pub upgrade_signal_metrics_config: Option<UpgradeSignalConfig>,
 }
 
 impl RollupNodeBuilder {
@@ -124,7 +124,7 @@ impl RollupNodeBuilder {
             finalized_poll_interval: None,
             checkpoint_path: None,
             safedb_path: None,
-            upgrade_signal_config: None,
+            upgrade_signal_metrics_config: None,
         }
     }
 
@@ -171,9 +171,9 @@ impl RollupNodeBuilder {
         Self { checkpoint_path: Some(path), ..self }
     }
 
-    /// Sets the optional L1 upgrade signal observer configuration.
-    pub fn with_upgrade_signal_config(self, config: Option<UpgradeSignalConfig>) -> Self {
-        Self { upgrade_signal_config: config, ..self }
+    /// Sets the optional L1 upgrade signal metrics observer configuration.
+    pub fn with_upgrade_signal_metrics_config(self, config: Option<UpgradeSignalConfig>) -> Self {
+        Self { upgrade_signal_metrics_config: config, ..self }
     }
 
     /// Assembles the [`RollupNode`] service.
@@ -234,7 +234,7 @@ impl RollupNodeBuilder {
             derivation_delegate_provider,
             checkpoint_path,
             safedb_path: self.safedb_path,
-            upgrade_signal_config: self.upgrade_signal_config,
+            upgrade_signal_metrics_config: self.upgrade_signal_metrics_config,
         })
     }
 

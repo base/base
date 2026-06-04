@@ -17,7 +17,9 @@ use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use url::Url;
 
-use crate::upgrade_signal::{ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalExtension};
+use crate::upgrade_signal::{
+    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalMetricsExtension,
+};
 
 /// CLI arguments for a standard Base execution node.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -218,14 +220,13 @@ impl StandardBaseRethNode {
         };
 
         let chain_spec = Arc::make_mut(&mut builder.config_mut().chain);
-        ExecutionUpgradeSignalExtension::apply_initial_signal_to_chain_spec(&config, chain_spec)
-            .await?;
+        ExecutionUpgradeSignal::apply_initial_signal_to_chain_spec(&config, chain_spec).await?;
 
         Ok(builder)
     }
 
-    /// Installs the upgrade signal observer extension when configured.
-    pub fn install_upgrade_signal_extension<SB: PayloadServiceBuilder>(
+    /// Installs the upgrade signal metrics observer extension when configured.
+    pub fn install_upgrade_signal_metrics_extension<SB: PayloadServiceBuilder>(
         runner: &mut BaseNodeRunner<SB>,
         rollup_args: &RollupArgs,
     ) -> eyre::Result<()> {
@@ -233,7 +234,7 @@ impl StandardBaseRethNode {
             return Ok(());
         };
 
-        runner.install_ext::<ExecutionUpgradeSignalExtension>(config);
+        runner.install_ext::<ExecutionUpgradeSignalMetricsExtension>(config);
 
         Ok(())
     }
@@ -302,7 +303,7 @@ impl StandardBaseRethNode {
         runner.install_ext::<TxForwardingExtension>((&args).into());
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
-        Self::install_upgrade_signal_extension(&mut runner, &rollup_args)?;
+        Self::install_upgrade_signal_metrics_extension(&mut runner, &rollup_args)?;
 
         Ok(runner)
     }

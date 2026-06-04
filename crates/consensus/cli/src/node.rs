@@ -10,7 +10,7 @@ use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder};
 use base_upgrade_signal::{
-    AlloyUpgradeSignalReader, UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalReader,
+    AlloyUpgradeSignalReader, UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalMetrics,
     UpgradeSignalSchedule,
 };
 use clap::Args;
@@ -147,7 +147,7 @@ pub struct ConsensusNodeConfigArgs {
     #[arg(long = "checkpoint.path", env = "BASE_NODE_CHECKPOINT_PATH")]
     pub checkpoint_path: Option<PathBuf>,
 
-    /// L1 upgrade signal observer arguments.
+    /// L1 upgrade signal schedule arguments.
     #[command(flatten)]
     pub upgrade_signal: UpgradeSignalArgs,
 }
@@ -313,7 +313,7 @@ impl ConsensusNodeArgs {
             rpc_config,
         )
         .with_sequencer_config(self.config.sequencer_flags.config())
-        .with_upgrade_signal_config(upgrade_signal_config);
+        .with_upgrade_signal_metrics_config(upgrade_signal_config);
 
         if let Some(path) = self.config.checkpoint_path.clone() {
             builder = builder.with_checkpoint_path(path);
@@ -335,7 +335,26 @@ impl ConsensusNodeArgs {
             RootProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone()),
             signal_config.contract_address,
         );
-        let schedule = reader.read_schedule(&signal_config.hardfork_ids).await?;
+        let schedule = match reader.read_schedule(&signal_config.hardfork_ids).await {
+            Ok(schedule) => schedule,
+            Err(error) => {
+                UpgradeSignalMetrics::record_l1_read_errors(&signal_config.hardfork_ids);
+                return Err(error.into());
+            }
+        };
+        UpgradeSignalMetrics::record_schedule(&schedule);
+        for signal in &schedule.signals {
+            info!(
+                target: "upgrade_signal",
+                hardfork_id = %signal.hardfork_id,
+                activation_timestamp = signal.activation_timestamp,
+                minimum_protocol_version = %signal.protocol_version,
+                node_protocol_version = %signal_config.node_protocol_version,
+                l1_block_number = signal.l1_block_number,
+                "read dynamic upgrade signal for consensus startup"
+            );
+        }
+        signal_config.validate_schedule_protocol_versions(&schedule)?;
 
         Self::apply_schedule_to_rollup_config(cfg, &schedule);
 

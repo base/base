@@ -4390,7 +4390,6 @@ dependencies = [
  "eyre",
  "futures",
  "proptest",
- "reth-chain-state",
  "reth-chainspec",
  "reth-cli",
  "reth-cli-commands",
@@ -6279,15 +6278,10 @@ dependencies = [
  "alloy-provider 2.0.5",
  "alloy-rpc-types-eth 2.0.5",
  "alloy-sol-types",
- "async-trait",
  "base-metrics",
  "clap",
  "metrics",
- "metrics-util",
  "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
  "url",
 ]
 

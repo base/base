@@ -14,9 +14,9 @@ workspace = true
 [dependencies]
 # workspace
 base-cli-utils.workspace = true
-base-upgrade-signal.workspace = true
 base-common-network.workspace = true
 base-jwt = { workspace = true, features = ["engine-validation"] }
+base-upgrade-signal = { workspace = true, features = ["metrics"] }
 
 # consensus
 base-consensus-rpc.workspace = true

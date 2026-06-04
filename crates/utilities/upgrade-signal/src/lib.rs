@@ -9,12 +9,13 @@
 
 mod config;
 pub use config::{
-    DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS, DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalArgs,
-    UpgradeSignalConfig, UpgradeSignalConfigError, UpgradeSignalL1RpcArgs,
+    DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS, DEFAULT_UPGRADE_SIGNAL_NODE_PROTOCOL_VERSION,
+    DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalArgs, UpgradeSignalConfig,
+    UpgradeSignalConfigError, UpgradeSignalL1RpcArgs,
 };
 
 mod contract;
-pub use contract::{AlloyUpgradeSignalReader, IUpgradeSignal, UpgradeSignalReader};
+pub use contract::{AlloyUpgradeSignalReader, IUpgradeSignal};
 
 mod error;
 pub use error::UpgradeSignalError;
@@ -22,11 +23,8 @@ pub use error::UpgradeSignalError;
 mod metrics;
 pub use metrics::UpgradeSignalMetrics;
 
-mod observer;
-pub use observer::{L2TimestampSource, UpgradeSignalPollingObserver};
-
 mod state;
 pub use state::{
-    UpgradeActivation, UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalSchedule,
-    UpgradeSignalState, UpgradeSignalStateUpdate,
+    UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalSchedule, UpgradeSignalState,
+    UpgradeSignalStateUpdate,
 };
