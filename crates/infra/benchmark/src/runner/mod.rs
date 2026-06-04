@@ -1,9 +1,7 @@
 //! End-to-end benchmark orchestration: snapshot preparation, node lifecycle,
 //! block production loop, metrics collection, and result serialization.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
@@ -12,27 +10,29 @@ use reqwest::Url;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::client::{setup_node, ClientOptions, InternalClientOptions};
-use crate::config::{BenchmarkConfig, TestRun};
-use crate::deploy::deploy_uniswap_v3;
-use crate::git::GitInfo;
-use crate::consensus::{
-    BaseConsensusClient, FakeMempool, SequencerConsensusClient, SyncingConsensusClient,
+use crate::{
+    client::{ClientOptions, InternalClientOptions, setup_node},
+    config::{BenchmarkConfig, TestRun},
+    consensus::{
+        BaseConsensusClient, FakeMempool, SequencerConsensusClient, SyncingConsensusClient,
+    },
+    deploy::deploy_uniswap_v3,
+    error::BenchmarkError,
+    git::GitInfo,
+    metrics::{
+        BlockMetrics, GAS_PER_BLOCK, GAS_PER_SECOND, GET_PAYLOAD_LATENCY, MetricsCollector,
+        NEW_PAYLOAD_LATENCY, Severity, TRANSACTIONS_PER_BLOCK, ThresholdViolation,
+        check_thresholds,
+    },
+    output::{
+        RunContext, average_metric, load_payloads_json, write_metadata_json, write_metrics_file,
+        write_payloads_json,
+    },
+    payload::{LoadTestConfig, LoadTestPayloadWorker, PayloadWorker},
+    ports::PortManager,
+    proxy::run_proxy,
+    snapshots::SnapshotManager,
 };
-use crate::error::BenchmarkError;
-use crate::metrics::{
-    check_thresholds, BlockMetrics, MetricsCollector, Severity, ThresholdViolation,
-    GAS_PER_BLOCK, GAS_PER_SECOND, GET_PAYLOAD_LATENCY, NEW_PAYLOAD_LATENCY,
-    TRANSACTIONS_PER_BLOCK,
-};
-use crate::output::{
-    average_metric, load_payloads_json, write_metadata_json, write_metrics_file,
-    write_payloads_json, RunContext,
-};
-use crate::payload::{LoadTestConfig, LoadTestPayloadWorker, PayloadWorker};
-use crate::ports::PortManager;
-use crate::proxy::run_proxy;
-use crate::snapshots::SnapshotManager;
 
 const JWT_SECRET: [u8; 32] = [0u8; 32];
 
@@ -117,41 +117,30 @@ impl NetworkBenchmark {
             .map_err(BenchmarkError::Io)?;
 
         let jwt_path = test_dir.path().join("jwt.hex");
-        tokio::fs::write(&jwt_path, hex::encode(JWT_SECRET))
-            .await
-            .map_err(BenchmarkError::Io)?;
+        tokio::fs::write(&jwt_path, hex::encode(JWT_SECRET)).await.map_err(BenchmarkError::Io)?;
 
         let chain_cfg_path = test_dir.path().join("genesis.json");
         let rollup_cfg_path = test_dir.path().join("rollup.json");
         if let Some(src) = self.config.rollup_config.as_ref() {
-            tokio::fs::copy(src, &rollup_cfg_path)
-                .await
-                .map_err(BenchmarkError::Io)?;
-            let raw = tokio::fs::read_to_string(&rollup_cfg_path)
-                .await
-                .map_err(BenchmarkError::Io)?;
+            tokio::fs::copy(src, &rollup_cfg_path).await.map_err(BenchmarkError::Io)?;
+            let raw =
+                tokio::fs::read_to_string(&rollup_cfg_path).await.map_err(BenchmarkError::Io)?;
             let rollup: RollupConfig = serde_json::from_str(&raw)
                 .map_err(|e| BenchmarkError::Config(format!("invalid rollup config: {e}")))?;
-            let genesis_json =
-                genesis_json_from_rollup_config(&rollup, &self.options.prefund_key);
+            let genesis_json = genesis_json_from_rollup_config(&rollup, &self.options.prefund_key);
             let genesis_str = serde_json::to_string_pretty(&genesis_json)
                 .map_err(|e| BenchmarkError::Config(format!("genesis json error: {e}")))?;
-            tokio::fs::write(&chain_cfg_path, genesis_str)
-                .await
-                .map_err(BenchmarkError::Io)?;
+            tokio::fs::write(&chain_cfg_path, genesis_str).await.map_err(BenchmarkError::Io)?;
         } else {
             let genesis = build_test_genesis();
             let genesis_str = serde_json::to_string_pretty(&genesis)
                 .map_err(|e| BenchmarkError::Config(format!("genesis json error: {e}")))?;
-            tokio::fs::write(&chain_cfg_path, genesis_str)
-                .await
-                .map_err(BenchmarkError::Io)?;
+            tokio::fs::write(&chain_cfg_path, genesis_str).await.map_err(BenchmarkError::Io)?;
         }
 
         let rollup_cfg: Arc<RollupConfig> = if rollup_cfg_path.exists() {
-            let raw = tokio::fs::read_to_string(&rollup_cfg_path)
-                .await
-                .map_err(BenchmarkError::Io)?;
+            let raw =
+                tokio::fs::read_to_string(&rollup_cfg_path).await.map_err(BenchmarkError::Io)?;
             Arc::new(
                 serde_json::from_str(&raw)
                     .map_err(|e| BenchmarkError::Config(format!("invalid rollup config: {e}")))?,
@@ -205,9 +194,7 @@ impl NetworkBenchmark {
             flashblocks_block_time_ms,
         };
         if let Some(node_args) = run.definition.node_args.as_deref() {
-            client_options
-                .extra_args
-                .extend(node_args.split_whitespace().map(ToString::to_string));
+            client_options.extra_args.extend(node_args.split_whitespace().map(ToString::to_string));
         }
 
         let sequencer_log_dir = self.options.output_dir.join("sequencer");
@@ -239,9 +226,10 @@ impl NetworkBenchmark {
         let cancel = CancellationToken::new();
 
         let mempool = FakeMempool::new();
-        let upstream: Url = node.rpc_url().parse().map_err(|_| {
-            BenchmarkError::Config(format!("invalid rpc url: {}", node.rpc_url()))
-        })?;
+        let upstream: Url = node
+            .rpc_url()
+            .parse()
+            .map_err(|_| BenchmarkError::Config(format!("invalid rpc url: {}", node.rpc_url())))?;
 
         let proxy_cancel = cancel.clone();
         let proxy_mempool = mempool.clone();
@@ -354,9 +342,11 @@ impl NetworkBenchmark {
         write_payloads_json(&self.options.output_dir, &payloads)?;
 
         if matches!(self.options.mode, BenchmarkMode::SequencerOnly) {
-            let violations = run.definition.metrics.as_ref().map_or_else(Vec::new, |mc| {
-                check_thresholds(&block_metrics_vec, mc)
-            });
+            let violations = run
+                .definition
+                .metrics
+                .as_ref()
+                .map_or_else(Vec::new, |mc| check_thresholds(&block_metrics_vec, mc));
             let success = violations.iter().all(|v| v.severity != Severity::Error);
             write_metrics_file(&self.options.output_dir, "sequencer", &block_metrics_vec)?;
             let ctx = RunContext {
@@ -396,9 +386,11 @@ impl NetworkBenchmark {
             )
             .await?;
 
-        let violations = run.definition.metrics.as_ref().map_or_else(Vec::new, |mc| {
-            check_thresholds(&block_metrics_vec, mc)
-        });
+        let violations = run
+            .definition
+            .metrics
+            .as_ref()
+            .map_or_else(Vec::new, |mc| check_thresholds(&block_metrics_vec, mc));
         let success = violations.iter().all(|v| v.severity != Severity::Error);
         write_metrics_file(&self.options.output_dir, "sequencer", &block_metrics_vec)?;
         let ctx = RunContext {
@@ -476,23 +468,21 @@ impl NetworkBenchmark {
         let mut validator_base =
             BaseConsensusClient::connect(validator_auth_url, validator_jwt, Arc::clone(rollup_cfg))
                 .await?;
-        validator_base
-            .init_from_genesis(validator_node.rpc_url())
-            .await?;
+        validator_base.init_from_genesis(validator_node.rpc_url()).await?;
         let mut validator = SyncingConsensusClient::new(validator_base);
-        let mut validator_metrics_collector =
-            MetricsCollector::new(validator_node.metrics_port());
+        let mut validator_metrics_collector = MetricsCollector::new(validator_node.metrics_port());
         let block_time = std::time::Duration::from_millis(self.config.block_time_ms);
-        let validator_metrics = validator
-            .start(payloads, 1, block_time, &mut validator_metrics_collector)
-            .await?;
+        let validator_metrics =
+            validator.start(payloads, 1, block_time, &mut validator_metrics_collector).await?;
 
         validator_node.stop().await?;
 
         if matches!(self.options.mode, BenchmarkMode::ValidatorOnly { .. }) {
-            let violations = run.definition.metrics.as_ref().map_or_else(Vec::new, |mc| {
-                check_thresholds(&validator_metrics, mc)
-            });
+            let violations = run
+                .definition
+                .metrics
+                .as_ref()
+                .map_or_else(Vec::new, |mc| check_thresholds(&validator_metrics, mc));
             let success = violations.iter().all(|v| v.severity != Severity::Error);
             write_metrics_file(&self.options.output_dir, "validator", &validator_metrics)?;
             let ctx = RunContext {
@@ -604,10 +594,7 @@ impl RunResult {
     }
 }
 
-fn genesis_json_from_rollup_config(
-    rollup: &RollupConfig,
-    prefund_key: &str,
-) -> serde_json::Value {
+fn genesis_json_from_rollup_config(rollup: &RollupConfig, prefund_key: &str) -> serde_json::Value {
     let chain_id = rollup.l2_chain_id.id();
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

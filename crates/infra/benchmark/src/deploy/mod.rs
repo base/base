@@ -36,13 +36,9 @@ pub async fn deploy_uniswap_v3(
         .parse()
         .map_err(|e| BenchmarkError::Config(format!("invalid deploy key: {e}")))?;
     let wallet = EthereumWallet::new(signer);
-    let provider = ProviderBuilder::new()
-        .wallet(wallet)
-        .connect_http(
-            rpc_url
-                .parse()
-                .map_err(|e| BenchmarkError::Config(format!("invalid rpc url: {e}")))?,
-        );
+    let provider = ProviderBuilder::new().wallet(wallet).connect_http(
+        rpc_url.parse().map_err(|e| BenchmarkError::Config(format!("invalid rpc url: {e}")))?,
+    );
 
     info!("deploying mock Uniswap V3 tokens and router");
 
@@ -101,5 +97,9 @@ pub async fn deploy_uniswap_v3(
         "mock Uniswap V3 setup complete"
     );
 
-    Ok(UniswapV3Addresses { router: router_addr, token_in: token_in_addr, token_out: token_out_addr })
+    Ok(UniswapV3Addresses {
+        router: router_addr,
+        token_in: token_in_addr,
+        token_out: token_out_addr,
+    })
 }

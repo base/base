@@ -1,7 +1,6 @@
 //! Benchmark configuration types and matrix expansion.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -215,11 +214,7 @@ pub struct WeightedTx {
 
 fn default_transactions() -> Vec<WeightedTx> {
     vec![
-        WeightedTx {
-            weight: 70,
-            tx_type: "transfer".into(),
-            ..Default::default()
-        },
+        WeightedTx { weight: 70, tx_type: "transfer".into(), ..Default::default() },
         WeightedTx {
             weight: 20,
             tx_type: "calldata".into(),
@@ -335,14 +330,8 @@ mod tests {
     fn expand_over_100_returns_error() {
         let mut config = minimal_config();
         config.benchmarks[0].variables = vec![
-            Variable {
-                name: "x".into(),
-                values: (0..11).map(|i| i.to_string()).collect(),
-            },
-            Variable {
-                name: "y".into(),
-                values: (0..11).map(|i| i.to_string()).collect(),
-            },
+            Variable { name: "x".into(), values: (0..11).map(|i| i.to_string()).collect() },
+            Variable { name: "y".into(), values: (0..11).map(|i| i.to_string()).collect() },
         ];
         assert!(config.expand().is_err());
     }

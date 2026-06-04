@@ -1,17 +1,19 @@
 //! EL client abstraction: trait, options, and concrete implementations.
 
-use std::fs::{self, File};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    fs::{self, File},
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use tracing::{info, warn};
 
-use crate::error::BenchmarkError;
-use crate::flashblocks::FlashblocksClient;
-use crate::ports::PortManager;
-use crate::process::ProcessHandle;
+use crate::{
+    error::BenchmarkError, flashblocks::FlashblocksClient, ports::PortManager,
+    process::ProcessHandle,
+};
 
 const RPC_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const RPC_READY_TIMEOUT: Duration = Duration::from_secs(240);
@@ -126,28 +128,49 @@ impl BaseRethNodeClient {
         &self.options.reth_bin
     }
 
-    fn build_args(&self, el_port: u16, auth_port: u16, metrics_port: u16, p2p_port: u16) -> Vec<String> {
+    fn build_args(
+        &self,
+        el_port: u16,
+        auth_port: u16,
+        metrics_port: u16,
+        p2p_port: u16,
+    ) -> Vec<String> {
         let mut args = vec![
             "node".into(),
-            "--color".into(), "never".into(),
-            "--chain".into(), self.internal.chain_cfg_path.to_string_lossy().into_owned(),
-            "--datadir".into(), self.internal.data_dir_path.to_string_lossy().into_owned(),
+            "--color".into(),
+            "never".into(),
+            "--chain".into(),
+            self.internal.chain_cfg_path.to_string_lossy().into_owned(),
+            "--datadir".into(),
+            self.internal.data_dir_path.to_string_lossy().into_owned(),
             "--http".into(),
-            "--http.port".into(), el_port.to_string(),
-            "--http.api".into(), "eth,net,web3,miner,debug".into(),
-            "--authrpc.port".into(), auth_port.to_string(),
-            "--authrpc.jwtsecret".into(), self.internal.jwt_secret_path.to_string_lossy().into_owned(),
-            "--metrics".into(), metrics_port.to_string(),
+            "--http.port".into(),
+            el_port.to_string(),
+            "--http.api".into(),
+            "eth,net,web3,miner,debug".into(),
+            "--authrpc.port".into(),
+            auth_port.to_string(),
+            "--authrpc.jwtsecret".into(),
+            self.internal.jwt_secret_path.to_string_lossy().into_owned(),
+            "--metrics".into(),
+            metrics_port.to_string(),
             "--engine.state-provider-metrics".into(),
             "--disable-discovery".into(),
-            "--port".into(), p2p_port.to_string(),
+            "--port".into(),
+            p2p_port.to_string(),
             "-vvv".into(),
-            "--txpool.pending-max-count".into(), "100000000".into(),
-            "--txpool.queued-max-count".into(), "100000000".into(),
-            "--txpool.max-account-slots".into(), "100000000".into(),
-            "--txpool.pending-max-size".into(), "100".into(),
-            "--txpool.queued-max-size".into(), "100".into(),
-            "--db.read-transaction-timeout".into(), "0".into(),
+            "--txpool.pending-max-count".into(),
+            "100000000".into(),
+            "--txpool.queued-max-count".into(),
+            "100000000".into(),
+            "--txpool.max-account-slots".into(),
+            "100000000".into(),
+            "--txpool.pending-max-size".into(),
+            "100".into(),
+            "--txpool.queued-max-size".into(),
+            "100".into(),
+            "--db.read-transaction-timeout".into(),
+            "0".into(),
         ];
 
         for arg in &self.options.extra_args {
@@ -196,8 +219,7 @@ impl BaseRethNodeClient {
 impl ExecutionClient for BaseRethNodeClient {
     async fn run(&mut self) -> Result<(), BenchmarkError> {
         let ports = self.port_manager.acquire_n(4)?;
-        let (el_port, auth_port, metrics_port, p2p_port) =
-            (ports[0], ports[1], ports[2], ports[3]);
+        let (el_port, auth_port, metrics_port, p2p_port) = (ports[0], ports[1], ports[2], ports[3]);
         self.ports = ports;
 
         self.rpc_url = format!("http://127.0.0.1:{el_port}");
@@ -213,18 +235,11 @@ impl ExecutionClient for BaseRethNodeClient {
         let args = self.build_args(el_port, auth_port, metrics_port, p2p_port);
 
         let log_path = self.internal.test_dir_path.join("el.log");
-        let log_file = File::create(&log_path).map_err(|e| {
-            BenchmarkError::Io(e)
-        })?;
+        let log_file = File::create(&log_path).map_err(|e| BenchmarkError::Io(e))?;
         let log_file2 = log_file.try_clone()?;
 
-        let mut handle = ProcessHandle::new(
-            self.binary().to_path_buf(),
-            args,
-            vec![],
-            log_file,
-            log_file2,
-        );
+        let mut handle =
+            ProcessHandle::new(self.binary().to_path_buf(), args, vec![], log_file, log_file2);
         handle.start().await?;
         self.process = Some(handle);
 
@@ -411,8 +426,9 @@ pub fn setup_node(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     fn make_options(node_type: &str) -> ClientOptions {
         ClientOptions {
@@ -438,7 +454,8 @@ mod tests {
     #[test]
     fn build_args_includes_required_flags() {
         let mgr = Arc::new(PortManager::new());
-        let client = BaseRethNodeClient::new(make_options("base-reth-node"), make_internal(), mgr, None);
+        let client =
+            BaseRethNodeClient::new(make_options("base-reth-node"), make_internal(), mgr, None);
         let args = client.build_args(8545, 8551, 9001, 30303);
 
         assert!(args.contains(&"node".to_string()));
@@ -469,7 +486,8 @@ mod tests {
     #[test]
     fn build_args_no_websocket_url_by_default() {
         let mgr = Arc::new(PortManager::new());
-        let client = BaseRethNodeClient::new(make_options("base-reth-node"), make_internal(), mgr, None);
+        let client =
+            BaseRethNodeClient::new(make_options("base-reth-node"), make_internal(), mgr, None);
         let args = client.build_args(8545, 8551, 9001, 30303);
         assert!(!args.contains(&"--websocket-url".to_string()));
     }

@@ -1,8 +1,6 @@
 //! Block metrics collection, Prometheus scraping, and threshold checking.
 
-use std::collections::HashMap;
-use std::path::Path;
-use std::time::Instant;
+use std::{collections::HashMap, path::Path, time::Instant};
 
 use prometheus_parse::Value;
 use tracing::warn;
@@ -57,12 +55,8 @@ impl BlockMetrics {
     /// `delta_sum / delta_count` relative to the previous scrape and inserts
     /// the result as `<base>_avg`. Matches the Go runner's per-interval histogram logic.
     pub fn compute_delta_averages(&mut self) {
-        let sum_keys: Vec<String> = self
-            .execution_metrics
-            .keys()
-            .filter(|k| k.ends_with("_sum"))
-            .cloned()
-            .collect();
+        let sum_keys: Vec<String> =
+            self.execution_metrics.keys().filter(|k| k.ends_with("_sum")).cloned().collect();
 
         for sum_key in sum_keys {
             let base = &sum_key[..sum_key.len() - 4];
@@ -80,12 +74,24 @@ impl BlockMetrics {
             let prev_sum = self
                 .prev_prometheus
                 .get(&sum_key)
-                .and_then(|s| if let Value::Counter(v) | Value::Gauge(v) | Value::Untyped(v) = s.value { Some(v) } else { None })
+                .and_then(|s| {
+                    if let Value::Counter(v) | Value::Gauge(v) | Value::Untyped(v) = s.value {
+                        Some(v)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or(0.0);
             let prev_count = self
                 .prev_prometheus
                 .get(&count_key)
-                .and_then(|s| if let Value::Counter(v) | Value::Gauge(v) | Value::Untyped(v) = s.value { Some(v) } else { None })
+                .and_then(|s| {
+                    if let Value::Counter(v) | Value::Gauge(v) | Value::Untyped(v) = s.value {
+                        Some(v)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or(0.0);
 
             let delta_count = cur_count - prev_count;
@@ -102,15 +108,9 @@ impl BlockMetrics {
     /// Histogram and Summary types (deltaSum / deltaCount).
     ///
     /// `NaN` results (e.g. from zero delta count) are silently skipped.
-    pub fn update_prometheus_metric(
-        &mut self,
-        name: &str,
-        current: &prometheus_parse::Sample,
-    ) {
+    pub fn update_prometheus_metric(&mut self, name: &str, current: &prometheus_parse::Sample) {
         let value = match &current.value {
-            Value::Histogram(_) | Value::Summary(_) => {
-                None
-            }
+            Value::Histogram(_) | Value::Summary(_) => None,
             Value::Gauge(v) | Value::Counter(v) | Value::Untyped(v) => Some(*v),
         };
 
@@ -123,11 +123,8 @@ impl BlockMetrics {
     }
 }
 
-
 /// Scrape Prometheus metrics from a node's metrics endpoint.
-pub async fn scrape_prometheus(
-    url: &str,
-) -> Result<Vec<prometheus_parse::Sample>, BenchmarkError> {
+pub async fn scrape_prometheus(url: &str) -> Result<Vec<prometheus_parse::Sample>, BenchmarkError> {
     let text = reqwest::get(url)
         .await
         .map_err(|e| BenchmarkError::Metrics(format!("scrape failed: {e}")))?

@@ -1,19 +1,22 @@
 //! Payload worker trait and load-test subprocess worker.
 
-use std::fs::File;
-use std::path::PathBuf;
+use std::{fs::File, path::PathBuf};
 
 use async_trait::async_trait;
 use reqwest::Url;
 use tempfile::NamedTempFile;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::Mutex;
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    sync::Mutex,
+};
 use tracing::info;
 
-use crate::config::{LoadTestPayloadParams, WeightedTx};
-use crate::consensus::FakeMempool;
-use crate::error::BenchmarkError;
-use crate::process::ProcessHandle;
+use crate::{
+    config::{LoadTestPayloadParams, WeightedTx},
+    consensus::FakeMempool,
+    error::BenchmarkError,
+    process::ProcessHandle,
+};
 
 /// Drives a payload generation subprocess during a benchmark run.
 #[async_trait]
@@ -73,15 +76,12 @@ pub struct LoadTestPayloadWorker {
     pub mempool: FakeMempool,
     handle: Mutex<Option<ProcessHandle>>,
     config_file: Mutex<Option<NamedTempFile>>,
-    stdout_reader:
-        Mutex<Option<BufReader<tokio::process::ChildStdout>>>,
+    stdout_reader: Mutex<Option<BufReader<tokio::process::ChildStdout>>>,
 }
 
 impl std::fmt::Debug for LoadTestPayloadWorker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LoadTestPayloadWorker")
-            .field("bin", &self.bin)
-            .finish_non_exhaustive()
+        f.debug_struct("LoadTestPayloadWorker").field("bin", &self.bin).finish_non_exhaustive()
     }
 }
 
@@ -123,8 +123,7 @@ impl PayloadWorker for LoadTestPayloadWorker {
             .tempfile()
             .map_err(BenchmarkError::Io)?;
 
-        serde_yaml::to_writer(&mut tmp, &cfg)
-            .map_err(|e| BenchmarkError::Config(e.to_string()))?;
+        serde_yaml::to_writer(&mut tmp, &cfg).map_err(|e| BenchmarkError::Config(e.to_string()))?;
 
         let config_path = tmp.path().to_path_buf();
 
@@ -170,9 +169,8 @@ impl LoadTestPayloadWorker {
     /// Block until the load-test prints `"Accounts funded."` on stdout.
     pub async fn wait_until_ready(&self) -> Result<(), BenchmarkError> {
         let mut guard = self.stdout_reader.lock().await;
-        let reader = guard.as_mut().ok_or_else(|| {
-            BenchmarkError::Client("load-test not started".into())
-        })?;
+        let reader =
+            guard.as_mut().ok_or_else(|| BenchmarkError::Client("load-test not started".into()))?;
         let mut line = String::new();
         loop {
             line.clear();

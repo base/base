@@ -1,8 +1,10 @@
 //! TCP port acquisition and release for child process allocation.
 
-use std::collections::HashSet;
-use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashSet,
+    net::TcpListener,
+    sync::{Arc, Mutex},
+};
 
 use crate::error::BenchmarkError;
 

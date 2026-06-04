@@ -1,14 +1,15 @@
 //! Top-level entry point: parse config, create runner, report results.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use tracing::info;
 
-use crate::config::BenchmarkConfig;
-use crate::error::BenchmarkError;
-use crate::git::GitInfo;
-use crate::runner::{BenchmarkMode, NetworkBenchmark, RunnerOptions};
+use crate::{
+    config::BenchmarkConfig,
+    error::BenchmarkError,
+    git::GitInfo,
+    runner::{BenchmarkMode, NetworkBenchmark, RunnerOptions},
+};
 
 /// The embedded default benchmark config (ERC-20 transfers on a fresh devnet).
 pub const DEFAULT_CONFIG_YAML: &str = include_str!("../examples/devnet.yaml");

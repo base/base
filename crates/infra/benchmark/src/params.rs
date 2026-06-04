@@ -1,6 +1,6 @@
 //! Devnet rollup parameters and hardcoded keys for local benchmarking.
 
-use alloy_primitives::{address, b256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, address, b256};
 
 /// Maximum allowed sequencer clock drift in seconds.
 pub const MAX_SEQUENCER_DRIFT: u64 = 20;
@@ -18,8 +18,7 @@ pub const EIP1559_ELASTICITY: u64 = 50;
 pub const EIP1559_DENOMINATOR: u64 = 1;
 
 /// Address that receives transaction fees.
-pub const SUGGESTED_FEE_RECIPIENT: Address =
-    address!("4200000000000000000000000000000000000011");
+pub const SUGGESTED_FEE_RECIPIENT: Address = address!("4200000000000000000000000000000000000011");
 
 /// Default block gas limit (30M).
 pub const DEFAULT_GAS_LIMIT: u64 = 30_000_000;

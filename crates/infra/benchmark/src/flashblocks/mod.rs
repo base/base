@@ -1,22 +1,21 @@
 //! Flashblocks WebSocket consumer and replay server.
 
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use alloy_primitives::Bytes;
-use axum::Router;
-use axum::extract::{ConnectInfo, State, WebSocketUpgrade};
-use axum::extract::ws::{Message, WebSocket};
-use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::{
+    Router,
+    extract::{
+        ConnectInfo, State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
+    },
+    response::IntoResponse,
+    routing::get,
+};
 use base_common_flashblocks::Flashblock;
 use futures::{SinkExt, StreamExt};
-use tokio::net::TcpListener;
-use tokio::sync::broadcast;
-use tokio::time::interval;
-use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
+use tokio::{net::TcpListener, sync::broadcast, time::interval};
+use tokio_tungstenite::{connect_async, tungstenite::Message as TungsteniteMessage};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -37,19 +36,14 @@ pub struct FlashblocksClient {
 
 impl std::fmt::Debug for FlashblocksClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FlashblocksClient")
-            .field("port", &self.port)
-            .finish_non_exhaustive()
+        f.debug_struct("FlashblocksClient").field("port", &self.port).finish_non_exhaustive()
     }
 }
 
 impl FlashblocksClient {
     /// Create a new client targeting the given WebSocket port.
     pub fn new(port: u16) -> Self {
-        Self {
-            port,
-            collected: Arc::new(tokio::sync::Mutex::new(Vec::new())),
-        }
+        Self { port, collected: Arc::new(tokio::sync::Mutex::new(Vec::new())) }
     }
 
     /// WebSocket URL for this client.
@@ -142,11 +136,7 @@ async fn ws_handler(
     ws.on_upgrade(move |socket| handle_client(socket, addr, state.tx.subscribe()))
 }
 
-async fn handle_client(
-    socket: WebSocket,
-    addr: SocketAddr,
-    mut rx: broadcast::Receiver<Vec<u8>>,
-) {
+async fn handle_client(socket: WebSocket, addr: SocketAddr, mut rx: broadcast::Receiver<Vec<u8>>) {
     let (mut sender, _receiver) = socket.split();
     info!(addr = %addr, "flashblocks replay client connected");
 
@@ -204,23 +194,16 @@ impl FlashblockReplayServer {
     pub async fn run(&self, port: u16, cancel: CancellationToken) -> Result<(), BenchmarkError> {
         let state = ReplayState { tx: self.tx.clone() };
 
-        let router = Router::new()
-            .route("/", get(ws_handler))
-            .with_state(state);
+        let router = Router::new().route("/", get(ws_handler)).with_state(state);
 
-        let listener = TcpListener::bind(("0.0.0.0", port))
-            .await
-            .map_err(BenchmarkError::Io)?;
+        let listener = TcpListener::bind(("0.0.0.0", port)).await.map_err(BenchmarkError::Io)?;
 
         info!(port = port, "flashblocks replay server listening");
 
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .with_graceful_shutdown(cancel.cancelled_owned())
-        .await
-        .map_err(BenchmarkError::Io)
+        axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
+            .with_graceful_shutdown(cancel.cancelled_owned())
+            .await
+            .map_err(BenchmarkError::Io)
     }
 }
 

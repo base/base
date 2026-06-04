@@ -1,14 +1,16 @@
 //! Consensus clients: sequencer (block proposer) and syncing (validator replay).
 
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
-use alloy_primitives::{address, keccak256, Bytes, TxKind, B256, B64, U256};
+use alloy_primitives::{B64, B256, Bytes, TxKind, U256, address, keccak256};
 use alloy_provider::RootProvider;
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadAttributes, PayloadId};
-use base_common_consensus::{TxDeposit, DEPOSIT_TX_TYPE_ID};
+use base_common_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
 use base_common_rpc_types_engine::{BaseExecutionPayloadV4, BasePayloadAttributes};
@@ -18,9 +20,11 @@ use reqwest::Url;
 use tokio::task::JoinSet;
 use tracing::info;
 
-use crate::error::BenchmarkError;
-use crate::metrics::{BlockMetrics, MetricsCollector};
-use crate::params;
+use crate::{
+    error::BenchmarkError,
+    metrics::{BlockMetrics, MetricsCollector},
+    params,
+};
 
 const FAKE_BEACON_ROOT_PREIMAGE: &[u8] = b"fake-beacon-block-root\x01";
 
@@ -110,11 +114,19 @@ impl BaseConsensusClient {
         cfg: Arc<RollupConfig>,
     ) -> Result<Self, BenchmarkError> {
         let dummy_l1: Url = "http://127.0.0.1:1".parse().unwrap();
-        let engine = EngineClientBuilder { l2: auth_url, l2_jwt: jwt_secret, l1_rpc: dummy_l1, cfg }
-            .build()
-            .await
-            .map_err(|e| BenchmarkError::EngineApi(format!("failed to connect engine client: {e}")))?;
-        Ok(Self { engine, head_block_hash: B256::ZERO, head_block_number: 0, head_block_timestamp: 0 })
+        let engine =
+            EngineClientBuilder { l2: auth_url, l2_jwt: jwt_secret, l1_rpc: dummy_l1, cfg }
+                .build()
+                .await
+                .map_err(|e| {
+                    BenchmarkError::EngineApi(format!("failed to connect engine client: {e}"))
+                })?;
+        Ok(Self {
+            engine,
+            head_block_hash: B256::ZERO,
+            head_block_number: 0,
+            head_block_timestamp: 0,
+        })
     }
 
     /// Fetch the genesis block from `rpc_url` and seed head state from it.
@@ -133,7 +145,9 @@ impl BaseConsensusClient {
             .map_err(|e| BenchmarkError::EngineApi(format!("get genesis block failed: {e}")))?
             .json()
             .await
-            .map_err(|e| BenchmarkError::EngineApi(format!("get genesis block parse failed: {e}")))?;
+            .map_err(|e| {
+                BenchmarkError::EngineApi(format!("get genesis block parse failed: {e}"))
+            })?;
 
         let result = resp
             .get("result")
@@ -182,13 +196,11 @@ impl BaseConsensusClient {
         &self,
         payload_id: PayloadId,
     ) -> Result<BaseExecutionPayloadV4, BenchmarkError> {
-        let envelope = tokio::time::timeout(
-            Duration::from_secs(240),
-            self.engine.get_payload_v4(payload_id),
-        )
-        .await
-        .map_err(|_| BenchmarkError::Timeout("get_payload timed out".into()))?
-        .map_err(|e| BenchmarkError::EngineApi(format!("get_payload failed: {e}")))?;
+        let envelope =
+            tokio::time::timeout(Duration::from_secs(240), self.engine.get_payload_v4(payload_id))
+                .await
+                .map_err(|_| BenchmarkError::Timeout("get_payload timed out".into()))?
+                .map_err(|e| BenchmarkError::EngineApi(format!("get_payload failed: {e}")))?;
         Ok(envelope.execution_payload)
     }
 
@@ -286,11 +298,8 @@ impl SequencerConsensusClient {
         let gas_used = payload.payload_inner.payload_inner.payload_inner.gas_used;
         let tx_count = payload.payload_inner.payload_inner.payload_inner.transactions.len() as u64;
         let build_duration_secs = build_duration.as_secs_f64();
-        let gas_per_second = if build_duration_secs > 0.0 {
-            gas_used as f64 / build_duration_secs
-        } else {
-            0.0
-        };
+        let gas_per_second =
+            if build_duration_secs > 0.0 { gas_used as f64 / build_duration_secs } else { 0.0 };
 
         info!(
             block = %self.base.head_block_number,
@@ -302,9 +311,16 @@ impl SequencerConsensusClient {
         );
 
         let mut metrics = BlockMetrics::new(self.base.head_block_number);
-        metrics.add_execution_metric(crate::metrics::SEND_TXS_LATENCY, send_latency.as_nanos() as f64);
-        metrics.add_execution_metric(crate::metrics::UPDATE_FORK_CHOICE_LATENCY, fcu_latency.as_nanos() as f64);
-        metrics.add_execution_metric(crate::metrics::GET_PAYLOAD_LATENCY, get_latency.as_nanos() as f64);
+        metrics
+            .add_execution_metric(crate::metrics::SEND_TXS_LATENCY, send_latency.as_nanos() as f64);
+        metrics.add_execution_metric(
+            crate::metrics::UPDATE_FORK_CHOICE_LATENCY,
+            fcu_latency.as_nanos() as f64,
+        );
+        metrics.add_execution_metric(
+            crate::metrics::GET_PAYLOAD_LATENCY,
+            get_latency.as_nanos() as f64,
+        );
         metrics.add_execution_metric(crate::metrics::GAS_PER_BLOCK, gas_used as f64);
         metrics.add_execution_metric(crate::metrics::GAS_PER_SECOND, gas_per_second);
         metrics.add_execution_metric(crate::metrics::TRANSACTIONS_PER_BLOCK, tx_count as f64);
@@ -348,7 +364,11 @@ impl SequencerConsensusClient {
         Ok(())
     }
 
-    fn build_payload_attributes(&self, gas_limit: u64, timestamp: u64) -> Result<BasePayloadAttributes, BenchmarkError> {
+    fn build_payload_attributes(
+        &self,
+        gas_limit: u64,
+        timestamp: u64,
+    ) -> Result<BasePayloadAttributes, BenchmarkError> {
         let beacon_root = fake_beacon_root();
         let deposit_tx = build_l1_info_deposit_tx();
 
@@ -359,6 +379,7 @@ impl SequencerConsensusClient {
                 suggested_fee_recipient: params::SUGGESTED_FEE_RECIPIENT,
                 withdrawals: Some(vec![]),
                 parent_beacon_block_root: Some(beacon_root),
+                slot_number: None,
             },
             transactions: Some(vec![deposit_tx]),
             no_tx_pool: Some(false),
@@ -399,8 +420,7 @@ impl SyncingConsensusClient {
         let mut collected = Vec::new();
 
         for payload in payloads {
-            let block_number =
-                payload.payload_inner.payload_inner.payload_inner.block_number;
+            let block_number = payload.payload_inner.payload_inner.payload_inner.block_number;
 
             let new_payload_start = Instant::now();
             self.base.new_payload(payload.clone(), beacon_root).await?;
@@ -413,8 +433,7 @@ impl SyncingConsensusClient {
             tokio::time::sleep(block_time).await;
 
             if block_number >= first_test_block {
-                let gas_used =
-                    payload.payload_inner.payload_inner.payload_inner.gas_used;
+                let gas_used = payload.payload_inner.payload_inner.payload_inner.gas_used;
                 let tx_count =
                     payload.payload_inner.payload_inner.payload_inner.transactions.len() as u64;
 
@@ -426,11 +445,18 @@ impl SyncingConsensusClient {
                     0.0
                 };
 
-                metrics.add_execution_metric(crate::metrics::NEW_PAYLOAD_LATENCY, new_payload_latency.as_nanos() as f64);
-                metrics.add_execution_metric(crate::metrics::UPDATE_FORK_CHOICE_LATENCY, fcu_latency.as_nanos() as f64);
+                metrics.add_execution_metric(
+                    crate::metrics::NEW_PAYLOAD_LATENCY,
+                    new_payload_latency.as_nanos() as f64,
+                );
+                metrics.add_execution_metric(
+                    crate::metrics::UPDATE_FORK_CHOICE_LATENCY,
+                    fcu_latency.as_nanos() as f64,
+                );
                 metrics.add_execution_metric(crate::metrics::GAS_PER_BLOCK, gas_used as f64);
                 metrics.add_execution_metric(crate::metrics::GAS_PER_SECOND, gas_per_second);
-                metrics.add_execution_metric(crate::metrics::TRANSACTIONS_PER_BLOCK, tx_count as f64);
+                metrics
+                    .add_execution_metric(crate::metrics::TRANSACTIONS_PER_BLOCK, tx_count as f64);
                 metrics_collector.collect(&mut metrics).await?;
                 collected.push(metrics);
             }

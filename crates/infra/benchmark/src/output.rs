@@ -1,25 +1,27 @@
 //! Output directory management, file helpers, and random ID generation.
 
-use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    fs::{self, File},
+    io::{self, Read, Write},
+    path::{Path, PathBuf},
+};
 
+use base_common_rpc_types_engine::BaseExecutionPayloadV4;
 use chrono::{SecondsFormat, Utc};
-use flate2::write::GzEncoder;
-use flate2::Compression;
+use flate2::{Compression, write::GzEncoder};
 use rand::Rng;
 use serde::Serialize;
 use serde_json::json;
 use tracing::warn;
 
-use base_common_rpc_types_engine::BaseExecutionPayloadV4;
-
-use crate::config::{BenchmarkConfig, TestRun};
-use crate::error::BenchmarkError;
-use crate::metrics::{
-    BlockMetrics, GAS_PER_SECOND, GET_PAYLOAD_LATENCY, NEW_PAYLOAD_LATENCY, SEND_TXS_LATENCY,
-    UPDATE_FORK_CHOICE_LATENCY,
+use crate::{
+    config::{BenchmarkConfig, TestRun},
+    error::BenchmarkError,
+    metrics::{
+        BlockMetrics, GAS_PER_SECOND, GET_PAYLOAD_LATENCY, NEW_PAYLOAD_LATENCY, SEND_TXS_LATENCY,
+        UPDATE_FORK_CHOICE_LATENCY,
+    },
 };
 
 /// Generate a random 8-byte lowercase hex identifier.
@@ -135,22 +137,15 @@ pub fn write_metadata_json(
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| output_dir.display().to_string());
-    let source_file = config_path
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "<default>".to_string());
+    let source_file =
+        config_path.map(|p| p.display().to_string()).unwrap_or_else(|| "<default>".to_string());
 
     let mut test_config = serde_json::Map::from_iter([
         ("NodeType".to_string(), json!(run.definition.node_type)),
         ("GasLimit".to_string(), json!(gas_limit)),
-        (
-            "BlockTimeMilliseconds".to_string(),
-            json!(config.block_time_ms),
-        ),
+        ("BlockTimeMilliseconds".to_string(), json!(config.block_time_ms)),
         ("BenchmarkRun".to_string(), json!(run.id)),
-        (
-            "NodeArgs".to_string(),
-            json!(run.definition.node_args.clone().unwrap_or_default()),
-        ),
+        ("NodeArgs".to_string(), json!(run.definition.node_args.clone().unwrap_or_default())),
         ("ValidatorNodeType".to_string(), json!("base-reth-node")),
     ]);
     for (key, value) in &run.definition.tags {
@@ -194,10 +189,7 @@ pub fn write_metadata_json(
         }]
     });
 
-    fs::write(
-        output_dir.join("metadata.json"),
-        serde_json::to_string_pretty(&metadata)?,
-    )?;
+    fs::write(output_dir.join("metadata.json"), serde_json::to_string_pretty(&metadata)?)?;
     Ok(())
 }
 
@@ -207,11 +199,7 @@ pub fn average_metric(metrics: &[BlockMetrics], metric_name: &str) -> f64 {
         .iter()
         .filter_map(|entry| entry.execution_metrics.get(metric_name).copied())
         .collect();
-    if values.is_empty() {
-        0.0
-    } else {
-        values.iter().sum::<f64>() / values.len() as f64
-    }
+    if values.is_empty() { 0.0 } else { values.iter().sum::<f64>() / values.len() as f64 }
 }
 
 /// Like [`average_metric`] but converts nanoseconds to seconds.
@@ -258,8 +246,9 @@ pub fn dump_log_tail(path: &Path, max_bytes: u64) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::tempdir;
+
+    use super::*;
 
     #[test]
     fn random_id_is_hex_16_chars() {
@@ -293,5 +282,4 @@ mod tests {
         decoder.read_to_end(&mut out).unwrap();
         assert_eq!(out, b"hello benchmark");
     }
-
 }

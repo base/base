@@ -3360,13 +3360,13 @@ dependencies = [
 name = "base-benchmark"
 version = "0.1.0"
 dependencies = [
- "alloy-network",
+ "alloy-network 2.0.5",
  "alloy-primitives",
- "alloy-provider",
+ "alloy-provider 2.0.5",
  "alloy-rlp",
  "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-signer-local",
+ "alloy-rpc-types-eth 2.0.5",
+ "alloy-signer-local 2.0.5",
  "async-trait",
  "axum 0.8.9",
  "base-common-consensus",
@@ -3390,7 +3390,7 @@ dependencies = [
  "nix 0.30.1",
  "prometheus-parse",
  "rand 0.9.4",
- "reqwest 0.13.2",
+ "reqwest 0.13.3",
  "serde",
  "serde_json",
  "serde_yaml",

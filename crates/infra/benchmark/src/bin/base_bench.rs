@@ -1,7 +1,6 @@
 //! CLI entry point for the `base-bench` benchmark orchestrator.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use base_benchmark::BenchmarkMode;
 use clap::Parser;
@@ -105,14 +104,13 @@ async fn main() {
 
     let (config, config_path) = cli.config.as_ref().map_or_else(
         || {
-            let config =
-                match base_benchmark::parse_config(base_benchmark::DEFAULT_CONFIG_YAML) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        error!(error = %e, "built-in default config failed to parse");
-                        std::process::exit(1);
-                    }
-                };
+            let config = match base_benchmark::parse_config(base_benchmark::DEFAULT_CONFIG_YAML) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!(error = %e, "built-in default config failed to parse");
+                    std::process::exit(1);
+                }
+            };
             (config, None)
         },
         |path| {
@@ -135,10 +133,7 @@ async fn main() {
         },
     );
 
-    let output_dir = cli
-        .output_dir
-        .clone()
-        .unwrap_or_else(|| cli.root_dir.join("results"));
+    let output_dir = cli.output_dir.clone().unwrap_or_else(|| cli.root_dir.join("results"));
 
     tracing::info!(
         config = config_path
@@ -164,10 +159,7 @@ async fn main() {
             s.split(',')
                 .filter_map(|kv| {
                     let mut p = kv.splitn(2, '=');
-                    Some((
-                        p.next()?.trim().to_string(),
-                        p.next()?.trim().to_string(),
-                    ))
+                    Some((p.next()?.trim().to_string(), p.next()?.trim().to_string()))
                 })
                 .collect()
         })

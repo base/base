@@ -4,12 +4,14 @@
 use std::sync::Arc;
 
 use alloy_primitives::Bytes;
-use axum::body::Body;
-use axum::extract::State;
-use axum::http::{HeaderMap, Response, StatusCode};
-use axum::response::IntoResponse;
-use axum::Router;
-use axum::routing::post;
+use axum::{
+    Router,
+    body::Body,
+    extract::State,
+    http::{HeaderMap, Response, StatusCode},
+    response::IntoResponse,
+    routing::post,
+};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,8 +19,7 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::consensus::FakeMempool;
-use crate::error::BenchmarkError;
+use crate::{consensus::FakeMempool, error::BenchmarkError};
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
@@ -124,10 +125,7 @@ async fn handle_batch_rpc(
     (StatusCode::OK, axum::Json(responses)).into_response()
 }
 
-async fn handle_send_raw_transaction(
-    state: &ProxyState,
-    req: JsonRpcRequest,
-) -> impl IntoResponse {
+async fn handle_send_raw_transaction(state: &ProxyState, req: JsonRpcRequest) -> impl IntoResponse {
     let raw_hex = req
         .params
         .as_ref()
@@ -143,10 +141,7 @@ async fn handle_send_raw_transaction(
             let resp = JsonRpcError {
                 jsonrpc: req.jsonrpc,
                 id: req.id,
-                error: JsonRpcErrorBody {
-                    code: -32602,
-                    message: format!("invalid hex: {e}"),
-                },
+                error: JsonRpcErrorBody { code: -32602, message: format!("invalid hex: {e}") },
             };
             return (StatusCode::OK, axum::Json(resp)).into_response();
         }
@@ -156,11 +151,8 @@ async fn handle_send_raw_transaction(
     state.mempool.add_transactions(vec![raw_bytes]);
     info!(tx_hash = %tx_hash, "intercepted eth_sendRawTransaction");
 
-    let resp = JsonRpcResponse {
-        jsonrpc: req.jsonrpc,
-        id: req.id,
-        result: format!("{tx_hash:#x}"),
-    };
+    let resp =
+        JsonRpcResponse { jsonrpc: req.jsonrpc, id: req.id, result: format!("{tx_hash:#x}") };
     (StatusCode::OK, axum::Json(resp)).into_response()
 }
 
@@ -218,19 +210,12 @@ pub async fn run_proxy(
     mempool: FakeMempool,
     cancel: CancellationToken,
 ) -> Result<(), BenchmarkError> {
-    let state = Arc::new(ProxyState {
-        upstream: upstream_url,
-        mempool,
-        client: reqwest::Client::new(),
-    });
+    let state =
+        Arc::new(ProxyState { upstream: upstream_url, mempool, client: reqwest::Client::new() });
 
-    let router = Router::new()
-        .route("/", post(handle_rpc))
-        .with_state(state);
+    let router = Router::new().route("/", post(handle_rpc)).with_state(state);
 
-    let listener = TcpListener::bind(("0.0.0.0", listen_port))
-        .await
-        .map_err(BenchmarkError::Io)?;
+    let listener = TcpListener::bind(("0.0.0.0", listen_port)).await.map_err(BenchmarkError::Io)?;
 
     info!(port = listen_port, "proxy listening");
 
@@ -249,10 +234,7 @@ mod tests {
         let err = JsonRpcError {
             jsonrpc: "2.0".into(),
             id: serde_json::json!(1),
-            error: JsonRpcErrorBody {
-                code: -32602,
-                message: "bad param".into(),
-            },
+            error: JsonRpcErrorBody { code: -32602, message: "bad param".into() },
         };
         let s = serde_json::to_string(&err).unwrap();
         assert!(s.contains("-32602"));

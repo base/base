@@ -1,13 +1,13 @@
 //! Child process lifecycle management with graceful SIGINT shutdown.
 
-use std::fs::File;
-use std::os::unix::process::ExitStatusExt;
-use std::path::PathBuf;
-use std::process::Stdio;
-use std::time::Duration;
+use std::{
+    fs::File, os::unix::process::ExitStatusExt, path::PathBuf, process::Stdio, time::Duration,
+};
 
-use nix::sys::signal::{kill, Signal};
-use nix::unistd::Pid;
+use nix::{
+    sys::signal::{Signal, kill},
+    unistd::Pid,
+};
 use tokio::process::{Child, ChildStdout, Command};
 use tracing::{info, warn};
 
@@ -58,19 +58,12 @@ impl ProcessHandle {
 
     /// Spawn the child process.
     pub async fn start(&mut self) -> Result<(), BenchmarkError> {
-        let stdout: Stdio = if self.pipe_stdout {
-            Stdio::piped()
-        } else {
-            self.stdout_file.try_clone()?.into()
-        };
+        let stdout: Stdio =
+            if self.pipe_stdout { Stdio::piped() } else { self.stdout_file.try_clone()?.into() };
         let stderr: Stdio = self.stderr_file.try_clone()?.into();
 
         let mut cmd = Command::new(&self.binary);
-        cmd.args(&self.args)
-            .stdout(stdout)
-            .stderr(stderr)
-            .kill_on_drop(false)
-            .process_group(0);
+        cmd.args(&self.args).stdout(stdout).stderr(stderr).kill_on_drop(false).process_group(0);
         // SAFETY: `pre_exec` runs between fork and exec in the child process.
         // We reset the signal mask so the child does not inherit blocked signals
         // from the parent's tokio runtime.
@@ -87,10 +80,7 @@ impl ProcessHandle {
         }
 
         let child = cmd.spawn().map_err(|e| {
-            BenchmarkError::Client(format!(
-                "failed to spawn {}: {e}",
-                self.binary.display()
-            ))
+            BenchmarkError::Client(format!("failed to spawn {}: {e}", self.binary.display()))
         })?;
 
         let name = self.binary.file_name().unwrap_or_default().to_string_lossy();
@@ -132,12 +122,12 @@ impl ProcessHandle {
     /// non-zero code or a signal.
     pub async fn wait(&mut self) -> Result<(), BenchmarkError> {
         let Some(child) = self.child.as_mut() else { return Ok(()) };
-        let name =
-            self.binary.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let name = self.binary.file_name().unwrap_or_default().to_string_lossy().to_string();
 
-        let status = child.wait().await.map_err(|e| {
-            BenchmarkError::Client(format!("failed to wait for {name}: {e}"))
-        })?;
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| BenchmarkError::Client(format!("failed to wait for {name}: {e}")))?;
 
         if status.success() {
             return Ok(());

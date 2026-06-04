@@ -1,15 +1,19 @@
 //! Snapshot management: caching and creation of node data directories.
 
-use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use sha2::{Digest, Sha256};
 use tracing::info;
 
-use crate::config::{DatadirConfig, SnapshotConfig};
-use crate::error::BenchmarkError;
-use crate::process::ProcessHandle;
+use crate::{
+    config::{DatadirConfig, SnapshotConfig},
+    error::BenchmarkError,
+    process::ProcessHandle,
+};
 
 /// Cache key identifying a unique snapshot configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -99,8 +103,7 @@ impl SnapshotManager {
     }
 
     fn snapshot_path(&self, key: &SnapshotKey) -> PathBuf {
-        self.snapshots_dir
-            .join(format!("{}_{}_{}", key.node_type, key.role, key.command_hash))
+        self.snapshots_dir.join(format!("{}_{}_{}", key.node_type, key.role, key.command_hash))
     }
 
     async fn run_snapshot_script(
@@ -110,9 +113,9 @@ impl SnapshotManager {
         snapshot_path: &Path,
     ) -> Result<(), BenchmarkError> {
         let parts: Vec<&str> = snapshot.command.split_whitespace().collect();
-        let (bin, extra_args) = parts.split_first().ok_or_else(|| {
-            BenchmarkError::Snapshot("snapshot command is empty".into())
-        })?;
+        let (bin, extra_args) = parts
+            .split_first()
+            .ok_or_else(|| BenchmarkError::Snapshot("snapshot command is empty".into()))?;
 
         let mut args: Vec<String> = extra_args.iter().map(|s| s.to_string()).collect();
         args.push(node_type.to_string());
@@ -121,18 +124,13 @@ impl SnapshotManager {
         let devnull = fs::File::open("/dev/null")?;
         let stderr = devnull.try_clone()?;
 
-        let mut handle = ProcessHandle::new(
-            PathBuf::from(bin),
-            args,
-            vec![],
-            devnull,
-            stderr,
-        );
+        let mut handle = ProcessHandle::new(PathBuf::from(bin), args, vec![], devnull, stderr);
 
         handle.start().await?;
-        handle.wait().await.map_err(|e| {
-            BenchmarkError::Snapshot(format!("snapshot script failed: {e}"))
-        })
+        handle
+            .wait()
+            .await
+            .map_err(|e| BenchmarkError::Snapshot(format!("snapshot script failed: {e}")))
     }
 }
 
@@ -146,8 +144,9 @@ fn explicit_path(config: &DatadirConfig, role: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::tempdir;
+
+    use super::*;
 
     #[test]
     fn snapshot_key_hash_is_12_hex_chars() {
@@ -205,13 +204,11 @@ mod tests {
 
         let mut mgr = SnapshotManager::new(tmp.path().to_path_buf());
         let config = DatadirConfig { sequencer: Some(explicit.clone()), validator: None };
-        let snap = SnapshotConfig {
-            command: "unused".into(),
-            genesis_file: None,
-            force_clean: false,
-        };
+        let snap =
+            SnapshotConfig { command: "unused".into(), genesis_file: None, force_clean: false };
 
-        let result = mgr.ensure_snapshot(&config, &snap, "base-reth-node", "sequencer").await.unwrap();
+        let result =
+            mgr.ensure_snapshot(&config, &snap, "base-reth-node", "sequencer").await.unwrap();
         assert_eq!(result, explicit);
     }
 
@@ -220,11 +217,8 @@ mod tests {
         let tmp = tempdir().unwrap();
         let mut mgr = SnapshotManager::new(tmp.path().to_path_buf());
         let config = DatadirConfig::default();
-        let snap = SnapshotConfig {
-            command: "true".into(),
-            genesis_file: None,
-            force_clean: false,
-        };
+        let snap =
+            SnapshotConfig { command: "true".into(), genesis_file: None, force_clean: false };
 
         let a = mgr.ensure_snapshot(&config, &snap, "node", "sequencer").await.unwrap();
         let b = mgr.ensure_snapshot(&config, &snap, "node", "sequencer").await.unwrap();
