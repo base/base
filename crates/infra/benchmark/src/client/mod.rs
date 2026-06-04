@@ -235,7 +235,7 @@ impl ExecutionClient for BaseRethNodeClient {
         let args = self.build_args(el_port, auth_port, metrics_port, p2p_port);
 
         let log_path = self.internal.test_dir_path.join("el.log");
-        let log_file = File::create(&log_path).map_err(|e| BenchmarkError::Io(e))?;
+        let log_file = File::create(&log_path).map_err(BenchmarkError::Io)?;
         let log_file2 = log_file.try_clone()?;
 
         let mut handle =

@@ -11,7 +11,6 @@ use base_common_rpc_types_engine::BaseExecutionPayloadV4;
 use chrono::{SecondsFormat, Utc};
 use flate2::{Compression, write::GzEncoder};
 use rand::Rng;
-use serde::Serialize;
 use serde_json::json;
 use tracing::warn;
 

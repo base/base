@@ -25,7 +25,7 @@ use crate::{
         check_thresholds,
     },
     output::{
-        RunContext, average_metric, load_payloads_json, write_metadata_json, write_metrics_file,
+        RunContext, load_payloads_json, write_metadata_json, write_metrics_file,
         write_payloads_json,
     },
     payload::{LoadTestConfig, LoadTestPayloadWorker, PayloadWorker},
@@ -49,6 +49,16 @@ pub enum BenchmarkMode {
         /// Path to a `payloads.json` file from a previous sequencer-only run.
         payloads_path: PathBuf,
     },
+}
+
+struct ValidatorPhaseArgs<'a> {
+    run: &'a TestRun,
+    payloads: &'a [base_common_rpc_types_engine::BaseExecutionPayloadV4],
+    chain_cfg_path: &'a std::path::Path,
+    jwt_path: &'a std::path::Path,
+    rollup_cfg: &'a Arc<RollupConfig>,
+    validator_log_dir: &'a std::path::Path,
+    test_dir: &'a tempfile::TempDir,
 }
 
 /// Filesystem paths and keys needed by the benchmark runner.
@@ -155,15 +165,15 @@ impl NetworkBenchmark {
         if let BenchmarkMode::ValidatorOnly { payloads_path } = &self.options.mode {
             let payloads = load_payloads_json(payloads_path)?;
             return self
-                .run_validator_phase(
-                    &run,
-                    &payloads,
-                    &chain_cfg_path,
-                    &jwt_path,
-                    &rollup_cfg,
-                    &validator_log_dir,
-                    &test_dir,
-                )
+                .run_validator_phase(ValidatorPhaseArgs {
+                    run: &run,
+                    payloads: &payloads,
+                    chain_cfg_path: &chain_cfg_path,
+                    jwt_path: &jwt_path,
+                    rollup_cfg: &rollup_cfg,
+                    validator_log_dir: &validator_log_dir,
+                    test_dir: &test_dir,
+                })
                 .await;
         }
 
@@ -375,15 +385,15 @@ impl NetworkBenchmark {
         }
 
         let validator_metrics = self
-            .run_validator_phase(
-                &run,
-                &payloads,
-                &chain_cfg_path,
-                &jwt_path,
-                &rollup_cfg,
-                &validator_log_dir,
-                &test_dir,
-            )
+            .run_validator_phase(ValidatorPhaseArgs {
+                run: &run,
+                payloads: &payloads,
+                chain_cfg_path: &chain_cfg_path,
+                jwt_path: &jwt_path,
+                rollup_cfg: &rollup_cfg,
+                validator_log_dir: &validator_log_dir,
+                test_dir: &test_dir,
+            })
             .await?;
 
         let violations = run
@@ -421,15 +431,18 @@ impl NetworkBenchmark {
     }
 
     async fn run_validator_phase(
-        &mut self,
-        run: &TestRun,
-        payloads: &[base_common_rpc_types_engine::BaseExecutionPayloadV4],
-        chain_cfg_path: &std::path::Path,
-        jwt_path: &std::path::Path,
-        rollup_cfg: &Arc<RollupConfig>,
-        validator_log_dir: &std::path::Path,
-        test_dir: &tempfile::TempDir,
+        &self,
+        args: ValidatorPhaseArgs<'_>,
     ) -> Result<RunResult, BenchmarkError> {
+        let ValidatorPhaseArgs {
+            run,
+            payloads,
+            chain_cfg_path,
+            jwt_path,
+            rollup_cfg,
+            validator_log_dir,
+            test_dir,
+        } = args;
         let validator_data_dir = test_dir.path().join("validator-data");
         std::fs::create_dir_all(&validator_data_dir)?;
 
