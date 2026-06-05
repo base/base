@@ -37,7 +37,11 @@ impl BaseNodeExtension for FlashblocksExtension {
         };
 
         let state = cfg.state;
-        let mut subscriber = FlashblocksSubscriber::new(Arc::clone(&state), cfg.websocket_url);
+        let mut subscriber = FlashblocksSubscriber::new(
+            Arc::clone(&state),
+            cfg.websocket_url,
+            cfg.subscriber_ping_interval,
+        );
 
         let state_for_canonical = Arc::clone(&state);
         let state_for_rpc = Arc::clone(&state);
