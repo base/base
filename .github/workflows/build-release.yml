@@ -42,10 +42,10 @@ jobs:
             runner: ubuntu-24.04
             os: linux
           - triple: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-24.04
             os: linux
           - triple: aarch64-apple-darwin
-            runner: macos-14
+            runner: macos-latest
             os: macos
 
     runs-on: ${{ matrix.target.runner }}
@@ -67,7 +67,16 @@ jobs:
         if: matrix.target.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libclang-dev pkg-config
+          packages=(libclang-dev pkg-config)
+          if [[ "${{ matrix.target.triple }}" == "aarch64-unknown-linux-gnu" ]]; then
+            packages+=(
+              gcc-aarch64-linux-gnu
+              g++-aarch64-linux-gnu
+              libc6-dev-arm64-cross
+              pkg-config-aarch64-linux-gnu
+            )
+          fi
+          sudo apt-get install -y "${packages[@]}"
 
       - name: Install mold linker (Linux)
         if: matrix.target.os == 'linux'
@@ -88,6 +97,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
+        with:
+          targets: ${{ matrix.target.triple }}
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
@@ -107,7 +118,18 @@ jobs:
             [[ -n "$bin" ]] || continue
             cargo_args+=(--bin "$bin")
           done <<< "${RELEASE_BINS}"
-          cargo build --locked --profile maxperf "${cargo_args[@]}"
+
+          if [[ "${{ matrix.target.triple }}" == "aarch64-unknown-linux-gnu" ]]; then
+            export AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar
+            export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+            export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+            export PKG_CONFIG=aarch64-linux-gnu-pkg-config
+            export PKG_CONFIG_ALLOW_CROSS=1
+            export RANLIB_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ranlib
+          fi
+
+          cargo build --locked --profile maxperf --target "${{ matrix.target.triple }}" "${cargo_args[@]}"
 
       - name: Package binaries
         run: |
@@ -116,7 +138,7 @@ jobs:
           while IFS= read -r bin; do
             [[ -n "$bin" ]] || continue
             ARCHIVE="${bin}-${TAG}-${TARGET}.tar.gz"
-            tar -czf "$ARCHIVE" -C target/maxperf "$bin"
+            tar -czf "$ARCHIVE" -C "target/${TARGET}/maxperf" "$bin"
             if command -v sha256sum &>/dev/null; then
               sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
             else
