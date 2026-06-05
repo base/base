@@ -69,17 +69,14 @@ impl BenchSetup {
             .expect("recovered block should build");
 
         let mut flashblocks = Vec::new();
-        for scenario in [
-            PendingStateScenario::RepeatedRecipient,
-            PendingStateScenario::FanoutRecipients,
-        ] {
+        for scenario in
+            [PendingStateScenario::RepeatedRecipient, PendingStateScenario::FanoutRecipients]
+        {
             for &count in tx_counts {
                 let txs = sample_transactions(&provider, count, scenario);
                 let blocks = build_flashblocks(&canonical_block, &txs);
-                flashblocks.push((
-                    format!("pending_state_{}_{}_txs", scenario.label(), count),
-                    blocks,
-                ));
+                flashblocks
+                    .push((format!("pending_state_{}_{}_txs", scenario.label(), count), blocks));
             }
         }
 

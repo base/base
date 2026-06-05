@@ -4719,7 +4719,7 @@ dependencies = [
  "base-metrics",
  "derive_more 2.1.1",
  "futures",
- "imbl 6.1.0",
+ "imbl",
  "jsonrpsee",
  "jsonrpsee-types",
  "metrics",
@@ -11064,20 +11064,6 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
-]
-
-[[package]]
-name = "imbl"
-version = "6.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fade8ae6828627ad1fa094a891eccfb25150b383047190a3648d66d06186501"
-dependencies = [
- "archery",
- "bitmaps",
- "imbl-sized-chunks",
- "rand_core 0.9.5",
- "rand_xoshiro",
- "version_check",
 ]
 
 [[package]]
@@ -18624,7 +18610,7 @@ dependencies = [
  "auto_impl",
  "bitflags 2.11.1",
  "futures-util",
- "imbl 7.0.0",
+ "imbl",
  "metrics",
  "parking_lot",
  "paste",
