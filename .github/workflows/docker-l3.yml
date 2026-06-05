@@ -51,7 +51,7 @@ jobs:
             --set ${{ matrix.target }}.platform=linux/amd64 \
             --set ${{ matrix.target }}.output=type=image,push=true \
             --set ${{ matrix.target }}.cache-from=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-l3-${{ matrix.target }}-linux-amd64 \
-            --set ${{ matrix.target }}.cache-from=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-linux-amd64 \
+            --set ${{ matrix.target }}.cache-from=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-${{ matrix.target }}-linux-amd64 \
             --set ${{ matrix.target }}.cache-to=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-l3-${{ matrix.target }}-linux-amd64,mode=max
 
       - name: Tag as latest l3
