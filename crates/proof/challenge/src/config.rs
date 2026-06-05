@@ -101,8 +101,6 @@ pub struct ChallengerConfig {
     pub zk_request_timeout: Duration,
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
     pub max_proof_duration: Duration,
-    /// Whether TEE-first proof sourcing is enabled.
-    pub enable_tee_proofs: bool,
     /// Signing configuration for L1 transaction submission.
     pub signing: SignerConfig,
     /// Transaction manager configuration (fee limits, confirmations, timeouts).
@@ -223,7 +221,6 @@ impl ChallengerConfig {
             zk_connect_timeout: cli.challenger.zk_connect_timeout,
             zk_request_timeout: cli.challenger.zk_request_timeout,
             max_proof_duration: cli.challenger.max_proof_duration,
-            enable_tee_proofs: cli.challenger.enable_tee_proofs,
             signing,
             tx_manager,
             bond_discovery_lookback_games: cli.challenger.bond_discovery_lookback_games,
@@ -510,21 +507,6 @@ mod tests {
         ]);
         let result = ChallengerConfig::from_cli(cli);
         assert!(matches!(result, Err(ConfigError::InvalidUrl { field: "zk-rpc-url", .. })));
-    }
-
-    #[test]
-    fn test_enable_tee_proofs_defaults_to_false() {
-        let cli = cli_from_args(&SIGNER_ARGS);
-        let config = ChallengerConfig::from_cli(cli).unwrap();
-        assert!(!config.enable_tee_proofs);
-    }
-
-    #[test]
-    fn test_enable_tee_proofs_flag() {
-        let all_args = [&SIGNER_ARGS[..], &["--enable-tee-proofs"]].concat();
-        let cli = cli_from_args(&all_args);
-        let config = ChallengerConfig::from_cli(cli).unwrap();
-        assert!(config.enable_tee_proofs);
     }
 
     #[test]

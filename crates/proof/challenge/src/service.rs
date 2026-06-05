@@ -133,22 +133,19 @@ impl ChallengerService {
         let proof_requester = Arc::new(ProofRequesterClient::connect(&proof_requester_config)?);
         info!(endpoint = %config.zk_rpc_url, "Prover-service requester client initialized");
 
-        // ── 6b. TEE proof config (optional) ─────────────────────────────────
+        // ── 6b. TEE proof config ────────────────────────────────────────────
         //
-        // TEE proofs flow through the same `proof_requester` as ZK proofs;
-        // the TEE config only carries an L1 head provider used to build the
-        // TEE proof request envelope. Enabling TEE-first sourcing is a pure
-        // feature flag.
-        let tee = if config.enable_tee_proofs {
-            info!("TEE proof sourcing enabled");
-            let l1_config = L1ClientConfig::new(l1_rpc_url.clone());
-            let l1_client = L1Client::new(l1_config)
-                .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
-            Some(crate::TeeConfig { l1_head_provider: Arc::new(l1_client) })
-        } else {
-            info!("TEE proof sourcing disabled");
-            None
-        };
+        // TEE-first proof sourcing is the steady-state mode. TEE proofs flow
+        // through the same `proof_requester` as ZK proofs; the TEE config only
+        // carries an L1 head provider used to build the TEE proof request
+        // envelope. The driver automatically falls back to the ZK path when a
+        // TEE proof is unavailable for a given session, so TEE-first is safe
+        // to run even in deployments where TEE proofs are not yet generated
+        // for every session.
+        let l1_config = L1ClientConfig::new(l1_rpc_url.clone());
+        let l1_client = L1Client::new(l1_config)
+            .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
+        let tee = Some(crate::TeeConfig { l1_head_provider: Arc::new(l1_client) });
 
         // ── 7. Bond manager (optional) ─────────────────────────────────────
         let bond_manager = if !config.bond_claim_addresses.is_empty() {

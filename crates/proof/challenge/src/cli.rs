@@ -103,15 +103,6 @@ pub struct ChallengerArgs {
     )]
     pub max_proof_duration: Duration,
 
-    /// Enable TEE-first proof sourcing.
-    ///
-    /// When set, the challenger first attempts to source proofs via the TEE
-    /// path (using the same prover-service endpoint as ZK proofs) and falls
-    /// back to ZK proofs on failure. When unset, the challenger uses ZK
-    /// proofs only.
-    #[arg(long = "enable-tee-proofs", env = cli_env!("ENABLE_TEE_PROOFS"))]
-    pub enable_tee_proofs: bool,
-
     /// Signer configuration (local private key or remote sidecar).
     #[command(flatten)]
     pub signer: SignerCli,
