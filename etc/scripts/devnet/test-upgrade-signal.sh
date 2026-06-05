@@ -7,14 +7,17 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
 ACTIVATION_OFFSET="${UPGRADE_SIGNAL_ACTIVATION_OFFSET:-240}"
-RESCHEDULE_BEFORE_SECONDS="${UPGRADE_SIGNAL_TEST_RESCHEDULE_BEFORE_SECONDS:-10}"
-RESCHEDULE_DELAY_SECONDS="${UPGRADE_SIGNAL_TEST_RESCHEDULE_DELAY_SECONDS:-60}"
+RESCHEDULE_BEFORE_SECONDS="${UPGRADE_SIGNAL_TEST_RESCHEDULE_BEFORE_SECONDS:-60}"
+RESCHEDULE_DELAY_SECONDS="${UPGRADE_SIGNAL_TEST_RESCHEDULE_DELAY_SECONDS:-120}"
 POLL_INTERVAL="${UPGRADE_SIGNAL_TEST_POLL_INTERVAL:-2}"
 TIMEOUT_SECONDS="${UPGRADE_SIGNAL_TEST_TIMEOUT_SECONDS:-300}"
 CHECKPOINT_ENV="$REPO_ROOT/.devnet/upgrade-signal-checkpoint.env"
 UPGRADE_ENV="$REPO_ROOT/.devnet/upgrade-signal.env"
 L1_RPC="${UPGRADE_SIGNAL_L1_RPC_URL:-${L1_RPC_URL:-http://localhost:4545}}"
 L2_RPC="${UPGRADE_SIGNAL_L2_RPC_URL:-${L2_CLIENT_RPC_URL:-http://localhost:8545}}"
+L2_BUILDER_RPC="${UPGRADE_SIGNAL_L2_BUILDER_RPC_URL:-${L2_BUILDER_RPC_URL:-http://localhost:7545}}"
+L2_BUILDER_OP_RPC="${UPGRADE_SIGNAL_L2_BUILDER_OP_RPC_URL:-${L2_BUILDER_OP_RPC_URL:-http://localhost:7549}}"
+L2_CLIENT_OP_RPC="${UPGRADE_SIGNAL_L2_CLIENT_OP_RPC_URL:-${L2_CLIENT_OP_RPC_URL:-http://localhost:8549}}"
 ROLLUP_JSON="$REPO_ROOT/.devnet/l2/configs/rollup.json"
 GENESIS_JSON="$REPO_ROOT/.devnet/l2/configs/genesis.json"
 
@@ -185,14 +188,26 @@ set_azul_activation_timestamp() {
     echo "Contract Azul timestamp is now $read_timestamp"
 }
 
-restart_upgrade_signal_consumers() {
-    echo "Restarting L2 services that apply the upgrade signal schedule..."
-    compose_upgrade up -d --no-build --no-deps --force-recreate \
-        base-builder \
-        base-builder-cl \
-        base-client \
-        base-client-cl
-    wait_for_l2_rpc
+refresh_upgrade_signal() {
+    local label="$1"
+    local rpc_url="$2"
+    local raw_result
+
+    echo "Refreshing upgrade signal on $label..."
+    if ! raw_result="$(cast rpc --rpc-url "$rpc_url" admin_refreshUpgradeSignal 2>&1)"; then
+        echo "failed to refresh upgrade signal on $label at $rpc_url" >&2
+        echo "$raw_result" >&2
+        exit 1
+    fi
+    echo "$label refresh result: $raw_result"
+}
+
+refresh_upgrade_signal_consumers() {
+    echo "Refreshing L2 services that apply the upgrade signal schedule..."
+    refresh_upgrade_signal "builder execution node" "$L2_BUILDER_RPC"
+    refresh_upgrade_signal "builder consensus node" "$L2_BUILDER_OP_RPC"
+    refresh_upgrade_signal "client execution node" "$L2_RPC"
+    refresh_upgrade_signal "client consensus node" "$L2_CLIENT_OP_RPC"
 }
 
 require_cmd cast
@@ -315,7 +330,7 @@ fi
 
 echo "Rescheduling Azul from $ACTIVATION_TIMESTAMP to $UPDATED_ACTIVATION_TIMESTAMP..."
 set_azul_activation_timestamp "$UPDATED_ACTIVATION_TIMESTAMP"
-restart_upgrade_signal_consumers
+refresh_upgrade_signal_consumers
 
 CURRENT_TIMESTAMP="$(latest_l2_timestamp)"
 if ((CURRENT_TIMESTAMP >= UPDATED_ACTIVATION_TIMESTAMP)); then
