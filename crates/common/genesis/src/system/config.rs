@@ -232,6 +232,11 @@ mod tests {
     use super::*;
     use crate::{HardForkConfig, SystemConfigUpdate};
 
+    #[cfg(feature = "arbitrary")]
+    use arbitrary::Arbitrary;
+    #[cfg(feature = "arbitrary")]
+    use rand::Rng;
+
     const BATCHER_UPDATE_TYPE: B256 =
         b256!("0000000000000000000000000000000000000000000000000000000000000000");
     const GAS_CONFIG_UPDATE_TYPE: B256 =
