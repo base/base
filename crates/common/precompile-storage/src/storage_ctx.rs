@@ -185,6 +185,11 @@ impl<'a> StorageCtx<'a> {
         self.try_with_storage(|s| s.deduct_gas(gas))
     }
 
+    /// Deducts state-creating gas, consuming the EIP-8037 reservoir first.
+    pub fn deduct_state_gas(&self, gas: u64) -> Result<()> {
+        self.try_with_storage(|s| s.deduct_state_gas(gas))
+    }
+
     /// Computes keccak256 and charges the appropriate gas.
     pub fn keccak256(&self, data: &[u8]) -> Result<B256> {
         self.try_with_storage(|s| s.keccak256(data))
@@ -401,6 +406,139 @@ mod tests {
 
             assert_eq!(value, 7);
             assert_eq!(ctx.caller(), original);
+        });
+    }
+
+    #[test]
+    fn success_output_carries_correct_reservoir_and_state_gas_used() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        storage.set_reservoir(1_000);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            ctx.deduct_state_gas(400).unwrap(); // 400 from reservoir; reservoir = 600
+
+            let out = ctx.success_output(Bytes::new());
+
+            assert!(out.is_success());
+            assert_eq!(
+                out.state_gas_used, 400,
+                "state_gas_used must equal total state gas charged"
+            );
+            assert_eq!(out.reservoir, 600, "reservoir must equal remaining reservoir");
+        });
+    }
+
+    #[test]
+    fn success_output_with_zero_reservoir_sets_fields_correctly() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        // reservoir = 0; all state gas spills into regular gas.
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            ctx.deduct_state_gas(250).unwrap();
+
+            let out = ctx.success_output(Bytes::new());
+
+            assert!(out.is_success());
+            assert_eq!(out.state_gas_used, 250);
+            assert_eq!(out.reservoir, 0);
+        });
+    }
+
+    #[test]
+    fn success_output_no_state_gas_charged_leaves_reservoir_intact() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        storage.set_reservoir(800);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let out = ctx.success_output(Bytes::new());
+
+            assert!(out.is_success());
+            assert_eq!(out.state_gas_used, 0);
+            assert_eq!(out.reservoir, 800, "untouched reservoir must be returned in full");
+        });
+    }
+
+    #[test]
+    fn revert_output_carries_correct_reservoir_and_state_gas_used() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        storage.set_reservoir(500);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            ctx.deduct_state_gas(150).unwrap(); // reservoir = 350
+
+            let out = ctx.revert_output(Bytes::from("revert reason"));
+
+            assert!(out.is_revert());
+            assert_eq!(out.state_gas_used, 150);
+            assert_eq!(out.reservoir, 350);
+            assert_eq!(out.bytes, Bytes::from("revert reason"));
+        });
+    }
+
+    #[test]
+    fn revert_output_with_spillover_sets_fields_correctly() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        storage.set_reservoir(100);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            ctx.deduct_state_gas(300).unwrap(); // 100 from reservoir, 200 spill; reservoir = 0
+
+            let out = ctx.revert_output(Bytes::new());
+
+            assert!(out.is_revert());
+            assert_eq!(out.state_gas_used, 300);
+            assert_eq!(out.reservoir, 0);
+        });
+    }
+
+    #[test]
+    fn error_result_revert_carries_state_gas_and_reservoir() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        storage.set_reservoir(600);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            ctx.deduct_state_gas(200).unwrap(); // reservoir = 400
+
+            let result = ctx.error_result(BasePrecompileError::Revert(Bytes::new()));
+            let out = result.unwrap();
+
+            assert!(out.is_revert());
+            assert_eq!(out.state_gas_used, 200);
+            assert_eq!(out.reservoir, 400);
+        });
+    }
+
+    #[test]
+    fn error_result_oog_carries_reservoir() {
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        storage.set_reservoir(999);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let result = ctx.error_result(BasePrecompileError::OutOfGas);
+            let out = result.unwrap();
+
+            assert!(out.is_halt());
+            // On OOG the remaining reservoir must be returned so the EVM can account for it.
+            assert_eq!(out.reservoir, 999);
+        });
+    }
+
+    #[test]
+    fn success_output_carries_gas_refunded_alongside_new_fields() {
+        // Verifies that gas_refunded is still set correctly alongside the new reservoir
+        // and state_gas_used fields (regression guard for the output construction change).
+        let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
+        storage.set_reservoir(500);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            ctx.deduct_state_gas(200).unwrap();
+
+            let out = ctx.success_output(Bytes::new());
+
+            assert!(out.is_success());
+            assert_eq!(out.state_gas_used, 200);
+            assert_eq!(out.reservoir, 300);
+            assert_eq!(out.gas_refunded, 0); // HashMapStorageProvider always returns 0
         });
     }
 

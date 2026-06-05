@@ -29,6 +29,7 @@ pub struct HashMapStorageProvider {
     snapshots: Vec<Snapshot>,
     gas_params: GasParams,
     state_gas_used: u64,
+    reservoir: u64,
     /// Emitted events keyed by contract address.
     pub events: HashMap<Address, Vec<LogData>>,
 }
@@ -65,6 +66,7 @@ impl HashMapStorageProvider {
             counter_sstore: 0,
             gas_params: GasParams::default(),
             state_gas_used: 0,
+            reservoir: 0,
         }
     }
 }
@@ -162,7 +164,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn deduct_state_gas(&mut self, gas: u64) -> Result<(), BasePrecompileError> {
-        // No gas limit in the test provider; just track the cumulative amount.
+        // Drain the reservoir first (EIP-8037 semantics); any excess spills into
+        // regular gas. No gas limit is enforced in the test provider.
+        let from_reservoir = gas.min(self.reservoir);
+        self.reservoir -= from_reservoir;
         self.state_gas_used = self.state_gas_used.saturating_add(gas);
         Ok(())
     }
@@ -186,7 +191,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn reservoir(&self) -> u64 {
-        0
+        self.reservoir
     }
 
     fn is_static(&self) -> bool {
@@ -319,10 +324,104 @@ impl HashMapStorageProvider {
     pub fn set_gas_params(&mut self, gas_params: GasParams) {
         self.gas_params = gas_params;
     }
+
+    /// Sets the initial EIP-8037 state-gas reservoir (test-utils only).
+    pub fn set_reservoir(&mut self, reservoir: u64) {
+        self.reservoir = reservoir;
+    }
 }
 
 /// Test helper: returns a fresh `(HashMapStorageProvider, precompile_address)` pair.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn setup_storage() -> (HashMapStorageProvider, Address) {
     (HashMapStorageProvider::new(1), Address::from([0x42u8; 20]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::PrecompileStorageProvider;
+
+    #[test]
+    fn reservoir_starts_at_zero_by_default() {
+        let provider = HashMapStorageProvider::new(1);
+        assert_eq!(provider.reservoir(), 0);
+        assert_eq!(provider.state_gas_used(), 0);
+    }
+
+    #[test]
+    fn deduct_state_gas_drains_reservoir_first() {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_reservoir(500);
+
+        provider.deduct_state_gas(200).unwrap();
+
+        assert_eq!(provider.reservoir(), 300, "reservoir should decrease by the charge");
+        assert_eq!(provider.state_gas_used(), 200, "state_gas_used should equal total charged");
+    }
+
+    #[test]
+    fn deduct_state_gas_exhausts_reservoir_exactly() {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_reservoir(300);
+
+        provider.deduct_state_gas(300).unwrap();
+
+        assert_eq!(provider.reservoir(), 0);
+        assert_eq!(provider.state_gas_used(), 300);
+    }
+
+    #[test]
+    fn deduct_state_gas_spills_into_regular_when_reservoir_exhausted() {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_reservoir(100);
+
+        // 100 from reservoir, 200 spill into regular gas.
+        provider.deduct_state_gas(300).unwrap();
+
+        assert_eq!(provider.reservoir(), 0, "reservoir fully consumed");
+        assert_eq!(provider.state_gas_used(), 300, "all 300 tracked as state gas");
+    }
+
+    #[test]
+    fn deduct_state_gas_with_no_reservoir_all_regular() {
+        let mut provider = HashMapStorageProvider::new(1);
+        // reservoir = 0, everything spills immediately.
+        provider.deduct_state_gas(500).unwrap();
+
+        assert_eq!(provider.reservoir(), 0);
+        assert_eq!(provider.state_gas_used(), 500);
+    }
+
+    #[test]
+    fn multiple_deductions_deplete_reservoir_progressively() {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_reservoir(400);
+
+        provider.deduct_state_gas(100).unwrap(); // reservoir = 300
+        provider.deduct_state_gas(150).unwrap(); // reservoir = 150
+        provider.deduct_state_gas(200).unwrap(); // 150 from reservoir, 50 spill; reservoir = 0
+        provider.deduct_state_gas(50).unwrap(); // all spill; reservoir = 0
+
+        assert_eq!(provider.reservoir(), 0);
+        assert_eq!(provider.state_gas_used(), 500);
+    }
+
+    #[test]
+    fn reservoir_set_and_retrieved_correctly() {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_reservoir(1_000_000);
+        assert_eq!(provider.reservoir(), 1_000_000);
+    }
+
+    #[test]
+    fn state_gas_zero_charge_leaves_reservoir_unchanged() {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_reservoir(500);
+
+        provider.deduct_state_gas(0).unwrap();
+
+        assert_eq!(provider.reservoir(), 500);
+        assert_eq!(provider.state_gas_used(), 0);
+    }
 }

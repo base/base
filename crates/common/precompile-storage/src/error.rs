@@ -181,4 +181,123 @@ mod tests {
         assert!(output.is_revert());
         assert_eq!(output.bytes, expected);
     }
+
+    // --- BasePrecompileError::into_precompile_result ---
+
+    #[test]
+    fn base_error_revert_sets_reservoir_and_state_gas_used() {
+        let result =
+            BasePrecompileError::Revert(Bytes::from("err")).into_precompile_result(1000, 200, 750);
+        let out = result.unwrap();
+        assert!(out.is_revert());
+        assert_eq!(out.gas_used, 1000);
+        assert_eq!(out.state_gas_used, 200);
+        assert_eq!(out.reservoir, 750);
+        assert_eq!(out.bytes, Bytes::from("err"));
+    }
+
+    #[test]
+    fn base_error_panic_sets_reservoir_and_state_gas_used() {
+        let result = BasePrecompileError::Panic(PanicKind::UnderOverflow)
+            .into_precompile_result(500, 100, 400);
+        let out = result.unwrap();
+        assert!(out.is_revert(), "panic encodes as a revert");
+        assert_eq!(out.state_gas_used, 100);
+        assert_eq!(out.reservoir, 400);
+    }
+
+    #[test]
+    fn base_error_oog_halt_carries_remaining_reservoir() {
+        let result = BasePrecompileError::OutOfGas.into_precompile_result(999, 0, 300);
+        let out = result.unwrap();
+        assert!(out.is_halt());
+        // The reservoir value at OOG time must be returned so the EVM can account for it.
+        assert_eq!(out.reservoir, 300);
+    }
+
+    #[test]
+    fn base_error_oog_with_zero_reservoir() {
+        let result = BasePrecompileError::OutOfGas.into_precompile_result(0, 0, 0);
+        let out = result.unwrap();
+        assert!(out.is_halt());
+        assert_eq!(out.reservoir, 0);
+    }
+
+    #[test]
+    fn base_error_static_call_violation_sets_reservoir() {
+        let result = BasePrecompileError::StaticCallViolation.into_precompile_result(100, 50, 600);
+        let out = result.unwrap();
+        assert!(out.is_revert());
+        assert_eq!(out.state_gas_used, 50);
+        assert_eq!(out.reservoir, 600);
+    }
+
+    #[test]
+    fn base_error_fatal_propagates_as_err() {
+        let result =
+            BasePrecompileError::Fatal("db error".into()).into_precompile_result(0, 0, 500);
+        assert!(result.is_err(), "Fatal must not produce a PrecompileOutput");
+    }
+
+    // --- IntoPrecompileResult<T> for Result<T> ---
+
+    #[test]
+    fn into_precompile_result_success_sets_state_gas_and_reservoir() {
+        let ok: Result<Bytes> = Ok(Bytes::from("output"));
+        let result = ok.into_precompile_result(1500, 300, 800, |b| b);
+        let out = result.unwrap();
+
+        assert!(out.is_success());
+        assert_eq!(out.gas_used, 1500);
+        assert_eq!(out.state_gas_used, 300);
+        assert_eq!(out.reservoir, 800);
+        assert_eq!(out.bytes, Bytes::from("output"));
+    }
+
+    #[test]
+    fn into_precompile_result_success_with_zero_reservoir() {
+        let ok: Result<Bytes> = Ok(Bytes::new());
+        let out = ok.into_precompile_result(100, 0, 0, |b| b).unwrap();
+
+        assert!(out.is_success());
+        assert_eq!(out.state_gas_used, 0);
+        assert_eq!(out.reservoir, 0);
+    }
+
+    #[test]
+    fn into_precompile_result_err_revert_propagates_reservoir_and_state_gas() {
+        let err: Result<Bytes> = Err(BasePrecompileError::Revert(Bytes::from("revert")));
+        let out = err.into_precompile_result(200, 50, 900, |b| b).unwrap();
+
+        assert!(out.is_revert());
+        assert_eq!(out.gas_used, 200);
+        assert_eq!(out.state_gas_used, 50);
+        assert_eq!(out.reservoir, 900);
+    }
+
+    #[test]
+    fn into_precompile_result_err_oog_carries_reservoir() {
+        let err: Result<Bytes> = Err(BasePrecompileError::OutOfGas);
+        let out = err.into_precompile_result(0, 0, 1234, |b| b).unwrap();
+
+        assert!(out.is_halt());
+        assert_eq!(out.reservoir, 1234);
+    }
+
+    #[test]
+    fn into_precompile_result_err_fatal_propagates_as_err() {
+        let err: Result<Bytes> = Err(BasePrecompileError::Fatal("crash".into()));
+        let result = err.into_precompile_result(0, 0, 0, |b| b);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn into_precompile_result_encoder_applied_on_success() {
+        let ok: Result<u64> = Ok(42u64);
+        let out =
+            ok.into_precompile_result(0, 0, 0, |v| Bytes::from(v.to_le_bytes().to_vec())).unwrap();
+
+        assert!(out.is_success());
+        assert_eq!(out.bytes, Bytes::from(42u64.to_le_bytes().to_vec()));
+    }
 }
