@@ -8,10 +8,11 @@ use uuid::Uuid;
 use crate::{
     ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CompleteProofResult, CreateProofRequest,
     CreateProofRequestError, CreateProofRequestOutcome, CreateProofRequestValidationError,
-    CreateProofSession, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob, ProofJob,
-    ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession,
-    ProofStatus, ProofType, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
-    UpdateProofSession, UpdateReceipt, ZkVmKind, canonical_session_id,
+    CreateProofSession, FailExpiredProofJobs, FailUnclaimedProofJobs, HeartbeatOutcome,
+    HeartbeatProofJob, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem,
+    ProofRequestPage, ProofSession, ProofStatus, ProofType, RetryOutcome, SessionStatus,
+    SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt, ZkVmKind,
+    canonical_session_id,
 };
 
 /// Repository for proof request database operations
@@ -737,6 +738,58 @@ impl ProofRequestRepo {
 
         let rows = sqlx::query(&sql)
             .bind(i64::from(req.max_attempts))
+            .bind(&req.error_message)
+            .bind(i64::from(req.batch_size))
+            .fetch_all(&self.pool)
+            .await?;
+
+        rows.iter().map(row_to_proof_job).collect()
+    }
+
+    /// Terminally fail worker jobs that were never claimed within the timeout.
+    ///
+    /// Targets only pre-claim rows (`status = 'CREATED'`, `job_status = 'PENDING'`,
+    /// no `worker_id`/`lock_id`, no active backend session) older than
+    /// `unclaimed_timeout_seconds`. Retrying is futile since no worker picked them
+    /// up, so both the worker job and requester proof are marked `FAILED`. The
+    /// scope is deliberately disjoint from [`Self::get_stuck_requests`]
+    /// (`status = 'PENDING'`) and [`Self::fail_expired_proof_jobs`] (`CLAIMED`), so
+    /// legacy in-flight requests are never affected.
+    pub async fn fail_unclaimed_proof_jobs(
+        &self,
+        req: FailUnclaimedProofJobs,
+    ) -> Result<Vec<ProofJob>> {
+        let columns = PROOF_JOB_RETURNING_COLUMNS;
+        let sql = format!(
+            r#"
+            UPDATE proof_requests
+            SET job_status = 'FAILED',
+                status = 'FAILED',
+                error_message = $2,
+                completed_at = NOW()
+            WHERE id IN (
+                SELECT pr.id
+                FROM proof_requests pr
+                WHERE pr.job_status = 'PENDING'
+                  AND pr.status = 'CREATED'
+                  AND pr.worker_id IS NULL
+                  AND pr.lock_id IS NULL
+                  AND pr.updated_at < NOW() - ($1)::double precision * INTERVAL '1 second'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM proof_sessions ps
+                      WHERE ps.proof_request_id = pr.id
+                        AND ps.status IN ('SUBMITTING', 'RUNNING')
+                  )
+                ORDER BY pr.updated_at ASC, pr.start_block_number ASC, pr.created_at ASC, pr.id ASC
+                LIMIT $3
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING {columns}
+            "#
+        );
+
+        let rows = sqlx::query(&sql)
+            .bind(i64::from(req.unclaimed_timeout_seconds))
             .bind(&req.error_message)
             .bind(i64::from(req.batch_size))
             .fetch_all(&self.pool)

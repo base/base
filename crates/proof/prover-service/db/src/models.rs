@@ -1028,6 +1028,17 @@ pub struct FailExpiredProofJobs {
     pub error_message: String,
 }
 
+/// Parameters for terminally failing worker jobs that were never claimed.
+#[derive(Debug, Clone)]
+pub struct FailUnclaimedProofJobs {
+    /// Pre-claim jobs whose `updated_at` is older than this are treated as orphaned.
+    pub unclaimed_timeout_seconds: u32,
+    /// Maximum number of unclaimed jobs to fail in this batch.
+    pub batch_size: u32,
+    /// Error message stored on newly failed jobs.
+    pub error_message: String,
+}
+
 #[cfg(test)]
 mod tests {
     use base_prover_service_protocol::{ZkProofRequest, ZkVm};

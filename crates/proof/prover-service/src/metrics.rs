@@ -25,6 +25,8 @@ pub const PROOF_REQUESTS_COMPLETED: &str = "zk_prover_service.proof_requests_com
 pub const STUCK_REQUESTS: &str = "zk_prover_service.stuck_requests";
 /// Stuck requests retried (reset to CREATED). Tags: `proof_type`
 pub const RETRIED_REQUESTS: &str = "zk_prover_service.retried_requests";
+/// Worker jobs terminally failed by a background reaper. Tags: `reason`, `proof_type`
+pub const WORKER_JOBS_FAILED: &str = "zk_prover_service.worker_jobs_failed";
 
 // ---------------------------------------------------------------------------
 // ProverMetrics — metric descriptions (called once at init)
@@ -51,6 +53,10 @@ impl ProverMetrics {
         describe_counter!(PROOF_REQUESTS_COMPLETED, "Terminal proof request outcomes");
         describe_counter!(STUCK_REQUESTS, "Stuck requests detected and failed");
         describe_counter!(RETRIED_REQUESTS, "Stuck requests retried (reset to CREATED)");
+        describe_counter!(
+            WORKER_JOBS_FAILED,
+            "Worker jobs terminally failed by a background reaper"
+        );
     }
 }
 
@@ -112,6 +118,15 @@ pub fn inc_stuck_requests(proof_type: &str) {
 /// Increment retried requests counter.
 pub fn inc_retried_requests(proof_type: &str) {
     counter!(RETRIED_REQUESTS, "proof_type" => proof_type.to_string()).increment(1);
+}
+
+/// Increment the worker-jobs-failed counter for a reaper outcome.
+pub fn inc_worker_jobs_failed(reason: &str, proof_type: &str) {
+    counter!(WORKER_JOBS_FAILED,
+        "reason" => reason.to_string(),
+        "proof_type" => proof_type.to_string(),
+    )
+    .increment(1);
 }
 
 // ---------------------------------------------------------------------------
