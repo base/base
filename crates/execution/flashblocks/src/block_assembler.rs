@@ -16,8 +16,9 @@ use base_common_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4,
 };
+use std::time::Instant;
 
-use crate::{ExecutionError, ProtocolError, Result};
+use crate::{ExecutionError, ProtocolError, Result, profiling::pending_state_profiling_enabled};
 
 /// Result of assembling a block from flashblocks.
 #[derive(Debug, Clone)]
@@ -71,17 +72,25 @@ impl BlockAssembler {
     /// - The first flashblock is missing its base payload
     /// - Block conversion fails
     pub fn assemble(flashblocks: &[Flashblock]) -> Result<AssembledBlock> {
+        let profiling = pending_state_profiling_enabled();
+        let total_start = profiling.then(Instant::now);
         let first = flashblocks.first().ok_or(ProtocolError::EmptyFlashblocks)?;
         let base = first.base.clone().ok_or(ProtocolError::MissingBase)?;
         let latest_flashblock = flashblocks.last().ok_or(ProtocolError::EmptyFlashblocks)?;
 
+        let flatten_transactions_start = profiling.then(Instant::now);
         let transactions: Vec<Bytes> = flashblocks
             .iter()
             .flat_map(|flashblock| flashblock.diff.transactions.clone())
             .collect();
+        let flatten_transactions_us =
+            flatten_transactions_start.map(|start| start.elapsed().as_micros());
 
+        let flatten_withdrawals_start = profiling.then(Instant::now);
         let withdrawals: Vec<Withdrawal> =
             flashblocks.iter().flat_map(|flashblock| flashblock.diff.withdrawals.clone()).collect();
+        let flatten_withdrawals_us =
+            flatten_withdrawals_start.map(|start| start.elapsed().as_micros());
 
         // BaseExecutionPayloadV4 sets withdrawals_root directly instead of computing from list.
         let execution_payload = BaseExecutionPayloadV4 {
@@ -120,12 +129,27 @@ impl BlockAssembler {
             PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
         );
 
+        let block_conversion_start = profiling.then(Instant::now);
         let block: BaseBlock = BaseExecutionPayload::V4(execution_payload)
             .try_into_block_with_sidecar(&sidecar)
             .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?;
+        let block_conversion_us = block_conversion_start.map(|start| start.elapsed().as_micros());
 
         // Zero block hash for flashblocks since the final hash isn't known yet
         let sealed_header = block.header.clone().seal(B256::ZERO);
+
+        if let Some(total_start) = total_start {
+            info!(
+                phase = "assemble_block",
+                flashblocks = flashblocks.len(),
+                txs = block.body.transactions.len(),
+                flatten_transactions_us = flatten_transactions_us.unwrap_or_default(),
+                flatten_withdrawals_us = flatten_withdrawals_us.unwrap_or_default(),
+                block_conversion_us = block_conversion_us.unwrap_or_default(),
+                total_us = total_start.elapsed().as_micros(),
+                "flashblocks pending-state profile"
+            );
+        }
 
         Ok(AssembledBlock { block, base, flashblocks: flashblocks.to_vec(), header: sealed_header })
     }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap as StdHashMap, sync::Arc};
+use std::{collections::HashMap as StdHashMap, sync::Arc, time::Instant};
 
 use alloy_consensus::{Header, Sealed, TxReceipt};
 use alloy_eips::BlockNumberOrTag;
@@ -24,7 +24,10 @@ use revm::{
     state::{AccountInfo, EvmState},
 };
 
-use crate::{BuildError, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
+use crate::{
+    BuildError, PendingBlocksAPI, StateProcessorError, TransactionWithLogs,
+    profiling::pending_state_profiling_enabled,
+};
 
 /// Builder for [`PendingBlocks`].
 #[derive(Debug)]
@@ -96,34 +99,82 @@ impl PendingBlocksBuilder {
 
     /// Creates a builder pre-populated from an existing snapshot.
     pub fn from_previous(pending_blocks: &PendingBlocks) -> Self {
+        let profiling = pending_state_profiling_enabled();
+        let total_start = profiling.then(Instant::now);
+
+        let clone_start = profiling.then(Instant::now);
+        let flashblocks = pending_blocks.flashblocks.clone();
+        let flashblocks_us = clone_start.map(|start| start.elapsed().as_micros());
+
+        let clone_start = profiling.then(Instant::now);
+        let headers =
+            vec![pending_blocks.earliest_header.clone(), pending_blocks.latest_header.clone()];
+        let headers_us = clone_start.map(|start| start.elapsed().as_micros());
+
+        let clone_start = profiling.then(Instant::now);
+        let transactions = pending_blocks.transactions.clone();
+        let account_balances = pending_blocks.account_balances.clone();
+        let transaction_count = pending_blocks.transaction_count.clone();
+        let transaction_receipts = pending_blocks.transaction_receipts.clone();
+        let transactions_by_hash = pending_blocks.transactions_by_hash.clone();
+        let transaction_position = pending_blocks.transaction_position.clone();
+        let transaction_state = pending_blocks.transaction_state.clone();
+        let transaction_senders = pending_blocks.transaction_senders.clone();
+        let transaction_results = pending_blocks.transaction_results.clone();
+        let execution_times = pending_blocks.execution_times.clone();
+        let state_root_times = pending_blocks.state_root_times.clone();
+        let state_maps_us = clone_start.map(|start| start.elapsed().as_micros());
+
+        let clone_start = profiling.then(Instant::now);
+        let next_position_per_block =
+            pending_blocks.next_position_per_block().collect::<StdHashMap<_, _>>();
+        let next_positions_us = clone_start.map(|start| start.elapsed().as_micros());
+
+        let clone_start = profiling.then(Instant::now);
+        let bundle_state = Arc::clone(&pending_blocks.bundle_state);
+        let bundle_state_us = clone_start.map(|start| start.elapsed().as_micros());
+
+        let state_overrides = pending_blocks.state_overrides.clone();
+
+        if let Some(total_start) = total_start {
+            info!(
+                phase = "from_previous",
+                txs = pending_blocks.transactions.len(),
+                flashblocks = pending_blocks.flashblocks.len(),
+                bundle_accounts = pending_blocks.bundle_state.len(),
+                flashblocks_us = flashblocks_us.unwrap_or_default(),
+                headers_us = headers_us.unwrap_or_default(),
+                state_maps_us = state_maps_us.unwrap_or_default(),
+                next_positions_us = next_positions_us.unwrap_or_default(),
+                bundle_state_us = bundle_state_us.unwrap_or_default(),
+                total_us = total_start.elapsed().as_micros(),
+                "flashblocks pending-state profile"
+            );
+        }
+
         Self {
-            flashblocks: pending_blocks.flashblocks.clone(),
-            headers: vec![
-                pending_blocks.earliest_header.clone(),
-                pending_blocks.latest_header.clone(),
-            ],
+            flashblocks,
+            headers,
             latest_flashblock_tx_start: pending_blocks.latest_flashblock_tx_start,
             latest_block_base: Some(pending_blocks.latest_block_base.clone()),
             latest_block_l1_block_info: Some(pending_blocks.latest_block_l1_block_info.clone()),
             latest_block_transaction_count: pending_blocks.latest_block_transaction_count,
             latest_block_cumulative_gas_used: pending_blocks.latest_block_cumulative_gas_used,
             latest_block_next_log_index: pending_blocks.latest_block_next_log_index,
-            transactions: pending_blocks.transactions.clone(),
-            account_balances: pending_blocks.account_balances.clone(),
-            transaction_count: pending_blocks.transaction_count.clone(),
-            transaction_receipts: pending_blocks.transaction_receipts.clone(),
-            transactions_by_hash: pending_blocks.transactions_by_hash.clone(),
-            transaction_position: pending_blocks.transaction_position.clone(),
-            next_position_per_block: pending_blocks
-                .next_position_per_block()
-                .collect::<StdHashMap<_, _>>(),
-            transaction_state: pending_blocks.transaction_state.clone(),
-            transaction_senders: pending_blocks.transaction_senders.clone(),
-            state_overrides: pending_blocks.state_overrides.clone(),
-            transaction_results: pending_blocks.transaction_results.clone(),
-            execution_times: pending_blocks.execution_times.clone(),
-            state_root_times: pending_blocks.state_root_times.clone(),
-            bundle_state: Some(Arc::clone(&pending_blocks.bundle_state)),
+            transactions,
+            account_balances,
+            transaction_count,
+            transaction_receipts,
+            transactions_by_hash,
+            transaction_position,
+            next_position_per_block,
+            transaction_state,
+            transaction_senders,
+            state_overrides,
+            transaction_results,
+            execution_times,
+            state_root_times,
+            bundle_state: Some(bundle_state),
             deferred_error: None,
         }
     }
@@ -274,9 +325,13 @@ impl PendingBlocksBuilder {
 
     /// Builds the pending blocks.
     pub fn build(self) -> Result<PendingBlocks, StateProcessorError> {
+        let profiling = pending_state_profiling_enabled();
+        let total_start = profiling.then(Instant::now);
         if let Some(err) = self.deferred_error {
             return Err(err.into());
         }
+
+        let derive_start = profiling.then(Instant::now);
         let earliest_header = self.headers.first().cloned().ok_or(BuildError::MissingHeaders)?;
         let latest_header = self.headers.last().cloned().ok_or(BuildError::MissingHeaders)?;
 
@@ -330,12 +385,28 @@ impl PendingBlocksBuilder {
                 self.transactions.len().saturating_sub(latest_flashblock_tx_count)
             }
         };
+        let derive_us = derive_start.map(|start| start.elapsed().as_micros());
 
+        let validation_start = profiling.then(Instant::now);
         for transaction in &self.transactions {
             let tx_hash = transaction.tx_hash();
             if !self.transaction_receipts.contains_key(&tx_hash) {
                 return Err(BuildError::MissingReceipt { tx_hash }.into());
             }
+        }
+        let validation_us = validation_start.map(|start| start.elapsed().as_micros());
+
+        if let Some(total_start) = total_start {
+            info!(
+                phase = "build_snapshot",
+                txs = self.transactions.len(),
+                flashblocks = self.flashblocks.len(),
+                bundle_accounts = self.bundle_state.as_ref().map_or(0, |bundle| bundle.len()),
+                derive_us = derive_us.unwrap_or_default(),
+                validation_us = validation_us.unwrap_or_default(),
+                total_us = total_start.elapsed().as_micros(),
+                "flashblocks pending-state profile"
+            );
         }
 
         Ok(PendingBlocks {

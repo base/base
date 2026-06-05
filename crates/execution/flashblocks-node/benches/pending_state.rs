@@ -39,6 +39,21 @@ struct BenchSetup {
     _harness: Arc<TestHarness>,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum PendingStateScenario {
+    RepeatedRecipient,
+    FanoutRecipients,
+}
+
+impl PendingStateScenario {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::RepeatedRecipient => "repeated_recipient",
+            Self::FanoutRecipients => "fanout_recipients",
+        }
+    }
+}
+
 impl BenchSetup {
     #[allow(clippy::arc_with_non_send_sync)]
     async fn new(tx_counts: &[usize]) -> Self {
@@ -53,14 +68,20 @@ impl BenchSetup {
             .try_into_recovered()
             .expect("recovered block should build");
 
-        let flashblocks = tx_counts
-            .iter()
-            .map(|count| {
-                let txs = sample_transactions(&provider, *count);
+        let mut flashblocks = Vec::new();
+        for scenario in [
+            PendingStateScenario::RepeatedRecipient,
+            PendingStateScenario::FanoutRecipients,
+        ] {
+            for &count in tx_counts {
+                let txs = sample_transactions(&provider, count, scenario);
                 let blocks = build_flashblocks(&canonical_block, &txs);
-                (format!("pending_state_{count}_txs"), blocks)
-            })
-            .collect();
+                flashblocks.push((
+                    format!("pending_state_{}_{}_txs", scenario.label(), count),
+                    blocks,
+                ));
+            }
+        }
 
         Self {
             target_block: canonical_block.number + 1,
@@ -258,16 +279,28 @@ fn transaction_flashblock(
     }
 }
 
-fn sample_transactions(provider: &LocalNodeProvider, count: usize) -> Vec<BaseTransactionSigned> {
+fn sample_transactions(
+    provider: &LocalNodeProvider,
+    count: usize,
+    scenario: PendingStateScenario,
+) -> Vec<BaseTransactionSigned> {
     let signer = B256::from_hex(Account::Alice.private_key()).expect("valid private key hex");
     let chain_id = provider.chain_spec().chain_id();
 
     (0..count as u64)
         .map(|nonce| {
+            let recipient = match scenario {
+                PendingStateScenario::RepeatedRecipient => Account::Bob.address(),
+                PendingStateScenario::FanoutRecipients => {
+                    let mut bytes = [0u8; 20];
+                    bytes[12..].copy_from_slice(&(nonce + 1).to_be_bytes());
+                    Address::from(bytes)
+                }
+            };
             let txn = TransactionBuilder::default()
                 .signer(signer)
                 .chain_id(chain_id)
-                .to(Account::Bob.address())
+                .to(recipient)
                 .nonce(nonce)
                 .value(1_000_000_000u128)
                 .gas_limit(TX_GAS_USED)

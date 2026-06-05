@@ -32,6 +32,7 @@ use crate::{
     BlockAssembler, ExecutionError, FlashblockCache, PendingBlocks, PendingBlocksBuilder,
     PendingStateBuilder, ProviderError, Result, StateProcessorError,
     metrics::Metrics,
+    profiling::pending_state_profiling_enabled,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
         ReorgDetector, SequenceValidationResult,
@@ -91,12 +92,36 @@ where
         mut db: PendingExecutionDb,
         state_overrides: StateOverride,
     ) -> Result<Option<Arc<PendingBlocks>>> {
+        let profiling = pending_state_profiling_enabled();
+        let total_start = profiling.then(Instant::now);
+
+        let merge_start = profiling.then(Instant::now);
         db.merge_transitions(BundleRetention::Reverts);
+        let merge_us = merge_start.map(|start| start.elapsed().as_micros());
+
+        let bundle_clone_start = profiling.then(Instant::now);
         pending_blocks_builder.with_bundle_state(db.bundle_state.clone());
+        let bundle_clone_us = bundle_clone_start.map(|start| start.elapsed().as_micros());
         pending_blocks_builder.with_state_overrides(state_overrides.clone());
 
+        let build_start = profiling.then(Instant::now);
         let pending_blocks = Arc::new(pending_blocks_builder.build()?);
+        let build_us = build_start.map(|start| start.elapsed().as_micros());
         self.set_live_state(db, state_overrides);
+
+        if let Some(total_start) = total_start {
+            info!(
+                phase = "publish_pending_blocks",
+                txs = pending_blocks.pending_transaction_count(),
+                flashblocks = pending_blocks.get_flashblocks().len(),
+                bundle_accounts = pending_blocks.get_bundle_state().len(),
+                merge_us = merge_us.unwrap_or_default(),
+                bundle_clone_us = bundle_clone_us.unwrap_or_default(),
+                build_us = build_us.unwrap_or_default(),
+                total_us = total_start.elapsed().as_micros(),
+                "flashblocks pending-state profile"
+            );
+        }
 
         Ok(Some(pending_blocks))
     }
@@ -404,6 +429,8 @@ where
         prev_pending_blocks: &Arc<PendingBlocks>,
         flashblock: &Flashblock,
     ) -> Result<Option<Arc<PendingBlocks>>> {
+        let profiling = pending_state_profiling_enabled();
+        let total_start = profiling.then(Instant::now);
         let latest_block_base = prev_pending_blocks.latest_block_base().clone();
         let latest_block_l1_block_info = prev_pending_blocks.latest_block_l1_block_info().clone();
         let latest_flashblock_tx_start = prev_pending_blocks.pending_transaction_count();
@@ -425,9 +452,11 @@ where
         };
         drop(live_state);
 
+        let header_start = profiling.then(Instant::now);
         let mut latest_block_flashblocks = prev_pending_blocks.latest_block_flashblocks();
         latest_block_flashblocks.push(flashblock.clone());
         let latest_block_header = BlockAssembler::assemble(&latest_block_flashblocks)?.header;
+        let header_us = header_start.map(|start| start.elapsed().as_micros());
 
         let evm_config = BaseEvmConfig::base(self.client.chain_spec());
         let latest_header = prev_pending_blocks.latest_header();
@@ -445,7 +474,8 @@ where
                 Ok((tx.clone(), tx.recover_signer()?))
             })
             .collect::<Result<_>>()?;
-        Metrics::sender_recovery_duration().record(recovery_start.elapsed());
+        let sender_recovery_elapsed = recovery_start.elapsed();
+        Metrics::sender_recovery_duration().record(sender_recovery_elapsed);
 
         let mut pending_blocks_builder = PendingBlocksBuilder::from_previous(prev_pending_blocks);
         pending_blocks_builder.with_flashblocks([flashblock.clone()]);
@@ -475,6 +505,9 @@ where
             prev_pending_blocks.latest_block_next_log_index(),
         );
 
+        let loop_start = profiling.then(Instant::now);
+        let mut evm_execution_us = 0u128;
+
         for (offset, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
             let tx_hash = transaction.tx_hash();
             let idx = previous_block_transaction_count + offset;
@@ -487,6 +520,7 @@ where
                 pending_state_builder.execute_transaction(idx, recovered_transaction)?;
 
             if let Some(time_us) = executed_transaction.execution_time_us {
+                evm_execution_us = evm_execution_us.saturating_add(time_us);
                 pending_blocks_builder.with_execution_time(tx_hash, time_us);
             }
 
@@ -501,10 +535,12 @@ where
             pending_blocks_builder.with_transaction_state(tx_hash, executed_transaction.state);
             pending_blocks_builder.with_transaction_result(tx_hash, executed_transaction.result);
         }
+        let loop_us = loop_start.map(|start| start.elapsed().as_micros());
 
         let latest_block_cumulative_gas_used = pending_state_builder.cumulative_gas_used();
         let latest_block_next_log_index = pending_state_builder.next_log_index();
         let (db, state_overrides) = pending_state_builder.into_db_and_state_overrides();
+        let publish_start = profiling.then(Instant::now);
         pending_blocks_builder.with_latest_block_context(
             latest_flashblock_tx_start,
             latest_block_base,
@@ -513,8 +549,28 @@ where
             latest_block_cumulative_gas_used,
             latest_block_next_log_index,
         );
+        let pending_blocks =
+            self.publish_pending_blocks(pending_blocks_builder, db, state_overrides)?;
 
-        self.publish_pending_blocks(pending_blocks_builder, db, state_overrides)
+        if let Some(total_start) = total_start {
+            info!(
+                phase = "same_block_append",
+                txs = prev_pending_blocks.pending_transaction_count()
+                    + flashblock.diff.transactions.len(),
+                flashblock_index = flashblock.index,
+                appended_txs = flashblock.diff.transactions.len(),
+                header_us = header_us.unwrap_or_default(),
+                sender_recovery_us = sender_recovery_elapsed.as_micros(),
+                loop_us = loop_us.unwrap_or_default(),
+                evm_execution_us,
+                bookkeeping_us = loop_us.unwrap_or_default().saturating_sub(evm_execution_us),
+                publish_us = publish_start.map_or(0, |start| start.elapsed().as_micros()),
+                total_us = total_start.elapsed().as_micros(),
+                "flashblocks pending-state profile"
+            );
+        }
+
+        Ok(pending_blocks)
     }
 
     #[instrument(
