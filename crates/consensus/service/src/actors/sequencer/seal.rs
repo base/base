@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::L2BlockInfo;
+use tracing::Instrument;
 
 use crate::{
     Metrics, UnsafePayloadGossipClient,
@@ -101,11 +102,11 @@ impl PayloadSealer {
 
         let result = match self.state {
             SealState::Sealed => {
-                let _entered = self.seal_span.enter();
                 debug!(target: "sequencer", step = "commit", "seal pipeline step");
                 if let Some(conductor) = conductor {
                     conductor
                         .commit_unsafe_payload(&self.envelope)
+                        .instrument(self.seal_span.clone())
                         .await
                         .map_err(SealStepError::Conductor)?;
                 }
@@ -113,20 +114,20 @@ impl PayloadSealer {
                 Ok(SealStepOutcome::Pending)
             }
             SealState::Committed => {
-                let _entered = self.seal_span.enter();
                 debug!(target: "sequencer", step = "gossip", "seal pipeline step");
                 gossip_client
                     .schedule_execution_payload_gossip(self.envelope.clone())
+                    .instrument(self.seal_span.clone())
                     .await
                     .map_err(SealStepError::Gossip)?;
                 self.state = SealState::Gossiped;
                 Ok(SealStepOutcome::Pending)
             }
             SealState::Gossiped => {
-                let _entered = self.seal_span.enter();
                 debug!(target: "sequencer", step = "insert", "seal pipeline step");
                 let inserted_head = engine_client
                     .insert_unsafe_payload(self.envelope.clone())
+                    .instrument(self.seal_span.clone())
                     .await
                     .map_err(SealStepError::Insert)?;
                 Ok(SealStepOutcome::Inserted(inserted_head))
