@@ -4,7 +4,6 @@ use base_prover_service_db::{
 use base_prover_service_protocol::{ProveBlockRangeRequest, ProveBlockRangeResponse};
 use jsonrpsee::core::RpcResult;
 use tracing::{info, warn};
-use uuid::Uuid;
 
 use crate::server::{
     ProverServiceServer, failed_precondition, internal, invalid_argument, record_rpc_result,
@@ -29,8 +28,8 @@ impl ProverServiceServer {
         request: ProveBlockRangeRequest,
     ) -> RpcResult<ProveBlockRangeResponse> {
         let mut proof_request = request.proof;
-        let session_id = parse_session_id(proof_request.session_id.as_deref())?;
-        proof_request.session_id = Some(session_id.clone());
+        let session_id = parse_session_id(&proof_request.session_id)?;
+        proof_request.session_id = session_id.clone();
 
         let db_request =
             CreateProofRequest::new(proof_request).map_err(|e| invalid_argument(format!("{e}")))?;
@@ -122,12 +121,8 @@ impl ProverServiceServer {
     }
 }
 
-fn parse_session_id(session_id: Option<&str>) -> RpcResult<String> {
-    session_id
-        .map(canonical_session_id)
-        .transpose()
-        .map_err(|e| invalid_argument(format!("{e}")))
-        .map(|id| id.unwrap_or_else(|| Uuid::new_v4().to_string()))
+fn parse_session_id(session_id: &str) -> RpcResult<String> {
+    canonical_session_id(session_id).map_err(|e| invalid_argument(format!("{e}")))
 }
 
 #[cfg(test)]
@@ -157,7 +152,7 @@ mod tests {
     #[test]
     fn parse_session_id_accepts_uppercase_uuid() {
         let id = Uuid::new_v4();
-        let parsed = parse_session_id(Some(&id.to_string().to_uppercase())).unwrap();
+        let parsed = parse_session_id(&id.to_string().to_uppercase()).unwrap();
 
         assert_eq!(parsed, id.to_string());
     }
@@ -165,7 +160,7 @@ mod tests {
     #[test]
     fn parse_session_id_accepts_opaque_values() {
         let session_id = "tee/aws_nitro/claimed-root";
-        let parsed = parse_session_id(Some(session_id)).unwrap();
+        let parsed = parse_session_id(session_id).unwrap();
 
         assert_eq!(parsed, session_id);
     }

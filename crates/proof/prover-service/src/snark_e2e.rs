@@ -20,6 +20,7 @@ use sp1_sdk::{
     blocking::{CpuProver, MockProver, Prover as BlockingProver},
 };
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::L1HeadCalculator;
 
@@ -210,7 +211,7 @@ impl SnarkE2e {
         let prove_resp = client
             .prove_block_range(ProveBlockRangeRequest {
                 proof: ProofRequest {
-                    session_id: None,
+                    session_id: Uuid::new_v4().to_string(),
                     request: ProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
                         proof: ZkProofRequest {
                             start_block_number: safe_head,

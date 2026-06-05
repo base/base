@@ -455,7 +455,7 @@ mod tests {
             session_id: session_id.clone(),
             status: ProofJobStatus::Claimed,
             request: ProofRequest {
-                session_id: Some(session_id),
+                session_id,
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number: 1,
                     number_of_blocks_to_prove: 1,

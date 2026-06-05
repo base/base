@@ -85,23 +85,16 @@ impl ProofRequesterClient {
 
     /// Submit a prove-block-range proof request.
     ///
-    /// When `request.proof.session_id` is `None`, the prover service generates a fresh
-    /// UUID per call, so retrying a transient failure could enqueue a duplicate proof
-    /// under a different session ID. To stay idempotent, requests without a client-
-    /// supplied `session_id` are issued exactly once and any error is surfaced as-is.
-    /// Once `session_id` becomes a required protocol field, this guard can be removed.
+    /// Because `session_id` is required by the protocol, retries are safe to issue
+    /// without enqueueing duplicate proofs under different session IDs.
     pub async fn prove_block_range(
         &self,
         request: ProveBlockRangeRequest,
     ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
         debug!(
-            session_id = ?request.proof.session_id,
+            session_id = %request.proof.session_id,
             "proving block range"
         );
-
-        if request.proof.session_id.is_none() {
-            return Ok(self.inner.prove_block_range(request).await?);
-        }
 
         (|| {
             let request = request.clone();
@@ -112,7 +105,7 @@ impl ProofRequesterClient {
         .when(ProverServiceClientError::is_retryable)
         .notify(|error, delay| {
             warn!(
-                session_id = ?request.proof.session_id,
+                session_id = %request.proof.session_id,
                 backoff_ms = delay.as_millis(),
                 error = %error,
                 "prove block range failed; retrying"
@@ -352,9 +345,7 @@ mod tests {
                     Err(invalid_params_error("scripted prove_block_range fatal failure"))
                 }
                 None | Some(ScriptedOutcome::Success) => {
-                    let session_id =
-                        request.proof.session_id.expect("test request should set session_id");
-                    Ok(ProveBlockRangeResponse { session_id })
+                    Ok(ProveBlockRangeResponse { session_id: request.proof.session_id })
                 }
             }
         }
@@ -411,7 +402,7 @@ mod tests {
     fn sample_prove_request(session_id: &str) -> ProveBlockRangeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
-                session_id: Some(session_id.to_owned()),
+                session_id: session_id.to_owned(),
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number: 100,
                     number_of_blocks_to_prove: 5,
@@ -536,30 +527,6 @@ mod tests {
 
         assert!(err.is_retryable());
         assert_eq!(api_clone.prove_calls(), total_calls);
-
-        server.shutdown().await;
-    }
-
-    #[tokio::test]
-    async fn requester_does_not_retry_prove_block_range_without_session_id() {
-        let api = MockRequesterApi::new();
-        // Even with retryable outcomes queued, the client must call the server exactly
-        // once when session_id is None to avoid enqueueing duplicate proofs under a
-        // server-generated UUID.
-        api.queue_prove_outcomes([ScriptedOutcome::Retryable, ScriptedOutcome::Retryable]);
-        let api_clone = api.clone();
-        let server = RunningRequesterServer::spawn_with_retry(api, fast_retry_config()).await;
-
-        let mut request = sample_prove_request("ignored");
-        request.proof.session_id = None;
-        let err = server
-            .client
-            .prove_block_range(request)
-            .await
-            .expect_err("retryable error should propagate without retry");
-
-        assert!(err.is_retryable());
-        assert_eq!(api_clone.prove_calls(), 1);
 
         server.shutdown().await;
     }

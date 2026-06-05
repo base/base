@@ -627,8 +627,8 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
         let log = &zk.state.lock().unwrap().prove_block_range_log;
         assert_eq!(log.len(), 1, "exactly one prove_block_range call on initiation");
         assert_eq!(
-            log[0].proof.session_id.as_deref(),
-            Some(expected_session_id.as_str()),
+            log[0].proof.session_id.as_str(),
+            expected_session_id.as_str(),
             "challenger must use game-address/invalid-index session_id on initiation",
         );
     }
@@ -640,12 +640,13 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
         let log = &zk.state.lock().unwrap().prove_block_range_log;
         assert_eq!(log.len(), 2, "retry must invoke prove_block_range a second time");
         assert_eq!(
-            log[1].proof.session_id.as_deref(),
-            Some(expected_session_id.as_str()),
+            log[1].proof.session_id.as_str(),
+            expected_session_id.as_str(),
             "retry must reuse the deterministic session_id so the service can requeue",
         );
         assert_eq!(
-            log[0].proof.session_id, log[1].proof.session_id,
+            log[0].proof.session_id.as_str(),
+            log[1].proof.session_id.as_str(),
             "the deterministic session_id must be stable across retries",
         );
     }

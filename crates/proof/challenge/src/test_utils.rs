@@ -730,8 +730,7 @@ impl ProofRequesterProvider for MockZkProofProvider {
         &self,
         request: ProveBlockRangeRequest,
     ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
-        let session_id =
-            request.proof.session_id.clone().unwrap_or_else(|| self.session_id.clone());
+        let session_id = request.proof.session_id.clone();
         self.state.lock().unwrap().prove_block_range_log.push(request);
         Ok(ProveBlockRangeResponse { session_id })
     }

@@ -447,8 +447,7 @@ impl ProofRequesterProvider for MockProofRequester {
         &self,
         request: ProveBlockRangeRequest,
     ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
-        let session_id =
-            request.proof.session_id.clone().expect("proposer tests should set session_id");
+        let session_id = request.proof.session_id.clone();
         self.requests.lock().unwrap().insert(session_id.clone(), request);
         Ok(ProveBlockRangeResponse { session_id })
     }

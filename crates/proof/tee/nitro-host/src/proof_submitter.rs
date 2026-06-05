@@ -396,7 +396,7 @@ mod tests {
             session_id: request.session_id.clone(),
             status: ProofJobStatus::Succeeded,
             request: ProofRequest {
-                session_id: Some(request.session_id.clone()),
+                session_id: request.session_id.clone(),
                 request: ProofRequestKind::Tee(TeeProofRequest {
                     proof: PrimitiveProofRequest::default(),
                     tee_kind: TeeKind::AwsNitro,

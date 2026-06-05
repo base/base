@@ -11,6 +11,7 @@ mod common;
 
 use base_prover_service_protocol::{GetProofRequest, ProofStatus, ProverRequesterApiClient};
 use common::{ProveBlockRequest, connect, prove_block};
+use uuid::Uuid;
 
 const PROOF_TYPE_COMPRESSED: i32 = 3;
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -28,7 +29,7 @@ async fn get_proof_failed_returns_error_message() {
             number_of_blocks_to_prove: 0,
             sequence_window: None,
             proof_type: PROOF_TYPE_COMPRESSED,
-            session_id: None,
+            session_id: Uuid::new_v4().to_string(),
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,

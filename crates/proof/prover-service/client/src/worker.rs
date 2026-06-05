@@ -491,7 +491,7 @@ mod tests {
 
     fn proof_request(session_id: impl Into<String>) -> ProofRequest {
         ProofRequest {
-            session_id: Some(session_id.into()),
+            session_id: session_id.into(),
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: 10,
                 number_of_blocks_to_prove: 2,
@@ -526,7 +526,7 @@ mod tests {
             .expect("get_next_proof should succeed");
         let claim_job = get_next_response.job.expect("get next response should include a job");
         assert_eq!(claim_job.session_id, "session-for-worker-claim");
-        assert_eq!(claim_job.request.session_id.as_deref(), Some("session-for-worker-claim"));
+        assert_eq!(claim_job.request.session_id, "session-for-worker-claim");
         assert_eq!(claim_job.status, ProofJobStatus::Claimed);
         assert_eq!(claim_job.lock_id.as_deref(), Some("lock-claim"));
         assert_eq!(claim_job.worker_id.as_deref(), Some("worker-claim"));
@@ -540,7 +540,7 @@ mod tests {
         let heartbeat_response =
             provider.heartbeat(heartbeat_request.clone()).await.expect("heartbeat should succeed");
         assert_eq!(heartbeat_response.job.session_id, "session-heartbeat");
-        assert_eq!(heartbeat_response.job.request.session_id.as_deref(), Some("session-heartbeat"));
+        assert_eq!(heartbeat_response.job.request.session_id, "session-heartbeat");
         assert_eq!(heartbeat_response.job.lock_id.as_deref(), Some("lock-heartbeat"));
         assert_eq!(heartbeat_response.job.worker_id.as_deref(), Some("worker-heartbeat"));
 
@@ -555,7 +555,7 @@ mod tests {
             .await
             .expect("submit_proof should succeed");
         assert_eq!(submit_response.job.session_id, "session-submit");
-        assert_eq!(submit_response.job.request.session_id.as_deref(), Some("session-submit"));
+        assert_eq!(submit_response.job.request.session_id, "session-submit");
         assert_eq!(submit_response.job.status, ProofJobStatus::Succeeded);
         assert_eq!(submit_response.job.lock_id.as_deref(), Some("lock-submit"));
         assert_eq!(submit_response.job.worker_id.as_deref(), Some("worker-submit"));

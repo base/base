@@ -12,8 +12,9 @@ const PROOF_TYPE_COMPRESSED: i32 = 3;
 
 #[tokio::test]
 #[ignore = "requires a running prover-service (set PROVER_RPC_ADDR); run with `cargo nextest run --run-ignored all -p base-prover-service --test idempotency`"]
-async fn prove_block_without_session_id_returns_uuid() {
+async fn prove_block_with_session_id_returns_uuid() {
     let client = connect();
+    let session_id = Uuid::new_v4().to_string();
 
     let resp = prove_block(
         &client,
@@ -22,16 +23,16 @@ async fn prove_block_without_session_id_returns_uuid() {
             number_of_blocks_to_prove: 1,
             sequence_window: None,
             proof_type: PROOF_TYPE_COMPRESSED,
-            session_id: None,
+            session_id: session_id.clone(),
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
         },
     )
     .await
-    .expect("ProveBlock should succeed without session_id");
+    .expect("ProveBlock should succeed with session_id");
 
-    Uuid::parse_str(&resp.session_id).expect("session_id should be a valid UUID");
+    assert_eq!(resp.session_id, session_id);
 }
 
 #[tokio::test]
@@ -47,7 +48,7 @@ async fn prove_block_with_session_id_uses_provided_id() {
             number_of_blocks_to_prove: 1,
             sequence_window: None,
             proof_type: PROOF_TYPE_COMPRESSED,
-            session_id: Some(session_id.clone()),
+            session_id: session_id.clone(),
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
@@ -72,7 +73,7 @@ async fn prove_block_duplicate_session_id_is_idempotent() {
             number_of_blocks_to_prove: 1,
             sequence_window: None,
             proof_type: PROOF_TYPE_COMPRESSED,
-            session_id: Some(session_id.clone()),
+            session_id: session_id.clone(),
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
@@ -88,7 +89,7 @@ async fn prove_block_duplicate_session_id_is_idempotent() {
             number_of_blocks_to_prove: 1,
             sequence_window: None,
             proof_type: PROOF_TYPE_COMPRESSED,
-            session_id: Some(session_id.clone()),
+            session_id: session_id.clone(),
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
@@ -105,7 +106,7 @@ async fn prove_block_duplicate_session_id_is_idempotent() {
 
 #[tokio::test]
 #[ignore = "requires a running prover-service (set PROVER_RPC_ADDR); run with `cargo nextest run --run-ignored all -p base-prover-service --test idempotency`"]
-async fn prove_block_invalid_session_id_returns_error() {
+async fn prove_block_empty_session_id_returns_error() {
     let client = connect();
 
     let err = prove_block(
@@ -115,14 +116,14 @@ async fn prove_block_invalid_session_id_returns_error() {
             number_of_blocks_to_prove: 1,
             sequence_window: None,
             proof_type: PROOF_TYPE_COMPRESSED,
-            session_id: Some("not-a-uuid".to_string()),
+            session_id: String::new(),
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
         },
     )
     .await
-    .expect_err("should fail with invalid session_id");
+    .expect_err("should fail with empty session_id");
 
     assert!(err.to_string().contains("session_id"), "error should mention session_id, got: {err}");
 }
@@ -139,7 +140,7 @@ async fn prove_block_invalid_proof_type_returns_error() {
             number_of_blocks_to_prove: 1,
             sequence_window: None,
             proof_type: 99,
-            session_id: None,
+            session_id: Uuid::new_v4().to_string(),
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,

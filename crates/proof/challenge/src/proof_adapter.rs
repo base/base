@@ -56,10 +56,7 @@ impl ChallengerProofAdapter {
     ) -> ProveBlockRangeRequest {
         let session_id = Self::snark_groth16_session_id(game_address, invalid_index);
         ProveBlockRangeRequest {
-            proof: ProofRequest {
-                session_id: Some(session_id),
-                request: ProofRequestKind::SnarkGroth16(request),
-            },
+            proof: ProofRequest { session_id, request: ProofRequestKind::SnarkGroth16(request) },
         }
     }
 
@@ -73,7 +70,7 @@ impl ChallengerProofAdapter {
         let session_id = Self::tee_session_id(game_address, invalid_index, tee_kind);
         ProveBlockRangeRequest {
             proof: ProofRequest {
-                session_id: Some(session_id),
+                session_id,
                 request: ProofRequestKind::Tee(TeeProofRequest { proof: request, tee_kind }),
             },
         }
@@ -213,7 +210,7 @@ mod tests {
             request,
         );
 
-        assert_eq!(wrapped.proof.session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(wrapped.proof.session_id, session_id);
         match wrapped.proof.request {
             ProofRequestKind::SnarkGroth16(snark) => {
                 assert_eq!(snark.prover_address, prover_address);
@@ -244,7 +241,7 @@ mod tests {
             TeeKind::AwsNitro,
         );
 
-        assert_eq!(wrapped.proof.session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(wrapped.proof.session_id, session_id);
         match wrapped.proof.request {
             ProofRequestKind::Tee(tee) => {
                 assert_eq!(tee.proof, request);

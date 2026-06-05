@@ -199,7 +199,7 @@ impl ProposerProofAdapter {
         let session_id = Self::tee_session_id(&request, tee_kind);
         ProveBlockRangeRequest {
             proof: ProofRequest {
-                session_id: Some(session_id),
+                session_id,
                 request: ProofRequestKind::Tee(TeeProofRequest { proof: request, tee_kind }),
             },
         }
@@ -273,8 +273,7 @@ mod tests {
             &self,
             request: ProveBlockRangeRequest,
         ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
-            let session_id =
-                request.proof.session_id.clone().expect("request should set session_id");
+            let session_id = request.proof.session_id.clone();
             self.prove_requests.lock().unwrap().push(request);
             Ok(ProveBlockRangeResponse { session_id })
         }
@@ -370,7 +369,7 @@ mod tests {
         let wrapped =
             ProposerProofAdapter::tee_prove_block_range_request(request.clone(), TeeKind::AwsNitro);
 
-        assert_eq!(wrapped.proof.session_id.as_deref(), Some(expected_session_id.as_str()));
+        assert_eq!(wrapped.proof.session_id, expected_session_id);
         match wrapped.proof.request {
             ProofRequestKind::Tee(tee) => {
                 assert_eq!(tee.proof, request);

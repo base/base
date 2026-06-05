@@ -620,7 +620,7 @@ mod tests {
         ProofJob {
             session_id: session_id.clone(),
             status,
-            request: ProofRequest { session_id: Some(session_id), request },
+            request: ProofRequest { session_id, request },
             attempt: 1,
             lock_id,
             worker_id,

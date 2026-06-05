@@ -1460,10 +1460,8 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
     fn try_from(mut req: CreateProofRequest) -> std::result::Result<Self, Self::Error> {
         req.validate()?;
 
-        let (id, session_id) = canonical_request_ids(
-            req.session_id.as_deref().or(req.request_payload.session_id.as_deref()),
-        )?;
-        req.request_payload.session_id = Some(session_id.clone());
+        let (id, session_id) = canonical_request_ids(&req.session_id)?;
+        req.request_payload.session_id = session_id.clone();
 
         let start_block_number = i64::try_from(req.start_block_number).map_err(|_| {
             CreateProofRequestValidationError::ValueOutOfRange { field: "start_block_number" }
@@ -1513,19 +1511,14 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
 }
 
 fn canonical_request_ids(
-    session_id: Option<&str>,
+    session_id: &str,
 ) -> std::result::Result<(Uuid, String), CreateProofRequestValidationError> {
-    match session_id {
-        Some("") => Err(CreateProofRequestValidationError::EmptySessionId),
-        Some(session_id) => Uuid::parse_str(session_id).map_or_else(
-            |_| Ok((Uuid::new_v4(), session_id.to_owned())),
-            |id| Ok((id, id.to_string())),
-        ),
-        None => {
-            let id = Uuid::new_v4();
-            Ok((id, id.to_string()))
-        }
+    if session_id.is_empty() {
+        return Err(CreateProofRequestValidationError::EmptySessionId);
     }
+
+    Uuid::parse_str(session_id)
+        .map_or_else(|_| Ok((Uuid::new_v4(), session_id.to_owned())), |id| Ok((id, id.to_string())))
 }
 
 const fn validate_backend_proof_type(
@@ -1694,6 +1687,14 @@ fn strip_null_object_fields(value: &mut serde_json::Value) {
     }
 }
 
+fn ensure_protocol_session_id(value: &mut serde_json::Value, session_id: &str) {
+    if let serde_json::Value::Object(map) = value
+        && !map.get("session_id").is_some_and(|value| !value.is_null())
+    {
+        map.insert("session_id".to_owned(), serde_json::Value::String(session_id.to_owned()));
+    }
+}
+
 /// Helper function to convert a database row to `ProofRequest`
 fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
     let id = row.get("id");
@@ -1730,7 +1731,7 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         .transpose()?
         .or_else(|| fallback_zk_vm_for_request(api_proof_type));
     let tee_kind = row.get::<Option<&str>, _>("tee_kind").map(parse_tee_kind).transpose()?;
-    let request_payload =
+    let mut request_payload =
         row.get::<Option<serde_json::Value>, _>("request_payload").unwrap_or_else(|| {
             ProtocolRequestPayloadParams {
                 session_id: &session_id,
@@ -1745,6 +1746,7 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
             }
             .build()
         });
+    ensure_protocol_session_id(&mut request_payload, &session_id);
 
     Ok(ProofRequest {
         id,
@@ -2007,7 +2009,7 @@ mod tests {
     fn prepared_request_uses_uuid_session_id_and_builds_protocol_payload() {
         let session_id = Uuid::new_v4();
         let create = CreateProofRequest::new(ProtocolProofRequest {
-            session_id: Some(session_id.to_string()),
+            session_id: session_id.to_string(),
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: 100,
                 number_of_blocks_to_prove: 5,
@@ -2028,7 +2030,7 @@ mod tests {
         let protocol_request: ProtocolProofRequest =
             serde_json::from_value(prepared.request_payload).expect("payload should deserialize");
         let session_id = session_id.to_string();
-        assert_eq!(protocol_request.session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(protocol_request.session_id, session_id);
         let ProofRequestKind::Compressed(zk_request) = protocol_request.request else {
             panic!("expected compressed protocol request");
         };
@@ -2042,7 +2044,7 @@ mod tests {
     #[test]
     fn prepared_request_omits_absent_optional_protocol_payload_fields() {
         let create = CreateProofRequest::new(ProtocolProofRequest {
-            session_id: Some(Uuid::new_v4().to_string()),
+            session_id: Uuid::new_v4().to_string(),
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: 100,
                 number_of_blocks_to_prove: 5,
@@ -2091,7 +2093,7 @@ mod tests {
         let protocol_request: ProtocolProofRequest =
             serde_json::from_value(payload).expect("fallback TEE payload should deserialize");
 
-        assert_eq!(protocol_request.session_id.as_deref(), Some("tee-session"));
+        assert_eq!(protocol_request.session_id, "tee-session");
         let ProofRequestKind::Tee(request) = protocol_request.request else {
             panic!("expected TEE protocol request");
         };
@@ -2103,7 +2105,7 @@ mod tests {
     #[test]
     fn prepared_request_represents_tee_protocol_request() {
         let create = CreateProofRequest::new(ProtocolProofRequest {
-            session_id: Some("tee-session".to_owned()),
+            session_id: "tee-session".to_owned(),
             request: ProofRequestKind::Tee(TeeProofRequest {
                 proof: Default::default(),
                 tee_kind: ProtocolTeeKind::AwsNitro,
@@ -2121,14 +2123,14 @@ mod tests {
 
         let protocol_request: ProtocolProofRequest =
             serde_json::from_value(prepared.request_payload).expect("payload should deserialize");
-        assert_eq!(protocol_request.session_id.as_deref(), Some("tee-session"));
+        assert_eq!(protocol_request.session_id, "tee-session");
         assert!(matches!(protocol_request.request, ProofRequestKind::Tee(_)));
     }
 
     #[test]
     fn prepared_request_rejects_unsupported_protocol_combination() {
         let mut create = CreateProofRequest::new(ProtocolProofRequest {
-            session_id: Some("bad-tee-session".to_owned()),
+            session_id: "bad-tee-session".to_owned(),
             request: ProofRequestKind::Tee(TeeProofRequest {
                 proof: Default::default(),
                 tee_kind: ProtocolTeeKind::AwsNitro,
@@ -2146,7 +2148,7 @@ mod tests {
     #[test]
     fn prepared_request_rejects_database_range_overflow() {
         let create = CreateProofRequest::new(ProtocolProofRequest {
-            session_id: Some(Uuid::new_v4().to_string()),
+            session_id: Uuid::new_v4().to_string(),
             request: ProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: (i64::MAX as u64) + 1,
                 number_of_blocks_to_prove: 5,

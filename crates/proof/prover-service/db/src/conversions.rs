@@ -215,7 +215,7 @@ mod tests {
 
     fn compressed_payload(session_id: &str) -> serde_json::Value {
         serde_json::to_value(ProtocolProofRequest {
-            session_id: Some(session_id.to_owned()),
+            session_id: session_id.to_owned(),
             request: ProofRequestKind::Compressed(base_prover_service_protocol::ZkProofRequest {
                 start_block_number: 10,
                 number_of_blocks_to_prove: 2,

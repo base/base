@@ -56,7 +56,7 @@ fn compressed_request() -> CreateProofRequest {
 
 fn compressed_request_at(start_block_number: u64) -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
-        session_id: None,
+        session_id: Uuid::new_v4().to_string(),
         request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
             start_block_number,
             number_of_blocks_to_prove: 5,
@@ -71,7 +71,7 @@ fn compressed_request_at(start_block_number: u64) -> CreateProofRequest {
 
 fn snark_request() -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
-        session_id: None,
+        session_id: Uuid::new_v4().to_string(),
         request: ProtocolProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
             proof: ZkProofRequest {
                 start_block_number: 200,
@@ -95,13 +95,19 @@ fn snark_request() -> CreateProofRequest {
 
 fn tee_request() -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
-        session_id: None,
+        session_id: Uuid::new_v4().to_string(),
         request: ProtocolProofRequestKind::Tee(TeeProofRequest {
             proof: Default::default(),
             tee_kind: ProtocolTeeKind::AwsNitro,
         }),
     })
     .expect("TEE request should validate")
+}
+
+fn set_request_session_id(req: &mut CreateProofRequest, session_id: impl Into<String>) {
+    let session_id = session_id.into();
+    req.session_id = session_id.clone();
+    req.request_payload.session_id = session_id;
 }
 
 /// Create a request in RUNNING state with an associated proof session.
@@ -183,7 +189,7 @@ async fn test_create_with_session_id() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
+    set_request_session_id(&mut req, explicit_id.to_string());
 
     let id = repo.create(req).await.unwrap();
     assert_eq!(id, explicit_id);
@@ -201,7 +207,7 @@ async fn test_create_with_uppercase_session_id_is_canonicalized() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string().to_uppercase());
+    set_request_session_id(&mut req, explicit_id.to_string().to_uppercase());
 
     let id = repo.create(req).await.unwrap();
     assert_eq!(id, explicit_id);
@@ -223,7 +229,7 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
+    set_request_session_id(&mut req, explicit_id.to_string());
 
     sqlx::query(
         r#"
@@ -940,7 +946,7 @@ async fn test_create_for_worker_queue_creates_claimable_job() {
     drain_claimable_compressed_jobs(&repo).await;
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
+    set_request_session_id(&mut req, explicit_id.to_string());
 
     let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
     assert!(matches!(outcome, CreateProofRequestOutcome::Created(id) if id == explicit_id));
@@ -962,7 +968,7 @@ async fn test_create_for_worker_queue_accepts_tee_requests() {
     drain_claimable_tee_jobs(&repo).await;
     let explicit_id = format!("tee-worker-queue-{}", Uuid::new_v4());
     let mut req = tee_request();
-    req.session_id = Some(explicit_id.clone());
+    set_request_session_id(&mut req, explicit_id.clone());
 
     let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
     let id = outcome.id();
@@ -989,7 +995,7 @@ async fn test_create_for_worker_queue_idempotent() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
+    set_request_session_id(&mut req, explicit_id.to_string());
 
     let first = repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
     let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
@@ -1006,7 +1012,7 @@ async fn test_create_for_worker_queue_requeues_failed_row() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
+    set_request_session_id(&mut req, explicit_id.to_string());
 
     let first = repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
@@ -1440,7 +1446,7 @@ async fn test_heartbeat_proof_job_guards_current_expired_and_reclaimed_locks() {
     drain_claimable_tee_jobs(&repo).await;
     let (explicit_id, uppercase_session_id) = uppercase_uuid_session_id();
     let mut request = tee_request();
-    request.session_id = Some(uppercase_session_id.clone());
+    set_request_session_id(&mut request, uppercase_session_id.clone());
     let id = repo.create(request).await.unwrap();
     assert_eq!(id, explicit_id);
     let first = repo
@@ -1520,7 +1526,7 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
     drain_claimable_compressed_jobs(&repo).await;
     let (explicit_id, uppercase_session_id) = uppercase_uuid_session_id();
     let mut request = compressed_request();
-    request.session_id = Some(uppercase_session_id.clone());
+    set_request_session_id(&mut request, uppercase_session_id.clone());
     let id = repo.create(request).await.unwrap();
     assert_eq!(id, explicit_id);
     let claimed = repo

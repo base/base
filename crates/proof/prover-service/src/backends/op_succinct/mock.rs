@@ -168,7 +168,7 @@ impl ProvingBackend for MockBackend {
                                 ProofType::OpSuccinctSp1ClusterCompressed => 3,
                                 ProofType::OpSuccinctSp1ClusterSnarkGroth16 => 4,
                             },
-                            session_id: None,
+                            session_id: proof_request.session_id.clone(),
                             prover_address: proof_request.prover_address.clone(),
                             l1_head: proof_request.l1_head.clone(),
                             intermediate_root_interval: proof_request
@@ -319,7 +319,7 @@ mod tests {
             number_of_blocks_to_prove: 5,
             sequence_window: Some(50),
             proof_type: 3,
-            session_id: None,
+            session_id: "test-session".to_owned(),
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,

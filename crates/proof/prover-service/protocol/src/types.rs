@@ -71,16 +71,15 @@ pub struct ProveBlockRangeRequest {
 /// Response returned after a prove-block-range request is accepted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProveBlockRangeResponse {
-    /// Server-assigned or client-supplied session identifier.
+    /// Accepted client-supplied session identifier.
     pub session_id: String,
 }
 
 /// Submitted proof request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProofRequest {
-    /// Optional client-provided idempotency key.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
+    /// Client-provided idempotency key.
+    pub session_id: String,
     /// Proof request details.
     pub request: ProofRequestKind,
 }
@@ -350,7 +349,7 @@ mod tests {
     fn proof_request_serializes_as_json_rpc_payload() {
         let request = ProveBlockRangeRequest {
             proof: ProofRequest {
-                session_id: Some("proof-session".to_owned()),
+                session_id: "proof-session".to_owned(),
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number: 10,
                     number_of_blocks_to_prove: 20,
@@ -382,6 +381,22 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn proof_request_requires_session_id() {
+        let result = serde_json::from_value::<ProofRequest>(json!({
+            "request": {
+                "proof_type": "compressed",
+                "payload": {
+                    "start_block_number": 10,
+                    "number_of_blocks_to_prove": 20,
+                    "zk_vm": "sp1"
+                }
+            }
+        }));
+
+        assert!(result.is_err());
     }
 
     #[test]

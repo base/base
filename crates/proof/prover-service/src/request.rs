@@ -13,8 +13,8 @@ pub struct ProveBlockRequest {
     pub sequence_window: Option<u64>,
     /// Internal proof type discriminant.
     pub proof_type: i32,
-    /// Optional caller-provided session ID.
-    pub session_id: Option<String>,
+    /// Caller-provided session ID.
+    pub session_id: String,
     /// Ethereum address of the on-chain prover for Groth16 proofs.
     pub prover_address: Option<String>,
     /// Optional explicit L1 head hash.
