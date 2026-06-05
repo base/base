@@ -1803,3 +1803,240 @@ async fn test_poll_running_timeout_triggers_retry() {
     assert_eq!(entry.retry_count, 1);
     assert!(matches!(entry.phase, ProofPhase::NeedsRetry));
 }
+
+// ── Metric emission tests ───────────────────────────────────────────────────
+//
+// These tests assert that the new C5 proof-lifecycle metrics
+// (`proof_session_failures_total{reason}` and `proof_retries_exhausted_total`)
+// are emitted at the correct points. They use the `metrics-util`
+// `DebuggingRecorder` pattern: each test installs its own local recorder and
+// inspects the resulting snapshot.
+
+#[cfg(feature = "metrics")]
+mod metrics_emission {
+    use base_challenger::ChallengerMetrics;
+    use metrics_util::{
+        CompositeKey, MetricKind,
+        debugging::{DebugValue, DebuggingRecorder, Snapshotter},
+    };
+
+    use super::*;
+
+    type SnapEntry =
+        (CompositeKey, Option<metrics::Unit>, Option<metrics::SharedString>, DebugValue);
+
+    /// Installs a local `DebuggingRecorder` for the closure and snapshots its
+    /// metrics afterward.
+    fn with_recorder<F>(f: F)
+    where
+        F: FnOnce(Snapshotter),
+    {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || f(snapshotter));
+    }
+
+    /// Returns the value of `proof_session_failures_total` whose `reason`
+    /// label matches `expected_reason`, if present in the snapshot.
+    fn find_failure_counter_with_reason(snap: &[SnapEntry], expected_reason: &str) -> Option<u64> {
+        snap.iter().find_map(|(ck, _, _, v)| {
+            if ck.kind() != MetricKind::Counter
+                || ck.key().name() != "base_challenger.proof_session_failures_total"
+            {
+                return None;
+            }
+            let reason_match =
+                ck.key().labels().any(|l| l.key() == "reason" && l.value() == expected_reason);
+            if !reason_match {
+                return None;
+            }
+            match v {
+                DebugValue::Counter(n) => Some(*n),
+                _ => None,
+            }
+        })
+    }
+
+    /// Returns the value of a bare counter by name, if present.
+    fn find_counter(snap: &[SnapEntry], name: &str) -> Option<u64> {
+        snap.iter().find_map(|(ck, _, _, v)| {
+            if ck.kind() != MetricKind::Counter || ck.key().name() != name {
+                return None;
+            }
+            match v {
+                DebugValue::Counter(n) => Some(*n),
+                _ => None,
+            }
+        })
+    }
+
+    #[test]
+    fn test_poll_timeout_emits_failure_metric() {
+        with_recorder(|snap| {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+
+            rt.block_on(async {
+                let zk = Arc::new(MockZkProofProvider {
+                    session_id: "stuck-session".to_string(),
+                    state: Mutex::new(MockZkProofState {
+                        proof_status: ProofStatus::Running,
+                        ..Default::default()
+                    }),
+                });
+
+                let mut proofs = PendingProofs::new();
+                proofs.insert(
+                    addr(0),
+                    PendingProof::awaiting(
+                        "stuck-session".to_string(),
+                        0,
+                        B256::ZERO,
+                        minimal_prove_request(),
+                        DisputeIntent::Challenge,
+                    ),
+                );
+
+                proofs.poll(addr(0), &*zk, Duration::ZERO).await.unwrap();
+            });
+
+            let snapshot = snap.snapshot().into_vec();
+            assert_eq!(
+                find_failure_counter_with_reason(
+                    &snapshot,
+                    ChallengerMetrics::PROOF_FAILURE_TIMEOUT,
+                ),
+                Some(1),
+                "timeout path must increment proof_session_failures_total{{reason=timeout}}",
+            );
+        });
+    }
+
+    #[test]
+    fn test_poll_failed_status_emits_failure_metric() {
+        with_recorder(|snap| {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+
+            rt.block_on(async {
+                let zk = Arc::new(MockZkProofProvider {
+                    session_id: "failed-session".to_string(),
+                    state: Mutex::new(MockZkProofState {
+                        proof_status: ProofStatus::Failed,
+                        ..Default::default()
+                    }),
+                });
+
+                let mut proofs = PendingProofs::new();
+                proofs.insert(
+                    addr(0),
+                    PendingProof::awaiting(
+                        "failed-session".to_string(),
+                        0,
+                        B256::ZERO,
+                        minimal_prove_request(),
+                        DisputeIntent::Challenge,
+                    ),
+                );
+
+                proofs.poll(addr(0), &*zk, Duration::from_secs(3600)).await.unwrap();
+            });
+
+            let snapshot = snap.snapshot().into_vec();
+            assert_eq!(
+                find_failure_counter_with_reason(
+                    &snapshot,
+                    ChallengerMetrics::PROOF_FAILURE_FAILED,
+                ),
+                Some(1),
+                "explicit Failed status must increment \
+                 proof_session_failures_total{{reason=failed}}",
+            );
+        });
+    }
+
+    #[test]
+    fn test_poll_succeeded_without_result_emits_malformed_metric() {
+        with_recorder(|snap| {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+
+            rt.block_on(async {
+                let zk = Arc::new(MockZkProofProvider {
+                    session_id: "malformed-session".to_string(),
+                    state: Mutex::new(MockZkProofState {
+                        proof_status: ProofStatus::Succeeded,
+                        omit_result_on_success: true,
+                        ..Default::default()
+                    }),
+                });
+
+                let mut proofs = PendingProofs::new();
+                proofs.insert(
+                    addr(0),
+                    PendingProof::awaiting(
+                        "malformed-session".to_string(),
+                        0,
+                        B256::ZERO,
+                        minimal_prove_request(),
+                        DisputeIntent::Challenge,
+                    ),
+                );
+
+                proofs.poll(addr(0), &*zk, Duration::from_secs(3600)).await.unwrap();
+            });
+
+            let snapshot = snap.snapshot().into_vec();
+            assert_eq!(
+                find_failure_counter_with_reason(
+                    &snapshot,
+                    ChallengerMetrics::PROOF_FAILURE_MALFORMED,
+                ),
+                Some(1),
+                "Succeeded with no result must increment \
+                 proof_session_failures_total{{reason=malformed}}",
+            );
+        });
+    }
+
+    #[test]
+    fn test_step_proof_exhaustion_emits_metric() {
+        with_recorder(|snap| {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+
+            rt.block_on(async {
+                let (l2, factory, verifier) = invalid_game_mocks();
+                let zk = failed_zk_prover("fail-forever");
+                let tx_manager = default_tx_manager();
+                let mut driver = test_driver(factory, Arc::clone(&verifier), l2, zk, tx_manager);
+
+                // Step 1: initiate the proof.
+                driver.step().await.unwrap();
+
+                // Force the entry past the retry budget so the next step exhausts.
+                // The game must remain `InProgress` with unresolved prover slots
+                // — otherwise `poll_or_submit` short-circuits and drops the
+                // entry before reaching `handle_proof_retry` (where the metric
+                // is emitted). The same `step()` call re-discovers the
+                // still-`InProgress` game via the scanner and re-creates a
+                // fresh pending entry with `retry_count = 0`, so we assert
+                // exactly on the metric and not on entry presence.
+                let max_retries =
+                    Driver::<MockL2Provider, MockZkProofProvider, MockTxManager>::MAX_PROOF_RETRIES;
+                let entry = driver
+                    .pending_proofs
+                    .get_mut(&addr(0))
+                    .expect("entry should exist after initiation");
+                entry.retry_count = max_retries + 1;
+                entry.phase = ProofPhase::NeedsRetry;
+                let _ = &verifier; // game already InProgress from invalid_game_mocks
+
+                driver.step().await.unwrap();
+            });
+
+            let snapshot = snap.snapshot().into_vec();
+            assert_eq!(
+                find_counter(&snapshot, "base_challenger.proof_retries_exhausted_total"),
+                Some(1),
+                "retry exhaustion must increment proof_retries_exhausted_total",
+            );
+        });
+    }
+}

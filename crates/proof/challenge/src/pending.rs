@@ -17,7 +17,7 @@ use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{GetProofRequest, ProofStatus, SnarkGroth16ProofRequest};
 use tracing::warn;
 
-use crate::ChallengerProofAdapter;
+use crate::{ChallengerMetrics, ChallengerProofAdapter};
 
 /// The kind of proof being generated.
 #[derive(Debug, Clone)]
@@ -260,6 +260,10 @@ impl PendingProofs {
                 limit = ?max_proof_duration,
                 "proof session timed out, will retry"
             );
+            ChallengerMetrics::proof_session_failures_total(
+                ChallengerMetrics::PROOF_FAILURE_TIMEOUT,
+            )
+            .increment(1);
             pending.retry_count += 1;
             pending.phase = ProofPhase::NeedsRetry;
             return Ok(Some(ProofUpdate::NeedsRetry));
@@ -279,6 +283,10 @@ impl PendingProofs {
             ProofStatus::Succeeded => {
                 let Some(result) = response.result else {
                     warn!(game = %game, "proof succeeded without result, treating as retryable failure");
+                    ChallengerMetrics::proof_session_failures_total(
+                        ChallengerMetrics::PROOF_FAILURE_MALFORMED,
+                    )
+                    .increment(1);
                     pending.retry_count += 1;
                     pending.phase = ProofPhase::NeedsRetry;
                     return Ok(Some(ProofUpdate::NeedsRetry));
@@ -299,6 +307,10 @@ impl PendingProofs {
                                     error = %e,
                                     "TEE proof validation failed, falling back to ZK"
                                 );
+                                ChallengerMetrics::proof_session_failures_total(
+                                    ChallengerMetrics::PROOF_FAILURE_TEE_VALIDATION,
+                                )
+                                .increment(1);
                                 pending.retry_count += 1;
                                 pending.phase = ProofPhase::NeedsRetry;
                                 return Ok(Some(ProofUpdate::NeedsRetry));
@@ -314,6 +326,10 @@ impl PendingProofs {
             }
             ProofStatus::Failed => {
                 warn!(game = %game, error_message = ?response.error_message, "proof job failed");
+                ChallengerMetrics::proof_session_failures_total(
+                    ChallengerMetrics::PROOF_FAILURE_FAILED,
+                )
+                .increment(1);
                 pending.retry_count += 1;
                 pending.phase = ProofPhase::NeedsRetry;
                 ProofUpdate::NeedsRetry

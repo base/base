@@ -839,6 +839,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                 retry_count = retry_count,
                 "proof retries exhausted, dropping entry"
             );
+            ChallengerMetrics::proof_retries_exhausted_total().increment(1);
             self.pending_proofs.remove(&game_address);
             return Ok(());
         }

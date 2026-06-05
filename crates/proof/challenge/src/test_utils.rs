@@ -695,6 +695,10 @@ pub struct MockZkProofState {
     pub proof: Vec<u8>,
     /// Optional full prover-service result returned when status is [`ProofStatus::Succeeded`].
     pub result: Option<ApiProofResult>,
+    /// When `true`, [`get_proof`](ProofRequesterProvider::get_proof) returns `None` for
+    /// `result` even when `proof_status` is [`ProofStatus::Succeeded`]. Used to simulate
+    /// the "succeeded without result" malformed-response path.
+    pub omit_result_on_success: bool,
     /// Error message returned when status is `Failed`.
     pub error_message: Option<String>,
     /// Every [`ProveBlockRangeRequest`] received by `prove_block_range`, in call order.
@@ -707,6 +711,7 @@ impl Default for MockZkProofState {
             proof_status: ProofStatus::Queued,
             proof: Vec::new(),
             result: None,
+            omit_result_on_success: false,
             error_message: None,
             prove_block_range_log: Vec::new(),
         }
@@ -737,11 +742,15 @@ impl ProofRequesterProvider for MockZkProofProvider {
     ) -> Result<GetProofResponse, ProverServiceClientError> {
         let state = self.state.lock().unwrap().clone();
         let result = if state.proof_status == ProofStatus::Succeeded {
-            state.result.or_else(|| {
-                Some(ApiProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                    proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: state.proof.into() },
-                }))
-            })
+            if state.omit_result_on_success {
+                None
+            } else {
+                state.result.or_else(|| {
+                    Some(ApiProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+                        proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: state.proof.into() },
+                    }))
+                })
+            }
         } else {
             None
         };
