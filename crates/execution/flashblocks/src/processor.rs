@@ -2,7 +2,7 @@
 
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex as StdMutex},
+    sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard},
     time::Instant,
 };
 
@@ -76,13 +76,16 @@ where
         + Clone
         + 'static,
 {
+    fn lock_live_state(&self) -> StdMutexGuard<'_, Option<LivePendingState>> {
+        self.live_state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn clear_live_state(&self) {
-        *self.live_state.lock().expect("live state mutex poisoned") = None;
+        *self.lock_live_state() = None;
     }
 
     fn set_live_state(&self, db: PendingExecutionDb, state_overrides: StateOverride) {
-        *self.live_state.lock().expect("live state mutex poisoned") =
-            Some(LivePendingState { db, state_overrides });
+        *self.lock_live_state() = Some(LivePendingState { db, state_overrides });
     }
 
     fn publish_pending_blocks(
@@ -407,17 +410,8 @@ where
         let latest_block_base = prev_pending_blocks.latest_block_base().clone();
         let latest_block_l1_block_info = prev_pending_blocks.latest_block_l1_block_info().clone();
         let latest_flashblock_tx_start = prev_pending_blocks.pending_transaction_count();
-        let transactions: Vec<BaseTxEnvelope> = flashblock
-            .diff
-            .transactions
-            .iter()
-            .map(|tx| BaseTxEnvelope::decode_2718_exact(tx.as_ref()))
-            .collect::<std::result::Result<_, _>>()
-            .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?;
-        let latest_block_transaction_count =
-            prev_pending_blocks.latest_block_transaction_count() + transactions.len();
 
-        let mut live_state = self.live_state.lock().expect("live state mutex poisoned");
+        let mut live_state = self.lock_live_state();
         let Some(LivePendingState { db, state_overrides }) = live_state.take() else {
             let mut flashblocks = prev_pending_blocks.get_flashblocks();
             flashblocks.push(flashblock.clone());
@@ -438,8 +432,31 @@ where
         let evm = evm_config.evm_with_env(db, evm_env);
 
         let previous_block_transaction_count = prev_pending_blocks.latest_block_transaction_count();
+        let pending_block = Block {
+            header: Header {
+                number: latest_block_base.block_number,
+                timestamp: latest_block_base.timestamp,
+                gas_limit: latest_block_base.gas_limit,
+                base_fee_per_gas: Some(latest_block_base.base_fee_per_gas.saturating_to()),
+                ..Default::default()
+            },
+            body: BlockBody {
+                transactions: flashblock
+                    .diff
+                    .transactions
+                    .iter()
+                    .map(|tx| BaseTxEnvelope::decode_2718_exact(tx.as_ref()))
+                    .collect::<std::result::Result<_, _>>()
+                    .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?,
+                ..Default::default()
+            },
+        };
+        let latest_block_transaction_count = prev_pending_blocks.latest_block_transaction_count()
+            + pending_block.body.transactions.len();
         let recovery_start = Instant::now();
-        let txs_with_senders: Vec<(BaseTxEnvelope, Address)> = transactions
+        let txs_with_senders: Vec<(BaseTxEnvelope, Address)> = pending_block
+            .body
+            .transactions
             .par_iter()
             .cloned()
             .map(|tx| -> Result<(BaseTxEnvelope, Address)> {
@@ -453,17 +470,6 @@ where
         let mut pending_blocks_builder = PendingBlocksBuilder::from_previous(prev_pending_blocks);
         pending_blocks_builder.with_flashblocks([flashblock.clone()]);
         pending_blocks_builder.replace_latest_header(latest_block_header);
-
-        let pending_block = Block {
-            header: Header {
-                number: latest_block_base.block_number,
-                timestamp: latest_block_base.timestamp,
-                gas_limit: latest_block_base.gas_limit,
-                base_fee_per_gas: Some(latest_block_base.base_fee_per_gas.saturating_to()),
-                ..Default::default()
-            },
-            body: BlockBody { transactions, ..Default::default() },
-        };
 
         let mut pending_state_builder = PendingStateBuilder::new(
             self.client.chain_spec(),
@@ -536,15 +542,7 @@ where
             return Err(StateProcessorError::MissingFirstFlashblock);
         };
 
-        let transactions: Vec<BaseTxEnvelope> = flashblock
-            .diff
-            .transactions
-            .iter()
-            .map(|tx| BaseTxEnvelope::decode_2718_exact(tx.as_ref()))
-            .collect::<std::result::Result<_, _>>()
-            .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?;
-
-        let mut live_state = self.live_state.lock().expect("live state mutex poisoned");
+        let mut live_state = self.lock_live_state();
         let Some(LivePendingState { db, state_overrides }) = live_state.take() else {
             let mut flashblocks = prev_pending_blocks.get_flashblocks();
             flashblocks.push(flashblock.clone());
@@ -554,6 +552,7 @@ where
 
         let previous_header = prev_pending_blocks.latest_header();
         let current_block = BlockAssembler::assemble(std::slice::from_ref(flashblock))?;
+        let l1_block_info = current_block.l1_block_info()?;
         let pending_block = Block {
             header: Header {
                 number: base.block_number,
@@ -562,10 +561,8 @@ where
                 base_fee_per_gas: Some(base.base_fee_per_gas.saturating_to()),
                 ..Default::default()
             },
-            body: BlockBody { transactions: transactions.clone(), ..Default::default() },
+            body: current_block.block.body.clone(),
         };
-        let l1_block_info = base_execution_evm::extract_l1_info(&pending_block.body)
-            .map_err(|e| ExecutionError::L1BlockInfo(e.to_string()))?;
 
         let evm_config = BaseEvmConfig::base(self.client.chain_spec());
         let block_env_attributes = BaseNextBlockEnvAttributes {
@@ -582,7 +579,9 @@ where
         let evm = evm_config.evm_with_env(db, evm_env);
 
         let recovery_start = Instant::now();
-        let txs_with_senders: Vec<(BaseTxEnvelope, Address)> = transactions
+        let txs_with_senders: Vec<(BaseTxEnvelope, Address)> = pending_block
+            .body
+            .transactions
             .par_iter()
             .cloned()
             .map(|tx| -> Result<(BaseTxEnvelope, Address)> {

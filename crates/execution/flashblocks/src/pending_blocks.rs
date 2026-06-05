@@ -110,8 +110,7 @@ impl PendingBlocksBuilder {
         let transaction_results = pending_blocks.transaction_results.clone();
         let execution_times = pending_blocks.execution_times.clone();
         let state_root_times = pending_blocks.state_root_times.clone();
-        let next_position_per_block =
-            pending_blocks.next_position_per_block().collect::<StdHashMap<_, _>>();
+        let next_position_per_block = pending_blocks.next_position_per_block.clone();
         let bundle_state = Arc::clone(&pending_blocks.bundle_state);
 
         let state_overrides = pending_blocks.state_overrides.clone();
@@ -365,6 +364,7 @@ impl PendingBlocksBuilder {
             transaction_receipts: self.transaction_receipts,
             transactions_by_hash: self.transactions_by_hash,
             transaction_position: self.transaction_position,
+            next_position_per_block: self.next_position_per_block,
             transaction_state: self.transaction_state,
             transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
@@ -396,6 +396,7 @@ pub struct PendingBlocks {
     transaction_receipts: HashMap<B256, BaseTransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
     transaction_position: HashMap<B256, (BlockNumber, usize)>,
+    next_position_per_block: StdHashMap<BlockNumber, usize>,
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
@@ -492,17 +493,6 @@ impl PendingBlocks {
     #[inline]
     pub fn latest_header(&self) -> Sealed<Header> {
         self.latest_header.clone()
-    }
-
-    fn next_position_per_block(&self) -> impl Iterator<Item = (BlockNumber, usize)> + '_ {
-        self.transaction_position
-            .values()
-            .fold(StdHashMap::new(), |mut acc, (block_number, pos)| {
-                let next = acc.entry(*block_number).or_insert(0);
-                *next = (*next).max(*pos + 1);
-                acc
-            })
-            .into_iter()
     }
 
     /// Returns the parent hash of the earliest pending block.
@@ -1113,6 +1103,31 @@ mod tests {
             next_pending_blocks.get_bundle_state().account(&sender).is_some(),
             "bundle_state should be preserved when cloning a pending snapshot"
         );
+    }
+
+    #[test]
+    fn from_previous_preserves_next_position_per_block() {
+        let tx_hash_a = B256::with_last_byte(0xAA);
+        let tx_hash_b = B256::with_last_byte(0xBB);
+        let tx_hash_c = B256::with_last_byte(0xCC);
+
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([test_flashblock()]);
+        builder.with_header(Sealed::new_unchecked(Header::default(), B256::ZERO));
+        builder.with_transaction(test_transaction_with_hash(tx_hash_a));
+        builder.with_receipt(tx_hash_a, test_receipt_with_log(tx_hash_a, test_sender()));
+        builder.with_transaction(test_transaction_with_hash(tx_hash_b));
+        builder.with_receipt(tx_hash_b, test_receipt_with_log(tx_hash_b, test_sender()));
+
+        let pending_blocks = builder.build().expect("build should succeed");
+
+        let mut next_builder = PendingBlocksBuilder::from_previous(&pending_blocks);
+        next_builder.with_transaction(test_transaction_with_hash(tx_hash_c));
+        next_builder.with_receipt(tx_hash_c, test_receipt_with_log(tx_hash_c, test_sender()));
+        let next_pending_blocks =
+            next_builder.build().expect("build from previous should preserve positions");
+
+        assert_eq!(next_pending_blocks.transaction_position(1, &tx_hash_c), Some(2));
     }
 
     /// Builds a [`PendingBlocks`] with the supplied (hash, `log_address`) pairs
