@@ -73,7 +73,6 @@ jobs:
               gcc-aarch64-linux-gnu
               g++-aarch64-linux-gnu
               libc6-dev-arm64-cross
-              pkg-config-aarch64-linux-gnu
             )
           fi
           sudo apt-get install -y "${packages[@]}"
@@ -124,7 +123,6 @@ jobs:
             export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
             export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-            export PKG_CONFIG=aarch64-linux-gnu-pkg-config
             export PKG_CONFIG_ALLOW_CROSS=1
             export RANLIB_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ranlib
           fi
