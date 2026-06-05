@@ -4384,6 +4384,7 @@ dependencies = [
  "clap",
  "eyre",
  "futures",
+ "humantime",
  "proptest",
  "reth-chainspec",
  "reth-cli",
