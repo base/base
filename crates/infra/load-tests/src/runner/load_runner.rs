@@ -1494,10 +1494,15 @@ impl LoadRunner {
             .start(),
         );
 
-        // Block watcher is deferred until after the submission phase so that heavy
-        // eth_getBlockReceipts calls don't compete with tx submission on the query RPC.
-        // Flashblock confirmations handle in-flight release during the test.
-        let block_watcher_query_rpc = self.config.query_rpc.clone();
+        info!(url = %self.config.query_rpc, "starting block watcher");
+        let block_watcher_task = Some(
+            BlockWatcher::new(
+                RootProvider::<Base>::new_http(self.config.query_rpc.clone()),
+                results_tracker.clone(),
+                self.cancel_token.clone(),
+            )
+            .start(),
+        );
 
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
 
@@ -1540,10 +1545,8 @@ impl LoadRunner {
         let mut last_gas_price_refresh = Instant::now();
         let mut last_rate_limiter_update = Instant::now();
         let mut last_progress_report = Instant::now();
-        let mut last_expiry_check = Instant::now();
         const GAS_PRICE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
         const RATE_LIMITER_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
-        const EXPIRY_CHECK_INTERVAL: Duration = Duration::from_secs(5);
         const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
         const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -1601,15 +1604,9 @@ impl LoadRunner {
             for metrics in results_tracker.drain_confirmed_metrics() {
                 self.collector.record_confirmed(metrics);
             }
-
-            results_tracker.release_stale_in_flight(Duration::from_secs(2));
-
-            if last_expiry_check.elapsed() >= EXPIRY_CHECK_INTERVAL {
-                let expired = results_tracker.expire_pending(PENDING_CONFIRMATION_TIMEOUT);
-                if expired > 0 {
-                    self.collector.record_failures("expired without confirmation", expired);
-                }
-                last_expiry_check = Instant::now();
+            let expired = results_tracker.expire_pending(PENDING_CONFIRMATION_TIMEOUT);
+            if expired > 0 {
+                self.collector.record_failures("expired without confirmation", expired);
             }
 
             if use_live_display || use_snapshot_tx {
@@ -1671,16 +1668,12 @@ impl LoadRunner {
 
             let batch_start = Instant::now();
             let mut consecutive_at_limit = 0usize;
-            let in_flight_snapshot = results_tracker.snapshot_in_flight();
 
             while pending_batch.len() < batch_size && batch_start.elapsed() < batch_timeout {
                 let account = &self.accounts.accounts()[current_account_idx];
                 let queued = queued_per_sender.get(&account.address).copied().unwrap_or(0);
-                let sender_in_flight = in_flight_snapshot
-                    .get(&account.address)
-                    .copied()
-                    .unwrap_or(0)
-                    .saturating_add(queued);
+                let sender_in_flight =
+                    results_tracker.in_flight_for(&account.address).saturating_add(queued);
 
                 if sender_in_flight >= max_in_flight_per_sender {
                     debug!(
@@ -1840,16 +1833,6 @@ impl LoadRunner {
             elapsed_secs = elapsed.as_secs(),
             actual_tps = submitted as f64 / elapsed.as_secs_f64(),
             "load test complete, draining confirmations"
-        );
-
-        info!(url = %block_watcher_query_rpc, "starting block watcher for confirmation drain");
-        let block_watcher_task = Some(
-            BlockWatcher::new(
-                RootProvider::<Base>::new_http(block_watcher_query_rpc),
-                results_tracker.clone(),
-                self.cancel_token.clone(),
-            )
-            .start(),
         );
 
         let drain_start = Instant::now();
