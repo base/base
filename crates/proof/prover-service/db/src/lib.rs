@@ -3,6 +3,9 @@
 mod config;
 pub use config::DatabaseConfig;
 
+mod conversions;
+pub use conversions::ConversionError;
+
 mod models;
 pub use models::{
     ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CompleteProofResult, CreateProofRequest,

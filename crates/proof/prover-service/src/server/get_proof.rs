@@ -1,10 +1,9 @@
 use base_prover_service_db::{
-    ProofRequest, ProofStatus as DbProofStatus, ProofType as DbProofType,
-    SessionStatus as DbSessionStatus, canonical_session_id,
+    ProofRequest, ProofStatus as DbProofStatus, SessionStatus as DbSessionStatus,
+    canonical_session_id,
 };
 use base_prover_service_protocol::{
-    GetProofRequest, GetProofResponse, ProofResult, ProofStatus, SnarkGroth16ProofResult,
-    ZkProofResult, ZkVm,
+    GetProofRequest, GetProofResponse, ProofResult, ProofStatus, ZkProofResult, ZkVm,
 };
 use jsonrpsee::core::RpcResult;
 use tracing::{Instrument, info};
@@ -21,37 +20,6 @@ fn is_dry_run_metadata(metadata: &serde_json::Value) -> bool {
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false)
         && metadata.get(OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY).is_some()
-}
-
-fn proof_result_for_request(proof_req: &ProofRequest) -> RpcResult<ProofResult> {
-    if let Some(result_payload) = &proof_req.result_payload {
-        return serde_json::from_value(result_payload.clone()).map_err(|e| {
-            internal(format!(
-                "stored proof result payload for session_id {} is invalid: {e}",
-                proof_req.session_id
-            ))
-        });
-    }
-
-    match proof_req.proof_type {
-        Some(DbProofType::OpSuccinctSp1ClusterCompressed) => {
-            let proof = proof_req
-                .stark_receipt
-                .clone()
-                .ok_or_else(|| not_found("compressed proof receipt not available"))?;
-            Ok(ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into() }))
-        }
-        Some(DbProofType::OpSuccinctSp1ClusterSnarkGroth16) => {
-            let proof = proof_req
-                .snark_receipt
-                .clone()
-                .ok_or_else(|| not_found("SNARK Groth16 proof receipt not available"))?;
-            Ok(ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into() },
-            }))
-        }
-        None => Err(not_found("proof result not available for request without backend proof_type")),
-    }
 }
 
 const fn should_use_dry_run_result(proof_req: &ProofRequest) -> bool {
@@ -92,7 +60,12 @@ impl ProverServiceServer {
             })));
         }
 
-        Ok(Some(proof_result_for_request(proof_req)?))
+        let result = proof_req
+            .stored_proof_result()
+            .map_err(|e| internal(e.to_string()))?
+            .ok_or_else(|| not_found("proof result not available"))?;
+
+        Ok(Some(result))
     }
 
     async fn get_proof_inner(&self, request: GetProofRequest) -> RpcResult<GetProofResponse> {
@@ -225,84 +198,6 @@ mod tests {
 
         assert!(is_dry_run_metadata(&metadata));
         assert!(!is_dry_run_metadata(&serde_json::json!({ "dry_run": true })));
-    }
-
-    #[test]
-    fn proof_result_for_compressed_returns_stark_bytes() {
-        let stark_bytes = vec![0xDE, 0xAD, 0xBE, 0xEF];
-        let req = make_proof_request(
-            ProofType::OpSuccinctSp1ClusterCompressed,
-            Some(stark_bytes.clone()),
-            None,
-        );
-
-        let result = proof_result_for_request(&req).unwrap();
-        assert_eq!(
-            result,
-            ProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: stark_bytes.into() })
-        );
-    }
-
-    #[test]
-    fn proof_result_for_snark_returns_snark_bytes() {
-        let snark_bytes = vec![0xCA, 0xFE];
-        let req = make_proof_request(
-            ProofType::OpSuccinctSp1ClusterSnarkGroth16,
-            None,
-            Some(snark_bytes.clone()),
-        );
-
-        let result = proof_result_for_request(&req).unwrap();
-        assert_eq!(
-            result,
-            ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: snark_bytes.into() },
-            })
-        );
-    }
-
-    #[test]
-    fn proof_result_prefers_stored_result_payload() {
-        let stored_result = ProofResult::Compressed(ZkProofResult {
-            zk_vm: ZkVm::Sp1,
-            proof: vec![0xAA, 0xBB].into(),
-        });
-        let mut req = make_proof_request(
-            ProofType::OpSuccinctSp1ClusterCompressed,
-            Some(vec![0xDE, 0xAD]),
-            None,
-        );
-        req.result_payload =
-            Some(serde_json::to_value(&stored_result).expect("proof result should serialize"));
-
-        let result = proof_result_for_request(&req).unwrap();
-        assert_eq!(result, stored_result);
-    }
-
-    #[test]
-    fn proof_result_for_tee_returns_stored_result_payload() {
-        let stored_result = serde_json::json!({
-            "proof_type": "tee",
-            "payload": {
-                "aggregate_proposal": {
-                    "output_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    "signature": "0x",
-                    "l1_origin_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    "l1_origin_number": 0,
-                    "l2_block_number": 0,
-                    "prev_output_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    "config_hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
-                },
-                "proposals": [],
-                "tee_kind": "aws_nitro"
-            }
-        });
-        let mut req = make_proof_request(ProofType::OpSuccinctSp1ClusterCompressed, None, None);
-        req.proof_type = None;
-        req.result_payload = Some(stored_result);
-
-        let result = proof_result_for_request(&req).unwrap();
-        assert!(matches!(result, ProofResult::Tee(_)));
     }
 
     #[test]
