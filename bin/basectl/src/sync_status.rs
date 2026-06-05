@@ -211,6 +211,20 @@ enum TipStatus {
     Unavailable,
 }
 
+impl TipStatus {
+    /// Display label matching the JSON serialization. Compiler-enforced
+    /// exhaustive match keeps this in sync with the `serde(rename_all)`
+    /// when new variants are added.
+    const fn as_str(&self) -> &'static str {
+        match self {
+            Self::CaughtUp => "caught_up",
+            Self::Behind => "behind",
+            Self::Ahead => "ahead",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
 impl TipReferenceJson {
     fn from_local_and_public(url: &str, local: u64, public: Option<u64>) -> Self {
         let Some(public) = public else {
@@ -300,20 +314,16 @@ fn print_pretty(
 }
 
 fn format_tip_reference(url: &str, local: u64, public: Option<u64>) -> String {
-    let Some(public) = public else {
-        return format!("unavailable (url={url} fetch failed)");
-    };
-    let local_i = i64::try_from(local).unwrap_or(i64::MAX);
-    let public_i = i64::try_from(public).unwrap_or(i64::MAX);
-    let delta = public_i.saturating_sub(local_i);
-    let status = if delta.abs() <= TIP_CAUGHT_UP_THRESHOLD {
-        "caught_up"
-    } else if delta > 0 {
-        "behind"
-    } else {
-        "ahead"
-    };
-    format!("#{public} (url={url}) delta={delta} ({status})")
+    // Single source of truth for delta math + classification:
+    // `TipReferenceJson::from_local_and_public`. Build the JSON struct and
+    // read its fields rather than re-deriving the same logic here.
+    let tip = TipReferenceJson::from_local_and_public(url, local, public);
+    match (tip.block_number, tip.delta_blocks) {
+        (Some(block), Some(delta)) => {
+            format!("#{block} (url={url}) delta={delta} ({})", tip.status.as_str())
+        }
+        _ => format!("unavailable (url={url} fetch failed)"),
+    }
 }
 
 fn format_block_info(b: &BlockInfo) -> String {
