@@ -48,8 +48,7 @@ main() {
         if [[ "$TAG_SHA" == "$HEAD_SHA" ]]; then
             echo "Tag $TAG already exists at HEAD, skipping creation"
         else
-            echo "Error: Tag $TAG already exists but points at $TAG_SHA, not HEAD ($HEAD_SHA)"
-            exit 1
+            echo "Tag $TAG already exists at $TAG_SHA, reusing it instead of HEAD ($HEAD_SHA)"
         fi
     else
         configure_git
