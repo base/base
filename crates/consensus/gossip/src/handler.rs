@@ -72,17 +72,15 @@ impl Handler for BlockHandler {
 
         match decoded {
             Ok(envelope) => {
-                tracing::Span::current().record(
-                    "block_hash",
-                    tracing::field::display(envelope.payload.block_hash()),
-                );
+                tracing::Span::current()
+                    .record("block_hash", tracing::field::display(envelope.payload.block_hash()));
                 tracing::Span::current().record("block_number", envelope.payload.block_number());
                 match self.block_valid(&envelope) {
-                Ok(()) => (MessageAcceptance::Accept, Some(envelope)),
-                Err(err) => {
-                    warn!(target: "gossip", ?err, hash = ?envelope.payload_hash, "Received invalid block");
-                    (err.into(), None)
-                }
+                    Ok(()) => (MessageAcceptance::Accept, Some(envelope)),
+                    Err(err) => {
+                        warn!(target: "gossip", ?err, hash = ?envelope.payload_hash, "Received invalid block");
+                        (err.into(), None)
+                    }
                 }
             }
             Err(err) => {

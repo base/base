@@ -91,7 +91,10 @@ where
     type MethodResponse = S::MethodResponse;
     type NotificationResponse = S::NotificationResponse;
 
-    fn call<'a>(&self, req: RpcRequest<'a>) -> impl Future<Output = Self::MethodResponse> + Send + 'a {
+    fn call<'a>(
+        &self,
+        req: RpcRequest<'a>,
+    ) -> impl Future<Output = Self::MethodResponse> + Send + 'a {
         let cx = req.extensions().get::<InboundOtelContext>().cloned();
         let inner = self.inner.clone();
 
@@ -110,7 +113,10 @@ where
         }
     }
 
-    fn batch<'a>(&self, mut req: Batch<'a>) -> impl Future<Output = Self::BatchResponse> + Send + 'a {
+    fn batch<'a>(
+        &self,
+        mut req: Batch<'a>,
+    ) -> impl Future<Output = Self::BatchResponse> + Send + 'a {
         let cx = req.extensions().get::<InboundOtelContext>().cloned();
         let inner = self.inner.clone();
 
