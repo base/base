@@ -413,6 +413,12 @@ where
 
         let mut live_state = self.lock_live_state();
         let Some(LivePendingState { db, state_overrides }) = live_state.take() else {
+            warn!(
+                message = "live pending state unavailable, falling back to full rebuild",
+                block_number = flashblock.metadata.block_number,
+                flashblock_index = flashblock.index,
+                path = "same_block"
+            );
             let mut flashblocks = prev_pending_blocks.get_flashblocks();
             flashblocks.push(flashblock.clone());
             return self.build_pending_state(Some(Arc::clone(prev_pending_blocks)), &flashblocks);
@@ -544,6 +550,12 @@ where
 
         let mut live_state = self.lock_live_state();
         let Some(LivePendingState { db, state_overrides }) = live_state.take() else {
+            warn!(
+                message = "live pending state unavailable, falling back to full rebuild",
+                block_number = flashblock.metadata.block_number,
+                flashblock_index = flashblock.index,
+                path = "next_block"
+            );
             let mut flashblocks = prev_pending_blocks.get_flashblocks();
             flashblocks.push(flashblock.clone());
             return self.build_pending_state(Some(Arc::clone(prev_pending_blocks)), &flashblocks);
