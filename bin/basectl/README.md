@@ -62,6 +62,24 @@ the operator's wall clock is readable without timezone math. Raw JSON
 (`--json --raw`) preserves the alloy/JSON-RPC wire format with hex
 quantities at the top level — byte-equivalent to `cast block --json`.
 
+### `basectl sync-status`
+
+Reports the rollup node's `optimism_syncStatus` (CL) joined with the EL's
+`eth_syncing` state. One round-trip each, run in parallel; either failure
+short-circuits the call. Visible alias: `ss`.
+
+The CL response carries every L1/L2 head ref the rollup node knows about,
+each with a block number, hash, and Unix timestamp. Pretty mode prints an
+aligned key-value table; humanized JSON adds a precomputed `safeLagSeconds`
+/ `safeLagBlocks` pair (`unsafe` minus `safe`) so consumers don't have to
+re-derive lag from raw timestamps.
+
+| Flag | Description |
+|------|-------------|
+| `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
+| `--json` | Emit humanized JSON (decoded numeric values, ISO + local timestamps, precomputed `safeLag*`) instead of the key-value table. |
+| `--raw` | With `--json`, emit the alloy-typed `optimism_syncStatus` wire format instead of the humanized form. Errors at parse time if used without `--json`. |
+
 ### `basectl flashblocks`
 
 Streams live flashblocks as newline-delimited JSON to stdout. For the
@@ -103,4 +121,13 @@ basectl -c sepolia block --json latest | jq '{number, gasUsed, baseFeePerGasWei,
 
 # Raw (wire) JSON: same shape as `cast block --json`, useful for round-tripping
 basectl -c mainnet block --json --raw finalized | jq '{number, gasUsed, baseFeePerGas}'
+
+# Sync status against a devnet (consensus_node_rpc is set in the devnet preset)
+basectl -c devnet sync-status
+
+# Sync status against a public chain — requires explicit --cl-rpc since mainnet/sepolia presets ship without one
+basectl -c sepolia sync-status --cl-rpc https://your-rollup-node.example/
+
+# Humanized JSON shows precomputed safe-head lag for downstream tooling
+basectl -c sepolia sync-status --cl-rpc https://your-rollup-node.example/ --json | jq '{safeLagSeconds, safeLagBlocks, elActivelySyncing}'
 ```
