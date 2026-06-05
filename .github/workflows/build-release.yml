@@ -96,16 +96,14 @@ jobs:
           ln -sf "$MOLD_BIN" "$MOLD_CROSS_BIN/ld"
           ln -sf "$MOLD_BIN" "$MOLD_CROSS_BIN/ld.mold"
 
-          cat > "$MOLD_CROSS_BIN/aarch64-linux-gnu-gcc-with-mold" <<EOF
-#!/usr/bin/env bash
-exec "$CROSS_GCC" -B"$MOLD_CROSS_BIN" "\$@"
-EOF
+          printf '%s\n' '#!/usr/bin/env bash' \
+            "exec \"$CROSS_GCC\" -B\"$MOLD_CROSS_BIN\" \"\\$@\"" \
+            > "$MOLD_CROSS_BIN/aarch64-linux-gnu-gcc-with-mold"
           chmod +x "$MOLD_CROSS_BIN/aarch64-linux-gnu-gcc-with-mold"
 
-          cat > "$MOLD_CROSS_BIN/aarch64-linux-gnu-g++-with-mold" <<EOF
-#!/usr/bin/env bash
-exec "$CROSS_GXX" -B"$MOLD_CROSS_BIN" "\$@"
-EOF
+          printf '%s\n' '#!/usr/bin/env bash' \
+            "exec \"$CROSS_GXX\" -B\"$MOLD_CROSS_BIN\" \"\\$@\"" \
+            > "$MOLD_CROSS_BIN/aarch64-linux-gnu-g++-with-mold"
           chmod +x "$MOLD_CROSS_BIN/aarch64-linux-gnu-g++-with-mold"
 
           echo "MOLD_CROSS_BIN=$MOLD_CROSS_BIN" >> "$GITHUB_ENV"
