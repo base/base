@@ -60,13 +60,16 @@ impl FakeMempool {
         q.extend(txs);
     }
 
-    /// Drain all pending transactions, deposits first.
-    pub fn drain(&self) -> Vec<Bytes> {
+    /// Drain all pending transactions into two lists: regular txpool transactions
+    /// and deposit transactions (type `0x7E`) that must be included in payload
+    /// attributes rather than sent via `eth_sendRawTransaction`.
+    ///
+    /// Returns `(txpool_txs, deposit_txs)`.
+    pub fn drain_split(&self) -> (Vec<Bytes>, Vec<Bytes>) {
         let mut q = self.pending.lock().unwrap();
-        let (mut deposits, mut regular): (Vec<Bytes>, Vec<Bytes>) =
+        let (deposits, txpool): (Vec<Bytes>, Vec<Bytes>) =
             q.drain(..).partition(|tx| tx.first().copied() == Some(0x7E));
-        deposits.append(&mut regular);
-        deposits
+        (txpool, deposits)
     }
 
     /// Number of pending transactions.
@@ -258,10 +261,10 @@ impl SequencerConsensusClient {
         gas_limit: u64,
     ) -> Result<(BaseExecutionPayloadV4, BlockMetrics), BenchmarkError> {
         let build_start = Instant::now();
-        let txs = mempool.drain();
+        let (txpool_txs, deposit_txs) = mempool.drain_split();
 
         let send_start = Instant::now();
-        self.batch_send_txs(&txs).await?;
+        self.batch_send_txs(&txpool_txs).await?;
         let send_latency = send_start.elapsed();
 
         let now_secs = std::time::SystemTime::now()
@@ -270,7 +273,7 @@ impl SequencerConsensusClient {
             .as_secs();
         let block_time_secs = block_time.as_secs().max(1);
         let next_timestamp = now_secs + block_time_secs;
-        let attrs = self.build_payload_attributes(gas_limit, next_timestamp)?;
+        let attrs = self.build_payload_attributes(gas_limit, next_timestamp, &deposit_txs)?;
 
         let fcu_start = Instant::now();
         let payload_id = self
@@ -368,9 +371,11 @@ impl SequencerConsensusClient {
         &self,
         gas_limit: u64,
         timestamp: u64,
+        extra_deposits: &[Bytes],
     ) -> Result<BasePayloadAttributes, BenchmarkError> {
         let beacon_root = fake_beacon_root();
-        let deposit_tx = build_l1_info_deposit_tx();
+        let mut transactions = vec![build_l1_info_deposit_tx()];
+        transactions.extend_from_slice(extra_deposits);
 
         Ok(BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
@@ -381,12 +386,81 @@ impl SequencerConsensusClient {
                 parent_beacon_block_root: Some(beacon_root),
                 slot_number: None,
             },
-            transactions: Some(vec![deposit_tx]),
+            transactions: Some(transactions),
             no_tx_pool: Some(false),
             gas_limit: Some(gas_limit),
             eip_1559_params: Some(holocene_eip1559_params()),
             min_base_fee: Some(1),
         })
+    }
+
+    /// Fund the prefund account via a deposit transaction if its balance is below
+    /// 1 000 000 ETH. This is needed when running against an existing chain snapshot
+    /// where the devnet genesis pre-funding is absent (e.g., mainnet ZFS snapshot).
+    pub async fn fund_prefund_account_if_needed(
+        &mut self,
+        block_time: Duration,
+        gas_limit: u64,
+    ) -> Result<(), BenchmarkError> {
+        const WEI_PER_ETH: u128 = 1_000_000_000_000_000_000;
+        const FUND_AMOUNT: u128 = 1_000_000 * WEI_PER_ETH;
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&self.rpc_url)
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "eth_getBalance",
+                "params": [format!("{:#x}", params::PREFUND_ADDRESS), "latest"],
+            }))
+            .send()
+            .await
+            .map_err(|e| BenchmarkError::Config(format!("eth_getBalance request failed: {e}")))?;
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| BenchmarkError::Config(format!("eth_getBalance parse error: {e}")))?;
+
+        let balance_hex =
+            json["result"].as_str().unwrap_or("0x0").trim_start_matches("0x");
+        let hex_bytes = hex::decode(balance_hex).unwrap_or_default();
+        let mut padded = [0u8; 32];
+        let offset = 32usize.saturating_sub(hex_bytes.len());
+        padded[offset..].copy_from_slice(&hex_bytes[..hex_bytes.len().min(32)]);
+        let balance = U256::from_be_bytes(padded);
+
+        if balance >= U256::from(FUND_AMOUNT) {
+            info!(balance = %balance, "prefund account already funded");
+            return Ok(());
+        }
+
+        info!(balance = %balance, "funding prefund account via deposit transaction");
+
+        let deposit = TxDeposit {
+            source_hash: keccak256(b"fund-prefund-account"),
+            from: address!("0000000000000000000000000000000000000001"),
+            to: TxKind::Call(params::PREFUND_ADDRESS),
+            mint: FUND_AMOUNT,
+            value: U256::from(FUND_AMOUNT),
+            gas_limit: 210_000,
+            is_system_transaction: false,
+            input: Bytes::new(),
+        };
+
+        let mut rlp_buf = Vec::new();
+        deposit.encode(&mut rlp_buf);
+        let mut tx_bytes = Vec::with_capacity(1 + rlp_buf.len());
+        tx_bytes.push(DEPOSIT_TX_TYPE_ID);
+        tx_bytes.extend_from_slice(&rlp_buf);
+
+        let fund_mempool = FakeMempool::new();
+        fund_mempool.add_transactions(vec![Bytes::from(tx_bytes)]);
+        self.propose(&fund_mempool, block_time, gas_limit).await?;
+
+        info!("prefund account funded via deposit transaction");
+        Ok(())
     }
 }
 
@@ -494,36 +568,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fake_mempool_drain_deposits_first() {
+    fn fake_mempool_drain_split_separates_deposits() {
         let pool = FakeMempool::new();
         let regular = Bytes::from(vec![0x02, 0xaa, 0xbb]);
         let deposit = Bytes::from(vec![0x7E, 0x01, 0x02]);
         pool.add_transactions(vec![regular.clone(), deposit.clone()]);
-        let drained = pool.drain();
-        assert_eq!(drained.len(), 2);
-        assert_eq!(drained[0], deposit);
-        assert_eq!(drained[1], regular);
+        let (txpool, deposits) = pool.drain_split();
+        assert_eq!(txpool, vec![regular]);
+        assert_eq!(deposits, vec![deposit]);
     }
 
     #[test]
-    fn fake_mempool_drain_clears_queue() {
+    fn fake_mempool_drain_split_clears_queue() {
         let pool = FakeMempool::new();
         pool.add_transactions(vec![Bytes::from(vec![0x01])]);
-        let _ = pool.drain();
+        let _ = pool.drain_split();
         assert!(pool.is_empty());
     }
 
     #[test]
-    fn fake_mempool_multiple_deposits_before_regular() {
+    fn fake_mempool_drain_split_multiple_each_type() {
         let pool = FakeMempool::new();
         let r1 = Bytes::from(vec![0x02]);
         let d1 = Bytes::from(vec![0x7E, 0x01]);
         let r2 = Bytes::from(vec![0x03]);
         let d2 = Bytes::from(vec![0x7E, 0x02]);
         pool.add_transactions(vec![r1.clone(), d1.clone(), r2.clone(), d2.clone()]);
-        let drained = pool.drain();
-        assert_eq!(&drained[0..2], &[d1, d2]);
-        assert_eq!(&drained[2..4], &[r1, r2]);
+        let (txpool, deposits) = pool.drain_split();
+        assert_eq!(txpool, vec![r1, r2]);
+        assert_eq!(deposits, vec![d1, d2]);
     }
 
     #[test]

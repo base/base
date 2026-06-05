@@ -75,6 +75,10 @@ pub struct BenchmarkDefinition {
     pub payload: TransactionPayloadDef,
     /// Prometheus threshold configuration.
     pub metrics: Option<MetricsConfig>,
+    /// Chain spec name or path passed to `--chain`. When `None` a genesis file
+    /// is generated automatically (devnet mode). Set to `"base"` for mainnet.
+    #[serde(default)]
+    pub chain: Option<String>,
     /// Extra CLI arguments for the node binary.
     #[serde(default)]
     pub node_args: Option<String>,
@@ -286,6 +290,7 @@ mod tests {
                     },
                 },
                 metrics: None,
+                chain: None,
                 node_args: None,
                 tags: HashMap::new(),
                 variables: vec![],

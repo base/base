@@ -33,6 +33,9 @@ pub const BATCHER_KEY: B256 =
 pub const PREFUND_KEY: B256 =
     b256!("59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
 
+/// Address corresponding to [`PREFUND_KEY`] (Hardhat account #1).
+pub const PREFUND_ADDRESS: Address = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
+
 /// Compute the total prefund amount (1M ETH in wei).
 pub fn prefund_amount() -> U256 {
     U256::from(1_000_000u64) * U256::from(10u64).pow(U256::from(18u64))

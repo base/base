@@ -216,7 +216,9 @@ mod tests {
     #[tokio::test]
     async fn mempool_starts_empty() {
         let worker = make_worker();
-        assert!(worker.mempool.drain().is_empty());
+        let (txpool, deposits) = worker.mempool.drain_split();
+        assert!(txpool.is_empty());
+        assert!(deposits.is_empty());
     }
 
     #[tokio::test]
@@ -226,8 +228,10 @@ mod tests {
         worker
             .mempool
             .add_transactions(vec![Bytes::from_static(b"tx1"), Bytes::from_static(b"tx2")]);
-        let drained = worker.mempool.drain();
+        let (drained, deposits) = worker.mempool.drain_split();
         assert_eq!(drained.len(), 2);
-        assert!(worker.mempool.drain().is_empty());
+        assert!(deposits.is_empty());
+        let (after, _) = worker.mempool.drain_split();
+        assert!(after.is_empty());
     }
 }

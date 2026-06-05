@@ -133,9 +133,11 @@ impl NetworkBenchmark {
         let jwt_path = test_dir.path().join("jwt.hex");
         tokio::fs::write(&jwt_path, hex::encode(JWT_SECRET)).await.map_err(BenchmarkError::Io)?;
 
-        let chain_cfg_path = test_dir.path().join("genesis.json");
         let rollup_cfg_path = test_dir.path().join("rollup.json");
-        if let Some(src) = self.config.rollup_config.as_ref() {
+        let chain_cfg_path = if let Some(chain) = &run.definition.chain {
+            PathBuf::from(chain)
+        } else if let Some(src) = self.config.rollup_config.as_ref() {
+            let path = test_dir.path().join("genesis.json");
             tokio::fs::copy(src, &rollup_cfg_path).await.map_err(BenchmarkError::Io)?;
             let raw =
                 tokio::fs::read_to_string(&rollup_cfg_path).await.map_err(BenchmarkError::Io)?;
@@ -144,13 +146,16 @@ impl NetworkBenchmark {
             let genesis_json = genesis_json_from_rollup_config(&rollup, &self.options.prefund_key);
             let genesis_str = serde_json::to_string_pretty(&genesis_json)
                 .map_err(|e| BenchmarkError::Config(format!("genesis json error: {e}")))?;
-            tokio::fs::write(&chain_cfg_path, genesis_str).await.map_err(BenchmarkError::Io)?;
+            tokio::fs::write(&path, genesis_str).await.map_err(BenchmarkError::Io)?;
+            path
         } else {
+            let path = test_dir.path().join("genesis.json");
             let genesis = build_test_genesis();
             let genesis_str = serde_json::to_string_pretty(&genesis)
                 .map_err(|e| BenchmarkError::Config(format!("genesis json error: {e}")))?;
-            tokio::fs::write(&chain_cfg_path, genesis_str).await.map_err(BenchmarkError::Io)?;
-        }
+            tokio::fs::write(&path, genesis_str).await.map_err(BenchmarkError::Io)?;
+            path
+        };
 
         let rollup_cfg: Arc<RollupConfig> = if rollup_cfg_path.exists() {
             let raw =
@@ -309,6 +314,8 @@ impl NetworkBenchmark {
                 }
             }
         }
+
+        sequencer.fund_prefund_account_if_needed(block_time, gas_limit).await?;
 
         let worker = LoadTestPayloadWorker::new(LoadTestConfig {
             bin: self.options.load_test_bin.clone(),
