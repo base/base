@@ -31,6 +31,7 @@ alloy-primitives.workspace = true
 
 # op
 base-common-rpc-types.workspace = true
+base-common-genesis = { workspace = true, features = ["std"] }
 
 serde_json.workspace = true
 serde = { workspace = true, optional = true }

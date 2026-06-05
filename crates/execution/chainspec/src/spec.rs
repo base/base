@@ -8,6 +8,7 @@ use alloy_hardforks::Hardfork;
 use alloy_primitives::{Address, B256, U256};
 use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
+use base_common_genesis::{HardForkActivation, RuntimeHardForkRegistry};
 use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
     BaseFeeParams, BaseFeeParamsKind, ChainSpec, DepositContract, DisplayHardforks, EthChainSpec,
@@ -271,6 +272,38 @@ impl BaseChainSpec {
     /// Activates or updates the given hardfork condition in-place.
     pub fn set_fork<H: Hardfork>(&mut self, fork: H, condition: ForkCondition) {
         self.inner.hardforks.insert(fork, condition);
+    }
+
+    /// Returns the runtime-aware activation condition for a hardfork.
+    pub fn fork<H: Hardfork>(&self, fork: H) -> ForkCondition {
+        self.runtime_fork_condition(&fork).unwrap_or_else(|| self.inner.fork(fork))
+    }
+
+    /// Returns a runtime hardfork ID for the given execution fork, if one exists.
+    pub fn runtime_hardfork_id<H: Hardfork + ?Sized>(fork: &H) -> Option<&'static str> {
+        match fork.name() {
+            "Shanghai" | "Canyon" => Some("canyon"),
+            "Cancun" | "Ecotone" => Some("ecotone"),
+            "Fjord" => Some("fjord"),
+            "Granite" => Some("granite"),
+            "Holocene" => Some("holocene"),
+            "Prague" | "Isthmus" => Some("isthmus"),
+            "Jovian" => Some("jovian"),
+            "Osaka" | "Azul" => Some("azul"),
+            "Beryl" => Some("beryl"),
+            _ => None,
+        }
+    }
+
+    /// Returns a runtime hardfork activation condition for an execution fork.
+    pub fn runtime_fork_condition<H: Hardfork + ?Sized>(&self, fork: &H) -> Option<ForkCondition> {
+        let hardfork_id = Self::runtime_hardfork_id(fork)?;
+        RuntimeHardForkRegistry::activation(self.chain().id(), hardfork_id).map(|activation| {
+            match activation {
+                HardForkActivation::Never => ForkCondition::Never,
+                HardForkActivation::Timestamp(timestamp) => ForkCondition::Timestamp(timestamp),
+            }
+        })
     }
 
     /// Recomputes the sealed genesis header from the current genesis and hardfork schedule.
@@ -542,7 +575,7 @@ impl EthChainSpec for BaseChainSpec {
 
 impl Hardforks for BaseChainSpec {
     fn fork<H: Hardfork>(&self, fork: H) -> ForkCondition {
-        self.inner.fork(fork)
+        BaseChainSpec::fork(self, fork)
     }
 
     fn forks_iter(&self) -> impl Iterator<Item = (&dyn Hardfork, ForkCondition)> {
@@ -600,11 +633,13 @@ mod tests {
     };
     use core::str::FromStr;
 
+    use alloy_chains::Chain;
     use alloy_consensus::proofs::storage_root_unhashed;
     use alloy_genesis::{ChainConfig as AlloyChainConfig, Genesis};
     use alloy_hardforks::Hardfork;
     use alloy_primitives::{B256, U256, address, b256};
     use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
+    use base_common_genesis::RuntimeHardForkRegistry;
     use base_common_rpc_types::FeeInfo;
     use reth_chainspec::{
         BaseFeeParams, BaseFeeParamsKind, ChainSpec, EthChainSpec, EthereumHardforks, test_fork_ids,
@@ -783,6 +818,35 @@ mod tests {
                 ),
             ],
         );
+    }
+
+    #[test]
+    fn runtime_registry_overrides_execution_fork_conditions() {
+        let chain_id = 9_100_003;
+        RuntimeHardForkRegistry::clear_chain(chain_id);
+        let spec = BaseChainSpecBuilder::default()
+            .chain(Chain::from_id(chain_id))
+            .genesis(Genesis::default())
+            .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
+            .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
+            .build();
+        let chain_id = spec.chain().id();
+        RuntimeHardForkRegistry::clear_chain(chain_id);
+
+        assert_eq!(spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
+        assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
+
+        RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "azul", 42);
+
+        assert_eq!(spec.fork(EthereumHardfork::Osaka), ForkCondition::Timestamp(42));
+        assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(42));
+
+        RuntimeHardForkRegistry::clear_activation_timestamp(chain_id, "azul");
+
+        assert_eq!(spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
+        assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
+
+        RuntimeHardForkRegistry::clear_chain(chain_id);
     }
 
     #[test]
