@@ -133,16 +133,20 @@ impl ChallengerService {
         let proof_requester = Arc::new(ProofRequesterClient::connect(&proof_requester_config)?);
         info!(endpoint = %config.zk_rpc_url, "Prover-service requester client initialized");
 
-        // ── 6b. TEE proof client (optional) ─────────────────────────────────
-        let tee = if let Some(ref tee_url) = config.tee_rpc_url {
-            // TODO(C4): consolidate proof-client config and replace tee_rpc_url as a feature gate.
-            info!(endpoint = %tee_url, "TEE proof sourcing enabled");
+        // ── 6b. TEE proof config (optional) ─────────────────────────────────
+        //
+        // TEE proofs flow through the same `proof_requester` as ZK proofs;
+        // the TEE config only carries an L1 head provider used to build the
+        // TEE proof request envelope. Enabling TEE-first sourcing is a pure
+        // feature flag.
+        let tee = if config.enable_tee_proofs {
+            info!("TEE proof sourcing enabled");
             let l1_config = L1ClientConfig::new(l1_rpc_url.clone());
             let l1_client = L1Client::new(l1_config)
                 .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
             Some(crate::TeeConfig { l1_head_provider: Arc::new(l1_client) })
         } else {
-            info!("TEE proof sourcing disabled (no --tee-rpc-url)");
+            info!("TEE proof sourcing disabled");
             None
         };
 
