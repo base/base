@@ -2,7 +2,7 @@
 
 use std::{
     sync::{Arc, Once},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
@@ -20,7 +20,7 @@ use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use reth_provider::BlockReader;
 use reth_transaction_pool::test_utils::TransactionBuilder;
-use tokio::{runtime::Runtime, time::sleep};
+use tokio::{runtime::Runtime, sync::broadcast, time::timeout};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 const DEPOSIT_GAS_USED: u64 = 21_000;
@@ -84,7 +84,7 @@ fn pending_state_benches(c: &mut Criterion) {
     init_bench_tracing();
 
     let runtime = Runtime::new().expect("tokio runtime should start");
-    let setup = runtime.block_on(BenchSetup::new(&[5, 25, 100]));
+    let setup = runtime.block_on(BenchSetup::new(&[5, 25, 100, 500, 1000, 1500]));
     let mut group = c.benchmark_group("pending_state_build");
 
     for (label, flashblocks) in setup.flashblocks {
@@ -118,13 +118,14 @@ fn pending_state_benches(c: &mut Criterion) {
 async fn build_pending_state(input: BenchInput) {
     let state = FlashblocksState::new(5);
     state.start(input.provider);
+    let receiver = state.subscribe_to_flashblocks();
     state.on_canonical_block_received(input.canonical_block);
 
     for flashblock in input.flashblocks {
         state.on_flashblock_received(flashblock);
     }
 
-    wait_for_pending_state(&state, input.target_block, input.last_index).await;
+    wait_for_pending_state(receiver, input.target_block, input.last_index).await;
 }
 
 fn init_bench_tracing() {
@@ -150,25 +151,23 @@ fn init_bench_tracing() {
 }
 
 async fn wait_for_pending_state(
-    state: &FlashblocksState,
+    mut receiver: broadcast::Receiver<Arc<base_flashblocks::PendingBlocks>>,
     target_block: BlockNumber,
     expected_index: u64,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(pending) = state.get_pending_blocks().as_ref()
-            && pending.latest_block_number() == target_block
-            && pending.latest_flashblock_index() == expected_index
-        {
-            return;
+    let deadline = Duration::from_secs(10);
+    timeout(deadline, async move {
+        loop {
+            let pending = receiver.recv().await.expect("pending state receiver should remain open");
+            if pending.latest_block_number() == target_block
+                && pending.latest_flashblock_index() == expected_index
+            {
+                return;
+            }
         }
-
-        if Instant::now() > deadline {
-            panic!("pending state was not built in time");
-        }
-
-        sleep(Duration::from_millis(10)).await;
-    }
+    })
+    .await
+    .expect("pending state was not built in time");
 }
 
 fn build_flashblocks(
