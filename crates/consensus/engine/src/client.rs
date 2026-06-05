@@ -31,7 +31,7 @@ use thiserror::Error;
 use tower::ServiceBuilder;
 use url::Url;
 
-use crate::{JwtWsConnect, Metrics};
+use crate::{JwtWsConnect, Metrics, trace_layer::TraceContextLayer};
 
 /// An error that occurred in the [`EngineClient`].
 #[derive(Error, Debug)]
@@ -139,7 +139,10 @@ where
                 let hyper_client =
                     Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
                 let auth_layer = AuthLayer::new(jwt);
-                let service = ServiceBuilder::new().layer(auth_layer).service(hyper_client);
+                let service = ServiceBuilder::new()
+                    .layer(TraceContextLayer)
+                    .layer(auth_layer)
+                    .service(hyper_client);
                 let layer_transport = HyperClient::with_service(service);
                 let http_hyper = Http::with_client(layer_transport, addr);
                 let rpc_client = RpcClient::new(http_hyper, false);

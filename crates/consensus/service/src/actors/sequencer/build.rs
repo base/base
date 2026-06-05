@@ -10,6 +10,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{AttributesBuilder, PipelineErrorKind};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
+use tracing::instrument;
 
 use crate::{
     Metrics, PoolActivation,
@@ -71,6 +72,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     ///
     /// Returns `Ok(None)` for temporary or reset conditions that should be retried on the
     /// next tick.
+    #[instrument(skip_all, fields(parent_num = parent.block_info.number, l1_origin_num = tracing::field::Empty))]
     pub async fn build_on(
         &mut self,
         parent: L2BlockInfo,
@@ -78,6 +80,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         let Some(l1_origin) = self.get_next_payload_l1_origin(parent).await? else {
             return Ok(None);
         };
+        tracing::Span::current().record("l1_origin_num", l1_origin.number);
 
         info!(
             target: "sequencer",

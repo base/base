@@ -397,7 +397,7 @@ where
     }
 
     fn handle_local_unsafe_l2_block(&mut self, request: InsertUnsafePayloadRequest) {
-        let InsertUnsafePayloadRequest { envelope, result_tx } = request;
+        let InsertUnsafePayloadRequest { envelope, result_tx, otel_cx: _ } = request;
         debug!(
             target: "engine",
             block_number = envelope.execution_payload.block_number(),
@@ -744,12 +744,19 @@ where
 
                 match request {
                     EngineActorRequest::BuildRequest(build_request) => {
-                        let BuildRequest { attributes, result_tx } = *build_request;
-                        match self
-                            .engine
-                            .build(Arc::clone(&self.client), Arc::clone(&self.rollup), attributes)
-                            .await
-                        {
+                        let BuildRequest { attributes, result_tx, otel_cx } = *build_request;
+                        let build_future = {
+                            let _guard = otel_cx.attach();
+                            self
+                                .engine
+                                .build(
+                                    Arc::clone(&self.client),
+                                    Arc::clone(&self.rollup),
+                                    attributes,
+                                )
+                        };
+                        let build_result = build_future.await;
+                        match build_result {
                             Ok(payload_id) => {
                                 result_tx
                                     .send(Ok(payload_id))
@@ -768,17 +775,20 @@ where
                         }
                     }
                     EngineActorRequest::GetPayloadRequest(get_payload_request) => {
-                        let GetPayloadRequest { payload_id, attributes, result_tx } =
+                        let GetPayloadRequest { payload_id, attributes, result_tx, otel_cx } =
                             *get_payload_request;
-                        let result = self
-                            .engine
-                            .get_payload(
-                                Arc::clone(&self.client),
-                                Arc::clone(&self.rollup),
-                                payload_id,
-                                attributes,
-                            )
-                            .await;
+                        let get_payload_future = {
+                            let _guard = otel_cx.attach();
+                            self
+                                .engine
+                                .get_payload(
+                                    Arc::clone(&self.client),
+                                    Arc::clone(&self.rollup),
+                                    payload_id,
+                                    attributes,
+                                )
+                        };
+                        let result = get_payload_future.await;
 
                         let error =
                             result.as_ref().err().map(|err| (err.severity(), format!("{err:?}")));
@@ -812,7 +822,9 @@ where
                         self.handle_external_unsafe_l2_block(*envelope);
                     }
                     EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(envelope) => {
-                        self.handle_local_unsafe_l2_block(*envelope);
+                        let request = *envelope;
+                        let _guard = request.otel_cx.clone().attach();
+                        self.handle_local_unsafe_l2_block(request);
                     }
                     EngineActorRequest::ResetRequest(reset_request) => {
                         // Do not reset the engine while the EL is still syncing. A Reset sends a
@@ -1149,6 +1161,7 @@ mod tests {
             processor.handle_local_unsafe_l2_block(InsertUnsafePayloadRequest {
                 envelope,
                 result_tx: None,
+                otel_cx: opentelemetry::Context::new(),
             });
         } else {
             processor.handle_external_unsafe_l2_block(envelope);
@@ -2004,6 +2017,7 @@ mod tests {
             .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
                 attributes,
                 result_tx: build_result_tx,
+                otel_cx: opentelemetry::Context::new(),
             })))
             .await
             .expect("failed to send build request");
