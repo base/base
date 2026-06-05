@@ -20,16 +20,13 @@ pub struct FlashblocksConfig {
 }
 
 impl FlashblocksConfig {
-    /// Default interval between upstream websocket ping frames.
-    pub const DEFAULT_SUBSCRIBER_PING_INTERVAL: Duration = Duration::from_secs(30);
-
     /// Create a new Flashblocks configuration.
     pub fn new(websocket_url: Url, max_pending_blocks_depth: u64) -> Self {
         let state = Arc::new(FlashblocksState::new(max_pending_blocks_depth));
         Self {
             websocket_url,
             max_pending_blocks_depth,
-            subscriber_ping_interval: Self::DEFAULT_SUBSCRIBER_PING_INTERVAL,
+            subscriber_ping_interval: Duration::from_secs(30),
             cached_execution: false,
             state,
         }
