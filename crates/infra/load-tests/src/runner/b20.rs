@@ -9,10 +9,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
-use base_common_precompiles::{
-    ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20TokenRole, B20Variant,
-    IActivationRegistry, IB20, IB20Factory,
-};
+use base_common_precompiles::{B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory};
 use futures::{StreamExt, stream};
 use tracing::{debug, info, instrument, warn};
 
@@ -70,64 +67,10 @@ impl LoadRunner {
         }
 
         if token_address.is_none() {
-            // Activate B-20 features if not already active. Activation is idempotent on
-            // already-active features but reverts if the funder is not the activation admin.
-            let features = [ActivationFeature::B20Asset.id()];
-            for feature in &features {
-                let is_activated_call = IActivationRegistry::isActivatedCall { feature: *feature };
-                let check_result = self
-                    .client
-                    .call(
-                        TransactionRequest::default()
-                            .with_to(ActivationRegistryStorage::ADDRESS)
-                            .with_input(Bytes::from(is_activated_call.abi_encode()))
-                            .into(),
-                    )
-                    .await;
-
-                let already_active = check_result
-                    .ok()
-                    .and_then(|bytes| {
-                        IActivationRegistry::isActivatedCall::abi_decode_returns(bytes.as_ref())
-                            .ok()
-                    })
-                    .unwrap_or(false);
-
-                if !already_active {
-                    info!(feature = %feature, "activating B-20 feature");
-                    let activate_call = IActivationRegistry::activateCall { feature: *feature };
-                    let tx = TransactionRequest::default()
-                        .with_to(ActivationRegistryStorage::ADDRESS)
-                        .with_input(Bytes::from(activate_call.abi_encode()))
-                        .with_nonce(nonce)
-                        .with_chain_id(chain_id)
-                        .with_gas_limit(b20_gas_limit)
-                        .with_max_fee_per_gas(max_fee)
-                        .with_max_priority_fee_per_gas(max_priority_fee);
-                    nonce += 1;
-
-                    let pending = funder_provider.send_transaction(tx).await.map_err(|e| {
-                        BaselineError::Transaction(format!(
-                            "failed to activate B-20 feature {feature}: {e}. \
-                             The funder must be the activation admin (sequencer key on devnet)"
-                        ))
-                    })?;
-
-                    let receipt = pending.get_receipt().await.map_err(|e| {
-                        BaselineError::Transaction(format!(
-                            "B-20 feature activation receipt failed: {e}"
-                        ))
-                    })?;
-
-                    if !receipt.status() {
-                        return Err(BaselineError::Transaction(format!(
-                            "B-20 feature {feature} activation reverted. \
-                             The funder must be the activation admin (sequencer key on devnet)"
-                        )));
-                    }
-                }
-            }
-
+            // B-20 activation is a one-time chain-lifecycle operation performed by the activation
+            // admin (see `ActivationRegistry`), not by the load tester. The funder only creates a
+            // token; if the feature is not active, the factory's `ensure_activated` check will
+            // revert the create tx with `FeatureNotActivated`.
             info!("creating new B-20 token via factory");
 
             let salt = B256::from(rand::random::<[u8; 32]>());
@@ -170,9 +113,14 @@ impl LoadRunner {
             })?;
 
             if !receipt.status() {
-                return Err(BaselineError::Transaction(
-                    "B-20 token creation transaction reverted".into(),
-                ));
+                return Err(BaselineError::Transaction(format!(
+                    "B-20 token creation reverted (tx {}). \
+                     Likely causes: B-20 feature not yet activated on this chain \
+                     (activation is done once by the activation admin, not the load tester), \
+                     or a factory validation error (decimals/version/initCall). \
+                     Inspect the tx trace for the precise revert reason.",
+                    receipt.transaction_hash
+                )));
             }
 
             info!(token = %predicted, "B-20 token created");
