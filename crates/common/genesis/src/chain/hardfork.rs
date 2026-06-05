@@ -1,7 +1,12 @@
 //! Contains the hardfork configuration for the chain.
 
-use alloc::string::{String, ToString};
+use alloc::{
+    collections::BTreeMap,
+    string::{String, ToString},
+};
 use core::fmt::Display;
+#[cfg(feature = "std")]
+use std::sync::{OnceLock, RwLock};
 
 /// Hardfork configuration for Base-specific upgrades.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
@@ -23,6 +28,160 @@ impl HardforkConfig {
     /// Returns true if no Base-specific hardforks are configured.
     pub const fn is_empty(&self) -> bool {
         self.azul.is_none() && self.beryl.is_none()
+    }
+}
+
+/// Runtime hardfork activation override.
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum HardForkActivation {
+    /// The hardfork is not activated.
+    Never,
+    /// The hardfork activates at the given L2 timestamp.
+    Timestamp(u64),
+}
+
+impl HardForkActivation {
+    /// Converts an optional timestamp into a hardfork activation.
+    pub const fn from_timestamp(timestamp: Option<u64>) -> Self {
+        match timestamp {
+            Some(timestamp) => Self::Timestamp(timestamp),
+            None => Self::Never,
+        }
+    }
+
+    /// Returns the activation timestamp, if the hardfork is timestamp-activated.
+    pub const fn timestamp(self) -> Option<u64> {
+        match self {
+            Self::Never => None,
+            Self::Timestamp(timestamp) => Some(timestamp),
+        }
+    }
+}
+
+/// Runtime hardfork activation overrides for one chain.
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct HardForkActivationOverrides {
+    /// Hardfork activations keyed by canonical contract hardfork ID.
+    pub activations: BTreeMap<String, HardForkActivation>,
+}
+
+impl HardForkActivationOverrides {
+    /// Creates empty runtime hardfork activation overrides.
+    pub fn new() -> Self {
+        Self { activations: BTreeMap::new() }
+    }
+
+    /// Returns true if no runtime overrides are configured.
+    pub fn is_empty(&self) -> bool {
+        self.activations.is_empty()
+    }
+
+    /// Returns the runtime activation override for a hardfork ID.
+    pub fn activation(&self, hardfork_id: &str) -> Option<HardForkActivation> {
+        let hardfork_id = HardForkConfig::canonical_hardfork_id(hardfork_id)?;
+        self.activations.get(hardfork_id).copied()
+    }
+
+    /// Removes the runtime activation override for a hardfork ID.
+    pub fn remove_activation(&mut self, hardfork_id: &str) -> bool {
+        let Some(hardfork_id) = HardForkConfig::canonical_hardfork_id(hardfork_id) else {
+            return false;
+        };
+
+        self.activations.remove(hardfork_id).is_some()
+    }
+
+    /// Sets the runtime activation override for a hardfork ID.
+    pub fn set_activation(&mut self, hardfork_id: &str, activation: HardForkActivation) -> bool {
+        let Some(hardfork_id) = HardForkConfig::canonical_hardfork_id(hardfork_id) else {
+            return false;
+        };
+
+        self.activations.insert(hardfork_id.to_string(), activation);
+        true
+    }
+
+    /// Sets a runtime timestamp activation override for a hardfork ID.
+    pub fn set_activation_timestamp(&mut self, hardfork_id: &str, timestamp: u64) -> bool {
+        self.set_activation(hardfork_id, HardForkActivation::Timestamp(timestamp))
+    }
+
+    /// Sets a runtime override that clears a hardfork activation.
+    pub fn clear_activation_timestamp(&mut self, hardfork_id: &str) -> bool {
+        self.set_activation(hardfork_id, HardForkActivation::Never)
+    }
+}
+
+/// Process-local runtime hardfork activation registry.
+#[cfg(feature = "std")]
+#[derive(Debug, Clone, Copy)]
+pub struct RuntimeHardForkRegistry;
+
+#[cfg(feature = "std")]
+impl RuntimeHardForkRegistry {
+    /// Returns the global runtime hardfork activation registry.
+    pub fn registry() -> &'static RwLock<BTreeMap<u64, HardForkActivationOverrides>> {
+        static REGISTRY: OnceLock<RwLock<BTreeMap<u64, HardForkActivationOverrides>>> =
+            OnceLock::new();
+        REGISTRY.get_or_init(|| RwLock::new(BTreeMap::new()))
+    }
+
+    /// Returns the runtime activation override for a chain and hardfork ID.
+    pub fn activation(chain_id: u64, hardfork_id: &str) -> Option<HardForkActivation> {
+        Self::registry()
+            .read()
+            .expect("runtime hardfork registry poisoned")
+            .get(&chain_id)
+            .and_then(|overrides| overrides.activation(hardfork_id))
+    }
+
+    /// Returns all runtime activation overrides for a chain.
+    pub fn overrides(chain_id: u64) -> Option<HardForkActivationOverrides> {
+        Self::registry().read().expect("runtime hardfork registry poisoned").get(&chain_id).cloned()
+    }
+
+    /// Replaces all runtime activation overrides for a chain.
+    pub fn replace_overrides(chain_id: u64, overrides: HardForkActivationOverrides) {
+        Self::registry()
+            .write()
+            .expect("runtime hardfork registry poisoned")
+            .insert(chain_id, overrides);
+    }
+
+    /// Clears all runtime activation overrides for a chain.
+    pub fn clear_chain(chain_id: u64) {
+        Self::registry().write().expect("runtime hardfork registry poisoned").remove(&chain_id);
+    }
+
+    /// Removes one runtime activation override for a chain and hardfork ID.
+    pub fn remove_activation_override(chain_id: u64, hardfork_id: &str) -> bool {
+        let mut registry = Self::registry().write().expect("runtime hardfork registry poisoned");
+        let Some(overrides) = registry.get_mut(&chain_id) else {
+            return false;
+        };
+
+        overrides.remove_activation(hardfork_id)
+    }
+
+    /// Sets one runtime activation override for a chain and hardfork ID.
+    pub fn set_activation(
+        chain_id: u64,
+        hardfork_id: &str,
+        activation: HardForkActivation,
+    ) -> bool {
+        let mut registry = Self::registry().write().expect("runtime hardfork registry poisoned");
+        let overrides = registry.entry(chain_id).or_default();
+        overrides.set_activation(hardfork_id, activation)
+    }
+
+    /// Sets one runtime timestamp activation override for a chain and hardfork ID.
+    pub fn set_activation_timestamp(chain_id: u64, hardfork_id: &str, timestamp: u64) -> bool {
+        Self::set_activation(chain_id, hardfork_id, HardForkActivation::Timestamp(timestamp))
+    }
+
+    /// Sets one runtime override that clears a chain hardfork activation.
+    pub fn clear_activation_timestamp(chain_id: u64, hardfork_id: &str) -> bool {
+        Self::set_activation(chain_id, hardfork_id, HardForkActivation::Never)
     }
 }
 
@@ -114,6 +273,22 @@ impl Display for HardForkConfig {
 }
 
 impl HardForkConfig {
+    /// Canonical contract hardfork IDs supported by the runtime upgrade signal.
+    pub const CONTRACT_HARDFORK_IDS: &'static [&'static str] = &[
+        "regolith",
+        "canyon",
+        "delta",
+        "ecotone",
+        "fjord",
+        "granite",
+        "holocene",
+        "pectra_blob_schedule",
+        "isthmus",
+        "jovian",
+        "azul",
+        "beryl",
+    ];
+
     /// Clears all timestamp-based hardfork activation times.
     pub fn clear_activation_timestamps(&mut self) {
         self.regolith_time = None;
@@ -131,44 +306,106 @@ impl HardForkConfig {
 
     /// Clears a timestamp-based hardfork activation time by contract hardfork ID.
     pub fn clear_activation_timestamp(&mut self, hardfork_id: &str) -> bool {
-        match Self::normalized_hardfork_id(hardfork_id).as_str() {
-            "regolith" => self.regolith_time = None,
-            "canyon" => self.canyon_time = None,
-            "delta" => self.delta_time = None,
-            "ecotone" => self.ecotone_time = None,
-            "fjord" => self.fjord_time = None,
-            "granite" => self.granite_time = None,
-            "holocene" => self.holocene_time = None,
-            "pectrablobschedule" => self.pectra_blob_schedule_time = None,
-            "isthmus" => self.isthmus_time = None,
-            "jovian" => self.jovian_time = None,
-            "azul" | "baseazul" | "v1" => self.base.azul = None,
-            "beryl" | "baseberyl" | "v2" => self.base.beryl = None,
+        match Self::canonical_hardfork_id(hardfork_id) {
+            Some("regolith") => self.regolith_time = None,
+            Some("canyon") => self.canyon_time = None,
+            Some("delta") => self.delta_time = None,
+            Some("ecotone") => self.ecotone_time = None,
+            Some("fjord") => self.fjord_time = None,
+            Some("granite") => self.granite_time = None,
+            Some("holocene") => self.holocene_time = None,
+            Some("pectra_blob_schedule") => self.pectra_blob_schedule_time = None,
+            Some("isthmus") => self.isthmus_time = None,
+            Some("jovian") => self.jovian_time = None,
+            Some("azul") => self.base.azul = None,
+            Some("beryl") => self.base.beryl = None,
             _ => return false,
         }
 
         true
     }
 
+    /// Applies a hardfork activation override by contract hardfork ID.
+    pub fn set_activation(&mut self, hardfork_id: &str, activation: HardForkActivation) -> bool {
+        match activation {
+            HardForkActivation::Never => self.clear_activation_timestamp(hardfork_id),
+            HardForkActivation::Timestamp(timestamp) => {
+                self.set_activation_timestamp(hardfork_id, timestamp)
+            }
+        }
+    }
+
+    /// Applies all hardfork activation overrides.
+    pub fn apply_activation_overrides(&mut self, overrides: &HardForkActivationOverrides) {
+        for (hardfork_id, activation) in &overrides.activations {
+            self.set_activation(hardfork_id, *activation);
+        }
+    }
+
+    /// Returns the activation for a timestamp-based hardfork ID.
+    pub fn activation(&self, hardfork_id: &str) -> Option<HardForkActivation> {
+        let timestamp = match Self::canonical_hardfork_id(hardfork_id) {
+            Some("regolith") => self.regolith_time,
+            Some("canyon") => self.canyon_time,
+            Some("delta") => self.delta_time,
+            Some("ecotone") => self.ecotone_time,
+            Some("fjord") => self.fjord_time,
+            Some("granite") => self.granite_time,
+            Some("holocene") => self.holocene_time,
+            Some("pectra_blob_schedule") => self.pectra_blob_schedule_time,
+            Some("isthmus") => self.isthmus_time,
+            Some("jovian") => self.jovian_time,
+            Some("azul") => self.base.azul,
+            Some("beryl") => self.base.beryl,
+            _ => return None,
+        };
+
+        Some(HardForkActivation::from_timestamp(timestamp))
+    }
+
+    /// Returns the activation timestamp for a timestamp-based hardfork ID.
+    pub fn activation_timestamp(&self, hardfork_id: &str) -> Option<u64> {
+        self.activation(hardfork_id).and_then(HardForkActivation::timestamp)
+    }
+
     /// Sets a timestamp-based hardfork activation time by contract hardfork ID.
     pub fn set_activation_timestamp(&mut self, hardfork_id: &str, timestamp: u64) -> bool {
-        match Self::normalized_hardfork_id(hardfork_id).as_str() {
-            "regolith" => self.regolith_time = Some(timestamp),
-            "canyon" => self.canyon_time = Some(timestamp),
-            "delta" => self.delta_time = Some(timestamp),
-            "ecotone" => self.ecotone_time = Some(timestamp),
-            "fjord" => self.fjord_time = Some(timestamp),
-            "granite" => self.granite_time = Some(timestamp),
-            "holocene" => self.holocene_time = Some(timestamp),
-            "pectrablobschedule" => self.pectra_blob_schedule_time = Some(timestamp),
-            "isthmus" => self.isthmus_time = Some(timestamp),
-            "jovian" => self.jovian_time = Some(timestamp),
-            "azul" | "baseazul" | "v1" => self.base.azul = Some(timestamp),
-            "beryl" | "baseberyl" | "v2" => self.base.beryl = Some(timestamp),
+        match Self::canonical_hardfork_id(hardfork_id) {
+            Some("regolith") => self.regolith_time = Some(timestamp),
+            Some("canyon") => self.canyon_time = Some(timestamp),
+            Some("delta") => self.delta_time = Some(timestamp),
+            Some("ecotone") => self.ecotone_time = Some(timestamp),
+            Some("fjord") => self.fjord_time = Some(timestamp),
+            Some("granite") => self.granite_time = Some(timestamp),
+            Some("holocene") => self.holocene_time = Some(timestamp),
+            Some("pectra_blob_schedule") => self.pectra_blob_schedule_time = Some(timestamp),
+            Some("isthmus") => self.isthmus_time = Some(timestamp),
+            Some("jovian") => self.jovian_time = Some(timestamp),
+            Some("azul") => self.base.azul = Some(timestamp),
+            Some("beryl") => self.base.beryl = Some(timestamp),
             _ => return false,
         }
 
         true
+    }
+
+    /// Returns the canonical contract hardfork ID for an input hardfork ID or alias.
+    pub fn canonical_hardfork_id(hardfork_id: &str) -> Option<&'static str> {
+        match Self::normalized_hardfork_id(hardfork_id).as_str() {
+            "regolith" => Some("regolith"),
+            "canyon" => Some("canyon"),
+            "delta" => Some("delta"),
+            "ecotone" => Some("ecotone"),
+            "fjord" => Some("fjord"),
+            "granite" => Some("granite"),
+            "holocene" => Some("holocene"),
+            "pectrablobschedule" => Some("pectra_blob_schedule"),
+            "isthmus" => Some("isthmus"),
+            "jovian" => Some("jovian"),
+            "azul" | "baseazul" | "v1" => Some("azul"),
+            "beryl" | "baseberyl" | "v2" => Some("beryl"),
+            _ => None,
+        }
     }
 
     /// Normalizes a contract hardfork ID for matching.
@@ -352,5 +589,47 @@ mod tests {
         hardforks.clear_activation_timestamps();
 
         assert_eq!(hardforks, HardForkConfig::default());
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "std")]
+mod runtime_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_registry_tracks_timestamp_and_never_overrides() {
+        let chain_id = 9_100_001;
+        RuntimeHardForkRegistry::clear_chain(chain_id);
+
+        assert!(RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "base_azul", 42));
+        assert!(RuntimeHardForkRegistry::clear_activation_timestamp(chain_id, "beryl"));
+        assert!(!RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "unknown", 10));
+
+        assert_eq!(
+            RuntimeHardForkRegistry::activation(chain_id, "azul"),
+            Some(HardForkActivation::Timestamp(42))
+        );
+        assert_eq!(
+            RuntimeHardForkRegistry::activation(chain_id, "beryl"),
+            Some(HardForkActivation::Never)
+        );
+        assert_eq!(RuntimeHardForkRegistry::activation(chain_id, "unknown"), None);
+
+        RuntimeHardForkRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn hardfork_config_applies_activation_overrides() {
+        let mut hardforks = HardForkConfig { canyon_time: Some(10), ..Default::default() };
+        let mut overrides = HardForkActivationOverrides::new();
+
+        assert!(overrides.clear_activation_timestamp("canyon"));
+        assert!(overrides.set_activation_timestamp("azul", 42));
+
+        hardforks.apply_activation_overrides(&overrides);
+
+        assert_eq!(hardforks.canyon_time, None);
+        assert_eq!(hardforks.base.azul, Some(42));
     }
 }

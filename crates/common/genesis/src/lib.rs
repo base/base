@@ -28,7 +28,12 @@ pub use system::{
 };
 
 mod chain;
-pub use chain::{AddressList, HardForkConfig, HardforkConfig, Roles};
+#[cfg(feature = "std")]
+pub use chain::RuntimeHardForkRegistry;
+pub use chain::{
+    AddressList, HardForkActivation, HardForkActivationOverrides, HardForkConfig, HardforkConfig,
+    Roles,
+};
 
 mod genesis;
 pub use genesis::ChainGenesis;
