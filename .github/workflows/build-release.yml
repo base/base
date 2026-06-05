@@ -70,6 +70,7 @@ jobs:
           packages=(libclang-dev pkg-config)
           if [[ "${{ matrix.target.triple }}" == "aarch64-unknown-linux-gnu" ]]; then
             packages+=(
+              binutils-aarch64-linux-gnu
               gcc-aarch64-linux-gnu
               g++-aarch64-linux-gnu
               libc6-dev-arm64-cross
