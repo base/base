@@ -747,13 +747,11 @@ where
                         let BuildRequest { attributes, result_tx, otel_cx } = *build_request;
                         let build_future = {
                             let _guard = otel_cx.attach();
-                            self
-                                .engine
-                                .build(
-                                    Arc::clone(&self.client),
-                                    Arc::clone(&self.rollup),
-                                    attributes,
-                                )
+                            self.engine.build(
+                                Arc::clone(&self.client),
+                                Arc::clone(&self.rollup),
+                                attributes,
+                            )
                         };
                         let build_result = build_future.await;
                         match build_result {
@@ -779,14 +777,12 @@ where
                             *get_payload_request;
                         let get_payload_future = {
                             let _guard = otel_cx.attach();
-                            self
-                                .engine
-                                .get_payload(
-                                    Arc::clone(&self.client),
-                                    Arc::clone(&self.rollup),
-                                    payload_id,
-                                    attributes,
-                                )
+                            self.engine.get_payload(
+                                Arc::clone(&self.client),
+                                Arc::clone(&self.rollup),
+                                payload_id,
+                                attributes,
+                            )
                         };
                         let result = get_payload_future.await;
 
