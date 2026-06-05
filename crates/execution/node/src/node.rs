@@ -1073,18 +1073,12 @@ where
 }
 
 /// A basic Base network builder.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BaseNetworkBuilder {
     /// Disable transaction pool gossip
     pub disable_txpool_gossip: bool,
     /// Disable discovery v4
     pub disable_discovery_v4: bool,
-}
-
-impl Default for BaseNetworkBuilder {
-    fn default() -> Self {
-        Self { disable_discovery_v4: false, disable_txpool_gossip: false }
-    }
 }
 
 impl BaseNetworkBuilder {
