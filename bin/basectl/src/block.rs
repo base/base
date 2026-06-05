@@ -7,10 +7,9 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use anyhow::{Result, anyhow, bail};
 use base_common_network::Base;
 use basectl_cli::{
-    JsonOutput, KeyValueTable, MonitoringConfig, fetch_block, format_bytes, format_gas,
-    format_gwei, format_unix_timestamp,
+    JsonOutput, KeyValueTable, MonitoringConfig, TimestampJson, fetch_block, format_bytes,
+    format_gas, format_gwei, format_unix_timestamp,
 };
-use chrono::{DateTime, Local, SecondsFormat};
 use serde::Serialize;
 
 /// Parses a CLI block reference into alloy's `BlockId`.
@@ -113,28 +112,6 @@ impl BlockSummaryJson {
             excess_blob_gas: header.excess_blob_gas,
             withdrawals: block.withdrawals.as_ref().map(|w| w.len()),
         }
-    }
-}
-
-/// Three-form timestamp object: raw unix seconds, UTC RFC 3339, and local
-/// RFC 3339 (operator's machine timezone with offset suffix).
-#[derive(Debug, Clone, Serialize)]
-struct TimestampJson {
-    unix: u64,
-    utc: String,
-    local: String,
-}
-
-impl TimestampJson {
-    fn from_unix(secs: u64) -> Self {
-        let dt = i64::try_from(secs).ok().and_then(|s| DateTime::from_timestamp(s, 0));
-        let utc = dt
-            .map(|t| t.to_rfc3339_opts(SecondsFormat::Secs, true))
-            .unwrap_or_else(|| secs.to_string());
-        let local = dt
-            .map(|t| t.with_timezone(&Local).to_rfc3339_opts(SecondsFormat::Secs, false))
-            .unwrap_or_else(|| secs.to_string());
-        Self { unix: secs, utc, local }
     }
 }
 
@@ -249,31 +226,6 @@ mod tests {
     }
 
     #[test]
-    fn timestamp_json_renders_three_forms() {
-        let ts = super::TimestampJson::from_unix(1_780_614_804);
-
-        assert_eq!(ts.unix, 1_780_614_804);
-        assert!(ts.utc.ends_with('Z'), "expected UTC suffix Z, got {}", ts.utc);
-        assert!(ts.utc.starts_with("2026-06-04"), "expected UTC date prefix, got {}", ts.utc);
-        let local_has_offset =
-            ts.local.contains('+') || ts.local.matches('-').count() >= 3 || ts.local.ends_with('Z');
-        assert!(local_has_offset, "expected local RFC 3339 with offset, got {}", ts.local);
-    }
-
-    #[test]
-    fn timestamp_json_falls_back_on_u64_overflow() {
-        // u64 values above i64::MAX would silently wrap to a negative i64 under
-        // an `as i64` cast, producing a misleading pre-epoch RFC 3339 string.
-        // The try_from guard converts that case to None, triggering the raw
-        // seconds fallback for both utc and local.
-        let oversize = super::TimestampJson::from_unix(u64::MAX);
-
-        assert_eq!(oversize.unix, u64::MAX);
-        assert_eq!(oversize.utc, u64::MAX.to_string());
-        assert_eq!(oversize.local, u64::MAX.to_string());
-    }
-
-    #[test]
     fn block_summary_json_serializes_with_camel_case_and_nested_timestamp() {
         let summary = super::BlockSummaryJson {
             network: "sepolia".to_string(),
@@ -281,7 +233,7 @@ mod tests {
             number: 42,
             hash: B256::repeat_byte(0x11),
             parent_hash: B256::repeat_byte(0x22),
-            timestamp: super::TimestampJson::from_unix(1_780_614_804),
+            timestamp: basectl_cli::TimestampJson::from_unix(1_780_614_804),
             transactions: 7,
             gas_used: 21_000,
             gas_limit: 30_000_000,

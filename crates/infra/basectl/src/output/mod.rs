@@ -9,7 +9,7 @@ pub use format::{
 };
 
 mod json;
-pub use json::JsonOutput;
+pub use json::{JsonOutput, TimestampJson};
 
 mod render;
 pub use render::{

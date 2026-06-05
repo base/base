@@ -7,10 +7,9 @@ use alloy_rpc_types_eth::SyncStatus as EthSyncStatus;
 use anyhow::{Result, anyhow};
 use base_protocol::{BlockInfo, L2BlockInfo};
 use basectl_cli::{
-    JsonOutput, KeyValueTable, MonitoringConfig, SyncStatusReport, fetch_sync_status,
-    format_duration, format_unix_timestamp,
+    JsonOutput, KeyValueTable, MonitoringConfig, SyncStatusReport, TimestampJson,
+    fetch_sync_status, format_duration, format_unix_timestamp,
 };
-use chrono::{DateTime, Local, SecondsFormat};
 use serde::Serialize;
 use url::Url;
 
@@ -139,28 +138,6 @@ struct ElSyncInfoJson {
     highest_block: u64,
 }
 
-/// Three-form timestamp object: raw unix seconds, UTC RFC 3339, and local
-/// RFC 3339 (operator's machine timezone with offset suffix).
-#[derive(Debug, Clone, Serialize)]
-struct TimestampJson {
-    unix: u64,
-    utc: String,
-    local: String,
-}
-
-impl TimestampJson {
-    fn from_unix(secs: u64) -> Self {
-        let dt = i64::try_from(secs).ok().and_then(|s| DateTime::from_timestamp(s, 0));
-        let utc = dt
-            .map(|t| t.to_rfc3339_opts(SecondsFormat::Secs, true))
-            .unwrap_or_else(|| secs.to_string());
-        let local = dt
-            .map(|t| t.with_timezone(&Local).to_rfc3339_opts(SecondsFormat::Secs, false))
-            .unwrap_or_else(|| secs.to_string());
-        Self { unix: secs, utc, local }
-    }
-}
-
 fn print_pretty(network: &str, report: &SyncStatusReport) -> Result<()> {
     let cl = &report.cl;
     let mut table = KeyValueTable::new();
@@ -219,7 +196,7 @@ mod tests {
     use base_protocol::{BlockInfo, L2BlockInfo, SyncStatus};
     use basectl_cli::SyncStatusReport;
 
-    use super::{SyncStatusJson, TimestampJson};
+    use super::SyncStatusJson;
 
     fn sample_l2(block: u64, ts: u64) -> L2BlockInfo {
         L2BlockInfo::new(
@@ -280,21 +257,5 @@ mod tests {
         let summary = SyncStatusJson::from_report("mainnet", &report);
         assert_eq!(summary.safe_lag_seconds, 0);
         assert_eq!(summary.safe_lag_blocks, 0);
-    }
-
-    #[test]
-    fn timestamp_json_renders_three_forms() {
-        let ts = TimestampJson::from_unix(1_780_614_804);
-        assert_eq!(ts.unix, 1_780_614_804);
-        assert!(ts.utc.ends_with('Z'), "expected UTC suffix Z, got {}", ts.utc);
-        assert!(ts.utc.starts_with("2026-06-04"), "expected UTC date prefix, got {}", ts.utc);
-    }
-
-    #[test]
-    fn timestamp_json_falls_back_on_u64_overflow() {
-        let oversize = TimestampJson::from_unix(u64::MAX);
-        assert_eq!(oversize.unix, u64::MAX);
-        assert_eq!(oversize.utc, u64::MAX.to_string());
-        assert_eq!(oversize.local, u64::MAX.to_string());
     }
 }
