@@ -6,7 +6,6 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
 };
 
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -18,7 +17,7 @@ use base_proof_contracts::{
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
-use base_proof_primitives::{ProofResult, Proposal, ProverClient};
+use base_proof_primitives::Proposal;
 use base_proof_rpc::{
     BaseBlock, L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OutputAtBlock,
     RollupProvider, RpcError, RpcResult, SyncStatus,
@@ -405,32 +404,6 @@ pub fn test_proposal(block_number: u64) -> Proposal {
         l2_block_number: block_number,
         prev_output_root: B256::repeat_byte(0x03),
         config_hash: B256::repeat_byte(0x04),
-    }
-}
-
-/// Mock prover client for tests.
-#[derive(Debug)]
-pub struct MockProver {
-    /// Simulated proving delay.
-    pub delay: Duration,
-    /// Block interval used to generate intermediate proposals.
-    pub block_interval: u64,
-}
-
-#[async_trait]
-impl ProverClient for MockProver {
-    async fn prove(
-        &self,
-        request: base_proof_primitives::ProofRequest,
-    ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>> {
-        tokio::time::sleep(self.delay).await;
-
-        let block_number = request.claimed_l2_block_number;
-
-        let start = block_number.saturating_sub(self.block_interval);
-        let proposals: Vec<Proposal> = ((start + 1)..=block_number).map(test_proposal).collect();
-
-        Ok(ProofResult::Tee { aggregate_proposal: test_proposal(block_number), proposals })
     }
 }
 

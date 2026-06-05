@@ -1,60 +1,19 @@
 //! Adapters between proposer proof types and the shared prover-service protocol.
 
-use std::{fmt, sync::Arc, time::Duration};
+use std::{fmt, sync::Arc};
 
 use alloy_primitives::B256;
-use async_trait::async_trait;
 use base_proof_primitives::{
-    ProofRequest as PrimitiveProofRequest, ProofResult as PrimitiveProofResult, ProverClient,
+    ProofRequest as PrimitiveProofRequest, ProofResult as PrimitiveProofResult,
 };
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{
-    GetProofRequest, ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProofStatus,
-    ProveBlockRangeRequest, TeeKind, TeeProofRequest,
+    ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest, TeeKind,
+    TeeProofRequest,
 };
 use tracing::debug;
 
 use crate::ProposerError;
-
-/// [`ProverClient`] implementation backed by the prover-service requester API.
-#[derive(Clone)]
-pub struct ProofRequesterProver {
-    requester: Arc<dyn ProofRequesterProvider>,
-    tee_kind: TeeKind,
-    poll_interval: Duration,
-    max_wait: Duration,
-}
-
-impl ProofRequesterProver {
-    /// Creates a prover adapter for AWS Nitro TEE proofs.
-    pub fn aws_nitro(
-        requester: Arc<dyn ProofRequesterProvider>,
-        poll_interval: Duration,
-        max_wait: Duration,
-    ) -> Self {
-        Self { requester, tee_kind: TeeKind::AwsNitro, poll_interval, max_wait }
-    }
-
-    /// Creates a prover adapter for the given TEE implementation.
-    pub const fn new(
-        requester: Arc<dyn ProofRequesterProvider>,
-        tee_kind: TeeKind,
-        poll_interval: Duration,
-        max_wait: Duration,
-    ) -> Self {
-        Self { requester, tee_kind, poll_interval, max_wait }
-    }
-}
-
-impl fmt::Debug for ProofRequesterProver {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProofRequesterProver")
-            .field("tee_kind", &self.tee_kind)
-            .field("poll_interval", &self.poll_interval)
-            .field("max_wait", &self.max_wait)
-            .finish_non_exhaustive()
-    }
-}
 
 /// Proof request accepted by prover service for asynchronous collection.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -106,59 +65,6 @@ impl fmt::Debug for ProofRequesterDispatcher {
         f.debug_struct("ProofRequesterDispatcher")
             .field("tee_kind", &self.tee_kind)
             .finish_non_exhaustive()
-    }
-}
-
-#[async_trait]
-impl ProverClient for ProofRequesterProver {
-    async fn prove(
-        &self,
-        request: PrimitiveProofRequest,
-    ) -> Result<PrimitiveProofResult, Box<dyn std::error::Error + Send + Sync>> {
-        let request = ProposerProofAdapter::tee_prove_block_range_request(request, self.tee_kind);
-        let session_id = self.requester.prove_block_range(request).await?.session_id;
-        let started_at = tokio::time::Instant::now();
-
-        loop {
-            if started_at.elapsed() >= self.max_wait {
-                return Err(Box::new(ProposerError::Prover(format!(
-                    "timed out waiting for TEE proof session {session_id} after {:?}",
-                    self.max_wait
-                ))));
-            }
-
-            let response = self
-                .requester
-                .get_proof(GetProofRequest { session_id: session_id.clone() })
-                .await?;
-
-            match response.status {
-                ProofStatus::Succeeded => {
-                    let result = response.result.ok_or_else(|| {
-                        ProposerError::Prover(format!(
-                            "TEE proof session {session_id} succeeded without a result"
-                        ))
-                    })?;
-                    return Ok(ProposerProofAdapter::tee_proof_result(result, self.tee_kind)?);
-                }
-                ProofStatus::Failed => {
-                    let message = response.error_message.unwrap_or_else(|| {
-                        format!("TEE proof session {session_id} failed without an error message")
-                    });
-                    return Err(Box::new(ProposerError::Prover(message)));
-                }
-                ProofStatus::Queued | ProofStatus::Running => {
-                    debug!(
-                        session_id = %session_id,
-                        status = ?response.status,
-                        elapsed = ?started_at.elapsed(),
-                        "waiting for TEE proof"
-                    );
-                }
-            }
-
-            tokio::time::sleep(self.poll_interval).await;
-        }
     }
 }
 
@@ -236,35 +142,23 @@ impl ProposerProofAdapter {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, sync::Mutex, time::Duration};
+    use std::sync::Mutex;
 
     use alloy_primitives::{Address, B256, Bytes};
     use async_trait::async_trait;
-    use base_proof_primitives::{Proposal, ProverClient};
+    use base_proof_primitives::Proposal;
     use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
     use base_prover_service_protocol::{
         GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequestKind,
-        ProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind,
-        TeeProofResult,
+        ProofResult, ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
     };
 
-    use super::{ProofRequesterDispatcher, ProofRequesterProver, ProposerProofAdapter};
+    use super::{ProofRequesterDispatcher, ProposerProofAdapter};
 
-    #[derive(Debug)]
+    #[derive(Debug, Default)]
     struct MockProofRequester {
         prove_requests: Mutex<Vec<ProveBlockRangeRequest>>,
         get_requests: Mutex<Vec<GetProofRequest>>,
-        proof_responses: Mutex<VecDeque<GetProofResponse>>,
-    }
-
-    impl MockProofRequester {
-        fn new(proof_responses: Vec<GetProofResponse>) -> Self {
-            Self {
-                prove_requests: Mutex::new(Vec::new()),
-                get_requests: Mutex::new(Vec::new()),
-                proof_responses: Mutex::new(proof_responses.into()),
-            }
-        }
     }
 
     #[async_trait]
@@ -281,10 +175,9 @@ mod tests {
 
         async fn get_proof(
             &self,
-            request: GetProofRequest,
+            _request: GetProofRequest,
         ) -> Result<GetProofResponse, ProverServiceClientError> {
-            self.get_requests.lock().unwrap().push(request);
-            Ok(self.proof_responses.lock().unwrap().pop_front().expect("missing proof response"))
+            unimplemented!("tests do not poll proofs")
         }
 
         async fn list_proofs(
@@ -402,63 +295,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proof_requester_prover_submits_and_polls_tee_result() {
-        let aggregate = test_proposal(600);
-        let proposal = test_proposal(300);
-        let response = GetProofResponse {
-            status: ProofStatus::Succeeded,
-            error_message: None,
-            result: Some(ProofResult::Tee(TeeProofResult {
-                aggregate_proposal: aggregate.clone(),
-                proposals: vec![proposal.clone()],
-                tee_kind: TeeKind::AwsNitro,
-            })),
-        };
-        let requester = std::sync::Arc::new(MockProofRequester::new(vec![response]));
-        let prover = ProofRequesterProver::aws_nitro(
-            std::sync::Arc::clone(&requester) as std::sync::Arc<dyn ProofRequesterProvider>,
-            Duration::from_millis(1),
-            Duration::from_secs(1),
-        );
-
-        let result = prover.prove(test_request(B256::repeat_byte(0xaa))).await.unwrap();
-
-        assert_eq!(
-            result,
-            base_proof_primitives::ProofResult::Tee {
-                aggregate_proposal: aggregate,
-                proposals: vec![proposal]
-            }
-        );
-        assert_eq!(requester.prove_requests.lock().unwrap().len(), 1);
-        assert_eq!(requester.get_requests.lock().unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn proof_requester_prover_returns_failed_proof_error() {
-        let response = GetProofResponse {
-            status: ProofStatus::Failed,
-            error_message: Some("boom".to_owned()),
-            result: None,
-        };
-        let requester = std::sync::Arc::new(MockProofRequester::new(vec![response]));
-        let prover = ProofRequesterProver::aws_nitro(
-            requester,
-            Duration::from_millis(1),
-            Duration::from_secs(1),
-        );
-
-        let err = prover
-            .prove(test_request(B256::repeat_byte(0xaa)))
-            .await
-            .expect_err("failed proof should return an error");
-
-        assert!(err.to_string().contains("boom"));
-    }
-
-    #[tokio::test]
     async fn proof_requester_dispatcher_submits_without_polling() {
-        let requester = std::sync::Arc::new(MockProofRequester::new(Vec::new()));
+        let requester = std::sync::Arc::new(MockProofRequester::default());
         let dispatcher = ProofRequesterDispatcher::aws_nitro(
             std::sync::Arc::clone(&requester) as std::sync::Arc<dyn ProofRequesterProvider>
         );
@@ -470,21 +308,5 @@ mod tests {
         assert_eq!(dispatched.session_id, expected_session_id);
         assert_eq!(requester.prove_requests.lock().unwrap().len(), 1);
         assert!(requester.get_requests.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn proof_requester_prover_times_out_waiting_for_terminal_status() {
-        let response =
-            GetProofResponse { status: ProofStatus::Running, error_message: None, result: None };
-        let requester = std::sync::Arc::new(MockProofRequester::new(vec![response]));
-        let prover =
-            ProofRequesterProver::aws_nitro(requester, Duration::from_millis(1), Duration::ZERO);
-
-        let err = prover
-            .prove(test_request(B256::repeat_byte(0xaa)))
-            .await
-            .expect_err("non-terminal proof should time out");
-
-        assert!(err.to_string().contains("timed out waiting for TEE proof session"));
     }
 }

@@ -38,7 +38,7 @@ use alloy_primitives::{Address, B256};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, encode_extra_data,
 };
-use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
+use base_proof_primitives::{ProofRequest, ProofResult};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider, RpcError};
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::TeeKind;
@@ -101,9 +101,6 @@ struct CachedRecovery {
 
 /// Mutable state for the coordinator loop.
 struct PipelineState {
-    /// Running proof tasks, each yielding `(target_block, result)`.
-    /// TODO(P6): remove after the transitional `ProverClient` path is deleted.
-    prove_tasks: JoinSet<(u64, Result<ProofResult, ProposerError>)>,
     /// Running proof dispatch tasks, each accepting a prover-service session.
     dispatch_tasks: JoinSet<ProofDispatchOutcome>,
     /// At most one concurrent submission task.
@@ -134,7 +131,6 @@ enum ProofDispatchOutcome {
 impl PipelineState {
     fn new() -> Self {
         Self {
-            prove_tasks: JoinSet::new(),
             dispatch_tasks: JoinSet::new(),
             submit_tasks: JoinSet::new(),
             proved: BTreeMap::new(),
@@ -178,7 +174,6 @@ where
     F: DisputeGameFactoryClient,
 {
     config: PipelineConfig,
-    prover: Arc<dyn ProverClient>,
     proof_requester: Arc<dyn ProofRequesterProvider>,
     proof_dispatcher: ProofRequesterDispatcher,
     proof_collector: ProofCollector<R>,
@@ -204,7 +199,6 @@ where
     fn clone(&self) -> Self {
         Self {
             config: self.config.clone(),
-            prover: Arc::clone(&self.prover),
             proof_requester: Arc::clone(&self.proof_requester),
             proof_dispatcher: self.proof_dispatcher.clone(),
             proof_collector: self.proof_collector.clone(),
@@ -246,7 +240,6 @@ where
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: PipelineConfig,
-        prover: Arc<dyn ProverClient>,
         proof_requester: Arc<dyn ProofRequesterProvider>,
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
@@ -280,7 +273,6 @@ where
 
         Self {
             config,
-            prover,
             proof_requester: Arc::clone(&proof_requester),
             proof_dispatcher: ProofRequesterDispatcher::aws_nitro(proof_requester),
             proof_collector,
@@ -324,7 +316,6 @@ where
                 biased;
 
                 () = self.cancel.cancelled() => {
-                    state.prove_tasks.abort_all();
                     state.dispatch_tasks.abort_all();
                     state.submit_tasks.abort_all();
                     break;
@@ -339,11 +330,6 @@ where
                     if chain_next {
                         self.try_submit(&mut state);
                     }
-                }
-
-                Some(result) = state.prove_tasks.join_next() => {
-                    self.handle_proof_result(result, &mut state);
-                    self.try_submit(&mut state);
                 }
 
                 _ = poll_interval.tick() => {
@@ -858,64 +844,6 @@ where
                 state.submitting = None;
                 state.record_gauges();
                 false
-            }
-        }
-    }
-
-    fn handle_proof_result(
-        &self,
-        join_result: Result<(u64, Result<ProofResult, ProposerError>), tokio::task::JoinError>,
-        state: &mut PipelineState,
-    ) {
-        match join_result {
-            Ok((target, Ok(proof_result))) => {
-                state.inflight.remove(&target);
-                state.retry_counts.remove(&target);
-                state.proved.insert(target, proof_result);
-                state.record_gauges();
-                info!(target_block = target, "Proof completed successfully");
-            }
-            Ok((target, Err(e))) => {
-                Metrics::errors_total(e.metric_label()).increment(1);
-                state.inflight.remove(&target);
-                let count = state.retry_counts.entry(target).or_insert(0);
-                *count += 1;
-                if *count >= self.config.max_retries {
-                    error!(
-                        target_block = target,
-                        attempts = *count,
-                        error = %e,
-                        "Proof failed after max retries, dropping cached recovery"
-                    );
-                    // Drop only this target's retry bookkeeping (inflight was
-                    // already cleared above when the task finished). Other
-                    // in-flight proofs and completed entries in `proved` are
-                    // independent and must not be discarded. Drop
-                    // `cached_recovery` so the next tick re-walks the chain;
-                    // if this block is still needed it will be re-dispatched
-                    // naturally.
-                    state.retry_counts.remove(&target);
-                    state.cached_recovery = None;
-                } else {
-                    warn!(
-                        target_block = target,
-                        attempt = *count,
-                        error = %e,
-                        "Proof failed, will retry next tick"
-                    );
-                }
-                state.record_gauges();
-            }
-            Err(join_err) if join_err.is_cancelled() => {
-                debug!(error = %join_err, "Proof task cancelled");
-            }
-            Err(join_err) => {
-                // Panics inside the prove future are caught and surfaced as
-                // `Ok((target, Err(_)))`; this branch is reached only for
-                // non-cancellation join errors that aren't tied to a known
-                // target. Don't blow away the proved queue.
-                warn!(error = %join_err, "Proof task join error");
-                state.record_gauges();
             }
         }
     }
@@ -1467,7 +1395,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
-    use base_proof_primitives::{ProofResult, Proposal, ProverClient};
+    use base_proof_primitives::{ProofResult, Proposal};
     #[cfg(feature = "metrics")]
     use metrics_util::{
         CompositeKey, MetricKind,
@@ -1479,8 +1407,8 @@ mod tests {
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-        MockOutputProposer, MockProofRequester, MockProver, MockRollupClient, test_anchor_root,
-        test_proposal, test_sync_status,
+        MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root, test_proposal,
+        test_sync_status,
     };
 
     // ---- Named constants for test data ----
@@ -1518,9 +1446,6 @@ mod tests {
 
     /// Default L1 block number returned by `MockL1`.
     const TEST_L1_BLOCK_NUMBER: u64 = 1000;
-
-    /// Default mock prover delay for recovery tests (minimal).
-    const MOCK_PROVER_DELAY: Duration = Duration::from_millis(1);
 
     // ---- Helper builders for game data ----
 
@@ -1626,10 +1551,6 @@ mod tests {
     ) -> TestPipeline {
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
-            delay: Duration::from_millis(10),
-            block_interval: pipeline_config.driver.block_interval,
-        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_block_number, B256::ZERO),
             output_roots: HashMap::new(),
@@ -1643,7 +1564,6 @@ mod tests {
 
         ProvingPipeline::new(
             pipeline_config,
-            prover,
             Arc::new(MockProofRequester::default()),
             l1,
             l2,
@@ -1738,8 +1658,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> =
-            Arc::new(MockProver { delay: MOCK_PROVER_DELAY, block_interval });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(0, B256::ZERO),
             output_roots,
@@ -1763,7 +1681,6 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
             Arc::new(MockProofRequester::default()),
             l1,
             l2,
@@ -1908,8 +1825,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> =
-            Arc::new(MockProver { delay: MOCK_PROVER_DELAY, block_interval: TEST_BLOCK_INTERVAL });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(TEST_BLOCK_INTERVAL * 2, B256::ZERO),
             output_roots: HashMap::new(),
@@ -1939,7 +1854,6 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
             Arc::new(MockProofRequester::default()),
             l1,
             l2,
@@ -2039,8 +1953,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> =
-            Arc::new(MockProver { delay: MOCK_PROVER_DELAY, block_interval: TEST_BLOCK_INTERVAL });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(0, B256::ZERO),
             output_roots,
@@ -2064,7 +1976,6 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
             Arc::new(MockProofRequester::default()),
             l1,
             l2,
@@ -2323,10 +2234,6 @@ mod tests {
 
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
-            delay: Duration::from_secs(3600),
-            block_interval: TEST_BLOCK_INTERVAL,
-        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_head, B256::ZERO),
             output_roots: HashMap::new(),
@@ -2350,7 +2257,6 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
             Arc::new(MockProofRequester::default()),
             l1,
             l2,
@@ -2398,10 +2304,6 @@ mod tests {
 
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
-            delay: Duration::from_secs(3600),
-            block_interval: TEST_BLOCK_INTERVAL,
-        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_head, B256::ZERO),
             output_roots: HashMap::new(),
@@ -2425,7 +2327,6 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
             Arc::new(MockProofRequester::default()),
             l1,
             l2,
@@ -2458,10 +2359,6 @@ mod tests {
 
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
-            delay: Duration::from_secs(3600),
-            block_interval: TEST_BLOCK_INTERVAL,
-        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_head, B256::ZERO),
             output_roots: HashMap::new(),
@@ -2485,7 +2382,6 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
             Arc::new(MockProofRequester::default()),
             l1,
             l2,
@@ -2585,8 +2481,9 @@ mod tests {
         state.retry_counts.insert(failing_target, pipeline.config.max_retries.saturating_sub(1));
 
         // Final attempt fails and pushes the counter to max_retries.
-        pipeline.handle_proof_result(
-            Ok((failing_target, Err(ProposerError::Prover("boom".into())))),
+        pipeline.handle_proof_failure(
+            failing_target,
+            ProposerError::Prover("boom".into()),
             &mut state,
         );
 
@@ -2606,7 +2503,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_proof_join_error_preserves_proved_queue() {
+    async fn test_dispatch_join_error_preserves_proved_queue() {
         // Construct a synthetic JoinError by joining an aborted task.
         let cancelled_err = {
             let mut js: JoinSet<()> = JoinSet::new();
@@ -2625,7 +2522,7 @@ mod tests {
         // A cancellation join error is the only join error reachable in practice
         // (panics are caught inside the spawned future). Verify it leaves
         // state alone.
-        pipeline.handle_proof_result(Err(cancelled_err), &mut state);
+        pipeline.handle_dispatch_result(Err(cancelled_err), &mut state);
         assert_eq!(state.proved, proved_before, "proved queue untouched on cancellation");
         assert_eq!(state.cached_recovery, cached_before, "cache untouched on cancellation");
     }

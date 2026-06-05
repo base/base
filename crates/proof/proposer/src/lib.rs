@@ -21,9 +21,7 @@ mod output_proposer;
 pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter};
 
 mod proof_adapter;
-pub use proof_adapter::{
-    DispatchedProof, ProofRequesterDispatcher, ProofRequesterProver, ProposerProofAdapter,
-};
+pub use proof_adapter::{DispatchedProof, ProofRequesterDispatcher, ProposerProofAdapter};
 
 mod proof_collector;
 pub use proof_collector::{CollectedProof, ProofCollector};

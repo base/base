@@ -14,7 +14,6 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
-use base_proof_primitives::ProverClient;
 use base_proof_rpc::{
     L1Client, L1ClientConfig, L2Client, L2ClientConfig, RollupClient, RollupClientConfig,
 };
@@ -28,7 +27,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    Metrics, ProofRequesterProver,
+    Metrics,
     config::ProposerConfig,
     constants::MAX_PROOF_RETRIES,
     driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
@@ -96,11 +95,6 @@ impl ProposerService {
         let proof_requester = ProofRequesterClient::connect(&prover_service_config)
             .wrap_err("failed to create prover-service requester client")?;
         let proof_requester: Arc<dyn ProofRequesterProvider> = Arc::new(proof_requester);
-        let prover_client: Arc<dyn ProverClient> = Arc::new(ProofRequesterProver::aws_nitro(
-            Arc::clone(&proof_requester),
-            prover_service_config.poll_interval(),
-            prover_service_config.max_wait(),
-        ));
         info!(endpoint = %config.prover_rpc, "Prover-service requester client initialized");
 
         let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
@@ -226,7 +220,6 @@ impl ProposerService {
         };
         let pipeline = ProvingPipeline::new(
             pipeline_config,
-            prover_client,
             proof_requester,
             l1_client,
             l2_client,
