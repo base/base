@@ -45,6 +45,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push ${{ matrix.target }}
+        env:
+          BASE_SUCCINCT_ELF_REQUIRE: "0"
         run: |
           docker buildx bake -f etc/docker/docker-bake.hcl ${{ matrix.target }} \
             --set ${{ matrix.target }}.tags=${{ env.REGISTRY_IMAGE }}:${{ matrix.target }}-sha-${{ github.sha }} \
