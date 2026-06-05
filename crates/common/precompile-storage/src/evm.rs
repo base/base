@@ -87,6 +87,10 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
+        if self.is_static {
+            return Err(BasePrecompileError::StaticCallViolation);
+        }
+
         let code_len = code.len();
 
         // EIP-3541 / Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
@@ -294,7 +298,10 @@ mod tests {
     use alloy_primitives::Address;
     use revm::{context_interface::cfg::GasParams, primitives::hardfork::SpecId, state::Bytecode};
 
-    use crate::{hashmap::HashMapStorageProvider, provider::PrecompileStorageProvider};
+    use crate::{
+        error::BasePrecompileError, hashmap::HashMapStorageProvider,
+        provider::PrecompileStorageProvider,
+    };
 
     fn amsterdam_provider() -> HashMapStorageProvider {
         let mut provider = HashMapStorageProvider::new(1);
@@ -339,5 +346,19 @@ mod tests {
             after_first,
             "state_gas_used must not increase for an existing account"
         );
+    }
+
+    #[test]
+    fn set_code_static_context_reverts_before_state_gas_or_code_mutation() {
+        let mut provider = amsterdam_provider();
+        provider.set_static(true);
+        let addr = Address::from([0x42u8; 20]);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+
+        let err = provider.set_code(addr, code).unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::StaticCallViolation);
+        assert_eq!(provider.state_gas_used(), 0);
+        assert!(provider.get_account_info(addr).is_none());
     }
 }
