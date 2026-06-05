@@ -17,6 +17,7 @@ TX_SPAMMER_ENABLED="${UPGRADE_SIGNAL_TX_SPAMMER:-1}"
 TX_SPAMMER_CONFIG="$REPO_ROOT/.devnet/upgrade-signal-load-test.yaml"
 TX_SPAMMER_LOG="$REPO_ROOT/.devnet/upgrade-signal-load-test.log"
 TX_SPAMMER_OUTPUT="$REPO_ROOT/.devnet/upgrade-signal-load-test-results.json"
+TX_SPAMMER_POST_UPGRADE_TXS="$REPO_ROOT/.devnet/upgrade-signal-post-upgrade-txs.json"
 TX_SPAMMER_BIN="${UPGRADE_SIGNAL_TX_SPAMMER_BIN:-$REPO_ROOT/target/debug/base-load-tester}"
 TX_SPAMMER_POST_TEST_SECONDS="${UPGRADE_SIGNAL_TX_SPAMMER_POST_TEST_SECONDS:-60}"
 L1_RPC="${UPGRADE_SIGNAL_L1_RPC_URL:-${L1_RPC_URL:-http://localhost:4545}}"
@@ -124,6 +125,10 @@ latest_l2_timestamp() {
     fi
 
     printf '%d\n' "$((16#${timestamp_hex#0x}))"
+}
+
+latest_l2_block_number() {
+    cast block-number --rpc-url "$L2_RPC"
 }
 
 wait_for_l2_timestamp() {
@@ -265,10 +270,62 @@ stop_tx_spammer() {
     TX_SPAMMER_PID=""
 }
 
+write_post_upgrade_tx_report() {
+    local start_block="$1"
+    local end_block="$2"
+    local tx_blocks="$REPO_ROOT/.devnet/upgrade-signal-post-upgrade-tx-blocks.jsonl"
+    local block_number
+    local block_hex
+    local block_json
+
+    : > "$tx_blocks"
+
+    if ((start_block <= end_block)); then
+        for ((block_number = start_block; block_number <= end_block; block_number++)); do
+            block_hex="$(printf '0x%x' "$block_number")"
+            block_json="$(cast rpc --rpc-url "$L2_RPC" eth_getBlockByNumber "$block_hex" true)"
+            jq -c \
+                --argjson block_number "$block_number" \
+                '{
+                    block_number: $block_number,
+                    hash: .hash,
+                    timestamp: .timestamp,
+                    transaction_count: (.transactions | length),
+                    transactions: [
+                        .transactions[] | {
+                            hash,
+                            from,
+                            to,
+                            type,
+                            gas,
+                            gasPrice,
+                            maxFeePerGas,
+                            maxPriorityFeePerGas
+                        }
+                    ]
+                }' <<< "$block_json" >> "$tx_blocks"
+        done
+    fi
+
+    jq -s \
+        --argjson start_block "$start_block" \
+        --argjson end_block "$end_block" \
+        '{
+            start_block: $start_block,
+            end_block: $end_block,
+            total_transactions: (map(.transaction_count) | add // 0),
+            blocks: .
+        }' "$tx_blocks" > "$TX_SPAMMER_POST_UPGRADE_TXS"
+}
+
 keep_tx_spammer_after_test() {
     if ! tx_spammer_enabled || ((TX_SPAMMER_POST_TEST_SECONDS == 0)); then
         return
     fi
+    local start_block
+    local end_block
+    local tx_count
+
     if [[ -z "$TX_SPAMMER_PID" ]]; then
         return
     fi
@@ -278,6 +335,7 @@ keep_tx_spammer_after_test() {
         exit 1
     fi
 
+    start_block="$(latest_l2_block_number)"
     echo "Keeping tx spammer running for $TX_SPAMMER_POST_TEST_SECONDS seconds after test completion..."
     sleep "$TX_SPAMMER_POST_TEST_SECONDS"
 
@@ -286,6 +344,17 @@ keep_tx_spammer_after_test() {
         tail -n 80 "$TX_SPAMMER_LOG" >&2 || true
         exit 1
     fi
+
+    end_block="$(latest_l2_block_number)"
+    write_post_upgrade_tx_report "$((start_block + 1))" "$end_block"
+    tx_count="$(jq -r '.total_transactions' "$TX_SPAMMER_POST_UPGRADE_TXS")"
+    if ((tx_count == 0)); then
+        echo "no post-upgrade tx spam landed between L2 blocks $((start_block + 1)) and $end_block" >&2
+        echo "tx spammer logs: $TX_SPAMMER_LOG" >&2
+        exit 1
+    fi
+
+    echo "Observed $tx_count post-upgrade txs; report: $TX_SPAMMER_POST_UPGRADE_TXS"
 }
 
 trap stop_tx_spammer EXIT
