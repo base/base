@@ -5,7 +5,7 @@ use std::{
 };
 
 use base_common_flashblocks::Flashblock;
-use base_common_genesis::SystemConfig;
+use base_common_genesis::{HardForkConfig, SystemConfig};
 use base_consensus_rpc::ClusterMembership;
 use tokio::sync::{mpsc, watch};
 use url::Url;
@@ -212,6 +212,7 @@ pub struct Resources {
     /// L1 system config fetched from the contract.
     pub system_config: Option<SystemConfig>,
     sys_config_rx: Option<mpsc::Receiver<SystemConfig>>,
+    hardforks_rx: Option<mpsc::Receiver<HardForkConfig>>,
 }
 
 /// State for DA (data availability) monitoring.
@@ -271,6 +272,7 @@ impl Resources {
             proofs: ProofsState::default(),
             system_config: None,
             sys_config_rx: None,
+            hardforks_rx: None,
         }
     }
 
@@ -284,12 +286,25 @@ impl Resources {
         self.sys_config_rx = Some(rx);
     }
 
+    /// Sets the channel for receiving live hardfork schedule updates.
+    pub fn set_hardforks_channel(&mut self, rx: mpsc::Receiver<HardForkConfig>) {
+        self.hardforks_rx = Some(rx);
+    }
+
     /// Polls for a new system config from the background task.
     pub fn poll_sys_config(&mut self) {
         if let Some(ref mut rx) = self.sys_config_rx
             && let Ok(cfg) = rx.try_recv()
         {
             self.system_config = Some(cfg);
+        }
+    }
+
+    /// Polls for live hardfork schedule updates from the consensus node.
+    pub fn poll_hardforks(&mut self) {
+        let Some(ref mut rx) = self.hardforks_rx else { return };
+        while let Ok(hardforks) = rx.try_recv() {
+            self.config.hardforks = Some(hardforks);
         }
     }
 }

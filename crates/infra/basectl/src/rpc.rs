@@ -9,6 +9,7 @@ use alloy_sol_types::sol;
 use anyhow::Result;
 use base_common_consensus::BaseTxEnvelope;
 use base_common_flashblocks::Flashblock;
+use base_common_genesis::{HardForkConfig, RollupConfig};
 use base_common_network::Base;
 use base_consensus_rpc::{
     AdminApiClient, BaseP2PApiClient, ClusterMembership, ConductorApiClient, RollupNodeApiClient,
@@ -29,6 +30,7 @@ use crate::{
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
 const WS_RECONNECT_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const WS_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
+const ROLLUP_CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Fetches the safe and latest L2 block numbers.
 pub async fn fetch_safe_and_latest(l2_rpc: &str) -> Result<(u64, u64)> {
@@ -87,6 +89,62 @@ pub async fn run_safe_head_poller(
             && tx.send(block.header.number).await.is_err()
         {
             break;
+        }
+    }
+}
+
+/// Polls the consensus node's live rollup config for hardfork schedule updates.
+pub async fn run_rollup_config_poller(
+    consensus_rpc: Url,
+    tx: mpsc::Sender<HardForkConfig>,
+    toast_tx: mpsc::Sender<Toast>,
+) {
+    let client = match HttpClientBuilder::default().build(consensus_rpc.as_str()) {
+        Ok(client) => client,
+        Err(error) => {
+            warn!(
+                error = %error,
+                consensus_rpc = %consensus_rpc,
+                "failed to create consensus RPC client for rollup config polling"
+            );
+            let _ = toast_tx.try_send(Toast::warning("Rollup config poller connection failed"));
+            return;
+        }
+    };
+
+    let mut interval = tokio::time::interval(ROLLUP_CONFIG_POLL_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last_hardforks = None;
+    let mut initialized = false;
+
+    loop {
+        interval.tick().await;
+        let config =
+            match client.request::<RollupConfig, _>("optimism_rollupConfig", rpc_params![]).await {
+                Ok(config) => config,
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        consensus_rpc = %consensus_rpc,
+                        "failed to poll live rollup config"
+                    );
+                    continue;
+                }
+            };
+
+        if last_hardforks.as_ref() == Some(&config.hardforks) {
+            continue;
+        }
+
+        last_hardforks = Some(config.hardforks);
+        if tx.send(config.hardforks).await.is_err() {
+            break;
+        }
+
+        if initialized {
+            let _ = toast_tx.try_send(Toast::info("Hardfork schedule updated"));
+        } else {
+            initialized = true;
         }
     }
 }
