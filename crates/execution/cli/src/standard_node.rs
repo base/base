@@ -307,10 +307,7 @@ mod tests {
         ])
         .args;
 
-        assert_eq!(
-            args.flashblocks_ping_interval,
-            FlashblocksConfig::DEFAULT_SUBSCRIBER_PING_INTERVAL
-        );
+        assert_eq!(args.flashblocks_ping_interval, Duration::from_secs(30));
     }
 
     #[test]
@@ -320,10 +317,7 @@ mod tests {
             .args;
 
         assert_eq!(args.flashblocks_url, None);
-        assert_eq!(
-            args.flashblocks_ping_interval,
-            FlashblocksConfig::DEFAULT_SUBSCRIBER_PING_INTERVAL
-        );
+        assert_eq!(args.flashblocks_ping_interval, Duration::from_secs(30));
     }
 
     #[test]
