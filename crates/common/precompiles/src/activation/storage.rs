@@ -123,7 +123,7 @@ impl ActivationRegistryStorage<'_> {
         if self.storage.is_static() {
             return Err(BasePrecompileError::revert(IActivationRegistry::StaticCallNotAllowed {}));
         }
-    
+
         let caller = self.storage.caller();
         let Some(admin) = activation_admin_address else {
             return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
@@ -131,17 +131,23 @@ impl ActivationRegistryStorage<'_> {
         if caller != admin {
             return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
         }
-        
+
         let current_activated_state = self.features.at(&feature).read()?;
-        
-        let is_activating_and_already_activated = to_activated_state == true && current_activated_state == true;
-        let is_deactivating_and_already_deactivated = to_activated_state == false && current_activated_state == false;
-        
+
+        let is_activating_and_already_activated =
+            to_activated_state == true && current_activated_state == true;
+        let is_deactivating_and_already_deactivated =
+            to_activated_state == false && current_activated_state == false;
+
         if is_activating_and_already_activated {
-            return Err(BasePrecompileError::revert(IActivationRegistry::AlreadyActivated { feature }));
+            return Err(BasePrecompileError::revert(IActivationRegistry::AlreadyActivated {
+                feature,
+            }));
         }
         if is_deactivating_and_already_deactivated {
-            return Err(BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated { feature }));
+            return Err(BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated {
+                feature,
+            }));
         }
 
         if to_activated_state {
