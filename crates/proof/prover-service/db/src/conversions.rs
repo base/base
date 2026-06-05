@@ -181,32 +181,25 @@ impl ProofRequest {
     /// Build the protocol result from stored state: prefers `result_payload`,
     /// else reconstructs from the legacy STARK/SNARK receipts. `None` means no
     /// result data is available.
-    pub fn stored_proof_result(&self) -> Result<Option<ProtocolProofResult>, ConversionError> {
-        if let Some(result_payload) = &self.result_payload {
-            return serde_json::from_value(result_payload.clone()).map(Some).map_err(|source| {
-                ConversionError::InvalidResultPayload {
-                    session_id: self.session_id.clone(),
-                    source,
-                }
+    pub fn stored_proof_result(self) -> Result<Option<ProtocolProofResult>, ConversionError> {
+        if let Some(result_payload) = self.result_payload {
+            return serde_json::from_value(result_payload).map(Some).map_err(|source| {
+                ConversionError::InvalidResultPayload { session_id: self.session_id, source }
             });
         }
 
         Ok(match self.proof_type {
-            Some(ProofType::OpSuccinctSp1ClusterCompressed) => {
-                self.stark_receipt.clone().map(|proof| {
-                    ProtocolProofResult::Compressed(ZkProofResult {
-                        zk_vm: ProtocolZkVm::Sp1,
-                        proof: proof.into(),
-                    })
+            Some(ProofType::OpSuccinctSp1ClusterCompressed) => self.stark_receipt.map(|proof| {
+                ProtocolProofResult::Compressed(ZkProofResult {
+                    zk_vm: ProtocolZkVm::Sp1,
+                    proof: proof.into(),
                 })
-            }
-            Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16) => {
-                self.snark_receipt.clone().map(|proof| {
-                    ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                        proof: ZkProofResult { zk_vm: ProtocolZkVm::Sp1, proof: proof.into() },
-                    })
+            }),
+            Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16) => self.snark_receipt.map(|proof| {
+                ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+                    proof: ZkProofResult { zk_vm: ProtocolZkVm::Sp1, proof: proof.into() },
                 })
-            }
+            }),
             None => None,
         })
     }

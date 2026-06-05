@@ -52,8 +52,8 @@ impl ProverServiceServer {
             .any(is_dry_run_metadata))
     }
 
-    async fn succeeded_result(&self, proof_req: &ProofRequest) -> RpcResult<Option<ProofResult>> {
-        if should_use_dry_run_result(proof_req) && self.request_is_dry_run(proof_req.id).await? {
+    async fn succeeded_result(&self, proof_req: ProofRequest) -> RpcResult<Option<ProofResult>> {
+        if should_use_dry_run_result(&proof_req) && self.request_is_dry_run(proof_req.id).await? {
             return Ok(Some(ProofResult::Compressed(ZkProofResult {
                 zk_vm: ZkVm::Sp1,
                 proof: Vec::new().into(),
@@ -108,7 +108,7 @@ impl ProverServiceServer {
                 match updated_proof_req.status {
                     DbProofStatus::Succeeded => (
                         ProofStatus::Succeeded,
-                        self.succeeded_result(&updated_proof_req).await?,
+                        self.succeeded_result(updated_proof_req).await?,
                         None,
                     ),
                     DbProofStatus::Failed => {
@@ -118,7 +118,7 @@ impl ProverServiceServer {
                 }
             }
             DbProofStatus::Succeeded => {
-                (ProofStatus::Succeeded, self.succeeded_result(&proof_req).await?, None)
+                (ProofStatus::Succeeded, self.succeeded_result(proof_req).await?, None)
             }
             DbProofStatus::Failed => (ProofStatus::Failed, None, proof_req.error_message),
         };
