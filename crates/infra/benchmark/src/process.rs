@@ -18,6 +18,7 @@ pub struct ProcessHandle {
     binary: PathBuf,
     args: Vec<String>,
     env: Vec<(String, String)>,
+    current_dir: Option<PathBuf>,
     pipe_stdout: bool,
     stdout_file: File,
     stderr_file: File,
@@ -42,7 +43,22 @@ impl ProcessHandle {
         stdout_file: File,
         stderr_file: File,
     ) -> Self {
-        Self { binary, args, env, pipe_stdout: false, stdout_file, stderr_file, child: None }
+        Self {
+            binary,
+            args,
+            env,
+            current_dir: None,
+            pipe_stdout: false,
+            stdout_file,
+            stderr_file,
+            child: None,
+        }
+    }
+
+    /// Set the working directory for the spawned process.
+    pub fn with_current_dir(mut self, dir: PathBuf) -> Self {
+        self.current_dir = Some(dir);
+        self
     }
 
     /// Enable stdout piping so the caller can read process output.
@@ -64,6 +80,9 @@ impl ProcessHandle {
 
         let mut cmd = Command::new(&self.binary);
         cmd.args(&self.args).stdout(stdout).stderr(stderr).kill_on_drop(false).process_group(0);
+        if let Some(dir) = &self.current_dir {
+            cmd.current_dir(dir);
+        }
         // SAFETY: `pre_exec` runs between fork and exec in the child process.
         // We reset the signal mask so the child does not inherit blocked signals
         // from the parent's tokio runtime.

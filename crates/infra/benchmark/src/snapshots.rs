@@ -41,12 +41,18 @@ impl SnapshotKey {
 pub struct SnapshotManager {
     cache: HashMap<SnapshotKey, PathBuf>,
     snapshots_dir: PathBuf,
+    script_dir: Option<PathBuf>,
 }
 
 impl SnapshotManager {
     /// Create a new manager that stores snapshots under `snapshots_dir`.
-    pub fn new(snapshots_dir: PathBuf) -> Self {
-        Self { cache: HashMap::new(), snapshots_dir }
+    ///
+    /// `script_dir` is the working directory used when executing snapshot
+    /// commands. Pass the config file's parent so relative paths like
+    /// `./scripts/zfs-clone.sh` resolve correctly regardless of the process
+    /// CWD. Pass `None` to inherit the process CWD.
+    pub fn new(snapshots_dir: PathBuf, script_dir: Option<PathBuf>) -> Self {
+        Self { cache: HashMap::new(), snapshots_dir, script_dir }
     }
 
     /// Resolve the data directory for a given node type and role.
@@ -125,6 +131,9 @@ impl SnapshotManager {
         let stderr = devnull.try_clone()?;
 
         let mut handle = ProcessHandle::new(PathBuf::from(bin), args, vec![], devnull, stderr);
+        if let Some(dir) = &self.script_dir {
+            handle = handle.with_current_dir(dir.clone());
+        }
 
         handle.start().await?;
         handle
@@ -183,7 +192,7 @@ mod tests {
     #[test]
     fn snapshot_path_format() {
         let tmp = tempdir().unwrap();
-        let mgr = SnapshotManager::new(tmp.path().to_path_buf());
+        let mgr = SnapshotManager::new(tmp.path().to_path_buf(), None);
         let key = SnapshotKey {
             node_type: "base-reth-node".into(),
             role: "sequencer".into(),
@@ -202,7 +211,7 @@ mod tests {
         let explicit = tmp.path().join("mydata");
         fs::create_dir_all(&explicit).unwrap();
 
-        let mut mgr = SnapshotManager::new(tmp.path().to_path_buf());
+        let mut mgr = SnapshotManager::new(tmp.path().to_path_buf(), None);
         let config = DatadirConfig { sequencer: Some(explicit.clone()), validator: None };
         let snap =
             SnapshotConfig { command: "unused".into(), genesis_file: None, force_clean: false };
@@ -215,7 +224,7 @@ mod tests {
     #[tokio::test]
     async fn ensure_snapshot_caches_result() {
         let tmp = tempdir().unwrap();
-        let mut mgr = SnapshotManager::new(tmp.path().to_path_buf());
+        let mut mgr = SnapshotManager::new(tmp.path().to_path_buf(), None);
         let config = DatadirConfig::default();
         let snap =
             SnapshotConfig { command: "true".into(), genesis_file: None, force_clean: false };

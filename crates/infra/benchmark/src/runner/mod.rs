@@ -100,11 +100,13 @@ pub struct NetworkBenchmark {
 impl NetworkBenchmark {
     /// Create a new benchmark runner.
     pub fn new(config: BenchmarkConfig, options: RunnerOptions, snapshot_dir: PathBuf) -> Self {
+        let script_dir =
+            options.config_path.as_deref().and_then(|p| p.parent()).map(PathBuf::from);
         Self {
             config,
             options,
             port_manager: Arc::new(PortManager::new()),
-            snapshot_manager: SnapshotManager::new(snapshot_dir),
+            snapshot_manager: SnapshotManager::new(snapshot_dir, script_dir),
         }
     }
 
