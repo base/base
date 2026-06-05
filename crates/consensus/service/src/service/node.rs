@@ -21,7 +21,7 @@ use base_consensus_providers::{
 use base_consensus_rpc::RpcBuilder;
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_protocol::L2BlockInfo;
-use base_upgrade_signal::UpgradeSignalConfig;
+use base_upgrade_signal::{UpgradeSignalConfig, UpgradeSignalRefresher};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -541,6 +541,13 @@ impl RollupNode {
                     cancellation.clone(),
                 )
             });
+        let upgrade_signal_refresher = self.upgrade_signal_metrics_config.clone().map(|config| {
+            UpgradeSignalRefresher::new(
+                config,
+                self.l1_config.engine_provider.clone(),
+                self.config.l2_chain_id.id(),
+            )
+        });
         // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if self.mode().is_sequencer() {
             let sequencer_engine_client = QueuedSequencerEngineClient {
@@ -593,6 +600,7 @@ impl RollupNode {
                 QueuedEngineRpcClient::new(engine_rpc_request_tx),
                 sequencer_admin_client,
                 safe_db_reader,
+                upgrade_signal_refresher,
             )
         });
 

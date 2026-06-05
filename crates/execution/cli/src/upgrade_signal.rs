@@ -2,11 +2,15 @@
 
 use alloy_provider::RootProvider;
 use base_execution_chainspec::BaseChainSpec;
-use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
+use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
-    AlloyUpgradeSignalReader, DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalConfig,
-    UpgradeSignalMetrics, UpgradeSignalMonitor, UpgradeSignalSchedule, UpgradeSignalStateUpdate,
+    AlloyUpgradeSignalReader, DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalApplySummary,
+    UpgradeSignalConfig, UpgradeSignalMetrics, UpgradeSignalMonitor, UpgradeSignalRefresher,
+    UpgradeSignalSchedule, UpgradeSignalStateUpdate,
 };
+use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
+use reth_chainspec::EthChainSpec;
+use reth_rpc_server_types::RethRpcModule;
 use tracing::{debug, info, warn};
 use url::Url;
 
@@ -113,6 +117,61 @@ impl ExecutionUpgradeSignal {
 
         Ok(applied)
     }
+
+    /// Refreshes the runtime upgrade signal schedule for a running execution node.
+    pub async fn refresh_runtime_upgrade_signal(
+        refresher: &UpgradeSignalRefresher,
+    ) -> RpcResult<UpgradeSignalApplySummary> {
+        match refresher.refresh().await {
+            Ok(summary) => {
+                info!(
+                    target: "upgrade_signal",
+                    chain_id = summary.chain_id,
+                    l1_block_number = ?summary.l1_block_number,
+                    applied_hardforks = summary.applied_hardforks,
+                    cleared_hardforks = summary.cleared_hardforks,
+                    ignored_hardforks = summary.ignored_hardforks,
+                    configured_hardforks = summary.configured_hardforks,
+                    "refreshed execution runtime upgrade signal"
+                );
+                Ok(summary)
+            }
+            Err(error) => {
+                warn!(
+                    target: "upgrade_signal",
+                    error = %error,
+                    "failed to refresh execution runtime upgrade signal"
+                );
+                Err(ErrorObject::owned(
+                    -32003,
+                    "failed to refresh upgrade signal",
+                    Some(error.to_string()),
+                ))
+            }
+        }
+    }
+
+    /// Registers the execution admin RPC method for runtime upgrade signal refreshes.
+    pub fn register_runtime_refresh_rpc(
+        ctx: &mut BaseRpcContext<'_>,
+        config: ExecutionUpgradeSignalConfig,
+    ) -> eyre::Result<()> {
+        let chain_id = ctx.config().chain.chain().id();
+        let refresher = UpgradeSignalRefresher::new(
+            config.signal_config,
+            RootProvider::new_http(config.l1_rpc),
+            chain_id,
+        );
+        let mut module = RpcModule::new(refresher);
+        module
+            .register_async_method("admin_refreshUpgradeSignal", |_, refresher, _| async move {
+                Self::refresh_runtime_upgrade_signal(&refresher).await
+            })
+            .map_err(|error| eyre::eyre!(error))?;
+        ctx.modules.merge_if_module_configured(RethRpcModule::Admin, module)?;
+
+        Ok(())
+    }
 }
 
 /// Execution-node extension that records live L1 upgrade signal metrics only.
@@ -165,6 +224,11 @@ impl ExecutionUpgradeSignalMetricsExtension {
 impl BaseNodeExtension for ExecutionUpgradeSignalMetricsExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         let config = self.config;
+        let rpc_config = config.clone();
+
+        let hooks = hooks.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
+            ExecutionUpgradeSignal::register_runtime_refresh_rpc(ctx, rpc_config)
+        });
 
         hooks.add_node_started_hook(move |ctx| {
             let reader = AlloyUpgradeSignalReader::new(
@@ -208,7 +272,7 @@ impl FromExtensionConfig for ExecutionUpgradeSignalMetricsExtension {
 #[cfg(test)]
 mod tests {
     use base_common_chains::BaseUpgrade;
-    use reth_chainspec::{ChainSpec, EthereumHardfork, ForkCondition, Hardforks};
+    use reth_chainspec::{ChainSpec, EthereumHardfork, ForkCondition};
 
     use super::*;
 

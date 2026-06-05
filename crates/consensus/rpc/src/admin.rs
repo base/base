@@ -6,10 +6,12 @@ use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_gossip::Metrics;
+use base_upgrade_signal::{UpgradeSignalApplySummary, UpgradeSignalRefresher};
 use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
 };
+use tracing::{info, warn};
 
 use crate::{AdminApiServer, SequencerAdminAPIClient};
 
@@ -32,6 +34,8 @@ pub struct AdminRpc<SequencerAdminAPIClient> {
     pub sequencer_admin_client: Option<SequencerAdminAPIClient>,
     /// The sender to the network actor.
     pub network_sender: NetworkAdminQuerySender,
+    /// Runtime upgrade signal refresher.
+    pub upgrade_signal_refresher: Option<UpgradeSignalRefresher>,
 }
 
 impl<SequencerAdminAPIClient_> AdminRpc<SequencerAdminAPIClient_>
@@ -53,13 +57,26 @@ where
         sequencer_admin_client: Option<SequencerAdminAPIClient_>,
         network_sender: NetworkAdminQuerySender,
     ) -> Self {
-        Self { sequencer_admin_client, network_sender }
+        Self { sequencer_admin_client, network_sender, upgrade_signal_refresher: None }
+    }
+
+    /// Sets the runtime upgrade signal refresher.
+    pub fn with_upgrade_signal_refresher(
+        self,
+        upgrade_signal_refresher: Option<UpgradeSignalRefresher>,
+    ) -> Self {
+        Self { upgrade_signal_refresher, ..self }
     }
 }
 
 /// Returns an RPC error indicating the sequencer is not available on this node.
 fn sequencer_unavailable() -> ErrorObject<'static> {
     ErrorObject::owned(-32001, "sequencer not available on this node", None::<()>)
+}
+
+/// Returns an RPC error indicating the upgrade signal is not available on this node.
+fn upgrade_signal_unavailable() -> ErrorObject<'static> {
+    ErrorObject::owned(-32002, "upgrade signal not configured on this node", None::<()>)
 }
 
 #[async_trait]
@@ -174,5 +191,41 @@ where
             .reset_derivation_pipeline()
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
+    }
+
+    async fn admin_refresh_upgrade_signal(&self) -> RpcResult<UpgradeSignalApplySummary> {
+        Metrics::rpc_calls("admin_refreshUpgradeSignal").increment(1.0);
+
+        let Some(ref refresher) = self.upgrade_signal_refresher else {
+            return Err(upgrade_signal_unavailable());
+        };
+
+        match refresher.refresh().await {
+            Ok(summary) => {
+                info!(
+                    target: "upgrade_signal",
+                    chain_id = summary.chain_id,
+                    l1_block_number = ?summary.l1_block_number,
+                    applied_hardforks = summary.applied_hardforks,
+                    cleared_hardforks = summary.cleared_hardforks,
+                    ignored_hardforks = summary.ignored_hardforks,
+                    configured_hardforks = summary.configured_hardforks,
+                    "refreshed consensus runtime upgrade signal"
+                );
+                Ok(summary)
+            }
+            Err(error) => {
+                warn!(
+                    target: "upgrade_signal",
+                    error = %error,
+                    "failed to refresh consensus runtime upgrade signal"
+                );
+                Err(ErrorObject::owned(
+                    -32003,
+                    "failed to refresh upgrade signal",
+                    Some(error.to_string()),
+                ))
+            }
+        }
     }
 }
