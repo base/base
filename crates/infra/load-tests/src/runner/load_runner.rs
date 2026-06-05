@@ -1865,7 +1865,10 @@ impl LoadRunner {
                 }
             }
 
-            let expired = results_tracker.expire_pending(PENDING_CONFIRMATION_TIMEOUT);
+            // Use a shorter expiry during drain: the test is over, so any
+            // pending tx older than the drain window itself is stale.
+            let drain_expiry = PENDING_CONFIRMATION_TIMEOUT.saturating_sub(drain_start.elapsed());
+            let expired = results_tracker.expire_pending(drain_expiry);
             if expired > 0 {
                 self.collector.record_failures("expired without confirmation", expired);
             }

@@ -4873,7 +4873,6 @@ dependencies = [
  "alloy-signer 2.0.5",
  "alloy-signer-local 2.0.5",
  "alloy-sol-types",
- "base-common-consensus",
  "base-common-flashblocks",
  "base-common-network",
  "base-common-precompiles",

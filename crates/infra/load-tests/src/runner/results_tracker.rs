@@ -129,7 +129,11 @@ impl ResultsTracker {
 
             inner.pending.insert(
                 transaction.tx_hash,
-                PendingTransaction { from: transaction.from, submit_time, in_flight_released: false },
+                PendingTransaction {
+                    from: transaction.from,
+                    submit_time,
+                    in_flight_released: false,
+                },
             );
             inner.pending_age_queue.push_back(transaction.tx_hash);
             inner
@@ -156,12 +160,12 @@ impl ResultsTracker {
                 inner.flashblock_eviction_queue.push_back(inclusion.tx_hash);
             }
 
-            if let Some(pending) = inner.pending.get_mut(&inclusion.tx_hash) {
-                if !pending.in_flight_released {
-                    pending.in_flight_released = true;
-                    let from = pending.from;
-                    inner.decrement_in_flight(&from);
-                }
+            if let Some(pending) = inner.pending.get_mut(&inclusion.tx_hash)
+                && !pending.in_flight_released
+            {
+                pending.in_flight_released = true;
+                let from = pending.from;
+                inner.decrement_in_flight(&from);
             }
         }
 
@@ -194,8 +198,9 @@ impl ResultsTracker {
 
     /// Expires submitted transactions that were not observed in a canonical block.
     ///
-    /// Transactions already confirmed by a flashblock are not expired — they are
-    /// assumed to be included on-chain even if the block receipt has not arrived yet.
+    /// Removes all pending entries older than `max_age`, regardless of whether their
+    /// in-flight slot was already released. Returns the number of entries that were
+    /// NOT previously confirmed by a flashblock (true failures).
     pub fn expire_pending(&self, max_age: Duration) -> u64 {
         let now = Instant::now();
         let mut inner = self.inner.write();
@@ -203,23 +208,21 @@ impl ResultsTracker {
             .pending
             .iter()
             .filter_map(|(tx_hash, pending)| {
-                if pending.in_flight_released {
-                    return None;
-                }
                 (now.duration_since(pending.submit_time) > max_age).then_some(*tx_hash)
             })
             .collect();
 
-        let expired_count = expired.len() as u64;
+        let mut unconfirmed_count = 0u64;
         for tx_hash in expired {
-            if let Some(pending) = inner.pending.remove(&tx_hash) {
-                if !pending.in_flight_released {
-                    inner.decrement_in_flight(&pending.from);
-                }
+            if let Some(pending) = inner.pending.remove(&tx_hash)
+                && !pending.in_flight_released
+            {
+                inner.decrement_in_flight(&pending.from);
+                unconfirmed_count += 1;
             }
         }
 
-        expired_count
+        unconfirmed_count
     }
 
     /// Drains confirmed metrics that have not yet been consumed by the runner.
@@ -262,7 +265,7 @@ impl ResultsTracker {
         let mut released = 0u64;
 
         while let Some(&tx_hash) = inner.pending_age_queue.front() {
-            let Some(pending) = inner.pending.get(&tx_hash) else {
+            let Some(pending) = inner.pending.get_mut(&tx_hash) else {
                 inner.pending_age_queue.pop_front();
                 continue;
             };
@@ -272,8 +275,8 @@ impl ResultsTracker {
             }
 
             if !pending.in_flight_released {
+                pending.in_flight_released = true;
                 let from = pending.from;
-                inner.pending.get_mut(&tx_hash).unwrap().in_flight_released = true;
                 inner.decrement_in_flight(&from);
                 released += 1;
             }
@@ -508,5 +511,79 @@ mod tests {
         tracker
             .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
         assert_eq!(tracker.total_in_flight(), 0, "duplicate flashblock should not underflow");
+    }
+
+    #[test]
+    fn release_stale_in_flight_releases_old_txs() {
+        let sender_a = address!("0000000000000000000000000000000000000001");
+        let sender_b = address!("0000000000000000000000000000000000000002");
+        let tx_a = TxHash::repeat_byte(0xa0);
+        let tx_b = TxHash::repeat_byte(0xb0);
+        let tx_c = TxHash::repeat_byte(0xc0);
+        let tracker = ResultsTracker::new(&[sender_a, sender_b]);
+
+        tracker.sent_transactions(vec![
+            SentTransaction { tx_hash: tx_a, from: sender_a },
+            SentTransaction { tx_hash: tx_b, from: sender_b },
+        ]);
+        assert_eq!(tracker.total_in_flight(), 2);
+
+        // Nothing older than 100s yet.
+        assert_eq!(tracker.release_stale_in_flight(Duration::from_secs(100)), 0);
+        assert_eq!(tracker.total_in_flight(), 2);
+
+        // Release everything older than 0s (all of them).
+        let released = tracker.release_stale_in_flight(Duration::ZERO);
+        assert_eq!(released, 2, "both txs should be released");
+        assert_eq!(tracker.total_in_flight(), 0);
+        assert_eq!(tracker.in_flight_for(&sender_a), 0);
+        assert_eq!(tracker.in_flight_for(&sender_b), 0);
+
+        // Calling again should release nothing (already released).
+        assert_eq!(tracker.release_stale_in_flight(Duration::ZERO), 0);
+
+        // New tx after release — should track normally.
+        tracker.sent_transactions(vec![SentTransaction { tx_hash: tx_c, from: sender_a }]);
+        assert_eq!(tracker.total_in_flight(), 1);
+        assert_eq!(tracker.in_flight_for(&sender_a), 1);
+    }
+
+    #[test]
+    fn release_stale_does_not_double_decrement_with_flashblock() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(0xd0);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+        assert_eq!(tracker.total_in_flight(), 1);
+
+        // Flashblock confirms it first.
+        tracker
+            .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
+        assert_eq!(tracker.total_in_flight(), 0);
+
+        // Time-based release fires later — should not underflow.
+        assert_eq!(tracker.release_stale_in_flight(Duration::ZERO), 0);
+        assert_eq!(tracker.total_in_flight(), 0);
+    }
+
+    #[test]
+    fn expire_pending_cleans_up_released_entries() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(0xe0);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+        assert_eq!(tracker.pending_count(), 1);
+
+        // Time-based release marks in_flight_released but keeps the pending entry.
+        tracker.release_stale_in_flight(Duration::ZERO);
+        assert_eq!(tracker.pending_count(), 1, "pending entry should still exist");
+        assert_eq!(tracker.total_in_flight(), 0);
+
+        // expire_pending should now remove released entries too.
+        let expired = tracker.expire_pending(Duration::ZERO);
+        assert_eq!(expired, 0, "released tx is not a true failure");
+        assert_eq!(tracker.pending_count(), 0, "pending entry should be cleaned up");
     }
 }

@@ -455,7 +455,7 @@ impl SubmissionPipeline {
         } else if lower.contains("missing response") || lower.contains("invalid tx hash") {
             BatchTxError::RetryableUnknown(msg)
         } else if lower.contains("replacement transaction underpriced") {
-            BatchTxError::AlreadyKnown
+            BatchTxError::NonceTooLow
         } else if lower.contains("txpool is full")
             || lower.contains("transaction pool is full")
             || lower.contains("pool is full")
