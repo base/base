@@ -6,7 +6,7 @@ use std::{
 
 use alloy_consensus::{Eip658Value, Transaction};
 use alloy_eips::{Encodable2718, Typed2718};
-use alloy_evm::{Database, block::StateChangeSource};
+use alloy_evm::Database;
 #[cfg(any(test, feature = "test-utils"))]
 use alloy_primitives::B256;
 use alloy_primitives::{BlockHash, Bytes, TxHash, U256};
@@ -630,10 +630,7 @@ impl BasePayloadBuilderCtx {
             info.receipts.push(self.build_receipt(ctx, depositor_nonce));
 
             if let Some(sender) = state_root_updates {
-                let _ = sender.send(StateRootMessage::StateUpdate(
-                    StateChangeSource::Transaction(info.executed_transactions.len()).into(),
-                    state.clone(),
-                ));
+                let _ = sender.send(StateRootMessage::StateUpdate(state.clone()));
             }
 
             // commit changes
@@ -1045,10 +1042,7 @@ impl BasePayloadBuilderCtx {
             info.receipts.push(self.build_receipt(ctx, None));
 
             if let Some(sender) = state_root_updates {
-                let _ = sender.send(StateRootMessage::StateUpdate(
-                    StateChangeSource::Transaction(info.executed_transactions.len()).into(),
-                    state.clone(),
-                ));
+                let _ = sender.send(StateRootMessage::StateUpdate(state.clone()));
             }
 
             // commit changes

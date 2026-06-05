@@ -9,7 +9,10 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, test_utils::get_available_port};
+use base_builder_core::{
+    BuilderConfig, FlashblocksServiceBuilder,
+    test_utils::{clear_otel_env_vars, get_available_port},
+};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{BasePooledTransaction, BuilderApiImpl, BuilderApiServer};
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
@@ -238,21 +241,6 @@ impl InProcessBuilder {
     /// Returns the Flashblocks URL for Docker containers using testcontainers host port exposure.
     pub fn host_flashblocks_url(&self) -> String {
         format!("ws://{}:{}/", crate::host::host_address(), self.flashblocks_port)
-    }
-}
-
-fn clear_otel_env_vars() {
-    for key in [
-        "OTEL_EXPORTER_OTLP_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_HEADERS",
-        "OTEL_EXPORTER_OTLP_PROTOCOL",
-        "OTEL_LOGS_EXPORTER",
-        "OTEL_METRICS_EXPORTER",
-        "OTEL_TRACES_EXPORTER",
-        "OTEL_SDK_DISABLED",
-    ] {
-        // SAFETY: We're in a test environment where env var mutation is acceptable
-        unsafe { std::env::remove_var(key) };
     }
 }
 

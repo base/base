@@ -35,7 +35,7 @@ use reth_cli_runner::CliRunner;
 use reth_db::DatabaseEnv;
 use reth_node_builder::{NodeBuilder, WithLaunchContext};
 use reth_node_core::{
-    args::{LogArgs, TraceArgs},
+    args::{LogArgs, PayloadBuilderArgs, TraceArgs},
     version::version_metadata,
 };
 // This allows us to manually enable node metrics features, required for proper jemalloc metric
@@ -123,10 +123,53 @@ where
             launcher(builder, chain_spec).await
         }))
     }
+
+    /// Execute the configured CLI, first allowing callers to copy parsed reth payload-builder
+    /// arguments into their extension args.
+    pub fn run_with_payload_builder_args<L, Fut, F>(
+        self,
+        configure_ext: F,
+        launcher: L,
+    ) -> eyre::Result<()>
+    where
+        L: FnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv, BaseChainSpec>>, Ext) -> Fut,
+        Fut: Future<Output = eyre::Result<()>>,
+        F: FnOnce(&mut Ext, &PayloadBuilderArgs),
+    {
+        self.with_runner_and_payload_builder_args(
+            CliRunner::try_default_runtime()?,
+            configure_ext,
+            launcher,
+        )
+    }
+
+    /// Execute the configured CLI with the provided [`CliRunner`], first allowing callers to copy
+    /// parsed reth payload-builder arguments into their extension args.
+    pub fn with_runner_and_payload_builder_args<L, Fut, F>(
+        self,
+        runner: CliRunner,
+        configure_ext: F,
+        launcher: L,
+    ) -> eyre::Result<()>
+    where
+        L: FnOnce(WithLaunchContext<NodeBuilder<DatabaseEnv, BaseChainSpec>>, Ext) -> Fut,
+        Fut: Future<Output = eyre::Result<()>>,
+        F: FnOnce(&mut Ext, &PayloadBuilderArgs),
+    {
+        let mut this = self.configure();
+        this.set_runner(runner);
+        this.run_with_ext_config(
+            FnLauncher::new::<BaseChainSpecParser, Ext>(async move |builder, chain_spec| {
+                launcher(builder, chain_spec).await
+            }),
+            configure_ext,
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use base_cli_utils::clear_otel_env_vars;
     use base_execution_chainspec::BaseChainSpec;
     use base_node_core::args::RollupArgs;
     use clap::Parser;
@@ -154,11 +197,7 @@ mod tests {
 
     #[test]
     fn parse_node() {
-        // clap 4.x validates env var values even when the CLI arg is explicitly provided.
-        // Override OTEL_EXPORTER_OTLP_PROTOCOL (which may be set to `http/protobuf` in CI)
-        // to a value accepted by reth's OtlpProtocol enum.
-        // SAFETY: this is a single-test context; no other thread concurrently reads this var.
-        unsafe { std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "http") };
+        clear_otel_env_vars();
         let cmd = Cli::<RollupArgs>::parse_from([
             "base-reth",
             "node",

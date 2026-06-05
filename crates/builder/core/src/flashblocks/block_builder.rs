@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use alloy_evm::{
-    Database,
-    block::{BlockExecutor, StateChangeSource},
-};
+use alloy_evm::{Database, Evm};
 use alloy_primitives::B256;
 use base_execution_payload_builder::BaseBuiltPayload;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -117,15 +114,12 @@ impl<'a, DB> FlashblocksBlockBuilder<'a, DB> {
             // must stay open for the block's actual transactions: typically flashblock batches, plus
             // any transactions supplied by the FCU.
             let sender = sender.clone();
-            builder.executor_mut().set_state_hook(Some(Box::new(
-                move |source: StateChangeSource, state: &EvmState| {
-                    let _ =
-                        sender.send(StateRootMessage::StateUpdate(source.into(), state.clone()));
-                },
-            )));
+            builder.evm_mut().db_mut().set_state_hook(Some(Box::new(move |state: &EvmState| {
+                let _ = sender.send(StateRootMessage::StateUpdate(state.clone()));
+            })));
         }
         builder.apply_pre_execution_changes()?;
-        builder.executor_mut().set_state_hook(None);
+        builder.evm_mut().db_mut().set_state_hook(None);
         drop(builder);
 
         Ok(())

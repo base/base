@@ -255,7 +255,7 @@ where
             state_provider = Box::new(CachedStateProvider::new(
                 state_provider,
                 execution_cache.cache().clone(),
-                CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder),
+                Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
             ));
         }
         let db = StateProviderDatabase::new(state_provider);

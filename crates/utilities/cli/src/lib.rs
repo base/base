@@ -39,5 +39,25 @@ mod cli;
 mod runtime;
 pub use runtime::RuntimeManager;
 
+/// Clears OTEL-related environment variables that can interfere with CLI argument parsing.
+///
+/// Clap reads env vars for args with `env = "..."` attributes, and externally configured OTEL
+/// values such as `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` may not match reth's CLI enums.
+/// Use this in parser tests or in-process test harnesses before constructing CLI args.
+pub fn clear_otel_env_vars() {
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "OTEL_EXPORTER_OTLP_PROTOCOL",
+        "OTEL_LOGS_EXPORTER",
+        "OTEL_METRICS_EXPORTER",
+        "OTEL_TRACES_EXPORTER",
+        "OTEL_SDK_DISABLED",
+    ] {
+        // SAFETY: Callers use this in test environments before CLI parsing.
+        unsafe { std::env::remove_var(key) };
+    }
+}
+
 #[macro_use]
 mod macros;

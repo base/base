@@ -91,8 +91,12 @@ pub struct Args {
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
 
-    /// Maximum number of payload build tasks that may execute concurrently
-    #[arg(long = "builder.max-payload-tasks", default_value = "3", value_parser = parse_positive_usize)]
+    /// Maximum number of payload build tasks that may execute concurrently.
+    ///
+    /// base-builder uses reth's `--builder.max-tasks` CLI arg for this setting. This skipped
+    /// extension field is populated from reth's parsed `PayloadBuilderArgs` before node launch so
+    /// we do not duplicate or drift from reth's payload-builder CLI surface.
+    #[arg(skip = 3usize)]
     pub max_payload_tasks: usize,
 
     /// Whether to enable TIPS Resource Metering
@@ -155,14 +159,6 @@ impl Args {
             Duration::from_secs(self.metering_store_ttl_secs),
         )
     }
-}
-
-fn parse_positive_usize(value: &str) -> Result<usize, String> {
-    let value = value.parse::<usize>().map_err(|err| err.to_string())?;
-    if value == 0 {
-        return Err("value must be greater than 0".to_string());
-    }
-    Ok(value)
 }
 
 impl Default for Args {
@@ -248,6 +244,9 @@ mod tests {
     use alloy_primitives::{B256, TxHash, U256};
     use base_builder_core::{MeteringProvider, NoopMeteringProvider};
     use base_bundles::MeterBundleResponse;
+    use base_cli_utils::clear_otel_env_vars;
+    use base_execution_cli::{Cli, commands::Commands};
+    use clap::Parser;
     use rstest::rstest;
 
     use super::*;
@@ -306,7 +305,34 @@ mod tests {
 
     #[test]
     fn max_payload_tasks_rejects_zero() {
-        assert!(super::parse_positive_usize("0").is_err());
+        let result =
+            Cli::<Args>::try_parse_from(["base-builder", "node", "--builder.max-tasks", "0"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_parse_defaults_max_payload_tasks_when_arg_is_omitted() {
+        clear_otel_env_vars();
+        let cli = Cli::<Args>::try_parse_from(["base-builder", "node"])
+            .expect("missing builder.max-payload-tasks should use the default");
+        let Commands::Node(node) = cli.command else {
+            panic!("expected node command");
+        };
+
+        assert_eq!(node.ext.max_payload_tasks, 3);
+        assert_eq!(node.builder.max_payload_tasks, 3);
+    }
+
+    #[test]
+    fn cli_parse_uses_reth_max_tasks_arg() {
+        clear_otel_env_vars();
+        let cli = Cli::<Args>::try_parse_from(["base-builder", "node", "--builder.max-tasks", "8"])
+            .expect("reth builder max tasks arg should parse");
+        let Commands::Node(node) = cli.command else {
+            panic!("expected node command");
+        };
+
+        assert_eq!(node.builder.max_payload_tasks, 8);
     }
 
     #[rstest]
