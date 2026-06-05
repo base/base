@@ -32,6 +32,6 @@ pub use pods::{PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, run_pods_pol
 
 mod rollup;
 pub use rollup::{
-    LatestProposal, ProofsSnapshot, ValidatorNodeStatus, fetch_safe_and_latest, run_proofs_poller,
-    run_safe_head_poller, run_validator_poller,
+    LatestProposal, ProofsSnapshot, SyncStatusReport, ValidatorNodeStatus, fetch_safe_and_latest,
+    fetch_sync_status, run_proofs_poller, run_safe_head_poller, run_validator_poller,
 };

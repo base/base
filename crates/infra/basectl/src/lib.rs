@@ -32,14 +32,14 @@ pub use rpc::{
     BacklogBlock, BacklogFetchResult, BacklogProgress, BlockDaInfo, ConductorNodeStatus,
     ConductorPollUpdate, InitialBacklog, L1BlockInfo, L1ConnectionMode, LatestProposal,
     PausedPeers, PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, ProofsSnapshot,
-    TimestampedFlashblock, TxSummary, ValidatorNodeStatus, conductor_pause_all_nodes,
-    conductor_pause_node, conductor_resume_all_nodes, conductor_resume_node,
-    decode_flashblock_transactions, fetch_block, fetch_block_transactions,
+    SyncStatusReport, TimestampedFlashblock, TxSummary, ValidatorNodeStatus,
+    conductor_pause_all_nodes, conductor_pause_node, conductor_resume_all_nodes,
+    conductor_resume_node, decode_flashblock_transactions, fetch_block, fetch_block_transactions,
     fetch_full_system_config, fetch_initial_backlog_with_progress, fetch_safe_and_latest,
-    pause_sequencer_node, restart_conductor_node, run_block_fetcher, run_conductor_poller,
-    run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher, run_pods_poller,
-    run_proofs_poller, run_safe_head_poller, run_validator_poller, start_sequencer_node,
-    stop_sequencer_node, transfer_conductor_leader, unpause_sequencer_node,
+    fetch_sync_status, pause_sequencer_node, restart_conductor_node, run_block_fetcher,
+    run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher,
+    run_pods_poller, run_proofs_poller, run_safe_head_poller, run_validator_poller,
+    start_sequencer_node, stop_sequencer_node, transfer_conductor_leader, unpause_sequencer_node,
 };
 
 mod tui;

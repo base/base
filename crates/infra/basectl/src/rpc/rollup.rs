@@ -2,10 +2,11 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types_eth::BlockNumberOrTag;
+use alloy_rpc_types_eth::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
 use alloy_sol_types::sol;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use base_consensus_rpc::{BaseP2PApiClient, RollupNodeApiClient};
+use base_protocol::SyncStatus;
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -15,6 +16,52 @@ use crate::{
     config::{ProofsConfig, ValidatorNodeConfig},
     tui::Toast,
 };
+
+/// Combined CL `optimism_syncStatus` + EL `eth_syncing` snapshot.
+///
+/// The CL `SyncStatus` carries every L1/L2 head ref the rollup node knows
+/// about, including timestamps on `unsafe_l2`/`safe_l2`/`finalized_l2` via
+/// `L2BlockInfo.block_info.timestamp`. The EL `EthSyncStatus` is alloy's
+/// typed `eth_syncing` response (`Info(SyncInfo)` while syncing, `None`
+/// otherwise).
+///
+/// Doctor (Phase 2.8) reuses this to compute `unsafe.timestamp -
+/// safe.timestamp` for its safe-head-recency check, gated on whether the
+/// EL is actively syncing.
+#[derive(Debug, Clone)]
+pub struct SyncStatusReport {
+    /// Rollup node `optimism_syncStatus` response.
+    pub cl: SyncStatus,
+    /// Execution-layer `eth_syncing` response.
+    pub el: EthSyncStatus,
+}
+
+/// Fetches a combined CL + EL sync-status snapshot.
+///
+/// Calls `optimism_syncStatus` against the consensus-node RPC and
+/// `eth_syncing` against the execution-layer RPC in parallel; either error
+/// short-circuits the call.
+pub async fn fetch_sync_status(rpc: &Url, cl_rpc: &Url) -> Result<SyncStatusReport> {
+    let cl_client = HttpClientBuilder::default()
+        .request_timeout(Duration::from_secs(10))
+        .build(cl_rpc.as_str())
+        .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
+    let el_provider = ProviderBuilder::new()
+        .connect(rpc.as_str())
+        .await
+        .with_context(|| format!("connecting to L2 EL RPC at {rpc}"))?;
+    let (cl, el) = tokio::try_join!(
+        async {
+            RollupNodeApiClient::sync_status(&cl_client)
+                .await
+                .with_context(|| format!("fetching optimism_syncStatus from {cl_rpc}"))
+        },
+        async {
+            el_provider.syncing().await.with_context(|| format!("fetching eth_syncing from {rpc}"))
+        },
+    )?;
+    Ok(SyncStatusReport { cl, el })
+}
 
 /// Fetches the safe and latest L2 block numbers.
 pub async fn fetch_safe_and_latest(l2_rpc: &str) -> Result<(u64, u64)> {
