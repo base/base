@@ -6516,6 +6516,7 @@ dependencies = [
  "alloy-rpc-types-eth 2.0.5",
  "anyhow",
  "base-common-network",
+ "base-protocol",
  "basectl-cli",
  "chrono",
  "clap",

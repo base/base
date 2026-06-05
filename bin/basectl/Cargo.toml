@@ -24,6 +24,7 @@ clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+base-protocol = { workspace = true, features = ["serde", "std"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [dev-dependencies]
