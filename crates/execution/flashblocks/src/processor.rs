@@ -452,14 +452,15 @@ where
         };
         drop(live_state);
 
+        let latest_header = prev_pending_blocks.latest_header();
         let header_start = profiling.then(Instant::now);
         let mut latest_block_flashblocks = prev_pending_blocks.latest_block_flashblocks();
         latest_block_flashblocks.push(flashblock.clone());
-        let latest_block_header = BlockAssembler::assemble(&latest_block_flashblocks)?.header;
+        let latest_block_header =
+            BlockAssembler::refresh_same_block_header(&latest_header, &latest_block_flashblocks)?;
         let header_us = header_start.map(|start| start.elapsed().as_micros());
 
         let evm_config = BaseEvmConfig::base(self.client.chain_spec());
-        let latest_header = prev_pending_blocks.latest_header();
         let evm_env = evm_config
             .evm_env(&latest_header)
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
