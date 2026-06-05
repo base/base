@@ -23,6 +23,12 @@ pub use error::UpgradeSignalError;
 mod metrics;
 pub use metrics::UpgradeSignalMetrics;
 
+mod runtime;
+pub use runtime::{
+    UpgradeSignalApplyAction, UpgradeSignalApplyChange, UpgradeSignalApplySummary,
+    UpgradeSignalRefresher, UpgradeSignalRuntimeApplier,
+};
+
 mod state;
 pub use state::{
     UpgradeSignal, UpgradeSignalMonitor, UpgradeSignalSchedule, UpgradeSignalState,
