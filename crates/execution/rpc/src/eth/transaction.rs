@@ -6,16 +6,14 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::{BlockHeader, Typed2718, transaction::TxHashRef};
+use alloy_consensus::{Typed2718, transaction::TxHashRef};
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
-use base_common_chains::Upgrades;
 use base_common_consensus::{
     BaseTransaction, BaseTransactionInfo, DepositInfo, DepositReceiptExt, EIP8130_TX_TYPE_ID,
 };
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_chainspec::ChainSpecProvider;
 use reth_primitives_traits::{Recovered, SignedTransaction, SignerRecoverable, WithEncoded};
 use reth_rpc_eth_api::{
     EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore, RpcReceipt,
@@ -23,9 +21,7 @@ use reth_rpc_eth_api::{
     helpers::{EthTransactions, LoadReceipt, LoadTransaction, SpawnBlocking, spec::SignersForRpc},
 };
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
-use reth_storage_api::{
-    BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider, errors::ProviderError,
-};
+use reth_storage_api::{ProviderTx, ReceiptProvider, TransactionsProvider, errors::ProviderError};
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTransaction, TransactionOrigin, TransactionPool,
 };
@@ -36,7 +32,6 @@ use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerC
 impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    N::Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
@@ -56,7 +51,7 @@ where
     ) -> Result<B256, Self::Error> {
         let (tx, recovered) = tx.split();
 
-        if recovered.ty() == EIP8130_TX_TYPE_ID && !self.is_cobalt_active_at_latest()? {
+        if recovered.ty() == EIP8130_TX_TYPE_ID {
             return Err(BaseInvalidTransactionError::Eip8130NotAccepted.into());
         }
 
@@ -204,20 +199,6 @@ where
     /// Returns the [`SequencerClient`] if one is set.
     pub fn raw_tx_forwarder(&self) -> Option<SequencerClient> {
         self.inner.sequencer_client.clone()
-    }
-}
-
-impl<N, Rpc> BaseEthApi<N, Rpc>
-where
-    N: RpcNodeCore,
-    N::Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
-{
-    fn is_cobalt_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
-        let Some(header) = self.provider().latest_header()? else {
-            return Ok(false);
-        };
-        Ok(self.provider().chain_spec().is_cobalt_active_at_timestamp(header.timestamp()))
     }
 }
 
