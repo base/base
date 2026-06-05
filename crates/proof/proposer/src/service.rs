@@ -70,7 +70,7 @@ impl ProposerService {
 
         let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())
             .with_timeout(config.rpc_timeout)
-            .with_retry_config(config.retry.clone())
+            .with_retry_config(config.retry)
             .with_skip_tls_verify(config.skip_tls_verify)
             .with_metrics_prefix("base_proposer");
         let l1_client = Arc::new(L1Client::new(l1_config)?);
@@ -78,7 +78,7 @@ impl ProposerService {
 
         let l2_config = L2ClientConfig::new(config.l2_eth_rpc.clone())
             .with_timeout(config.rpc_timeout)
-            .with_retry_config(config.retry.clone())
+            .with_retry_config(config.retry)
             .with_skip_tls_verify(config.skip_tls_verify)
             .with_metrics_prefix("base_proposer");
         let l2_client = Arc::new(L2Client::new(l2_config)?);
@@ -86,7 +86,7 @@ impl ProposerService {
 
         let rollup_config = RollupClientConfig::new(config.rollup_rpc.clone())
             .with_timeout(config.rpc_timeout)
-            .with_retry_config(config.retry.clone())
+            .with_retry_config(config.retry)
             .with_skip_tls_verify(config.skip_tls_verify);
         let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
         info!(endpoint = %config.rollup_rpc, "Rollup client initialized");

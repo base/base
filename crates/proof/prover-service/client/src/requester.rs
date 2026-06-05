@@ -216,6 +216,7 @@ mod tests {
         ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer, ZkProofRequest,
         ZkProofResult, ZkVm,
     };
+    use base_retry::RetryConfig;
     use chrono::Utc;
     use jsonrpsee::{
         core::{RpcResult, client::Error as JsonRpcClientError},
@@ -225,8 +226,6 @@ mod tests {
     };
 
     use super::{ProofRequesterClient, ProofRequesterProvider};
-    use base_retry::RetryConfig;
-
     use crate::ProverServiceClientError;
 
     /// Outcome script for a single requester call when the test wants to drive
@@ -524,8 +523,7 @@ mod tests {
         let api = MockRequesterApi::new();
         // backon's `with_max_times(n)` allows `n` retries on top of the initial call,
         // so an exhausted run performs `max_attempts + 1` total calls.
-        let total_calls =
-            config.normalized_max_attempts().expect("fast retry config should be bounded") + 1;
+        let total_calls = config.max_attempts.expect("fast retry config should be bounded") + 1;
         api.queue_prove_outcomes((0..total_calls).map(|_| ScriptedOutcome::Retryable));
         let api_clone = api.clone();
         let server = RunningRequesterServer::spawn_with_retry(api, config).await;

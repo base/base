@@ -44,14 +44,6 @@ impl RetryConfig {
         Self { max_attempts: None, initial_delay, max_delay }
     }
 
-    /// Returns the configured max retry attempts.
-    ///
-    /// `Some(0)` disables retries and performs only the initial call. `None` retries without an
-    /// attempt limit.
-    pub const fn normalized_max_attempts(&self) -> Option<u32> {
-        self.max_attempts
-    }
-
     /// Returns the configured max delay, clamped to the minimum allowed delay.
     pub fn normalized_max_delay(&self) -> Duration {
         self.max_delay.max(MIN_RETRY_DELAY)
@@ -69,10 +61,11 @@ impl RetryConfig {
             .with_max_delay(self.normalized_max_delay())
             .with_jitter();
 
-        match self.normalized_max_attempts() {
-            Some(max_attempts) => builder.with_max_times(max_attempts as usize),
-            None => builder.without_max_times(),
-        }
+        let Some(max_attempts) = self.max_attempts else {
+            return builder.without_max_times();
+        };
+
+        builder.with_max_times(max_attempts as usize)
     }
 }
 
@@ -103,7 +96,7 @@ mod tests {
     fn bounded_max_attempts_preserves_zero() {
         let config = RetryConfig::new(0, Duration::from_millis(10), Duration::from_millis(20));
 
-        assert_eq!(config.normalized_max_attempts(), Some(0));
+        assert_eq!(config.max_attempts, Some(0));
         assert!(format!("{:?}", config.to_backoff_builder()).contains("max_times: Some(0)"));
     }
 
