@@ -1804,14 +1804,9 @@ async fn test_poll_running_timeout_triggers_retry() {
     assert!(matches!(entry.phase, ProofPhase::NeedsRetry));
 }
 
-// ── Metric emission tests ───────────────────────────────────────────────────
-//
-// These tests assert that the new C5 proof-lifecycle metrics
-// (`proof_session_failures_total{reason}` and `proof_retries_exhausted_total`)
-// are emitted at the correct points. They use the `metrics-util`
-// `DebuggingRecorder` pattern: each test installs its own local recorder and
-// inspects the resulting snapshot.
-
+// Metric emission tests for `proof_session_failures_total{reason}` and
+// `proof_retries_exhausted_total`. Each test installs a local
+// `DebuggingRecorder` and asserts on the resulting snapshot.
 #[cfg(feature = "metrics")]
 mod metrics_emission {
     use base_challenger::ChallengerMetrics;
@@ -1997,6 +1992,59 @@ mod metrics_emission {
     }
 
     #[test]
+    fn test_poll_tee_validation_failure_emits_metric() {
+        with_recorder(|snap| {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+
+            rt.block_on(async {
+                let expected_root = B256::repeat_byte(0xaa);
+                let bad_proposal = Proposal {
+                    output_root: B256::repeat_byte(0xbb),
+                    signature: Bytes::from(vec![0u8; 65]),
+                    l1_origin_hash: DEFAULT_L1_HEAD,
+                    l1_origin_number: 1000,
+                    l2_block_number: 20,
+                    prev_output_root: B256::ZERO,
+                    config_hash: B256::ZERO,
+                };
+                let zk = Arc::new(MockZkProofProvider {
+                    session_id: "tee-bad-root-session".to_string(),
+                    state: Mutex::new(MockZkProofState {
+                        proof_status: ProofStatus::Succeeded,
+                        result: Some(tee_api_result(bad_proposal)),
+                        ..Default::default()
+                    }),
+                });
+
+                let mut proofs = PendingProofs::new();
+                proofs.insert(
+                    addr(0),
+                    PendingProof::awaiting_tee(
+                        "tee-bad-root-session".to_string(),
+                        0,
+                        expected_root,
+                        Some(minimal_prove_request()),
+                        Some(DisputeIntent::Challenge),
+                    ),
+                );
+
+                proofs.poll(addr(0), &*zk, Duration::from_secs(3600)).await.unwrap();
+            });
+
+            let snapshot = snap.snapshot().into_vec();
+            assert_eq!(
+                find_failure_counter_with_reason(
+                    &snapshot,
+                    ChallengerMetrics::PROOF_FAILURE_TEE_VALIDATION,
+                ),
+                Some(1),
+                "TEE root mismatch must increment \
+                 proof_session_failures_total{{reason=tee_validation_failed}}",
+            );
+        });
+    }
+
+    #[test]
     fn test_step_proof_exhaustion_emits_metric() {
         with_recorder(|snap| {
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -2010,14 +2058,10 @@ mod metrics_emission {
                 // Step 1: initiate the proof.
                 driver.step().await.unwrap();
 
-                // Force the entry past the retry budget so the next step exhausts.
-                // The game must remain `InProgress` with unresolved prover slots
-                // — otherwise `poll_or_submit` short-circuits and drops the
-                // entry before reaching `handle_proof_retry` (where the metric
-                // is emitted). The same `step()` call re-discovers the
-                // still-`InProgress` game via the scanner and re-creates a
-                // fresh pending entry with `retry_count = 0`, so we assert
-                // exactly on the metric and not on entry presence.
+                // Force the entry past the retry budget so the next `step()`
+                // exhausts. The scanner re-creates a fresh entry with
+                // `retry_count = 0` in the same call, so we assert on the
+                // metric only.
                 let max_retries =
                     Driver::<MockL2Provider, MockZkProofProvider, MockTxManager>::MAX_PROOF_RETRIES;
                 let entry = driver
