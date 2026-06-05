@@ -29,8 +29,8 @@ use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
-    BlockAssembler, ExecutionError, FlashblockCache, PendingBlocks, PendingBlocksBuilder,
-    PendingStateBuilder, ProviderError, Result, StateProcessorError,
+    AssembledBlock, BlockAssembler, ExecutionError, FlashblockCache, PendingBlocks,
+    PendingBlocksBuilder, PendingStateBuilder, ProviderError, Result, StateProcessorError,
     metrics::Metrics,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
@@ -553,6 +553,7 @@ where
         let previous_header = prev_pending_blocks.latest_header();
         let current_block = BlockAssembler::assemble(std::slice::from_ref(flashblock))?;
         let l1_block_info = current_block.l1_block_info()?;
+        let AssembledBlock { block: assembled_block, header: assembled_header, .. } = current_block;
         let pending_block = Block {
             header: Header {
                 number: base.block_number,
@@ -561,7 +562,7 @@ where
                 base_fee_per_gas: Some(base.base_fee_per_gas.saturating_to()),
                 ..Default::default()
             },
-            body: current_block.block.body.clone(),
+            body: assembled_block.body,
         };
 
         let evm_config = BaseEvmConfig::base(self.client.chain_spec());
@@ -593,7 +594,7 @@ where
 
         let mut pending_blocks_builder = PendingBlocksBuilder::from_previous(prev_pending_blocks);
         pending_blocks_builder.with_flashblocks([flashblock.clone()]);
-        pending_blocks_builder.with_header(current_block.header);
+        pending_blocks_builder.with_header(assembled_header);
 
         let mut pending_state_builder = PendingStateBuilder::new(
             self.client.chain_spec(),
