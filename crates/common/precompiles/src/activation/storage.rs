@@ -115,7 +115,7 @@ impl ActivationRegistryStorage<'_> {
     pub fn set_activated(
         &mut self,
         feature: B256,
-        activated: bool,
+        to_activated_state: bool,
         activation_admin_address: Option<Address>,
     ) -> Result<()> {
         // Keep this guard at the shared mutation boundary so `activate`, `deactivate`, and direct
@@ -123,7 +123,7 @@ impl ActivationRegistryStorage<'_> {
         if self.storage.is_static() {
             return Err(BasePrecompileError::revert(IActivationRegistry::StaticCallNotAllowed {}));
         }
-
+    
         let caller = self.storage.caller();
         let Some(admin) = activation_admin_address else {
             return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
@@ -131,21 +131,20 @@ impl ActivationRegistryStorage<'_> {
         if caller != admin {
             return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
         }
-
-        let current = self.features.at(&feature).read()?;
-        if current == activated {
-            if activated {
-                return Err(BasePrecompileError::revert(IActivationRegistry::AlreadyActivated {
-                    feature,
-                }));
-            }
-
-            return Err(BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated {
-                feature,
-            }));
+        
+        let current_activated_state = self.features.at(&feature).read()?;
+        
+        let is_activating_and_already_activated = to_activated_state == true && current_activated_state == true;
+        let is_deactivating_and_already_deactivated = to_activated_state == false && current_activated_state == false;
+        
+        if is_activating_and_already_activated {
+            return Err(BasePrecompileError::revert(IActivationRegistry::AlreadyActivated { feature }));
+        }
+        if is_deactivating_and_already_deactivated {
+            return Err(BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated { feature }));
         }
 
-        if activated {
+        if to_activated_state {
             self.__initialize()?;
             self.features.at_mut(&feature).write(true)?;
             self.emit_event(IActivationRegistry::FeatureActivated { feature, caller })?;

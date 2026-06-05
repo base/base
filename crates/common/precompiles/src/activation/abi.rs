@@ -17,9 +17,6 @@ sol! {
         /// Feature is already activated.
         error AlreadyActivated(bytes32 feature);
 
-        /// Feature is already deactivated.
-        error AlreadyDeactivated(bytes32 feature);
-
         /// Feature is not activated.
         error FeatureNotActivated(bytes32 feature);
 
