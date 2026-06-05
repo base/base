@@ -6,20 +6,11 @@ use base_prover_service_protocol::{
     GetNextProofRequest, GetNextProofResponse, HeartbeatRequest, HeartbeatResponse,
     ProverWorkerApiClient, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
-use base_retry::{
-    DEFAULT_BOUNDED_INITIAL_DELAY, DEFAULT_BOUNDED_MAX_ATTEMPTS, DEFAULT_BOUNDED_MAX_DELAY,
-    RetryConfig,
-};
+use base_retry::RetryConfig;
 use jsonrpsee::http_client::HttpClient;
 use tracing::{debug, warn};
 
 use crate::{ProverServiceClientBuildError, ProverServiceClientConfig, ProverServiceClientError};
-
-const DEFAULT_RETRY_CONFIG: RetryConfig = RetryConfig::new(
-    DEFAULT_BOUNDED_MAX_ATTEMPTS,
-    DEFAULT_BOUNDED_INITIAL_DELAY,
-    DEFAULT_BOUNDED_MAX_DELAY,
-);
 
 /// Abstraction over prover worker JSON-RPC methods.
 ///
@@ -62,8 +53,8 @@ pub struct ProverWorkerClient {
 impl ProverWorkerClient {
     /// Create a worker client from an existing JSON-RPC HTTP client. Idempotent worker retries
     /// use [`RetryConfig::default`]; call [`Self::with_retry_config`] to override.
-    pub const fn new(inner: HttpClient) -> Self {
-        Self { inner, retry: DEFAULT_RETRY_CONFIG }
+    pub fn new(inner: HttpClient) -> Self {
+        Self { inner, retry: RetryConfig::default() }
     }
 
     /// Connect a worker client using the provided configuration.
