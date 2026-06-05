@@ -1,0 +1,102 @@
+name: Docker (L3)
+
+on:
+  push:
+    branches: [l3]
+  workflow_dispatch: {}
+
+env:
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node-reth-dev
+
+permissions:
+  contents: read
+
+jobs:
+  build-rust-services:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [client, base, builder, consensus, batcher, zk-prover]
+
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Login to GHCR
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.target }}
+        run: |
+          docker buildx bake -f etc/docker/docker-bake.hcl ${{ matrix.target }} \
+            --set ${{ matrix.target }}.tags=${{ env.REGISTRY_IMAGE }}:${{ matrix.target }}-sha-${{ github.sha }} \
+            --set ${{ matrix.target }}.platform=linux/amd64 \
+            --set ${{ matrix.target }}.output=type=image,push=true \
+            --set ${{ matrix.target }}.cache-to=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-l3-${{ matrix.target }}-linux-amd64,mode=max
+
+      - name: Tag as latest l3
+        run: |
+          docker buildx imagetools create \
+            --tag ${{ env.REGISTRY_IMAGE }}:${{ matrix.target }}-l3 \
+            ${{ env.REGISTRY_IMAGE }}:${{ matrix.target }}-sha-${{ github.sha }}
+
+  build-devnet-setup:
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Login to GHCR
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push devnet-setup
+        run: |
+          docker buildx build \
+            -f etc/docker/Dockerfile.devnet \
+            -t ${{ env.REGISTRY_IMAGE }}:devnet-setup-sha-${{ github.sha }} \
+            --platform linux/amd64 \
+            --push \
+            --cache-to type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-l3-devnet-setup-linux-amd64,mode=max \
+            .
+
+      - name: Tag as latest l3
+        run: |
+          docker buildx imagetools create \
+            --tag ${{ env.REGISTRY_IMAGE }}:devnet-setup-l3 \
+            ${{ env.REGISTRY_IMAGE }}:devnet-setup-sha-${{ github.sha }}
