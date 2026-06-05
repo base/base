@@ -21,6 +21,9 @@ alloy-signer-local.workspace = true
 # Tx Manager
 base-tx-manager.workspace = true
 
+# Retry
+base-retry.workspace = true
+
 # Balance Monitor
 base-balance-monitor.workspace = true
 

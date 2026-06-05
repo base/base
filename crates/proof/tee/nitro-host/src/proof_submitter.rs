@@ -1,74 +1,22 @@
 //! Async proof submission task for prover-service worker delivery.
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::Duration,
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
-use backon::{ExponentialBuilder, Retryable};
+use backon::Retryable;
 use base_proof_primitives::ProofResult as NitroProofResult;
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{
     HeartbeatRequest, HeartbeatResponse, ProofResult as ServiceProofResult, TeeKind,
     TeeProofResult, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
+use base_retry::{DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use thiserror::Error;
 use tokio::{task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
-
-/// Minimum delay used to avoid tight retry loops.
-pub const MIN_PROOF_SUBMITTER_BACKOFF: Duration = Duration::from_millis(1);
-
-/// Default initial retry delay for proof submission.
-pub const DEFAULT_PROOF_SUBMITTER_INITIAL_BACKOFF: Duration = Duration::from_millis(250);
-
-/// Default maximum retry delay for proof submission.
-pub const DEFAULT_PROOF_SUBMITTER_MAX_BACKOFF: Duration = Duration::from_secs(30);
-
-/// Exponential backoff configuration for proof submission retries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProofSubmitterBackoffConfig {
-    /// First delay after a retryable submission failure.
-    pub initial_delay: Duration,
-    /// Maximum delay between retry attempts.
-    pub max_delay: Duration,
-}
-
-impl ProofSubmitterBackoffConfig {
-    /// Creates a proof submission backoff config.
-    pub const fn new(initial_delay: Duration, max_delay: Duration) -> Self {
-        Self { initial_delay, max_delay }
-    }
-
-    /// Returns the configured max delay, clamped to the minimum allowed delay.
-    pub fn normalized_max_delay(&self) -> Duration {
-        self.max_delay.max(MIN_PROOF_SUBMITTER_BACKOFF)
-    }
-
-    /// Returns the configured initial delay, clamped to the configured max delay.
-    pub fn normalized_initial_delay(&self) -> Duration {
-        self.initial_delay.max(MIN_PROOF_SUBMITTER_BACKOFF).min(self.normalized_max_delay())
-    }
-
-    /// Creates a `backon` [`ExponentialBuilder`] from this configuration.
-    pub fn to_backoff_builder(&self) -> ExponentialBuilder {
-        ExponentialBuilder::default()
-            .with_min_delay(self.normalized_initial_delay())
-            .with_max_delay(self.normalized_max_delay())
-            .without_max_times()
-            .with_jitter()
-    }
-}
-
-impl Default for ProofSubmitterBackoffConfig {
-    fn default() -> Self {
-        Self::new(DEFAULT_PROOF_SUBMITTER_INITIAL_BACKOFF, DEFAULT_PROOF_SUBMITTER_MAX_BACKOFF)
-    }
-}
 
 /// Errors raised while preparing or submitting a generated proof.
 #[derive(Debug, Error)]
@@ -117,7 +65,7 @@ impl ProofSubmitterRequest {
 #[derive(Clone, Debug)]
 pub struct ProofSubmitter<Client> {
     client: Client,
-    backoff: ProofSubmitterBackoffConfig,
+    backoff: RetryConfig,
 }
 
 impl<Client> ProofSubmitter<Client> {
@@ -125,21 +73,21 @@ impl<Client> ProofSubmitter<Client> {
     pub const fn new(client: Client) -> Self {
         Self {
             client,
-            backoff: ProofSubmitterBackoffConfig::new(
-                DEFAULT_PROOF_SUBMITTER_INITIAL_BACKOFF,
-                DEFAULT_PROOF_SUBMITTER_MAX_BACKOFF,
+            backoff: RetryConfig::unbounded(
+                DEFAULT_UNBOUNDED_INITIAL_DELAY,
+                DEFAULT_UNBOUNDED_MAX_DELAY,
             ),
         }
     }
 
     /// Sets the retry backoff config.
-    pub const fn with_backoff_config(mut self, backoff: ProofSubmitterBackoffConfig) -> Self {
+    pub const fn with_backoff_config(mut self, backoff: RetryConfig) -> Self {
         self.backoff = backoff;
         self
     }
 
     /// Returns the configured retry backoff.
-    pub const fn backoff_config(&self) -> ProofSubmitterBackoffConfig {
+    pub const fn backoff_config(&self) -> RetryConfig {
         self.backoff
     }
 }
@@ -300,7 +248,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     use alloy_primitives::{B256, Bytes};
     use async_trait::async_trait;
@@ -475,8 +426,7 @@ mod tests {
 
     #[test]
     fn backoff_config_normalizes_and_builds_backon_exponential_builder() {
-        let backoff =
-            ProofSubmitterBackoffConfig::new(Duration::from_millis(5), Duration::from_millis(12));
+        let backoff = RetryConfig::unbounded(Duration::from_millis(5), Duration::from_millis(12));
 
         let builder = backoff.to_backoff_builder();
 
@@ -516,7 +466,7 @@ mod tests {
     async fn submitter_retries_until_submission_is_delivered() {
         let client = MockWorkerClient::new(vec![retryable_error(), retryable_error()]);
         let submitter = ProofSubmitter::new(client.clone()).with_backoff_config(
-            ProofSubmitterBackoffConfig::new(Duration::from_millis(1), Duration::from_millis(2)),
+            RetryConfig::unbounded(Duration::from_millis(1), Duration::from_millis(2)),
         );
 
         let response = submitter
@@ -532,7 +482,7 @@ mod tests {
     async fn submitter_stops_on_non_retryable_error() {
         let client = MockWorkerClient::new(vec![non_retryable_error()]);
         let submitter = ProofSubmitter::new(client.clone()).with_backoff_config(
-            ProofSubmitterBackoffConfig::new(Duration::from_millis(1), Duration::from_millis(2)),
+            RetryConfig::unbounded(Duration::from_millis(1), Duration::from_millis(2)),
         );
 
         let result = submitter.submit_until_delivered(submit_request()).await;
@@ -545,7 +495,7 @@ mod tests {
     async fn submitter_can_run_as_spawned_task() {
         let client = MockWorkerClient::new(Vec::new());
         let submitter = ProofSubmitter::new(client.clone()).with_backoff_config(
-            ProofSubmitterBackoffConfig::new(Duration::from_millis(1), Duration::from_millis(2)),
+            RetryConfig::unbounded(Duration::from_millis(1), Duration::from_millis(2)),
         );
 
         let handle = submitter.spawn_until_delivered(submit_request(), CancellationToken::new());
@@ -571,7 +521,7 @@ mod tests {
     async fn spawned_submitter_stops_when_cancelled() {
         let client = MockWorkerClient::always_retryable_failure();
         let submitter = ProofSubmitter::new(client.clone()).with_backoff_config(
-            ProofSubmitterBackoffConfig::new(Duration::from_secs(1), Duration::from_secs(1)),
+            RetryConfig::unbounded(Duration::from_secs(1), Duration::from_secs(1)),
         );
         let cancel = CancellationToken::new();
 

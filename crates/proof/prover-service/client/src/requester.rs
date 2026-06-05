@@ -6,13 +6,11 @@ use base_prover_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
     ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiClient,
 };
+use base_retry::RetryConfig;
 use jsonrpsee::http_client::HttpClient;
 use tracing::{debug, warn};
 
-use crate::{
-    ProofRequesterRetryConfig, ProverServiceClientBuildError, ProverServiceClientConfig,
-    ProverServiceClientError,
-};
+use crate::{ProverServiceClientBuildError, ProverServiceClientConfig, ProverServiceClientError};
 
 /// Abstraction over proof requester JSON-RPC methods.
 ///
@@ -45,20 +43,19 @@ pub trait ProofRequesterProvider: Send + Sync {
 ///
 /// Each requester operation is wrapped in a `backon` exponential backoff that retries
 /// transient JSON-RPC failures (per [`ProverServiceClientError::is_retryable`]). Retry
-/// behavior is controlled by the [`ProofRequesterRetryConfig`] passed at construction
-/// time, defaulting to [`ProofRequesterRetryConfig::default`].
+/// behavior is controlled by the [`RetryConfig`] passed at construction time, defaulting
+/// to [`RetryConfig::default`].
 #[derive(Clone, Debug)]
 pub struct ProofRequesterClient {
     inner: HttpClient,
-    retry: ProofRequesterRetryConfig,
+    retry: RetryConfig,
 }
 
 impl ProofRequesterClient {
     /// Create a requester client from an existing JSON-RPC HTTP client. Retries use
-    /// [`ProofRequesterRetryConfig::default`]; call [`Self::with_retry_config`] to
-    /// override.
+    /// [`RetryConfig::default`]; call [`Self::with_retry_config`] to override.
     pub fn new(inner: HttpClient) -> Self {
-        Self { inner, retry: ProofRequesterRetryConfig::default() }
+        Self { inner, retry: RetryConfig::default() }
     }
 
     /// Connect a requester client using the provided configuration. The retry
@@ -71,7 +68,7 @@ impl ProofRequesterClient {
 
     /// Override the retry configuration applied to requester operations.
     #[must_use]
-    pub const fn with_retry_config(mut self, retry: ProofRequesterRetryConfig) -> Self {
+    pub const fn with_retry_config(mut self, retry: RetryConfig) -> Self {
         self.retry = retry;
         self
     }
@@ -82,7 +79,7 @@ impl ProofRequesterClient {
     }
 
     /// Return the retry configuration applied to requester operations.
-    pub const fn retry_config(&self) -> ProofRequesterRetryConfig {
+    pub const fn retry_config(&self) -> RetryConfig {
         self.retry
     }
 
@@ -228,7 +225,9 @@ mod tests {
     };
 
     use super::{ProofRequesterClient, ProofRequesterProvider};
-    use crate::{ProofRequesterRetryConfig, ProverServiceClientError};
+    use base_retry::RetryConfig;
+
+    use crate::ProverServiceClientError;
 
     /// Outcome script for a single requester call when the test wants to drive
     /// retry behavior. The server returns the head of the queue per call.
@@ -299,10 +298,10 @@ mod tests {
 
     impl RunningRequesterServer {
         async fn spawn(api: MockRequesterApi) -> Self {
-            Self::spawn_with_retry(api, ProofRequesterRetryConfig::default()).await
+            Self::spawn_with_retry(api, RetryConfig::default()).await
         }
 
-        async fn spawn_with_retry(api: MockRequesterApi, retry: ProofRequesterRetryConfig) -> Self {
+        async fn spawn_with_retry(api: MockRequesterApi, retry: RetryConfig) -> Self {
             let addr: SocketAddr = "127.0.0.1:0".parse().expect("test address should parse");
             let server = Server::builder().build(addr).await.expect("server should bind");
             let local_addr = server.local_addr().expect("server should have local address");
@@ -331,8 +330,8 @@ mod tests {
         ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), message.into(), None::<()>)
     }
 
-    fn fast_retry_config() -> ProofRequesterRetryConfig {
-        ProofRequesterRetryConfig::new(3, Duration::from_millis(1), Duration::from_millis(1))
+    fn fast_retry_config() -> RetryConfig {
+        RetryConfig::new(3, Duration::from_millis(1), Duration::from_millis(1))
     }
 
     #[async_trait]
@@ -473,13 +472,11 @@ mod tests {
     async fn requester_rpc_errors_preserve_call_context_and_retryability() {
         let api = MockRequesterApi::rejecting_get_proof();
         // Use a single explicit retry with 1ms delays so the test exercises the real
-        // retry code path quickly without relying on the `0 -> 1` clamp inside
-        // `ProofRequesterRetryConfig::normalized_max_attempts`. Call count is not
-        // asserted; this test only verifies the final error variant, code, and
-        // retryability classification.
+        // retry code path quickly. Call count is not asserted; this test only verifies
+        // the final error variant, code, and retryability classification.
         let server = RunningRequesterServer::spawn_with_retry(
             api,
-            ProofRequesterRetryConfig::new(1, Duration::from_millis(1), Duration::from_millis(1)),
+            RetryConfig::new(1, Duration::from_millis(1), Duration::from_millis(1)),
         )
         .await;
         let provider: &dyn ProofRequesterProvider = &server.client;
@@ -527,7 +524,8 @@ mod tests {
         let api = MockRequesterApi::new();
         // backon's `with_max_times(n)` allows `n` retries on top of the initial call,
         // so an exhausted run performs `max_attempts + 1` total calls.
-        let total_calls = config.normalized_max_attempts() + 1;
+        let total_calls =
+            config.normalized_max_attempts().expect("fast retry config should be bounded") + 1;
         api.queue_prove_outcomes((0..total_calls).map(|_| ScriptedOutcome::Retryable));
         let api_clone = api.clone();
         let server = RunningRequesterServer::spawn_with_retry(api, config).await;

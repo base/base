@@ -9,12 +9,13 @@ use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
 use base_common_genesis::RollupConfig;
+use base_retry::RetryConfig;
 use url::Url;
 
 use super::{
     HttpProvider,
     cache::MeteredCache,
-    config::{DEFAULT_CACHE_SIZE, RetryConfig},
+    config::DEFAULT_CACHE_SIZE,
     error::{RpcError, RpcResult},
     provider_ext::OptimismRollupProviderExt,
     traits::RollupProvider,

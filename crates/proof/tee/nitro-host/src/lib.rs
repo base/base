@@ -20,11 +20,7 @@ mod registration;
 pub use registration::{RegistrationChecker, RegistrationError, ValidSigner};
 
 mod proof_submitter;
-pub use proof_submitter::{
-    DEFAULT_PROOF_SUBMITTER_INITIAL_BACKOFF, DEFAULT_PROOF_SUBMITTER_MAX_BACKOFF,
-    MIN_PROOF_SUBMITTER_BACKOFF, ProofSubmitter, ProofSubmitterBackoffConfig, ProofSubmitterError,
-    ProofSubmitterRequest,
-};
+pub use proof_submitter::{ProofSubmitter, ProofSubmitterError, ProofSubmitterRequest};
 
 mod proof_generator;
 pub use proof_generator::{

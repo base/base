@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use base_retry::RetryConfig;
 use jsonrpsee::{
     core::client::Error as JsonRpcClientError,
     http_client::{HttpClient, HttpClientBuilder},
@@ -9,8 +10,6 @@ use jsonrpsee::{
 use thiserror::Error;
 use tracing::debug;
 use url::Url;
-
-use crate::ProofRequesterRetryConfig;
 
 /// Errors that can occur during prover-service client configuration validation.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -59,7 +58,7 @@ pub struct ProverServiceClientConfig {
     request_timeout: Duration,
     poll_interval: Duration,
     max_wait: Duration,
-    retry: ProofRequesterRetryConfig,
+    retry: RetryConfig,
 }
 
 impl ProverServiceClientConfig {
@@ -79,7 +78,7 @@ impl ProverServiceClientConfig {
             request_timeout: Self::DEFAULT_REQUEST_TIMEOUT,
             poll_interval: Self::DEFAULT_POLL_INTERVAL,
             max_wait: Self::DEFAULT_MAX_WAIT,
-            retry: ProofRequesterRetryConfig::default(),
+            retry: RetryConfig::default(),
         }
     }
 
@@ -107,7 +106,7 @@ impl ProverServiceClientConfig {
     /// requester JSON-RPC methods.
     ///
     /// [`ProofRequesterClient`]: crate::ProofRequesterClient
-    pub const fn retry_config(&self) -> ProofRequesterRetryConfig {
+    pub const fn retry_config(&self) -> RetryConfig {
         self.retry
     }
 
@@ -133,7 +132,7 @@ impl ProverServiceClientConfig {
     /// requester JSON-RPC methods.
     ///
     /// [`ProofRequesterClient`]: crate::ProofRequesterClient
-    pub const fn with_retry_config(mut self, retry: ProofRequesterRetryConfig) -> Self {
+    pub const fn with_retry_config(mut self, retry: RetryConfig) -> Self {
         self.retry = retry;
         self
     }
@@ -168,12 +167,10 @@ impl ProverServiceClientConfig {
         }
 
         // Validate retry sub-config. `max_attempts == 0` is intentionally accepted and
-        // documented as equivalent to one attempt by `ProofRequesterRetryConfig`, matching
-        // the workspace's `base_proof_rpc::config::RetryConfig` convention; the broader
-        // API hardening (private fields + construction-time validation) is tracked as
-        // S2 in the consolidation plan. We do reject `initial_delay > max_delay` here so
-        // misconfiguration surfaces as a config error rather than a silent clamp inside
-        // the backoff builder.
+        // disables retries; the broader API hardening (private fields + construction-time
+        // validation) is tracked as S2 in the consolidation plan. We do reject
+        // `initial_delay > max_delay` here so misconfiguration surfaces as a config error
+        // rather than a silent clamp inside the backoff builder.
         if self.retry.initial_delay > self.retry.max_delay {
             return Err(ProverServiceClientConfigError::RetryInitialDelayExceedsMaxDelay);
         }
@@ -273,7 +270,7 @@ mod tests {
     #[test]
     fn config_validation_rejects_retry_initial_delay_greater_than_max_delay() {
         let config = ProverServiceClientConfig::new("http://localhost:8545").with_retry_config(
-            ProofRequesterRetryConfig::new(3, Duration::from_secs(60), Duration::from_millis(50)),
+            RetryConfig::new(3, Duration::from_secs(60), Duration::from_millis(50)),
         );
 
         let err = config.validate().expect_err("invalid retry config should fail validation");
@@ -283,10 +280,9 @@ mod tests {
 
     #[test]
     fn config_validation_accepts_zero_retry_max_attempts() {
-        // `max_attempts == 0` is documented as equivalent to one attempt by
-        // `ProofRequesterRetryConfig`; validation must not reject it.
+        // `max_attempts == 0` disables retries; validation must not reject it.
         let config = ProverServiceClientConfig::new("http://localhost:8545").with_retry_config(
-            ProofRequesterRetryConfig::new(0, Duration::from_millis(10), Duration::from_millis(20)),
+            RetryConfig::new(0, Duration::from_millis(10), Duration::from_millis(20)),
         );
 
         config.validate().expect("zero max_attempts retry config should pass validation");

@@ -159,6 +159,7 @@ incremental = false
 
 [workspace.dependencies]
 # Base Primitives
+base-retry = { path = "crates/utilities/retry" }
 base-bundles = { path = "crates/common/bundles" }
 base-common-signer = { path = "crates/common/signer" }
 base-common-chains = { path = "crates/common/chains" }
