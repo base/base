@@ -165,7 +165,7 @@ impl TryFrom<ProofJob> for ProtocolProofJob {
             session_id,
             status: job.job_status.into(),
             request,
-            attempt: job.attempt.max(0) as u32,
+            attempt: u32::try_from(job.attempt).unwrap_or(0),
             lock_id: job.lock_id.map(|id| id.to_string()),
             worker_id: job.worker_id,
             lock_expires_at: job.lock_expires_at,
@@ -214,7 +214,7 @@ impl ProofRequest {
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_protocol::{ProofRequestKind, ProofRequest as ProtocolProofRequest};
+    use base_prover_service_protocol::{ProofRequest as ProtocolProofRequest, ProofRequestKind};
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -223,16 +223,14 @@ mod tests {
     fn compressed_payload(session_id: &str) -> serde_json::Value {
         serde_json::to_value(ProtocolProofRequest {
             session_id: Some(session_id.to_owned()),
-            request: ProofRequestKind::Compressed(
-                base_prover_service_protocol::ZkProofRequest {
-                    start_block_number: 10,
-                    number_of_blocks_to_prove: 2,
-                    sequence_window: None,
-                    l1_head: None,
-                    intermediate_root_interval: None,
-                    zk_vm: ProtocolZkVm::Sp1,
-                },
-            ),
+            request: ProofRequestKind::Compressed(base_prover_service_protocol::ZkProofRequest {
+                start_block_number: 10,
+                number_of_blocks_to_prove: 2,
+                sequence_window: None,
+                l1_head: None,
+                intermediate_root_interval: None,
+                zk_vm: ProtocolZkVm::Sp1,
+            }),
         })
         .expect("protocol request should serialize")
     }
@@ -383,7 +381,8 @@ mod tests {
         });
         let mut req = proof_request(Some(ProofType::OpSuccinctSp1ClusterCompressed));
         req.stark_receipt = Some(vec![0xDE, 0xAD]);
-        req.result_payload = Some(serde_json::to_value(&expected).expect("result should serialize"));
+        req.result_payload =
+            Some(serde_json::to_value(&expected).expect("result should serialize"));
 
         assert_eq!(req.stored_proof_result().unwrap(), Some(expected));
     }
