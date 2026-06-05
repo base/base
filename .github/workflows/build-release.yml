@@ -82,6 +82,34 @@ jobs:
         if: matrix.target.os == 'linux'
         uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
 
+      - name: Configure mold for AArch64 cross-linking
+        if: matrix.target.triple == 'aarch64-unknown-linux-gnu'
+        run: |
+          set -euo pipefail
+
+          MOLD_BIN="$(command -v mold)"
+          CROSS_GCC="$(command -v aarch64-linux-gnu-gcc)"
+          CROSS_GXX="$(command -v aarch64-linux-gnu-g++)"
+          MOLD_CROSS_BIN="${RUNNER_TEMP}/mold-cross/bin"
+
+          mkdir -p "$MOLD_CROSS_BIN"
+          ln -sf "$MOLD_BIN" "$MOLD_CROSS_BIN/ld"
+          ln -sf "$MOLD_BIN" "$MOLD_CROSS_BIN/ld.mold"
+
+          cat > "$MOLD_CROSS_BIN/aarch64-linux-gnu-gcc-with-mold" <<EOF
+#!/usr/bin/env bash
+exec "$CROSS_GCC" -B"$MOLD_CROSS_BIN" "\$@"
+EOF
+          chmod +x "$MOLD_CROSS_BIN/aarch64-linux-gnu-gcc-with-mold"
+
+          cat > "$MOLD_CROSS_BIN/aarch64-linux-gnu-g++-with-mold" <<EOF
+#!/usr/bin/env bash
+exec "$CROSS_GXX" -B"$MOLD_CROSS_BIN" "\$@"
+EOF
+          chmod +x "$MOLD_CROSS_BIN/aarch64-linux-gnu-g++-with-mold"
+
+          echo "MOLD_CROSS_BIN=$MOLD_CROSS_BIN" >> "$GITHUB_ENV"
+
       - name: Install lld linker (macOS)
         if: matrix.target.os == 'macos'
         run: |
@@ -124,9 +152,9 @@ jobs:
 
           if [[ "${{ matrix.target.triple }}" == "aarch64-unknown-linux-gnu" ]]; then
             export AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar
-            export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
-            export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+            export CC_aarch64_unknown_linux_gnu="${MOLD_CROSS_BIN}/aarch64-linux-gnu-gcc-with-mold"
+            export CXX_aarch64_unknown_linux_gnu="${MOLD_CROSS_BIN}/aarch64-linux-gnu-g++-with-mold"
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${MOLD_CROSS_BIN}/aarch64-linux-gnu-gcc-with-mold"
             export PKG_CONFIG_ALLOW_CROSS=1
             export RANLIB_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ranlib
           fi
