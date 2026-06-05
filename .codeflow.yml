@@ -1,0 +1,11 @@
+# Heimdall configuration.
+#
+# This file lives on the `privacy` branch only and should NOT be merged into
+# `main`. Heimdall reads `.codeflow.yml` from a PR's target branch, so keeping
+# this file off `main` scopes the policy below to PRs targeting `privacy`,
+# leaving `main`'s review requirements unchanged.
+secure:
+  branches:
+    - privacy
+  required_reviews: 1
+  force_mfa: true
