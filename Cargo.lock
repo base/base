@@ -3211,6 +3211,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-activator"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-rpc-client 2.0.5",
+ "alloy-rpc-types-eth 2.0.5",
+ "alloy-sol-types",
+ "alloy-transport-http 2.0.5",
+ "base-common-chains",
+ "base-common-network",
+ "base-common-precompiles",
+ "base-common-rpc-types",
+ "clap",
+ "eyre",
+ "hex",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "base-balance-monitor"
 version = "0.0.0"
 dependencies = [

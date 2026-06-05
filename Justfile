@@ -198,3 +198,7 @@ bench-proof-mpt:
 # Run basectl TUI dashboard
 basectl:
     cargo run -p basectl --release -- monitor
+
+# Run the Beryl precompile activator helper
+activator +args='list':
+    @cargo run --quiet -p base-activator -- "$@"

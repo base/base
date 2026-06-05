@@ -1,0 +1,35 @@
+[package]
+name = "base-activator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-provider.workspace = true
+alloy-sol-types.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-client.workspace = true
+alloy-transport-http.workspace = true
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+
+# base
+base-common-chains.workspace = true
+base-common-network.workspace = true
+base-common-rpc-types.workspace = true
+base-common-precompiles.workspace = true
+
+# misc
+hex.workspace = true
+url.workspace = true
+eyre.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+clap = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
