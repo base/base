@@ -38,6 +38,9 @@ pub enum ProverServiceClientConfigError {
     /// The configured retry initial delay is greater than the retry max delay.
     #[error("retry initial delay must be less than or equal to retry max delay")]
     RetryInitialDelayExceedsMaxDelay,
+    /// The configured retry policy is unbounded.
+    #[error("unbounded retries are not allowed for prover-service clients")]
+    UnboundedRetryNotAllowed,
 }
 
 /// Errors that can occur when building a prover-service client.
@@ -166,11 +169,11 @@ impl ProverServiceClientConfig {
             return Err(ProverServiceClientConfigError::PollIntervalExceedsMaxWait);
         }
 
-        // Validate retry sub-config. `max_attempts == 0` is intentionally accepted and
-        // disables retries; the broader API hardening (private fields + construction-time
-        // validation) is tracked as S2 in the consolidation plan. We do reject
-        // `initial_delay > max_delay` here so misconfiguration surfaces as a config error
-        // rather than a silent clamp inside the backoff builder.
+        // `max_attempts == 0` disables retries; `None` is not allowed for this RPC client.
+        if self.retry.max_attempts.is_none() {
+            return Err(ProverServiceClientConfigError::UnboundedRetryNotAllowed);
+        }
+
         if self.retry.initial_delay > self.retry.max_delay {
             return Err(ProverServiceClientConfigError::RetryInitialDelayExceedsMaxDelay);
         }
@@ -286,5 +289,16 @@ mod tests {
         );
 
         config.validate().expect("zero max_attempts retry config should pass validation");
+    }
+
+    #[test]
+    fn config_validation_rejects_unbounded_retry() {
+        let config = ProverServiceClientConfig::new("http://localhost:8545").with_retry_config(
+            RetryConfig::unbounded(Duration::from_millis(10), Duration::from_millis(20)),
+        );
+
+        let err = config.validate().expect_err("unbounded retry config should fail validation");
+
+        assert_eq!(err, ProverServiceClientConfigError::UnboundedRetryNotAllowed);
     }
 }
