@@ -55,7 +55,7 @@ use crate::{
     output_proposer::OutputProposer,
     proof_adapter::{ProofRequesterDispatcher, ProposerProofAdapter},
     proof_collector::{CollectedProof, ProofCollector},
-    proof_submitter::{ProofSubmitter, SubmitAction},
+    proof_submitter::{ProofSubmitter, ProofSubmitterConfig, SubmitAction},
 };
 
 /// Configuration for the parallel proving pipeline.
@@ -268,12 +268,14 @@ where
             Arc::clone(&output_proposer),
             Arc::clone(&rollup_client),
             Arc::clone(&l1_client),
-            config.driver.proposer_address,
-            config.driver.block_interval,
-            config.driver.intermediate_block_interval,
-            config.driver.tee_image_hash,
-            config.tee_prover_registry_address,
-            config.recovery_scan_concurrency,
+            ProofSubmitterConfig {
+                proposer_address: config.driver.proposer_address,
+                block_interval: config.driver.block_interval,
+                intermediate_block_interval: config.driver.intermediate_block_interval,
+                tee_image_hash: config.driver.tee_image_hash,
+                tee_prover_registry_address: config.tee_prover_registry_address,
+                output_fetch_concurrency: config.recovery_scan_concurrency,
+            },
         );
 
         Self {

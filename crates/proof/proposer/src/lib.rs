@@ -29,7 +29,7 @@ mod proof_collector;
 pub use proof_collector::{CollectedProof, ProofCollector};
 
 mod proof_submitter;
-pub use proof_submitter::{ProofSubmitter, SubmitAction};
+pub use proof_submitter::{ProofSubmitter, ProofSubmitterConfig, SubmitAction};
 
 mod driver;
 pub use driver::{DriverConfig, PipelineHandle, ProposerDriverControl, RecoveredState};

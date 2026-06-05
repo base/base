@@ -63,6 +63,30 @@ impl std::fmt::Display for SubmitAction {
     }
 }
 
+/// Configuration for [`ProofSubmitter`].
+///
+/// Bundles the scalar parameters the submitter needs at construction time so
+/// [`ProofSubmitter::new`] takes a small, fixed argument list. All fields are
+/// derived from the parent [`crate::PipelineConfig`].
+#[derive(Debug, Clone, Copy)]
+pub struct ProofSubmitterConfig {
+    /// Address of the proposer on L1.
+    pub proposer_address: Address,
+    /// Number of L2 blocks per proposal.
+    pub block_interval: u64,
+    /// Stride (in L2 blocks) between intermediate roots within a proposal.
+    pub intermediate_block_interval: u64,
+    /// Expected TEE enclave image hash.
+    pub tee_image_hash: B256,
+    /// Optional on-chain `TEEProverRegistry` address. When set, the submitter
+    /// performs an `isValidSigner` pre-flight check before calling
+    /// `propose_output`.
+    pub tee_prover_registry_address: Option<Address>,
+    /// Concurrency limit for fetching canonical output roots from the rollup
+    /// node during validation.
+    pub output_fetch_concurrency: usize,
+}
+
 /// Validates a TEE proof against the canonical chain and submits it to L1.
 pub struct ProofSubmitter<L1, R>
 where
@@ -72,12 +96,7 @@ where
     output_proposer: Arc<dyn OutputProposer>,
     rollup_client: Arc<R>,
     l1_client: Arc<L1>,
-    proposer_address: Address,
-    block_interval: u64,
-    intermediate_block_interval: u64,
-    tee_image_hash: B256,
-    tee_prover_registry_address: Option<Address>,
-    output_fetch_concurrency: usize,
+    config: ProofSubmitterConfig,
 }
 
 impl<L1, R> Clone for ProofSubmitter<L1, R>
@@ -90,12 +109,7 @@ where
             output_proposer: Arc::clone(&self.output_proposer),
             rollup_client: Arc::clone(&self.rollup_client),
             l1_client: Arc::clone(&self.l1_client),
-            proposer_address: self.proposer_address,
-            block_interval: self.block_interval,
-            intermediate_block_interval: self.intermediate_block_interval,
-            tee_image_hash: self.tee_image_hash,
-            tee_prover_registry_address: self.tee_prover_registry_address,
-            output_fetch_concurrency: self.output_fetch_concurrency,
+            config: self.config,
         }
     }
 }
@@ -106,14 +120,7 @@ where
     R: RollupProvider,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProofSubmitter")
-            .field("proposer_address", &self.proposer_address)
-            .field("block_interval", &self.block_interval)
-            .field("intermediate_block_interval", &self.intermediate_block_interval)
-            .field("tee_image_hash", &self.tee_image_hash)
-            .field("tee_prover_registry_address", &self.tee_prover_registry_address)
-            .field("output_fetch_concurrency", &self.output_fetch_concurrency)
-            .finish_non_exhaustive()
+        f.debug_struct("ProofSubmitter").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
@@ -123,29 +130,13 @@ where
     R: RollupProvider + 'static,
 {
     /// Creates a new proof submitter.
-    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         output_proposer: Arc<dyn OutputProposer>,
         rollup_client: Arc<R>,
         l1_client: Arc<L1>,
-        proposer_address: Address,
-        block_interval: u64,
-        intermediate_block_interval: u64,
-        tee_image_hash: B256,
-        tee_prover_registry_address: Option<Address>,
-        output_fetch_concurrency: usize,
+        config: ProofSubmitterConfig,
     ) -> Self {
-        Self {
-            output_proposer,
-            rollup_client,
-            l1_client,
-            proposer_address,
-            block_interval,
-            intermediate_block_interval,
-            tee_image_hash,
-            tee_prover_registry_address,
-            output_fetch_concurrency,
-        }
+        Self { output_proposer, rollup_client, l1_client, config }
     }
 
     /// Validates the completed proof and submits it to L1 as a dispute game.
@@ -189,10 +180,10 @@ where
 
         // Extract intermediate roots.
         let starting_block_number =
-            target_block.checked_sub(self.block_interval).ok_or_else(|| {
+            target_block.checked_sub(self.config.block_interval).ok_or_else(|| {
                 SubmitAction::Failed(ProposerError::Internal(format!(
                     "target_block {target_block} < block_interval {}",
-                    self.block_interval
+                    self.config.block_interval
                 )))
             })?;
         let intermediate_blocks =
@@ -234,7 +225,7 @@ where
         // configured, recover the signer from the aggregate proposal signature
         // and check `isValidSigner` on-chain. If the signer is invalid, skip
         // submission to avoid wasting gas on a transaction that will revert.
-        if let Some(registry_address) = self.tee_prover_registry_address {
+        if let Some(registry_address) = self.config.tee_prover_registry_address {
             match self
                 .check_signer_validity(
                     aggregate_proposal,
@@ -337,7 +328,7 @@ where
     ) -> Result<bool, ProposerError> {
         // Reconstruct the journal that the enclave signed over.
         let journal = ProofJournal {
-            proposer: self.proposer_address,
+            proposer: self.config.proposer_address,
             l1_origin_hash: aggregate_proposal.l1_origin_hash,
             prev_output_root: aggregate_proposal.prev_output_root,
             starting_l2_block: starting_block_number,
@@ -345,7 +336,7 @@ where
             ending_l2_block: aggregate_proposal.l2_block_number,
             intermediate_roots: intermediate_roots.to_vec(),
             config_hash: aggregate_proposal.config_hash,
-            tee_image_hash: self.tee_image_hash,
+            tee_image_hash: self.config.tee_image_hash,
         };
         let digest = keccak256(journal.encode());
 
@@ -387,13 +378,13 @@ where
         &self,
         starting_block_number: u64,
     ) -> Result<Vec<u64>, ProposerError> {
-        let interval = self.intermediate_block_interval;
+        let interval = self.config.intermediate_block_interval;
         if interval == 0 {
             return Err(ProposerError::Config(
                 "intermediate_block_interval must not be zero".into(),
             ));
         }
-        let count = self.block_interval / interval;
+        let count = self.config.block_interval / interval;
         (1..=count)
             .map(|i| {
                 starting_block_number
@@ -458,7 +449,7 @@ where
                     .map_err(ProposerError::Rpc);
                 (block_number, result)
             })
-            .buffered(self.output_fetch_concurrency)
+            .buffered(self.config.output_fetch_concurrency)
             .collect::<HashMap<_, _>>()
             .await
             .into_iter()
