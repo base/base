@@ -131,10 +131,14 @@ impl BasePrecompileError {
 /// Extension trait to convert `Result<T, BasePrecompileError>` into a [`PrecompileResult`].
 pub trait IntoPrecompileResult<T> {
     /// Converts `self` into a [`PrecompileResult`] using `encode_ok` for the success path.
+    ///
+    /// `gas_refunded` is copied into `PrecompileOutput::gas_refunded` on success so revm can
+    /// apply EIP-3529 refund accounting at the transaction level. Pass `ctx.gas_refunded()`.
     fn into_precompile_result(
         self,
         gas: u64,
         state_gas: u64,
+        gas_refunded: i64,
         encode_ok: impl FnOnce(T) -> Bytes,
     ) -> PrecompileResult;
 }
@@ -144,10 +148,15 @@ impl<T> IntoPrecompileResult<T> for Result<T> {
         self,
         gas: u64,
         state_gas: u64,
+        gas_refunded: i64,
         encode_ok: impl FnOnce(T) -> Bytes,
     ) -> PrecompileResult {
         match self {
-            Ok(res) => Ok(PrecompileOutput::new(gas, encode_ok(res), state_gas)),
+            Ok(res) => {
+                let mut out = PrecompileOutput::new(gas, encode_ok(res), state_gas);
+                out.gas_refunded = gas_refunded;
+                Ok(out)
+            }
             Err(err) => err.into_precompile_result(gas, state_gas),
         }
     }
@@ -167,5 +176,35 @@ mod tests {
         let output = result.unwrap();
         assert!(output.is_revert());
         assert_eq!(output.bytes, expected);
+    }
+
+    #[test]
+    fn into_precompile_result_propagates_gas_refunded_on_success() {
+        let ok: Result<Bytes> = Ok(Bytes::from("out"));
+        let out = ok.into_precompile_result(500, 0, 200, |b| b).unwrap();
+
+        assert!(out.is_success());
+        assert_eq!(out.gas_used, 500);
+        assert_eq!(out.gas_refunded, 200);
+    }
+
+    #[test]
+    fn into_precompile_result_zero_refund_on_success() {
+        let ok: Result<Bytes> = Ok(Bytes::new());
+        let out = ok.into_precompile_result(0, 0, 0, |b| b).unwrap();
+
+        assert!(out.is_success());
+        assert_eq!(out.gas_refunded, 0);
+    }
+
+    #[test]
+    fn into_precompile_result_error_path_does_not_expose_refund_field() {
+        // The error path goes through BasePrecompileError::into_precompile_result which
+        // does not set gas_refunded (refunds are only meaningful on success).
+        let err: Result<Bytes> = Err(BasePrecompileError::Revert(Bytes::new()));
+        let out = err.into_precompile_result(100, 0, 999, |b| b).unwrap();
+
+        assert!(out.is_revert());
+        assert_eq!(out.gas_refunded, 0, "error path must not propagate gas_refunded");
     }
 }

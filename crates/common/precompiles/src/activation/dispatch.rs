@@ -23,6 +23,7 @@ impl ActivationRegistryStorage<'_> {
         self.inner(calldata, activation_admin_address).into_precompile_result(
             ctx.gas_used(),
             ctx.state_gas_used(),
+            ctx.gas_refunded(),
             |output| output,
         )
     }

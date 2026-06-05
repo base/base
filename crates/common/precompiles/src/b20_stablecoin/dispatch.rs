@@ -48,6 +48,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         self.inner_with_observer(ctx, calldata, observer).into_precompile_result(
             ctx.gas_used(),
             ctx.state_gas_used(),
+            ctx.gas_refunded(),
             |b| b,
         )
     }
