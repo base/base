@@ -220,8 +220,6 @@ fn serialize_u256_full<S>(ts: &U256, ser: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
-    use serde::Serialize;
-
     alloy_primitives::B256::from(ts.to_be_bytes::<32>()).serialize(ser)
 }
 
