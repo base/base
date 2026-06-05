@@ -65,8 +65,9 @@ quantities at the top level — byte-equivalent to `cast block --json`.
 ### `basectl sync-status`
 
 Reports the rollup node's `optimism_syncStatus` (CL) joined with the EL's
-`eth_syncing` state. One round-trip each, run in parallel; either failure
-short-circuits the call. Visible alias: `ss`.
+`eth_syncing` state, plus a public-RPC tip reference for cross-checking.
+One round-trip each, run in parallel; the CL/EL pair short-circuits on
+failure, the tip reference is best-effort. Visible alias: `ss`.
 
 The CL response carries every L1/L2 head ref the rollup node knows about,
 each with a block number, hash, and Unix timestamp. Pretty mode prints an
@@ -74,10 +75,23 @@ aligned key-value table; humanized JSON adds a precomputed `safeLagSeconds`
 / `safeLagBlocks` pair (`unsafe` minus `safe`) so consumers don't have to
 re-derive lag from raw timestamps.
 
+When the EL is mid-sync (`eth_syncing` returns the `Info(...)` variant),
+the output also surfaces `processedBlocks` (`current - starting`) and
+`remainingBlocks` (`highest - current`) so operators can quantify the gap
+instead of just seeing "syncing: true."
+
+A `tip_reference` row compares the local node's unsafe L2 head against the
+preset's public RPC URL (`https://mainnet.base.org/`,
+`https://sepolia.base.org/`, or `http://localhost:7545` for devnet). Status
+is one of `caught_up` (within ±5 blocks of the reference), `behind`,
+`ahead`, or `unavailable` (public RPC unreachable). The threshold is a
+strawman — tunable based on Datadog/on-call feedback.
+
 | Flag | Description |
 |------|-------------|
+| `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field. |
 | `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
-| `--json` | Emit humanized JSON (decoded numeric values, ISO + local timestamps, precomputed `safeLag*`) instead of the key-value table. |
+| `--json` | Emit humanized JSON (decoded numeric values, ISO + local timestamps, precomputed `safeLag*`, `tipReference` object, `elSyncInfo` with `processedBlocks` / `remainingBlocks`) instead of the key-value table. |
 | `--raw` | With `--json`, emit the alloy-typed `optimism_syncStatus` wire format instead of the humanized form. Errors at parse time if used without `--json`. |
 
 ### `basectl flashblocks`
