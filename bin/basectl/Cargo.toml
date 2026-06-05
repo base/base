@@ -14,7 +14,6 @@ workspace = true
 [dependencies]
 url = { workspace = true }
 anyhow = { workspace = true }
-chrono = { workspace = true }
 alloy-eips = { workspace = true }
 basectl-cli = { workspace = true }
 alloy-provider = { workspace = true }
