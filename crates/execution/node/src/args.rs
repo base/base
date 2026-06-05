@@ -134,12 +134,6 @@ pub struct RollupArgs {
     )]
     pub proofs_history_verification_interval: u64,
 
-    /// Enable the Base discv5 protocol identity.
-    ///
-    /// When enabled, the node advertises itself with the `basev0` protocol ID in discv5,
-    /// allowing it to find and connect to other Base nodes more efficiently.
-    #[arg(long = "rollup.discovery.v5.base", default_value_t = true, action = clap::ArgAction::Set)]
-    pub base_protocol: bool,
 }
 
 impl Default for RollupArgs {
@@ -158,7 +152,6 @@ impl Default for RollupArgs {
             proofs_history_window: 1_296_000,
             proofs_history_prune_interval: Duration::from_secs(15),
             proofs_history_verification_interval: 0,
-            base_protocol: true,
         }
     }
 }
@@ -280,20 +273,4 @@ mod tests {
         assert_eq!(args.txpool_ordering, TxpoolOrdering::Timestamp);
     }
 
-    #[test]
-    fn test_parse_base_protocol_default_true() {
-        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
-        assert!(args.base_protocol);
-    }
-
-    #[test]
-    fn test_parse_base_protocol_disabled() {
-        let args = CommandParser::<RollupArgs>::parse_from([
-            "reth",
-            "--rollup.discovery.v5.base",
-            "false",
-        ])
-        .args;
-        assert!(!args.base_protocol);
-    }
 }

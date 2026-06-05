@@ -97,7 +97,6 @@ where
         disable_txpool_gossip,
         compute_pending_block,
         discovery_v4,
-        base_protocol,
         ..
     } = RollupArgs::default();
     ComponentsBuilder::default()
@@ -108,7 +107,7 @@ where
             BasePayloadBuilder::new(compute_pending_block)
                 .with_transactions(CustomTxPriority { chain_id }),
         ))
-        .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4, base_protocol))
+        .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
         .consensus(BaseConsensusBuilder::default())
 }
 

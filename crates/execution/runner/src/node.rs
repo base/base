@@ -72,7 +72,6 @@ impl BaseNode {
             disable_txpool_gossip,
             compute_pending_block,
             discovery_v4,
-            base_protocol,
             max_inflight_delegated_slots,
             ..
         } = self.args;
@@ -88,7 +87,7 @@ impl BaseNode {
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
             ))
-            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4, base_protocol))
+            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
             .consensus(BaseConsensusBuilder::default())
     }
 
