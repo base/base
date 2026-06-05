@@ -103,12 +103,17 @@ impl BasePrecompileError {
     ///
     /// Internal dispatch diagnostics use compact, non-ABI revert data: unknown selectors return the
     /// raw selector bytes, and decode failures return `selector || utf8_error_string`.
-    pub fn into_precompile_result(self, gas: u64, state_gas: u64) -> PrecompileResult {
+    pub fn into_precompile_result(
+        self,
+        gas: u64,
+        state_gas: u64,
+        reservoir: u64,
+    ) -> PrecompileResult {
         let bytes: Bytes = match self {
             Self::Revert(bytes) => bytes,
             Self::Panic(kind) => Panic { code: U256::from(kind as u32) }.abi_encode().into(),
             Self::OutOfGas => {
-                return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0));
+                return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, reservoir));
             }
             Self::SlotOverflow => {
                 return Err(PrecompileError::Fatal("slot overflow".into()));
@@ -124,7 +129,9 @@ impl BasePrecompileError {
                 bytes.into()
             }
         };
-        Ok(PrecompileOutput::revert(gas, bytes, state_gas))
+        let mut out = PrecompileOutput::revert(gas, bytes, reservoir);
+        out.state_gas_used = state_gas;
+        Ok(out)
     }
 }
 
@@ -135,6 +142,7 @@ pub trait IntoPrecompileResult<T> {
         self,
         gas: u64,
         state_gas: u64,
+        reservoir: u64,
         encode_ok: impl FnOnce(T) -> Bytes,
     ) -> PrecompileResult;
 }
@@ -144,11 +152,16 @@ impl<T> IntoPrecompileResult<T> for Result<T> {
         self,
         gas: u64,
         state_gas: u64,
+        reservoir: u64,
         encode_ok: impl FnOnce(T) -> Bytes,
     ) -> PrecompileResult {
         match self {
-            Ok(res) => Ok(PrecompileOutput::new(gas, encode_ok(res), state_gas)),
-            Err(err) => err.into_precompile_result(gas, state_gas),
+            Ok(res) => {
+                let mut out = PrecompileOutput::new(gas, encode_ok(res), reservoir);
+                out.state_gas_used = state_gas;
+                Ok(out)
+            }
+            Err(err) => err.into_precompile_result(gas, state_gas, reservoir),
         }
     }
 }
@@ -163,7 +176,7 @@ mod tests {
     fn delegate_call_not_allowed_encodes_to_typed_revert() {
         let expected: Bytes = DelegateCallNotAllowed {}.abi_encode().into();
         let result =
-            BasePrecompileError::revert(DelegateCallNotAllowed {}).into_precompile_result(0, 0);
+            BasePrecompileError::revert(DelegateCallNotAllowed {}).into_precompile_result(0, 0, 0);
         let output = result.unwrap();
         assert!(output.is_revert());
         assert_eq!(output.bytes, expected);

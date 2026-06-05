@@ -40,14 +40,24 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         match self.accounting().is_initialized() {
             Ok(true) => {}
             Ok(false) => {
-                return BasePrecompileError::Revert(Bytes::new())
-                    .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+                return BasePrecompileError::Revert(Bytes::new()).into_precompile_result(
+                    ctx.gas_used(),
+                    ctx.state_gas_used(),
+                    ctx.reservoir(),
+                );
             }
-            Err(e) => return e.into_precompile_result(ctx.gas_used(), ctx.state_gas_used()),
+            Err(e) => {
+                return e.into_precompile_result(
+                    ctx.gas_used(),
+                    ctx.state_gas_used(),
+                    ctx.reservoir(),
+                );
+            }
         }
         self.inner_with_observer(ctx, calldata, observer).into_precompile_result(
             ctx.gas_used(),
             ctx.state_gas_used(),
+            ctx.reservoir(),
             |b| b,
         )
     }

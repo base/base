@@ -38,7 +38,6 @@ pub struct EvmPrecompileStorageProvider<'a> {
     timestamp: U256,
     chain_id: u64,
     beneficiary: Address,
-    state_gas_used: u64,
 }
 
 impl<'a> EvmPrecompileStorageProvider<'a> {
@@ -47,7 +46,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
     /// `gas_params` drives all EIP-2929/2200/3529 cost calculations.
     /// Pass [`GasParams::default`] when the active spec is unknown at call site.
     pub fn new(input: PrecompileInput<'a>, gas_params: GasParams) -> Self {
-        let PrecompileInput { gas, caller, is_static, internals, .. } = input;
+        let PrecompileInput { gas, caller, is_static, internals, reservoir, .. } = input;
 
         let block_number = internals.block_env().number().to::<u64>();
         let timestamp = internals.block_env().timestamp();
@@ -57,14 +56,13 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
         Self {
             internals,
             caller,
-            gas: Gas::new(gas),
+            gas: Gas::new_with_regular_gas_and_reservoir(gas, reservoir),
             gas_params,
             is_static,
             block_number,
             timestamp,
             chain_id,
             beneficiary,
-            state_gas_used: 0,
         }
     }
 }
@@ -216,9 +214,9 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn deduct_state_gas(&mut self, gas: u64) -> Result<()> {
-        // No separate reservoir in the precompile context; state gas is drawn from regular gas.
-        self.deduct_gas(gas)?;
-        self.state_gas_used = self.state_gas_used.saturating_add(gas);
+        if !self.gas.record_state_cost(gas) {
+            return Err(BasePrecompileError::OutOfGas);
+        }
         Ok(())
     }
 
@@ -235,7 +233,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn state_gas_used(&self) -> u64 {
-        self.state_gas_used
+        self.gas.state_gas_spent()
     }
 
     fn gas_refunded(&self) -> i64 {
@@ -243,7 +241,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn reservoir(&self) -> u64 {
-        0
+        self.gas.reservoir()
     }
 
     fn is_static(&self) -> bool {

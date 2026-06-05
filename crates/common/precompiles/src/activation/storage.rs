@@ -80,6 +80,7 @@ impl ActivationRegistryStorage<'_> {
         self.ensure_activated(feature).into_precompile_result(
             self.storage.gas_used(),
             self.storage.state_gas_used(),
+            self.storage.reservoir(),
             |()| Bytes::new(),
         )
     }

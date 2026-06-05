@@ -10,7 +10,7 @@ macro_rules! base_precompile {
                     return ::base_precompile_storage::BasePrecompileError::revert(
                         ::base_precompile_storage::DelegateCallNotAllowed {},
                     )
-                    .into_precompile_result(0, 0);
+                    .into_precompile_result(0, 0, 0);
                 }
 
                 let $calldata: ::alloy_primitives::Bytes = input.data.to_vec().into();
@@ -31,7 +31,7 @@ macro_rules! base_precompile {
                     return ::base_precompile_storage::BasePrecompileError::revert(
                         ::base_precompile_storage::DelegateCallNotAllowed {},
                     )
-                    .into_precompile_result(0, 0);
+                    .into_precompile_result(0, 0, 0);
                 }
 
                 let $calldata: ::alloy_primitives::Bytes = $input.data.to_vec().into();
@@ -54,7 +54,11 @@ macro_rules! deduct_calldata_cost {
         let calldata_len = $calldata.len();
         let calldata_cost = calldata_len.div_ceil(32).saturating_mul(G_SHA3WORD as usize) as u64;
         if let Err(e) = $ctx.deduct_gas(calldata_cost) {
-            return e.into_precompile_result($ctx.gas_used(), $ctx.state_gas_used());
+            return e.into_precompile_result(
+                $ctx.gas_used(),
+                $ctx.state_gas_used(),
+                $ctx.reservoir(),
+            );
         }
     }};
 }
