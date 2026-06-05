@@ -133,7 +133,6 @@ pub struct RollupArgs {
         default_value_t = 0
     )]
     pub proofs_history_verification_interval: u64,
-
 }
 
 impl Default for RollupArgs {
@@ -272,5 +271,4 @@ mod tests {
         .args;
         assert_eq!(args.txpool_ordering, TxpoolOrdering::Timestamp);
     }
-
 }
