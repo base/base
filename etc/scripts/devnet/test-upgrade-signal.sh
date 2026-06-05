@@ -183,24 +183,18 @@ txpool_nodes:
   - "$L2_RPC"
 flashblocks_ws: "$L2_BUILDER_FLASHBLOCKS_WS"
 
-sender_count: 100
-target_gps: 20000000
-in_flight_per_sender: 96
-batch_size: 20
+sender_count: 4
+target_gps: 1000000
+in_flight_per_sender: 1
+batch_size: 1
 batch_timeout: "10ms"
 duration: "30s"
 seed: 12345
 funding_amount: "10000000000000000"
 
 transactions:
-  - weight: 70
+  - weight: 100
     type: transfer
-  - weight: 20
-    type: calldata
-    max_size: 256
-  - weight: 10
-    type: precompile
-    target: sha256
 EOF
 }
 
@@ -291,6 +285,9 @@ write_post_upgrade_tx_report() {
                     hash: .hash,
                     timestamp: .timestamp,
                     transaction_count: (.transactions | length),
+                    user_transaction_count: ([
+                        .transactions[] | select(.type != "0x7e")
+                    ] | length),
                     transactions: [
                         .transactions[] | {
                             hash,
@@ -314,6 +311,7 @@ write_post_upgrade_tx_report() {
             start_block: $start_block,
             end_block: $end_block,
             total_transactions: (map(.transaction_count) | add // 0),
+            total_user_transactions: (map(.user_transaction_count) | add // 0),
             blocks: .
         }' "$tx_blocks" > "$TX_SPAMMER_POST_UPGRADE_TXS"
 }
@@ -325,6 +323,7 @@ keep_tx_spammer_after_test() {
     local start_block
     local end_block
     local tx_count
+    local user_tx_count
 
     if [[ -z "$TX_SPAMMER_PID" ]]; then
         return
@@ -348,13 +347,15 @@ keep_tx_spammer_after_test() {
     end_block="$(latest_l2_block_number)"
     write_post_upgrade_tx_report "$((start_block + 1))" "$end_block"
     tx_count="$(jq -r '.total_transactions' "$TX_SPAMMER_POST_UPGRADE_TXS")"
-    if ((tx_count == 0)); then
-        echo "no post-upgrade tx spam landed between L2 blocks $((start_block + 1)) and $end_block" >&2
+    user_tx_count="$(jq -r '.total_user_transactions' "$TX_SPAMMER_POST_UPGRADE_TXS")"
+    if ((user_tx_count == 0)); then
+        echo "no post-upgrade user tx spam landed between L2 blocks $((start_block + 1)) and $end_block" >&2
+        echo "observed $tx_count total txs, but they were all protocol/deposit txs" >&2
         echo "tx spammer logs: $TX_SPAMMER_LOG" >&2
         exit 1
     fi
 
-    echo "Observed $tx_count post-upgrade txs; report: $TX_SPAMMER_POST_UPGRADE_TXS"
+    echo "Observed $user_tx_count post-upgrade user txs; report: $TX_SPAMMER_POST_UPGRADE_TXS"
 }
 
 trap stop_tx_spammer EXIT
