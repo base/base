@@ -79,7 +79,7 @@ pub struct BuildRequest {
     pub attributes: AttributesWithParent,
     /// The channel on which the result, successful or not, will be sent.
     pub result_tx: mpsc::Sender<Result<PayloadId, BuildTaskError>>,
-    /// OTel context from the requester.
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
     pub otel_cx: Context,
 }
 
@@ -99,7 +99,7 @@ pub struct InsertUnsafePayloadRequest {
     pub envelope: BaseExecutionPayloadEnvelope,
     /// Optional response channel used by the sequencer to wait for actual insertion.
     pub result_tx: Option<mpsc::Sender<Result<L2BlockInfo, InsertTaskError>>>,
-    /// OTel context from the requester.
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
     pub otel_cx: Context,
 }
 
@@ -113,6 +113,6 @@ pub struct GetPayloadRequest {
     pub attributes: AttributesWithParent,
     /// The channel on which the result, successful or not, will be sent.
     pub result_tx: mpsc::Sender<Result<BaseExecutionPayloadEnvelope, SealTaskError>>,
-    /// OTel context from the requester.
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
     pub otel_cx: Context,
 }
