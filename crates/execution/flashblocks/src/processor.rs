@@ -443,7 +443,8 @@ where
             .par_iter()
             .cloned()
             .map(|tx| -> Result<(BaseTxEnvelope, Address)> {
-                Ok((tx.clone(), tx.recover_signer()?))
+                let sender = tx.recover_signer()?;
+                Ok((tx, sender))
             })
             .collect::<Result<_>>()?;
         let sender_recovery_elapsed = recovery_start.elapsed();
@@ -585,7 +586,8 @@ where
             .par_iter()
             .cloned()
             .map(|tx| -> Result<(BaseTxEnvelope, Address)> {
-                Ok((tx.clone(), tx.recover_signer()?))
+                let sender = tx.recover_signer()?;
+                Ok((tx, sender))
             })
             .collect::<Result<_>>()?;
         Metrics::sender_recovery_duration().record(recovery_start.elapsed());

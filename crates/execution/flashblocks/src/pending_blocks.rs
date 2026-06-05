@@ -31,12 +31,12 @@ use crate::{BuildError, PendingBlocksAPI, StateProcessorError, TransactionWithLo
 pub struct PendingBlocksBuilder {
     flashblocks: Vector<Flashblock>,
     headers: Vec<Sealed<Header>>,
-    latest_flashblock_tx_start: usize,
+    latest_flashblock_tx_start: Option<usize>,
     latest_block_base: Option<ExecutionPayloadBaseV1>,
     latest_block_l1_block_info: Option<PendingL1BlockInfo>,
-    latest_block_transaction_count: usize,
-    latest_block_cumulative_gas_used: u64,
-    latest_block_next_log_index: usize,
+    latest_block_transaction_count: Option<usize>,
+    latest_block_cumulative_gas_used: Option<u64>,
+    latest_block_next_log_index: Option<usize>,
 
     transactions: Vector<Transaction>,
     account_balances: HashMap<Address, U256>,
@@ -70,12 +70,12 @@ impl PendingBlocksBuilder {
         Self {
             flashblocks: Vector::new(),
             headers: Vec::new(),
-            latest_flashblock_tx_start: 0,
+            latest_flashblock_tx_start: None,
             latest_block_base: None,
             latest_block_l1_block_info: None,
-            latest_block_transaction_count: 0,
-            latest_block_cumulative_gas_used: 0,
-            latest_block_next_log_index: 0,
+            latest_block_transaction_count: None,
+            latest_block_cumulative_gas_used: None,
+            latest_block_next_log_index: None,
             transactions: Vector::new(),
             account_balances: HashMap::new(),
             transaction_count: HashMap::new(),
@@ -119,12 +119,12 @@ impl PendingBlocksBuilder {
         Self {
             flashblocks,
             headers,
-            latest_flashblock_tx_start: pending_blocks.latest_flashblock_tx_start,
+            latest_flashblock_tx_start: Some(pending_blocks.latest_flashblock_tx_start),
             latest_block_base: Some(pending_blocks.latest_block_base.clone()),
             latest_block_l1_block_info: Some(pending_blocks.latest_block_l1_block_info.clone()),
-            latest_block_transaction_count: pending_blocks.latest_block_transaction_count,
-            latest_block_cumulative_gas_used: pending_blocks.latest_block_cumulative_gas_used,
-            latest_block_next_log_index: pending_blocks.latest_block_next_log_index,
+            latest_block_transaction_count: Some(pending_blocks.latest_block_transaction_count),
+            latest_block_cumulative_gas_used: Some(pending_blocks.latest_block_cumulative_gas_used),
+            latest_block_next_log_index: Some(pending_blocks.latest_block_next_log_index),
             transactions,
             account_balances,
             transaction_count,
@@ -179,12 +179,12 @@ impl PendingBlocksBuilder {
         latest_block_cumulative_gas_used: u64,
         latest_block_next_log_index: usize,
     ) -> &Self {
-        self.latest_flashblock_tx_start = latest_flashblock_tx_start;
+        self.latest_flashblock_tx_start = Some(latest_flashblock_tx_start);
         self.latest_block_base = Some(latest_block_base);
         self.latest_block_l1_block_info = Some(latest_block_l1_block_info);
-        self.latest_block_transaction_count = latest_block_transaction_count;
-        self.latest_block_cumulative_gas_used = latest_block_cumulative_gas_used;
-        self.latest_block_next_log_index = latest_block_next_log_index;
+        self.latest_block_transaction_count = Some(latest_block_transaction_count);
+        self.latest_block_cumulative_gas_used = Some(latest_block_cumulative_gas_used);
+        self.latest_block_next_log_index = Some(latest_block_next_log_index);
         self
     }
 
@@ -305,36 +305,30 @@ impl PendingBlocksBuilder {
             .ok_or(BuildError::MissingHeaders)?;
         let latest_block_l1_block_info =
             self.latest_block_l1_block_info.clone().unwrap_or_default();
-        let latest_block_transaction_count = if self.latest_block_transaction_count > 0 {
-            self.latest_block_transaction_count
-        } else {
-            self.transactions
-                .iter()
-                .filter(|tx| tx.block_number.unwrap_or_default() == latest_header.number)
-                .count()
-        };
-        let latest_block_cumulative_gas_used = if self.latest_block_cumulative_gas_used > 0 {
-            self.latest_block_cumulative_gas_used
-        } else {
-            self.transactions
-                .iter()
-                .filter_map(|tx| self.transaction_receipts.get(&tx.tx_hash()))
-                .last()
-                .map(|receipt| receipt.inner.inner.cumulative_gas_used())
-                .unwrap_or_default()
-        };
-        let latest_block_next_log_index = if self.latest_block_next_log_index > 0 {
-            self.latest_block_next_log_index
-        } else {
+        let latest_block_transaction_count =
+            self.latest_block_transaction_count.unwrap_or_else(|| {
+                self.transactions
+                    .iter()
+                    .filter(|tx| tx.block_number.unwrap_or_default() == latest_header.number)
+                    .count()
+            });
+        let latest_block_cumulative_gas_used =
+            self.latest_block_cumulative_gas_used.unwrap_or_else(|| {
+                self.transactions
+                    .iter()
+                    .filter_map(|tx| self.transaction_receipts.get(&tx.tx_hash()))
+                    .last()
+                    .map(|receipt| receipt.inner.inner.cumulative_gas_used())
+                    .unwrap_or_default()
+            });
+        let latest_block_next_log_index = self.latest_block_next_log_index.unwrap_or_else(|| {
             self.transactions
                 .iter()
                 .filter_map(|tx| self.transaction_receipts.get(&tx.tx_hash()))
                 .map(|receipt| receipt.inner.logs().len())
                 .sum()
-        };
-        let latest_flashblock_tx_start = if self.latest_flashblock_tx_start > 0 {
-            self.latest_flashblock_tx_start
-        } else {
+        });
+        let latest_flashblock_tx_start = self.latest_flashblock_tx_start.unwrap_or_else(|| {
             let latest_flashblock_tx_count = self
                 .flashblocks
                 .last()
@@ -345,7 +339,7 @@ impl PendingBlocksBuilder {
             } else {
                 self.transactions.len().saturating_sub(latest_flashblock_tx_count)
             }
-        };
+        });
 
         for transaction in &self.transactions {
             let tx_hash = transaction.tx_hash();
