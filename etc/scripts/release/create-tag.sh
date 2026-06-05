@@ -47,8 +47,17 @@ main() {
         HEAD_SHA=$(git rev-parse HEAD)
         if [[ "$TAG_SHA" == "$HEAD_SHA" ]]; then
             echo "Tag $TAG already exists at HEAD, skipping creation"
+        elif [[ "$RELEASE_TYPE" == "final" ]]; then
+            echo "Tag $TAG exists at $TAG_SHA; moving to HEAD ($HEAD_SHA) for retry"
+            configure_git
+            git push origin ":refs/tags/$TAG"
+            git tag -d "$TAG"
+            create_and_push_tag "$TAG"
+            echo ""
+            echo "=== Tag $TAG moved to HEAD ==="
         else
-            echo "Tag $TAG already exists at $TAG_SHA, reusing it instead of HEAD ($HEAD_SHA)"
+            echo "Error: Tag $TAG already exists but points at $TAG_SHA, not HEAD ($HEAD_SHA)"
+            exit 1
         fi
     else
         configure_git

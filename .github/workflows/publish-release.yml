@@ -89,7 +89,7 @@ jobs:
             if [[ "$TAG_SHA" == "$HEAD_SHA" ]]; then
               echo "::notice::Tag ${TAG} already exists at release branch HEAD; reusing it"
             else
-              echo "::notice::Tag ${TAG} already exists at ${TAG_SHA}; reusing it instead of release branch HEAD ${HEAD_SHA}"
+              echo "::notice::Tag ${TAG} exists at ${TAG_SHA} (not HEAD ${HEAD_SHA}); create-tag will move it to HEAD"
             fi
           fi
 
