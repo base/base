@@ -1689,7 +1689,7 @@ fn strip_null_object_fields(value: &mut serde_json::Value) {
 
 fn ensure_protocol_session_id(value: &mut serde_json::Value, session_id: &str) {
     if let serde_json::Value::Object(map) = value
-        && !map.get("session_id").is_some_and(|value| !value.is_null())
+        && map.get("session_id").is_none_or(|value| value.is_null())
     {
         map.insert("session_id".to_owned(), serde_json::Value::String(session_id.to_owned()));
     }
