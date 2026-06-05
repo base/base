@@ -54,6 +54,10 @@ impl ConsensusNodeCommand {
             ["libp2p_gossipsub=error"]
         )?;
 
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+        );
+
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;

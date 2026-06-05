@@ -60,6 +60,7 @@ libp2p.workspace = true
 futures.workspace = true
 http-body.workspace = true
 tokio-util.workspace = true
+opentelemetry.workspace = true
 async-trait.workspace = true
 async-stream.workspace = true
 tokio-stream.workspace = true

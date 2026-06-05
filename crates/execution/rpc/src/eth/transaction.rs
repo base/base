@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::Typed2718;
+use alloy_consensus::{Typed2718, transaction::TxHashRef};
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
 use base_common_consensus::{
@@ -25,7 +25,7 @@ use reth_storage_api::{ProviderTx, ReceiptProvider, TransactionsProvider, errors
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTransaction, TransactionOrigin, TransactionPool,
 };
-use tracing::{debug, warn};
+use tracing::{debug, instrument, warn};
 
 use crate::{BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, SequencerClient};
 
@@ -43,6 +43,7 @@ where
         self.inner.eth_api.send_raw_transaction_sync_timeout()
     }
 
+    #[instrument(skip_all, fields(tx_hash = %tx.tx_hash()))]
     async fn send_transaction(
         &self,
         origin: TransactionOrigin,
