@@ -67,7 +67,7 @@ quantities at the top level — byte-equivalent to `cast block --json`.
 Reports the rollup node's `optimism_syncStatus` (CL) joined with the EL's
 `eth_syncing` state, plus a public-RPC tip reference for cross-checking.
 One round-trip each, run in parallel; the CL/EL pair short-circuits on
-failure, the tip reference is best-effort. Visible alias: `ss`.
+failure, the tip reference is best-effort.
 
 The CL response carries every L1/L2 head ref the rollup node knows about,
 each with a block number, hash, and Unix timestamp. Pretty mode prints an
@@ -83,14 +83,15 @@ instead of just seeing "syncing: true."
 A `tip_reference` row compares the local node's unsafe L2 head against the
 preset's public RPC URL (`https://mainnet.base.org/`,
 `https://sepolia.base.org/`, or `http://localhost:7545` for devnet). Status
-is one of `caught_up` (within ±5 blocks of the reference), `behind`,
-`ahead`, or `unavailable` (public RPC unreachable). The threshold is a
-strawman — tunable based on Datadog/on-call feedback.
+is one of `caught_up` (within ±N blocks of the reference, where N is the
+`--tip-tolerance` flag — default 5), `behind`, `ahead`, or `unavailable`
+(public RPC unreachable).
 
 | Flag | Description |
 |------|-------------|
 | `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field. |
 | `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
+| `--tip-tolerance <BLOCKS>` | Block tolerance for the tip-reference `caught_up` classification. Within ±this many blocks of the public reference, the local node is reported as `caught_up`; otherwise `behind` or `ahead`. Default `5` ≈ ~10s at Base's 2s block time. Use `0` for strict alerting, larger values to dampen noise. |
 | `--json` | Emit humanized JSON (decoded numeric values, ISO + local timestamps, precomputed `safeLag*`, `tipReference` object, `elSyncInfo` with `processedBlocks` / `remainingBlocks`) instead of the key-value table. |
 | `--raw` | With `--json`, emit the alloy-typed `optimism_syncStatus` wire format instead of the humanized form. Errors at parse time if used without `--json`. |
 

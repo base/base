@@ -14,16 +14,12 @@ use basectl_cli::{
 use serde::Serialize;
 use url::Url;
 
-/// Threshold (in blocks) below which the local node is treated as caught up
-/// with the public reference RPC. Strawman — ~10s of network jitter at 2s
-/// block time. Tunable based on Datadog/on-call feedback.
-const TIP_CAUGHT_UP_THRESHOLD: i64 = 5;
-
 /// Runs the `basectl sync-status` subcommand.
 pub(crate) async fn run(
     config: MonitoringConfig,
     el_rpc_override: Option<Url>,
     cl_rpc_override: Option<Url>,
+    tip_tolerance: u64,
     json: bool,
     raw: bool,
 ) -> Result<()> {
@@ -43,11 +39,18 @@ pub(crate) async fn run(
     match (json, raw) {
         (true, true) => JsonOutput::print(&report.cl)?,
         (true, false) => {
-            let summary =
-                SyncStatusJson::from_report(&config.name, &report, tip_url, public_tip_block);
+            let summary = SyncStatusJson::from_report(
+                &config.name,
+                &report,
+                tip_url,
+                public_tip_block,
+                tip_tolerance,
+            );
             JsonOutput::print(&summary)?;
         }
-        (false, _) => print_pretty(&config.name, &report, tip_url, public_tip_block)?,
+        (false, _) => {
+            print_pretty(&config.name, &report, tip_url, public_tip_block, tip_tolerance)?;
+        }
     }
     Ok(())
 }
@@ -99,6 +102,7 @@ impl SyncStatusJson {
         report: &SyncStatusReport,
         tip_url: &str,
         public_tip_block: Option<u64>,
+        tip_tolerance: u64,
     ) -> Self {
         let cl = &report.cl;
         let safe_lag_seconds =
@@ -127,6 +131,7 @@ impl SyncStatusJson {
             tip_url,
             cl.unsafe_l2.block_info.number,
             public_tip_block,
+            tip_tolerance,
         );
         Self {
             network: network.to_string(),
@@ -201,11 +206,12 @@ struct TipReferenceJson {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum TipStatus {
-    /// Local within `±TIP_CAUGHT_UP_THRESHOLD` blocks of the public reference.
+    /// Local within `±tolerance` blocks of the public reference (configurable
+    /// via `--tip-tolerance`).
     CaughtUp,
-    /// Local is more than `TIP_CAUGHT_UP_THRESHOLD` blocks behind the reference.
+    /// Local is more than `tolerance` blocks behind the reference.
     Behind,
-    /// Local is more than `TIP_CAUGHT_UP_THRESHOLD` blocks ahead of the reference.
+    /// Local is more than `tolerance` blocks ahead of the reference.
     Ahead,
     /// Public reference fetch failed; comparison not available.
     Unavailable,
@@ -226,7 +232,7 @@ impl TipStatus {
 }
 
 impl TipReferenceJson {
-    fn from_local_and_public(url: &str, local: u64, public: Option<u64>) -> Self {
+    fn from_local_and_public(url: &str, local: u64, public: Option<u64>, tolerance: u64) -> Self {
         let Some(public) = public else {
             return Self {
                 url: url.to_string(),
@@ -240,8 +246,9 @@ impl TipReferenceJson {
         // real chain heights are always well under i64::MAX.
         let local_i = i64::try_from(local).unwrap_or(i64::MAX);
         let public_i = i64::try_from(public).unwrap_or(i64::MAX);
+        let tolerance_i = i64::try_from(tolerance).unwrap_or(i64::MAX);
         let delta = public_i.saturating_sub(local_i);
-        let status = if delta.abs() <= TIP_CAUGHT_UP_THRESHOLD {
+        let status = if delta.abs() <= tolerance_i {
             TipStatus::CaughtUp
         } else if delta > 0 {
             TipStatus::Behind
@@ -257,6 +264,7 @@ fn print_pretty(
     report: &SyncStatusReport,
     tip_url: &str,
     public_tip_block: Option<u64>,
+    tip_tolerance: u64,
 ) -> Result<()> {
     let cl = &report.cl;
     let mut table = KeyValueTable::new();
@@ -306,18 +314,23 @@ fn print_pretty(
 
     table.row(
         "tip_reference",
-        format_tip_reference(tip_url, cl.unsafe_l2.block_info.number, public_tip_block),
+        format_tip_reference(
+            tip_url,
+            cl.unsafe_l2.block_info.number,
+            public_tip_block,
+            tip_tolerance,
+        ),
     );
 
     table.print()?;
     Ok(())
 }
 
-fn format_tip_reference(url: &str, local: u64, public: Option<u64>) -> String {
+fn format_tip_reference(url: &str, local: u64, public: Option<u64>, tolerance: u64) -> String {
     // Single source of truth for delta math + classification:
     // `TipReferenceJson::from_local_and_public`. Build the JSON struct and
     // read its fields rather than re-deriving the same logic here.
-    let tip = TipReferenceJson::from_local_and_public(url, local, public);
+    let tip = TipReferenceJson::from_local_and_public(url, local, public, tolerance);
     match (tip.block_number, tip.delta_blocks) {
         (Some(block), Some(delta)) => {
             format!("#{block} (url={url}) delta={delta} ({})", tip.status.as_str())
@@ -370,12 +383,13 @@ mod tests {
         let report =
             SyncStatusReport { cl: sample_status(), el: alloy_rpc_types_eth::SyncStatus::None };
         // Public reference 2 blocks ahead of local — within the caught-up
-        // threshold (5).
+        // tolerance (5).
         let summary = SyncStatusJson::from_report(
             "mainnet",
             &report,
             "https://mainnet.base.org/",
             Some(18_432_102),
+            5,
         );
         let value: serde_json::Value = serde_json::to_value(&summary).unwrap();
 
@@ -407,7 +421,7 @@ mod tests {
         status.unsafe_l2 = sample_l2(100, 1_000);
         status.safe_l2 = sample_l2(200, 2_000);
         let report = SyncStatusReport { cl: status, el: alloy_rpc_types_eth::SyncStatus::None };
-        let summary = SyncStatusJson::from_report("mainnet", &report, "https://example/", None);
+        let summary = SyncStatusJson::from_report("mainnet", &report, "https://example/", None, 5);
         assert_eq!(summary.safe_lag_seconds, 0);
         assert_eq!(summary.safe_lag_blocks, 0);
     }
@@ -422,6 +436,7 @@ mod tests {
             &report,
             "https://mainnet.base.org/",
             Some(18_432_500),
+            5,
         );
         let value: serde_json::Value = serde_json::to_value(&summary).unwrap();
 
@@ -439,6 +454,7 @@ mod tests {
             &report,
             "https://mainnet.base.org/",
             Some(18_431_700),
+            5,
         );
         let value: serde_json::Value = serde_json::to_value(&summary).unwrap();
 
@@ -451,7 +467,7 @@ mod tests {
         let report =
             SyncStatusReport { cl: sample_status(), el: alloy_rpc_types_eth::SyncStatus::None };
         let summary =
-            SyncStatusJson::from_report("mainnet", &report, "https://mainnet.base.org/", None);
+            SyncStatusJson::from_report("mainnet", &report, "https://mainnet.base.org/", None, 5);
         let value: serde_json::Value = serde_json::to_value(&summary).unwrap();
 
         assert!(value["tipReference"]["blockNumber"].is_null());
@@ -475,8 +491,13 @@ mod tests {
             cl: sample_status(),
             el: alloy_rpc_types_eth::SyncStatus::Info(info),
         };
-        let summary =
-            SyncStatusJson::from_report("mainnet", &report, "https://example/", Some(18_432_100));
+        let summary = SyncStatusJson::from_report(
+            "mainnet",
+            &report,
+            "https://example/",
+            Some(18_432_100),
+            5,
+        );
         let value: serde_json::Value = serde_json::to_value(&summary).unwrap();
 
         assert_eq!(value["elActivelySyncing"], true);
@@ -504,10 +525,30 @@ mod tests {
             cl: sample_status(),
             el: alloy_rpc_types_eth::SyncStatus::Info(info),
         };
-        let summary = SyncStatusJson::from_report("mainnet", &report, "https://example/", None);
+        let summary = SyncStatusJson::from_report("mainnet", &report, "https://example/", None, 5);
         let value: serde_json::Value = serde_json::to_value(&summary).unwrap();
 
         assert_eq!(value["elSyncInfo"]["processedBlocks"], 1_500);
         assert_eq!(value["elSyncInfo"]["remainingBlocks"], 0);
+    }
+
+    #[test]
+    fn tip_reference_tolerance_widens_caught_up_band() {
+        // Same fixture as the "behind" test (delta = 400) but with tolerance
+        // bumped to 500 — classification flips to caught_up, demonstrating
+        // that the --tip-tolerance flag actually controls the boundary.
+        let report =
+            SyncStatusReport { cl: sample_status(), el: alloy_rpc_types_eth::SyncStatus::None };
+        let summary = SyncStatusJson::from_report(
+            "mainnet",
+            &report,
+            "https://mainnet.base.org/",
+            Some(18_432_500),
+            500,
+        );
+        let value: serde_json::Value = serde_json::to_value(&summary).unwrap();
+
+        assert_eq!(value["tipReference"]["deltaBlocks"], 400);
+        assert_eq!(value["tipReference"]["status"], "caught_up");
     }
 }

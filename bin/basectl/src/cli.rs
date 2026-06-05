@@ -54,7 +54,6 @@ pub(crate) enum Commands {
         raw: bool,
     },
     /// Report combined CL `optimism_syncStatus` + EL `eth_syncing`.
-    #[command(visible_alias = "ss")]
     SyncStatus {
         /// Override the execution-layer RPC URL.
         ///
@@ -72,6 +71,15 @@ pub(crate) enum Commands {
         /// config).
         #[arg(long = "cl-rpc", value_name = "URL")]
         cl_rpc: Option<Url>,
+        /// Block tolerance for the tip-reference `caught_up` classification.
+        ///
+        /// The local node is reported as `caught_up` when within ±this many
+        /// blocks of the public reference. Beyond the window, status flips
+        /// to `behind` or `ahead`. Default 5 ≈ ~10s of network jitter at
+        /// Base's 2s block time. Lower the value for stricter alerting,
+        /// raise it to dampen noise on flaky networks.
+        #[arg(long = "tip-tolerance", value_name = "BLOCKS", default_value_t = 5)]
+        tip_tolerance: u64,
         /// Emit JSON (humanized — decoded numbers, ISO + local timestamps,
         /// precomputed `safeLag*`) instead of the pretty table.
         #[arg(long)]
