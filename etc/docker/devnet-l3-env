@@ -1,0 +1,28 @@
+# Base-L1 / L3 devnet overrides (layered on top of devnet-env via a second --env-file).
+# L1 = base-anvil (l1-anvil, aliased to l1-el). The Base parent has no beacon/blob DA, so
+# the L2 consensus runs beaconless and the batcher posts calldata.
+# Used by `just devnet up-l3`.
+
+# Select the Base L1 stack (setup-l1 emits only jwt.hex + el/chain-config.json).
+L1_MODE=base
+
+# No BASE_NODE_L1_BEACON: leaving it unset makes the L2 consensus nodes run beaconless. The
+# beaconless mode must be opted into explicitly via --l1.calldata-only, otherwise the consensus
+# node refuses to start (guards against a main-chain node silently running without a beacon API).
+BASE_NODE_L1_CALLDATA_ONLY=true
+# L1 slot duration matches base-anvil's --block-time (2s).
+BASE_NODE_L1_SLOT_DURATION_OVERRIDE=2
+
+# Force calldata batching and disable the throttle-driven blob fallback (no blob DA on Base).
+BATCHER_DATA_AVAILABILITY_TYPE=calldata
+BATCHER_NO_FORCE_BLOBS_WHEN_THROTTLING=true
+
+# Calldata DA carries far less per L1 tx than blobs, so raise batcher throughput to keep the
+# safe head tracking the unsafe head: longer channels pack more L2 blocks per submission, and
+# several in-flight txs avoid serializing on per-tx confirmation. (Defaults are 2 / 1.)
+BATCHER_MAX_CHANNEL_DURATION=10
+BATCHER_MAX_PENDING_TRANSACTIONS=4
+
+# No L1_BEACON_ADDRESS: leaving it unset makes the ZK prover build a disabled blob provider, but
+# the prover (like the consensus node) requires calldata-only mode to be opted into explicitly.
+L1_CALLDATA_ONLY=true
