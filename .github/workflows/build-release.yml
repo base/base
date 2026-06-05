@@ -379,7 +379,7 @@ jobs:
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "::warning::No binary artifacts found — all binary builds may have failed, skipping upload"
           else
-            gh release upload "$TAG" "${files[@]}"
+            gh release upload --clobber "$TAG" "${files[@]}"
           fi
 
       - name: Summary
