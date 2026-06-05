@@ -13,13 +13,22 @@ POLL_INTERVAL="${UPGRADE_SIGNAL_TEST_POLL_INTERVAL:-2}"
 TIMEOUT_SECONDS="${UPGRADE_SIGNAL_TEST_TIMEOUT_SECONDS:-300}"
 CHECKPOINT_ENV="$REPO_ROOT/.devnet/upgrade-signal-checkpoint.env"
 UPGRADE_ENV="$REPO_ROOT/.devnet/upgrade-signal.env"
+TX_SPAMMER_ENABLED="${UPGRADE_SIGNAL_TX_SPAMMER:-1}"
+TX_SPAMMER_CONFIG="$REPO_ROOT/.devnet/upgrade-signal-load-test.yaml"
+TX_SPAMMER_LOG="$REPO_ROOT/.devnet/upgrade-signal-load-test.log"
+TX_SPAMMER_OUTPUT="$REPO_ROOT/.devnet/upgrade-signal-load-test-results.json"
+TX_SPAMMER_BIN="${UPGRADE_SIGNAL_TX_SPAMMER_BIN:-$REPO_ROOT/target/debug/base-load-tester}"
+TX_SPAMMER_POST_TEST_SECONDS="${UPGRADE_SIGNAL_TX_SPAMMER_POST_TEST_SECONDS:-60}"
 L1_RPC="${UPGRADE_SIGNAL_L1_RPC_URL:-${L1_RPC_URL:-http://localhost:4545}}"
 L2_RPC="${UPGRADE_SIGNAL_L2_RPC_URL:-${L2_CLIENT_RPC_URL:-http://localhost:8545}}"
 L2_BUILDER_RPC="${UPGRADE_SIGNAL_L2_BUILDER_RPC_URL:-${L2_BUILDER_RPC_URL:-http://localhost:7545}}"
 L2_BUILDER_OP_RPC="${UPGRADE_SIGNAL_L2_BUILDER_OP_RPC_URL:-${L2_BUILDER_OP_RPC_URL:-http://localhost:7549}}"
 L2_CLIENT_OP_RPC="${UPGRADE_SIGNAL_L2_CLIENT_OP_RPC_URL:-${L2_CLIENT_OP_RPC_URL:-http://localhost:8549}}"
+L2_BUILDER_FLASHBLOCKS_WS="${UPGRADE_SIGNAL_L2_BUILDER_FLASHBLOCKS_WS:-ws://localhost:${L2_BUILDER_FLASHBLOCKS_PORT:-7111}}"
 ROLLUP_JSON="$REPO_ROOT/.devnet/l2/configs/rollup.json"
 GENESIS_JSON="$REPO_ROOT/.devnet/l2/configs/genesis.json"
+TX_SPAMMER_FUNDER_KEY="${UPGRADE_SIGNAL_TX_SPAMMER_FUNDER_KEY:-${ANVIL_ACCOUNT_2_KEY:-}}"
+TX_SPAMMER_PID=""
 
 BASE_COMPOSE=(
     docker compose
@@ -144,6 +153,143 @@ wait_for_activation_timestamp() {
     wait_for_l2_timestamp "$activation_timestamp" "activation"
 }
 
+tx_spammer_enabled() {
+    case "$TX_SPAMMER_ENABLED" in
+        1|true|TRUE|yes|YES|on|ON)
+            return 0
+            ;;
+        0|false|FALSE|no|NO|off|OFF)
+            return 1
+            ;;
+        *)
+            echo "UPGRADE_SIGNAL_TX_SPAMMER must be a boolean-like value" >&2
+            exit 1
+            ;;
+    esac
+}
+
+write_tx_spammer_config() {
+    cat > "$TX_SPAMMER_CONFIG" <<EOF
+transaction_submission_rpcs:
+  - "$L2_BUILDER_RPC"
+query_rpc: "$L2_RPC"
+txpool_nodes:
+  - "$L2_BUILDER_RPC"
+  - "$L2_RPC"
+flashblocks_ws: "$L2_BUILDER_FLASHBLOCKS_WS"
+
+sender_count: 100
+target_gps: 20000000
+in_flight_per_sender: 96
+batch_size: 20
+batch_timeout: "10ms"
+duration: "30s"
+seed: 12345
+funding_amount: "10000000000000000"
+
+transactions:
+  - weight: 70
+    type: transfer
+  - weight: 20
+    type: calldata
+    max_size: 256
+  - weight: 10
+    type: precompile
+    target: sha256
+EOF
+}
+
+prepare_tx_spammer() {
+    if ! tx_spammer_enabled; then
+        return
+    fi
+
+    require_cmd cargo
+    if [[ -z "$TX_SPAMMER_FUNDER_KEY" ]]; then
+        echo "missing tx spammer funder key; set UPGRADE_SIGNAL_TX_SPAMMER_FUNDER_KEY" >&2
+        exit 1
+    fi
+
+    echo "Building tx spammer..."
+    (cd "$REPO_ROOT" && cargo build -p base-load-tester-bin --bin base-load-tester)
+    if [[ ! -x "$TX_SPAMMER_BIN" ]]; then
+        echo "tx spammer binary not found at $TX_SPAMMER_BIN" >&2
+        echo "set UPGRADE_SIGNAL_TX_SPAMMER_BIN when using a custom Cargo target dir" >&2
+        exit 1
+    fi
+}
+
+start_tx_spammer() {
+    if ! tx_spammer_enabled; then
+        echo "Tx spammer disabled."
+        return
+    fi
+
+    write_tx_spammer_config
+    : > "$TX_SPAMMER_LOG"
+
+    echo "Starting tx spammer against builder RPC $L2_BUILDER_RPC..."
+    (
+        cd "$REPO_ROOT"
+        export FUNDER_KEY="$TX_SPAMMER_FUNDER_KEY"
+        export LOAD_TEST_OUTPUT="$TX_SPAMMER_OUTPUT"
+        exec "$TX_SPAMMER_BIN" \
+            "$TX_SPAMMER_CONFIG" \
+            --continuous
+    ) >> "$TX_SPAMMER_LOG" 2>&1 &
+    TX_SPAMMER_PID="$!"
+
+    sleep 5
+    if ! kill -0 "$TX_SPAMMER_PID" >/dev/null 2>&1; then
+        echo "tx spammer exited during startup; last log lines:" >&2
+        tail -n 80 "$TX_SPAMMER_LOG" >&2 || true
+        exit 1
+    fi
+
+    echo "Tx spammer started with pid $TX_SPAMMER_PID; logs: $TX_SPAMMER_LOG"
+}
+
+stop_tx_spammer() {
+    if [[ -z "$TX_SPAMMER_PID" ]]; then
+        return
+    fi
+    if ! kill -0 "$TX_SPAMMER_PID" >/dev/null 2>&1; then
+        wait "$TX_SPAMMER_PID" || true
+        TX_SPAMMER_PID=""
+        return
+    fi
+
+    echo "Stopping tx spammer..."
+    kill -INT "$TX_SPAMMER_PID" >/dev/null 2>&1 || true
+    wait "$TX_SPAMMER_PID" || true
+    TX_SPAMMER_PID=""
+}
+
+keep_tx_spammer_after_test() {
+    if ! tx_spammer_enabled || ((TX_SPAMMER_POST_TEST_SECONDS == 0)); then
+        return
+    fi
+    if [[ -z "$TX_SPAMMER_PID" ]]; then
+        return
+    fi
+    if ! kill -0 "$TX_SPAMMER_PID" >/dev/null 2>&1; then
+        echo "tx spammer exited before post-test soak completed; last log lines:" >&2
+        tail -n 80 "$TX_SPAMMER_LOG" >&2 || true
+        exit 1
+    fi
+
+    echo "Keeping tx spammer running for $TX_SPAMMER_POST_TEST_SECONDS seconds after test completion..."
+    sleep "$TX_SPAMMER_POST_TEST_SECONDS"
+
+    if ! kill -0 "$TX_SPAMMER_PID" >/dev/null 2>&1; then
+        echo "tx spammer exited during post-test soak; last log lines:" >&2
+        tail -n 80 "$TX_SPAMMER_LOG" >&2 || true
+        exit 1
+    fi
+}
+
+trap stop_tx_spammer EXIT
+
 upgrade_signal_contract() {
     local contract_address
 
@@ -235,6 +381,10 @@ if ((RESCHEDULE_DELAY_SECONDS <= RESCHEDULE_BEFORE_SECONDS)); then
     echo "UPGRADE_SIGNAL_TEST_RESCHEDULE_DELAY_SECONDS must be greater than UPGRADE_SIGNAL_TEST_RESCHEDULE_BEFORE_SECONDS" >&2
     exit 1
 fi
+if ! [[ "$TX_SPAMMER_POST_TEST_SECONDS" =~ ^[0-9]+$ ]]; then
+    echo "UPGRADE_SIGNAL_TX_SPAMMER_POST_TEST_SECONDS must be a non-negative integer" >&2
+    exit 1
+fi
 
 reset_devnet
 
@@ -292,6 +442,8 @@ UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP="$ACTIVATION_TIMESTAMP" \
     UPGRADE_SIGNAL_L1_RPC_URL="$L1_RPC" \
     "$SCRIPT_DIR/setup-upgrade-signal.sh"
 
+prepare_tx_spammer
+
 echo "Starting L2 services with upgrade signal enabled..."
 compose_upgrade up -d --no-build \
     base-el-bootnode \
@@ -302,6 +454,7 @@ compose_upgrade up -d --no-build \
     base-client \
     base-client-cl
 wait_for_l2_rpc
+start_tx_spammer
 
 CURRENT_TIMESTAMP="$(latest_l2_timestamp)"
 if ((CURRENT_TIMESTAMP >= ACTIVATION_TIMESTAMP)); then
@@ -356,6 +509,8 @@ echo "Running post-Azul checks..."
 UPGRADE_SIGNAL_ACTIVATION_TIMESTAMP="$UPDATED_ACTIVATION_TIMESTAMP" \
     "$SCRIPT_DIR/test-base-azul.sh" after "$L2_RPC" latest
 
+keep_tx_spammer_after_test
+
 cat <<EOF
 
 Contract-driven upgrade signal devnet test passed.
@@ -366,4 +521,5 @@ Initial contract Azul time:    $ACTIVATION_TIMESTAMP
 Reschedule before activation:  $RESCHEDULE_BEFORE_SECONDS seconds
 Reschedule delay:              $RESCHEDULE_DELAY_SECONDS seconds
 Updated contract Azul time:    $UPDATED_ACTIVATION_TIMESTAMP
+Tx spammer post-test soak:     $TX_SPAMMER_POST_TEST_SECONDS seconds
 EOF
