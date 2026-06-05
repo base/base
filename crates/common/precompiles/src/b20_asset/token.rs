@@ -17,13 +17,11 @@ use crate::{
 ///
 /// Mirrors the structure of [`crate::B20Token`] but requires `S: AssetAccounting`
 /// so the dispatch layer can read and write asset-specific storage (multiplier,
-/// extra metadata, announcement IDs). The `in_announcement` flag guards against
-/// recursive `announce` calls within a single precompile invocation.
+/// extra metadata, announcement IDs).
 #[derive(Debug, Clone)]
 pub struct B20AssetToken<S: AssetAccounting, P: Policy> {
     accounting: S,
     policy: P,
-    in_announcement: bool,
 }
 
 impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
@@ -37,17 +35,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
 
     /// Creates a `B20AssetToken` backed by the provided storage and policy adapters.
     pub const fn with_storage_and_policy(accounting: S, policy: P) -> Self {
-        Self { accounting, policy, in_announcement: false }
-    }
-
-    /// Returns whether this token is currently executing an announcement.
-    pub const fn is_announcement_active(&self) -> bool {
-        self.in_announcement
-    }
-
-    /// Marks this token as executing an announcement.
-    pub const fn begin_announcement(&mut self) {
-        self.in_announcement = true;
+        Self { accounting, policy }
     }
 }
 

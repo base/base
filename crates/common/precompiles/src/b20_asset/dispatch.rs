@@ -383,7 +383,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
 
     /// Posts an announcement and atomically executes `internal_calls` via self-dispatch.
     ///
-    /// The `in_announcement` flag and selector check prevent recursive invocation.
+    /// The selector check in the inner loop prevents recursive invocation.
     fn announce(
         &mut self,
         ctx: StorageCtx<'_>,
@@ -395,9 +395,6 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     ) -> base_precompile_storage::Result<()> {
         let caller = ctx.caller();
         self.ensure_operator_role(caller, privileged)?;
-        if self.is_announcement_active() {
-            return Err(BasePrecompileError::revert(IB20Asset::AnnouncementInProgress {}));
-        }
 
         if self.accounting().is_announcement_id_used(id.as_str())? {
             return Err(BasePrecompileError::revert(IB20Asset::AnnouncementIdAlreadyUsed { id }));
@@ -407,8 +404,6 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         self.accounting_mut().emit_event(
             IB20Asset::Announcement { caller, id: id.clone(), description, uri }.encode_log_data(),
         )?;
-
-        self.begin_announcement();
 
         for call in &internal_calls {
             let call_bytes: &[u8] = call.as_ref();
