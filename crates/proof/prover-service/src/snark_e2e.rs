@@ -10,7 +10,7 @@ use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use anyhow::{Context, Result, bail};
 use base_common_network::Base;
 use base_prover_service_protocol::{
-    GetProofRequest, ProofRequest, ProofRequestKind, ProofResult, ProofStatus,
+    GetProofRequest, ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProofStatus,
     ProveBlockRangeRequest, ProverRequesterApiClient, SnarkGroth16ProofRequest, ZkProofRequest,
     ZkVm,
 };
@@ -20,12 +20,13 @@ use sp1_sdk::{
     blocking::{CpuProver, MockProver, Prover as BlockingProver},
 };
 use tracing::{info, warn};
-use uuid::Uuid;
 
 use crate::L1HeadCalculator;
 
 const POLL_INTERVAL_SECS: u64 = 30;
 const POLL_TIMEOUT_SECS: u64 = 14400; // 4 hours
+const SNARK_E2E_SESSION_NAMESPACE: &[u8] = b"base/prover-service/snark-e2e/proof-session/v1";
+const SNARK_E2E_BLOCKS_TO_PROVE: u64 = 1;
 
 /// Number of L1 blocks past the L1 origin to include when computing the
 /// `l1_head` for witness generation.  The server-side fallback computes
@@ -44,6 +45,33 @@ const MAX_STEP_BACKS: u64 = 300;
 pub struct SnarkE2e;
 
 impl SnarkE2e {
+    /// Returns the session-ID proof subtype label for SNARK Groth16 proofs.
+    pub const fn snark_groth16_session_label() -> &'static str {
+        "zk/sp1/snark_groth16"
+    }
+
+    /// Derives an idempotent session ID for the SNARK E2E proof request.
+    pub fn snark_groth16_session_id(
+        start_block_number: u64,
+        number_of_blocks_to_prove: u64,
+        sequence_window: u64,
+        prover_address: Address,
+    ) -> String {
+        let start_block_number = start_block_number.to_be_bytes();
+        let number_of_blocks_to_prove = number_of_blocks_to_prove.to_be_bytes();
+        let sequence_window = sequence_window.to_be_bytes();
+        ProofSessionId::derive_from_components(
+            SNARK_E2E_SESSION_NAMESPACE,
+            Self::snark_groth16_session_label(),
+            &[
+                &start_block_number,
+                &number_of_blocks_to_prove,
+                &sequence_window,
+                prover_address.as_slice(),
+            ],
+        )
+    }
+
     async fn connect() -> Result<HttpClient> {
         let addr = std::env::var("PROVER_RPC_ADDR")
             .or_else(|_| std::env::var("PROVER_GRPC_ADDR"))
@@ -208,26 +236,39 @@ impl SnarkE2e {
         // fallback, which is more robust than the client-side l1_origin + 50
         // heuristic.
         let client = Self::connect().await?;
+        let prover_address = Address::ZERO;
+        let submitted_session_id = Self::snark_groth16_session_id(
+            safe_head,
+            SNARK_E2E_BLOCKS_TO_PROVE,
+            SEQUENCE_WINDOW,
+            prover_address,
+        );
         let prove_resp = client
             .prove_block_range(ProveBlockRangeRequest {
                 proof: ProofRequest {
-                    session_id: Uuid::new_v4().to_string(),
+                    session_id: submitted_session_id.clone(),
                     request: ProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
                         proof: ZkProofRequest {
                             start_block_number: safe_head,
-                            number_of_blocks_to_prove: 1,
+                            number_of_blocks_to_prove: SNARK_E2E_BLOCKS_TO_PROVE,
                             sequence_window: Some(SEQUENCE_WINDOW),
                             l1_head: None,
                             intermediate_root_interval: None,
                             zk_vm: ZkVm::Sp1,
                         },
-                        prover_address: Address::ZERO,
+                        prover_address,
                     }),
                 },
             })
             .await?;
 
         let session_id = prove_resp.session_id;
+        if session_id != submitted_session_id {
+            bail!(
+                "prover service returned mismatched session_id: expected {submitted_session_id}, \
+                 got {session_id}"
+            );
+        }
         info!(session_id = %session_id, "SNARK Groth16 proof submitted");
 
         // -- 3. Poll GetProof until SUCCEEDED or timeout --------------------------
@@ -295,5 +336,72 @@ impl SnarkE2e {
         Self::verify_snark_proof(snark_proof, agg_vk, is_mock).await?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::Address;
+
+    use super::{SEQUENCE_WINDOW, SNARK_E2E_BLOCKS_TO_PROVE, SnarkE2e};
+
+    #[test]
+    fn snark_groth16_session_id_is_stable_for_same_request() {
+        assert_eq!(
+            SnarkE2e::snark_groth16_session_id(
+                100,
+                SNARK_E2E_BLOCKS_TO_PROVE,
+                SEQUENCE_WINDOW,
+                Address::ZERO
+            ),
+            SnarkE2e::snark_groth16_session_id(
+                100,
+                SNARK_E2E_BLOCKS_TO_PROVE,
+                SEQUENCE_WINDOW,
+                Address::ZERO
+            )
+        );
+    }
+
+    #[test]
+    fn snark_groth16_session_id_separates_proof_parameters() {
+        let session_id = SnarkE2e::snark_groth16_session_id(
+            100,
+            SNARK_E2E_BLOCKS_TO_PROVE,
+            SEQUENCE_WINDOW,
+            Address::ZERO,
+        );
+
+        assert_ne!(
+            session_id,
+            SnarkE2e::snark_groth16_session_id(
+                101,
+                SNARK_E2E_BLOCKS_TO_PROVE,
+                SEQUENCE_WINDOW,
+                Address::ZERO
+            )
+        );
+        assert_ne!(
+            session_id,
+            SnarkE2e::snark_groth16_session_id(100, 2, SEQUENCE_WINDOW, Address::ZERO)
+        );
+        assert_ne!(
+            session_id,
+            SnarkE2e::snark_groth16_session_id(
+                100,
+                SNARK_E2E_BLOCKS_TO_PROVE,
+                SEQUENCE_WINDOW + 1,
+                Address::ZERO
+            )
+        );
+        assert_ne!(
+            session_id,
+            SnarkE2e::snark_groth16_session_id(
+                100,
+                SNARK_E2E_BLOCKS_TO_PROVE,
+                SEQUENCE_WINDOW,
+                Address::repeat_byte(0x01)
+            )
+        );
     }
 }
