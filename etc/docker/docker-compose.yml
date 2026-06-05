@@ -18,6 +18,10 @@ services:
       - ../../.devnet/l1/reth:/data/l1-reth
       - ../../.devnet/l1/lighthouse:/data/l1-lighthouse
     environment:
+      # L1_MODE selects the parent chain: "eth" (reth + lighthouse, default) generates a full
+      # Ethereum L1 genesis; "base" (base-anvil L1, for the L3 devnet) generates only the JWT
+      # and L1 chain-config that the L2 services need.
+      - L1_MODE=${L1_MODE:-eth}
       - CHAIN_ID=${L1_CHAIN_ID}
       - SLOT_DURATION=4
       - OUTPUT_DIR=/output
@@ -25,9 +29,15 @@ services:
       - L1_DATA_DIR=/data
     entrypoint: ["/usr/local/bin/setup-l1.sh"]
 
+  # --- L1 parent chain (select one via profile) -----------------------------------------
+  # eth-l1 profile: Ethereum L1 = reth (l1-el) + lighthouse (l1-cl/l1-vc).  [default]
+  # base-l1 profile: Base L1 = base-anvil (l1-anvil, aliased to l1-el).     [L3 devnet]
+  # Both expose the same `l1-el` network name so L2 services are L1-agnostic.
+
   l1-el:
     image: ghcr.io/paradigmxyz/reth:v1.11.4
     container_name: l1-el
+    profiles: ["eth-l1"]
     depends_on:
       setup-l1:
         condition: service_completed_successfully
@@ -72,6 +82,7 @@ services:
   l1-cl:
     image: sigp/lighthouse:v8.0.1
     container_name: l1-cl
+    profiles: ["eth-l1"]
     depends_on:
       setup-l1:
         condition: service_completed_successfully
@@ -117,6 +128,7 @@ services:
   l1-vc:
     image: sigp/lighthouse:v8.0.1
     container_name: l1-vc
+    profiles: ["eth-l1"]
     depends_on:
       l1-cl:
         condition: service_healthy
@@ -132,6 +144,35 @@ services:
       - --suggested-fee-recipient=${FEE_RECIPIENT}
     restart: unless-stopped
 
+  # Base L1 (L3 devnet): Base's patched anvil, aliased to `l1-el` so L2 services are unchanged.
+  # No beacon/blob DA here - the L2 batcher posts calldata. Selected by the base-l1 profile.
+  l1-anvil:
+    image: ghcr.io/base/base-anvil:main
+    container_name: l1-anvil
+    profiles: ["base-l1"]
+    depends_on:
+      setup-l1:
+        condition: service_completed_successfully
+    networks:
+      default:
+        aliases:
+          - l1-el
+    ports:
+      - "${L1_HTTP_PORT}:${L1_HTTP_PORT}"   # HTTP RPC (also serves WS)
+    entrypoint: ["anvil"]
+    command:
+      - --host=0.0.0.0
+      - --port=${L1_HTTP_PORT}
+      - --chain-id=${L1_CHAIN_ID}
+      - --block-time=2                      # Base's 2s block cadence
+      # anvil's default mnemonic ("test test ... junk") prefunds the devnet accounts
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L1_HTTP_PORT}"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+
   setup-l2:
     image: devnet-setup:local
     build:
@@ -139,9 +180,15 @@ services:
       dockerfile: etc/docker/Dockerfile.devnet
     container_name: setup-l2
     env_file: devnet-env
+    # Depend on whichever L1 is active (reth l1-el in eth-l1, anvil l1-anvil in base-l1).
+    # required:false lets the inactive one be absent without erroring.
     depends_on:
       l1-el:
         condition: service_healthy
+        required: false
+      l1-anvil:
+        condition: service_healthy
+        required: false
     volumes:
       - ../../.devnet:/devnet
       - ../../.devnet/l2/builder:/data/l2-builder
@@ -376,6 +423,12 @@ services:
       - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
+    environment:
+      # L1 beacon + slot duration are mode-driven (set in the eth/l3 env file). In base-l1
+      # mode BASE_NODE_L1_BEACON is unset, so the node runs beaconless (calldata-only).
+      - BASE_NODE_L1_BEACON
+      - BASE_NODE_L1_CALLDATA_ONLY
+      - BASE_NODE_L1_SLOT_DURATION_OVERRIDE
     entrypoint: /app/base-consensus
     command:
       - node
@@ -383,8 +436,6 @@ services:
       - ${L2_CHAIN_ID}
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
-      - --l1-beacon
-      - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2-engine-rpc
       - ws://base-builder:${L2_BUILDER_AUTH_PORT}
       - --l2-engine-jwt-secret
@@ -393,8 +444,6 @@ services:
       - /genesis/l2/rollup.json
       - --l1-config-file
       - /genesis/el/chain-config.json
-      - --l1-slot-duration-override
-      - "4"
       - --rpc.port
       - "${L2_BUILDER_CL_RPC_PORT}"
       - --rpc.enable-admin
@@ -438,6 +487,16 @@ services:
         condition: service_healthy
     ports:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
+    environment:
+      # DA type is mode-driven: unset => blobs (eth-l1 default); base-l1 env sets calldata +
+      # disables the throttle-driven blob fallback so it stays calldata-only.
+      - BATCHER_DATA_AVAILABILITY_TYPE
+      - BATCHER_NO_FORCE_BLOBS_WHEN_THROTTLING
+      # Channel/pending-tx throughput is mode-driven: defaults (2 / 1) suit blob DA in eth-l1
+      # mode; base-l1 env raises them so low-throughput calldata DA keeps the safe head close
+      # to the unsafe head (each submission packs more L2 blocks, several txs in flight at once).
+      - BATCHER_MAX_CHANNEL_DURATION
+      - BATCHER_MAX_PENDING_TRANSACTIONS
     command:
       - --l1-rpc-url
       - http://l1-el:${L1_HTTP_PORT}
@@ -447,8 +506,6 @@ services:
       - http://base-builder-cl:${L2_BUILDER_CL_RPC_PORT}
       - --private-key
       - ${BATCHER_KEY}
-      - --max-channel-duration
-      - "2"
       - --poll-interval
       - "1"
       - --sub-safety-margin
@@ -573,6 +630,12 @@ services:
       - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
+    environment:
+      # L1 beacon + slot duration are mode-driven (set in the eth/l3 env file). In base-l1
+      # mode BASE_NODE_L1_BEACON is unset, so the node runs beaconless (calldata-only).
+      - BASE_NODE_L1_BEACON
+      - BASE_NODE_L1_CALLDATA_ONLY
+      - BASE_NODE_L1_SLOT_DURATION_OVERRIDE
     entrypoint: /app/base-consensus
     command:
       - node
@@ -580,8 +643,6 @@ services:
       - ${L2_CHAIN_ID}
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
-      - --l1-beacon
-      - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2-engine-rpc
       - ws://base-client:${L2_CLIENT_AUTH_PORT}
       - --l2-engine-jwt-secret
@@ -590,8 +651,6 @@ services:
       - /genesis/l2/rollup.json
       - --l1-config-file
       - /genesis/el/chain-config.json
-      - --l1-slot-duration-override
-      - "4"
       - --rpc.port
       - "${L2_CLIENT_CL_RPC_PORT}"
       - --p2p.listen.tcp
@@ -650,6 +709,10 @@ services:
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
       - BASE_CHAIN_L2_CHAIN_ID=${L2_CHAIN_ID}
       - OTEL_SERVICE_NAME=base-rpc
+      # L1 beacon + slot duration are mode-driven (eth/l3 env file). Unset beacon in base-l1.
+      - BASE_NODE_L1_BEACON
+      - BASE_NODE_L1_CALLDATA_ONLY
+      - BASE_NODE_L1_SLOT_DURATION_OVERRIDE
     entrypoint: /app/base
     command:
       - rpc
@@ -685,14 +748,10 @@ services:
       - --rollup.discovery.v4
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
-      - --l1-beacon
-      - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2-config-file
       - /genesis/l2/rollup.json
       - --l1-config-file
       - /genesis/el/chain-config.json
-      - --l1-slot-duration-override
-      - "4"
       - --rpc.port
       - "${L2_BASE_RPC_CL_RPC_PORT}"
       - --rpc.enable-admin
@@ -751,8 +810,13 @@ services:
     depends_on:
       l1-el:
         condition: service_healthy
+        required: false
+      l1-anvil:
+        condition: service_healthy
+        required: false
       l1-cl:
         condition: service_healthy
+        required: false
       base-rpc:
         condition: service_healthy
       zk-prover-postgres:
@@ -777,7 +841,10 @@ services:
       - GRPC_LISTEN_ADDR=0.0.0.0:9000
       - BASE_CONSENSUS_ADDRESS=http://base-rpc:${L2_BASE_RPC_CL_RPC_PORT}
       - L1_NODE_ADDRESS=http://l1-el:${L1_HTTP_PORT}
-      - L1_BEACON_ADDRESS=http://l1-cl:${L1_CL_HTTP_PORT}
+      # Beacon address is mode-driven: eth-l1 => l1-cl; base-l1 leaves it unset and opts into
+      # calldata-only proving explicitly via L1_CALLDATA_ONLY (set in the base-l1 env file).
+      - L1_BEACON_ADDRESS
+      - L1_CALLDATA_ONLY
       - L2_NODE_ADDRESS=http://base-rpc:${L2_BASE_RPC_HTTP_PORT}
       - DEFAULT_SEQUENCE_WINDOW=${DEFAULT_SEQUENCE_WINDOW:-50}
       - POSTGRES_HOST=zk-prover-postgres
