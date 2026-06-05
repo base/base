@@ -1,7 +1,5 @@
 use std::{fmt, sync::Arc};
 
-use opentelemetry::context::FutureExt as OtelFutureExt;
-
 use alloy_eips::BlockNumberOrTag;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
@@ -13,6 +11,7 @@ use base_consensus_engine::{
     NoopForkchoiceCheckpointReader, SealTaskError,
 };
 use base_protocol::L2BlockInfo;
+use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
