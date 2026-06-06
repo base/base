@@ -21,8 +21,11 @@ base_metrics::define_metrics! {
     pipeline_retries: gauge,
 
     #[describe("Total proof dispatch outcomes from the prover service")]
-    #[label(name = "outcome", default = ["accepted", "failed"])]
+    #[label(name = "outcome", default = ["accepted", "failed", "build_failed"])]
     proof_dispatch_total: counter,
+
+    #[describe("Total target blocks discarded by the submitter and skipped by subsequent polls")]
+    discarded_targets_total: counter,
 
     #[describe("Total proof collection outcomes returned by the proof collector")]
     #[label(name = "outcome", default = ["ready", "failed"])]
@@ -83,6 +86,12 @@ impl Metrics {
 
     /// Label value for a failed dispatch outcome.
     pub const DISPATCH_OUTCOME_FAILED: &str = "failed";
+
+    /// Label value for a dispatch attempt that failed before reaching the
+    /// prover service (e.g. while building the request from L1/L2 RPC data).
+    /// Build failures are transient infrastructure errors and do not count
+    /// against the per-target retry budget.
+    pub const DISPATCH_OUTCOME_BUILD_FAILED: &str = "build_failed";
 
     /// Label value for a ready (successfully collected) proof.
     pub const COLLECTION_OUTCOME_READY: &str = "ready";

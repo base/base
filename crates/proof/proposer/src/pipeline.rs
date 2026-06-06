@@ -29,7 +29,11 @@
 //! is wrapped in [`tokio::time::timeout`] so a stuck L1 RPC never blocks
 //! progress beyond `submit_timeout`.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::{
@@ -246,12 +250,22 @@ where
 
         let mut cache: Option<CachedRecovery> = None;
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        // Targets the submitter has irrecoverably discarded (e.g.
+        // `L1OriginTooOld`, `InvalidSigner`). The prover-service session for
+        // a discarded target is `Succeeded` with a deterministic id, so a
+        // naive next-iteration poll would re-deliver the same `Ready` proof
+        // and re-discard it indefinitely. Tracking discarded targets in
+        // memory lets us short-circuit polling until the chain advances past
+        // them; the set is cleared on restart, matching the implicit
+        // skip-via-dropped-`proved`-map behavior of the previous parallel
+        // pipeline.
+        let mut discarded_targets: HashSet<u64> = HashSet::new();
 
         loop {
             tokio::select! {
                 biased;
                 () = self.cancel.cancelled() => break,
-                () = self.step(&mut cache, &mut retry_counts) => {}
+                () = self.step(&mut cache, &mut retry_counts, &mut discarded_targets) => {}
             }
 
             tokio::select! {
@@ -270,7 +284,12 @@ where
     /// Recovers the on-chain tip, derives the next target block, polls the
     /// prover service, and acts on the [`TargetPoll`] outcome.
     #[instrument(skip_all)]
-    async fn step(&self, cache: &mut Option<CachedRecovery>, retry_counts: &mut HashMap<u64, u32>) {
+    async fn step(
+        &self,
+        cache: &mut Option<CachedRecovery>,
+        retry_counts: &mut HashMap<u64, u32>,
+        discarded_targets: &mut HashSet<u64>,
+    ) {
         let _tick_timer = base_metrics::timed!(Metrics::tick_duration_seconds());
 
         let (recovered, safe_head) = match self.try_recover_and_plan(cache).await {
@@ -289,8 +308,10 @@ where
         // run had advanced the chain.
         Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
-        // Drop retry counters for targets the chain has already passed.
+        // Drop retry counters and discarded markers for targets the chain
+        // has already passed.
         retry_counts.retain(|&target, _| target > recovered.l2_block_number);
+        discarded_targets.retain(|&target| target > recovered.l2_block_number);
 
         let target_block =
             match recovered.l2_block_number.checked_add(self.config.driver.block_interval) {
@@ -316,6 +337,19 @@ where
             return;
         }
 
+        // Skip targets the submitter has already discarded. The
+        // prover-service session for a discarded target is deterministic
+        // and sticky in `Succeeded`, so polling again would re-deliver the
+        // same `Ready` proof and re-discard it. The discarded marker is
+        // cleared above once the on-chain tip advances past `target_block`.
+        if discarded_targets.contains(&target_block) {
+            debug!(
+                target_block,
+                "Target previously discarded by submitter, waiting for chain to advance"
+            );
+            return;
+        }
+
         match self.proof_collector.poll(target_block).await {
             TargetPoll::Ready { session_id, proof } => {
                 info!(
@@ -324,7 +358,15 @@ where
                     "Proof ready, submitting inline"
                 );
                 Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
-                self.submit_inline(target_block, &recovered, proof, retry_counts, cache).await;
+                self.submit_inline(
+                    target_block,
+                    &recovered,
+                    proof,
+                    retry_counts,
+                    cache,
+                    discarded_targets,
+                )
+                .await;
             }
             TargetPoll::Pending { session_id, status } => {
                 debug!(
@@ -388,6 +430,7 @@ where
         proof: ProofResult,
         retry_counts: &mut HashMap<u64, u32>,
         cache: &mut Option<CachedRecovery>,
+        discarded_targets: &mut HashSet<u64>,
     ) {
         let parent_address = recovered.parent_address;
         info!(target_block, parent_address = %parent_address, "Submitting proof inline");
@@ -464,10 +507,17 @@ where
             Ok(Err(SubmitAction::Discard(error))) => {
                 submit_timer.disarm();
                 Metrics::errors_total(error.metric_label()).increment(1);
+                Metrics::discarded_targets_total().increment(1);
+                // The prover-service session for this target is keyed
+                // deterministically on the canonical output root, so the
+                // next poll would return the same `Ready` proof and
+                // re-discard it. Mark the target as discarded so subsequent
+                // iterations skip polling until the chain advances past it.
+                discarded_targets.insert(target_block);
                 warn!(
                     target_block,
                     error = %error,
-                    "Proof discarded by submitter, will re-derive next iteration"
+                    "Proof discarded by submitter, skipping until chain advances past target"
                 );
             }
         }
@@ -476,8 +526,12 @@ where
     /// Builds and dispatches a fresh `prove_block_range` request for
     /// `target_block`.
     ///
-    /// Treats request-build failures and dispatcher errors uniformly via
-    /// [`Self::handle_proof_failure`].
+    /// Request-build failures (transient L1/L2 RPC errors while assembling
+    /// the request) are logged and skipped without bumping the per-target
+    /// retry budget — they never reached the prover service, so the
+    /// proof-failure retry policy does not apply. Dispatcher errors (the
+    /// prover service rejected an otherwise valid request) flow through
+    /// [`Self::handle_proof_failure`] and do count against the budget.
     async fn dispatch_for(
         &self,
         target_block: u64,
@@ -495,10 +549,9 @@ where
                 warn!(
                     target_block,
                     error = %e,
-                    "Failed to build proof request, treating as proof failure"
+                    "Failed to build proof request, will retry next iteration"
                 );
-                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
-                self.handle_proof_failure(target_block, e, retry_counts, cache);
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
                 return;
             }
         };
@@ -994,7 +1047,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc, time::Duration};
+    use std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+        time::Duration,
+    };
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
@@ -2037,7 +2094,8 @@ mod tests {
 
         let mut cache: Option<CachedRecovery> = None;
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
-        pipeline.step(&mut cache, &mut retry_counts).await;
+        let mut discarded_targets: HashSet<u64> = HashSet::new();
+        pipeline.step(&mut cache, &mut retry_counts, &mut discarded_targets).await;
 
         assert!(
             proof_requester.requests.lock().unwrap().is_empty(),
@@ -2054,7 +2112,8 @@ mod tests {
 
         let mut cache: Option<CachedRecovery> = None;
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
-        pipeline.step(&mut cache, &mut retry_counts).await;
+        let mut discarded_targets: HashSet<u64> = HashSet::new();
+        pipeline.step(&mut cache, &mut retry_counts, &mut discarded_targets).await;
 
         let requests = proof_requester.requests.lock().unwrap();
         assert_eq!(
@@ -2085,9 +2144,17 @@ mod tests {
         let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
         let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
         let mut retry_counts: HashMap<u64, u32> = HashMap::from([(SUBMIT_BLOCK_INTERVAL, 1)]);
+        let mut discarded_targets: HashSet<u64> = HashSet::new();
 
         pipeline
-            .submit_inline(SUBMIT_BLOCK_INTERVAL, &recovered, proof, &mut retry_counts, &mut cache)
+            .submit_inline(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                proof,
+                &mut retry_counts,
+                &mut cache,
+                &mut discarded_targets,
+            )
             .await;
 
         assert!(cache.is_none(), "RootMismatch should drop the recovery cache");
@@ -2115,9 +2182,17 @@ mod tests {
         let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
         let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut discarded_targets: HashSet<u64> = HashSet::new();
 
         pipeline
-            .submit_inline(SUBMIT_BLOCK_INTERVAL, &recovered, proof, &mut retry_counts, &mut cache)
+            .submit_inline(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                proof,
+                &mut retry_counts,
+                &mut cache,
+                &mut discarded_targets,
+            )
             .await;
 
         assert!(cache.is_none(), "InvalidParentGame should drop the recovery cache");
@@ -2140,9 +2215,17 @@ mod tests {
         let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
         let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut discarded_targets: HashSet<u64> = HashSet::new();
 
         pipeline
-            .submit_inline(SUBMIT_BLOCK_INTERVAL, &recovered, proof, &mut retry_counts, &mut cache)
+            .submit_inline(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                proof,
+                &mut retry_counts,
+                &mut cache,
+                &mut discarded_targets,
+            )
             .await;
 
         assert!(cache.is_some(), "transient submit failures should preserve the recovery cache");
@@ -2169,9 +2252,17 @@ mod tests {
         let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
         let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut discarded_targets: HashSet<u64> = HashSet::new();
 
         pipeline
-            .submit_inline(SUBMIT_BLOCK_INTERVAL, &recovered, proof, &mut retry_counts, &mut cache)
+            .submit_inline(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                proof,
+                &mut retry_counts,
+                &mut cache,
+                &mut discarded_targets,
+            )
             .await;
 
         assert!(cache.is_some(), "submit timeout should preserve the recovery cache");
@@ -2197,6 +2288,7 @@ mod tests {
                 let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
                 let mut cache: Option<CachedRecovery> = None;
                 let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+                let mut discarded_targets: HashSet<u64> = HashSet::new();
                 pipeline
                     .submit_inline(
                         SUBMIT_BLOCK_INTERVAL,
@@ -2204,6 +2296,7 @@ mod tests {
                         proof,
                         &mut retry_counts,
                         &mut cache,
+                        &mut discarded_targets,
                     )
                     .await;
             });
@@ -2246,6 +2339,7 @@ mod tests {
                 let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
                 let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
                 let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+                let mut discarded_targets: HashSet<u64> = HashSet::new();
                 pipeline
                     .submit_inline(
                         SUBMIT_BLOCK_INTERVAL,
@@ -2253,6 +2347,7 @@ mod tests {
                         proof,
                         &mut retry_counts,
                         &mut cache,
+                        &mut discarded_targets,
                     )
                     .await;
             });
@@ -2283,9 +2378,17 @@ mod tests {
         let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
         let mut cache: Option<CachedRecovery> = None;
         let mut retry_counts: HashMap<u64, u32> = HashMap::from([(SUBMIT_BLOCK_INTERVAL, 2)]);
+        let mut discarded_targets: HashSet<u64> = HashSet::new();
 
         pipeline
-            .submit_inline(SUBMIT_BLOCK_INTERVAL, &recovered, proof, &mut retry_counts, &mut cache)
+            .submit_inline(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                proof,
+                &mut retry_counts,
+                &mut cache,
+                &mut discarded_targets,
+            )
             .await;
 
         assert!(
@@ -2293,5 +2396,189 @@ mod tests {
             "successful submit should clear the per-target retry counter"
         );
         assert!(cache.is_some(), "successful submit should refresh the cache");
+    }
+
+    /// L1 mock whose `header_by_number` always errors. Used to drive
+    /// `dispatch_for` through its build-failure path.
+    #[derive(Debug)]
+    struct FailingL1;
+
+    #[async_trait]
+    impl L1Provider for FailingL1 {
+        async fn block_number(&self) -> base_proof_rpc::RpcResult<u64> {
+            Ok(TEST_L1_BLOCK_NUMBER)
+        }
+        async fn header_by_number(
+            &self,
+            _: Option<u64>,
+        ) -> base_proof_rpc::RpcResult<alloy_rpc_types_eth::Header> {
+            Err(RpcError::Transport("simulated L1 outage".into()))
+        }
+        async fn header_by_hash(
+            &self,
+            _: B256,
+        ) -> base_proof_rpc::RpcResult<alloy_rpc_types_eth::Header> {
+            unimplemented!()
+        }
+        async fn block_receipts(
+            &self,
+            _: B256,
+        ) -> base_proof_rpc::RpcResult<Vec<alloy_rpc_types_eth::TransactionReceipt>> {
+            unimplemented!()
+        }
+        async fn code_at(
+            &self,
+            _: Address,
+            _: Option<u64>,
+        ) -> base_proof_rpc::RpcResult<alloy_primitives::Bytes> {
+            unimplemented!()
+        }
+        async fn call_contract(
+            &self,
+            _: Address,
+            _: alloy_primitives::Bytes,
+            _: Option<u64>,
+        ) -> base_proof_rpc::RpcResult<alloy_primitives::Bytes> {
+            unimplemented!()
+        }
+        async fn get_balance(
+            &self,
+            _: Address,
+        ) -> base_proof_rpc::RpcResult<alloy_primitives::U256> {
+            Ok(alloy_primitives::U256::ZERO)
+        }
+    }
+
+    /// `dispatch_for` build failures are transient infrastructure errors and
+    /// must not bump the per-target retry budget — they never reached the
+    /// prover service, so the proof-failure retry policy does not apply.
+    /// Without this guard a sustained L1 RPC outage would burn the whole
+    /// retry budget and drop the recovery cache, causing a noisy
+    /// re-walk-and-fail-again cycle on every tick.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_dispatch_for_build_failure_does_not_bump_retries() {
+        let proof_requester = Arc::new(MockProofRequester::default());
+        let cancel = CancellationToken::new();
+        let l1 = Arc::new(FailingL1);
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(SUBMIT_BLOCK_INTERVAL, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+            anchor_game: Address::ZERO,
+        });
+
+        let pipeline = ProvingPipeline::new(
+            PipelineConfig {
+                submit_timeout: Duration::from_secs(60),
+                max_retries: 3,
+                recovery_scan_concurrency: 8,
+                tee_prover_registry_address: None,
+                driver: DriverConfig {
+                    game_type: TEST_GAME_TYPE,
+                    block_interval: SUBMIT_BLOCK_INTERVAL,
+                    intermediate_block_interval: SUBMIT_INTERMEDIATE_INTERVAL,
+                    poll_interval: Duration::from_millis(10),
+                    ..Default::default()
+                },
+            },
+            Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            Arc::new(MockDisputeGameFactory::with_games(vec![])),
+            Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockOutputProposer),
+            cancel,
+        );
+
+        let recovered = anchor_recovered_state();
+        let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+
+        pipeline
+            .dispatch_for(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                B256::repeat_byte(SUBMIT_BLOCK_INTERVAL as u8),
+                &mut retry_counts,
+                &mut cache,
+            )
+            .await;
+
+        assert!(
+            proof_requester.requests.lock().unwrap().is_empty(),
+            "build failure should not reach the prover service"
+        );
+        assert!(retry_counts.is_empty(), "build failures must not bump per-target retry counters");
+        assert!(cache.is_some(), "build failures must not drop the recovery cache");
+    }
+
+    /// `step()` short-circuits polling when the target block has already
+    /// been marked as discarded. The submitter's `Discard` outcomes (e.g.
+    /// `L1OriginTooOld`, `InvalidSigner`) leave the prover-service session
+    /// in `Succeeded` with a deterministic id, so re-polling would loop on
+    /// the same `Ready` proof indefinitely.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_step_skips_polling_for_discarded_targets() {
+        let (pipeline, proof_requester, _cancel) = step_pipeline_default(SUBMIT_BLOCK_INTERVAL);
+
+        let mut cache: Option<CachedRecovery> = None;
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut discarded_targets: HashSet<u64> = HashSet::from([SUBMIT_BLOCK_INTERVAL]);
+
+        pipeline.step(&mut cache, &mut retry_counts, &mut discarded_targets).await;
+
+        assert!(
+            proof_requester.requests.lock().unwrap().is_empty(),
+            "discarded targets must not trigger a fresh prover-service dispatch"
+        );
+        assert!(
+            discarded_targets.contains(&SUBMIT_BLOCK_INTERVAL),
+            "discard marker should persist while target is ahead of the chain tip"
+        );
+    }
+
+    /// `submit_inline` with a `Discard` outcome (e.g. `L1OriginTooOld`)
+    /// records the target in `discarded_targets` so subsequent iterations
+    /// short-circuit polling instead of re-delivering and re-discarding the
+    /// same proof indefinitely.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_submit_inline_discard_marks_target() {
+        let (pipeline, _proof_requester, _cancel) = step_pipeline_full(
+            HashMap::new(),
+            SUBMIT_BLOCK_INTERVAL,
+            3,
+            Duration::from_secs(60),
+            Arc::new(L1OriginTooOldOutputProposer),
+        );
+
+        let recovered = anchor_recovered_state();
+        let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+        let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut discarded_targets: HashSet<u64> = HashSet::new();
+
+        pipeline
+            .submit_inline(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                proof,
+                &mut retry_counts,
+                &mut cache,
+                &mut discarded_targets,
+            )
+            .await;
+
+        assert!(
+            discarded_targets.contains(&SUBMIT_BLOCK_INTERVAL),
+            "Discard outcome should mark the target so subsequent polls skip it"
+        );
+        assert!(retry_counts.is_empty(), "Discard must not bump per-target retry counters");
+        assert!(cache.is_some(), "Discard must not drop the recovery cache");
     }
 }
