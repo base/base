@@ -316,8 +316,6 @@ mod tests {
     #[test]
     #[cfg(feature = "arbitrary")]
     fn test_arbitrary_system_config() {
-        use arbitrary::Arbitrary;
-        use rand::Rng;
         let mut bytes = [0u8; 1024];
         rand::rng().fill(bytes.as_mut_slice());
         SystemConfig::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
