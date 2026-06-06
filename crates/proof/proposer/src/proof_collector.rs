@@ -392,7 +392,7 @@ mod tests {
         // It must rederive the session id from the canonical chain root and
         // recover the in-flight session.
         let collector =
-            ProofCollector::aws_nitro(Arc::clone(&proof_requester), rollup_client, 100, 4, 4);
+            ProofCollector::aws_nitro(Arc::clone(&proof_requester), rollup_client, 100, 4);
         let outcomes = collector.collect(&[target_block]).await;
 
         assert_eq!(outcomes.len(), 1);
