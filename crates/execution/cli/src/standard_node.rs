@@ -143,7 +143,7 @@ pub struct RpcStandardNodeArgs {
         long = "flashblocks.ping-interval",
         value_name = "FLASHBLOCKS_PING_INTERVAL",
         default_value = "30s",
-        value_parser = parse_positive_duration
+        value_parser = humantime::parse_duration
     )]
     pub flashblocks_ping_interval: Duration,
 
@@ -201,14 +201,6 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
             .with_max_batch_size(args.tx_forwarding_batch_size)
             .with_max_rps(args.tx_forwarding_max_rps)
     }
-}
-
-fn parse_positive_duration(input: &str) -> Result<Duration, String> {
-    let duration = humantime::parse_duration(input).map_err(|error| error.to_string())?;
-    if duration.is_zero() {
-        return Err("ping interval must be positive".to_string());
-    }
-    Ok(duration)
 }
 
 /// Standard Base execution-node runner wiring.
@@ -326,20 +318,6 @@ mod tests {
 
         assert_eq!(args.flashblocks_url, None);
         assert_eq!(args.flashblocks_ping_interval, Duration::from_secs(30));
-    }
-
-    #[test]
-    fn test_flashblocks_ping_interval_rejects_zero() {
-        let error = CommandParser::<RpcStandardNodeArgs>::try_parse_from([
-            "reth",
-            "--flashblocks-url",
-            "wss://example.com/ws",
-            "--flashblocks.ping-interval",
-            "0s",
-        ])
-        .expect_err("zero ping interval should be rejected");
-
-        assert!(error.to_string().contains("ping interval must be positive"));
     }
 
     #[test]
