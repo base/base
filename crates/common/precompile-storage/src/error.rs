@@ -129,11 +129,19 @@ impl BasePrecompileError {
 }
 
 /// Extension trait to convert `Result<T, BasePrecompileError>` into a [`PrecompileResult`].
+///
+/// Prefer [`StorageCtx::result_output`] over calling this trait directly — it reads all gas
+/// accounting fields from the context automatically. Use this trait only when the context is not
+/// available (e.g. in unit tests).
 pub trait IntoPrecompileResult<T> {
     /// Converts `self` into a [`PrecompileResult`] using `encode_ok` for the success path.
     ///
-    /// `gas_refunded` is copied into `PrecompileOutput::gas_refunded` on success so revm can
-    /// apply EIP-3529 refund accounting at the transaction level. Pass `ctx.gas_refunded()`.
+    /// On success, the accumulated EIP-3529 gas refund (`gas_refunded`) is copied into
+    /// [`PrecompileOutput::gas_refunded`] so revm can include it in transaction-level refund
+    /// accounting under the EIP-3529 cap (`gas_used / 5`).
+    ///
+    /// On error, `gas_refunded` is not propagated: refunds are only meaningful on successful
+    /// execution and the error arm delegates to [`BasePrecompileError::into_precompile_result`].
     fn into_precompile_result(
         self,
         gas: u64,
