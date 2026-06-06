@@ -7,6 +7,9 @@ pub use config::{
     DEFAULT_MAX_RECOVERY_ATTEMPTS, ProvingConfig, RegistrarConfig,
 };
 
+mod cert_revoker;
+pub use cert_revoker::CertRevoker;
+
 mod crl;
 pub use crl::{
     CertCrlInfo, CrlError, DEFAULT_CRL_FETCH_TIMEOUT_SECS, RevokedCertInfo, build_crl_http_client,

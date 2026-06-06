@@ -14,7 +14,7 @@ use std::{
 
 use alloy_primitives::{Address, Bytes, FixedBytes, hex};
 use alloy_sol_types::SolCall;
-use base_proof_contracts::{INitroEnclaveVerifier, ITEEProverRegistry};
+use base_proof_contracts::ITEEProverRegistry;
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_proof_tee_nitro_verifier::AttestationReport;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
@@ -28,8 +28,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
-    CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient, ProverClient,
-    ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient, Result, SignerClient, crl,
+    CertRevoker, CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient,
+    ProverClient, ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient, Result,
+    SignerClient, crl,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -319,7 +320,7 @@ where
     D: InstanceDiscovery + 'static,
     P: AttestationProofProvider + 'static,
     R: RegistryClient + 'static,
-    T: TxManager + 'static,
+    T: TxManager + Clone + 'static,
     S: SignerClient + 'static,
 {
     /// Creates a new registration driver.
@@ -634,7 +635,7 @@ where
             match self.check_and_revoke_crls(&all_attestations[0], instance).await {
                 Ok(true) => {
                     // Confirmed revocation — block registration for this instance.
-                    // The revokeCert transaction was already submitted above.
+                    // The revokeCert task was already spawned above.
                     warn!(
                         instance = %instance.instance_id,
                         "certificate revoked, skipping registration for this instance"
@@ -1081,16 +1082,11 @@ where
     /// so the [`Self::run`] pipeline can spawn registration tasks
     /// separately from discovery.
     ///
-    /// **Cancellation contract.** This future is allowed to be dropped by
-    /// the caller only at boundaries that contain no in-flight
-    /// `tx_manager.send()` — i.e. before, between, or after the explicit
-    /// `self.config.cancel.is_cancelled()` early-return checks below.
-    /// `check_and_revoke_crls` submits `revokeCert` transactions via
-    /// [`Self::submit_revoke_cert`]; dropping that future after a
-    /// `NonceGuard` has been acquired but before broadcast would leave a
-    /// permanent nonce gap. `discover_and_resolve` therefore drains its
-    /// `buffer_unordered` stream to natural completion instead of wrapping
-    /// `futs.next()` in a cancel-select.
+    /// **Cancellation contract.** This future checks
+    /// `self.config.cancel.is_cancelled()` before starting new side effects.
+    /// `check_and_revoke_crls` enqueues any `revokeCert` transactions in
+    /// detached tasks, so the resolution future does not await revocation
+    /// delivery.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<ResolveOutcome> {
         if self.config.cancel.is_cancelled() {
             return Ok(ResolveOutcome {
@@ -1166,10 +1162,8 @@ where
         }
 
         if self.config.crl.enabled {
-            // Skip the CRL check (and its potential `revokeCert` submission)
-            // on shutdown so we don't acquire a nonce we won't broadcast.
-            // Already-running `submit_revoke_cert` calls are NOT cancelled —
-            // see the cancellation contract on this function.
+            // Skip the CRL check (and its potential `revokeCert` task spawn)
+            // on shutdown so we do not start new onchain work.
             //
             // Return `attestations: None` so the safety invariant —
             // `Some(..)` ↔ "passed every eligibility + security gate,
@@ -1227,15 +1221,13 @@ where
     /// dedicated task per registerable signer instead, so that long
     /// Boundless proofs do not block the next discovery cycle.
     ///
-    /// **Why no outer cancel-select.** `resolve_instance` may call
-    /// `check_and_revoke_crls` → `submit_revoke_cert` → `tx_manager.send()`;
-    /// dropping that future after `NonceGuard` acquisition leaves a
-    /// permanent nonce gap. The buffered stream is therefore drained to
-    /// natural completion; each `resolve_instance` short-circuits on
-    /// `self.config.cancel` *between* awaits but never abandons an
-    /// in-flight send. Shutdown latency is bounded by `max_concurrency` ×
-    /// the slowest signer-RPC / CRL-fetch timeout, not by long proof work
-    /// (which lives in the spawned proof tasks).
+    /// **Why no outer cancel-select.** `resolve_instance` performs several
+    /// side effects before deciding whether an instance is registerable. The
+    /// buffered stream is therefore drained to natural completion; each
+    /// `resolve_instance` short-circuits on `self.config.cancel` between
+    /// awaits. Shutdown latency is bounded by `max_concurrency` × the slowest
+    /// signer-RPC / CRL-fetch timeout, not by long proof work (which lives in
+    /// the spawned proof tasks).
     ///
     /// The returned `ok_to_dereg` flag bakes in the cancellation policy
     /// (token not cancelled), the inconclusive-resolution guard (no
@@ -1281,11 +1273,10 @@ where
         }))
         .buffer_unordered(concurrency);
 
-        // No cancel-select around `futs.next()`: `resolve_instance` may
-        // hold an in-flight `tx_manager.send()` (via CRL revokeCert) whose
-        // nonce we MUST broadcast to avoid a permanent gap. Each future
-        // checks `self.config.cancel` cooperatively between awaits; new
-        // work is short-circuited, but in-flight sends complete naturally.
+        // No cancel-select around `futs.next()`: each future checks
+        // `self.config.cancel` cooperatively between awaits, so new work is
+        // short-circuited while already-started resolution work reaches a
+        // natural boundary.
         while let Some((instance, result)) = futs.next().await {
             match result {
                 Ok(outcome) => {
@@ -1828,7 +1819,7 @@ where
                 "submitting revokeCert transaction"
             );
 
-            self.submit_revoke_cert(verifier_address, revoked.path_digest).await;
+            self.submit_revoke_cert(verifier_address, revoked.path_digest);
         }
 
         Ok(true)
@@ -1838,46 +1829,14 @@ where
     ///
     /// Errors are logged but not propagated — a failed revocation should not
     /// block the registration cycle.
-    async fn submit_revoke_cert(&self, verifier_address: Address, cert_hash: FixedBytes<32>) {
-        let calldata =
-            Bytes::from(INitroEnclaveVerifier::revokeCertCall { certHash: cert_hash }.abi_encode());
-
+    fn submit_revoke_cert(&self, verifier_address: Address, cert_hash: FixedBytes<32>) {
         info!(
             verifier = %verifier_address,
             cert_hash = %cert_hash,
-            calldata_len = calldata.len(),
             "Revoking certificate"
         );
 
-        let candidate =
-            TxCandidate { tx_data: calldata, to: Some(verifier_address), ..Default::default() };
-
-        match self.tx_manager.send(candidate).await {
-            Ok(receipt) => {
-                if !receipt.inner.status() {
-                    warn!(
-                        cert_hash = %cert_hash,
-                        tx_hash = %receipt.transaction_hash,
-                        "revokeCert transaction reverted (cert may already be revoked)"
-                    );
-                } else {
-                    info!(
-                        cert_hash = %cert_hash,
-                        tx_hash = %receipt.transaction_hash,
-                        "certificate revoked successfully"
-                    );
-                    RegistrarMetrics::revoke_cert_success_total().increment(1);
-                }
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    cert_hash = %cert_hash,
-                    "failed to submit revokeCert transaction"
-                );
-                RegistrarMetrics::revoke_cert_tx_failures().increment(1);
-            }
-        }
+        CertRevoker::new(verifier_address, self.tx_manager.clone()).revoke_cert(cert_hash);
     }
 
     /// Submits a `deregisterSigner` transaction and returns whether it succeeded.
@@ -4414,13 +4373,10 @@ mod tests {
     // even when every future was blocked on a `Notify` gate. The
     // production replacement `discover_and_resolve` deliberately does
     // NOT `select!` on `cancel.cancelled()` around its `futs.next()`
-    // loop — see the rationale comment at the call site (cancelling a
-    // `resolve_instance` future that holds an in-flight CRL
-    // `revokeCert` `tx_manager.send()` would leak a nonce). Cooperative
-    // cancellation between awaits is the contract, and end-to-end
-    // shutdown latency (including the per-task cooperative cancel +
-    // drain timeout) is covered by the pipeline tests further down in
-    // this module (e.g. `run_drains_pending_proof_tasks_on_shutdown`).
+    // loop; cooperative cancellation between awaits is the contract, and
+    // end-to-end shutdown latency (including the per-task cooperative
+    // cancel + drain timeout) is covered by the pipeline tests further
+    // down in this module (e.g. `run_drains_pending_proof_tasks_on_shutdown`).
     //
     // The companion `BlockingSignerClient` was deleted with this test.
 
