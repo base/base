@@ -29,6 +29,7 @@ pub struct HashMapStorageProvider {
     snapshots: Vec<Snapshot>,
     gas_params: GasParams,
     state_gas_used: u64,
+    gas_refunded: i64,
     /// Emitted events keyed by contract address.
     pub events: HashMap<Address, Vec<LogData>>,
 }
@@ -65,6 +66,7 @@ impl HashMapStorageProvider {
             counter_sstore: 0,
             gas_params: GasParams::default(),
             state_gas_used: 0,
+            gas_refunded: 0,
         }
     }
 }
@@ -119,8 +121,15 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         if self.is_static {
             return Err(BasePrecompileError::StaticCallViolation);
         }
+        let old = self.internals.get(&(address, key)).copied().unwrap_or(U256::ZERO);
         self.counter_sstore += 1;
         self.internals.insert((address, key), value);
+        // Simplified EIP-3529 refund: clearing a previously set slot earns a refund.
+        // Exact EIP-2200/3529 accounting requires original-value tracking; the test provider
+        // approximates with the post-London clear-slot refund to keep the mock simple.
+        if !old.is_zero() && value.is_zero() {
+            self.refund_gas(4_800);
+        }
         Ok(())
     }
 
@@ -167,7 +176,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(())
     }
 
-    fn refund_gas(&mut self, _gas: i64) {}
+    fn refund_gas(&mut self, gas: i64) {
+        self.gas_refunded = self.gas_refunded.saturating_add(gas);
+    }
 
     fn gas_limit(&self) -> u64 {
         0
@@ -182,7 +193,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn gas_refunded(&self) -> i64 {
-        0
+        self.gas_refunded
     }
 
     fn reservoir(&self) -> u64 {
@@ -325,4 +336,63 @@ impl HashMapStorageProvider {
 #[cfg(any(test, feature = "test-utils"))]
 pub fn setup_storage() -> (HashMapStorageProvider, Address) {
     (HashMapStorageProvider::new(1), Address::from([0x42u8; 20]))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, U256};
+
+    use super::*;
+    use crate::provider::PrecompileStorageProvider;
+
+    const ADDR: Address = Address::ZERO;
+    const KEY: U256 = U256::ZERO;
+
+    #[test]
+    fn refund_gas_accumulates_positive() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.refund_gas(1_000);
+        p.refund_gas(500);
+        assert_eq!(p.gas_refunded(), 1_500);
+    }
+
+    #[test]
+    fn refund_gas_accumulates_negative() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.refund_gas(4_800);
+        p.refund_gas(-4_800);
+        assert_eq!(p.gas_refunded(), 0);
+    }
+
+    #[test]
+    fn refund_gas_starts_at_zero() {
+        let p = HashMapStorageProvider::new(1);
+        assert_eq!(p.gas_refunded(), 0);
+    }
+
+    #[test]
+    fn sstore_clearing_slot_generates_refund() {
+        let mut p = HashMapStorageProvider::new(1);
+        // Write a non-zero value first.
+        p.sstore(ADDR, KEY, U256::from(42u64)).unwrap();
+        assert_eq!(p.gas_refunded(), 0, "writing non-zero to zero slot earns no refund");
+        // Clear it — should earn EIP-3529 refund.
+        p.sstore(ADDR, KEY, U256::ZERO).unwrap();
+        assert!(p.gas_refunded() > 0, "clearing a non-zero slot must earn a refund");
+    }
+
+    #[test]
+    fn sstore_nonzero_to_nonzero_earns_no_refund() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.sstore(ADDR, KEY, U256::from(1u64)).unwrap();
+        p.sstore(ADDR, KEY, U256::from(2u64)).unwrap();
+        assert_eq!(p.gas_refunded(), 0);
+    }
+
+    #[test]
+    fn sstore_zero_to_nonzero_earns_no_refund() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.sstore(ADDR, KEY, U256::from(99u64)).unwrap();
+        assert_eq!(p.gas_refunded(), 0);
+    }
 }
