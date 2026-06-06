@@ -143,7 +143,8 @@ pub struct RpcStandardNodeArgs {
         long = "flashblocks.ping-interval",
         value_name = "FLASHBLOCKS_PING_INTERVAL",
         default_value = "30s",
-        value_parser = humantime::parse_duration
+        value_parser = humantime::parse_duration,
+        requires = "flashblocks_url"
     )]
     pub flashblocks_ping_interval: Duration,
 
@@ -311,13 +312,25 @@ mod tests {
     }
 
     #[test]
-    fn test_flashblocks_ping_interval_does_not_require_flashblocks_url() {
+    fn test_flashblocks_ping_interval_defaults_without_flashblocks_url() {
         let args = CommandParser::<RpcStandardNodeArgs>::try_parse_from(["reth"])
             .expect("default args should parse without flashblocks enabled")
             .args;
 
         assert_eq!(args.flashblocks_url, None);
         assert_eq!(args.flashblocks_ping_interval, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_flashblocks_ping_interval_requires_flashblocks_url() {
+        let error = CommandParser::<RpcStandardNodeArgs>::try_parse_from([
+            "reth",
+            "--flashblocks.ping-interval",
+            "45s",
+        ])
+        .expect_err("ping interval should require flashblocks url");
+
+        assert!(error.to_string().contains("--flashblocks-url"));
     }
 
     #[test]
