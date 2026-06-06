@@ -16,6 +16,7 @@
 
 use std::sync::Arc;
 
+use alloy_primitives::B256;
 use base_proof_primitives::ProofResult;
 use base_proof_rpc::RollupProvider;
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
@@ -59,6 +60,11 @@ pub enum TargetPoll {
         /// Deterministic prover-service session identifier the caller should
         /// expect when dispatching the matching `prove_block_range` request.
         session_id: String,
+        /// Canonical L2 output root at the target block, already fetched
+        /// while deriving the session id. Threaded through so the dispatch
+        /// path does not need to call `output_at_block(target_block)` a
+        /// second time.
+        claimed_l2_output_root: B256,
     },
     /// A transient error prevented the poll from completing (RPC failure,
     /// canonical root fetch error, etc.). The caller should sleep and retry
@@ -81,8 +87,6 @@ pub enum TargetPoll {
 pub struct ProofCollector<R> {
     proof_requester: Arc<dyn ProofRequesterProvider>,
     rollup_client: Arc<R>,
-    block_interval: u64,
-    output_fetch_concurrency: usize,
     tee_kind: TeeKind,
 }
 
@@ -91,8 +95,6 @@ impl<R> Clone for ProofCollector<R> {
         Self {
             proof_requester: Arc::clone(&self.proof_requester),
             rollup_client: Arc::clone(&self.rollup_client),
-            block_interval: self.block_interval,
-            output_fetch_concurrency: self.output_fetch_concurrency,
             tee_kind: self.tee_kind,
         }
     }
@@ -100,11 +102,7 @@ impl<R> Clone for ProofCollector<R> {
 
 impl<R> std::fmt::Debug for ProofCollector<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProofCollector")
-            .field("block_interval", &self.block_interval)
-            .field("output_fetch_concurrency", &self.output_fetch_concurrency)
-            .field("tee_kind", &self.tee_kind)
-            .finish_non_exhaustive()
+        f.debug_struct("ProofCollector").field("tee_kind", &self.tee_kind).finish_non_exhaustive()
     }
 }
 
@@ -113,42 +111,22 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
     pub fn aws_nitro(
         proof_requester: Arc<dyn ProofRequesterProvider>,
         rollup_client: Arc<R>,
-        block_interval: u64,
-        output_fetch_concurrency: usize,
     ) -> Self {
-        Self::new(
-            proof_requester,
-            rollup_client,
-            block_interval,
-            output_fetch_concurrency,
-            TeeKind::AwsNitro,
-        )
+        Self::new(proof_requester, rollup_client, TeeKind::AwsNitro)
     }
 
     /// Creates a proof collector for the given TEE implementation.
     pub const fn new(
         proof_requester: Arc<dyn ProofRequesterProvider>,
         rollup_client: Arc<R>,
-        block_interval: u64,
-        output_fetch_concurrency: usize,
         tee_kind: TeeKind,
     ) -> Self {
-        Self { proof_requester, rollup_client, block_interval, output_fetch_concurrency, tee_kind }
+        Self { proof_requester, rollup_client, tee_kind }
     }
 
     /// Returns the TEE implementation this collector polls proofs for.
     pub const fn tee_kind(&self) -> TeeKind {
         self.tee_kind
-    }
-
-    /// Returns the block interval the collector was configured with.
-    pub const fn block_interval(&self) -> u64 {
-        self.block_interval
-    }
-
-    /// Returns the rollup-output fetch concurrency the collector was configured with.
-    pub const fn output_fetch_concurrency(&self) -> usize {
-        self.output_fetch_concurrency
     }
 
     /// Polls the prover service for the proof of `target_block`.
@@ -188,7 +166,10 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
                     session_id = %session_id,
                     "No prover-service session for target, dispatch needed",
                 );
-                return TargetPoll::NotFound { session_id };
+                return TargetPoll::NotFound {
+                    session_id,
+                    claimed_l2_output_root: output.output_root,
+                };
             }
             Err(e) => {
                 debug!(
@@ -309,8 +290,7 @@ mod tests {
         // "Restart": build a fresh collector with no in-memory dispatch state.
         // It must rederive the session id from the canonical chain root and
         // recover the in-flight session.
-        let collector =
-            ProofCollector::aws_nitro(Arc::clone(&proof_requester), rollup_client, 100, 4);
+        let collector = ProofCollector::aws_nitro(Arc::clone(&proof_requester), rollup_client);
 
         match collector.poll(target_block).await {
             TargetPoll::Ready { session_id, .. } => {
@@ -335,9 +315,16 @@ mod tests {
             max_safe_block: None,
         });
 
-        let collector = ProofCollector::aws_nitro(proof_requester, rollup_client, 100, 4);
+        let collector = ProofCollector::aws_nitro(proof_requester, rollup_client);
         match collector.poll(target_block).await {
-            TargetPoll::NotFound { session_id } => assert!(!session_id.is_empty()),
+            TargetPoll::NotFound { session_id, claimed_l2_output_root } => {
+                assert!(!session_id.is_empty());
+                assert_eq!(
+                    claimed_l2_output_root,
+                    B256::repeat_byte(0xAA),
+                    "should surface the canonical root already fetched",
+                );
+            }
             other => panic!("expected NotFound, got {other:?}"),
         }
     }

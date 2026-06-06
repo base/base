@@ -174,7 +174,7 @@ where
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
-    /// Creates a new parallel proving pipeline.
+    /// Creates a new self-driving proving pipeline.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: PipelineConfig,
@@ -188,12 +188,8 @@ where
         output_proposer: Arc<dyn OutputProposer>,
         cancel: CancellationToken,
     ) -> Self {
-        let proof_collector = ProofCollector::aws_nitro(
-            Arc::clone(&proof_requester),
-            Arc::clone(&rollup_client),
-            config.driver.block_interval,
-            config.recovery_scan_concurrency,
-        );
+        let proof_collector =
+            ProofCollector::aws_nitro(Arc::clone(&proof_requester), Arc::clone(&rollup_client));
         let proof_submitter = ProofSubmitter::new(
             Arc::clone(&output_proposer),
             Arc::clone(&rollup_client),
@@ -286,6 +282,12 @@ where
         };
 
         Metrics::safe_head().set(safe_head as f64);
+        // Reflect the on-chain proposer tip on every iteration. Without this,
+        // dashboards that alert on proposer lag would see the gauge stuck at
+        // its last submit value (or unset on cold start) until the next
+        // successful inline submit, even if other proposers or a previous
+        // run had advanced the chain.
+        Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
         // Drop retry counters for targets the chain has already passed.
         retry_counts.retain(|&target, _| target > recovered.l2_block_number);
@@ -332,13 +334,20 @@ where
                     "Proof pending, waiting for prover service"
                 );
             }
-            TargetPoll::NotFound { session_id } => {
+            TargetPoll::NotFound { session_id, claimed_l2_output_root } => {
                 info!(
                     target_block,
                     session_id = %session_id,
                     "No prover-service session for target, dispatching"
                 );
-                self.dispatch_for(target_block, &recovered, retry_counts, cache).await;
+                self.dispatch_for(
+                    target_block,
+                    &recovered,
+                    claimed_l2_output_root,
+                    retry_counts,
+                    cache,
+                )
+                .await;
             }
             TargetPoll::Failed { session_id, error } => {
                 warn!(
@@ -473,10 +482,14 @@ where
         &self,
         target_block: u64,
         recovered: &RecoveredState,
+        claimed_l2_output_root: B256,
         retry_counts: &mut HashMap<u64, u32>,
         cache: &mut Option<CachedRecovery>,
     ) {
-        let request = match self.build_proof_request_for(target_block, recovered).await {
+        let request = match self
+            .build_proof_request_for(target_block, recovered, claimed_l2_output_root)
+            .await
+        {
             Ok(req) => req,
             Err(e) => {
                 warn!(
@@ -917,22 +930,18 @@ where
     }
 
     /// Builds a proof request for a single `target_block`, parallelising the
-    /// three required RPCs: L1 head header, target-block canonical output
-    /// root, and L2 head at the recovered tip.
+    /// two required RPCs: L1 head header and L2 head at the recovered tip.
+    /// The canonical output root for `target_block` is supplied by the
+    /// caller (already fetched while deriving the prover-service session id
+    /// in [`crate::proof_collector::ProofCollector::poll`]).
     async fn build_proof_request_for(
         &self,
         target_block: u64,
         recovered: &RecoveredState,
+        claimed_l2_output_root: B256,
     ) -> Result<ProofRequest, ProposerError> {
-        let (l1_head_result, target_root_result, agreed_head_result) = tokio::join!(
+        let (l1_head_result, agreed_head_result) = tokio::join!(
             async { self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc) },
-            async {
-                self.rollup_client
-                    .output_at_block(target_block)
-                    .await
-                    .map(|out| out.output_root)
-                    .map_err(ProposerError::Rpc)
-            },
             async {
                 self.l2_client
                     .header_by_number(Some(recovered.l2_block_number))
@@ -942,7 +951,6 @@ where
         );
 
         let l1_head = l1_head_result?;
-        let claimed_l2_output_root = target_root_result?;
         let agreed_l2_head = agreed_head_result?;
 
         let request = ProofRequest {
