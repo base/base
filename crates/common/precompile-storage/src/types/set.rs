@@ -308,13 +308,13 @@ where
     }
 
     fn t_read(&self) -> Result<Set<T>> {
-        unimplemented!("Set does not support transient storage")
+        Err(BasePrecompileError::Fatal("Set does not support transient storage".into()))
     }
     fn t_write(&mut self, _: Set<T>) -> Result<()> {
-        unimplemented!("Set does not support transient storage")
+        Err(BasePrecompileError::Fatal("Set does not support transient storage".into()))
     }
     fn t_delete(&mut self) -> Result<()> {
-        unimplemented!("Set does not support transient storage")
+        Err(BasePrecompileError::Fatal("Set does not support transient storage".into()))
     }
 }
 
@@ -378,6 +378,19 @@ mod tests {
             for addr in &addrs {
                 assert!(handler.contains(addr).unwrap());
             }
+        });
+    }
+
+    #[test]
+    fn test_set_transient_methods_return_err() {
+        let (mut storage, contract_addr) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(800u64);
+            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
+
+            assert!(handler.t_read().is_err());
+            assert!(handler.t_write(Set::default()).is_err());
+            assert!(handler.t_delete().is_err());
         });
     }
 
