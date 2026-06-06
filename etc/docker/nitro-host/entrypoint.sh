@@ -7,7 +7,6 @@ set -eux
 : "${L1_BEACON_URL:?required}"
 : "${L2_ETH_URL:?required}"
 : "${L2_CHAIN_ID:?required}"
-: "${PROOF_REQUEST_TIMEOUT_SECS:=3600}"
 
 ADDITIONAL_ARGS=()
 if [ -n "${TEE_PROVER_REGISTRY_ADDRESS:-}" ]; then
@@ -22,6 +21,5 @@ exec ./base-prover-nitro-host \
     --l2-chain-id "$L2_CHAIN_ID" \
     --listen-addr "$LISTEN_ADDR" \
     --vsock-cid "$VSOCK_CID" \
-    --proof-request-timeout-secs "$PROOF_REQUEST_TIMEOUT_SECS" \
     --enable-experimental-witness-endpoint \
     "${ADDITIONAL_ARGS[@]}"

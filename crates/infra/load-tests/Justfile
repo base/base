@@ -5,8 +5,11 @@
 #   just load-test run sepolia                           - Load test sepolia (requires FUNDER_KEY)
 #   just load-test continuous                            - Load test devnet indefinitely (Ctrl-C to stop)
 #   just load-test continuous sepolia                    - Load test sepolia indefinitely
+#   just load-test real-token                            - Real-token swap load test on devnet
+#   just load-test real-token sepolia                    - Real-token swap load test on sepolia
 #   just load-test recover                               - Recover funds from devnet test accounts
 #   just load-test recover sepolia                       - Recover funds from sepolia test accounts
+#   just load-test real-token-recover sepolia            - Recover real-token funds from sepolia test accounts
 
 set positional-arguments := true
 set working-directory := '../../..'
@@ -23,6 +26,63 @@ run network='devnet' *args:
     fi
     cargo run -p base-load-tester-bin --bin base-load-tester -- crates/infra/load-tests/examples/{{network}}.yaml {{args}}
 
+# Devnet deploys a local WETH/USDC harness and renders dynamic addresses.
+# Other networks use examples/real-token-<network>.yaml and expect contracts
+# to already be deployed.
+# Run real-token swap load test against a network.
+real-token network='devnet' *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ -z "${FUNDER_KEY:-}" ] && [ "{{network}}" = "devnet" ]; then
+        export FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+    fi
+
+    if [ "{{network}}" != "devnet" ]; then
+        config="crates/infra/load-tests/examples/real-token-{{network}}.yaml"
+        if [ ! -f "$config" ]; then
+            echo "real-token config not found: $config" >&2
+            exit 1
+        fi
+        cargo run -p base-load-tester-bin --bin base-load-tester -- "$config" {{args}}
+        exit 0
+    fi
+
+    contracts_dir="crates/utilities/test-utils/contracts"
+    template="crates/infra/load-tests/examples/real-token-devnet.yaml.template"
+    rendered_config="$(mktemp "${TMPDIR:-/tmp}/base-real-token-devnet.XXXXXX")"
+
+    echo "Installing Foundry dependencies..."
+    (cd "$contracts_dir" && forge soldeer install)
+
+    echo "Deploying real-token devnet swap harness..."
+    deploy_output="$(
+        cd "$contracts_dir"
+        forge script script/DeployRealTokenSwapDevnet.s.sol:DeployRealTokenSwapDevnet \
+            --rpc-url http://localhost:7545 \
+            --private-key "$FUNDER_KEY" \
+            --broadcast 2>&1
+    )"
+    printf '%s\n' "$deploy_output"
+
+    usdc="$(printf '%s\n' "$deploy_output" | awk '$1 == "USDC:" { print $2; exit }')"
+    uniswap_router="$(printf '%s\n' "$deploy_output" | awk '$1 == "Uniswap" && $2 == "router" && $3 == "shim:" { print $4; exit }')"
+    aerodrome_router="$(printf '%s\n' "$deploy_output" | awk '$1 == "Aerodrome" && $2 == "router" && $3 == "shim:" { print $4; exit }')"
+
+    if [ -z "$usdc" ] || [ -z "$uniswap_router" ] || [ -z "$aerodrome_router" ]; then
+        echo "failed to parse deployed harness addresses from forge output" >&2
+        exit 1
+    fi
+
+    sed \
+        -e "s|__USDC__|$usdc|g" \
+        -e "s|__UNISWAP_ROUTER__|$uniswap_router|g" \
+        -e "s|__AERODROME_ROUTER__|$aerodrome_router|g" \
+        "$template" > "$rendered_config"
+
+    echo "Running real-token devnet load test with rendered config: $rendered_config"
+    cargo run -p base-load-tester-bin --bin base-load-tester -- "$rendered_config" {{args}}
+
 # Run load test against a network indefinitely (Ctrl-C to stop)
 continuous network='devnet':
     just --justfile {{source_file()}} run {{network}} --continuous
@@ -30,3 +90,15 @@ continuous network='devnet':
 # Recover/drain funds from load test accounts back to funder
 recover network='devnet':
     just --justfile {{source_file()}} run {{network}} --drain-only
+
+# Recover real-token balances from load test accounts, then drain native ETH.
+real-token-recover network='sepolia':
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    config="crates/infra/load-tests/examples/real-token-{{network}}.yaml"
+    if [ ! -f "$config" ]; then
+        echo "real-token config not found: $config" >&2
+        exit 1
+    fi
+    cargo run -p base-load-tester-bin --bin base-load-tester -- "$config" --recover-real-tokens

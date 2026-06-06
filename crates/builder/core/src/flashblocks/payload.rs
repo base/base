@@ -219,8 +219,9 @@ where
         } = args;
 
         // We log only every Nth block based on sampling ratio to reduce usage
+        let block_number = config.parent_header.number + 1;
         let span = if config.parent_header.number.is_multiple_of(self.config.sampling_ratio) {
-            span!(Level::INFO, "build_payload")
+            span!(Level::INFO, "build_payload", block_number)
         } else {
             tracing::Span::none()
         };
@@ -417,6 +418,7 @@ where
 
         // Process flashblocks in a blocking loop
         loop {
+            let flashblock_index = ctx.flashblock_index();
             let fb_span = if span.is_none() {
                 tracing::Span::none()
             } else {
@@ -424,6 +426,7 @@ where
                     parent: &span,
                     Level::INFO,
                     "build_flashblock",
+                    flashblock_index,
                 )
             };
             let _entered = fb_span.enter();
@@ -980,6 +983,14 @@ where
     let mut hashed_state = HashedPostState::default();
 
     if calculate_state_root {
+        let state_root_span = span!(
+            Level::INFO,
+            "calculate_state_root",
+            block_number = ctx.block_number(),
+            parent_hash = %ctx.parent().hash(),
+        );
+        let _state_root_span_guard = state_root_span.enter();
+
         let state_provider = state.database.as_ref();
         hashed_state = state_provider.hashed_post_state(&state.bundle_state);
         (state_root, trie_output) =

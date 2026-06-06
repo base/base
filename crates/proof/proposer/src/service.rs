@@ -14,13 +14,14 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
-use base_proof_primitives::ProverClient;
 use base_proof_rpc::{
     L1Client, L1ClientConfig, L2Client, L2ClientConfig, RollupClient, RollupClientConfig,
 };
+use base_prover_service_client::{
+    ProofRequesterClient, ProofRequesterProvider, ProverServiceClientConfig,
+};
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use eyre::{Result, WrapErr};
-use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -56,7 +57,6 @@ impl ProposerService {
             prover_timeout = ?config.prover_timeout,
             poll_interval = ?config.poll_interval,
             rpc_timeout = ?config.rpc_timeout,
-            max_parallel_proofs = config.max_parallel_proofs,
             health_addr = %config.health_addr,
             admin_addr = ?config.admin_addr,
             tee_prover_registry = ?config.tee_prover_registry_address,
@@ -68,7 +68,7 @@ impl ProposerService {
 
         let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())
             .with_timeout(config.rpc_timeout)
-            .with_retry_config(config.retry.clone())
+            .with_retry_config(config.retry)
             .with_skip_tls_verify(config.skip_tls_verify)
             .with_metrics_prefix("base_proposer");
         let l1_client = Arc::new(L1Client::new(l1_config)?);
@@ -76,7 +76,7 @@ impl ProposerService {
 
         let l2_config = L2ClientConfig::new(config.l2_eth_rpc.clone())
             .with_timeout(config.rpc_timeout)
-            .with_retry_config(config.retry.clone())
+            .with_retry_config(config.retry)
             .with_skip_tls_verify(config.skip_tls_verify)
             .with_metrics_prefix("base_proposer");
         let l2_client = Arc::new(L2Client::new(l2_config)?);
@@ -84,16 +84,17 @@ impl ProposerService {
 
         let rollup_config = RollupClientConfig::new(config.rollup_rpc.clone())
             .with_timeout(config.rpc_timeout)
-            .with_retry_config(config.retry.clone())
+            .with_retry_config(config.retry)
             .with_skip_tls_verify(config.skip_tls_verify);
         let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
         info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
 
-        let prover_client = HttpClientBuilder::default()
-            .request_timeout(config.prover_timeout)
-            .build(config.prover_rpc.as_str())
-            .wrap_err("failed to create prover RPC client")?;
-        info!(endpoint = %config.prover_rpc, "Prover RPC client initialized");
+        let prover_service_config = ProverServiceClientConfig::new(config.prover_rpc.to_string())
+            .with_max_wait(config.prover_timeout);
+        let proof_requester = ProofRequesterClient::connect(&prover_service_config)
+            .wrap_err("failed to create prover-service requester client")?;
+        let proof_requester: Arc<dyn ProofRequesterProvider> = Arc::new(proof_requester);
+        info!(endpoint = %config.prover_rpc, "Prover-service requester client initialized");
 
         let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
             config.anchor_state_registry_addr,
@@ -142,8 +143,6 @@ impl ProposerService {
 
         let factory_client = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
-
-        let prover_client: Arc<dyn ProverClient> = Arc::new(prover_client);
 
         let (output_proposer, proposer_address): (Arc<dyn crate::OutputProposer>, Option<Address>) =
             if config.dry_run {
@@ -203,7 +202,6 @@ impl ProposerService {
         info!("Output proposer initialized");
 
         let pipeline_config = PipelineConfig {
-            max_parallel_proofs: config.max_parallel_proofs,
             max_retries: MAX_PROOF_RETRIES,
             recovery_scan_concurrency: config.recovery_scan_concurrency,
             tee_prover_registry_address: config.tee_prover_registry_address,
@@ -220,7 +218,7 @@ impl ProposerService {
         };
         let pipeline = ProvingPipeline::new(
             pipeline_config,
-            prover_client,
+            proof_requester,
             l1_client,
             l2_client,
             rollup_client,
@@ -230,7 +228,7 @@ impl ProposerService {
             output_proposer,
             cancel.child_token(),
         );
-        info!(max_parallel_proofs = config.max_parallel_proofs, "Proving pipeline initialized");
+        info!("Proving pipeline initialized");
         let driver_handle: Arc<dyn ProposerDriverControl> =
             Arc::new(PipelineHandle::new(pipeline, cancel.clone()));
 

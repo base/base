@@ -29,8 +29,8 @@ revm.workspace = true
 [dev-dependencies]
 rstest.workspace = true
 criterion.workspace = true
-base-precompile-storage = { workspace = true, features = ["test-utils"] }
 k256 = { workspace = true, features = ["ecdsa"] }
+base-precompile-storage = { workspace = true, features = ["test-utils"] }
 
 [[bench]]
 name = "base_precompiles"

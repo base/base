@@ -43,6 +43,9 @@ pub struct HardforkInfo {
     /// Beryl hardfork timestamp.
     #[serde(alias = "v2")]
     pub beryl: Option<u64>,
+    /// Cobalt hardfork timestamp.
+    #[serde(alias = "v3")]
+    pub cobalt: Option<u64>,
 }
 
 /// The Base chain-specific genesis block specification.
@@ -155,7 +158,7 @@ mod tests {
                 holocene_time: None,
                 isthmus_time: None,
                 jovian_time: None,
-                base: HardforkInfo { azul: Some(14), beryl: Some(16) },
+                base: HardforkInfo { azul: Some(14), beryl: Some(16), cobalt: None },
                 activation_admin_address: None,
             }
         );
@@ -221,7 +224,7 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: HardforkInfo { azul: Some(14), beryl: Some(16) },
+                    base: HardforkInfo { azul: Some(14), beryl: Some(16), cobalt: None },
                     activation_admin_address: None,
                 }),
                 base_fee_info: Some(FeeInfo {
@@ -247,7 +250,7 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: HardforkInfo { azul: Some(14), beryl: Some(16) },
+                    base: HardforkInfo { azul: Some(14), beryl: Some(16), cobalt: None },
                     activation_admin_address: None,
                 }),
                 base_fee_info: Some(FeeInfo {

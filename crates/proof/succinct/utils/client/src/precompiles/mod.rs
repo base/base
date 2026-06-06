@@ -7,6 +7,7 @@ use alloy_evm::precompiles::PrecompilesMap;
 use alloy_evm::precompiles::{DynPrecompile, Precompile};
 use alloy_primitives::Address;
 use base_common_evm::{BasePrecompiles, BaseSpecId};
+use base_common_precompiles::PrecompileCallObserver;
 #[cfg(any(test, target_os = "zkvm"))]
 use revm::precompile::PrecompileId;
 use revm::{
@@ -78,6 +79,24 @@ const fn get_precompile_tracker_name(id: &PrecompileId) -> Option<&'static str> 
     }
 }
 
+/// SP1 cycle-tracker observer for Base-native precompile operations.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Sp1CycleObserver;
+
+impl PrecompileCallObserver for Sp1CycleObserver {
+    fn start(&self, label: &'static str) {
+        let _ = label;
+        #[cfg(target_os = "zkvm")]
+        println!("cycle-tracker-report-start: {label}");
+    }
+
+    fn end(&self, label: &'static str) {
+        let _ = label;
+        #[cfg(target_os = "zkvm")]
+        println!("cycle-tracker-report-end: {label}");
+    }
+}
+
 /// The ZKVM-cycle-tracking precompiles.
 #[derive(Debug)]
 pub struct BaseZkvmPrecompiles {
@@ -124,7 +143,7 @@ impl BaseZkvmPrecompiles {
     ) -> PrecompilesMap {
         let mut precompiles = BasePrecompiles::new_with_spec(spec)
             .with_activation_admin_address(activation_admin_address)
-            .install();
+            .install_with_observer(Sp1CycleObserver);
         Self::install_cycle_trackers(&mut precompiles);
         precompiles
     }
@@ -423,7 +442,7 @@ mod tests {
     #[test]
     fn test_zkvm_precompiles_match_beryl_dynamic_installation() {
         let (token_address, _) =
-            B20Variant::B20.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
 
         let installed_addresses = [
             B20FactoryStorage::ADDRESS,
@@ -432,7 +451,9 @@ mod tests {
             token_address,
         ];
 
-        for (upgrade, expected) in [(BaseUpgrade::Azul, false), (BaseUpgrade::Beryl, true)] {
+        for (upgrade, expected) in
+            [(BaseUpgrade::Azul, false), (BaseUpgrade::Beryl, true), (BaseUpgrade::Cobalt, true)]
+        {
             let spec = BaseSpecId::new(upgrade);
             let base_precompiles = BasePrecompiles::new_with_spec(spec).install();
             let zkvm_precompiles = BaseZkvmPrecompiles::new_with_spec(spec);

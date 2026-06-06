@@ -4,11 +4,10 @@ use alloy_primitives::{Address, B256, FixedBytes, U256, keccak256};
 use alloy_sol_types::SolValue;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use super::Transferable;
-use crate::{IB20, TokenAccounting};
+use crate::{IB20, TokenAccounting, Transferable};
 
 /// ERC-5267 `eip712Domain()` return tuple: (fields, name, version, chainId, verifyingContract, salt, extensions).
-pub(super) type Eip712Domain = (FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>);
+pub type Eip712Domain = (FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>);
 
 /// Arguments for [`Permittable::permit`], grouping the EIP-2612 ABI fields.
 #[derive(Clone, Debug)]
@@ -58,6 +57,20 @@ impl PermitArgs {
         buf[2..34].copy_from_slice(domain_separator.as_slice());
         buf[34..66].copy_from_slice(struct_hash.as_slice());
         keccak256(buf)
+    }
+
+    /// Validates a recovered ECDSA address against the declared `owner`.
+    ///
+    /// Returns `Err(InvalidSigner)` when `recovered` is `Address::ZERO` (matching Solidity's
+    /// explicit zero-address guard) or when `recovered != owner`.
+    pub fn validate_recovered_address(recovered: Address, owner: Address) -> Result<()> {
+        if recovered.is_zero() || recovered != owner {
+            return Err(BasePrecompileError::revert(IB20::InvalidSigner {
+                signer: recovered,
+                owner,
+            }));
+        }
+        Ok(())
     }
 
     /// Maps Ethereum `v` (27/28) to secp256k1 recovery parity, then recovers the signer.
@@ -144,13 +157,7 @@ pub trait Permittable: Transferable {
         let nonce = self.accounting().nonce(args.owner)?;
         let signing_hash = args.signing_hash(domain_sep, nonce);
         let recovered = args.recover_signer(signing_hash)?;
-
-        if recovered != args.owner {
-            return Err(BasePrecompileError::revert(IB20::InvalidSigner {
-                signer: recovered,
-                owner: args.owner,
-            }));
-        }
+        PermitArgs::validate_recovered_address(recovered, args.owner)?;
 
         self.accounting_mut().increment_nonce(args.owner)?;
         self.approve(args.owner, args.spender, args.value)
@@ -164,13 +171,10 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
     use k256::ecdsa::SigningKey;
 
-    use super::{DOMAIN_TYPEHASH, PermitArgs, Permittable, VERSION};
     use crate::{
-        IB20,
-        common::{
-            Token, TokenAccounting,
-            test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestToken},
-        },
+        IB20, InMemoryPolicy, InMemoryTokenAccounting, PermitArgs, Permittable, TestToken, Token,
+        TokenAccounting,
+        common::ops::permittable::{DOMAIN_TYPEHASH, VERSION},
     };
 
     const CHAIN_ID: u64 = 1;
@@ -281,6 +285,33 @@ mod tests {
             args.signing_hash(domain_sep, U256::ZERO),
             args.signing_hash(domain_sep, U256::ONE)
         );
+    }
+
+    #[test]
+    fn validate_recovered_address_rejects_zero_address() {
+        let owner = Address::repeat_byte(0xaa);
+
+        assert_eq!(
+            PermitArgs::validate_recovered_address(Address::ZERO, owner).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidSigner { signer: Address::ZERO, owner })
+        );
+    }
+
+    #[test]
+    fn validate_recovered_address_rejects_wrong_signer() {
+        let owner = Address::repeat_byte(0xaa);
+        let wrong = Address::repeat_byte(0xbb);
+
+        assert_eq!(
+            PermitArgs::validate_recovered_address(wrong, owner).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidSigner { signer: wrong, owner })
+        );
+    }
+
+    #[test]
+    fn validate_recovered_address_accepts_matching_signer() {
+        let owner = Address::repeat_byte(0xaa);
+        PermitArgs::validate_recovered_address(owner, owner).unwrap();
     }
 
     #[test]
@@ -406,6 +437,34 @@ mod tests {
         args.owner = wrong_owner;
 
         assert!(token.permit(CHAIN_ID, now, args).is_err());
+    }
+
+    #[test]
+    fn permit_zero_owner_returns_invalid_signer_not_invalid_approver() {
+        // A unit test for the recovered == Address::ZERO branch is not feasible: alloy's ECDSA
+        // recovery returns Err (not zero) for degenerate inputs, and producing a signature that
+        // recovers to zero is cryptographically infeasible. This test instead confirms that when
+        // owner is Address::ZERO the function returns InvalidSigner (from the signature guard),
+        // not InvalidApprover (from approve()) — proving the guard fires before the approve() call.
+        let mut token = make_token();
+        let real_owner = owner_address();
+        let base_args = signed_permit_args(&token, real_owner, SPENDER, U256::ONE, U256::MAX);
+        let args = PermitArgs { owner: Address::ZERO, ..base_args };
+
+        // Swapping owner to zero changes the struct hash, so the recovered signer is some
+        // arbitrary address. Compute it from the same args permit() would use.
+        let domain_sep = token.domain_separator(CHAIN_ID).unwrap();
+        let nonce = token.accounting().nonce(Address::ZERO).unwrap();
+        let signing_hash = args.signing_hash(domain_sep, nonce);
+        let expected_signer = args.recover_signer(signing_hash).unwrap();
+
+        assert_eq!(
+            token.permit(CHAIN_ID, U256::ZERO, args).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidSigner {
+                signer: expected_signer,
+                owner: Address::ZERO,
+            })
+        );
     }
 
     #[test]

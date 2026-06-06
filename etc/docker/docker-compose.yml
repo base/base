@@ -3,6 +3,7 @@ x-rust-service-build: &rust-service-build
   dockerfile: etc/docker/Dockerfile.rust-services
   args:
     PROFILE: "${CARGO_PROFILE:-dev}"
+    BASE_SUCCINCT_ELF_REQUIRE: "${BASE_SUCCINCT_ELF_REQUIRE:-0}"
 
 services:
   setup-l1:
@@ -741,14 +742,24 @@ services:
     volumes:
       - ../../.devnet/l1/configs/el/chain-config.json:/app/configs/L1/${L1_CHAIN_ID}.json:ro
     environment:
-      - SP1_PROVER=dry-run
-      - PROXY_ENABLE=false
+      - SP1_PROVER=${SP1_PROVER:-dry-run}
+      - SP1_CLUSTER_API_ENDPOINT=${SP1_CLUSTER_API_ENDPOINT:-}
+      - SP1_CLUSTER_TIMEOUT_HOURS=${SP1_CLUSTER_TIMEOUT_HOURS:-24}
+      - CLI_S3_BUCKET=${CLI_S3_BUCKET:-}
+      - CLI_S3_REGION=${CLI_S3_REGION:-us-east-1}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - AWS_ENDPOINT_URL=${AWS_ENDPOINT_URL:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      - PROXY_ENABLE=${PROXY_ENABLE:-false}
+      - RUST_LOG=${RUST_LOG:-}
       - GRPC_LISTEN_ADDR=0.0.0.0:9000
       - BASE_CONSENSUS_ADDRESS=http://base-rpc:${L2_BASE_RPC_CL_RPC_PORT}
       - L1_NODE_ADDRESS=http://l1-el:${L1_HTTP_PORT}
       - L1_BEACON_ADDRESS=http://l1-cl:${L1_CL_HTTP_PORT}
       - L2_NODE_ADDRESS=http://base-rpc:${L2_BASE_RPC_HTTP_PORT}
-      - DEFAULT_SEQUENCE_WINDOW=50
+      - DEFAULT_SEQUENCE_WINDOW=${DEFAULT_SEQUENCE_WINDOW:-50}
       - POSTGRES_HOST=zk-prover-postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=prover

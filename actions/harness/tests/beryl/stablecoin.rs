@@ -4,7 +4,9 @@ use alloy_consensus::TxReceipt;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
-use base_common_precompiles::{B20FactoryStorage, B20TokenRole, IB20, IB20Factory, IB20Stablecoin};
+use base_common_precompiles::{
+    B20FactoryStorage, B20TokenRole, B20Variant, IB20, IB20Factory, IB20Stablecoin,
+};
 
 use crate::{
     env::BerylTestEnv,
@@ -193,7 +195,7 @@ async fn stablecoin_inherited_b20_operations_update_state_and_emit_events() {
 }
 
 #[tokio::test]
-async fn stablecoin_calls_revert_while_stablecoin_feature_is_deactivated() {
+async fn stablecoin_calls_succeed_while_stablecoin_feature_is_deactivated() {
     let mut scenario = StablecoinScenario::new().await;
 
     let (probe, deploy_probe) = scenario.env.deploy_staticcall_probe_tx(scenario.token);
@@ -211,51 +213,18 @@ async fn stablecoin_calls_revert_while_stablecoin_feature_is_deactivated() {
         BerylTestEnv::B20_PROBE_GAS_LIMIT,
     );
     let block = scenario.build_block_with_transactions(vec![probe_while_deactivated]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "probe transaction must succeed");
     assert!(
-        scenario.env.user_tx_succeeded(&block, 0),
-        "probe transaction must succeed even when the inner staticcall reverts"
-    );
-    assert!(
-        !scenario.env.probe_call_succeeded(probe),
-        "currency() staticcall must fail when B20_STABLECOIN is deactivated"
+        scenario.env.probe_call_succeeded(probe),
+        "currency() staticcall must succeed on existing token even when B20_STABLECOIN is deactivated"
     );
 
     let transfer_while_deactivated =
         scenario.env.transfer_b20_tx(scenario.token, BerylTestEnv::bob(), U256::ONE);
     let block = scenario.build_block_with_transactions(vec![transfer_while_deactivated]).await;
     assert!(
-        !scenario.env.user_tx_succeeded(&block, 0),
-        "stablecoin transfer must revert when B20_STABLECOIN is deactivated"
-    );
-    scenario.assert_total_supply(BerylTestEnv::B20_INITIAL_SUPPLY);
-    scenario.assert_balances(BerylTestEnv::B20_INITIAL_SUPPLY, 0, 0);
-
-    let reactivate_stablecoin =
-        scenario.env.activate_feature_tx(BerylTestEnv::b20_stablecoin_feature());
-    let block = scenario.build_block_with_transactions(vec![reactivate_stablecoin]).await;
-    assert!(scenario.env.user_tx_succeeded(&block, 0), "B20_STABLECOIN re-activation must succeed");
-
-    let probe_after_reactivate = scenario.env.call_staticcall_probe_tx(
-        probe,
-        Bytes::from(IB20Stablecoin::currencyCall {}.abi_encode()),
-        BerylTestEnv::B20_PROBE_GAS_LIMIT,
-    );
-    let block = scenario.build_block_with_transactions(vec![probe_after_reactivate]).await;
-    assert!(scenario.env.user_tx_succeeded(&block, 0), "probe transaction must succeed");
-    assert!(scenario.env.probe_call_succeeded(probe), "currency() staticcall must succeed again");
-    test_helpers::assert_probe_string(
-        &scenario.env,
-        probe,
-        "currency after reactivation",
-        BerylTestEnv::B20_STABLECOIN_CURRENCY,
-    );
-
-    let transfer_after_reactivate =
-        scenario.env.transfer_b20_tx(scenario.token, BerylTestEnv::bob(), U256::ONE);
-    let block = scenario.build_block_with_transactions(vec![transfer_after_reactivate]).await;
-    assert!(
         scenario.env.user_tx_succeeded(&block, 0),
-        "stablecoin transfer must succeed after B20_STABLECOIN is re-activated"
+        "existing stablecoin transfer must succeed even when B20_STABLECOIN is deactivated"
     );
     scenario.assert_transfer_log(&block, 0, BerylTestEnv::alice(), BerylTestEnv::bob(), 1);
     scenario.assert_balances(BerylTestEnv::B20_INITIAL_SUPPLY - 1, 1, 0);
@@ -269,14 +238,9 @@ async fn stablecoin_creation_reverts_for_invalid_currency() {
     let token = env.b20_stablecoin_address();
 
     let block1 = env.sequencer.build_empty_block().await;
-    let activate_factory = env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
     let activate_stablecoin = env.activate_feature_tx(BerylTestEnv::b20_stablecoin_feature());
-    let block2 = env
-        .sequencer
-        .build_next_block_with_transactions(vec![activate_factory, activate_stablecoin])
-        .await;
-    assert!(env.user_tx_succeeded(&block2, 0), "TOKEN_FACTORY activation must succeed");
-    assert!(env.user_tx_succeeded(&block2, 1), "B20_STABLECOIN activation must succeed");
+    let block2 = env.sequencer.build_next_block_with_transactions(vec![activate_stablecoin]).await;
+    assert!(env.user_tx_succeeded(&block2, 0), "B20_STABLECOIN activation must succeed");
 
     let invalid_currency = create_stablecoin_with_currency_tx(&env, "usd");
     let block3 = env.sequencer.build_next_block_with_transactions(vec![invalid_currency]).await;
@@ -330,14 +294,11 @@ impl StablecoinScenario {
     }
 
     async fn activate_precompiles(&mut self) {
-        let activate_factory = self.env.activate_feature_tx(BerylTestEnv::b20_factory_feature());
         let activate_stablecoin =
             self.env.activate_feature_tx(BerylTestEnv::b20_stablecoin_feature());
-        let block =
-            self.build_block_with_transactions(vec![activate_factory, activate_stablecoin]).await;
+        let block = self.build_block_with_transactions(vec![activate_stablecoin]).await;
 
-        assert!(self.env.user_tx_succeeded(&block, 0), "TOKEN_FACTORY activation must succeed");
-        assert!(self.env.user_tx_succeeded(&block, 1), "B20_STABLECOIN activation must succeed");
+        assert!(self.env.user_tx_succeeded(&block, 0), "B20_STABLECOIN activation must succeed");
     }
 
     async fn build_block_with_transactions(
@@ -384,12 +345,19 @@ impl StablecoinScenario {
     }
 
     fn assert_created_log(&self, block: &BaseBlock) {
+        let variant_params: Bytes = IB20Factory::B20StablecoinEventParams {
+            version: 1,
+            currency: BerylTestEnv::B20_STABLECOIN_CURRENCY.to_string(),
+        }
+        .abi_encode()
+        .into();
         let expected = IB20Factory::B20Created {
             token: self.token,
             variant: IB20Factory::B20Variant::STABLECOIN,
             name: BerylTestEnv::B20_STABLECOIN_NAME.to_string(),
             symbol: BerylTestEnv::B20_STABLECOIN_SYMBOL.to_string(),
             decimals: BerylTestEnv::B20_STABLECOIN_DECIMALS,
+            variantParams: variant_params,
         }
         .encode_log_data();
         assert!(
@@ -398,7 +366,7 @@ impl StablecoinScenario {
                 .logs()
                 .iter()
                 .any(|log| log.address == B20FactoryStorage::ADDRESS && log.data == expected),
-            "createB20(STABLECOIN) must emit B20Created"
+            "createB20(STABLECOIN) must emit B20Created with ABI-encoded currency in variantParams"
         );
     }
 
@@ -452,7 +420,7 @@ impl StablecoinScenario {
 
 fn create_stablecoin_with_currency_tx(env: &BerylTestEnv, currency: &str) -> BaseTxEnvelope {
     let params = IB20Factory::B20StablecoinCreateParams {
-        version: B20FactoryStorage::CREATE_TOKEN_VERSION,
+        version: B20Variant::Stablecoin.supported_version(),
         name: BerylTestEnv::B20_STABLECOIN_NAME.to_string(),
         symbol: BerylTestEnv::B20_STABLECOIN_SYMBOL.to_string(),
         initialAdmin: BerylTestEnv::alice(),

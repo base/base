@@ -218,12 +218,12 @@ where
         let index = (position - 1) as usize;
 
         if index != last_index {
-            let last_value = self.values[last_index].read()?;
+            let last_value = self.values.at_with_len(last_index, len)?.read()?;
             self.positions.at_mut(&last_value).write(position)?;
-            self.values[index].write(last_value)?;
+            self.values.at_mut_with_len(index, len)?.write(last_value)?;
         }
 
-        self.values[last_index].delete()?;
+        self.values.at_mut_with_len(last_index, len)?.delete()?;
         Slot::<U256>::new(self.values.len_slot(), self.address, self.storage)
             .write(U256::from(last_index))?;
         self.positions.at_mut(value).delete()?;
@@ -235,10 +235,11 @@ where
     where
         T::Handler<'a>: Handler<T>,
     {
-        if index >= self.len()? {
+        let len = self.len()?;
+        if index >= len {
             return Ok(None);
         }
-        Ok(Some(self.values[index].read()?))
+        Ok(Some(self.values.at_with_len(index, len)?.read()?))
     }
 
     /// Reads a contiguous range of elements from the set.
@@ -251,7 +252,7 @@ where
         let start = start.min(end);
         let mut result = Vec::new();
         for i in start..end {
-            result.push(self.values[i].read()?);
+            result.push(self.values.at_with_len(i, len)?.read()?);
         }
         Ok(result)
     }
@@ -266,7 +267,7 @@ where
         let len = self.len()?;
         let mut vec = Vec::new();
         for i in 0..len {
-            vec.push(self.values[i].read()?);
+            vec.push(self.values.at_with_len(i, len)?.read()?);
         }
         Ok(Set(vec))
     }
@@ -276,28 +277,31 @@ where
         let new_len = value.0.len();
 
         for i in 0..old_len {
-            let old_value = self.values[i].read()?;
+            let old_value = self.values.at_with_len(i, old_len)?.read()?;
             self.positions.at_mut(&old_value).delete()?;
         }
 
         for (index, new_value) in value.0.into_iter().enumerate() {
             self.positions.at_mut(&new_value).write(checked_position(index)?)?;
-            self.values[index].write(new_value)?;
+            self.values.at_mut_with_len(index, new_len)?.write(new_value)?;
         }
-
-        Slot::<U256>::new(self.values.len_slot(), self.address, self.storage)
-            .write(U256::from(new_len))?;
 
         for i in new_len..old_len {
-            self.values[i].delete()?;
+            self.values.at_mut_with_len(i, old_len)?.delete()?;
         }
+
+        if new_len != old_len {
+            Slot::<U256>::new(self.values.len_slot(), self.address, self.storage)
+                .write(U256::from(new_len))?;
+        }
+
         Ok(())
     }
 
     fn delete(&mut self) -> Result<()> {
         let len = self.len()?;
         for i in 0..len {
-            let value = self.values[i].read()?;
+            let value = self.values.at_with_len(i, len)?.read()?;
             self.positions.at_mut(&value).delete()?;
         }
         self.values.delete()
@@ -326,6 +330,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
+    use rstest::rstest;
 
     use super::*;
     use crate::{hashmap::setup_storage, storage_ctx::StorageCtx};
@@ -372,6 +377,38 @@ mod tests {
             assert_eq!(loaded.len(), addrs.len());
             for addr in &addrs {
                 assert!(handler.contains(addr).unwrap());
+            }
+        });
+    }
+
+    /// (`initial_size`, `final_size`) — covers grow, shrink, and equal-size rewrite.
+    #[rstest]
+    #[case(3, 7)] // grow
+    #[case(7, 3)] // shrink
+    #[case(4, 4)] // same size, different contents
+    fn test_set_write_len_slot_updated(#[case] initial: u8, #[case] final_size: u8) {
+        let (mut storage, contract_addr) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base = U256::from(700u64);
+            let mut handler = SetHandler::<Address>::new(base, contract_addr, ctx);
+
+            // Use disjoint ranges so first and second share no elements.
+            let first: Vec<Address> = (0..initial).map(|i| Address::from([i; 20])).collect();
+            handler.write(Set::from(first.clone())).unwrap();
+            assert_eq!(handler.len().unwrap(), initial as usize);
+
+            let second: Vec<Address> =
+                (100..100 + final_size).map(|i| Address::from([i; 20])).collect();
+            handler.write(Set::from(second.clone())).unwrap();
+
+            assert_eq!(handler.len().unwrap(), final_size as usize);
+            let loaded = handler.read().unwrap();
+            assert_eq!(loaded.len(), final_size as usize);
+            for addr in &second {
+                assert!(handler.contains(addr).unwrap());
+            }
+            for addr in &first {
+                assert!(!handler.contains(addr).unwrap());
             }
         });
     }

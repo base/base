@@ -29,6 +29,9 @@ pub use uniswap::UniswapV3Payload;
 mod aerodrome;
 pub use aerodrome::AerodromeClPayload;
 
+mod b20;
+pub use b20::B20TransferPayload;
+
 mod osaka;
 pub use osaka::OsakaPayload;
 

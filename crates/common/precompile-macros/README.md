@@ -22,7 +22,7 @@ pub struct B20Storage {
 }
 
 #[contract]
-pub struct B20Security {
+pub struct B20Asset {
     pub b20: B20Storage,
 }
 ```

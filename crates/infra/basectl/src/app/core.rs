@@ -12,8 +12,9 @@ use url::Url;
 
 use super::{Action, Resources, Router, View, ViewId, runner::start_background_services};
 use crate::{
-    commands::{COLOR_BASE_BLUE, EVENT_POLL_TIMEOUT},
+    app::EVENT_POLL_TIMEOUT,
     config::MonitoringConfig,
+    output::COLOR_BASE_BLUE,
     tui::{AppFrame, Toast, restore_terminal, setup_terminal},
 };
 
@@ -109,6 +110,7 @@ impl App {
             self.resources.conductor.poll();
             self.resources.validators.poll();
             self.resources.proofs.poll();
+            self.resources.pods.poll();
             // When a conductor cluster is configured, bridge the Raft leader's
             // safe head into the DA tracker each tick.  The conductor poller
             // already queries `sync_status` from every node's CL, so the

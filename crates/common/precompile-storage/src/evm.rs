@@ -89,7 +89,7 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
         let code_len = code.len();
 
-        // EIP-3541 / Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
+        // Yellow Paper G_codedeposit: 200 gas per byte of deployed bytecode.
         self.deduct_gas(self.gas_params.code_deposit_cost(code_len))?;
 
         // For new (empty) accounts charge the CREATE equivalent costs (Yellow Paper G_create).

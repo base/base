@@ -9,10 +9,16 @@ use base_common_chains as _;
 use base_proof_host as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
 use base_proof_tee_nitro_host as _;
+#[cfg(all(feature = "worker", not(target_os = "linux")))]
+use base_prover_service_client as _;
 use serde as _;
 use tokio as _;
+#[cfg(all(feature = "worker", not(target_os = "linux")))]
+use tokio_util as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
 use tracing as _;
+#[cfg(all(feature = "worker", not(target_os = "linux")))]
+use uuid as _;
 
 mod cli;
 

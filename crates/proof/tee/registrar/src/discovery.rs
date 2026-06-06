@@ -89,6 +89,18 @@ impl AwsTargetGroupDiscovery {
             })
             .collect()
     }
+
+    /// Returns ELB target IDs that were not resolved to enough EC2 data to
+    /// build a prover endpoint.
+    fn missing_target_ids<'a>(
+        targets: &'a [(String, InstanceHealthStatus)],
+        instance_data: &HashMap<String, (String, Option<SystemTime>)>,
+    ) -> Vec<&'a str> {
+        targets
+            .iter()
+            .filter_map(|(id, _)| (!instance_data.contains_key(id)).then_some(id.as_str()))
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -173,12 +185,22 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
             })
             .collect();
 
-        // Warn about instances that the EC2 call didn't return
-        // (e.g. terminated between the ELB and EC2 calls, or missing a private IP).
-        for (id, _) in &targets {
-            if !instance_data.contains_key(id) {
-                warn!(instance_id = %id, "instance missing from EC2 response, skipping");
-            }
+        // Treat missing EC2 data as an inconclusive discovery cycle rather
+        // than silently shrinking the fleet. A target can disappear between
+        // the ELB and EC2 calls during a legitimate termination; the next
+        // cycle will then observe the authoritative ELB target set. Failing
+        // this cycle prevents a transient or partial EC2 response from
+        // making the orphan sweep deregister a signer whose target was still
+        // present in ELB.
+        let missing_ids = Self::missing_target_ids(&targets, &instance_data);
+        for id in &missing_ids {
+            warn!(instance_id = %id, "instance missing from EC2 response");
+        }
+        if !missing_ids.is_empty() {
+            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(format!(
+                "EC2 response missing data for ELB target(s): {}",
+                missing_ids.join(",")
+            )))));
         }
 
         Ok(Self::assemble_prover_instances(&targets, &instance_data, self.port))
@@ -229,6 +251,20 @@ mod tests {
         let data = HashMap::new();
         let instances = AwsTargetGroupDiscovery::assemble_prover_instances(&targets, &data, 8000);
         assert!(instances.is_empty());
+    }
+
+    #[test]
+    fn missing_target_ids_reports_targets_without_ec2_data() {
+        let targets = make_targets(&[
+            ("i-001", InstanceHealthStatus::Healthy),
+            ("i-002", InstanceHealthStatus::Healthy),
+            ("i-003", InstanceHealthStatus::Healthy),
+        ]);
+        let data = make_instance_data(&[("i-001", "10.0.0.1"), ("i-003", "10.0.0.3")]);
+
+        let missing = AwsTargetGroupDiscovery::missing_target_ids(&targets, &data);
+
+        assert_eq!(missing, vec!["i-002"]);
     }
 
     #[test]

@@ -20,9 +20,13 @@ impl<'a> MetricsAggregator<'a> {
     }
 
     /// Computes summary statistics from the collected metrics.
+    ///
+    /// `wall_clock_duration` is used as a fallback for TPS when block timestamps
+    /// are unavailable. When block timestamps are present, TPS is derived from
+    /// the first-to-last block time span instead.
     pub fn summarize(
         &self,
-        duration: Duration,
+        wall_clock_duration: Duration,
         submitted: u64,
         failed: u64,
         failure_reasons: &HashMap<String, u64>,
@@ -37,17 +41,20 @@ impl<'a> MetricsAggregator<'a> {
         let tps_values: Vec<f64> = throughput_samples.iter().map(|s| s.tps).collect();
         let gps_values: Vec<f64> = throughput_samples.iter().map(|s| s.gps).collect();
 
+        let block_range = self.compute_block_range();
+        let throughput_duration = block_range.block_time_duration().unwrap_or(wall_clock_duration);
+
         MetricsSummary {
             config,
             error: None,
             block_latency: self.compute_block_latency(),
             block_receipt_delay: self.compute_block_receipt_delay(),
             flashblocks_latency: self.compute_flashblocks_latency(),
-            throughput: self.compute_throughput(duration, submitted, failed),
+            throughput: self.compute_throughput(throughput_duration, submitted, failed),
             throughput_percentiles: Self::compute_throughput_percentiles(&tps_values, &gps_values),
             throughput_timeseries: throughput_samples.to_vec(),
             gas: self.compute_gas(),
-            block_range: self.compute_block_range(),
+            block_range,
             top_failure_reasons,
         }
     }

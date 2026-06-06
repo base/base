@@ -1,0 +1,27 @@
+[package]
+name = "base-snapshotter-bin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "snapshotter"
+path = "main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+rayon = { workspace = true }
+tracing = { workspace = true }
+base-snapshotter = { workspace = true }
+aws-credential-types = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+clap = { workspace = true, features = ["derive", "env"] }
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }

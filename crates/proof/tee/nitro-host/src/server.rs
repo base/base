@@ -1,19 +1,20 @@
-use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
+use std::{fmt, net::SocketAddr, sync::Arc};
 
+use alloy_signer::utils::public_key_to_address;
 use base_health::{HealthzApiServer, HealthzRpc};
-use base_proof_contracts::TEEProverRegistryContractClient;
-use base_proof_host::{ProverConfig, ProverService};
+use base_proof_host::ProverConfig;
 use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
 use jsonrpsee::{
     RpcModule,
     core::{RpcResult, async_trait},
     server::{Server, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
+use k256::ecdsa::VerifyingKey;
 use tracing::{info, warn};
 
 use super::{
-    NitroBackend,
     health::{RegistrationHealthConfig, RegistrationHealthzRpc},
+    pool::{NitroEnclavePool, NitroEnclavePoolError},
     registration::RegistrationChecker,
     transport::NitroTransport,
 };
@@ -24,19 +25,13 @@ const MAX_USER_DATA_BYTES: usize = 512;
 /// Maximum allowed size for the `nonce` attestation field (NSM limit).
 const MAX_NONCE_BYTES: usize = 512;
 
-struct EnclaveService {
-    transport: Arc<NitroTransport>,
-    service: ProverService<NitroBackend>,
-}
-
 /// Host-side TEE prover server exposing a JSON-RPC interface.
 ///
 /// Implements two JSON-RPC namespaces:
 /// - `prover_*`: proving operations (forwarded to the enclave via transport)
 /// - `enclave_*`: signer info queries (also forwarded via transport)
 pub struct NitroProverServer {
-    enclaves: Vec<EnclaveService>,
-    proof_request_timeout: Duration,
+    pool: NitroEnclavePool,
     registration_health: Option<RegistrationHealthConfig>,
 }
 
@@ -51,13 +46,21 @@ impl NitroProverServer {
         jsonrpsee::types::ErrorObjectOwned::owned(code, err.to_string(), None::<()>)
     }
 
-    /// Create a server with the given prover config, enclave transport, and proof request timeout.
-    pub fn new(
-        config: ProverConfig,
-        transport: Arc<NitroTransport>,
-        proof_request_timeout: Duration,
-    ) -> Self {
-        Self::new_multi(config, vec![transport], proof_request_timeout)
+    fn pool_err(err: NitroEnclavePoolError) -> jsonrpsee::types::ErrorObjectOwned {
+        match err {
+            NitroEnclavePoolError::Registration(e) => {
+                warn!(error = %e, "rejecting proof request: signer validation failed");
+                Self::rpc_err(-32001, e)
+            }
+            NitroEnclavePoolError::Busy => Self::rpc_err(-32002, err),
+            NitroEnclavePoolError::RegistrationCheckerMismatch { .. }
+            | NitroEnclavePoolError::Prover(_) => Self::rpc_err(-32000, err),
+        }
+    }
+
+    /// Create a server with the given prover config and enclave transport.
+    pub fn new(config: ProverConfig, transport: Arc<NitroTransport>) -> Self {
+        Self::new_multi(config, vec![transport])
     }
 
     /// Create a server with multiple enclave transports for dual-enclave deployments.
@@ -65,20 +68,9 @@ impl NitroProverServer {
     /// # Panics
     ///
     /// Panics if `transports` is empty.
-    pub fn new_multi(
-        config: ProverConfig,
-        transports: Vec<Arc<NitroTransport>>,
-        proof_request_timeout: Duration,
-    ) -> Self {
-        assert!(!transports.is_empty(), "at least one transport is required");
-        let enclaves = transports
-            .into_iter()
-            .map(|transport| {
-                let backend = NitroBackend::new(Arc::clone(&transport));
-                EnclaveService { transport, service: ProverService::new(config.clone(), backend) }
-            })
-            .collect();
-        Self { enclaves, proof_request_timeout, registration_health: None }
+    pub fn new_multi(config: ProverConfig, transports: Vec<Arc<NitroTransport>>) -> Self {
+        let pool = NitroEnclavePool::new_multi(config, transports);
+        Self { pool, registration_health: None }
     }
 
     /// Enables registration-gated health checks. When set, `/healthz` verifies
@@ -97,8 +89,8 @@ impl NitroProverServer {
         info!(addr = %addr, "nitro rpc server started");
 
         let mut module = RpcModule::new(());
-        let transports: Vec<Arc<NitroTransport>> =
-            self.enclaves.iter().map(|enclave| Arc::clone(&enclave.transport)).collect();
+        let transports = self.pool.transports();
+        let mut pool = self.pool;
 
         let checker = match self.registration_health {
             Some(config) => {
@@ -106,12 +98,8 @@ impl NitroProverServer {
                     registry = %config.registry_address,
                     "registration-gated health and proving guard enabled"
                 );
-                let l1_url = url::Url::parse(&config.l1_rpc_url)
-                    .map_err(|e| eyre::eyre!("invalid L1 RPC URL: {e}"))?;
-                let registry =
-                    TEEProverRegistryContractClient::new(config.registry_address, l1_url);
                 let checker = Arc::new(
-                    RegistrationChecker::new(transports.clone(), registry)
+                    RegistrationChecker::from_health_config(transports.clone(), &config)
                         .map_err(|e| eyre::eyre!("registration checker init failed: {e}"))?,
                 );
                 module.merge(
@@ -126,14 +114,12 @@ impl NitroProverServer {
             }
         };
 
-        module.merge(
-            NitroProverRpc {
-                enclaves: self.enclaves,
-                proof_request_timeout: self.proof_request_timeout,
-                checker,
-            }
-            .into_rpc(),
-        )?;
+        if let Some(checker) = checker {
+            pool = pool
+                .with_registration_checker(checker)
+                .map_err(|e| eyre::eyre!("registration checker init failed: {e}"))?;
+        }
+        module.merge(NitroProverRpc { pool: Arc::new(pool) }.into_rpc())?;
 
         module.merge(NitroSignerRpc { transports }.into_rpc())?;
 
@@ -143,42 +129,13 @@ impl NitroProverServer {
 
 /// Inner RPC handler for `prover_*` methods.
 struct NitroProverRpc {
-    enclaves: Vec<EnclaveService>,
-    proof_request_timeout: Duration,
-    checker: Option<Arc<RegistrationChecker>>,
+    pool: Arc<NitroEnclavePool>,
 }
 
 #[async_trait]
 impl ProverApiServer for NitroProverRpc {
     async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult> {
-        let enclave = match &self.checker {
-            Some(checker) => {
-                let valid = checker.select_valid_enclave().await.map_err(|e| {
-                    warn!(error = %e, "rejecting proof request: signer validation failed");
-                    NitroProverServer::rpc_err(-32001, e)
-                })?;
-                &self.enclaves[valid.index]
-            }
-            // Constructor guarantees at least one enclave.
-            None => &self.enclaves[0],
-        };
-
-        let l2_block = request.claimed_l2_block_number;
-        let timeout = self.proof_request_timeout;
-
-        match tokio::time::timeout(timeout, enclave.service.prove_block(request)).await {
-            Ok(result) => result.map_err(|e| NitroProverServer::rpc_err(-32000, e)),
-            Err(_elapsed) => {
-                warn!(l2_block, timeout_secs = timeout.as_secs(), "proof request timed out");
-                Err(NitroProverServer::rpc_err(
-                    -32000,
-                    format!(
-                        "proof request timed out after {}s for L2 block {l2_block}",
-                        timeout.as_secs()
-                    ),
-                ))
-            }
-        }
+        self.pool.prove(request).await.map_err(NitroProverServer::pool_err)
     }
 }
 
@@ -204,6 +161,22 @@ impl EnclaveApiServer for NitroSignerRpc {
                     .map_err(|e| NitroProverServer::rpc_err(-32001, e))?,
             );
         }
+        // Per-call signer log so an investigator can trace every signer
+        // the host has ever returned to the registrar. Makes a silent
+        // mid-run enclave re-key visible as a sequence of log lines
+        // with changing addresses.
+        let signers: Vec<String> = keys
+            .iter()
+            .map(|k| {
+                VerifyingKey::from_sec1_bytes(k)
+                    .map(|vk| format!("{}", public_key_to_address(&vk)))
+                    .unwrap_or_else(|e| {
+                        warn!(error = %e, "failed to parse enclave signer public key");
+                        "<unparseable>".to_string()
+                    })
+            })
+            .collect();
+        info!(signers = ?signers, "nitro_host.signer_public_key_rpc");
         Ok(keys)
     }
 
@@ -305,5 +278,12 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.code(), -32602);
         assert!(err.message().contains("nonce"));
+    }
+
+    #[test]
+    fn pool_busy_error_maps_to_retryable_rpc_code() {
+        let err = NitroProverServer::pool_err(NitroEnclavePoolError::Busy);
+        assert_eq!(err.code(), -32002);
+        assert!(err.message().contains("enclave busy"));
     }
 }

@@ -1565,7 +1565,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1576,7 +1576,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3594,16 +3594,17 @@ dependencies = [
  "base-proof-primitives",
  "base-proof-rpc",
  "base-protocol",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
  "base-runtime",
  "base-tx-manager",
- "base-zk-client",
  "clap",
  "derive_more 2.1.1",
  "eyre",
  "futures",
  "humantime",
- "jsonrpsee",
  "metrics",
+ "metrics-util",
  "rstest",
  "rustls 0.23.40",
  "serde",
@@ -3613,7 +3614,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
- "uuid",
 ]
 
 [[package]]
@@ -3678,6 +3678,7 @@ dependencies = [
  "alloy-rpc-types-eth 2.0.5",
  "alloy-serde 2.0.5",
  "alloy-signer 2.0.5",
+ "alloy-signer-local 2.0.5",
  "arbitrary",
  "bincode 2.0.1",
  "bytes",
@@ -4132,10 +4133,12 @@ dependencies = [
  "metrics",
  "mockall",
  "rand 0.9.4",
+ "redb",
  "reqwest 0.13.3",
  "rstest",
  "serde",
  "strum",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -4353,6 +4356,7 @@ dependencies = [
  "reth-primitives-traits",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -4381,6 +4385,7 @@ dependencies = [
  "clap",
  "eyre",
  "futures",
+ "humantime",
  "proptest",
  "reth-chainspec",
  "reth-cli",
@@ -4870,9 +4875,9 @@ dependencies = [
  "alloy-signer 2.0.5",
  "alloy-signer-local 2.0.5",
  "alloy-sol-types",
- "base-common-consensus",
  "base-common-flashblocks",
  "base-common-network",
+ "base-common-precompiles",
  "base-tx-manager",
  "eyre",
  "futures",
@@ -4940,7 +4945,6 @@ dependencies = [
  "revm",
  "revm-bytecode",
  "revm-database",
- "revm-inspectors",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -5100,6 +5104,7 @@ dependencies = [
  "derive_more 2.1.1",
  "proptest",
  "revm",
+ "rstest",
  "thiserror 2.0.18",
 ]
 
@@ -5346,6 +5351,7 @@ dependencies = [
  "base-common-genesis",
  "base-common-network",
  "base-common-rpc-types",
+ "base-retry",
  "metrics",
  "moka",
  "serde",
@@ -5661,6 +5667,7 @@ dependencies = [
  "rstest",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]
@@ -5702,20 +5709,26 @@ dependencies = [
 name = "base-proof-tee-nitro-host"
 version = "0.0.0"
 dependencies = [
+ "alloy-genesis 2.0.5",
  "alloy-primitives",
  "alloy-signer 2.0.5",
  "async-trait",
+ "base-common-genesis",
  "base-health",
  "base-proof-contracts",
  "base-proof-host",
  "base-proof-preimage",
  "base-proof-primitives",
  "base-proof-tee-nitro-enclave",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
+ "chrono",
  "eyre",
  "jsonrpsee",
  "k256",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tokio-vsock",
  "tower 0.5.3",
  "tracing",
@@ -5764,6 +5777,7 @@ dependencies = [
  "jsonrpsee",
  "k256",
  "metrics",
+ "metrics-exporter-prometheus",
  "rand 0.9.4",
  "reqwest 0.13.3",
  "rstest",
@@ -5844,6 +5858,9 @@ dependencies = [
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-rpc",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
+ "base-retry",
  "base-tx-manager",
  "clap",
  "eyre",
@@ -5851,6 +5868,7 @@ dependencies = [
  "humantime",
  "jsonrpsee",
  "metrics",
+ "metrics-util",
  "reqwest 0.13.3",
  "rstest",
  "rustls 0.23.40",
@@ -5929,11 +5947,103 @@ dependencies = [
  "base-proof-host",
  "base-proof-tee-nitro-enclave",
  "base-proof-tee-nitro-host",
+ "base-prover-service-client",
  "clap",
  "eyre",
  "serde",
  "tokio",
+ "tokio-util",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "base-prover-service"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-rpc-types 2.0.5",
+ "anyhow",
+ "async-trait",
+ "axum 0.8.9",
+ "base-common-network",
+ "base-proof-primitives",
+ "base-proof-rpc",
+ "base-proof-succinct-client-utils",
+ "base-proof-succinct-elfs",
+ "base-proof-succinct-ethereum-host-utils",
+ "base-proof-succinct-host-utils",
+ "base-proof-succinct-proof-utils",
+ "base-prover-service-db",
+ "base-prover-service-protocol",
+ "bincode 2.0.1",
+ "chrono",
+ "governor",
+ "jsonrpsee",
+ "metrics",
+ "nonzero_ext",
+ "reqwest 0.13.3",
+ "serde",
+ "serde_json",
+ "sp1-cluster-artifact",
+ "sp1-cluster-common",
+ "sp1-cluster-utils",
+ "sp1-prover-types",
+ "sp1-sdk",
+ "tokio",
+ "tower 0.5.3",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+ "uuid",
+]
+
+[[package]]
+name = "base-prover-service-client"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "backon",
+ "base-prover-service-protocol",
+ "base-retry",
+ "chrono",
+ "jsonrpsee",
+ "rstest",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-prover-service-db"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base-prover-service-protocol",
+ "chrono",
+ "futures",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "base-prover-service-protocol"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-proof-primitives",
+ "chrono",
+ "jsonrpsee",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -5983,6 +6093,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-retry"
+version = "0.0.0"
+dependencies = [
+ "backon",
+]
+
+[[package]]
 name = "base-ring-buffer"
 version = "0.0.0"
 
@@ -5999,6 +6116,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-snapshotter"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-s3",
+ "blake3",
+ "bollard",
+ "clap",
+ "futures",
+ "rayon",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "tar",
+ "tempfile",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
+ "zstd",
+]
+
+[[package]]
+name = "base-snapshotter-bin"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "base-snapshotter",
+ "clap",
+ "rayon",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
 name = "base-snark-e2e"
 version = "0.0.0"
 dependencies = [
@@ -6006,6 +6164,74 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.23",
+]
+
+[[package]]
+name = "base-system-tests"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.0.5",
+ "alloy-eips 2.0.5",
+ "alloy-genesis 2.0.5",
+ "alloy-network 2.0.5",
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-rpc-client 2.0.5",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth 2.0.5",
+ "alloy-signer 2.0.5",
+ "alloy-signer-local 2.0.5",
+ "alloy-sol-types",
+ "base-batcher-service",
+ "base-builder-core",
+ "base-bundle-extension",
+ "base-common-genesis",
+ "base-common-network",
+ "base-common-precompiles",
+ "base-common-rpc-types",
+ "base-consensus-disc",
+ "base-consensus-gossip",
+ "base-consensus-node",
+ "base-consensus-peers",
+ "base-consensus-rpc",
+ "base-consensus-sources",
+ "base-execution-chainspec",
+ "base-execution-rpc",
+ "base-execution-txpool",
+ "base-flashblocks",
+ "base-flashblocks-node",
+ "base-node-core",
+ "base-node-runner",
+ "base-proof-rpc",
+ "base-protocol",
+ "base-runtime",
+ "base-tx-forwarding",
+ "base-txpool-rpc",
+ "base-txpool-tracing",
+ "base-zk-client",
+ "clap",
+ "eyre",
+ "hex",
+ "indicatif 0.18.4",
+ "jsonrpsee",
+ "k256",
+ "libp2p",
+ "nanoid",
+ "rand 0.9.4",
+ "reqwest 0.13.3",
+ "reth-db",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-provider",
+ "reth-tasks",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "testcontainers",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -6145,6 +6371,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cbbc9d0964165b47557570cce6c952866c2678457aca742aafc9fb771d30270"
 
 [[package]]
+name = "base-zk-benchmarks"
+version = "0.0.0"
+
+[[package]]
 name = "base-zk-client"
 version = "0.0.0"
 dependencies = [
@@ -6279,10 +6509,18 @@ checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
 name = "basectl"
 version = "0.0.0"
 dependencies = [
+ "alloy-eips 2.0.5",
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-rpc-types-eth 2.0.5",
  "anyhow",
+ "base-common-network",
+ "base-protocol",
  "basectl-cli",
  "clap",
  "rustls 0.23.40",
+ "serde",
+ "serde_json",
  "tokio",
  "url",
 ]
@@ -6305,6 +6543,7 @@ dependencies = [
  "base-common-flashblocks",
  "base-common-genesis",
  "base-common-network",
+ "base-common-precompiles",
  "base-consensus-gossip",
  "base-consensus-rpc",
  "base-protocol",
@@ -6321,35 +6560,6 @@ dependencies = [
  "tokio-tungstenite 0.28.0",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "based"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus 2.0.5",
- "alloy-primitives",
- "alloy-provider 2.0.5",
- "alloy-rpc-types-eth 2.0.5",
- "alloy-transport-http 2.0.5",
- "anyhow",
- "async-trait",
- "cadence",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "based-bin"
-version = "0.0.0"
-dependencies = [
- "base-cli-utils",
- "based",
- "cadence",
- "clap",
- "serde",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -6426,7 +6636,7 @@ dependencies = [
  "bitflags 2.11.1",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -6446,7 +6656,7 @@ dependencies = [
  "bitflags 2.11.1",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "regex",
@@ -7068,15 +7278,6 @@ dependencies = [
  "libc",
  "once_cell",
  "serde",
-]
-
-[[package]]
-name = "cadence"
-version = "1.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ca08f6db9f0c963249cf23a27820f9d973d2acaad4d6bfaeb858b58ebd58a6a"
-dependencies = [
- "crossbeam-channel",
 ]
 
 [[package]]
@@ -8419,74 +8620,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "devnet"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus 2.0.5",
- "alloy-eips 2.0.5",
- "alloy-genesis 2.0.5",
- "alloy-network 2.0.5",
- "alloy-primitives",
- "alloy-provider 2.0.5",
- "alloy-rpc-client 2.0.5",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth 2.0.5",
- "alloy-signer 2.0.5",
- "alloy-signer-local 2.0.5",
- "alloy-sol-types",
- "base-batcher-service",
- "base-builder-core",
- "base-bundle-extension",
- "base-common-genesis",
- "base-common-network",
- "base-common-precompiles",
- "base-common-rpc-types",
- "base-consensus-disc",
- "base-consensus-gossip",
- "base-consensus-node",
- "base-consensus-peers",
- "base-consensus-rpc",
- "base-consensus-sources",
- "base-execution-chainspec",
- "base-execution-rpc",
- "base-execution-txpool",
- "base-flashblocks",
- "base-flashblocks-node",
- "base-node-core",
- "base-node-runner",
- "base-proof-rpc",
- "base-protocol",
- "base-runtime",
- "base-tx-forwarding",
- "base-txpool-rpc",
- "base-txpool-tracing",
- "base-zk-client",
- "clap",
- "eyre",
- "hex",
- "indicatif 0.18.4",
- "jsonrpsee",
- "k256",
- "libp2p",
- "nanoid",
- "rand 0.9.4",
- "reqwest 0.13.3",
- "reth-db",
- "reth-node-builder",
- "reth-node-core",
- "reth-provider",
- "reth-tasks",
- "serde",
- "serde_json",
- "tempfile",
- "testcontainers",
- "tokio",
- "tokio-util",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8583,7 +8716,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -9076,7 +9209,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -9822,7 +9955,7 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.2.1",
+ "windows-link 0.1.3",
  "windows-result 0.4.1",
 ]
 
@@ -10674,7 +10807,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-layer",
@@ -12340,9 +12473,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.29"
+version = "0.4.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
 name = "loom"
@@ -13201,7 +13334,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -15090,7 +15223,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
  "heck",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "log",
  "multimap",
  "once_cell",
@@ -15110,7 +15243,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
  "heck",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "log",
  "multimap",
  "petgraph 0.8.3",
@@ -15131,7 +15264,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -15144,7 +15277,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -15157,7 +15290,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -15304,7 +15437,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls 0.23.40",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -15342,7 +15475,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -18779,9 +18912,9 @@ dependencies = [
 
 [[package]]
 name = "revm-inspectors"
-version = "0.39.0"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "731b682530a732ef9c189ef831589128e2ce34d4a306c956322ae2dffe009715"
+checksum = "5dea6997563b46432f9c1822275cab4c462aed8f4a189dc518478c31317afb99"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth 2.0.5",
@@ -19666,7 +19799,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -19746,7 +19879,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 0.26.11",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -19767,7 +19900,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 1.0.7",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -20601,18 +20734,18 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slop-air"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4aaab798ba2ee1d2fffb3075fc303e4fd87b5b3062693a68f81adb8b508821bd"
+checksum = "15597dcaa23dbf30bdbf9709938f34182736792300bb4623fe3459ebe33e775a"
 dependencies = [
  "p3-air",
 ]
 
 [[package]]
 name = "slop-algebra"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e8abf7cfad18c0580576e8adc01f7fa27b1cb19432e451e82950c9a445a7cfc"
+checksum = "6d7e25239ac2fe1cbc2ed5114844209d70361c8d55ef812cb935c90d6f771b5b"
 dependencies = [
  "itertools 0.14.0",
  "p3-field",
@@ -20621,9 +20754,9 @@ dependencies = [
 
 [[package]]
 name = "slop-alloc"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "550acd655362b52fc00d00410f08fc5dea4d22e35eef091c09b6a37d9c79e014"
+checksum = "aadbdfa7badeb1c7576621d1eeb04f305ed6c93c1accd5da5012ad1ddaea2aa1"
 dependencies = [
  "serde",
  "slop-algebra",
@@ -20632,9 +20765,9 @@ dependencies = [
 
 [[package]]
 name = "slop-baby-bear"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3263d9487d6e632a747dd267d981e859e4f9fb97506dd8b547049116e0f49dc9"
+checksum = "9da8ad7e63b774a2f20704bfc963ebeb4f891e23754a3cb6df47a4a465a85492"
 dependencies = [
  "lazy_static",
  "p3-baby-bear",
@@ -20647,9 +20780,9 @@ dependencies = [
 
 [[package]]
 name = "slop-basefold"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "596da7b2b980055ec1074c61f7b7f243e57f4fef81ab04f717bcc99b3391191d"
+checksum = "012eb95fec1133adbf989e6e819943ce3cc2f12b817d063c13885a4b338581ae"
 dependencies = [
  "derive-where",
  "itertools 0.14.0",
@@ -20670,9 +20803,9 @@ dependencies = [
 
 [[package]]
 name = "slop-basefold-prover"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce348433feab7a98c2d18419c11320a63a9407a7bf360fcb1d12e98610def29d"
+checksum = "c16dfb91c773ba557a735efe3ffbd29bff54b314440d0623ad9756ffc2dfe3fd"
 dependencies = [
  "derive-where",
  "itertools 0.14.0",
@@ -20697,9 +20830,9 @@ dependencies = [
 
 [[package]]
 name = "slop-bn254"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c327e0927fabf9c0ae9a7b0333027dc04431e5981ab80d7bbe994d6c4ce35fc1"
+checksum = "1243ca619a3f4c07f536a060d1fd2c6f779d5b0e4cfeee3acee4d1f76ae35cb4"
 dependencies = [
  "ff",
  "p3-bn254-fr",
@@ -20712,9 +20845,9 @@ dependencies = [
 
 [[package]]
 name = "slop-challenger"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c263e731bb694d4465eedae7ecd6faf1f277198e751f3c209a1c4186d80d1b6b"
+checksum = "594a3251b7fbbabf7e0ba1e5c2f563c2797fc2d51982c0208ce70b2f52b8fbe4"
 dependencies = [
  "futures",
  "p3-challenger",
@@ -20725,9 +20858,9 @@ dependencies = [
 
 [[package]]
 name = "slop-commit"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "109134f16ae1ea59d333cb28de896bfc8ee383fb575819b6a9f78ba72f46e8ad"
+checksum = "ee8fd26ee268213b9c36d208a322f6d43ca46347d82cf07a5b83a6b95701890b"
 dependencies = [
  "p3-commit",
  "serde",
@@ -20736,9 +20869,9 @@ dependencies = [
 
 [[package]]
 name = "slop-dft"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bac9e643a07f2138cf5faaae46ae1a16bb359d5224aa3010bbf7b0b794dfd07"
+checksum = "f79c2c28e4155679cc2b2ff17a1e258cbffea580182158a8e4d71dc7cd5dc9fe"
 dependencies = [
  "p3-dft",
  "serde",
@@ -20750,18 +20883,18 @@ dependencies = [
 
 [[package]]
 name = "slop-fri"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "407ac1bf5c4b05a4da95c9951bf32307049f3157988e4b22f65915ff58f33173"
+checksum = "3645dbec4f2ddfc598d0250e880d422ecae2e70fbb2d7f434f0d5c21df011c1e"
 dependencies = [
  "p3-fri",
 ]
 
 [[package]]
 name = "slop-futures"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee61e1c5d07006a5221314cfe6f6f77d2168e117081fb13581f8596f7262ddd4"
+checksum = "058c54147a291a867e4253356adf491a29e9d999f45b26103bfc02452d8daa8e"
 dependencies = [
  "crossbeam",
  "futures",
@@ -20774,9 +20907,9 @@ dependencies = [
 
 [[package]]
 name = "slop-jagged"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d313a73ca824342c6468fd1c63a7e3cde89b7cf456d2f3408843100603eadab"
+checksum = "60222309dec4d4bffae090b160847267a23bc5b9ecd4412ba4494b486d21c776"
 dependencies = [
  "derive-where",
  "futures",
@@ -20808,18 +20941,18 @@ dependencies = [
 
 [[package]]
 name = "slop-keccak-air"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07b7952549a449a95b4a2daa4e1861afbe94c5f22d3c0f36bf42406855f5912f"
+checksum = "c7d7511944cafbc44ce208dc768b591fa6fc55a87d3f7238f8888e2536db607c"
 dependencies = [
  "p3-keccak-air",
 ]
 
 [[package]]
 name = "slop-koala-bear"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a8cdc74f04d13e738b4628312b16dfec6a2e547bde697c8bdcf556884c6e91f"
+checksum = "1ccc675284794435dd053d5e7415089bbd08fccf92cd91e044ea3213821dfb5c"
 dependencies = [
  "lazy_static",
  "p3-koala-bear",
@@ -20832,27 +20965,27 @@ dependencies = [
 
 [[package]]
 name = "slop-matrix"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57b20e8f35b9ebe60aa9bc0a2b76848bb43c8130f4df85491c5d09f49aa92c45"
+checksum = "af3d316b50bf50f8e75d388c829a499ec2f2db77c87c4183d3884d75b99df244"
 dependencies = [
  "p3-matrix",
 ]
 
 [[package]]
 name = "slop-maybe-rayon"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef79faf36b964b0b8423179e29c9c6839fd16d3f9548785b69988a50c1ea617d"
+checksum = "cabdac3bd6efd75739924e4162340caa59b32b24e02d3f84ab8f56d3f3386ee2"
 dependencies = [
  "p3-maybe-rayon",
 ]
 
 [[package]]
 name = "slop-merkle-tree"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "160e61fa46d477af39d4d1b5737faaee77afe0b4106531ae22b9781686b2888e"
+checksum = "c3b49522dc0a3b87966ba354d8cfcb762baadf9d2641f565aebca39e3032fe2a"
 dependencies = [
  "derive-where",
  "itertools 0.14.0",
@@ -20876,9 +21009,9 @@ dependencies = [
 
 [[package]]
 name = "slop-multilinear"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "671628cc4119c29685ff484d5eb993ba483cef7915d065c993c55842b4c2f3c9"
+checksum = "e04d8ec813376aaa38b94c3e12a07dd6dd76d3e7240708f51a8daef48b6c2f8a"
 dependencies = [
  "derive-where",
  "futures",
@@ -20897,27 +21030,27 @@ dependencies = [
 
 [[package]]
 name = "slop-poseidon2"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3aedfc3bf87cf2694bd108c039d663c346c7bb807491a7db6701eb9dff5c6e5d"
+checksum = "7f77602b918f667f970d017293189f9e60ba056d1933c9f717634877838297bc"
 dependencies = [
  "p3-poseidon2",
 ]
 
 [[package]]
 name = "slop-primitives"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f30e6e332c3cb103541bed9f5f477b769df1b5fb6076b5e2386569c94b1475dc"
+checksum = "592ded42eb74fd87d2ce13592906cf86f201128dd18e2aa5a35d298bc3534dcb"
 dependencies = [
  "slop-algebra",
 ]
 
 [[package]]
 name = "slop-stacked"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4981970b3ea9620889b558cc859edac2ffaeabc0b444027674cf15dd11e8d433"
+checksum = "fd59d332620d6da35a7b4f8837906ec7365761bc0bfda344bb232f8c0b395db7"
 dependencies = [
  "derive-where",
  "futures",
@@ -20938,9 +21071,9 @@ dependencies = [
 
 [[package]]
 name = "slop-sumcheck"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8a67f4c3d2f73c34032c13b85e22eba69ac8a677481dbbdb3f9942be12eb765"
+checksum = "4d1176c38a586911076061f419101bdc6491b7b9e2039553f2d3a8237158cfb3"
 dependencies = [
  "futures",
  "itertools 0.14.0",
@@ -20956,18 +21089,18 @@ dependencies = [
 
 [[package]]
 name = "slop-symmetric"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cb1de854325a8c36a1bdfee5514e1d4c9f39290ae19eeaecb21ca6ee88d96d6"
+checksum = "108bf1769132b782218e3606b8e2f310741fb89d1745234b59ff17d9e7ab8700"
 dependencies = [
  "p3-symmetric",
 ]
 
 [[package]]
 name = "slop-tensor"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcf7b2a0e76f1ad8ca43aac248965e4b7448101954661f877a6e6ac7f3813dad"
+checksum = "2bb040f7f2dc9be449a25184d2aee0321a748058d81d646a4a96ffcf32e53963"
 dependencies = [
  "arrayvec",
  "derive-where",
@@ -20985,18 +21118,18 @@ dependencies = [
 
 [[package]]
 name = "slop-uni-stark"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab33d6a10b1f4dc2edc26131bccd0955ccf5d76e7de6f15c50a9d0873f3f8603"
+checksum = "5d8a279d09e78b0ea5c5e97daa1b6440d47db8118bf3f5014667661c169c4590"
 dependencies = [
  "p3-uni-stark",
 ]
 
 [[package]]
 name = "slop-utils"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a9ff3ba185c57a0f4f3bc64e124f5c536d6db416f5f4930c46b278aade270e6"
+checksum = "1e9910567ffcfdd03aec3e5d220853f01bdbdfe1c1752f7e34cd0a4e20b226bd"
 dependencies = [
  "p3-util",
  "tracing-forest",
@@ -21005,9 +21138,9 @@ dependencies = [
 
 [[package]]
 name = "slop-whir"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07626b0cb8878f3884fa0f68e06ba37746181aa1e7ce0d6e95e53013c5c924e1"
+checksum = "99519ca11d444567b54d786f71687f63612a75c58404abde353185f53f38dd5e"
 dependencies = [
  "derive-where",
  "futures",
@@ -21111,7 +21244,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -21214,9 +21347,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-core-executor"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ead1f498f7763a3b27740d77db7ef07a737cf568a3c3c85efa72bb1a4858ea6a"
+checksum = "58d3af539d746d5312346d33899d297232351ca5aed1668f16d5a5a0ee0a3ab3"
 dependencies = [
  "bincode 1.3.3",
  "bytemuck",
@@ -21258,9 +21391,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-core-executor-runner"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14d0e9425daa3f50fcfa9b434e6030b64b3dfacaed3d97fd47314e5ddd851603"
+checksum = "19b3b61a7c5c891a8c18ac31deccca3914d59132f8656d6d7db09c453ee5ed6f"
 dependencies = [
  "base64 0.22.1",
  "bincode 1.3.3",
@@ -21280,9 +21413,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-core-executor-runner-binary"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6671dac7abe0391d28669cbf6b08806c07feb757c0a5fc29bac8ef6882a642df"
+checksum = "6b0c810b99e4fca0b0d0e791a2a7d6b080aad6ffb6cf950e633409eb2723cba3"
 dependencies = [
  "bincode 1.3.3",
  "crash-handler",
@@ -21295,9 +21428,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-core-machine"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e479b3999aa550b5ef9cadaa950a3ccbfb16ff226c5598fe632a6ee6ea1749d"
+checksum = "29b3851384225aae5588b1fca3c9c8f67001187d53abff21709a7cf8f6098f08"
 dependencies = [
  "bincode 1.3.3",
  "cfg-if",
@@ -21344,9 +21477,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-curves"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4376b39a9d40040b826555984b013bd887c4505a354993a27988a6a394155fe7"
+checksum = "0bd90718c62dc06a42b9a47308ca914bb6d3f04f9265c77cb76bc135929cd59d"
 dependencies = [
  "cfg-if",
  "dashu",
@@ -21365,9 +21498,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-derive"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe2bf01a986b185b4497d7386ce3fc35eba3fbeb5169aaa7645b61053c34f449"
+checksum = "ecac7ec9b0d2a12f486486a62b2805257e7ffcced51dd39d25fcefaa133adaf6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -21376,9 +21509,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-hypercube"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecb3ffe4a61132c3277e00f85c532fbf38c3a9287ccf10a815339fe5be48af2b"
+checksum = "8449d118a6fe1532899da955c30247c413c90e8c78b06a452f3a40ff6432299e"
 dependencies = [
  "arrayref",
  "deepsize2",
@@ -21425,9 +21558,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-jit"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "208902ad494f7a101e9c8420f493bc8c42fe4f1f6a3e21b7929d084f3c2e0dce"
+checksum = "9355cbdc9d7183d8ab244b695ae7630afb559c6b2bd466bc89a2f3e334b2047a"
 dependencies = [
  "dynasmrt",
  "hashbrown 0.14.5",
@@ -21442,9 +21575,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-lib"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0d5f56efe1d2a980d0f46083863ef4fdf715ed70cc32668c9e5725af145b8d9"
+checksum = "20e8b776b02a868c482b70b5dca58204f27fc860dbbe5eda70437299367f494c"
 dependencies = [
  "bincode 1.3.3",
  "serde",
@@ -21453,9 +21586,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-primitives"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13ad00052921b993af682403b378c8fe23c40382f9790f093c8fac0f30433c5e"
+checksum = "f20c3dd3131b1285420ca25a37f507915ab609887d6dda73973396a0faa719c1"
 dependencies = [
  "bincode 1.3.3",
  "blake3",
@@ -21565,9 +21698,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-recursion-circuit"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfe43147fe2a5604b1c14d10f44cb7d4304127275470f676b03593a2a00da4f2"
+checksum = "19d9ce031605bc111474c11e7841536f3469311253791ef326ee16427e10178e"
 dependencies = [
  "bincode 1.3.3",
  "itertools 0.14.0",
@@ -21605,9 +21738,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-recursion-compiler"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95f8488f5a4bd212f2498a8363d0f76378328aea5cbe69658c636016797c72ab"
+checksum = "993b5dcde57622009857883637177946254f3cf00290cc4b998b54a76ffab7c0"
 dependencies = [
  "backtrace",
  "cfg-if",
@@ -21626,9 +21759,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-recursion-executor"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef824f774b7ffac1c3c4f58fe145e4b503ba30ef885993947d4186a448748a7c"
+checksum = "983d18b6e0e641c8173b250c234fe355c3a9ba5b7485d3af5a54ddb7ab51e814"
 dependencies = [
  "backtrace",
  "cfg-if",
@@ -21650,9 +21783,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-recursion-gnark-ffi"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6961ae41bdca71e213d01aad4a7f664d0c95a760975a12816b2ac2d54e1e570"
+checksum = "43cb9411bdf57706fa6b342c60534c47c6a066aeb5129e89d8d39f6fb37d12e5"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -21675,9 +21808,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-recursion-machine"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d741527465de17de5c3ef4f9465e77117d2a15599398f97e8fb0cf8c3e57b2f4"
+checksum = "01ab820757fa3783a0230efd48a509fb64b8e7fbaf1d257211dae0c66df79002"
 dependencies = [
  "itertools 0.14.0",
  "rand 0.8.6",
@@ -21749,9 +21882,9 @@ dependencies = [
 
 [[package]]
 name = "sp1-verifier"
-version = "6.2.2"
+version = "6.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04eea9c69efabee3fff3c24f2946963d04b62af7fdd7fc6da06b1d4853f8aca6"
+checksum = "44e7a8627fcbfd89ec21932ae33e3a5b9adc4ef844c0e295ef36ee43f0fbf442"
 dependencies = [
  "bincode 1.3.3",
  "blake3",
@@ -22400,7 +22533,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -24564,7 +24697,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

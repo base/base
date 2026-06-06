@@ -38,7 +38,7 @@ use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, trace, warn};
+use tracing::{Level, debug, error, span, trace, warn};
 
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
@@ -901,6 +901,14 @@ impl BasePayloadBuilderCtx {
                     (info.executed_transactions.len() as u64).saturating_sub(min_tx_index);
                 return Ok(diag);
             }
+
+            let tx_span = span!(
+                Level::TRACE,
+                "execute_transaction",
+                tx_hash = %tx_hash,
+                tx_gas_limit = tx.gas_limit(),
+            );
+            let _tx_span_guard = tx_span.enter();
 
             let execution_start_time = Instant::now();
             let ResultAndState { result, state } = match evm.transact(&tx) {
