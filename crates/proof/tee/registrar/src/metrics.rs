@@ -37,6 +37,9 @@ base_metrics::define_metrics! {
     #[describe("Total number of revokeCert transaction submission failures")]
     revoke_cert_tx_failures: counter,
 
+    #[describe("Total number of revokeCert transactions that landed onchain but reverted")]
+    revoke_cert_reverted_total: counter,
+
     #[describe("Total number of successful revokeCert transactions")]
     revoke_cert_success_total: counter,
 

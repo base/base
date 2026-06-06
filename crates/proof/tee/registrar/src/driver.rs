@@ -1836,7 +1836,7 @@ where
             "Revoking certificate"
         );
 
-        CertRevoker::new(verifier_address, self.tx_manager.clone()).revoke_cert(cert_hash);
+        drop(CertRevoker::new(verifier_address, self.tx_manager.clone()).revoke_cert(cert_hash));
     }
 
     /// Submits a `deregisterSigner` transaction and returns whether it succeeded.

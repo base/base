@@ -4,6 +4,7 @@ use alloy_primitives::{Address, Bytes, FixedBytes};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::INitroEnclaveVerifier;
 use base_tx_manager::{TxCandidate, TxManager};
+use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::RegistrarMetrics;
@@ -24,12 +25,15 @@ where
         Self { verifier_address, tx_manager }
     }
 
-    /// Spawns a detached task that submits a `revokeCert` transaction and
-    /// relies on the tx manager to deliver a confirmed receipt.
-    pub fn revoke_cert(self, cert_hash: FixedBytes<32>) {
+    /// Spawns a task that submits a `revokeCert` transaction and relies on the
+    /// tx manager to deliver a confirmed receipt.
+    ///
+    /// Dropping the returned handle detaches the task; awaiting it lets callers
+    /// observe task panics or coordinate shutdown.
+    pub fn revoke_cert(self, cert_hash: FixedBytes<32>) -> JoinHandle<()> {
         tokio::spawn(async move {
             self.submit_revoke_cert(cert_hash).await;
-        });
+        })
     }
 
     /// Builds the transaction candidate for `NitroEnclaveVerifier.revokeCert`.
@@ -50,6 +54,7 @@ where
                         tx_hash = %receipt.transaction_hash,
                         "revokeCert transaction reverted (cert may already be revoked)"
                     );
+                    RegistrarMetrics::revoke_cert_reverted_total().increment(1);
                 } else {
                     info!(
                         cert_hash = %cert_hash,
@@ -115,12 +120,70 @@ mod tests {
         );
     }
 
-    #[derive(Debug, Clone, Default)]
+    #[tokio::test]
+    async fn revoke_cert_returns_join_handle_for_spawned_submission() {
+        let tx_manager = MockTxManager::default();
+        let revoker = CertRevoker::new(VERIFIER_ADDRESS, tx_manager.clone());
+
+        let handle = revoker.revoke_cert(CERT_HASH);
+
+        handle.await.unwrap();
+        assert_eq!(
+            tx_manager.take_candidate().tx_data,
+            Bytes::from(INitroEnclaveVerifier::revokeCertCall { certHash: CERT_HASH }.abi_encode())
+        );
+    }
+
+    #[cfg(feature = "metrics")]
+    mod metric_tests {
+        use metrics_exporter_prometheus::PrometheusBuilder;
+
+        use super::*;
+
+        #[test]
+        fn submit_revoke_cert_records_reverted_metric() {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let recorder = PrometheusBuilder::new().build_recorder();
+            let handle = recorder.handle();
+
+            metrics::with_local_recorder(&recorder, || {
+                rt.block_on(async {
+                    let tx_manager = MockTxManager::with_receipt_status(false);
+                    let revoker = CertRevoker::new(VERIFIER_ADDRESS, tx_manager);
+
+                    revoker.submit_revoke_cert(CERT_HASH).await;
+                });
+            });
+
+            let rendered = handle.render();
+            assert!(
+                rendered.contains("base_registrar_revoke_cert_reverted_total 1"),
+                "reverted revokeCert transaction should increment the revert counter. Got:\n{rendered}",
+            );
+            assert!(
+                !rendered.contains("base_registrar_revoke_cert_success_total 1"),
+                "reverted revokeCert transaction must not increment the success counter. Got:\n{rendered}",
+            );
+        }
+    }
+
+    #[derive(Debug, Clone)]
     struct MockTxManager {
         sent_candidate: std::sync::Arc<Mutex<Option<TxCandidate>>>,
+        receipt_status: bool,
+    }
+
+    impl Default for MockTxManager {
+        fn default() -> Self {
+            Self::with_receipt_status(true)
+        }
     }
 
     impl MockTxManager {
+        fn with_receipt_status(receipt_status: bool) -> Self {
+            Self { sent_candidate: std::sync::Arc::default(), receipt_status }
+        }
+
         fn take_candidate(&self) -> TxCandidate {
             self.sent_candidate.lock().unwrap().take().expect("candidate was sent")
         }
@@ -129,7 +192,7 @@ mod tests {
     impl TxManager for MockTxManager {
         async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
             *self.sent_candidate.lock().unwrap() = Some(candidate);
-            Ok(stub_receipt())
+            Ok(stub_receipt(self.receipt_status))
         }
 
         async fn send_async(&self, _candidate: TxCandidate) -> base_tx_manager::SendHandle {
@@ -141,10 +204,10 @@ mod tests {
         }
     }
 
-    fn stub_receipt() -> TransactionReceipt {
+    fn stub_receipt(status: bool) -> TransactionReceipt {
         let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
             receipt: Receipt {
-                status: Eip658Value::Eip658(true),
+                status: Eip658Value::Eip658(status),
                 cumulative_gas_used: 21_000,
                 logs: vec![],
             },
