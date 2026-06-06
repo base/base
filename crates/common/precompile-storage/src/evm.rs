@@ -173,6 +173,14 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         if self.is_static {
             return Err(BasePrecompileError::StaticCallViolation);
         }
+        // EIP-2200: if remaining gas is at or below the call stipend (2300), halt with
+        // out-of-gas. This is the reentrancy sentry that Solidity's `.transfer()` relies on:
+        // forwarding only 2300 gas guarantees the recipient cannot perform state-changing
+        // SSTOREs. Without this guard, a warm-dirty rewrite (~200 gas) would succeed where
+        // the EVM SSTORE opcode would have halted, breaking the 2300-gas invariant.
+        if self.gas.remaining() <= self.gas_params.call_stipend() {
+            return Err(BasePrecompileError::OutOfGas);
+        }
         let s = self
             .internals
             .sstore(address, key, value)
@@ -300,6 +308,24 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_gas_params(GasParams::new_spec(SpecId::AMSTERDAM));
         provider
+    }
+
+    /// The EIP-2200 stipend guard in [`super::EvmPrecompileStorageProvider::sstore`] compares
+    /// `gas.remaining()` against `gas_params.call_stipend()`. This test verifies that the
+    /// call stipend constant returned by `GasParams` is exactly 2300, as required by EIP-2200.
+    ///
+    /// Unit tests cannot directly instantiate [`super::EvmPrecompileStorageProvider`] because
+    /// it requires a live EVM journal via `PrecompileInput`. The stipend guard is therefore not
+    /// exercisable in isolation here. Full coverage of the guard at runtime is provided by the
+    /// B20 fork tests that forward exactly 2300 gas into a stateful precompile call.
+    #[test]
+    fn eip_2200_stipend_guard_constant_is_2300() {
+        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
+        assert_eq!(
+            gas_params.call_stipend(),
+            2300,
+            "call_stipend must equal 2300 as required by EIP-2200"
+        );
     }
 
     /// `set_code` on a brand-new account must charge both `create_state_gas` and
