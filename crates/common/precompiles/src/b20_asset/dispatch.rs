@@ -7,7 +7,7 @@ use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolInterface, SolValue};
-use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -45,12 +45,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             }
             Err(e) => return e.into_precompile_result(ctx.gas_used(), ctx.state_gas_used()),
         }
-        self.inner_with_observer(ctx, calldata, observer).into_precompile_result(
-            ctx.gas_used(),
-            ctx.state_gas_used(),
-            ctx.gas_refunded(),
-            |b| b,
-        )
+        ctx.result_output(self.inner_with_observer(ctx, calldata, observer), |b| b)
     }
 
     /// Decodes calldata and executes the matching `IB20Asset` or inherited `IB20` operation.

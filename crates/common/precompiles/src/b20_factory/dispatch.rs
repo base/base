@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::StorageCtx;
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -14,9 +14,7 @@ impl<'a> B20FactoryStorage<'a> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Factory` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         deduct_calldata_cost!(ctx, calldata);
-        let result = self.inner(ctx, calldata);
-        let gas = ctx.gas_used();
-        result.into_precompile_result(gas, ctx.state_gas_used(), ctx.gas_refunded(), |b| b)
+        ctx.result_output(self.inner(ctx, calldata), |b| b)
     }
 
     fn inner(

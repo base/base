@@ -1,6 +1,6 @@
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::StorageCtx;
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -24,12 +24,7 @@ impl PolicyRegistryStorage<'_> {
                 .ensure_activated(ActivationFeature::PolicyRegistry.id())
                 .and_then(|()| self.inner(calldata))
         };
-        result.into_precompile_result(
-            ctx.gas_used(),
-            ctx.state_gas_used(),
-            ctx.gas_refunded(),
-            |b| b,
-        )
+        ctx.result_output(result, |b| b)
     }
 
     /// Returns `true` when the calldata selector belongs to a view (read-only) function.

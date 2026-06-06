@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::StorageCtx;
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -20,12 +20,7 @@ impl ActivationRegistryStorage<'_> {
         activation_admin_address: Option<Address>,
     ) -> PrecompileResult {
         deduct_calldata_cost!(ctx, calldata);
-        self.inner(calldata, activation_admin_address).into_precompile_result(
-            ctx.gas_used(),
-            ctx.state_gas_used(),
-            ctx.gas_refunded(),
-            |output| output,
-        )
+        ctx.result_output(self.inner(calldata, activation_admin_address), |output| output)
     }
 
     fn inner(
