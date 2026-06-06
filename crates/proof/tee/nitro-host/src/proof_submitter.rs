@@ -84,21 +84,25 @@ where
         &self,
         request: WorkerSubmitProofRequest,
     ) -> Result<WorkerSubmitProofResponse, ProofSubmitterError> {
-        match self.client.submit_proof(request.clone()).await {
+        let session_id = request.session_id.clone();
+        let lock_id = request.lock_id.clone();
+        let worker_id = request.worker_id.clone();
+
+        match self.client.submit_proof(request).await {
             Ok(response) => {
                 info!(
-                    session_id = %request.session_id,
-                    lock_id = %request.lock_id,
-                    worker_id = %request.worker_id,
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
                     "proof submission delivered"
                 );
                 Ok(response)
             }
             Err(error) => {
                 warn!(
-                    session_id = %request.session_id,
-                    lock_id = %request.lock_id,
-                    worker_id = %request.worker_id,
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
                     error = %error,
                     "proof submission failed"
                 );
@@ -130,6 +134,8 @@ where
                 return Err(ProofSubmitterError::Cancelled);
             }
 
+            // After this point, cancellation is treated as in-flight and the
+            // submission RPC is allowed to finish.
             submitter.submit(request).await
         })
     }
