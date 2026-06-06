@@ -308,4 +308,30 @@ mod tests {
         assert_eq!(requester.prove_requests.lock().unwrap().len(), 1);
         assert!(requester.get_requests.lock().unwrap().is_empty());
     }
+
+    /// Restart/idempotency: dispatching the same proof request twice — e.g. after
+    /// a proposer restart re-discovers the same target — yields the same
+    /// deterministic session id. The prover service is expected to dedupe the
+    /// underlying session by id, but the proposer surfaces the same id either
+    /// way so that a subsequent `get_proof` call lands on the existing session.
+    #[tokio::test]
+    async fn proof_requester_dispatcher_is_idempotent_for_same_request() {
+        let requester = std::sync::Arc::new(MockProofRequester::default());
+        let dispatcher = ProofRequesterDispatcher::aws_nitro(
+            std::sync::Arc::clone(&requester) as std::sync::Arc<dyn ProofRequesterProvider>
+        );
+        let request = test_request(B256::repeat_byte(0xaa));
+        let expected_session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
+
+        let first = dispatcher.dispatch_tee(request.clone()).await.unwrap();
+        let second = dispatcher.dispatch_tee(request).await.unwrap();
+
+        assert_eq!(first.session_id, expected_session_id);
+        assert_eq!(second.session_id, expected_session_id);
+        let prove_requests = requester.prove_requests.lock().unwrap();
+        assert_eq!(prove_requests.len(), 2);
+        // Both calls carry the same session id and identical TEE proof payload.
+        assert_eq!(prove_requests[0].proof.session_id, expected_session_id);
+        assert_eq!(prove_requests[1].proof.session_id, expected_session_id);
+    }
 }

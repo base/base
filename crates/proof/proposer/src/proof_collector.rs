@@ -23,7 +23,10 @@ use base_prover_service_protocol::{GetProofRequest, ProofStatus, TeeKind};
 use futures::{StreamExt, stream};
 use tracing::debug;
 
-use crate::{driver::RecoveredState, error::ProposerError, proof_adapter::ProposerProofAdapter};
+use crate::{
+    driver::RecoveredState, error::ProposerError, metrics::Metrics,
+    proof_adapter::ProposerProofAdapter,
+};
 
 /// Outcome returned by [`ProofCollector::collect`] for a single target block.
 #[derive(Debug)]
@@ -196,6 +199,7 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
                 }
             };
 
+            Metrics::proof_status_received_total(Self::status_label(response.status)).increment(1);
             match response.status {
                 ProofStatus::Queued | ProofStatus::Running => {
                     debug!(
@@ -248,6 +252,16 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
         }
 
         outcomes
+    }
+
+    /// Maps a [`ProofStatus`] to its `proof_status_received_total` label value.
+    const fn status_label(status: ProofStatus) -> &'static str {
+        match status {
+            ProofStatus::Queued => Metrics::PROOF_STATUS_QUEUED,
+            ProofStatus::Running => Metrics::PROOF_STATUS_RUNNING,
+            ProofStatus::Succeeded => Metrics::PROOF_STATUS_SUCCEEDED,
+            ProofStatus::Failed => Metrics::PROOF_STATUS_FAILED,
+        }
     }
 
     async fn fetch_canonical_root_results(
@@ -348,5 +362,67 @@ mod tests {
 
         // Next target = 600 > safe_head=550, so no targets.
         assert!(targets.is_empty());
+    }
+
+    /// Restart/recovery: the collector derives the prover-service session id
+    /// solely from the canonical L2 output root + tee kind, so a freshly
+    /// constructed collector (mirroring a proposer restart) can pick up an
+    /// in-flight session that a previous run dispatched.
+    #[tokio::test]
+    async fn collector_recovers_in_flight_session_across_restart() {
+        use crate::proof_adapter::ProofRequesterDispatcher;
+
+        let proof_requester: Arc<dyn ProofRequesterProvider> =
+            Arc::new(MockProofRequester::default());
+
+        let target_block = 600u64;
+        let canonical_root = B256::repeat_byte(0xCC);
+        let mut output_roots = HashMap::new();
+        output_roots.insert(target_block, canonical_root);
+        let rollup_client = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(target_block, B256::ZERO),
+            output_roots,
+            max_safe_block: None,
+        });
+
+        // First "run": dispatch a TEE proof for `target_block` via a dispatcher
+        // that shares the prover-service stub.
+        let dispatcher = ProofRequesterDispatcher::aws_nitro(Arc::clone(&proof_requester));
+        let proof_request = base_proof_primitives::ProofRequest {
+            l1_head: B256::repeat_byte(0x01),
+            agreed_l2_head_hash: B256::repeat_byte(0x02),
+            agreed_l2_output_root: B256::repeat_byte(0x03),
+            claimed_l2_output_root: canonical_root,
+            claimed_l2_block_number: target_block,
+            proposer: Address::repeat_byte(0x04),
+            intermediate_block_interval: 300,
+            l1_head_number: 1200,
+            image_hash: B256::repeat_byte(0x05),
+        };
+        let dispatched = dispatcher.dispatch_tee(proof_request).await.unwrap();
+        let expected_session_id = dispatched.session_id.clone();
+        // Drop the dispatcher to simulate the prior proposer process exiting.
+        drop(dispatcher);
+
+        // "Restart": build a fresh collector with no in-memory dispatch state.
+        // It must rederive the session id from the canonical chain root and
+        // recover the in-flight session.
+        let collector = ProofCollector::aws_nitro(
+            Arc::clone(&proof_requester),
+            rollup_client,
+            target_block,
+            4,
+            4,
+        );
+        let outcomes = collector.collect(&[target_block]).await;
+
+        assert_eq!(outcomes.len(), 1);
+        match &outcomes[0] {
+            CollectedProof::Ready { target_block: t, session_id, .. } => {
+                assert_eq!(*t, target_block);
+                assert_eq!(session_id, &expected_session_id);
+            }
+            other => panic!("expected Ready, got {other:?}"),
+        }
     }
 }

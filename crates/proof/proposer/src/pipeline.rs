@@ -555,6 +555,7 @@ where
                     from_block = plan.start_block,
                     "Proof request accepted by prover service"
                 );
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
                 state.record_gauges();
             }
             ProofDispatchOutcome::Failed { plan, error } => {
@@ -569,6 +570,7 @@ where
                     return;
                 }
 
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
                 self.handle_proof_failure(plan.target_block, error, state);
             }
         }
@@ -593,6 +595,8 @@ where
                     state.inflight.remove(&target_block);
                     state.retry_counts.remove(&target_block);
                     state.proved.insert(target_block, proof);
+                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
+                    Metrics::last_collected_block().set(target_block as f64);
                     state.record_gauges();
                     info!(
                         target_block,
@@ -611,6 +615,8 @@ where
                         continue;
                     }
 
+                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
+                        .increment(1);
                     self.handle_proof_failure(target_block, error, state);
                 }
             }
@@ -622,6 +628,7 @@ where
         state.inflight.remove(&target);
         let count = state.retry_counts.entry(target).or_insert(0);
         *count += 1;
+        Metrics::proof_retries_total().increment(1);
         if *count >= self.config.max_retries {
             error!(
                 target_block = target,
@@ -1771,6 +1778,94 @@ mod tests {
                     assert_eq!(value.into_inner(), TEST_BLOCK_INTERVAL as f64);
                 }
                 other => panic!("expected recovered last_proposed_block gauge, got {other:?}"),
+            }
+        });
+    }
+
+    /// Verifies `handle_proof_failure` increments `proof_retries_total` on every
+    /// retry attempt below `max_retries`.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn test_handle_proof_failure_emits_retry_metrics() {
+        let pipeline =
+            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
+
+        with_recorder(|snap| {
+            let mut state = PipelineState::new();
+            let target = TEST_BLOCK_INTERVAL * 3;
+            state.inflight.insert(target);
+
+            // Each call to `handle_proof_failure` increments `proof_retries_total`
+            // before the max-retries check, so two calls yield a counter value of 2.
+            pipeline.handle_proof_failure(target, ProposerError::Prover("boom".into()), &mut state);
+            pipeline.handle_proof_failure(target, ProposerError::Prover("boom".into()), &mut state);
+
+            let snapshot = snap.snapshot().into_vec();
+            match find_metric(&snapshot, MetricKind::Counter, "base_proposer.proof_retries_total") {
+                Some(DebugValue::Counter(value)) => assert_eq!(*value, 2),
+                other => panic!("expected proof_retries_total counter, got {other:?}"),
+            }
+        });
+    }
+
+    /// Verifies `handle_dispatch_result` increments `proof_dispatch_total` with
+    /// the right `outcome` label for both accepted and failed dispatch outcomes.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn test_handle_dispatch_result_emits_dispatch_metrics() {
+        let pipeline =
+            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
+
+        with_recorder(|snap| {
+            let mut state = PipelineState::new();
+            let accepted_target = TEST_BLOCK_INTERVAL;
+            let failed_target = TEST_BLOCK_INTERVAL * 2;
+            state.inflight.insert(accepted_target);
+            state.inflight.insert(failed_target);
+
+            pipeline.handle_dispatch_result(
+                Ok(ProofDispatchOutcome::Accepted {
+                    plan: ProofPlan { start_block: 0, target_block: accepted_target },
+                    session_id: "session-accepted".to_owned(),
+                }),
+                &mut state,
+            );
+            pipeline.handle_dispatch_result(
+                Ok(ProofDispatchOutcome::Failed {
+                    plan: ProofPlan { start_block: accepted_target, target_block: failed_target },
+                    error: ProposerError::Prover("dispatch failed".into()),
+                }),
+                &mut state,
+            );
+
+            let snapshot = snap.snapshot().into_vec();
+            let accepted = snapshot
+                .iter()
+                .find(|(ck, _, _, _)| {
+                    ck.kind() == MetricKind::Counter
+                        && ck.key().name() == "base_proposer.proof_dispatch_total"
+                        && ck
+                            .key()
+                            .labels()
+                            .any(|l| l.key() == "outcome" && l.value() == "accepted")
+                })
+                .map(|(_, _, _, v)| v);
+            match accepted {
+                Some(DebugValue::Counter(value)) => assert_eq!(*value, 1),
+                other => panic!("expected accepted dispatch counter, got {other:?}"),
+            }
+
+            let failed = snapshot
+                .iter()
+                .find(|(ck, _, _, _)| {
+                    ck.kind() == MetricKind::Counter
+                        && ck.key().name() == "base_proposer.proof_dispatch_total"
+                        && ck.key().labels().any(|l| l.key() == "outcome" && l.value() == "failed")
+                })
+                .map(|(_, _, _, v)| v);
+            match failed {
+                Some(DebugValue::Counter(value)) => assert_eq!(*value, 1),
+                other => panic!("expected failed dispatch counter, got {other:?}"),
             }
         });
     }
