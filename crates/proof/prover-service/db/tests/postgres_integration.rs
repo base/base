@@ -1605,7 +1605,7 @@ async fn test_fail_expired_proof_jobs_enforces_retry_exhaustion() {
         .fail_expired_proof_jobs(FailExpiredProofJobs {
             max_attempts: 2,
             batch_size: 100,
-            error_message: "worker lock expired after retry budget".to_owned(),
+            error_message: "worker lock expired after retry budget",
         })
         .await
         .unwrap();
@@ -1625,7 +1625,7 @@ async fn test_fail_expired_proof_jobs_enforces_retry_exhaustion() {
         .fail_expired_proof_jobs(FailExpiredProofJobs {
             max_attempts: 2,
             batch_size: 100,
-            error_message: "worker lock expired after retry budget".to_owned(),
+            error_message: "worker lock expired after retry budget",
         })
         .await
         .unwrap();
@@ -1678,7 +1678,7 @@ async fn test_fail_expired_proof_jobs_honors_batch_size() {
         .fail_expired_proof_jobs(FailExpiredProofJobs {
             max_attempts: 1,
             batch_size: 2,
-            error_message: "worker lock expired after retry budget".to_owned(),
+            error_message: "worker lock expired after retry budget",
         })
         .await
         .unwrap();
@@ -1689,7 +1689,7 @@ async fn test_fail_expired_proof_jobs_honors_batch_size() {
         .fail_expired_proof_jobs(FailExpiredProofJobs {
             max_attempts: 1,
             batch_size: 2,
-            error_message: "worker lock expired after retry budget".to_owned(),
+            error_message: "worker lock expired after retry budget",
         })
         .await
         .unwrap();
@@ -1700,7 +1700,7 @@ async fn test_fail_expired_proof_jobs_honors_batch_size() {
         .fail_expired_proof_jobs(FailExpiredProofJobs {
             max_attempts: 1,
             batch_size: 2,
-            error_message: "worker lock expired after retry budget".to_owned(),
+            error_message: "worker lock expired after retry budget",
         })
         .await
         .unwrap();

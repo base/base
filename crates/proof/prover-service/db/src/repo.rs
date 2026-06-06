@@ -711,7 +711,7 @@ impl ProofRequestRepo {
     /// `FOR UPDATE SKIP LOCKED` to avoid locking the full expired backlog.
     pub async fn fail_expired_proof_jobs(
         &self,
-        req: FailExpiredProofJobs,
+        req: FailExpiredProofJobs<'_>,
     ) -> Result<Vec<ProofJob>> {
         let columns = PROOF_JOB_RETURNING_COLUMNS;
         let sql = format!(

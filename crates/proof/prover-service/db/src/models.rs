@@ -1019,13 +1019,13 @@ pub enum SubmitProofOutcome {
 
 /// Parameters for terminally failing expired worker jobs that exhausted attempts.
 #[derive(Debug, Clone)]
-pub struct FailExpiredProofJobs {
+pub struct FailExpiredProofJobs<'a> {
     /// Jobs with `attempt >= max_attempts` are failed once their lock has expired.
     pub max_attempts: u32,
     /// Maximum number of expired jobs to fail in this batch.
     pub batch_size: u32,
     /// Error message stored on newly failed jobs.
-    pub error_message: String,
+    pub error_message: &'a str,
 }
 
 #[cfg(test)]

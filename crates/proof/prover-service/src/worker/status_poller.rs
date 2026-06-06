@@ -43,12 +43,13 @@ pub struct StatusPoller {
     stuck_timeout_mins: i32,
     max_proof_retries: i32,
     worker_queue: WorkerQueueConfig,
+    expired_claim_error_message: String,
 }
 
 impl StatusPoller {
     /// Creates a status poller (`poll_interval_secs=<secs>`, `stuck_timeout_mins=<mins>`,
     /// `max_proof_retries=<n>`) with the given worker queue tuning.
-    pub const fn new(
+    pub fn new(
         repo: ProofRequestRepo,
         manager: ProofRequestManager,
         poll_interval_secs: u64,
@@ -56,6 +57,11 @@ impl StatusPoller {
         max_proof_retries: i32,
         worker_queue: WorkerQueueConfig,
     ) -> Self {
+        let expired_claim_error_message = format!(
+            "Worker claim expired after exhausting {} attempts",
+            worker_queue.reclaim_attempts
+        );
+
         Self {
             repo,
             manager,
@@ -63,6 +69,7 @@ impl StatusPoller {
             stuck_timeout_mins,
             max_proof_retries,
             worker_queue,
+            expired_claim_error_message,
         }
     }
 
@@ -175,10 +182,7 @@ impl StatusPoller {
             .fail_expired_proof_jobs(FailExpiredProofJobs {
                 max_attempts: self.worker_queue.reclaim_attempts,
                 batch_size: self.worker_queue.reaper_batch_size,
-                error_message: format!(
-                    "Worker claim expired after exhausting {} attempts",
-                    self.worker_queue.reclaim_attempts
-                ),
+                error_message: &self.expired_claim_error_message,
             })
             .await;
 
