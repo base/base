@@ -160,7 +160,7 @@ impl SnarkE2e {
 
         // Prove 1 block: start_block_number = safe_head - 1, target = safe_head
         let mut target_block = safe_head_number;
-        let mut safe_head = target_block - 1;
+        let mut safe_head = target_block.checked_sub(1).context("safe_head_number is 0, cannot prove genesis block")?;
         info!(
             latest_block,
             safe_head_number, target_block, safe_head, "fetched L2 block numbers (using safe head)"
@@ -222,11 +222,11 @@ impl SnarkE2e {
                 l1_origin,
                 finalized_l1,
                 needed = l1_origin + SEQUENCE_WINDOW,
-                gap = (l1_origin + SEQUENCE_WINDOW) as i64 - finalized_l1 as i64,
+                gap = (l1_origin.saturating_add(SEQUENCE_WINDOW) as i128) - (finalized_l1 as i128),
                 "L1 not finalized far enough, stepping back L2 blocks"
             );
-            target_block -= L2_BLOCK_STEP_BACK;
-            safe_head = target_block - 1;
+            target_block = target_block.checked_sub(L2_BLOCK_STEP_BACK).context("target_block underflow stepping back")?;
+            safe_head = target_block.checked_sub(1).context("target_block is 0 after step back")?;
         }
 
         // -- 2. Submit proof request for SNARK Groth16 ---------------------------
