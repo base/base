@@ -333,7 +333,8 @@ mod tests {
 
         let standard_args = StandardNodeArgs::from(args);
         let config: FlashblocksConfig =
-            (&standard_args).into().expect("flashblocks config should exist");
+            <&StandardNodeArgs as Into<Option<FlashblocksConfig>>>::into(&standard_args)
+                .expect("flashblocks config should exist");
 
         assert_eq!(config.subscriber_ping_interval, Duration::from_secs(45));
     }
