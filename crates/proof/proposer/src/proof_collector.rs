@@ -58,7 +58,6 @@ pub struct ProofCollector<R> {
     proof_requester: Arc<dyn ProofRequesterProvider>,
     rollup_client: Arc<R>,
     block_interval: u64,
-    max_parallel_proofs: usize,
     output_fetch_concurrency: usize,
     tee_kind: TeeKind,
 }
@@ -69,7 +68,6 @@ impl<R> Clone for ProofCollector<R> {
             proof_requester: Arc::clone(&self.proof_requester),
             rollup_client: Arc::clone(&self.rollup_client),
             block_interval: self.block_interval,
-            max_parallel_proofs: self.max_parallel_proofs,
             output_fetch_concurrency: self.output_fetch_concurrency,
             tee_kind: self.tee_kind,
         }
@@ -80,7 +78,6 @@ impl<R> std::fmt::Debug for ProofCollector<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProofCollector")
             .field("block_interval", &self.block_interval)
-            .field("max_parallel_proofs", &self.max_parallel_proofs)
             .field("output_fetch_concurrency", &self.output_fetch_concurrency)
             .field("tee_kind", &self.tee_kind)
             .finish_non_exhaustive()
@@ -93,14 +90,12 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
         proof_requester: Arc<dyn ProofRequesterProvider>,
         rollup_client: Arc<R>,
         block_interval: u64,
-        max_parallel_proofs: usize,
         output_fetch_concurrency: usize,
     ) -> Self {
         Self::new(
             proof_requester,
             rollup_client,
             block_interval,
-            max_parallel_proofs,
             output_fetch_concurrency,
             TeeKind::AwsNitro,
         )
@@ -111,18 +106,10 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
         proof_requester: Arc<dyn ProofRequesterProvider>,
         rollup_client: Arc<R>,
         block_interval: u64,
-        max_parallel_proofs: usize,
         output_fetch_concurrency: usize,
         tee_kind: TeeKind,
     ) -> Self {
-        Self {
-            proof_requester,
-            rollup_client,
-            block_interval,
-            max_parallel_proofs,
-            output_fetch_concurrency,
-            tee_kind,
-        }
+        Self { proof_requester, rollup_client, block_interval, output_fetch_concurrency, tee_kind }
     }
 
     /// Returns the TEE implementation this collector polls proofs for.
@@ -133,9 +120,14 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
     /// Returns the next-expected target blocks to poll, derived from `recovered`,
     /// the L2 `safe_head`, and the caller-supplied `is_excluded` predicate.
     ///
+    /// All eligible targets up to `safe_head` are returned. There is no
+    /// per-tick parallel-poll cap: collection is fundamentally bounded by the
+    /// safe head's distance from the recovered tip, and the prover service
+    /// queues sessions itself.
+    ///
     /// `is_excluded(target)` should return `true` when the caller already has a
-    /// completed proof for `target` or has begun submitting it; such targets are
-    /// skipped without affecting the per-tick parallel-poll budget.
+    /// completed proof for `target` or has begun submitting it; such targets
+    /// are skipped.
     pub fn collectable_targets(
         &self,
         recovered: &RecoveredState,
@@ -148,7 +140,7 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
         };
         let mut targets = Vec::new();
 
-        while cursor <= safe_head && targets.len() < self.max_parallel_proofs {
+        while cursor <= safe_head {
             if !is_excluded(cursor) {
                 targets.push(cursor);
             }
@@ -285,10 +277,7 @@ mod tests {
         test_utils::{MockProofRequester, MockRollupClient, test_sync_status},
     };
 
-    fn make_collector(
-        block_interval: u64,
-        max_parallel_proofs: usize,
-    ) -> ProofCollector<MockRollupClient> {
+    fn make_collector(block_interval: u64) -> ProofCollector<MockRollupClient> {
         let proof_requester: Arc<dyn ProofRequesterProvider> =
             Arc::new(MockProofRequester::default());
         let rollup_client = Arc::new(MockRollupClient {
@@ -296,13 +285,7 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        ProofCollector::aws_nitro(
-            proof_requester,
-            rollup_client,
-            block_interval,
-            max_parallel_proofs,
-            4,
-        )
+        ProofCollector::aws_nitro(proof_requester, rollup_client, block_interval, 4)
     }
 
     fn recovered(block: u64) -> RecoveredState {
@@ -315,7 +298,7 @@ mod tests {
 
     #[test]
     fn collectable_targets_returns_next_expected_blocks_excluding_proved_and_submitting() {
-        let collector = make_collector(100, 5);
+        let collector = make_collector(100);
 
         let proved: BTreeSet<u64> = [200, 400].into_iter().collect();
         let submitting: Option<u64> = Some(300);
@@ -330,19 +313,20 @@ mod tests {
         assert_eq!(targets, vec![500, 600, 700]);
     }
 
+    /// All eligible targets up to `safe_head` are returned: there is no
+    /// per-tick parallel-poll cap. The safe head is the only natural bound.
     #[test]
-    fn collectable_targets_caps_at_max_parallel_proofs() {
-        let collector = make_collector(100, 3);
+    fn collectable_targets_returns_all_eligible_targets_up_to_safe_head() {
+        let collector = make_collector(100);
 
         let targets = collector.collectable_targets(&recovered(100), 1000, |_| false);
 
-        // Even though 100..=1000 yields 9 candidates, max_parallel_proofs=3 caps it.
-        assert_eq!(targets, vec![200, 300, 400]);
+        assert_eq!(targets, vec![200, 300, 400, 500, 600, 700, 800, 900, 1000]);
     }
 
     #[test]
     fn collectable_targets_returns_empty_when_safe_head_below_first_target() {
-        let collector = make_collector(100, 5);
+        let collector = make_collector(100);
 
         let targets = collector.collectable_targets(&recovered(500), 550, |_| false);
 

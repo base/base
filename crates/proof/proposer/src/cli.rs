@@ -152,12 +152,17 @@ pub struct ProposerArgs {
     #[command(flatten)]
     pub signer: SignerCli,
 
-    /// Maximum number of concurrent proof tasks in parallel pipeline mode.
-    /// Set to 1 for sequential proving (default driver behavior).
+    /// Deprecated: previously capped the number of concurrent proof requests.
+    ///
+    /// The proposer no longer caps in-flight proofs locally — dispatch is
+    /// fire-and-forget against the prover service, which queues sessions
+    /// itself, and collection is bounded by the L2 safe head. Values supplied
+    /// here are ignored and trigger a runtime warning.
     #[arg(
         long = "max-parallel-proofs",
         env = cli_env!("MAX_PARALLEL_PROOFS"),
-        default_value = "1"
+        default_value = "1",
+        hide = true
     )]
     pub max_parallel_proofs: usize,
 
@@ -273,6 +278,7 @@ mod tests {
         assert_eq!(cli.proposer.rollup_rpc.as_str(), "http://localhost:7545/");
         assert!(!cli.proposer.skip_tls_verify);
         assert_eq!(cli.proposer.game_type, 1);
+        // Deprecated, retained for backward compatibility; default is 1.
         assert_eq!(cli.proposer.max_parallel_proofs, 1);
 
         assert_eq!(cli.logging.level, 3);

@@ -84,9 +84,6 @@ pub struct ProposerConfig {
     /// Transaction manager configuration.
     /// `None` when running in dry-run mode.
     pub tx_manager: Option<base_tx_manager::TxManagerConfig>,
-    /// Maximum number of concurrent proof tasks.
-    /// When > 1, uses the parallel proving pipeline instead of the sequential driver.
-    pub max_parallel_proofs: usize,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
     /// Optional address of the `TEEProverRegistry` contract on L1.
@@ -104,12 +101,16 @@ impl ProposerConfig {
         validate_url(&proposer.l2_eth_rpc, "l2-eth-rpc")?;
         validate_url(&proposer.rollup_rpc, "rollup-rpc")?;
 
-        if proposer.max_parallel_proofs == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "max-parallel-proofs",
-                constraint: "at least 1",
-                value: "0",
-            });
+        // The `--max-parallel-proofs` CLI flag is retained for backward
+        // compatibility with deployments that still pass it. The proposer no
+        // longer caps in-flight proofs locally, so any non-default value is
+        // ignored with a warning.
+        if proposer.max_parallel_proofs != 1 {
+            tracing::warn!(
+                value = proposer.max_parallel_proofs,
+                "--max-parallel-proofs is deprecated and has no effect; the prover service queues \
+                 sessions itself and collection is bounded by the L2 safe head"
+            );
         }
 
         if proposer.recovery_scan_concurrency == 0 {
@@ -204,7 +205,6 @@ impl ProposerConfig {
             retry,
             signing,
             tx_manager,
-            max_parallel_proofs: proposer.max_parallel_proofs,
             recovery_scan_concurrency: proposer.recovery_scan_concurrency,
             tee_prover_registry_address: proposer.tee_prover_registry_address,
         })
@@ -305,7 +305,6 @@ mod tests {
         assert_eq!(config.prover_timeout, Duration::from_secs(70 * 60));
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.rpc_timeout, Duration::from_secs(30));
-        assert_eq!(config.max_parallel_proofs, 1);
         assert_eq!(config.tx_manager.as_ref().unwrap().tx_send_timeout, PROPOSAL_TIMEOUT);
     }
 
@@ -457,22 +456,18 @@ mod tests {
     }
 
     #[test]
-    fn test_max_parallel_proofs_zero_rejected() {
-        let mut cli = minimal_cli();
-        cli.proposer.max_parallel_proofs = 0;
-        let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "max-parallel-proofs", .. })
-        ));
-    }
-
-    #[test]
-    fn test_max_parallel_proofs_custom() {
+    fn test_max_parallel_proofs_is_accepted_but_ignored() {
+        // Backward compatibility: deployments may still pass any positive value.
+        // The flag is deprecated, so it must not surface as a config error or
+        // propagate into [`ProposerConfig`] (the field has been removed).
         let mut cli = minimal_cli();
         cli.proposer.max_parallel_proofs = 8;
-        let config = ProposerConfig::from_cli(cli).unwrap();
-        assert_eq!(config.max_parallel_proofs, 8);
+        ProposerConfig::from_cli(cli).expect("deprecated --max-parallel-proofs should be ignored");
+
+        let mut cli = minimal_cli();
+        cli.proposer.max_parallel_proofs = 0;
+        ProposerConfig::from_cli(cli)
+            .expect("a zero --max-parallel-proofs is also accepted as deprecated input");
     }
 
     #[test]
