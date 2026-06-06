@@ -165,9 +165,6 @@ where
         ChainSpec: Clone,
     {
         let spec = self.receipt_builder.chain_spec();
-        let state_clear_flag = spec.is_spurious_dragon_active_at_block(self.pending_block.number);
-        self.evm.db_mut().set_state_clear_flag(state_clear_flag);
-
         let mut system_caller = SystemCaller::new(spec.clone());
         system_caller
             .apply_blockhashes_contract_call(parent_hash, &mut self.evm)
@@ -208,6 +205,7 @@ where
                 inner: transaction,
                 block_hash: None,
                 block_number: Some(self.pending_block.number),
+                block_timestamp: Some(self.pending_block.timestamp),
                 transaction_index: Some(idx as u64),
                 effective_gas_price: Some(effective_gas_price),
             },
@@ -289,7 +287,7 @@ where
 
         match transact_result {
             Ok(ResultAndState { state, result }) => {
-                let gas_used = result.gas_used();
+                let gas_used = result.tx_gas_used();
                 for (addr, acc) in &state {
                     let existing_override = self.state_overrides.entry(*addr).or_default();
                     existing_override.balance = Some(acc.info.balance);
@@ -367,6 +365,7 @@ where
                         inner: transaction,
                         block_hash: None,
                         block_number: Some(self.pending_block.number),
+                        block_timestamp: Some(self.pending_block.timestamp),
                         transaction_index: Some(idx as u64),
                         effective_gas_price: Some(effective_gas_price),
                     },

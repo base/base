@@ -46,6 +46,7 @@ impl Mainnet {
             cancun_time: alloy_hardforks::EthereumHardfork::Cancun.mainnet_activation_timestamp(),
             prague_time: alloy_hardforks::EthereumHardfork::Prague.mainnet_activation_timestamp(),
             osaka_time: alloy_hardforks::EthereumHardfork::Osaka.mainnet_activation_timestamp(),
+            amsterdam_time: None,
             bpo1_time: alloy_hardforks::EthereumHardfork::Bpo1.mainnet_activation_timestamp(),
             bpo2_time: alloy_hardforks::EthereumHardfork::Bpo2.mainnet_activation_timestamp(),
             bpo3_time: alloy_hardforks::EthereumHardfork::Bpo3.mainnet_activation_timestamp(),
@@ -60,6 +61,7 @@ impl Mainnet {
             parlia: None,
             extra_fields: Default::default(),
             terminal_total_difficulty_passed: false,
+            _non_exhaustive: (),
         }
     }
 }

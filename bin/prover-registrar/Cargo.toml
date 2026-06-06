@@ -28,6 +28,7 @@ base-proof-tee-nitro-attestation-prover = { workspace = true, features = ["prove
 alloy-provider.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
+boundless-market.workspace = true
 
 # AWS
 aws-sdk-ec2.workspace = true

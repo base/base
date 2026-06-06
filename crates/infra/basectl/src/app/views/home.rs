@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::{
     app::{Action, Resources, View, ViewId},
-    commands::COLOR_BASE_BLUE,
+    output::COLOR_BASE_BLUE,
     tui::Keybinding,
 };
 
@@ -64,8 +64,15 @@ const MENU_ITEMS: &[MenuItem] = &[
         key: 'h',
         label: "HA Conductor",
         description: "Monitor HA conductor cluster",
-        badge: Some("devnet-only"),
+        badge: None,
         view_id: Some(ViewId::Conductor),
+    },
+    MenuItem {
+        key: 'o',
+        label: "Pods",
+        description: "Monitor Kubernetes pod status",
+        badge: Some("config-required"),
+        view_id: Some(ViewId::Pods),
     },
     MenuItem {
         key: 'p',
@@ -90,6 +97,7 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "d", description: "DA Monitor" },
     Keybinding { key: "f", description: "Flashblocks" },
     Keybinding { key: "h", description: "HA Conductor" },
+    Keybinding { key: "o", description: "Pods" },
     Keybinding { key: "p", description: "Proofs" },
     Keybinding { key: "u", description: "Upgrades" },
     Keybinding { key: "j/k", description: "Navigate" },
@@ -130,6 +138,7 @@ impl View for HomeView {
             KeyCode::Char('d') => Action::SwitchView(ViewId::DaMonitor),
             KeyCode::Char('f') => Action::SwitchView(ViewId::Flashblocks),
             KeyCode::Char('h') => Action::SwitchView(ViewId::Conductor),
+            KeyCode::Char('o') => Action::SwitchView(ViewId::Pods),
             KeyCode::Char('p') => Action::SwitchView(ViewId::Proofs),
             KeyCode::Char('u') => Action::SwitchView(ViewId::Upgrades),
             KeyCode::Up | KeyCode::Char('k') => {
@@ -308,13 +317,8 @@ const fn menu_height(columns: usize) -> u16 {
     (menu_row_count(columns) as u16).saturating_mul(MENU_ITEM_HEIGHT)
 }
 
-fn badge_style(badge: &str) -> Style {
-    match badge {
-        "devnet-only" => {
-            Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)
-        }
-        _ => Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
-    }
+fn badge_style(_badge: &str) -> Style {
+    Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
 }
 
 fn truncate_description(description: &str, width: u16) -> String {

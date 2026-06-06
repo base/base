@@ -1,12 +1,11 @@
 target/
+.claude/
 .idea/
 .DS_Store
 .devnet/
+.zk-prover/
 .sisyphus/
 eif*.bin
-docs/specs/node_modules/
-docs/specs/dist/
-docs/specs/.vocs/
 *.log
 .vscode/
 *.env

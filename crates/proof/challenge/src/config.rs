@@ -101,10 +101,6 @@ pub struct ChallengerConfig {
     pub zk_request_timeout: Duration,
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
     pub max_proof_duration: Duration,
-    /// URL of the TEE enclave RPC endpoint (optional).
-    pub tee_rpc_url: Option<Validated<Url>>,
-    /// Timeout for individual TEE proof requests (only `Some` when TEE is enabled).
-    pub tee_request_timeout: Option<Duration>,
     /// Signing configuration for L1 transaction submission.
     pub signing: SignerConfig,
     /// Transaction manager configuration (fee limits, confirmations, timeouts).
@@ -172,8 +168,6 @@ impl ChallengerConfig {
         let l1_eth_rpc = validate_url(cli.challenger.l1_eth_rpc, "l1-eth-rpc")?;
         let l2_eth_rpc = validate_url(cli.challenger.l2_eth_rpc, "l2-eth-rpc")?;
         let zk_rpc_url = validate_url(cli.challenger.zk_rpc_url, "zk-rpc-url")?;
-        let tee_rpc_url =
-            cli.challenger.tee_rpc_url.map(|url| validate_url(url, "tee-rpc-url")).transpose()?;
 
         if cli.challenger.anchor_state_registry_addr == Address::ZERO {
             return Err(ConfigError::OutOfRange {
@@ -187,13 +181,6 @@ impl ChallengerConfig {
         require_nonzero_duration(cli.challenger.zk_connect_timeout, "zk-connect-timeout")?;
         require_nonzero_duration(cli.challenger.zk_request_timeout, "zk-request-timeout")?;
         require_nonzero_duration(cli.challenger.max_proof_duration, "max-proof-duration")?;
-
-        let tee_request_timeout = if tee_rpc_url.is_some() {
-            require_nonzero_duration(cli.challenger.tee_request_timeout, "tee-request-timeout")?;
-            Some(cli.challenger.tee_request_timeout)
-        } else {
-            None
-        };
 
         require_nonzero(
             cli.challenger.bond_discovery_lookback_games,
@@ -234,8 +221,6 @@ impl ChallengerConfig {
             zk_connect_timeout: cli.challenger.zk_connect_timeout,
             zk_request_timeout: cli.challenger.zk_request_timeout,
             max_proof_duration: cli.challenger.max_proof_duration,
-            tee_rpc_url,
-            tee_request_timeout,
             signing,
             tx_manager,
             bond_discovery_lookback_games: cli.challenger.bond_discovery_lookback_games,
@@ -522,21 +507,6 @@ mod tests {
         ]);
         let result = ChallengerConfig::from_cli(cli);
         assert!(matches!(result, Err(ConfigError::InvalidUrl { field: "zk-rpc-url", .. })));
-    }
-
-    #[test]
-    fn test_zero_tee_request_timeout_rejected_when_tee_enabled() {
-        let all_args = [
-            &LOCAL_SIGNER_ARGS[..],
-            &["--tee-rpc-url", "http://localhost:9999", "--tee-request-timeout", "0s"],
-        ]
-        .concat();
-        let cli = cli_from_args(&all_args);
-        let result = ChallengerConfig::from_cli(cli);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "tee-request-timeout", .. })
-        ));
     }
 
     #[test]

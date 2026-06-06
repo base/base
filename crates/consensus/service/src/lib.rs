@@ -11,34 +11,38 @@ extern crate tracing;
 
 mod service;
 pub use service::{
-    DerivationDelegateConfig, FollowNode, HEAD_STREAM_POLL_INTERVAL, L1Config, L1ConfigBuilder,
-    NodeMode, RollupNode, RollupNodeBuilder, ShutdownSignal,
+    DerivationDelegateConfig, FollowNode, FollowNodeConfig, HEAD_STREAM_POLL_INTERVAL, L1Config,
+    L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder, ShutdownSignal,
 };
+
+mod follow;
+pub use follow::{FollowError, RemoteClient, RemoteL2Client, RemoteL2ClientError};
 
 mod actors;
 pub use actors::{
-    AlloyL1BlockFetcher, BlockStream, BootstrapRole, BuildRequest, CancellableContext, Conductor,
-    ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
-    DelegateL2Client, DelegateL2ClientError, DelegateL2DerivationActor, DerivationActor,
-    DerivationActorRequest, DerivationClientError, DerivationClientResult,
-    DerivationDelegateClient, DerivationDelegateClientError, DerivationEngineClient,
-    DerivationError, DerivationState, DerivationStateMachine, DerivationStateTransitionError,
-    DerivationStateUpdate, EngineActor, EngineActorRequest, EngineClientError, EngineClientResult,
-    EngineConfig, EngineDerivationClient, EngineError, EngineProcessor, EngineProcessorOptions,
-    EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest, GetPayloadRequest,
-    GossipTransport, InsertUnsafePayloadRequest, L1BlockFetcher, L1OriginSelector,
-    L1OriginSelectorError, L1OriginSelectorProvider, L1WatcherActor, L1WatcherActorError,
-    L1WatcherDerivationClient, L1WatcherQueryExecutor, L1WatcherQueryProcessor, L2Finalizer,
-    L2SourceClient, LogRetrier, NetworkActor, NetworkActorError, NetworkBuilder,
-    NetworkBuilderError, NetworkConfig, NetworkDriver, NetworkDriverError, NetworkEngineClient,
-    NetworkHandler, NetworkInboundData, NodeActor, OriginSelector, PayloadBuilder, PayloadSealer,
-    PendingStopSender, PoolActivation, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
-    QueuedEngineRpcClient, QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient,
-    QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient,
-    RecoveryModeGuard, ResetRequest, RpcActor, RpcActorError, RpcContext, ScheduledTicker,
-    SealState, SealStepError, SealStepOutcome, SequencerActor, SequencerActorError,
-    SequencerAdminQuery, SequencerConfig, SequencerEngineClient, UnsafePayloadGossipClient,
-    UnsafePayloadGossipClientError, UnsealedPayloadHandle,
+    AlloyL1BlockFetcher, BlockStream, BootstrapRole, BuildRequest, CancellableContext,
+    CheckpointActor, CheckpointClient, CheckpointDB, CheckpointError, CheckpointRequest,
+    CheckpointWriter, Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider,
+    DelegateDerivationActor, DerivationActor, DerivationActorRequest, DerivationClientError,
+    DerivationClientResult, DerivationDelegateClient, DerivationDelegateClientError,
+    DerivationEngineClient, DerivationError, DerivationState, DerivationStateMachine,
+    DerivationStateTransitionError, DerivationStateUpdate, EngineActor, EngineActorRequest,
+    EngineClientError, EngineClientResult, EngineConfig, EngineDerivationClient, EngineError,
+    EngineProcessor, EngineProcessorOptions, EngineRequestReceiver, EngineRpcProcessor,
+    EngineRpcRequest, GetPayloadRequest, GossipTransport, InsertUnsafePayloadRequest,
+    L1BlockFetcher, L1OriginSelector, L1OriginSelectorError, L1OriginSelectorProvider,
+    L1WatcherActor, L1WatcherActorError, L1WatcherDerivationClient, L1WatcherQueryExecutor,
+    L1WatcherQueryProcessor, L2Finalizer, LogRetrier, NetworkActor, NetworkActorError,
+    NetworkBuilder, NetworkBuilderError, NetworkConfig, NetworkDriver, NetworkDriverError,
+    NetworkEngineClient, NetworkHandler, NetworkInboundData, NodeActor, NoopCheckpointWriter,
+    OriginSelector, PayloadBuilder, PayloadSealer, PendingStopSender, PoolActivation,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
+    QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, RecoveryModeGuard, ResetRequest,
+    RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
+    SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
+    SequencerEngineClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
+    UnsealedPayloadHandle,
 };
 
 mod metrics;
@@ -47,4 +51,6 @@ pub use actors::{
     MockConductor, MockEngineDerivationClient, MockOriginSelector, MockSequencerEngineClient,
     MockUnsafePayloadGossipClient,
 };
+#[cfg(test)]
+pub use follow::MockRemoteClient;
 pub use metrics::Metrics;

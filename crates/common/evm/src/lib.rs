@@ -26,7 +26,7 @@ mod handler;
 pub use handler::{BaseHandler, IsTxError};
 
 mod precompiles;
-pub use precompiles::{BasePrecompileInstaller, BasePrecompiles};
+pub use precompiles::BasePrecompiles;
 
 mod api;
 pub use api::{BaseContext, BaseContextTr, BaseError, Builder, DefaultBase};

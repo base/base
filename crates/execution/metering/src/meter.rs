@@ -57,7 +57,6 @@ fn cache_state_from_bundle_state(bundle_state: &BundleState) -> CacheState {
             .iter()
             .map(|(&hash, code)| (hash, code.clone()))
             .collect(),
-        ..Default::default()
     }
 }
 
@@ -81,7 +80,7 @@ pub struct PendingTrieInput {
 #[derive(Debug, Clone)]
 pub struct PendingState {
     /// The accumulated bundle of state changes from pending flashblocks.
-    pub bundle_state: BundleState,
+    pub bundle_state: Arc<BundleState>,
     /// Optional pre-computed trie input for faster state root calculation.
     /// If provided, state root calculation skips recomputing the pending state's trie.
     pub trie_input: Option<PendingTrieInput>,
@@ -442,7 +441,8 @@ where
 
             let gas_used = builder
                 .execute_transaction(tx.clone())
-                .map_err(|e| eyre!("Transaction {tx_hash} execution failed: {e}"))?;
+                .map_err(|e| eyre!("Transaction {tx_hash} execution failed: {e}"))?
+                .tx_gas_used();
 
             let gas_fees = U256::from(gas_used) * U256::from(gas_price);
             total_gas_used = total_gas_used.saturating_add(gas_used);
@@ -450,20 +450,17 @@ where
 
             // Extract per-transaction opcode and precompile gas, then reset for next tx.
             let inspector = builder.evm_mut().inspector_mut();
-            let opcode_data = inspector.take_opcode_inspector();
+            let opcode_data = inspector.take_opcode_gas();
             let precompile_data = inspector.take_precompile_gas();
 
-            let mut opcode_gas: Vec<OpcodeGas> = metered_opcodes
-                .opcodes
+            let mut opcode_gas: Vec<OpcodeGas> = opcode_data
                 .iter()
-                .filter_map(|&opcode| {
-                    let count = opcode_data.opcode_counts().get(&opcode).copied().unwrap_or(0);
-                    if count > 0 {
-                        let gas_used = opcode_data.opcode_gas().get(&opcode).copied().unwrap_or(0);
-                        Some(OpcodeGas { opcode: opcode.as_str().to_string(), count, gas_used })
-                    } else {
-                        None
-                    }
+                .filter(|(_, usage)| usage.count > 0)
+                .map(|(&(contract_address, opcode), usage)| OpcodeGas {
+                    contract_address,
+                    opcode: opcode.as_str().to_string(),
+                    count: usage.count,
+                    gas_used: usage.gas_used,
                 })
                 .collect();
 
@@ -472,12 +469,16 @@ where
                     && usage.count > 0
                 {
                     opcode_gas.push(OpcodeGas {
+                        contract_address: *addr,
                         opcode: name.clone(),
                         count: usage.count,
                         gas_used: usage.gas_used,
                     });
                 }
             }
+            opcode_gas.sort_by(|a, b| {
+                a.contract_address.cmp(&b.contract_address).then_with(|| a.opcode.cmp(&b.opcode))
+            });
 
             results.push(TransactionResult {
                 coinbase_diff: gas_fees,
@@ -826,8 +827,86 @@ mod tests {
         let sstore = tx_opcodes.iter().find(|o| o.opcode == "SSTORE");
         assert!(sstore.is_some(), "SSTORE should appear in opcode gas results");
         let sstore = sstore.unwrap();
+        assert_eq!(sstore.contract_address, contract_address);
         assert!(sstore.count > 0, "SSTORE count should be non-zero");
         assert!(sstore.gas_used > 0, "SSTORE gas_used should be non-zero");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_opcode_gas_splits_by_contract() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+
+        let (deployment_tx_1, contract_address_1, _) =
+            Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 0)?;
+        let (deployment_tx_2, contract_address_2, _) =
+            Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 1)?;
+        harness.build_block_from_transactions(vec![deployment_tx_1, deployment_tx_2]).await?;
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        let tx_1 = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(contract_address_1)
+            .gas_limit(100_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(SimpleStorage::setValueCall { v: U256::from(1) }.abi_encode())
+            .into_eip1559();
+        let tx_1 =
+            BaseTransactionSigned::Eip1559(tx_1.as_eip1559().expect("eip1559 transaction").clone());
+
+        let tx_2 = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(1)
+            .to(contract_address_2)
+            .gas_limit(100_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(SimpleStorage::setValueCall { v: U256::from(2) }.abi_encode())
+            .into_eip1559();
+        let tx_2 =
+            BaseTransactionSigned::Eip1559(tx_2.as_eip1559().expect("eip1559 transaction").clone());
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx_1, tx_2])?;
+        let metered = MeteredOpcodes::parse(&["SSTORE".to_string()]).unwrap();
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: parsed_bundle,
+            header: header.clone(),
+            parent_beacon_block_root: header.parent_beacon_block_root(),
+            pending_state: None,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(metered),
+        })?;
+
+        assert_eq!(output.results.len(), 2);
+        let sstore_1 = output.results[0]
+            .opcode_gas
+            .iter()
+            .find(|entry| entry.opcode == "SSTORE")
+            .expect("first contract should report SSTORE gas");
+        let sstore_2 = output.results[1]
+            .opcode_gas
+            .iter()
+            .find(|entry| entry.opcode == "SSTORE")
+            .expect("second contract should report SSTORE gas");
+
+        assert_eq!(sstore_1.contract_address, contract_address_1);
+        assert_eq!(sstore_2.contract_address, contract_address_2);
+        assert_ne!(sstore_1.contract_address, sstore_2.contract_address);
 
         Ok(())
     }
@@ -889,6 +968,82 @@ mod tests {
             .expect("CREATE should appear in opcode gas results for a factory deployment");
         assert!(create.count > 0, "CREATE count should be non-zero");
         assert!(create.gas_used > 0, "CREATE gas_used should be non-zero");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_opcode_gas_subtracts_nested_call_gas() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+
+        let (factory_deployment_tx, factory_address, _) =
+            Account::Deployer.create_deployment_tx(ContractFactory::BYTECODE.clone(), 0)?;
+        harness.build_block_from_transactions(vec![factory_deployment_tx]).await?;
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(factory_address)
+            .gas_limit(1_000_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(
+                ContractFactory::deployAndCallCall {
+                    bytecode: SimpleStorage::BYTECODE.clone(),
+                    callData: SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode().into(),
+                }
+                .abi_encode(),
+            )
+            .into_eip1559();
+
+        let tx = BaseTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+        let metered = MeteredOpcodes::parse(&["CALL".to_string(), "SSTORE".to_string()]).unwrap();
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: parsed_bundle,
+            header: header.clone(),
+            parent_beacon_block_root: header.parent_beacon_block_root(),
+            pending_state: None,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(metered),
+        })?;
+
+        assert_eq!(output.results.len(), 1);
+        let tx_opcodes = &output.results[0].opcode_gas;
+        let call = tx_opcodes
+            .iter()
+            .find(|entry| entry.opcode == "CALL" && entry.contract_address == factory_address)
+            .expect("factory should report CALL gas");
+        let sstore = tx_opcodes
+            .iter()
+            .find(|entry| entry.opcode == "SSTORE" && entry.contract_address != factory_address)
+            .expect("callee should report SSTORE gas");
+
+        assert_eq!(call.count, 1, "factory should execute one CALL into SimpleStorage");
+        assert_eq!(sstore.count, 1, "callee should execute one SSTORE");
+        assert!(call.gas_used > 0, "CALL gas_used should be non-zero");
+        assert!(sstore.gas_used > 0, "SSTORE gas_used should be non-zero");
+        assert!(
+            call.gas_used < sstore.gas_used,
+            "CALL gas should exclude nested callee gas: CALL={} SSTORE={}",
+            call.gas_used,
+            sstore.gas_used
+        );
 
         Ok(())
     }
@@ -1338,7 +1493,7 @@ mod tests {
             Vec::<Vec<(Address, Option<Option<AccountInfo>>, Vec<(U256, U256)>)>>::new(),
             Vec::<(B256, Bytecode)>::new(),
         );
-        let pending_state = PendingState { bundle_state, trie_input: None };
+        let pending_state = PendingState { bundle_state: Arc::new(bundle_state), trie_input: None };
 
         // Transaction with nonce=0 — "too low" relative to pending nonce of 5
         let to = Address::random();
@@ -1646,7 +1801,8 @@ mod tests {
         let trie_input = compute_pending_trie_input(&state_provider, hashed)?;
         drop(state_provider);
 
-        let pending_state = PendingState { bundle_state, trie_input: Some(trie_input) };
+        let pending_state =
+            PendingState { bundle_state: Arc::new(bundle_state), trie_input: Some(trie_input) };
 
         // Create a bundle tx: Alice (nonce=1 from pending) sends to a random address
         let to = Address::random();

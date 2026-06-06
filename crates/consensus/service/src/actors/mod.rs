@@ -5,6 +5,12 @@
 mod traits;
 pub use traits::{CancellableContext, NodeActor};
 
+mod checkpoint;
+pub use checkpoint::{
+    CheckpointActor, CheckpointClient, CheckpointDB, CheckpointError, CheckpointRequest,
+    CheckpointWriter, NoopCheckpointWriter,
+};
+
 mod engine;
 #[cfg(test)]
 pub use engine::MockEngineDerivationClient;
@@ -16,17 +22,18 @@ pub use engine::{
 };
 
 mod rpc;
+pub(crate) use rpc::launch_rpc_server;
 pub use rpc::{
     QueuedEngineRpcClient, QueuedSequencerAdminAPIClient, RpcActor, RpcActorError, RpcContext,
 };
 
 mod derivation;
 pub use derivation::{
-    DelegateDerivationActor, DelegateL2Client, DelegateL2ClientError, DelegateL2DerivationActor,
-    DerivationActor, DerivationActorRequest, DerivationClientError, DerivationClientResult,
-    DerivationDelegateClient, DerivationDelegateClientError, DerivationEngineClient,
-    DerivationError, DerivationState, DerivationStateMachine, DerivationStateTransitionError,
-    DerivationStateUpdate, L2Finalizer, L2SourceClient, QueuedDerivationEngineClient,
+    DelegateDerivationActor, DerivationActor, DerivationActorRequest, DerivationClientError,
+    DerivationClientResult, DerivationDelegateClient, DerivationDelegateClientError,
+    DerivationEngineClient, DerivationError, DerivationState, DerivationStateMachine,
+    DerivationStateTransitionError, DerivationStateUpdate, L2Finalizer,
+    QueuedDerivationEngineClient,
 };
 
 mod l1_watcher;

@@ -6,9 +6,10 @@ use std::{
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
+use alloy_rpc_types_eth::error::EthRpcErrorCode;
 use audit_archiver_lib::BundleEvent;
 use base_bundles::{AcceptedBundle, Bundle, BundleExtensions, MeterBundleResponse, ParsedBundle};
-use base_common_consensus::BaseTxEnvelope;
+use base_common_consensus::{BaseTxEnvelope, EIP8130_REJECTION_MSG};
 use base_common_network::Base;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -16,6 +17,7 @@ use jsonrpsee::{
 };
 use moka::future::Cache;
 use reth_rpc_eth_types::EthApiError;
+use reth_rpc_server_types::result::rpc_err;
 use tokio::{
     sync::{broadcast, mpsc},
     time::{Duration, Instant, timeout},
@@ -222,6 +224,18 @@ impl IngressService {
 
         let envelope = BaseTxEnvelope::decode_2718_exact(data.iter().as_slice())
             .map_err(|_| EthApiError::FailedToDecodeSignedTransaction.into_rpc_err())?;
+
+        if envelope.is_eip8130() {
+            // Mirror the rejection used by `BaseEthApi::send_raw_transaction` so both
+            // ingress surfaces return the same code (-32003, TransactionRejected) and
+            // the same wording. Message is sourced from `base-common-consensus` to
+            // prevent drift with `BaseInvalidTransactionError::Eip8130NotAccepted`.
+            return Err(rpc_err(
+                EthRpcErrorCode::TransactionRejected.code(),
+                EIP8130_REJECTION_MSG,
+                None,
+            ));
+        }
 
         let transaction = envelope
             .try_into_recovered()

@@ -103,19 +103,6 @@ pub struct ChallengerArgs {
     )]
     pub max_proof_duration: Duration,
 
-    /// URL of the TEE enclave RPC endpoint (optional; enables TEE-first proof sourcing).
-    #[arg(long = "tee-rpc-url", env = cli_env!("TEE_RPC_URL"))]
-    pub tee_rpc_url: Option<Url>,
-
-    /// Timeout for individual TEE proof requests (e.g., "1m", "10m").
-    #[arg(
-        long = "tee-request-timeout",
-        env = cli_env!("TEE_REQUEST_TIMEOUT"),
-        default_value = "10m",
-        value_parser = humantime::parse_duration
-    )]
-    pub tee_request_timeout: Duration,
-
     /// Signer configuration (local private key or remote sidecar).
     #[command(flatten)]
     pub signer: SignerCli,

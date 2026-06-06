@@ -1,5 +1,5 @@
 _cargo_prove := "~/.sp1/bin/cargo-prove"
-_sp1_tag := "v6.1.0"
+_sp1_tag := "v6.2.3"
 _repo_root := justfile_directory()
 _succinct_dir := justfile_directory() / "crates/proof/succinct"
 
@@ -27,6 +27,7 @@ ensure-elfs:
             result=$(python3 "$script" "$manifest" "$cache_dir")
             if [ "$result" != "match" ]; then
                 echo "error: freshly built ELFs do not match manifest.toml ($result)." >&2
+                python3 "$script" --print-hashes "$manifest" "$cache_dir" >&2
                 echo "       If this is a legitimate change, run 'just succinct write-manifest' and commit." >&2
                 exit 1
             fi

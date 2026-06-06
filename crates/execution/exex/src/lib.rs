@@ -12,8 +12,11 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip1898::BlockWithParent;
+#[cfg(feature = "metrics")]
+use base_execution_trie::BaseProofsStore;
 use base_execution_trie::{
-    BaseProofStoragePrunerTask, BaseProofsStorage, BaseProofsStore, live::LiveTrieCollector,
+    BaseProofStoragePrunerTask, BaseProofsBatchStore, BaseProofsStorage,
+    live::{BatchBlock, LiveTrieCollector},
     metrics::BlockMetrics,
 };
 use futures::TryStreamExt;
@@ -25,10 +28,13 @@ pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
 use tracing::{debug, error, info};
 
-// Safety threshold for maximum blocks to prune automatically on startup.
-// If the required prune exceeds this, the node will error out and require manual pruning. Default
-// is 1000 blocks.
-const MAX_PRUNE_BLOCKS_STARTUP: u64 = 1000;
+/// Default safety threshold for the gap between stored earliest block and the configured
+/// window target. When exceeded on startup, the node refuses to auto-prune and asks the
+/// operator to run `proofs prune` manually. The threshold is a backstop against accidental
+/// misconfiguration (e.g. shrinking the proofs window by orders of magnitude) — it is not a
+/// measure of pruner throughput. Override via
+/// [`BaseProofsExExBuilder::with_max_prune_blocks_startup`].
+const DEFAULT_MAX_PRUNE_BLOCKS_STARTUP: u64 = 100_000;
 
 /// How many blocks to process in a single batch before yielding. Default is 50 blocks.
 const SYNC_BLOCKS_BATCH_SIZE: usize = 50;
@@ -53,6 +59,7 @@ where
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
     verification_interval: u64,
+    max_prune_blocks_startup: u64,
 }
 
 impl<Node, Storage> BaseProofsExExBuilder<Node, Storage>
@@ -67,6 +74,7 @@ where
             proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW,
             proofs_history_prune_interval: DEFAULT_PRUNE_INTERVAL,
             verification_interval: DEFAULT_VERIFICATION_INTERVAL,
+            max_prune_blocks_startup: DEFAULT_MAX_PRUNE_BLOCKS_STARTUP,
         }
     }
 
@@ -88,6 +96,13 @@ where
         self
     }
 
+    /// Sets the safety threshold for blocks that may be auto-pruned at startup.
+    /// See [`DEFAULT_MAX_PRUNE_BLOCKS_STARTUP`].
+    pub const fn with_max_prune_blocks_startup(mut self, max_blocks: u64) -> Self {
+        self.max_prune_blocks_startup = max_blocks;
+        self
+    }
+
     /// Builds the [`BaseProofsExEx`].
     pub fn build(self) -> BaseProofsExEx<Node, Storage> {
         BaseProofsExEx {
@@ -96,6 +111,7 @@ where
             proofs_history_window: self.proofs_history_window,
             proofs_history_prune_interval: self.proofs_history_prune_interval,
             verification_interval: self.verification_interval,
+            max_prune_blocks_startup: self.max_prune_blocks_startup,
         }
     }
 }
@@ -184,6 +200,9 @@ where
     /// If 0, verification is disabled (always use fast path when available).
     /// If 1, verification is always enabled (always execute blocks).
     verification_interval: u64,
+    /// Maximum blocks the startup check is willing to schedule for auto-prune. See
+    /// [`DEFAULT_MAX_PRUNE_BLOCKS_STARTUP`].
+    max_prune_blocks_startup: u64,
 }
 
 impl<Node, Storage> BaseProofsExEx<Node, Storage>
@@ -208,7 +227,7 @@ impl<Node, Storage, Primitives> BaseProofsExEx<Node, Storage>
 where
     Node: FullNodeComponents<Types: NodeTypes<Primitives = Primitives>>,
     Primitives: NodePrimitives,
-    Storage: BaseProofsStore + Clone + 'static,
+    Storage: BaseProofsBatchStore + Clone + 'static,
 {
     /// Main execution loop for the `ExEx`
     pub async fn run(mut self) -> eyre::Result<()> {
@@ -275,13 +294,13 @@ where
         let target_earliest = latest_block_number.saturating_sub(self.proofs_history_window);
         if target_earliest > earliest_block_number {
             let blocks_to_prune = target_earliest - earliest_block_number;
-            if blocks_to_prune > MAX_PRUNE_BLOCKS_STARTUP {
+            if blocks_to_prune > self.max_prune_blocks_startup {
                 return Err(eyre::eyre!(
                     "Configuration requires pruning {} blocks, which exceeds the safety threshold of {}. \
                      Huge prune operations can stall the node. \
                      Please run 'base-reth-node proofs prune' manually before starting the node.",
                     blocks_to_prune,
-                    MAX_PRUNE_BLOCKS_STARTUP
+                    self.max_prune_blocks_startup
                 ));
             }
         }
@@ -450,18 +469,22 @@ where
                 "Processing proofs storage sync batch"
             );
 
+            let mut batch: Vec<BatchBlock<Primitives>> =
+                Vec::with_capacity((end - latest) as usize);
             for block_num in (latest + 1)..=end {
                 let cached = sync_target.take(block_num);
-                if let Err(e) = Self::process_block(
-                    block_num,
-                    cached,
-                    collector,
-                    provider,
-                    verification_interval,
-                ) {
-                    error!(target: "base::exex", block_number = block_num, error = ?e, "Block processing failed");
-                    return;
+                match Self::build_batch_entry(block_num, cached, provider, verification_interval) {
+                    Ok(entry) => batch.push(entry),
+                    Err(e) => {
+                        error!(target: "base::exex", block_number = block_num, error = ?e, "Preparing block for batch failed");
+                        return;
+                    }
                 }
+            }
+
+            if let Err(e) = collector.execute_and_store_batch(batch) {
+                error!(target: "base::exex", start = latest + 1, end, error = ?e, "Batch processing failed");
+                return;
             }
 
             info!(target: "base::exex", latest_stored = latest, target, "Batch processed, yielding");
@@ -469,34 +492,33 @@ where
         }
     }
 
-    fn process_block(
+    fn build_batch_entry(
         block_number: u64,
         cached: Option<CachedBlockTrieData>,
-        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
         provider: &Node::Provider,
         verification_interval: u64,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<BatchBlock<Primitives>> {
         let should_verify =
             verification_interval > 0 && block_number.is_multiple_of(verification_interval);
+        let has_cached = cached.is_some();
 
-        if let Some(cached) = cached {
+        if let Some(cached) = cached
+            && !should_verify
+        {
             let sorted = cached.trie_data.get();
-            if !should_verify {
-                debug!(
-                    target: "base::exex",
-                    block_number,
-                    "Using pre-computed state from notification"
-                );
+            debug!(
+                target: "base::exex",
+                block_number,
+                "Using pre-computed state from notification"
+            );
+            return Ok(BatchBlock::Cached {
+                block_with_parent: cached.block_with_parent,
+                sorted_trie_updates: Arc::clone(&sorted.trie_updates),
+                sorted_post_state: Arc::clone(&sorted.hashed_state),
+            });
+        }
 
-                collector.store_block_updates(
-                    cached.block_with_parent,
-                    (*sorted.trie_updates).clone(),
-                    (*sorted.hashed_state).clone(),
-                )?;
-
-                return Ok(());
-            }
-
+        if has_cached {
             info!(
                 target: "base::exex",
                 block_number,
@@ -521,8 +543,7 @@ where
             .recovered_block(block_number.into(), TransactionVariant::NoHash)?
             .ok_or_else(|| eyre::eyre!("Missing block {} in provider", block_number))?;
 
-        collector.execute_and_store_block_updates(&block)?;
-        Ok(())
+        Ok(BatchBlock::Execute(Box::new(block)))
     }
 
     fn handle_notification(
@@ -793,6 +814,7 @@ mod tests {
             .with_proofs_history_window(20)
             .with_proofs_history_prune_interval(Duration::from_secs(3600))
             .with_verification_interval(1000)
+            .with_max_prune_blocks_startup(1000)
             .build()
     }
 

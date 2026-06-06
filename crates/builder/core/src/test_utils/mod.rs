@@ -20,7 +20,7 @@ pub use external::*;
 pub use instance::*;
 use k256::sha2::{Digest, Sha256};
 use reth_node_builder::NodeConfig;
-use reth_primitives::Recovered;
+use reth_primitives_traits::Recovered;
 pub use txs::*;
 pub use utils::*;
 

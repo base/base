@@ -37,7 +37,11 @@ impl BaseNodeExtension for FlashblocksExtension {
         };
 
         let state = cfg.state;
-        let mut subscriber = FlashblocksSubscriber::new(Arc::clone(&state), cfg.websocket_url);
+        let mut subscriber = FlashblocksSubscriber::new(
+            Arc::clone(&state),
+            cfg.websocket_url,
+            cfg.subscriber_ping_interval,
+        );
 
         let state_for_canonical = Arc::clone(&state);
         let state_for_rpc = Arc::clone(&state);
@@ -91,7 +95,11 @@ impl BaseNodeExtension for FlashblocksExtension {
             // Register the eth_subscribe subscription endpoint for flashblocks
             // Uses replace_configured since eth_subscribe already exists from reth's standard module
             // Pass eth_api to enable proxying standard subscription types to reth's implementation
-            let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), state_for_rpc);
+            let eth_pubsub = EthPubSub::new(
+                ctx.registry.eth_api().clone(),
+                ctx.node().task_executor.clone(),
+                state_for_rpc,
+            );
             ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
             Ok(())

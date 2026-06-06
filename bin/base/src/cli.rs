@@ -52,8 +52,7 @@ impl BaseCli {
             })
             .wrap_err("failed to install Prometheus recorder")?;
 
-        let resolved_chain = ChainResolver::new(chain).resolve()?;
-        command.run(resolved_chain)
+        command.run(ChainResolver::new(chain))
     }
 }
 #[cfg(test)]

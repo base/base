@@ -10,7 +10,7 @@ use base_common_network::Base;
 use base_execution_txpool::BasePooledTransaction;
 use dashmap::DashMap;
 use futures::StreamExt;
-use reth_primitives::Recovered;
+use reth_primitives_traits::Recovered;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, TransactionEvent};
 use tokio::sync::watch;
 use tracing::debug;

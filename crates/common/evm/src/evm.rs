@@ -1,12 +1,12 @@
 use core::ops::{Deref, DerefMut};
 
-use alloy_evm::{Database, Evm, EvmEnv};
+use alloy_evm::{Database as AlloyDatabase, Evm, EvmEnv};
 use alloy_primitives::{Address, Bytes};
 use revm::{
-    DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm, InspectEvm,
-    InspectSystemCallEvm, Inspector, SystemCallEvm,
+    Database as RevmDatabase, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm,
+    InspectEvm, InspectSystemCallEvm, Inspector, SystemCallEvm,
     context::{
-        BlockEnv, ContextError, ContextSetters, Evm as RevmEvm, FrameStack, TxEnv,
+        BlockEnv, CfgEnv, ContextError, ContextSetters, Evm as RevmEvm, FrameStack, TxEnv,
         result::ExecResultAndState,
     },
     context_interface::{
@@ -47,7 +47,7 @@ type InnerEvm<DB, I, P> = RevmEvm<
 /// [`Evm::transact`]. When `false`, the inspector is present in the type but silent,
 /// enabling zero-cost tracing toggling at runtime without type changes.
 #[allow(missing_debug_implementations)] // revm::Context does not implement Debug
-pub struct BaseEvm<DB: Database, I, P = BasePrecompiles> {
+pub struct BaseEvm<DB: RevmDatabase, I, P = BasePrecompiles> {
     /// Inner revm EVM with Base-specific context, fixed [`EthInstructions`] and
     /// [`EthFrame`], and generic precompile set [`P`].
     pub(crate) inner: InnerEvm<DB, I, P>,
@@ -55,7 +55,7 @@ pub struct BaseEvm<DB: Database, I, P = BasePrecompiles> {
     pub(crate) inspect: bool,
 }
 
-impl<DB: Database, I, P> BaseEvm<DB, I, P> {
+impl<DB: RevmDatabase, I, P> BaseEvm<DB, I, P> {
     /// Constructs a [`BaseEvm`] from a pre-built [`RevmEvm`] and an inspect flag.
     ///
     /// Prefer [`crate::Builder::build_base`] or [`crate::Builder::build_with_inspector`]
@@ -98,7 +98,7 @@ impl<DB: Database, I, P> BaseEvm<DB, I, P> {
     }
 }
 
-impl<DB: Database, I, P> Deref for BaseEvm<DB, I, P> {
+impl<DB: RevmDatabase, I, P> Deref for BaseEvm<DB, I, P> {
     type Target = BaseContext<DB>;
 
     #[inline]
@@ -107,7 +107,7 @@ impl<DB: Database, I, P> Deref for BaseEvm<DB, I, P> {
     }
 }
 
-impl<DB: Database, I, P> DerefMut for BaseEvm<DB, I, P> {
+impl<DB: RevmDatabase, I, P> DerefMut for BaseEvm<DB, I, P> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.ctx_mut()
@@ -116,7 +116,7 @@ impl<DB: Database, I, P> DerefMut for BaseEvm<DB, I, P> {
 
 impl<DB, I, P> EvmTr for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type Context = BaseContext<DB>;
@@ -167,7 +167,7 @@ where
 
 impl<DB, I, P> InspectorEvmTr for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: ContextTr<Journal: JournalExt> + ContextSetters,
     I: Inspector<BaseContext<DB>>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
@@ -203,7 +203,7 @@ where
 
 impl<DB, I, P> ExecuteEvm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: crate::BaseContextTr
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -242,7 +242,7 @@ where
 
 impl<DB, I, P> ExecuteCommitEvm for BaseEvm<DB, I, P>
 where
-    DB: Database + DatabaseCommit,
+    DB: RevmDatabase + DatabaseCommit,
     BaseContext<DB>: crate::BaseContextTr
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -255,7 +255,7 @@ where
 
 impl<DB, I, P> InspectEvm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt>
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -277,7 +277,7 @@ where
 
 impl<DB, I, P> InspectCommitEvm for BaseEvm<DB, I, P>
 where
-    DB: Database + DatabaseCommit,
+    DB: RevmDatabase + DatabaseCommit,
     BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt>
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -288,7 +288,7 @@ where
 
 impl<DB, I, P> SystemCallEvm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: crate::BaseContextTr<Tx: SystemCallTx>
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -317,7 +317,7 @@ where
 
 impl<DB, I, P> InspectSystemCallEvm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: RevmDatabase,
     BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt, Tx: SystemCallTx>
         + ContextSetters
         + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
@@ -347,7 +347,7 @@ where
 
 impl<DB, I, P> Evm for BaseEvm<DB, I, P>
 where
-    DB: Database,
+    DB: AlloyDatabase,
     I: Inspector<BaseContext<DB>>,
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     BaseContext<DB>: crate::BaseContextTr
@@ -369,6 +369,10 @@ where
 
     fn chain_id(&self) -> u64 {
         self.cfg.chain_id
+    }
+
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
+        &self.cfg
     }
 
     /// Executes `tx`, invoking the [`Inspector`] iff `self.inspect` is `true`.
@@ -410,5 +414,87 @@ where
             &mut self.inner.inspector,
             &mut self.inner.precompiles,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use alloy_evm::{
+        EvmFactory, EvmInternals,
+        precompiles::{Precompile, PrecompileInput},
+    };
+    use alloy_primitives::{Address, U256};
+    use base_common_precompiles::{
+        JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM,
+        JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
+        JOVIAN_PAIRING_MAX_INPUT_SIZE,
+    };
+    use revm::{context::CfgEnv, database::EmptyDB};
+    use rstest::rstest;
+
+    use super::*;
+    use crate::{BaseEvmFactory, BaseSpecId, BaseUpgrade};
+
+    #[rstest]
+    #[case::bn254_pair(*JOVIAN.address(), JOVIAN_MAX_INPUT_SIZE)]
+    #[case::bls12_g1_msm(*JOVIAN_G1_MSM.address(), JOVIAN_G1_MSM_MAX_INPUT_SIZE)]
+    #[case::bls12_g2_msm(*JOVIAN_G2_MSM.address(), JOVIAN_G2_MSM_MAX_INPUT_SIZE)]
+    #[case::bls12_pairing(*JOVIAN_PAIRING.address(), JOVIAN_PAIRING_MAX_INPUT_SIZE)]
+    fn precompile_jovian_at_max_input(#[case] address: Address, #[case] max_size: usize) {
+        let mut evm = BaseEvmFactory::default().create_evm(
+            EmptyDB::default(),
+            EvmEnv::new(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Jovian)),
+                BlockEnv::default(),
+            ),
+        );
+        let (precompiles, ctx) = (&mut evm.inner.precompiles, &mut evm.inner.ctx);
+        let precompile = precompiles.get(&address).unwrap();
+        let result = precompile.call(PrecompileInput {
+            data: &vec![0; max_size],
+            gas: u64::MAX,
+            caller: Address::ZERO,
+            value: U256::ZERO,
+            is_static: false,
+            target_address: Address::ZERO,
+            bytecode_address: Address::ZERO,
+            reservoir: 0,
+            internals: EvmInternals::from_context(ctx),
+        });
+        assert!(result.is_ok(), "precompile {address} should succeed at max input size");
+    }
+
+    #[rstest]
+    #[case::bn254_pair(*JOVIAN.address(), JOVIAN_MAX_INPUT_SIZE)]
+    #[case::bls12_g1_msm(*JOVIAN_G1_MSM.address(), JOVIAN_G1_MSM_MAX_INPUT_SIZE)]
+    #[case::bls12_g2_msm(*JOVIAN_G2_MSM.address(), JOVIAN_G2_MSM_MAX_INPUT_SIZE)]
+    #[case::bls12_pairing(*JOVIAN_PAIRING.address(), JOVIAN_PAIRING_MAX_INPUT_SIZE)]
+    fn precompile_jovian_over_max_input(#[case] address: Address, #[case] max_size: usize) {
+        let mut evm = BaseEvmFactory::default().create_evm(
+            EmptyDB::default(),
+            EvmEnv::new(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Jovian)),
+                BlockEnv::default(),
+            ),
+        );
+        let (precompiles, ctx) = (&mut evm.inner.precompiles, &mut evm.inner.ctx);
+        let precompile = precompiles.get(&address).unwrap();
+        let result = precompile.call(PrecompileInput {
+            data: &vec![0; max_size + 1],
+            gas: u64::MAX,
+            caller: Address::ZERO,
+            value: U256::ZERO,
+            is_static: false,
+            target_address: Address::ZERO,
+            bytecode_address: Address::ZERO,
+            reservoir: 0,
+            internals: EvmInternals::from_context(ctx),
+        });
+        assert!(
+            result.is_err(),
+            "precompile {address} should fail over max input size, got {result:?}"
+        );
     }
 }

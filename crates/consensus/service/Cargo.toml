@@ -50,6 +50,7 @@ base-common-rpc-types-engine = { workspace = true, features = ["std"] }
 # general
 url.workspace = true
 http.workspace = true
+redb.workspace = true
 serde.workspace = true
 tower = { workspace = true, features = ["limit", "load-shed"] }
 bytes.workspace = true
@@ -72,6 +73,10 @@ derive_more = { workspace = true, features = ["debug", "eq"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 jsonrpsee = { workspace = true, features = ["server", "http-client"] }
 
+# Binary conductor commit endpoint
+ethereum_ssz.workspace = true
+reqwest.workspace = true
+
 # metrics
 metrics = { workspace = true, optional = true }
 
@@ -80,6 +85,7 @@ rand.workspace = true
 rstest.workspace = true
 anyhow.workspace = true
 mockall.workspace = true
+tempfile.workspace = true
 arbitrary.workspace = true
 base-common-rpc-types.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }

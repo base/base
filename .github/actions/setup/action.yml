@@ -19,7 +19,7 @@ inputs:
     default: "false"
   sp1-version:
     description: SP1 release tag used when sp1 is enabled (matches etc/just/succinct.just)
-    default: "v6.1.0"
+    default: "v6.2.3"
   elf-cache:
     description: Restore/save the ELF cache keyed on crates/proof/succinct/elf/manifest.toml
     default: "false"

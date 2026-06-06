@@ -2,6 +2,8 @@
 # The kernels require Xcode (Metal) on macOS but are only needed for linking
 # (cargo build), not for type-checking (cargo check/clippy). CI builds run
 # on Linux where CPU kernels compile without issue.
+
+[private]
 _skip_kernels := if os() == "macos" { "RISC0_SKIP_BUILD_KERNELS=1" } else { "" }
 
 set positional-arguments := true
@@ -18,6 +20,8 @@ mod check 'etc/just/check.just'
 mod build 'etc/just/build.just'
 # SP1 / succinct ELF builds and proving helpers
 mod succinct 'etc/just/succinct.just'
+# ZK prover gRPC request helpers
+mod zk-prover 'etc/just/zk-prover.just'
 
 alias t := test
 alias f := fix
@@ -34,11 +38,7 @@ default:
 
 # Load test a network in continuous mode (Ctrl-C to stop)
 load-test-continuous network='devnet':
-    just load-test continuous {{network}}
-
-# Runs the specs docs locally
-specs:
-    cd docs/specs && bun ci && bun dev
+    just load-test continuous {{ network }}
 
 # One-time project setup: installs tooling and builds test contracts
 setup:
@@ -110,15 +110,15 @@ zepter-fix:
 install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest --locked
 
-# Runs tests across workspace with all features enabled (excludes devnet)
+# Runs tests across workspace with all features enabled (excludes system tests)
 test: install-nextest build::contracts build::elfs
-    cargo nextest run --workspace --all-features --exclude devnet --no-fail-fast
+    cargo nextest run --workspace --all-features --exclude base-system-tests --no-fail-fast
 
-# Runs tests only for crates affected by changes vs main (excludes devnet)
+# Runs tests only for crates affected by changes vs main (excludes system tests)
 test-affected base="main": install-nextest build::contracts build::elfs
     #!/usr/bin/env bash
     set -euo pipefail
-    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet --cargo-args)"
+    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude base-system-tests --cargo-args)"
     pkg_args=()
     while IFS= read -r line; do
         [ -n "$line" ] && pkg_args+=("$line")
@@ -131,14 +131,14 @@ test-affected base="main": install-nextest build::contracts build::elfs
     cargo nextest run --all-features "${pkg_args[@]}"
 
 # Runs tests with ci profile for minimal disk usage
-test-ci: install-nextest build::contracts build::elfs
-    cargo nextest run -P ci --locked --workspace --all-features --exclude devnet --cargo-profile ci
+test-ci: install-nextest build::contracts
+    cargo nextest run -P ci --locked --workspace --all-features --exclude base-system-tests --cargo-profile ci
 
 # Runs tests only for affected crates with ci profile (for PRs)
-test-affected-ci base="main": install-nextest build::contracts build::elfs
+test-affected-ci base="main": install-nextest build::contracts
     #!/usr/bin/env bash
     set -euo pipefail
-    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet --cargo-args)"
+    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude base-system-tests --cargo-args)"
     pkg_args=()
     while IFS= read -r line; do
         [ -n "$line" ] && pkg_args+=("$line")
@@ -163,12 +163,12 @@ hack:
 
 # Fixes any formatting issues
 format-fix:
-    {{_skip_kernels}} BASE_SUCCINCT_ELF_STUB=1 cargo fix --allow-dirty --allow-staged --workspace
+    {{ _skip_kernels }} BASE_SUCCINCT_ELF_STUB=1 cargo fix --allow-dirty --allow-staged --workspace
     cargo +nightly fmt --all
 
 # Fixes any clippy issues
 clippy-fix:
-    {{_skip_kernels}} BASE_SUCCINCT_ELF_STUB=1 cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged
+    {{ _skip_kernels }} BASE_SUCCINCT_ELF_STUB=1 cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged
 
 # Cleans the workspace
 clean:
@@ -197,4 +197,4 @@ bench-proof-mpt:
 
 # Run basectl TUI dashboard
 basectl:
-    cargo run -p basectl --release
+    cargo run -p basectl --release -- monitor

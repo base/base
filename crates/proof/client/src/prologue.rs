@@ -2,9 +2,9 @@ use alloc::sync::Arc;
 use core::fmt::Debug;
 
 use alloy_consensus::Sealed;
-use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::BlockEnv};
+use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use alloy_primitives::B256;
-use base_common_evm::{BaseSpecId, BaseTxEnv};
+use base_common_evm::{BaseEvmFactory, BaseTxEnv};
 use base_consensus_derive::EthereumDataSource;
 use base_proof::{
     BootInfo, CachingOracle, HintType, OracleBlobProvider, OracleL1ChainProvider,
@@ -17,23 +17,22 @@ use crate::{FaultProofDriver, FaultProofProgramError};
 
 /// The prologue phase — loads boot information and initializes the derivation pipeline.
 #[derive(Debug)]
-pub struct Prologue<P, H, F> {
+pub struct Prologue<P, H> {
     oracle_client: P,
     hint_writer: H,
-    evm_factory: F,
+    evm_factory: BaseEvmFactory,
 }
 
-impl<P, H, F> Prologue<P, H, F>
+impl<P, H> Prologue<P, H>
 where
     P: PreimageOracleClient + Send + Sync + Clone + Debug + 'static,
     H: HintWriterClient + Send + Sync + Clone + Debug + 'static,
-    F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + Debug + 'static,
-    F::Tx: FromTxWithEncoded<base_common_consensus::BaseTxEnvelope>
+    <BaseEvmFactory as EvmFactory>::Tx: FromTxWithEncoded<base_common_consensus::BaseTxEnvelope>
         + FromRecoveredTx<base_common_consensus::BaseTxEnvelope>
         + BaseTxEnv,
 {
     /// Creates a new prologue.
-    pub const fn new(oracle_client: P, hint_writer: H, evm_factory: F) -> Self {
+    pub const fn new(oracle_client: P, hint_writer: H, evm_factory: BaseEvmFactory) -> Self {
         Self { oracle_client, hint_writer, evm_factory }
     }
 
@@ -42,7 +41,9 @@ where
     /// # Errors
     ///
     /// Returns an error if boot information cannot be loaded or pipeline initialization fails.
-    pub async fn load(self) -> Result<FaultProofDriver<P, H, F>, FaultProofProgramError> {
+    pub async fn load(
+        self,
+    ) -> Result<FaultProofDriver<P, H, BaseEvmFactory>, FaultProofProgramError> {
         const ORACLE_LRU_SIZE: usize = 1024;
 
         let oracle = Arc::new(CachingOracle::new(
@@ -51,6 +52,8 @@ where
             self.hint_writer.clone(),
         ));
         let boot = BootInfo::load(oracle.as_ref()).await?;
+        let evm_factory =
+            self.evm_factory.with_activation_admin_address(boot.activation_admin_address);
         let l1_config = boot.l1_config;
         let rollup_config = Arc::new(boot.rollup_config);
 
@@ -136,7 +139,7 @@ where
             cursor,
             pipeline,
             l2_provider,
-            self.evm_factory,
+            evm_factory,
         ))
     }
 }
@@ -157,4 +160,20 @@ where
         .get_exact(PreimageKey::new_keccak256(*agreed_l2_output_root), output_preimage.as_mut())
         .await?;
     Ok(B256::from_slice(&output_preimage[96..128]))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::address;
+
+    use super::BaseEvmFactory;
+
+    #[test]
+    fn base_evm_factory_records_activation_admin_address() {
+        let admin = address!("331C9d37BbcebBC9dfAf98FBE3C5B8A39Dd6E771");
+
+        let factory = BaseEvmFactory::default().with_activation_admin_address(Some(admin));
+
+        assert_eq!(factory.activation_admin_address(), Some(admin));
+    }
 }

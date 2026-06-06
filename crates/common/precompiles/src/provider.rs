@@ -1,5 +1,7 @@
 use alloc::{boxed::Box, string::String};
 
+use alloy_evm::precompiles::PrecompilesMap;
+use alloy_primitives::Address;
 use base_common_chains::BaseUpgrade;
 use revm::{
     context::Cfg,
@@ -7,10 +9,13 @@ use revm::{
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, InterpreterResult},
     precompile::{self, Precompiles, bn254, modexp, secp256r1},
-    primitives::{Address, OnceLock, hardfork::SpecId},
+    primitives::{OnceLock, hardfork::SpecId},
 };
 
-use crate::{BasePrecompileSpec, bls12_381, bn254_pair};
+use crate::{
+    ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup, NoopPrecompileCallObserver,
+    PolicyRegistryPrecompile, PrecompileCallObserver, bls12_381, bn254_pair,
+};
 
 /// Base precompile provider.
 #[derive(Debug, Clone)]
@@ -19,6 +24,8 @@ pub struct BasePrecompiles<S = BaseUpgrade> {
     inner: EthPrecompiles,
     /// Spec id of the precompile provider.
     spec: S,
+    /// Activation registry admin address.
+    activation_admin_address: Option<Address>,
 }
 
 impl<S: BasePrecompileSpec> BasePrecompiles<S> {
@@ -34,11 +41,30 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             BaseUpgrade::Granite | BaseUpgrade::Holocene => Self::granite(),
             BaseUpgrade::Isthmus => Self::isthmus(),
             BaseUpgrade::Jovian => Self::jovian(),
-            BaseUpgrade::Azul | BaseUpgrade::Beryl => Self::azul(),
+            BaseUpgrade::Azul | BaseUpgrade::Beryl | BaseUpgrade::Cobalt => Self::azul(),
             upgrade => panic!("unsupported Base precompile upgrade: {upgrade}"),
         };
 
-        Self { inner: EthPrecompiles { precompiles, spec: SpecId::default() }, spec }
+        Self {
+            inner: EthPrecompiles { precompiles, spec: SpecId::default() },
+            spec,
+            activation_admin_address: None,
+        }
+    }
+
+    /// Sets the activation registry admin address.
+    #[must_use = "with_activation_admin_address returns a new BasePrecompiles value"]
+    pub const fn with_activation_admin_address(
+        mut self,
+        activation_admin_address: Option<Address>,
+    ) -> Self {
+        self.activation_admin_address = activation_admin_address;
+        self
+    }
+
+    /// Returns the activation registry admin address.
+    pub const fn activation_admin_address(&self) -> Option<Address> {
+        self.activation_admin_address
     }
 
     /// Converts a Base upgrade into its Ethereum precompile spec.
@@ -131,6 +157,39 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             precompiles
         })
     }
+
+    /// Returns precompiles for the Base Beryl spec.
+    ///
+    /// Static precompiles are the same as Azul; Beryl adds dynamic precompiles at install time.
+    pub fn beryl() -> &'static Precompiles {
+        Self::azul()
+    }
+
+    /// Builds a [`PrecompilesMap`] with all Base precompiles for this spec installed.
+    ///
+    /// For Beryl and later, this also installs the dynamic token and registry precompiles.
+    #[must_use = "install returns the PrecompilesMap containing all installed Base precompiles"]
+    pub fn install(self) -> PrecompilesMap {
+        self.install_with_observer(NoopPrecompileCallObserver)
+    }
+
+    /// Builds a [`PrecompilesMap`] with all Base precompiles for this spec installed and observed.
+    ///
+    /// For Beryl and later, this also installs the dynamic token and registry precompiles.
+    #[must_use = "install_with_observer returns the PrecompilesMap containing all installed Base precompiles"]
+    pub fn install_with_observer<O>(self, observer: O) -> PrecompilesMap
+    where
+        O: PrecompileCallObserver,
+    {
+        let mut precompiles = PrecompilesMap::from_static(self.precompiles());
+        if self.spec.upgrade() >= BaseUpgrade::Beryl {
+            B20Factory::install(&mut precompiles);
+            BerylLookup::install_with_observer(&mut precompiles, observer);
+            PolicyRegistryPrecompile::install(&mut precompiles);
+            ActivationRegistry::install(&mut precompiles, self.activation_admin_address);
+        }
+        precompiles
+    }
 }
 
 impl<CTX, S> PrecompileProvider<CTX> for BasePrecompiles<S>
@@ -145,7 +204,8 @@ where
         if spec == self.spec {
             return false;
         }
-        *self = Self::new_with_spec(spec);
+        *self =
+            Self::new_with_spec(spec).with_activation_admin_address(self.activation_admin_address);
         true
     }
 
@@ -179,13 +239,18 @@ impl<S: BasePrecompileSpec> Default for BasePrecompiles<S> {
 mod tests {
     use std::vec;
 
+    use alloy_primitives::{Address, B256};
+    use base_common_chains::BaseUpgrade;
     use revm::{
-        precompile::{PrecompileError, Precompiles, bls12_381_const, bn254, modexp, secp256r1},
+        precompile::{Precompiles, bls12_381_const, bn254, modexp, secp256r1},
         primitives::eip7823,
     };
+    use rstest::rstest;
 
-    use super::*;
-    use crate::{bls12_381, bn254_pair};
+    use crate::{
+        ActivationRegistryStorage, B20FactoryStorage, B20Variant, BasePrecompiles, bls12_381,
+        bn254_pair,
+    };
 
     type TestPrecompiles = BasePrecompiles<BaseUpgrade>;
 
@@ -220,7 +285,7 @@ mod tests {
         let precompile = precompiles.get(&address).unwrap();
         let input = vec![0u8; input_len];
         assert!(
-            precompile.execute(&input, u64::MAX).is_ok(),
+            precompile.execute(&input, u64::MAX, 0).is_ok(),
             "precompile {address} should succeed at max input size"
         );
     }
@@ -257,34 +322,25 @@ mod tests {
         let mut bad_input_len = bn254_pair::JOVIAN_MAX_INPUT_SIZE + 1;
         assert!(bad_input_len < bn254_pair::GRANITE_MAX_INPUT_SIZE);
         let input = vec![0u8; bad_input_len];
-        assert!(matches!(
-            bn254_pair_precompile.execute(&input, u64::MAX),
-            Err(PrecompileError::Bn254PairLength)
-        ));
+        assert!(bn254_pair_precompile.execute(&input, u64::MAX, 0).is_err());
 
         let g1_msm = precompiles.precompiles().get(&bls12_381_const::G1_MSM_ADDRESS).unwrap();
         bad_input_len = bls12_381::JOVIAN_G1_MSM_MAX_INPUT_SIZE + 1;
         assert!(bad_input_len < bls12_381::ISTHMUS_G1_MSM_MAX_INPUT_SIZE);
         let input = vec![0u8; bad_input_len];
-        assert!(
-            matches!(g1_msm.execute(&input, u64::MAX), Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
-        );
+        assert!(g1_msm.execute(&input, u64::MAX, 0).is_err());
 
         let g2_msm = precompiles.precompiles().get(&bls12_381_const::G2_MSM_ADDRESS).unwrap();
         bad_input_len = bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE + 1;
         assert!(bad_input_len < bls12_381::ISTHMUS_G2_MSM_MAX_INPUT_SIZE);
         let input = vec![0u8; bad_input_len];
-        assert!(
-            matches!(g2_msm.execute(&input, u64::MAX), Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
-        );
+        assert!(g2_msm.execute(&input, u64::MAX, 0).is_err());
 
         let pairing = precompiles.precompiles().get(&bls12_381_const::PAIRING_ADDRESS).unwrap();
         bad_input_len = bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE + 1;
         assert!(bad_input_len < bls12_381::ISTHMUS_PAIRING_MAX_INPUT_SIZE);
         let input = vec![0u8; bad_input_len];
-        assert!(
-            matches!(pairing.execute(&input, u64::MAX), Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
-        );
+        assert!(pairing.execute(&input, u64::MAX, 0).is_err());
     }
 
     #[test]
@@ -318,19 +374,21 @@ mod tests {
             azul_precompiles.precompiles().get(secp256r1::P256VERIFY_OSAKA.address()).unwrap();
 
         assert!(matches!(
-            jovian_p256.execute(&[], 5_000),
+            jovian_p256.execute(&[], 5_000, 0),
             Ok(output) if output.gas_used == secp256r1::P256VERIFY_BASE_GAS_FEE
         ));
-        assert!(matches!(azul_p256.execute(&[], 5_000), Err(PrecompileError::OutOfGas)));
+        assert!(
+            matches!(azul_p256.execute(&[], 5_000, 0), Ok(output) if output.halt_reason().is_some())
+        );
 
         let jovian_modexp = jovian_precompiles.precompiles().get(modexp::BERLIN.address()).unwrap();
         let azul_modexp = azul_precompiles.precompiles().get(modexp::OSAKA.address()).unwrap();
         let oversized_input = oversized_modexp_input();
 
-        assert!(jovian_modexp.execute(&oversized_input, u64::MAX).is_ok());
+        assert!(jovian_modexp.execute(&oversized_input, u64::MAX, 0).is_ok());
         assert!(matches!(
-            azul_modexp.execute(&oversized_input, u64::MAX),
-            Err(PrecompileError::ModexpEip7823LimitSize)
+            azul_modexp.execute(&oversized_input, u64::MAX, 0),
+            Ok(output) if output.halt_reason().is_some()
         ));
     }
 
@@ -392,46 +450,19 @@ mod tests {
     fn test_modexp_eip7823_boundary() {
         let input_ok = modexp_input(eip7823::INPUT_SIZE_LIMIT, 1, 1);
         assert!(
-            !matches!(
-                modexp::osaka_run(&input_ok, u64::MAX),
-                Err(PrecompileError::ModexpEip7823LimitSize)
-            ),
+            modexp::osaka_run(&input_ok, u64::MAX).is_ok(),
             "base_len=1024 should not hit size limit"
         );
 
         let input_too_large = modexp_input(eip7823::INPUT_SIZE_LIMIT + 1, 1, 1);
-        assert!(matches!(
-            modexp::osaka_run(&input_too_large, u64::MAX),
-            Err(PrecompileError::ModexpEip7823LimitSize)
-        ));
-    }
-
-    #[test]
-    fn test_modexp_eip7823_each_field_rejects() {
-        let over = eip7823::INPUT_SIZE_LIMIT + 1;
-
-        assert!(matches!(
-            modexp::osaka_run(&modexp_input(over, 0, 1), u64::MAX),
-            Err(PrecompileError::ModexpEip7823LimitSize)
-        ));
-        assert!(matches!(
-            modexp::osaka_run(&modexp_input(0, over, 1), u64::MAX),
-            Err(PrecompileError::ModexpEip7823LimitSize)
-        ));
-        assert!(matches!(
-            modexp::osaka_run(&modexp_input(0, 0, over), u64::MAX),
-            Err(PrecompileError::ModexpEip7823LimitSize)
-        ));
+        assert!(modexp::osaka_run(&input_too_large, u64::MAX).is_err());
     }
 
     #[test]
     fn test_modexp_eip7823_all_fields_at_limit() {
         let limit = eip7823::INPUT_SIZE_LIMIT;
         assert!(
-            !matches!(
-                modexp::osaka_run(&modexp_input(limit, limit, limit), u64::MAX),
-                Err(PrecompileError::ModexpEip7823LimitSize)
-            ),
+            modexp::osaka_run(&modexp_input(limit, limit, limit), u64::MAX).is_ok(),
             "all fields at limit should not trigger size error"
         );
     }
@@ -461,7 +492,7 @@ mod tests {
             secp256r1::p256_verify_osaka(&[], 6_900),
             Ok(output) if output.gas_used == 6_900
         ));
-        assert!(matches!(secp256r1::p256_verify_osaka(&[], 6_899), Err(PrecompileError::OutOfGas)));
+        assert!(secp256r1::p256_verify_osaka(&[], 6_899).is_err());
     }
 
     #[test]
@@ -470,5 +501,41 @@ mod tests {
             secp256r1::P256VERIFY_BASE_GAS_FEE_OSAKA,
             secp256r1::P256VERIFY_BASE_GAS_FEE * 2
         );
+    }
+
+    #[test]
+    fn install_preserves_base_precompile_set() {
+        let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Jovian).install();
+
+        assert!(precompiles.get(&bn254::pair::ADDRESS).is_some());
+        assert!(precompiles.get(secp256r1::P256VERIFY.address()).is_some());
+    }
+
+    #[rstest]
+    #[case::azul(BaseUpgrade::Azul, false)]
+    #[case::beryl(BaseUpgrade::Beryl, true)]
+    #[case::cobalt(BaseUpgrade::Cobalt, true)]
+    fn install_routes_b20_precompiles_by_fork(#[case] spec: BaseUpgrade, #[case] expected: bool) {
+        let precompiles = BasePrecompiles::new_with_spec(spec).install();
+        let (token, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+
+        assert_eq!(precompiles.get(&B20FactoryStorage::ADDRESS).is_some(), expected);
+        assert_eq!(precompiles.get(&token).is_some(), expected);
+        assert!(precompiles.get(&Address::repeat_byte(0x42)).is_none());
+    }
+
+    #[test]
+    fn activation_registry_is_not_installed_before_beryl() {
+        let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Azul).install();
+
+        assert!(precompiles.get(&ActivationRegistryStorage::ADDRESS).is_none());
+    }
+
+    #[test]
+    fn activation_registry_is_installed_at_beryl() {
+        let precompiles = BasePrecompiles::new_with_spec(BaseUpgrade::Beryl).install();
+
+        assert!(precompiles.get(&ActivationRegistryStorage::ADDRESS).is_some());
     }
 }

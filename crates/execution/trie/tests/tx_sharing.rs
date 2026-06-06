@@ -29,7 +29,9 @@ use reth_primitives_traits::Account;
 use reth_provider::{
     StateProofProvider, StateRootProvider, StorageRootProvider, noop::NoopProvider,
 };
-use reth_trie_common::{HashedPostState, HashedStorage, MultiProofTargets, TrieInput};
+use reth_trie_common::{
+    ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProofTargets, TrieInput,
+};
 use tempfile::TempDir;
 
 /// Number of accounts we seed and target per test request.
@@ -177,7 +179,11 @@ fn witness_acquires_one_tx_per_call() {
 
     assert_tx_acquisitions(&storage, 1, "witness", || {
         provider
-            .witness(TrieInput::from_state(full_post_state()), full_post_state())
+            .witness(
+                TrieInput::from_state(full_post_state()),
+                full_post_state(),
+                ExecutionWitnessMode::default(),
+            )
             .expect("witness");
     });
 }

@@ -119,8 +119,8 @@ fn gen_rust_unsigned_tests() -> TokenStream {
             #[test]
             fn #test_name(value in any::<#type_name>(), base_slot in arb_safe_slot()) {
                 let (mut storage, address) = setup_storage();
-                ::base_precompile_storage::StorageCtx::enter(&mut storage, || {
-                    let mut slot = ::base_precompile_storage::Slot::<#type_name>::new(base_slot, address);
+                ::base_precompile_storage::StorageCtx::enter(&mut storage, |ctx| {
+                    let mut slot = ::base_precompile_storage::Slot::<#type_name>::new(base_slot, address, ctx);
                     slot.write(value).unwrap();
                     let loaded = slot.read().unwrap();
                     assert_eq!(value, loaded, concat!(#label, " roundtrip failed"));
@@ -153,8 +153,8 @@ fn gen_rust_signed_tests() -> TokenStream {
                 #[test]
                 fn #pos_test_name(value in 0 as #type_name..=#type_name::MAX, base_slot in arb_safe_slot()) {
                     let (mut storage, address) = setup_storage();
-                    ::base_precompile_storage::StorageCtx::enter(&mut storage, || {
-                        let mut slot = ::base_precompile_storage::Slot::<#type_name>::new(base_slot, address);
+                    ::base_precompile_storage::StorageCtx::enter(&mut storage, |ctx| {
+                        let mut slot = ::base_precompile_storage::Slot::<#type_name>::new(base_slot, address, ctx);
                         slot.write(value).unwrap();
                         let loaded = slot.read().unwrap();
                         assert_eq!(value, loaded, concat!(#label, " positive roundtrip failed"));
@@ -171,8 +171,8 @@ fn gen_rust_signed_tests() -> TokenStream {
                 #[test]
                 fn #neg_test_name(value in #type_name::MIN..0 as #type_name, base_slot in arb_safe_slot()) {
                     let (mut storage, address) = setup_storage();
-                    ::base_precompile_storage::StorageCtx::enter(&mut storage, || {
-                        let mut slot = ::base_precompile_storage::Slot::<#type_name>::new(base_slot, address);
+                    ::base_precompile_storage::StorageCtx::enter(&mut storage, |ctx| {
+                        let mut slot = ::base_precompile_storage::Slot::<#type_name>::new(base_slot, address, ctx);
                         slot.write(value).unwrap();
                         let loaded = slot.read().unwrap();
                         assert_eq!(value, loaded, concat!(#label, " negative roundtrip failed"));
@@ -205,8 +205,8 @@ fn gen_alloy_unsigned_tests() -> TokenStream {
             #[test]
             fn #test_name(value in #arb_fn(), base_slot in arb_safe_slot()) {
                 let (mut storage, address) = setup_storage();
-                ::base_precompile_storage::StorageCtx::enter(&mut storage, || {
-                    let mut slot = ::base_precompile_storage::Slot::<::alloy_primitives::aliases::#type_name>::new(base_slot, address);
+                ::base_precompile_storage::StorageCtx::enter(&mut storage, |ctx| {
+                    let mut slot = ::base_precompile_storage::Slot::<::alloy_primitives::aliases::#type_name>::new(base_slot, address, ctx);
                     slot.write(value).unwrap();
                     let loaded = slot.read().unwrap();
                     assert_eq!(value, loaded, concat!(#label, " roundtrip failed"));
@@ -245,8 +245,8 @@ fn gen_alloy_signed_tests() -> TokenStream {
                 #[test]
                 fn #pos_test_name(value in #arb_pos_fn(), base_slot in arb_safe_slot()) {
                     let (mut storage, address) = setup_storage();
-                    ::base_precompile_storage::StorageCtx::enter(&mut storage, || {
-                        let mut slot = ::base_precompile_storage::Slot::<::alloy_primitives::aliases::#type_name>::new(base_slot, address);
+                    ::base_precompile_storage::StorageCtx::enter(&mut storage, |ctx| {
+                        let mut slot = ::base_precompile_storage::Slot::<::alloy_primitives::aliases::#type_name>::new(base_slot, address, ctx);
                         slot.write(value).unwrap();
                         let loaded = slot.read().unwrap();
                         assert_eq!(value, loaded, concat!(#label, " positive roundtrip failed"));
@@ -267,8 +267,8 @@ fn gen_alloy_signed_tests() -> TokenStream {
                 #[test]
                 fn #neg_test_name(value in #arb_neg_fn(), base_slot in arb_safe_slot()) {
                     let (mut storage, address) = setup_storage();
-                    ::base_precompile_storage::StorageCtx::enter(&mut storage, || {
-                        let mut slot = ::base_precompile_storage::Slot::<::alloy_primitives::aliases::#type_name>::new(base_slot, address);
+                    ::base_precompile_storage::StorageCtx::enter(&mut storage, |ctx| {
+                        let mut slot = ::base_precompile_storage::Slot::<::alloy_primitives::aliases::#type_name>::new(base_slot, address, ctx);
                         slot.write(value).unwrap();
                         let loaded = slot.read().unwrap();
                         assert_eq!(value, loaded, concat!(#label, " negative roundtrip failed"));
@@ -303,8 +303,8 @@ fn gen_fixed_bytes_tests() -> TokenStream {
             #[test]
             fn #test_name(value in #arb_fn(), base_slot in arb_safe_slot()) {
                 let (mut storage, address) = setup_storage();
-                ::base_precompile_storage::StorageCtx::enter(&mut storage, || {
-                    let mut slot = ::base_precompile_storage::Slot::<::alloy_primitives::FixedBytes<#size>>::new(base_slot, address);
+                ::base_precompile_storage::StorageCtx::enter(&mut storage, |ctx| {
+                    let mut slot = ::base_precompile_storage::Slot::<::alloy_primitives::FixedBytes<#size>>::new(base_slot, address, ctx);
                     slot.write(value).unwrap();
                     let loaded = slot.read().unwrap();
                     assert_eq!(

@@ -20,6 +20,7 @@ reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
 reth-payload-primitives.workspace = true
 reth-basic-payload-builder.workspace = true
+reth-revm.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 
@@ -51,6 +52,7 @@ base-tx-manager.workspace = true
 base-batcher-core.workspace = true
 base-common-chains.workspace = true
 base-execution-evm.workspace = true
+base-consensus-rpc.workspace = true
 base-consensus-node.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
@@ -78,6 +80,16 @@ thiserror.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+# alloy
+alloy-sol-types = { workspace = true, features = ["std"] }
+
+# base
 base-blobs.workspace = true
+base-common-precompiles.workspace = true
+base-precompile-storage.workspace = true
+
+# tokio
 tokio = { workspace = true, features = ["rt", "macros"] }
+
+# tracing
 tracing-subscriber = { workspace = true, features = ["env-filter"] }

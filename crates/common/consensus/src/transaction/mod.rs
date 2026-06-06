@@ -3,8 +3,14 @@
 mod deposit;
 pub use deposit::{DepositTransaction, TxDeposit};
 
+mod eip8130;
+pub use eip8130::{
+    AccountChange, Call, ConfigChange, CreateEntry, Delegation, Eip8130Constants, Eip8130Signed,
+    InitialOwner, OwnerChange, OwnerChangeType, Scope, TxEip8130,
+};
+
 mod tx_type;
-pub use tx_type::DEPOSIT_TX_TYPE_ID;
+pub use tx_type::{DEPOSIT_TX_TYPE_ID, EIP8130_REJECTION_MSG, EIP8130_TX_TYPE_ID};
 
 mod envelope;
 pub use envelope::{BaseTransaction, BaseTxEnvelope, OpTxType};

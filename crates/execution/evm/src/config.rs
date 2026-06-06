@@ -21,7 +21,7 @@ use base_execution_chainspec::BaseChainSpec;
 use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
 use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor};
-use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnv, precompiles::PrecompilesMap};
+use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnvMut, precompiles::PrecompilesMap};
 use reth_primitives_traits::{NodePrimitives, SealedBlock, SealedHeader, SignedTransaction};
 #[cfg(feature = "std")]
 use reth_primitives_traits::{TxTy, WithEncoded};
@@ -110,12 +110,13 @@ impl<ChainSpec: Upgrades> BaseEvmConfig<ChainSpec> {
 impl<ChainSpec: Upgrades, N: NodePrimitives, R> BaseEvmConfig<ChainSpec, N, R> {
     /// Creates a new [`BaseEvmConfig`] with the given chain spec.
     pub fn new(chain_spec: Arc<ChainSpec>, receipt_builder: R) -> Self {
+        let activation_admin_address = chain_spec.as_ref().activation_admin_address();
         Self {
             block_assembler: BaseBlockAssembler::new(Arc::clone(&chain_spec)),
             executor_factory: BaseBlockExecutorFactory::new(
                 receipt_builder,
                 chain_spec,
-                BaseEvmFactory::default(),
+                BaseEvmFactory::new(activation_admin_address),
             ),
             _pd: PhantomData,
         }
@@ -144,11 +145,11 @@ where
             Block = alloy_consensus::Block<R::Transaction>,
         >,
     BaseTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
-    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction>,
+    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction> + Clone,
     EvmF: EvmFactory<
             Tx: FromRecoveredTx<R::Transaction>
                     + FromTxWithEncoded<R::Transaction>
-                    + TransactionEnv
+                    + TransactionEnvMut
                     + BaseTxEnv,
             Precompiles = PrecompilesMap,
             Spec = BaseSpecId,
@@ -221,7 +222,7 @@ where
             Block = alloy_consensus::Block<R::Transaction>,
         >,
     BaseTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
-    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction>,
+    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction> + Clone,
     Self: Send + Sync + Unpin + Clone + 'static,
 {
     fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
@@ -326,7 +327,7 @@ mod tests {
         // Use the `BaseEvmConfig` to create the `cfg_env` and `block_env` based on the ChainSpec,
         // Header, and total difficulty
         let EvmEnv { cfg_env, .. } =
-            BaseEvmConfig::base(Arc::new(BaseChainSpec { inner: chain_spec.clone() }))
+            BaseEvmConfig::base(Arc::new(BaseChainSpec::from(chain_spec.clone())))
                 .evm_env(&header)
                 .unwrap();
 

@@ -106,6 +106,9 @@ pub enum BaseProofsStorageError {
          Please clear proofs data and retry initialization."
     )]
     InitializeStorageInconsistentState,
+    /// Batch session used after its underlying transaction has been committed or aborted.
+    #[error("Batch session used after its underlying transaction was closed")]
+    BatchSessionClosed,
 }
 
 impl From<BlockExecutionError> for BaseProofsStorageError {

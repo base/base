@@ -118,6 +118,7 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
                 OpTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
                 OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
                 OpTxType::Deposit => unreachable!(),
+                OpTxType::Eip8130 => BaseReceipt::Eip8130(receipt),
             })
         }
     }
@@ -175,8 +176,10 @@ mod tests {
     fn create_success_result() -> ExecutionResult<BaseHaltReason> {
         ExecutionResult::Success {
             reason: revm::context::result::SuccessReason::Stop,
-            gas_used: 21000,
-            gas_refunded: 0,
+            gas: revm::context::result::ResultGas::default()
+                .with_total_gas_spent(21_000)
+                .with_refunded(0)
+                .with_floor_gas(0),
             logs: vec![Log {
                 address: Address::ZERO,
                 data: LogData::new_unchecked(vec![], alloy_primitives::Bytes::new()),
@@ -207,8 +210,14 @@ mod tests {
 
     #[test]
     fn test_receipt_from_revert_result() {
-        let result: ExecutionResult<BaseHaltReason> =
-            ExecutionResult::Revert { gas_used: 10000, output: alloy_primitives::Bytes::new() };
+        let result: ExecutionResult<BaseHaltReason> = ExecutionResult::Revert {
+            gas: revm::context::result::ResultGas::default()
+                .with_total_gas_spent(10_000)
+                .with_refunded(0)
+                .with_floor_gas(0),
+            logs: vec![],
+            output: alloy_primitives::Bytes::new(),
+        };
         let receipt = Receipt {
             status: Eip658Value::Eip658(result.is_success()),
             cumulative_gas_used: 10000,
@@ -326,8 +335,14 @@ mod tests {
 
         let builder = UnifiedReceiptBuilder::new(chain_spec);
         let tx = create_legacy_tx();
-        let result: ExecutionResult<BaseHaltReason> =
-            ExecutionResult::Revert { gas_used: 10000, output: alloy_primitives::Bytes::new() };
+        let result: ExecutionResult<BaseHaltReason> = ExecutionResult::Revert {
+            gas: revm::context::result::ResultGas::default()
+                .with_total_gas_spent(10_000)
+                .with_refunded(0)
+                .with_floor_gas(0),
+            logs: vec![],
+            output: alloy_primitives::Bytes::new(),
+        };
 
         let receipt =
             builder.build(&mut evm, &tx, &result, 10000, 0).expect("build should succeed");

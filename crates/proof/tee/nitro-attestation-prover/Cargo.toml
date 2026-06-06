@@ -17,6 +17,7 @@ base-proof-tee-nitro-verifier.workspace = true
 
 # Types / traits (always available)
 thiserror.workspace = true
+tokio-util.workspace = true
 async-trait.workspace = true
 alloy-primitives.workspace = true
 
@@ -27,7 +28,6 @@ alloy-primitives.workspace = true
 url = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 boundless-market = { workspace = true, optional = true }
-alloy-signer-local = { workspace = true, optional = true }
 risc0-ethereum-contracts = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt"], optional = true }
 risc0-zkvm = { workspace = true, features = ["prove"], optional = true }
@@ -39,7 +39,6 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [features]
 prove = [
-	"dep:alloy-signer-local",
 	"dep:boundless-market",
 	"dep:risc0-ethereum-contracts",
 	"dep:risc0-zkvm",

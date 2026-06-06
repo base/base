@@ -20,7 +20,7 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_provider::{Provider, RootProvider};
 use base_bundles::MeterBundleResponse;
 use base_common_network::Base;
 use clap::Args;
@@ -134,11 +134,8 @@ impl BuilderConnector {
     /// that slow responses don't block the recv loop and risk broadcast channel
     /// lag.
     pub fn connect(metering_rx: broadcast::Receiver<MeterBundleResponse>, builder_rpc: Url) {
-        let rpc_url: Arc<str> = Arc::from(builder_rpc.as_str());
-        let builder: RootProvider<Base> = ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .network::<Base>()
-            .connect_http(builder_rpc);
+        let rpc_url = builder_rpc.clone();
+        let builder: RootProvider<Base> = RootProvider::new_http(builder_rpc);
 
         tokio::spawn(async move {
             let mut event_rx = metering_rx;
@@ -169,7 +166,7 @@ impl BuilderConnector {
                             break;
                         };
                         let builder = builder.clone();
-                        let url = Arc::clone(&rpc_url);
+                        let url = rpc_url.clone();
                         join_set.spawn(async move {
                             match builder
                                 .client()

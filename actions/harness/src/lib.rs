@@ -9,6 +9,12 @@ pub use action::{Action, L2BlockProvider};
 mod conductor;
 pub use conductor::{ConductorState, TestConductor, TestConductorHandle};
 
+mod common;
+pub use common::{
+    ActionL2Source, BlockHashInner, SharedBlockHashRegistry, TEST_ACCOUNT_ADDRESS,
+    TEST_ACCOUNT_KEY, TestAccount,
+};
+
 mod l1;
 pub use l1::{
     ActionBlobProvider, ActionL1BlockFetcher, ActionL1ChainProvider, ActionL1FetcherError, L1Block,
@@ -16,10 +22,11 @@ pub use l1::{
     SharedL1Chain, UserDeposit, block_info_from, l1_block_to_rpc,
 };
 
-mod l2;
-pub use l2::{
-    ActionL2Source, BlockHashInner, L2Sequencer, L2SequencerError, SharedBlockHashRegistry,
-    TEST_ACCOUNT_ADDRESS, TEST_ACCOUNT_KEY, TestAccount,
+mod sequencer;
+pub use sequencer::{
+    ActionConductor, ActionOriginSelector, ActionSequencerAttributesBuilder,
+    ActionSequencerEngineClient, ActionUnsafePayloadGossipClient, ExecutionPayloadConverter,
+    L2Sequencer, L2SequencerError,
 };
 
 mod harness;

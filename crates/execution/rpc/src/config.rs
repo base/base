@@ -41,8 +41,8 @@ fn sanitize_system_contracts_for_fork(chain_spec: &impl Upgrades, fork_config: &
         // Base does not support L1-style deposit, consolidation, or withdrawal request contracts.
         SystemContract::ConsolidationRequestPredeploy
         | SystemContract::DepositContract
-        | SystemContract::WithdrawalRequestPredeploy
-        | SystemContract::Other(_) => false,
+        | SystemContract::WithdrawalRequestPredeploy => false,
+        SystemContract::Other(_) => true,
     });
 }
 

@@ -28,6 +28,7 @@ static FORK_PROGRESSION: &[(&str, ForkSetter)] = &[
     ("jovian", |h| h.jovian_time = Some(0)),
     ("azul", |h| h.base.azul = Some(0)),
     ("beryl", |h| h.base.beryl = Some(0)),
+    ("cobalt", |h| h.base.cobalt = Some(0)),
 ];
 
 /// Named hardfork schedules for parametrizing harness tests across protocol upgrades.
@@ -187,6 +188,7 @@ mod tests {
                 "jovian",
                 "azul",
                 "beryl",
+                "cobalt",
             ]
         );
     }
@@ -265,6 +267,13 @@ mod tests {
                     assert!(cfg.is_jovian_active(0));
                     assert!(cfg.is_base_azul_active(0));
                     assert!(cfg.is_beryl_active(0));
+                    assert!(!cfg.is_cobalt_active(0));
+                }
+                "cobalt" => {
+                    assert!(cfg.is_jovian_active(0));
+                    assert!(cfg.is_base_azul_active(0));
+                    assert!(cfg.is_beryl_active(0));
+                    assert!(cfg.is_cobalt_active(0));
                 }
                 _ => unreachable!("unexpected fork {fork_name}"),
             }

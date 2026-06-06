@@ -50,20 +50,37 @@ pub trait PrecompileStorageProvider {
 
     /// Deducts gas from the remaining gas and returns an error if insufficient.
     fn deduct_gas(&mut self, gas: u64) -> Result<()>;
+    /// Deducts state-creating gas (EIP-8037 reservoir model).
+    ///
+    /// Counts only state-creation operations: new account creation and code deposit.
+    /// State gas is tracked separately from regular gas and also deducted from the
+    /// regular gas counter when no reservoir is available.
+    fn deduct_state_gas(&mut self, gas: u64) -> Result<()>;
     /// Adds a gas refund to the refund counter.
     fn refund_gas(&mut self, gas: i64);
     /// Returns the gas limit for this precompile call.
     fn gas_limit(&self) -> u64;
     /// Returns the gas used so far.
     fn gas_used(&self) -> u64;
+    /// Returns the state-creating gas spent so far (EIP-8037).
+    ///
+    /// Counts only new account creation and code deposit operations.
+    fn state_gas_used(&self) -> u64;
     /// Returns the gas refunded so far.
     fn gas_refunded(&self) -> i64;
+    /// Returns the remaining EIP-8037 state-gas reservoir.
+    ///
+    /// State gas is first deducted from this reservoir before spilling into regular gas.
+    /// Returns zero when no reservoir was provided at construction time.
+    fn reservoir(&self) -> u64;
 
     /// Returns whether the current call context is static.
     fn is_static(&self) -> bool;
 
     /// Returns the address that called this precompile.
     fn caller(&self) -> Address;
+    /// Replaces the current caller address and returns the previous caller.
+    fn replace_caller(&mut self, caller: Address) -> Address;
 
     /// Creates a new journal checkpoint for atomic state management.
     fn checkpoint(&mut self) -> JournalCheckpoint;
@@ -98,13 +115,11 @@ pub trait StorageOps {
 /// Trait providing access to a contract's address and storage.
 ///
 /// Automatically implemented by the `#[contract]` macro.
-pub trait ContractStorage {
+pub trait ContractStorage<'a> {
     /// Contract address.
     fn address(&self) -> Address;
     /// Contract storage accessor.
-    fn storage(&self) -> &crate::storage_ctx::StorageCtx;
-    /// Contract mutable storage accessor.
-    fn storage_mut(&mut self) -> &mut crate::storage_ctx::StorageCtx;
+    fn storage(&self) -> crate::storage_ctx::StorageCtx<'a>;
 
     /// Returns true if the contract has bytecode deployed at its address.
     fn is_initialized(&self) -> Result<bool> {
@@ -180,6 +195,12 @@ impl LayoutCtx {
 pub trait StorableType {
     /// Storage layout descriptor.
     const LAYOUT: Layout;
+    /// Whether this type declares its own ERC-7201 storage namespace.
+    const HAS_STORAGE_NAMESPACE: bool = false;
+    /// ERC-7201 namespace identifier for this type.
+    const STORAGE_NAMESPACE_ID: &'static str = "";
+    /// ERC-7201 namespace root slot for this type.
+    const STORAGE_NAMESPACE_ROOT: U256 = U256::ZERO;
     /// Number of storage slots this type occupies.
     const SLOTS: usize = Self::LAYOUT.slots();
     /// Number of bytes this type occupies.
@@ -190,10 +211,15 @@ pub trait StorableType {
     const IS_DYNAMIC: bool = false;
 
     /// The handler type that provides storage access for this type.
-    type Handler;
+    type Handler<'a>;
 
     /// Creates a handler for this type at the given storage location.
-    fn handle(slot: U256, ctx: LayoutCtx, address: Address) -> Self::Handler;
+    fn handle<'a>(
+        slot: U256,
+        ctx: LayoutCtx,
+        address: Address,
+        storage: crate::storage_ctx::StorageCtx<'a>,
+    ) -> Self::Handler<'a>;
 }
 
 /// Handler trait for read/write/delete operations on a storable value.

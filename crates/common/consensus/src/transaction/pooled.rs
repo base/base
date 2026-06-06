@@ -12,7 +12,7 @@ use alloy_consensus::{
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{B256, Signature, TxHash, bytes};
 
-use crate::BaseTxEnvelope;
+use crate::{BaseTxEnvelope, transaction::Eip8130Signed};
 
 /// All possible transactions that can be included in a response to `GetPooledTransactions`.
 /// A response to `GetPooledTransactions`. This can include a typed signed transaction, but cannot
@@ -35,17 +35,28 @@ pub enum BasePooledTransaction {
     /// A [`TxEip7702`] transaction tagged with type 4.
     #[envelope(ty = 4)]
     Eip7702(Signed<TxEip7702>),
+    /// An [EIP-8130] Account Abstraction transaction tagged with type 0x7D.
+    ///
+    /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
+    #[envelope(ty = 125, typed = TxEip8130)]
+    Eip8130(Eip8130Signed),
 }
 
 impl BasePooledTransaction {
     /// Heavy operation that returns the signature hash over rlp encoded transaction. It is only
     /// for signature signing or signer recovery.
+    ///
+    /// Panics on the [`Self::Eip8130`] variant: EIP-8130 transactions do not
+    /// have a single ECDSA signature.
     pub fn signature_hash(&self) -> B256 {
         match self {
             Self::Legacy(tx) => tx.signature_hash(),
             Self::Eip2930(tx) => tx.signature_hash(),
             Self::Eip1559(tx) => tx.signature_hash(),
             Self::Eip7702(tx) => tx.signature_hash(),
+            Self::Eip8130(_) => {
+                unimplemented!("BasePooledTransaction::signature_hash invoked on EIP-8130 variant")
+            }
         }
     }
 
@@ -56,16 +67,23 @@ impl BasePooledTransaction {
             Self::Eip2930(tx) => tx.hash(),
             Self::Eip1559(tx) => tx.hash(),
             Self::Eip7702(tx) => tx.hash(),
+            Self::Eip8130(tx) => tx.hash(),
         }
     }
 
     /// Returns the signature of the transaction.
-    pub const fn signature(&self) -> &Signature {
+    ///
+    /// Panics on the [`Self::Eip8130`] variant: EIP-8130 transactions do not
+    /// have a single ECDSA signature.
+    pub fn signature(&self) -> &Signature {
         match self {
             Self::Legacy(tx) => tx.signature(),
             Self::Eip2930(tx) => tx.signature(),
             Self::Eip1559(tx) => tx.signature(),
             Self::Eip7702(tx) => tx.signature(),
+            Self::Eip8130(_) => {
+                unimplemented!("BasePooledTransaction::signature invoked on EIP-8130 variant")
+            }
         }
     }
 
@@ -77,16 +95,23 @@ impl BasePooledTransaction {
             Self::Eip2930(tx) => tx.tx().encode_for_signing(out),
             Self::Eip1559(tx) => tx.tx().encode_for_signing(out),
             Self::Eip7702(tx) => tx.tx().encode_for_signing(out),
+            Self::Eip8130(tx) => tx.tx().encode_for_signing(out),
         }
     }
 
     /// Converts the transaction into the ethereum [`TxEnvelope`].
+    ///
+    /// Panics on the [`Self::Eip8130`] variant: EIP-8130 is Base-specific and
+    /// has no corresponding ethereum envelope variant.
     pub fn into_envelope(self) -> TxEnvelope {
         match self {
             Self::Legacy(tx) => tx.into(),
             Self::Eip2930(tx) => tx.into(),
             Self::Eip1559(tx) => tx.into(),
             Self::Eip7702(tx) => tx.into(),
+            Self::Eip8130(_) => {
+                unimplemented!("BasePooledTransaction::into_envelope invoked on EIP-8130 variant")
+            }
         }
     }
 
@@ -97,7 +122,21 @@ impl BasePooledTransaction {
             Self::Eip2930(tx) => tx.into(),
             Self::Eip1559(tx) => tx.into(),
             Self::Eip7702(tx) => tx.into(),
+            Self::Eip8130(tx) => BaseTxEnvelope::Eip8130(tx),
         }
+    }
+
+    /// Returns the [`Eip8130Signed`] variant if the transaction is an EIP-8130 transaction.
+    pub const fn as_eip8130(&self) -> Option<&Eip8130Signed> {
+        match self {
+            Self::Eip8130(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if the transaction is an EIP-8130 (account-abstraction) transaction.
+    pub const fn is_eip8130(&self) -> bool {
+        matches!(self, Self::Eip8130(_))
     }
 
     /// Returns the [`TxLegacy`] variant if the transaction is a legacy transaction.
@@ -157,6 +196,12 @@ impl From<Signed<TxEip7702>> for BasePooledTransaction {
     }
 }
 
+impl From<Eip8130Signed> for BasePooledTransaction {
+    fn from(v: Eip8130Signed) -> Self {
+        Self::Eip8130(v)
+    }
+}
+
 impl From<BasePooledTransaction> for alloy_consensus::transaction::PooledTransaction {
     fn from(value: BasePooledTransaction) -> Self {
         match value {
@@ -164,6 +209,9 @@ impl From<BasePooledTransaction> for alloy_consensus::transaction::PooledTransac
             BasePooledTransaction::Eip2930(tx) => tx.into(),
             BasePooledTransaction::Eip1559(tx) => tx.into(),
             BasePooledTransaction::Eip7702(tx) => tx.into(),
+            BasePooledTransaction::Eip8130(_) => unimplemented!(
+                "EIP-8130 transactions cannot be converted to ethereum PooledTransaction"
+            ),
         }
     }
 }
@@ -179,6 +227,9 @@ impl alloy_consensus::transaction::SignerRecoverable for BasePooledTransaction {
     fn recover_signer(
         &self,
     ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
+        if let Self::Eip8130(tx) = self {
+            return tx.recover_sender();
+        }
         let signature_hash = self.signature_hash();
         alloy_consensus::crypto::secp256k1::recover_signer(self.signature(), signature_hash)
     }
@@ -186,6 +237,9 @@ impl alloy_consensus::transaction::SignerRecoverable for BasePooledTransaction {
     fn recover_signer_unchecked(
         &self,
     ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
+        if let Self::Eip8130(tx) = self {
+            return tx.recover_sender_unchecked();
+        }
         let signature_hash = self.signature_hash();
         alloy_consensus::crypto::secp256k1::recover_signer_unchecked(
             self.signature(),
@@ -210,6 +264,7 @@ impl alloy_consensus::transaction::SignerRecoverable for BasePooledTransaction {
             Self::Eip7702(tx) => {
                 alloy_consensus::transaction::SignerRecoverable::recover_unchecked_with_buf(tx, buf)
             }
+            Self::Eip8130(tx) => tx.recover_sender_unchecked(),
         }
     }
 }
@@ -258,6 +313,7 @@ impl InMemorySize for BasePooledTransaction {
             Self::Eip2930(tx) => tx.size(),
             Self::Eip1559(tx) => tx.size(),
             Self::Eip7702(tx) => tx.size(),
+            Self::Eip8130(tx) => tx.size(),
         }
     }
 }

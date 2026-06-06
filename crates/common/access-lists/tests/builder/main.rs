@@ -42,6 +42,7 @@ fn block_env() -> BlockEnv {
             excess_blob_gas: 0,
             blob_gasprice: 1,
         }),
+        slot_num: 0,
     }
 }
 

@@ -30,19 +30,20 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
+    panic::AssertUnwindSafe,
     sync::Arc,
 };
 
-use alloy_primitives::{Address, B256, Signature, keccak256};
-use alloy_sol_types::SolCall;
+use alloy_primitives::{Address, B256};
 use base_proof_contracts::{
-    AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient,
-    ITEEProverRegistry, encode_extra_data,
+    AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, encode_extra_data,
 };
-use base_proof_primitives::{ProofJournal, ProofRequest, ProofResult, ProverClient};
+use base_proof_primitives::{ProofRequest, ProofResult};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider, RpcError};
+use base_prover_service_client::ProofRequesterProvider;
+use base_prover_service_protocol::TeeKind;
 use eyre::Result;
-use futures::{StreamExt, stream};
+use futures::{FutureExt, StreamExt, stream};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
@@ -52,14 +53,17 @@ use crate::{
     driver::{DriverConfig, RecoveredState},
     error::ProposerError,
     output_proposer::OutputProposer,
+    proof_adapter::{ProofRequesterDispatcher, ProposerProofAdapter},
+    proof_collector::{CollectedProof, ProofCollector},
+    proof_submitter::{ProofSubmitter, ProofSubmitterConfig, SubmitAction},
 };
 
 /// Configuration for the parallel proving pipeline.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
-    /// Maximum number of concurrent proof tasks.
-    pub max_parallel_proofs: usize,
-    /// Maximum retries for a single proof range before full pipeline reset.
+    /// Maximum retries for a single proof range before dropping that target
+    /// and the cached recovery; other in-flight and proved entries are
+    /// preserved.
     pub max_retries: u32,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
@@ -81,7 +85,8 @@ pub struct PipelineConfig {
 /// typically 1–2 steps).
 ///
 /// A full re-walk from the anchor is only needed when:
-/// - No cache exists (cold start / pipeline reset).
+/// - No cache exists (cold start, or invalidated by a submit `RootMismatch`
+///   or a target hitting `max_retries`).
 /// - The anchor advanced past the cached tip (governance intervention).
 /// - `game_count` decreased (L1 reorg removed games).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,8 +99,8 @@ struct CachedRecovery {
 
 /// Mutable state for the coordinator loop.
 struct PipelineState {
-    /// Running proof tasks, each yielding `(target_block, result)`.
-    prove_tasks: JoinSet<(u64, Result<ProofResult, ProposerError>)>,
+    /// Running proof dispatch tasks, each accepting a prover-service session.
+    dispatch_tasks: JoinSet<ProofDispatchOutcome>,
     /// At most one concurrent submission task.
     submit_tasks: JoinSet<SubmitOutcome>,
     /// Completed proofs waiting for sequential submission, keyed by target block.
@@ -116,10 +121,15 @@ struct ProofPlan {
     target_block: u64,
 }
 
+enum ProofDispatchOutcome {
+    Accepted { plan: ProofPlan, session_id: String },
+    Failed { plan: ProofPlan, error: ProposerError },
+}
+
 impl PipelineState {
     fn new() -> Self {
         Self {
-            prove_tasks: JoinSet::new(),
+            dispatch_tasks: JoinSet::new(),
             submit_tasks: JoinSet::new(),
             proved: BTreeMap::new(),
             inflight: BTreeSet::new(),
@@ -127,17 +137,6 @@ impl PipelineState {
             retry_counts: BTreeMap::new(),
             cached_recovery: None,
         }
-    }
-
-    fn reset(&mut self) {
-        self.prove_tasks.abort_all();
-        self.submit_tasks.abort_all();
-        self.inflight.clear();
-        self.proved.clear();
-        self.submitting = None;
-        self.retry_counts.clear();
-        self.cached_recovery = None;
-        self.record_gauges();
     }
 
     fn record_gauges(&self) {
@@ -173,7 +172,10 @@ where
     F: DisputeGameFactoryClient,
 {
     config: PipelineConfig,
-    prover: Arc<dyn ProverClient>,
+    proof_requester: Arc<dyn ProofRequesterProvider>,
+    proof_dispatcher: ProofRequesterDispatcher,
+    proof_collector: ProofCollector<R>,
+    proof_submitter: ProofSubmitter<L1, R>,
     l1_client: Arc<L1>,
     l2_client: Arc<L2>,
     rollup_client: Arc<R>,
@@ -195,7 +197,10 @@ where
     fn clone(&self) -> Self {
         Self {
             config: self.config.clone(),
-            prover: Arc::clone(&self.prover),
+            proof_requester: Arc::clone(&self.proof_requester),
+            proof_dispatcher: self.proof_dispatcher.clone(),
+            proof_collector: self.proof_collector.clone(),
+            proof_submitter: self.proof_submitter.clone(),
             l1_client: Arc::clone(&self.l1_client),
             l2_client: Arc::clone(&self.l2_client),
             rollup_client: Arc::clone(&self.rollup_client),
@@ -233,7 +238,7 @@ where
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: PipelineConfig,
-        prover: Arc<dyn ProverClient>,
+        proof_requester: Arc<dyn ProofRequesterProvider>,
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
         rollup_client: Arc<R>,
@@ -243,9 +248,32 @@ where
         output_proposer: Arc<dyn OutputProposer>,
         cancel: CancellationToken,
     ) -> Self {
+        let proof_collector = ProofCollector::aws_nitro(
+            Arc::clone(&proof_requester),
+            Arc::clone(&rollup_client),
+            config.driver.block_interval,
+            config.recovery_scan_concurrency,
+        );
+        let proof_submitter = ProofSubmitter::new(
+            Arc::clone(&output_proposer),
+            Arc::clone(&rollup_client),
+            Arc::clone(&l1_client),
+            ProofSubmitterConfig {
+                proposer_address: config.driver.proposer_address,
+                block_interval: config.driver.block_interval,
+                intermediate_block_interval: config.driver.intermediate_block_interval,
+                tee_image_hash: config.driver.tee_image_hash,
+                tee_prover_registry_address: config.tee_prover_registry_address,
+                output_fetch_concurrency: config.recovery_scan_concurrency,
+            },
+        );
+
         Self {
             config,
-            prover,
+            proof_requester: Arc::clone(&proof_requester),
+            proof_dispatcher: ProofRequesterDispatcher::aws_nitro(proof_requester),
+            proof_collector,
+            proof_submitter,
             l1_client,
             l2_client,
             rollup_client,
@@ -272,7 +300,6 @@ where
     /// collect proof completions and refill proof slots immediately.
     pub async fn run(&self) -> Result<()> {
         info!(
-            max_parallel_proofs = self.config.max_parallel_proofs,
             block_interval = self.config.driver.block_interval,
             "Starting parallel proving pipeline"
         );
@@ -285,9 +312,13 @@ where
                 biased;
 
                 () = self.cancel.cancelled() => {
-                    state.prove_tasks.abort_all();
+                    state.dispatch_tasks.abort_all();
                     state.submit_tasks.abort_all();
                     break;
+                }
+
+                Some(result) = state.dispatch_tasks.join_next() => {
+                    self.handle_dispatch_result(result, &mut state);
                 }
 
                 Some(result) = state.submit_tasks.join_next() => {
@@ -295,11 +326,6 @@ where
                     if chain_next {
                         self.try_submit(&mut state);
                     }
-                }
-
-                Some(result) = state.prove_tasks.join_next() => {
-                    self.handle_proof_result(result, &mut state);
-                    self.try_submit(&mut state);
                 }
 
                 _ = poll_interval.tick() => {
@@ -323,7 +349,9 @@ where
             self.try_recover_and_plan(&mut state.cached_recovery).await
         {
             Metrics::safe_head().set(safe_head as f64);
+            Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
             state.prune_stale(recovered.l2_block_number);
+            self.collect_proofs(&recovered, safe_head, state).await;
             self.dispatch_proofs(&recovered, safe_head, state).await?;
         }
         Ok(())
@@ -339,59 +367,7 @@ where
         safe_head: u64,
         state: &mut PipelineState,
     ) -> Result<()> {
-        let mut cursor = recovered
-            .l2_block_number
-            .checked_add(self.config.driver.block_interval)
-            .ok_or_else(|| {
-            eyre::eyre!(
-                "overflow: l2_block_number {} + block_interval {}",
-                recovered.l2_block_number,
-                self.config.driver.block_interval
-            )
-        })?;
-
-        let mut start_block = recovered.l2_block_number;
-        let mut plans = Vec::new();
-        let mut output_blocks = BTreeSet::new();
-
-        while cursor <= safe_head
-            && state.inflight.len() + plans.len() < self.config.max_parallel_proofs
-        {
-            let mut last_skipped = None;
-            while cursor <= safe_head
-                && (state.inflight.contains(&cursor)
-                    || state.proved.contains_key(&cursor)
-                    || state.submitting == Some(cursor))
-            {
-                last_skipped = Some(cursor);
-                cursor = match cursor.checked_add(self.config.driver.block_interval) {
-                    Some(c) => c,
-                    None => return Ok(()),
-                };
-            }
-
-            if cursor > safe_head {
-                break;
-            }
-
-            if state.inflight.len() + plans.len() >= self.config.max_parallel_proofs {
-                break;
-            }
-
-            if let Some(skipped) = last_skipped {
-                start_block = skipped;
-                output_blocks.insert(skipped);
-            }
-
-            plans.push(ProofPlan { start_block, target_block: cursor });
-            output_blocks.insert(cursor);
-            start_block = cursor;
-
-            cursor = match cursor.checked_add(self.config.driver.block_interval) {
-                Some(c) => c,
-                None => break,
-            };
-        }
+        let (plans, output_blocks) = self.plan_proofs(recovered, safe_head, state)?;
 
         if plans.is_empty() {
             state.record_gauges();
@@ -411,33 +387,260 @@ where
         };
 
         for (plan, request) in requests {
-            let prover = Arc::clone(&self.prover);
+            let retry_count = state.retry_counts.get(&plan.target_block).copied().unwrap_or(0);
+            let session_id = ProposerProofAdapter::tee_session_id(&request, TeeKind::AwsNitro);
+            let dispatcher = self.proof_dispatcher.clone();
             let cancel = self.cancel.child_token();
 
             info!(
+                session_id = %session_id,
                 from_block = plan.start_block,
                 to_block = plan.target_block,
                 blocks = plan.target_block.saturating_sub(plan.start_block),
+                retry_count,
                 "Dispatching proof task"
             );
             state.inflight.insert(plan.target_block);
-            state.prove_tasks.spawn(async move {
-                let mut proof_timer = base_metrics::timed!(Metrics::proof_duration_seconds());
-                tokio::select! {
-                    () = cancel.cancelled() => {
-                        proof_timer.disarm();
-                        (plan.target_block, Err(ProposerError::Internal("cancelled".into())))
+            state.dispatch_tasks.spawn(async move {
+                let inner = async move {
+                    tokio::select! {
+                        () = cancel.cancelled() => {
+                            ProofDispatchOutcome::Failed {
+                                plan,
+                                error: ProposerError::Internal("cancelled".into()),
+                            }
+                        }
+                        result = dispatcher.dispatch_tee(request) => {
+                            match result {
+                                Ok(dispatched) if dispatched.session_id == session_id => {
+                                    ProofDispatchOutcome::Accepted { plan, session_id }
+                                }
+                                Ok(dispatched) => ProofDispatchOutcome::Failed {
+                                    plan,
+                                    error: ProposerError::Prover(format!(
+                                        "prover service returned mismatched session_id: expected {}, got {}",
+                                        session_id,
+                                        dispatched.session_id
+                                    )),
+                                },
+                                Err(error) => ProofDispatchOutcome::Failed { plan, error },
+                            }
+                        }
                     }
-                    result = prover.prove(request) => {
-                        drop(proof_timer);
-                        (plan.target_block, result.map_err(|e| ProposerError::Prover(e.to_string())))
-                    }
+                };
+                // Catch panics inside the dispatch future so a single bad task
+                // never bubbles up as a tokio JoinError that the coordinator
+                // can't attribute to a specific target.
+                match AssertUnwindSafe(inner).catch_unwind().await {
+                    Ok(outcome) => outcome,
+                    Err(panic) => ProofDispatchOutcome::Failed {
+                        plan,
+                        error: ProposerError::Internal(format!(
+                            "proof dispatch task panicked: {}",
+                            panic_message(&panic),
+                        )),
+                    },
                 }
             });
         }
 
         state.record_gauges();
         Ok(())
+    }
+
+    fn plan_proofs(
+        &self,
+        recovered: &RecoveredState,
+        safe_head: u64,
+        state: &PipelineState,
+    ) -> Result<(Vec<ProofPlan>, BTreeSet<u64>)> {
+        let mut cursor = recovered
+            .l2_block_number
+            .checked_add(self.config.driver.block_interval)
+            .ok_or_else(|| {
+            eyre::eyre!(
+                "overflow: l2_block_number {} + block_interval {}",
+                recovered.l2_block_number,
+                self.config.driver.block_interval
+            )
+        })?;
+
+        let mut start_block = recovered.l2_block_number;
+        let mut plans = Vec::new();
+        let mut output_blocks = BTreeSet::new();
+
+        // Plan every eligible target up to the safe head. There is no per-tick
+        // parallel cap: dispatch is fire-and-forget against the prover service
+        // (which queues sessions itself) and collection is naturally bounded
+        // by the safe head's distance from the recovered tip.
+        while cursor <= safe_head {
+            let mut last_skipped = None;
+            while cursor <= safe_head
+                && (state.inflight.contains(&cursor)
+                    || state.proved.contains_key(&cursor)
+                    || state.submitting == Some(cursor))
+            {
+                last_skipped = Some(cursor);
+                cursor = match cursor.checked_add(self.config.driver.block_interval) {
+                    Some(c) => c,
+                    None => return Ok((plans, output_blocks)),
+                };
+            }
+
+            if cursor > safe_head {
+                break;
+            }
+
+            if let Some(skipped) = last_skipped {
+                start_block = skipped;
+                output_blocks.insert(skipped);
+            }
+
+            plans.push(ProofPlan { start_block, target_block: cursor });
+            output_blocks.insert(cursor);
+            start_block = cursor;
+
+            cursor = match cursor.checked_add(self.config.driver.block_interval) {
+                Some(c) => c,
+                None => break,
+            };
+        }
+        Ok((plans, output_blocks))
+    }
+
+    fn handle_dispatch_result(
+        &self,
+        join_result: Result<ProofDispatchOutcome, tokio::task::JoinError>,
+        state: &mut PipelineState,
+    ) {
+        let outcome = match join_result {
+            Ok(outcome) => outcome,
+            Err(join_err) if join_err.is_cancelled() => {
+                debug!(error = %join_err, "Proof dispatch task cancelled");
+                return;
+            }
+            Err(join_err) => {
+                // Panics inside dispatch futures are caught and returned as
+                // `ProofDispatchOutcome::Failed` with target context. A raw
+                // join error here has no target block, so stale inflight
+                // cleanup falls back to `prune_stale`.
+                warn!(error = %join_err, "Proof dispatch task join error");
+                state.record_gauges();
+                return;
+            }
+        };
+
+        match outcome {
+            ProofDispatchOutcome::Accepted { plan, session_id } => {
+                if !state.inflight.contains(&plan.target_block)
+                    || state.proved.contains_key(&plan.target_block)
+                {
+                    debug!(
+                        target_block = plan.target_block,
+                        session_id = %session_id,
+                        "Ignoring stale proof dispatch result"
+                    );
+                    return;
+                }
+
+                info!(
+                    target_block = plan.target_block,
+                    session_id = %session_id,
+                    from_block = plan.start_block,
+                    "Proof request accepted by prover service"
+                );
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
+                state.record_gauges();
+            }
+            ProofDispatchOutcome::Failed { plan, error } => {
+                if !state.inflight.contains(&plan.target_block)
+                    || state.proved.contains_key(&plan.target_block)
+                {
+                    debug!(
+                        target_block = plan.target_block,
+                        error = %error,
+                        "Ignoring stale proof dispatch failure"
+                    );
+                    return;
+                }
+
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
+                self.handle_proof_failure(plan.target_block, error, state);
+            }
+        }
+    }
+
+    async fn collect_proofs(
+        &self,
+        recovered: &RecoveredState,
+        safe_head: u64,
+        state: &mut PipelineState,
+    ) {
+        // Compute targets synchronously while we still hold an immutable view of
+        // `state` so the collector itself can run without borrowing pipeline state
+        // across await points.
+        let targets = self.proof_collector.collectable_targets(recovered, safe_head, |target| {
+            state.proved.contains_key(&target) || state.submitting == Some(target)
+        });
+
+        for outcome in self.proof_collector.collect(&targets).await {
+            match outcome {
+                CollectedProof::Ready { target_block, session_id, proof } => {
+                    state.inflight.remove(&target_block);
+                    state.retry_counts.remove(&target_block);
+                    state.proved.insert(target_block, proof);
+                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
+                    Metrics::last_collected_block().set(target_block as f64);
+                    state.record_gauges();
+                    info!(
+                        target_block,
+                        session_id = %session_id,
+                        "Proof completed successfully"
+                    );
+                }
+                CollectedProof::Failed { target_block, session_id, error } => {
+                    if !state.inflight.contains(&target_block) {
+                        debug!(
+                            target_block,
+                            session_id = %session_id,
+                            error = %error,
+                            "Ignoring failed proof result for non-inflight target"
+                        );
+                        continue;
+                    }
+
+                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
+                        .increment(1);
+                    self.handle_proof_failure(target_block, error, state);
+                }
+            }
+        }
+    }
+
+    fn handle_proof_failure(&self, target: u64, error: ProposerError, state: &mut PipelineState) {
+        Metrics::errors_total(error.metric_label()).increment(1);
+        state.inflight.remove(&target);
+        let count = state.retry_counts.entry(target).or_insert(0);
+        *count += 1;
+        Metrics::proof_retries_total().increment(1);
+        if *count >= self.config.max_retries {
+            error!(
+                target_block = target,
+                attempts = *count,
+                error = %error,
+                "Proof failed after max retries, dropping cached recovery"
+            );
+            state.retry_counts.remove(&target);
+            state.cached_recovery = None;
+        } else {
+            warn!(
+                target_block = target,
+                attempt = *count,
+                error = %error,
+                "Proof failed, will retry next tick"
+            );
+        }
+        state.record_gauges();
     }
 
     fn try_submit(&self, state: &mut PipelineState) {
@@ -468,35 +671,54 @@ where
         info!(target_block = next_to_submit, parent_address = %parent_address, "Spawning submission task");
 
         let pipeline = self.clone();
+        // Keep a clone outside the spawned future so a panic inside the task
+        // does not destroy the proof; the catch_unwind branch re-attaches it
+        // to a Failed outcome so the coordinator can re-queue it for retry.
+        let proof_for_panic = proof_result.clone();
         state.submit_tasks.spawn(async move {
-            let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
-            let result =
-                pipeline.validate_and_submit(&proof_result, next_to_submit, parent_address).await;
-            match result {
-                Ok(()) => {
-                    drop(submit_timer);
-                    SubmitOutcome::Success { target_block: next_to_submit }
-                }
-                Err(SubmitAction::RootMismatch) => {
-                    submit_timer.disarm();
-                    SubmitOutcome::RootMismatch { target_block: next_to_submit }
-                }
-                Err(SubmitAction::Failed(e)) => {
-                    submit_timer.disarm();
-                    SubmitOutcome::Failed {
-                        target_block: next_to_submit,
-                        proof: proof_result,
-                        error: e,
+            let inner = async move {
+                let mut submit_timer =
+                    base_metrics::timed!(Metrics::proposal_total_duration_seconds());
+                let result = pipeline
+                    .validate_and_submit(&proof_result, next_to_submit, parent_address)
+                    .await;
+                match result {
+                    Ok(()) => {
+                        drop(submit_timer);
+                        SubmitOutcome::Success { target_block: next_to_submit }
+                    }
+                    Err(SubmitAction::RootMismatch) => {
+                        submit_timer.disarm();
+                        SubmitOutcome::RootMismatch { target_block: next_to_submit }
+                    }
+                    Err(SubmitAction::Failed(e)) => {
+                        submit_timer.disarm();
+                        SubmitOutcome::Failed {
+                            target_block: next_to_submit,
+                            proof: proof_result,
+                            error: e,
+                        }
+                    }
+                    Err(SubmitAction::GameAlreadyExists) => {
+                        submit_timer.disarm();
+                        SubmitOutcome::GameAlreadyExists { target_block: next_to_submit }
+                    }
+                    Err(SubmitAction::Discard(e)) => {
+                        submit_timer.disarm();
+                        SubmitOutcome::Discard { target_block: next_to_submit, error: e }
                     }
                 }
-                Err(SubmitAction::GameAlreadyExists) => {
-                    submit_timer.disarm();
-                    SubmitOutcome::GameAlreadyExists { target_block: next_to_submit }
-                }
-                Err(SubmitAction::Discard(e)) => {
-                    submit_timer.disarm();
-                    SubmitOutcome::Discard { target_block: next_to_submit, error: e }
-                }
+            };
+            match AssertUnwindSafe(inner).catch_unwind().await {
+                Ok(outcome) => outcome,
+                Err(panic) => SubmitOutcome::Failed {
+                    target_block: next_to_submit,
+                    proof: proof_for_panic,
+                    error: ProposerError::Internal(format!(
+                        "submit task panicked: {}",
+                        panic_message(&panic)
+                    )),
+                },
             }
         });
     }
@@ -517,8 +739,13 @@ where
                 return false;
             }
             Err(join_err) => {
-                warn!(error = %join_err, "Submit task panicked");
-                state.reset();
+                // Panics are caught inside the spawned future and reported as
+                // SubmitOutcome::Failed (with the proof re-attached) so this
+                // branch should not normally fire. Treat as a transient
+                // failure: release the slot and leave `proved` intact.
+                warn!(error = %join_err, "Submit task join error");
+                state.submitting = None;
+                state.record_gauges();
                 return false;
             }
         };
@@ -569,9 +796,22 @@ where
                 true
             }
             SubmitOutcome::RootMismatch { target_block } => {
-                warn!(target_block, "Output root mismatch at submit time, resetting pipeline");
+                warn!(
+                    target_block,
+                    "Output root mismatch at submit time, dropping cached recovery"
+                );
                 Metrics::root_mismatch_total().increment(1);
-                state.reset();
+                // The mismatched proof was already removed from `proved` by
+                // `try_submit`. Drop the recovery cache so the next tick
+                // re-walks the chain and `prune_stale` evicts any newly
+                // overtaken entries. Other proved entries are left intact:
+                // each faces JIT validation independently at submit time and
+                // any that have gone stale will self-eject via this same
+                // path. Re-proving a still-valid block is much more expensive
+                // than one extra JIT validation RPC.
+                state.cached_recovery = None;
+                state.submitting = None;
+                state.record_gauges();
                 false
             }
             SubmitOutcome::Failed { target_block, proof, error } => {
@@ -605,52 +845,6 @@ where
                 state.submitting = None;
                 state.record_gauges();
                 false
-            }
-        }
-    }
-
-    fn handle_proof_result(
-        &self,
-        join_result: Result<(u64, Result<ProofResult, ProposerError>), tokio::task::JoinError>,
-        state: &mut PipelineState,
-    ) {
-        match join_result {
-            Ok((target, Ok(proof_result))) => {
-                state.inflight.remove(&target);
-                state.retry_counts.remove(&target);
-                state.proved.insert(target, proof_result);
-                state.record_gauges();
-                info!(target_block = target, "Proof completed successfully");
-            }
-            Ok((target, Err(e))) => {
-                Metrics::errors_total(e.metric_label()).increment(1);
-                state.inflight.remove(&target);
-                let count = state.retry_counts.entry(target).or_insert(0);
-                *count += 1;
-                if *count >= self.config.max_retries {
-                    error!(
-                        target_block = target,
-                        attempts = *count,
-                        error = %e,
-                        "Proof failed after max retries, resetting pipeline"
-                    );
-                    state.reset();
-                } else {
-                    warn!(
-                        target_block = target,
-                        attempt = *count,
-                        error = %e,
-                        "Proof failed, will retry next tick"
-                    );
-                    state.record_gauges();
-                }
-            }
-            Err(join_err) if join_err.is_cancelled() => {
-                debug!(error = %join_err, "Proof task cancelled");
-            }
-            Err(join_err) => {
-                warn!(error = %join_err, "Proof task panicked");
-                state.reset();
             }
         }
     }
@@ -803,7 +997,8 @@ where
         // O(1).
         //
         // A full walk from the anchor is required when:
-        // - No cache exists (cold start / pipeline reset).
+        // - No cache exists (cold start, or invalidated by RootMismatch /
+        //   max_retries).
         // - The anchor advanced past the cached tip (governance / anomaly).
         // - game_count decreased (L1 reorg removed games).
         let start = match cache.as_ref() {
@@ -879,7 +1074,8 @@ where
             // element of `intermediate_blocks` is always `expected_block`,
             // so this also provides the canonical output root — no separate
             // `output_at_block` call needed.
-            let intermediate_blocks = self.intermediate_block_numbers(parent_block)?;
+            let intermediate_blocks =
+                self.proof_submitter.intermediate_block_numbers(parent_block)?;
             let intermediate_roots =
                 match self.fetch_canonical_roots(intermediate_blocks.clone()).await {
                     Ok(roots) => roots,
@@ -995,36 +1191,16 @@ where
         &self,
         blocks: Vec<u64>,
     ) -> Result<HashMap<u64, B256>, ProposerError> {
-        self.fetch_canonical_roots_with(blocks, false).await
-    }
-
-    /// Concurrently fetches canonical output roots, bypassing the output cache.
-    async fn fetch_fresh_canonical_roots(
-        &self,
-        blocks: Vec<u64>,
-    ) -> Result<HashMap<u64, B256>, ProposerError> {
-        self.fetch_canonical_roots_with(blocks, true).await
-    }
-
-    /// Concurrently fetches canonical output roots with configurable cache usage.
-    ///
-    /// When `bypass_cache` is true, each root is fetched directly from the rollup node.
-    async fn fetch_canonical_roots_with(
-        &self,
-        blocks: Vec<u64>,
-        bypass_cache: bool,
-    ) -> Result<HashMap<u64, B256>, ProposerError> {
-        self.fetch_canonical_root_results_with(blocks, bypass_cache)
+        self.fetch_canonical_root_results(blocks)
             .await
             .into_iter()
             .map(|(block_number, result)| result.map(|root| (block_number, root)))
             .collect()
     }
 
-    async fn fetch_canonical_root_results_with(
+    async fn fetch_canonical_root_results(
         &self,
         blocks: Vec<u64>,
-        bypass_cache: bool,
     ) -> HashMap<u64, Result<B256, ProposerError>> {
         if blocks.is_empty() {
             return HashMap::new();
@@ -1033,12 +1209,12 @@ where
             .map(|block_number| {
                 let rollup = &self.rollup_client;
                 async move {
-                    let output = if bypass_cache {
-                        rollup.fresh_output_at_block(block_number).await
-                    } else {
-                        rollup.output_at_block(block_number).await
-                    };
-                    (block_number, output.map(|out| out.output_root).map_err(ProposerError::Rpc))
+                    let result = rollup
+                        .output_at_block(block_number)
+                        .await
+                        .map(|out| out.output_root)
+                        .map_err(ProposerError::Rpc);
+                    (block_number, result)
                 }
             })
             .buffered(self.config.recovery_scan_concurrency)
@@ -1061,7 +1237,7 @@ where
 
         let (l1_head_result, output_roots, l2_heads) = tokio::join!(
             async { self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc) },
-            self.fetch_canonical_root_results_with(output_blocks, false),
+            self.fetch_canonical_root_results(output_blocks),
             async {
                 stream::iter(start_blocks)
                     .map(|block_number| {
@@ -1173,311 +1349,29 @@ where
         Ok(requests)
     }
 
-    /// Recovers the TEE signer from the aggregate proposal and checks
-    /// `isValidSigner` on the `TEEProverRegistry`.
+    /// Validates the proof and submits it to L1 by delegating to the
+    /// [`ProofSubmitter`].
     ///
-    /// Returns `Ok(true)` if the signer is valid, `Ok(false)` if not,
-    /// or `Err` if the check itself failed (RPC error, parse failure, etc.).
-    async fn check_signer_validity(
-        &self,
-        aggregate_proposal: &base_proof_primitives::Proposal,
-        starting_block_number: u64,
-        intermediate_roots: &[B256],
-        registry_address: Address,
-    ) -> Result<bool, ProposerError> {
-        // Reconstruct the journal that the enclave signed over.
-        let journal = ProofJournal {
-            proposer: self.config.driver.proposer_address,
-            l1_origin_hash: aggregate_proposal.l1_origin_hash,
-            prev_output_root: aggregate_proposal.prev_output_root,
-            starting_l2_block: starting_block_number,
-            output_root: aggregate_proposal.output_root,
-            ending_l2_block: aggregate_proposal.l2_block_number,
-            intermediate_roots: intermediate_roots.to_vec(),
-            config_hash: aggregate_proposal.config_hash,
-            tee_image_hash: self.config.driver.tee_image_hash,
-        };
-        let digest = keccak256(journal.encode());
-
-        // Parse the 65-byte ECDSA signature (r ‖ s ‖ v).
-        let sig_bytes = aggregate_proposal.signature.as_ref();
-        let sig = Signature::try_from(sig_bytes)
-            .map_err(|e| ProposerError::Internal(format!("invalid proposal signature: {e}")))?;
-
-        let signer = sig
-            .recover_address_from_prehash(&digest)
-            .map_err(|e| ProposerError::Internal(format!("signer recovery failed: {e}")))?;
-
-        debug!(signer = %signer, "recovered TEE signer from aggregate proposal");
-
-        // Call isValidSigner on the registry via the L1 provider.
-        let calldata = ITEEProverRegistry::isValidSignerCall { signer }.abi_encode();
-        let result = self
-            .l1_client
-            .call_contract(registry_address, calldata.into(), None)
-            .await
-            .map_err(ProposerError::Rpc)?;
-
-        let is_valid =
-            ITEEProverRegistry::isValidSignerCall::abi_decode_returns(&result).map_err(|e| {
-                ProposerError::Internal(format!("failed to decode isValidSigner response: {e}"))
-            })?;
-        debug!(signer = %signer, is_valid, "isValidSigner check result");
-
-        Ok(is_valid)
-    }
-
-    #[instrument(skip_all, fields(target_block = target_block, parent_address = %parent_address))]
+    /// Kept on the pipeline as a thin wrapper so the spawned submission task
+    /// in [`Self::try_submit`] (and existing tests) can continue to call a
+    /// single entry point.
     async fn validate_and_submit(
         &self,
         proof_result: &ProofResult,
         target_block: u64,
         parent_address: Address,
     ) -> Result<(), SubmitAction> {
-        let (aggregate_proposal, proposals) = match proof_result {
-            ProofResult::Tee { aggregate_proposal, proposals } => (aggregate_proposal, proposals),
-            ProofResult::Zk { .. } => {
-                return Err(SubmitAction::Failed(ProposerError::Prover(
-                    "unexpected ZK proof result from TEE prover".into(),
-                )));
-            }
-        };
-
-        // JIT validation: check that the proved output root still matches canonical.
-        let canonical_output = self
-            .rollup_client
-            .fresh_output_at_block(target_block)
-            .await
-            .map_err(|e| SubmitAction::Failed(ProposerError::Rpc(e)))?;
-
-        if aggregate_proposal.output_root != canonical_output.output_root {
-            warn!(
-                proposal_root = ?aggregate_proposal.output_root,
-                canonical_root = ?canonical_output.output_root,
-                target_block,
-                "Proposal output root does not match canonical chain at submit time"
-            );
-            return Err(SubmitAction::RootMismatch);
-        }
-
-        // Extract intermediate roots.
-        let starting_block_number =
-            target_block.checked_sub(self.config.driver.block_interval).ok_or_else(|| {
-                SubmitAction::Failed(ProposerError::Internal(format!(
-                    "target_block {target_block} < block_interval {}",
-                    self.config.driver.block_interval
-                )))
-            })?;
-        let intermediate_blocks =
-            self.intermediate_block_numbers(starting_block_number).map_err(SubmitAction::Failed)?;
-        let intermediate_roots = self
-            .extract_intermediate_roots(starting_block_number, proposals, &intermediate_blocks)
-            .map_err(SubmitAction::Failed)?;
-
-        // Fetch fresh canonical roots for non-target intermediate blocks only;
-        // the target block was already fetched fresh for the JIT check above.
-        let non_target_blocks: Vec<u64> =
-            intermediate_blocks.iter().copied().filter(|&b| b != target_block).collect();
-
-        let mut canonical_map: HashMap<u64, B256> = self
-            .fetch_fresh_canonical_roots(non_target_blocks)
-            .await
-            .map_err(SubmitAction::Failed)?;
-        canonical_map.insert(target_block, canonical_output.output_root);
-
-        for (root, block) in intermediate_roots.iter().zip(intermediate_blocks.iter()) {
-            let canonical = canonical_map.get(block).ok_or_else(|| {
-                SubmitAction::Failed(ProposerError::Internal(format!(
-                    "missing canonical root for intermediate block {block}"
-                )))
-            })?;
-            if *root != *canonical {
-                warn!(
-                    intermediate_block = *block,
-                    proposal_root = ?root,
-                    canonical_root = ?canonical,
-                    target_block,
-                    "Intermediate output root does not match canonical chain at submit time"
-                );
-                return Err(SubmitAction::RootMismatch);
-            }
-        }
-
-        // Pre-submission signer validation: if a TEE prover registry is
-        // configured, recover the signer from the aggregate proposal signature
-        // and check `isValidSigner` on-chain. If the signer is invalid, skip
-        // submission to avoid wasting gas on a transaction that will revert.
-        if let Some(registry_address) = self.config.tee_prover_registry_address {
-            match self
-                .check_signer_validity(
-                    aggregate_proposal,
-                    starting_block_number,
-                    &intermediate_roots,
-                    registry_address,
-                )
-                .await
-            {
-                Ok(true) => {}
-                Ok(false) => {
-                    // The proof's signer is not registered on-chain. Discard
-                    // this proof so the pipeline re-proves with a (potentially
-                    // different, registered) enclave on the next attempt.
-                    warn!(target_block, "TEE signer is not valid on-chain, discarding proof");
-                    Metrics::tee_signer_invalid_total().increment(1);
-                    return Err(SubmitAction::Discard(ProposerError::Internal(
-                        "TEE signer not registered on-chain".into(),
-                    )));
-                }
-                Err(e) => {
-                    // Proceed on RPC failure: if L1 is unreachable, the
-                    // subsequent propose_output call will also fail and be
-                    // retried naturally. Blocking here would not save gas.
-                    // This also handles the case where the registry contract
-                    // is not yet deployed (rolling out the --tee-prover-registry-address
-                    // config before the contract exists on-chain).
-                    warn!(error = %e, target_block, "signer validity check failed, proceeding anyway");
-                }
-            }
-        }
-
-        info!(
-            target_block,
-            output_root = ?aggregate_proposal.output_root,
-            parent_address = %parent_address,
-            intermediate_roots_count = intermediate_roots.len(),
-            proposals_count = proposals.len(),
-            "Proposing output (creating dispute game)"
-        );
-
-        let mut propose_timer = base_metrics::timed!(Metrics::proposal_l1_tx_duration_seconds());
-        let propose_result = self
-            .output_proposer
-            .propose_output(aggregate_proposal, parent_address, &intermediate_roots)
-            .await;
-
-        match propose_result {
-            Ok(()) => {
-                drop(propose_timer);
-                info!(target_block, "Dispute game created successfully");
-                Metrics::l2_output_proposals_total().increment(1);
-                Ok(())
-            }
-            Err(e) => {
-                if e.is_game_already_exists() {
-                    drop(propose_timer);
-                    info!(
-                        target_block,
-                        "Game already exists, next tick will load fresh state from chain"
-                    );
-                    Err(SubmitAction::GameAlreadyExists)
-                } else if e.is_l1_origin_too_old() {
-                    propose_timer.disarm();
-                    warn!(
-                        error = %e,
-                        target_block,
-                        "Proof L1 origin is too old, discarding proof to re-prove"
-                    );
-                    Err(SubmitAction::Discard(e))
-                } else if e.is_invalid_signer() {
-                    propose_timer.disarm();
-                    warn!(
-                        error = %e,
-                        target_block,
-                        "Proof signer is invalid on-chain, discarding proof to re-prove"
-                    );
-                    Metrics::tee_signer_invalid_total().increment(1);
-                    Err(SubmitAction::Discard(e))
-                } else {
-                    propose_timer.disarm();
-                    Err(SubmitAction::Failed(e))
-                }
-            }
-        }
-    }
-
-    /// Returns intermediate block numbers between `starting_block_number` and
-    /// the next proposal target, stepping by `intermediate_block_interval`.
-    fn intermediate_block_numbers(
-        &self,
-        starting_block_number: u64,
-    ) -> Result<Vec<u64>, ProposerError> {
-        let interval = self.config.driver.intermediate_block_interval;
-        if interval == 0 {
-            return Err(ProposerError::Config(
-                "intermediate_block_interval must not be zero".into(),
-            ));
-        }
-        let count = self.config.driver.block_interval / interval;
-        (1..=count)
-            .map(|i| {
-                starting_block_number
-                    .checked_add(i.checked_mul(interval).ok_or_else(|| {
-                        ProposerError::Internal(
-                            "overflow computing intermediate block number".into(),
-                        )
-                    })?)
-                    .ok_or_else(|| {
-                        ProposerError::Internal(
-                            "overflow computing intermediate block number".into(),
-                        )
-                    })
-            })
-            .collect()
-    }
-
-    /// Extracts intermediate output roots from per-block proposals.
-    ///
-    /// Samples at every `intermediate_block_interval` within the range.
-    fn extract_intermediate_roots(
-        &self,
-        starting_block_number: u64,
-        proposals: &[base_proof_primitives::Proposal],
-        blocks: &[u64],
-    ) -> Result<Vec<B256>, ProposerError> {
-        let mut roots = Vec::with_capacity(blocks.len());
-        for &target_block in blocks {
-            let idx = target_block.checked_sub(starting_block_number + 1).ok_or_else(|| {
-                ProposerError::Internal(format!(
-                    "underflow computing proposal index for block {target_block}"
-                ))
-            })?;
-            if let Some(p) = proposals.get(idx as usize) {
-                roots.push(p.output_root);
-            } else {
-                return Err(ProposerError::Internal(format!(
-                    "intermediate root at block {target_block} not found in proposals (index {idx}, len {})",
-                    proposals.len()
-                )));
-            }
-        }
-        Ok(roots)
+        self.proof_submitter.submit(proof_result, target_block, parent_address).await
     }
 }
 
-/// Internal action after a submission attempt.
-#[derive(Debug)]
-enum SubmitAction {
-    /// Output root mismatch — proved root no longer matches canonical chain.
-    RootMismatch,
-    /// The dispute game already exists on-chain by a previous attempt whose
-    /// result was lost to an RPC propagation delay. The pipeline must invalidate
-    /// its recovery cache so the next forward walk discovers the existing game.
-    GameAlreadyExists,
-    /// Transient failure — retry later with the same proof.
-    Failed(ProposerError),
-    /// Proof is permanently invalid (e.g. signer not registered) — discard
-    /// and re-prove on the next attempt.
-    Discard(ProposerError),
-}
-
-impl std::fmt::Display for SubmitAction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::RootMismatch => write!(f, "output root mismatch"),
-            Self::GameAlreadyExists => write!(f, "game already exists"),
-            Self::Failed(e) | Self::Discard(e) => write!(f, "{e}"),
-        }
-    }
+/// Extracts a printable message from a `catch_unwind` panic payload.
+fn panic_message(panic: &Box<dyn std::any::Any + Send + 'static>) -> String {
+    panic
+        .downcast_ref::<&'static str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "non-string panic payload".to_string())
 }
 
 /// Result of a concurrent submission task, returned to the coordinator.
@@ -1502,18 +1396,45 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
-    use base_proof_primitives::{ProofResult, Proposal, ProverClient};
+    use base_proof_primitives::{ProofResult, Proposal};
+    #[cfg(feature = "metrics")]
+    use metrics_util::{
+        CompositeKey, MetricKind,
+        debugging::{DebugValue, DebuggingRecorder, Snapshotter},
+    };
     use rstest::rstest;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-        MockOutputProposer, MockProver, MockRollupClient, test_anchor_root, test_proposal,
+        MockOutputProposer, MockProofRequester, MockRollupClient, test_anchor_root, test_proposal,
         test_sync_status,
     };
 
     // ---- Named constants for test data ----
+
+    #[cfg(feature = "metrics")]
+    type SnapEntry =
+        (CompositeKey, Option<metrics::Unit>, Option<metrics::SharedString>, DebugValue);
+
+    #[cfg(feature = "metrics")]
+    fn with_recorder(f: impl FnOnce(Snapshotter)) {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || f(snapshotter));
+    }
+
+    #[cfg(feature = "metrics")]
+    fn find_metric<'a>(
+        snap: &'a [SnapEntry],
+        kind: MetricKind,
+        name: &str,
+    ) -> Option<&'a DebugValue> {
+        snap.iter()
+            .find(|(ck, _, _, _)| ck.kind() == kind && ck.key().name() == name)
+            .map(|(_, _, _, v)| v)
+    }
 
     /// Game type used across recovery tests.
     const TEST_GAME_TYPE: u32 = 42;
@@ -1526,9 +1447,6 @@ mod tests {
 
     /// Default L1 block number returned by `MockL1`.
     const TEST_L1_BLOCK_NUMBER: u64 = 1000;
-
-    /// Default mock prover delay for recovery tests (minimal).
-    const MOCK_PROVER_DELAY: Duration = Duration::from_millis(1);
 
     // ---- Helper builders for game data ----
 
@@ -1634,10 +1552,6 @@ mod tests {
     ) -> TestPipeline {
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
-            delay: Duration::from_millis(10),
-            block_interval: pipeline_config.driver.block_interval,
-        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_block_number, B256::ZERO),
             output_roots: HashMap::new(),
@@ -1651,7 +1565,7 @@ mod tests {
 
         ProvingPipeline::new(
             pipeline_config,
-            prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
@@ -1745,8 +1659,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> =
-            Arc::new(MockProver { delay: MOCK_PROVER_DELAY, block_interval });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(0, B256::ZERO),
             output_roots,
@@ -1759,7 +1671,6 @@ mod tests {
 
         ProvingPipeline::new(
             PipelineConfig {
-                max_parallel_proofs: 1,
                 max_retries: 1,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -1770,7 +1681,7 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
@@ -1789,7 +1700,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let pipeline = test_pipeline(
             PipelineConfig {
-                max_parallel_proofs: 2,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -1816,7 +1726,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let pipeline = test_pipeline(
             PipelineConfig {
-                max_parallel_proofs: 2,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -1838,6 +1747,118 @@ mod tests {
 
         let result = handle.await.expect("task should not panic");
         assert!(result.is_ok());
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn test_tick_records_recovered_last_proposed_block() {
+        let (factory, output_roots) = game_chain(1);
+        let pipeline = recovery_pipeline(factory, output_roots);
+
+        with_recorder(|snap| {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let mut state = PipelineState::new();
+
+            rt.block_on(async {
+                pipeline.tick(&mut state).await.unwrap();
+            });
+
+            let snapshot = snap.snapshot().into_vec();
+            match find_metric(&snapshot, MetricKind::Gauge, "base_proposer.last_proposed_block") {
+                Some(DebugValue::Gauge(value)) => {
+                    assert_eq!(value.into_inner(), TEST_BLOCK_INTERVAL as f64);
+                }
+                other => panic!("expected recovered last_proposed_block gauge, got {other:?}"),
+            }
+        });
+    }
+
+    /// Verifies `handle_proof_failure` increments `proof_retries_total` on every
+    /// retry attempt below `max_retries`.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn test_handle_proof_failure_emits_retry_metrics() {
+        let pipeline =
+            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
+
+        with_recorder(|snap| {
+            let mut state = PipelineState::new();
+            let target = TEST_BLOCK_INTERVAL * 3;
+            state.inflight.insert(target);
+
+            // Each call to `handle_proof_failure` increments `proof_retries_total`
+            // before the max-retries check, so two calls yield a counter value of 2.
+            pipeline.handle_proof_failure(target, ProposerError::Prover("boom".into()), &mut state);
+            pipeline.handle_proof_failure(target, ProposerError::Prover("boom".into()), &mut state);
+
+            let snapshot = snap.snapshot().into_vec();
+            match find_metric(&snapshot, MetricKind::Counter, "base_proposer.proof_retries_total") {
+                Some(DebugValue::Counter(value)) => assert_eq!(*value, 2),
+                other => panic!("expected proof_retries_total counter, got {other:?}"),
+            }
+        });
+    }
+
+    /// Verifies `handle_dispatch_result` increments `proof_dispatch_total` with
+    /// the right `outcome` label for both accepted and failed dispatch outcomes.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn test_handle_dispatch_result_emits_dispatch_metrics() {
+        let pipeline =
+            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
+
+        with_recorder(|snap| {
+            let mut state = PipelineState::new();
+            let accepted_target = TEST_BLOCK_INTERVAL;
+            let failed_target = TEST_BLOCK_INTERVAL * 2;
+            state.inflight.insert(accepted_target);
+            state.inflight.insert(failed_target);
+
+            pipeline.handle_dispatch_result(
+                Ok(ProofDispatchOutcome::Accepted {
+                    plan: ProofPlan { start_block: 0, target_block: accepted_target },
+                    session_id: "session-accepted".to_owned(),
+                }),
+                &mut state,
+            );
+            pipeline.handle_dispatch_result(
+                Ok(ProofDispatchOutcome::Failed {
+                    plan: ProofPlan { start_block: accepted_target, target_block: failed_target },
+                    error: ProposerError::Prover("dispatch failed".into()),
+                }),
+                &mut state,
+            );
+
+            let snapshot = snap.snapshot().into_vec();
+            let accepted = snapshot
+                .iter()
+                .find(|(ck, _, _, _)| {
+                    ck.kind() == MetricKind::Counter
+                        && ck.key().name() == "base_proposer.proof_dispatch_total"
+                        && ck
+                            .key()
+                            .labels()
+                            .any(|l| l.key() == "outcome" && l.value() == "accepted")
+                })
+                .map(|(_, _, _, v)| v);
+            match accepted {
+                Some(DebugValue::Counter(value)) => assert_eq!(*value, 1),
+                other => panic!("expected accepted dispatch counter, got {other:?}"),
+            }
+
+            let failed = snapshot
+                .iter()
+                .find(|(ck, _, _, _)| {
+                    ck.kind() == MetricKind::Counter
+                        && ck.key().name() == "base_proposer.proof_dispatch_total"
+                        && ck.key().labels().any(|l| l.key() == "outcome" && l.value() == "failed")
+                })
+                .map(|(_, _, _, v)| v);
+            match failed {
+                Some(DebugValue::Counter(value)) => assert_eq!(*value, 1),
+                other => panic!("expected failed dispatch counter, got {other:?}"),
+            }
+        });
     }
 
     // ---- Recovery: empty factory ----
@@ -1890,8 +1911,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> =
-            Arc::new(MockProver { delay: MOCK_PROVER_DELAY, block_interval: TEST_BLOCK_INTERVAL });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(TEST_BLOCK_INTERVAL * 2, B256::ZERO),
             output_roots: HashMap::new(),
@@ -1911,7 +1930,6 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                max_parallel_proofs: 4,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -1921,7 +1939,7 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
@@ -2020,8 +2038,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> =
-            Arc::new(MockProver { delay: MOCK_PROVER_DELAY, block_interval: TEST_BLOCK_INTERVAL });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(0, B256::ZERO),
             output_roots,
@@ -2034,7 +2050,6 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                max_parallel_proofs: 1,
                 max_retries: 1,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -2045,7 +2060,7 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
@@ -2293,20 +2308,16 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_dispatch_skips_inflight_and_proved_blocks() {
-        // Scenario: 4 proof slots, blocks 512–2048 were dispatched on the
-        // first tick.  Proof for 512 completed (now in `proved`), proofs
-        // for 1024/1536/2048 are still in-flight.  The next tick calls
+        // Scenario: blocks 512–2048 were dispatched on the first tick.
+        // Proof for 512 completed (now in `proved`); proofs for
+        // 1024/1536/2048 are still in-flight.  The next tick calls
         // dispatch_proofs which must skip past all four handled blocks and
-        // dispatch block 2560 to refill the freed slot.
+        // dispatch every remaining eligible block up to the safe head.
         let cancel = CancellationToken::new();
         let safe_head = TEST_BLOCK_INTERVAL * 6;
 
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
-            delay: Duration::from_secs(3600),
-            block_interval: TEST_BLOCK_INTERVAL,
-        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_head, B256::ZERO),
             output_roots: HashMap::new(),
@@ -2320,7 +2331,6 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                max_parallel_proofs: 4,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -2330,7 +2340,7 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
@@ -2358,12 +2368,24 @@ mod tests {
 
         pipeline.dispatch_proofs(&recovered, safe_head, &mut state).await.unwrap();
 
+        // safe_head = TEST_BLOCK_INTERVAL * 6 yields candidates 1..=6.
+        // Already handled: 1 (proved), 2/3/4 (inflight). Dispatch should add
+        // 5 and 6 — every remaining eligible target up to the safe head.
         assert!(
             state.inflight.contains(&(TEST_BLOCK_INTERVAL * 5)),
-            "block {} should have been dispatched to fill the freed slot",
+            "block {} should have been dispatched",
             TEST_BLOCK_INTERVAL * 5
         );
-        assert_eq!(state.inflight.len(), 4, "should be back to max_parallel_proofs");
+        assert!(
+            state.inflight.contains(&(TEST_BLOCK_INTERVAL * 6)),
+            "block {} should have been dispatched",
+            TEST_BLOCK_INTERVAL * 6
+        );
+        assert_eq!(
+            state.inflight.len(),
+            5,
+            "all eligible targets up to safe_head should be inflight"
+        );
         assert!(
             state.proved.contains_key(&TEST_BLOCK_INTERVAL),
             "proved entries must not be removed by dispatch"
@@ -2377,10 +2399,6 @@ mod tests {
 
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
-            delay: Duration::from_secs(3600),
-            block_interval: TEST_BLOCK_INTERVAL,
-        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_head, B256::ZERO),
             output_roots: HashMap::new(),
@@ -2394,7 +2412,6 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                max_parallel_proofs: 2,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -2404,7 +2421,7 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
@@ -2436,10 +2453,6 @@ mod tests {
 
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
-            delay: Duration::from_secs(3600),
-            block_interval: TEST_BLOCK_INTERVAL,
-        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_head, B256::ZERO),
             output_roots: HashMap::new(),
@@ -2453,7 +2466,6 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                max_parallel_proofs: 4,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -2463,7 +2475,7 @@ mod tests {
                     ..Default::default()
                 },
             },
-            prover,
+            Arc::new(MockProofRequester::default()),
             l1,
             l2,
             rollup,
@@ -2525,20 +2537,135 @@ mod tests {
         );
     }
 
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_pipeline_state_reset_clears_cache() {
+    /// Builds a `PipelineState` populated with several proved entries plus a
+    /// couple of in-flight bookkeeping targets, used for failure-isolation
+    /// tests that need to assert sibling entries survive.
+    fn state_with_proved_siblings() -> PipelineState {
         let mut state = PipelineState::new();
+        for target in [TEST_BLOCK_INTERVAL, TEST_BLOCK_INTERVAL * 2, TEST_BLOCK_INTERVAL * 3] {
+            let p = test_proposal(target);
+            state.proved.insert(
+                target,
+                ProofResult::Tee { aggregate_proposal: p.clone(), proposals: vec![p] },
+            );
+        }
+        // Unrelated in-flight + retry-count entries that must not be wiped
+        // when a sibling target hits a failure path.
+        state.inflight.insert(TEST_BLOCK_INTERVAL * 4);
+        state.retry_counts.insert(TEST_BLOCK_INTERVAL * 4, 1);
         state.cached_recovery = Some(CachedRecovery {
             game_count: 10,
             state: RecoveredState {
                 parent_address: proxy_addr(5),
                 output_root: B256::repeat_byte(0x11),
-                l2_block_number: TEST_BLOCK_INTERVAL,
+                l2_block_number: 0,
             },
         });
+        state
+    }
 
-        state.reset();
-        assert!(state.cached_recovery.is_none(), "reset() should clear cached_recovery");
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_proof_max_retries_preserves_proved_queue() {
+        let pipeline =
+            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
+        let mut state = state_with_proved_siblings();
+        let failing_target = TEST_BLOCK_INTERVAL * 7;
+        state.inflight.insert(failing_target);
+        state.retry_counts.insert(failing_target, pipeline.config.max_retries.saturating_sub(1));
+
+        // Final attempt fails and pushes the counter to max_retries.
+        pipeline.handle_proof_failure(
+            failing_target,
+            ProposerError::Prover("boom".into()),
+            &mut state,
+        );
+
+        assert!(!state.inflight.contains(&failing_target), "failing target cleared");
+        assert!(!state.retry_counts.contains_key(&failing_target), "retry count cleared");
+        assert!(
+            state.cached_recovery.is_none(),
+            "cached_recovery should be dropped to force a re-walk"
+        );
+        assert_eq!(state.proved.len(), 3, "proved entries for sibling targets must survive");
+        assert!(state.inflight.contains(&(TEST_BLOCK_INTERVAL * 4)), "unrelated inflight survives");
+        assert_eq!(
+            state.retry_counts.get(&(TEST_BLOCK_INTERVAL * 4)),
+            Some(&1),
+            "unrelated retry count survives"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_dispatch_join_error_preserves_proved_queue() {
+        // Construct a synthetic JoinError by joining an aborted task.
+        let cancelled_err = {
+            let mut js: JoinSet<()> = JoinSet::new();
+            let handle = js.spawn(async { std::future::pending::<()>().await });
+            handle.abort();
+            js.join_next().await.unwrap().unwrap_err()
+        };
+        assert!(cancelled_err.is_cancelled(), "fixture must produce a cancellation error");
+
+        let pipeline =
+            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
+        let mut state = state_with_proved_siblings();
+        let proved_before = state.proved.clone();
+        let cached_before = state.cached_recovery;
+
+        // A cancellation join error is the only join error reachable in practice
+        // (panics are caught inside the spawned future). Verify it leaves
+        // state alone.
+        pipeline.handle_dispatch_result(Err(cancelled_err), &mut state);
+        assert_eq!(state.proved, proved_before, "proved queue untouched on cancellation");
+        assert_eq!(state.cached_recovery, cached_before, "cache untouched on cancellation");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_root_mismatch_preserves_proved_queue() {
+        let pipeline =
+            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
+        let mut state = state_with_proved_siblings();
+        state.submitting = Some(TEST_BLOCK_INTERVAL * 5);
+
+        let chain_next = pipeline
+            .handle_submit_result(
+                Ok(SubmitOutcome::RootMismatch { target_block: TEST_BLOCK_INTERVAL * 5 }),
+                &mut state,
+            )
+            .await;
+
+        assert!(!chain_next, "root mismatch must not chain another submit");
+        assert!(state.submitting.is_none(), "submitting slot released");
+        assert!(state.cached_recovery.is_none(), "cached_recovery dropped on mismatch");
+        assert_eq!(
+            state.proved.len(),
+            3,
+            "sibling proved entries must survive a root mismatch on a different target"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_submit_join_error_preserves_proved_queue() {
+        // Build a real cancellation JoinError (only join error reachable
+        // post-catch_unwind).
+        let cancelled_err = {
+            let mut js: JoinSet<()> = JoinSet::new();
+            let handle = js.spawn(async { std::future::pending::<()>().await });
+            handle.abort();
+            js.join_next().await.unwrap().unwrap_err()
+        };
+
+        let pipeline =
+            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
+        let mut state = state_with_proved_siblings();
+        state.submitting = Some(TEST_BLOCK_INTERVAL * 9);
+        let proved_before = state.proved.clone();
+
+        let chain_next = pipeline.handle_submit_result(Err(cancelled_err), &mut state).await;
+
+        assert!(!chain_next);
+        assert!(state.submitting.is_none(), "slot released");
+        assert_eq!(state.proved, proved_before, "proved queue survives a submit join error");
     }
 
     /// Pipeline, primed state with a cached recovery tip, and a proof ready

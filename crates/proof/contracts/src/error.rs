@@ -27,3 +27,20 @@ pub enum ContractError {
     #[error("{0}")]
     Validation(String),
 }
+
+impl ContractError {
+    /// Creates an error for a failed contract call.
+    pub fn call(context: impl Into<String>, source: alloy_contract::Error) -> Self {
+        Self::Call { context: context.into(), source }
+    }
+
+    /// Creates an error for a failed provider request.
+    pub fn provider(context: impl Into<String>, source: alloy_transport::TransportError) -> Self {
+        Self::Provider { context: context.into(), source }
+    }
+
+    /// Creates an error for a failed contract value validation.
+    pub fn validation(context: impl Into<String>) -> Self {
+        Self::Validation(context.into())
+    }
+}

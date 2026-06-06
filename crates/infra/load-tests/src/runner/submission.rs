@@ -30,9 +30,9 @@ use super::{ResultsTracker, SentTransaction};
 use crate::rpc::{BatchRpcClient, BatchSendResult};
 
 /// Number of signer tasks per submission RPC.
-pub const SIGNER_WORKERS_PER_RPC: usize = 2;
+pub const SIGNER_WORKERS_PER_RPC: usize = 10;
 /// Number of sender tasks per submission RPC.
-pub const SENDER_WORKERS_PER_RPC: usize = 4;
+pub const SENDER_WORKERS_PER_RPC: usize = 10;
 /// Maximum signer task count.
 pub const MAX_SIGNER_WORKER_COUNT: usize = 32;
 /// Maximum sender task count.
@@ -454,6 +454,8 @@ impl SubmissionPipeline {
             BatchTxError::NonceTooLow
         } else if lower.contains("missing response") || lower.contains("invalid tx hash") {
             BatchTxError::RetryableUnknown(msg)
+        } else if lower.contains("replacement transaction underpriced") {
+            BatchTxError::NonceTooLow
         } else if lower.contains("txpool is full")
             || lower.contains("transaction pool is full")
             || lower.contains("pool is full")
@@ -658,27 +660,18 @@ impl SubmissionPipeline {
                                 attempt,
                                 "nonce too low during batch submission"
                             );
-                            // On retry, a nonce-too-low response usually means a prior attempt
-                            // was accepted but its response was lost. Treat it as submitted so we
-                            // do not return a consumed nonce; if another transaction consumed the
-                            // nonce, the optimistic pending entry expires through the normal
-                            // confirmation timeout.
-                            if attempt > 0 {
-                                let tx_hash = signed.tx_hash;
-                                submitted += Self::record_submitted(
-                                    &ctx,
-                                    signed,
-                                    tx_hash,
-                                    "tx nonce already used",
-                                )
-                                .await;
-                            } else {
-                                Self::release_signed(&ctx.submit_event_tx, &signed).await;
-                                let _ = ctx
-                                    .submit_event_tx
-                                    .send(SubmitEvent::Failed("nonce too low".into()))
-                                    .await;
-                            }
+                            // Nonce-too-low means the nonce was already consumed on-chain,
+                            // either by a prior attempt or by the same tx landing before
+                            // the response arrived. Treat as submitted to avoid returning
+                            // the nonce (which would cause replacement-tx-underpriced cycles).
+                            let tx_hash = signed.tx_hash;
+                            submitted += Self::record_submitted(
+                                &ctx,
+                                signed,
+                                tx_hash,
+                                "tx nonce already used",
+                            )
+                            .await;
                         }
                         BatchTxError::Rejected(msg) => {
                             debug!(

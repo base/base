@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
 use alloy_consensus::{Header, Sealed, TxReceipt};
 use alloy_eips::BlockNumberOrTag;
@@ -11,7 +11,7 @@ use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
-use base_common_consensus::OpTxType;
+use base_common_consensus::{BaseTxReceipt, OpTxType};
 use base_common_evm::{BaseHaltReason, BaseTxResult};
 use base_common_flashblocks::Flashblock;
 use base_common_network::Base;
@@ -21,13 +21,12 @@ use reth_revm::db::BundleState;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use revm::{
-    context::result::ExecResultAndState, context_interface::result::ExecutionResult,
-    state::EvmState,
+    context::result::ExecResultAndState,
+    context_interface::result::ExecutionResult,
+    state::{AccountInfo, EvmState},
 };
 
-use crate::{
-    BuildError, PendingBlocksAPI, StateProcessorError, TransactionWithLogs, metrics::Metrics,
-};
+use crate::{BuildError, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
 
 /// Builder for [`PendingBlocks`].
 #[derive(Debug)]
@@ -49,7 +48,7 @@ pub struct PendingBlocksBuilder {
     execution_times: HashMap<B256, u128>,
     state_root_times: HashMap<B256, u128>,
 
-    bundle_state: BundleState,
+    bundle_state: Option<Arc<BundleState>>,
 
     // Deferred error from `with_transaction` (e.g. duplicate hash). Surfaced from `build()`.
     deferred_error: Option<BuildError>,
@@ -80,7 +79,7 @@ impl PendingBlocksBuilder {
             execution_times: HashMap::new(),
             state_root_times: HashMap::new(),
             state_overrides: None,
-            bundle_state: BundleState::default(),
+            bundle_state: None,
             deferred_error: None,
         }
     }
@@ -169,7 +168,7 @@ impl PendingBlocksBuilder {
     /// Sets the accumulated bundle state.
     #[inline]
     pub fn with_bundle_state(&mut self, bundle_state: BundleState) -> &Self {
-        self.bundle_state = bundle_state;
+        self.bundle_state = Some(Arc::new(bundle_state));
         self
     }
 
@@ -230,7 +229,7 @@ impl PendingBlocksBuilder {
             transaction_state: self.transaction_state,
             transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
-            bundle_state: self.bundle_state,
+            bundle_state: self.bundle_state.unwrap_or_default(),
             transaction_results: self.transaction_results,
             execution_times: self.execution_times,
             state_root_times: self.state_root_times,
@@ -259,7 +258,7 @@ pub struct PendingBlocks {
     execution_times: HashMap<B256, u128>,
     state_root_times: HashMap<B256, u128>,
 
-    bundle_state: BundleState,
+    bundle_state: Arc<BundleState>,
 }
 
 impl PendingBlocks {
@@ -341,19 +340,9 @@ impl PendingBlocks {
         self.transaction_senders.get(tx_hash).copied()
     }
 
-    /// Returns a clone of the bundle state.
-    ///
-    /// NOTE: This clones the entire `BundleState`, which contains a `HashMap` of all touched
-    /// accounts and their storage slots. The cost scales with the number of accounts and
-    /// storage slots modified in the flashblock. Monitor `bundle_state_clone_duration` and
-    /// `bundle_state_clone_size` metrics to track if this becomes a bottleneck.
-    pub fn get_bundle_state(&self) -> BundleState {
-        let size = self.bundle_state.state.len();
-        let start = Instant::now();
-        let cloned = self.bundle_state.clone();
-        Metrics::bundle_state_clone_duration().record(start.elapsed());
-        Metrics::bundle_state_clone_size().record(size as f64);
-        cloned
+    /// Returns a shared reference to the bundle state.
+    pub fn get_bundle_state(&self) -> Arc<BundleState> {
+        Arc::clone(&self.bundle_state)
     }
 
     /// Returns all transactions for a specific block number.
@@ -433,8 +422,19 @@ impl PendingBlocks {
             tx_type: tx.inner.inner.tx_type(),
         };
 
-        let base_tx_result =
-            BaseTxResult { inner: eth_tx_result, is_deposit: tx.inner.inner.is_deposit(), sender };
+        // For deposit transactions, reconstruct the depositor's AccountInfo so that
+        // CachedExecutor's commit_transaction can set `deposit_nonce` correctly on the
+        // receipt it builds. Only the `nonce` field is consumed downstream.
+        let is_deposit = tx.inner.inner.is_deposit();
+        let depositor = is_deposit
+            .then(|| {
+                self.get_receipt(*tx_hash)
+                    .and_then(|r| r.inner.inner.receipt.deposit_nonce())
+                    .map(|nonce| AccountInfo { nonce, ..Default::default() })
+            })
+            .flatten();
+
+        let base_tx_result = BaseTxResult { inner: eth_tx_result, is_deposit, sender, depositor };
 
         Some(base_tx_result)
     }
@@ -709,6 +709,7 @@ mod tests {
                 ),
                 block_hash: None,
                 block_number: Some(1),
+                block_timestamp: None,
                 transaction_index: Some(0),
                 effective_gas_price: Some(1_000_000_000),
             },
@@ -739,6 +740,7 @@ mod tests {
                 inner: recovered,
                 block_hash: Some(B256::ZERO),
                 block_number: Some(1),
+                block_timestamp: None,
                 transaction_index: Some(0),
                 effective_gas_price: Some(1_000_000_000),
             },
@@ -766,6 +768,7 @@ mod tests {
                 ),
                 block_hash: None,
                 block_number: Some(1),
+                block_timestamp: None,
                 transaction_index: Some(0),
                 effective_gas_price: Some(0),
             },
@@ -861,8 +864,10 @@ mod tests {
     fn test_execution_result() -> ExecutionResult<BaseHaltReason> {
         ExecutionResult::Success {
             reason: revm::context::result::SuccessReason::Stop,
-            gas_used: 21000,
-            gas_refunded: 0,
+            gas: revm::context::result::ResultGas::default()
+                .with_total_gas_spent(21_000)
+                .with_refunded(0)
+                .with_floor_gas(0),
             logs: vec![],
             output: revm::context::result::Output::Call(Bytes::new()),
         }
@@ -909,12 +914,33 @@ mod tests {
         assert_eq!(result.inner.tx_type, OpTxType::Legacy);
         assert!(!result.is_deposit);
         assert_eq!(result.sender, test_sender());
-        assert_eq!(result.inner.result.result.gas_used(), 21000);
+        assert_eq!(result.inner.result.result.tx_gas_used(), 21000);
     }
 
     #[test]
     fn get_tx_result_reconstructs_all_fields_for_deposit_tx() {
-        let (tx_hash, pending_blocks) = build_pending_blocks(test_deposit_transaction(), Some(0));
+        let tx = test_deposit_transaction();
+        let tx_hash = tx.tx_hash();
+        let mut builder = PendingBlocksBuilder::default();
+        builder.with_flashblocks([test_flashblock()]);
+        builder.with_header(Sealed::new_unchecked(Header::default(), B256::ZERO));
+        builder.with_transaction(tx);
+        builder.with_transaction_sender(tx_hash, test_sender());
+        builder.with_transaction_state(tx_hash, Default::default());
+        builder.with_transaction_result(tx_hash, test_execution_result());
+        let mut receipt = test_receipt(tx_hash, Some(0));
+        receipt.inner.inner.receipt =
+            base_common_consensus::BaseReceipt::Deposit(base_common_consensus::DepositReceipt {
+                inner: alloy_consensus::Receipt {
+                    status: true.into(),
+                    cumulative_gas_used: 21000,
+                    logs: vec![],
+                },
+                deposit_nonce: Some(42),
+                deposit_receipt_version: Some(1),
+            });
+        builder.with_receipt(tx_hash, receipt);
+        let pending_blocks = builder.build().expect("should build pending blocks");
 
         let result = pending_blocks.get_tx_result(&tx_hash).expect("should return tx result");
 
@@ -922,7 +948,8 @@ mod tests {
         assert_eq!(result.inner.tx_type, OpTxType::Deposit);
         assert!(result.is_deposit);
         assert_eq!(result.sender, test_sender());
-        assert_eq!(result.inner.result.result.gas_used(), 21000);
+        assert_eq!(result.inner.result.result.tx_gas_used(), 21000);
+        assert_eq!(result.depositor.expect("deposit tx should have depositor").nonce, 42);
     }
 
     #[test]

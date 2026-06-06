@@ -6,8 +6,7 @@
 mod builder;
 pub use builder::{DerivationDelegateConfig, L1ConfigBuilder, RollupNodeBuilder};
 
-mod follow;
-pub use follow::FollowNode;
+pub use crate::follow::{FollowNode, FollowNodeConfig};
 
 mod mode;
 pub use mode::NodeMode;

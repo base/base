@@ -43,7 +43,6 @@ path = "bin/parse_receipt.rs"
 
 # workspace
 alloy-network.workspace = true
-alloy-node-bindings.workspace = true
 alloy-provider = { workspace = true, features = ["reqwest"] }
 alloy-transport-http = { workspace = true, features = [
     "reqwest",

@@ -196,10 +196,8 @@ mod tests {
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::HardForkConfig;
     use tracing::Level;
-    use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
-    use crate::test_utils::{CollectingLayer, TraceStorage};
 
     #[test]
     fn test_empty_l1_blocks() {
@@ -599,10 +597,7 @@ mod tests {
     #[test]
     #[cfg(feature = "std")]
     fn test_check_batch_drop_non_empty_jovian_transition() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = crate::capture_traces!();
 
         // Gather a few test transactions for the batch.
         let transactions = example_transactions();

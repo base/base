@@ -2525,7 +2525,7 @@ async fn large_l1_gaps_within_sequence_window() {
 /// Configuration:
 /// - `seq_window_size = 4` (small window so epochs expire quickly)
 /// - Zero batches submitted
-/// - 20 empty L1 blocks mined
+/// - More than two sequence windows of empty L1 blocks mined
 ///
 /// Expected result: the safe head advances well past genesis as the pipeline
 /// synthesises deposit-only blocks for each expired epoch.
@@ -2533,6 +2533,7 @@ async fn large_l1_gaps_within_sequence_window() {
 #[tokio::test]
 async fn extended_sequence_window_exhaustion_fills_with_deposit_only_blocks() {
     const SEQ_WINDOW: u64 = 4;
+    const EMPTY_L1_BLOCKS: u64 = SEQ_WINDOW * 2 + 2;
     let batcher_cfg = BatcherConfig::default();
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
         .with_seq_window_size(SEQ_WINDOW)
@@ -2546,17 +2547,15 @@ async fn extended_sequence_window_exhaustion_fills_with_deposit_only_blocks() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    // Mine 20 empty L1 blocks — no batches submitted anywhere.
-    for _ in 0..20 {
+    // Mine empty L1 blocks across multiple sequence windows with no batches
+    // submitted anywhere.
+    for _ in 0..EMPTY_L1_BLOCKS {
         h.mine_and_push(&chain);
     }
 
     node.initialize().await;
 
-    let mut total_derived = 0;
-    for _ in 1..=20u64 {
-        total_derived += node.run_until_idle().await;
-    }
+    let total_derived = node.run_until_idle().await;
 
     // With no batches, the pipeline generates deposit-only blocks for each
     // expired sequence window. The safe head must advance past genesis.
@@ -2571,4 +2570,10 @@ async fn extended_sequence_window_exhaustion_fills_with_deposit_only_blocks() {
         "pipeline must have generated deposit-only blocks for expired epochs; \
          total_derived = {total_derived}"
     );
+    for block_number in 1..=node.l2_safe_number() {
+        let block = node
+            .derived_block(block_number)
+            .expect("every derived block should be recorded by the node");
+        assert!(block.is_deposit_only(), "derived block {block_number} must be deposit-only");
+    }
 }

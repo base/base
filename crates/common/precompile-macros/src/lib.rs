@@ -3,8 +3,11 @@
 mod contract;
 pub(crate) use contract::{FieldInfo, FieldKind};
 
+mod accounting;
 mod layout;
+mod namespace;
 mod packing;
+mod precompile;
 mod storable;
 mod storable_primitives;
 mod storable_tests;
@@ -24,10 +27,47 @@ pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
     contract::generate(input, config.address.as_ref())
 }
 
+/// Namespaces a `#[contract]` storage struct or `Storable` layout using an ERC-7201 storage root.
+#[proc_macro_attribute]
+pub fn namespace(attr: TokenStream, item: TokenStream) -> TokenStream {
+    namespace::expand(attr, item)
+}
+
+/// Generates EVM precompile constructor and optional singleton installation methods.
+///
+/// By default this expands through `crate::macros::base_precompile!` in the invoking crate. Callers
+/// outside `base-common-precompiles` can pass `macro_path = path::to::wrapper_macro` to override the
+/// runtime wrapper macro.
+#[proc_macro_attribute]
+pub fn precompile(attr: TokenStream, item: TokenStream) -> TokenStream {
+    precompile::expand(attr, item)
+}
+
 /// Derives the `Storable` trait for structs with named fields and `#[repr(u8)]` unit enums.
-#[proc_macro_derive(Storable, attributes(storable_arrays))]
+#[proc_macro_derive(
+    Storable,
+    attributes(accessor, mutator, storable_arrays, namespace, storage_namespace)
+)]
 pub fn derive_storage_block(input: TokenStream) -> TokenStream {
     storable::derive(parse_macro_input!(input as DeriveInput))
+}
+
+/// Derives the B-20 `TokenAccounting` storage port for contract storage structs.
+#[proc_macro_derive(TokenAccounting)]
+pub fn derive_token_accounting(input: TokenStream) -> TokenStream {
+    accounting::derive_token(parse_macro_input!(input as DeriveInput))
+}
+
+/// Derives the stablecoin storage port for contract storage structs.
+#[proc_macro_derive(StablecoinAccounting)]
+pub fn derive_stablecoin_accounting(input: TokenStream) -> TokenStream {
+    accounting::derive_stablecoin(parse_macro_input!(input as DeriveInput))
+}
+
+/// Derives the asset-token storage port for contract storage structs.
+#[proc_macro_derive(AssetAccounting)]
+pub fn derive_asset_accounting(input: TokenStream) -> TokenStream {
+    accounting::derive_asset(parse_macro_input!(input as DeriveInput))
 }
 
 /// Generate `StorableType` and `Storable` implementations for all standard integer types.

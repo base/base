@@ -30,7 +30,6 @@ base-execution-chainspec.workspace = true
 # revm
 revm.workspace = true
 revm-database.workspace = true
-revm-inspectors.workspace = true
 revm-bytecode.workspace = true
 
 # alloy
@@ -77,7 +76,8 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
 # revm
-revm-context-interface.workspace = true
+revm.workspace = true
+revm-bytecode.workspace = true
 
 # alloy
 alloy-network.workspace = true

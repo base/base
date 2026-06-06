@@ -10,25 +10,48 @@ use alloy_primitives::{Address, B64, B256, Bytes, U256, keccak256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::{
     BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2,
-    ExecutionPayloadV1, ExecutionPayloadV3, PayloadId,
+    ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes as EthPayloadAttributes, PayloadId,
 };
 use base_common_chains::Upgrades;
 use base_common_consensus::{
     BasePrimitives, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
 };
+/// Re-export for use in downstream arguments.
+pub use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
-    BaseExecutionPayloadV4, BasePayloadAttributes,
+    BaseExecutionPayloadV4,
 };
 use base_execution_evm::BaseNextBlockEnvAttributes;
 use reth_chainspec::EthChainSpec;
-use reth_payload_builder::{EthPayloadBuilderAttributes, PayloadBuilderError};
-use reth_payload_primitives::{
-    BuildNextEnv, BuiltPayload, BuiltPayloadExecutedBlock, PayloadBuilderAttributes,
-};
+use reth_payload_builder::PayloadBuilderError;
+use reth_payload_primitives::{BuildNextEnv, BuiltPayload, BuiltPayloadExecutedBlock};
 use reth_primitives_traits::{
     NodePrimitives, SealedBlock, SealedHeader, SignedTransaction, WithEncoded,
 };
+
+/// Minimal Ethereum payload builder attributes retained for Base payload construction.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EthPayloadBuilderAttributes {
+    /// Payload job ID.
+    pub id: PayloadId,
+    /// Parent block hash.
+    pub parent: B256,
+    /// Timestamp for the payload.
+    pub timestamp: u64,
+    /// Suggested fee recipient.
+    pub suggested_fee_recipient: Address,
+    /// Prev-randao value for the payload.
+    pub prev_randao: B256,
+    /// Whether withdrawals were provided in the original payload attributes.
+    pub has_withdrawals: bool,
+    /// Withdrawals included in the payload.
+    pub withdrawals: Withdrawals,
+    /// Parent beacon block root.
+    pub parent_beacon_block_root: Option<B256>,
+    /// Slot number for the payload.
+    pub slot_number: Option<u64>,
+}
 
 /// Base Payload Builder Attributes
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +85,29 @@ impl<T> Default for BasePayloadBuilderAttributes<T> {
 }
 
 impl<T> BasePayloadBuilderAttributes<T> {
+    /// Converts these builder attributes back into the RPC payload attribute representation.
+    pub fn as_rpc_payload_attributes(&self) -> BasePayloadAttributes {
+        BasePayloadAttributes {
+            payload_attributes: EthPayloadAttributes {
+                timestamp: self.payload_attributes.timestamp,
+                prev_randao: self.payload_attributes.prev_randao,
+                suggested_fee_recipient: self.payload_attributes.suggested_fee_recipient,
+                withdrawals: self
+                    .payload_attributes
+                    .has_withdrawals
+                    .then(|| self.payload_attributes.withdrawals.to_vec()),
+                parent_beacon_block_root: self.payload_attributes.parent_beacon_block_root,
+                slot_number: self.payload_attributes.slot_number,
+            },
+            transactions: (!self.transactions.is_empty())
+                .then(|| self.transactions.iter().map(|tx| tx.encoded_bytes().clone()).collect()),
+            no_tx_pool: Some(self.no_tx_pool),
+            gas_limit: self.gas_limit,
+            eip_1559_params: self.eip_1559_params,
+            min_base_fee: self.min_base_fee,
+        }
+    }
+
     /// Extracts the extra data parameters post-Holocene hardfork.
     /// In Holocene, those parameters are the EIP-1559 base fee parameters.
     pub fn get_holocene_extra_data(
@@ -84,22 +130,22 @@ impl<T> BasePayloadBuilderAttributes<T> {
             .map(|params| JovianExtraData::encode(params, default_base_fee_params, min_base_fee))
             .ok_or(EIP1559ParamError::NoEIP1559Params)?
     }
+
+    /// Extracts the Holocene EIP-1559 parameters from the encoded form.
+    ///
+    /// Returns (`elasticity`, `denominator`).
+    pub fn decode_eip_1559_params(&self) -> Option<(u32, u32)> {
+        self.eip_1559_params.map(HoloceneExtraData::decode_params)
+    }
 }
 
-impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> PayloadBuilderAttributes
-    for BasePayloadBuilderAttributes<T>
-{
-    type RpcPayloadAttributes = BasePayloadAttributes;
-    type Error = alloy_rlp::Error;
-
-    /// Creates a new payload builder for the given parent block and the attributes.
-    ///
-    /// Derives the unique [`PayloadId`] for the given parent and attributes
-    fn try_new(
+impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> BasePayloadBuilderAttributes<T> {
+    /// Creates payload builder attributes for the given parent block and RPC payload attributes.
+    pub fn try_new(
         parent: B256,
         attributes: BasePayloadAttributes,
         version: u8,
-    ) -> Result<Self, Self::Error> {
+    ) -> Result<Self, alloy_rlp::Error> {
         let id = payload_id(&parent, &attributes, version);
 
         let transactions = attributes
@@ -117,8 +163,10 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> PayloadBuilderAtt
             timestamp: attributes.payload_attributes.timestamp,
             suggested_fee_recipient: attributes.payload_attributes.suggested_fee_recipient,
             prev_randao: attributes.payload_attributes.prev_randao,
+            has_withdrawals: attributes.payload_attributes.withdrawals.is_some(),
             withdrawals: attributes.payload_attributes.withdrawals.unwrap_or_default().into(),
             parent_beacon_block_root: attributes.payload_attributes.parent_beacon_block_root,
+            slot_number: attributes.payload_attributes.slot_number,
         };
 
         Ok(Self {
@@ -130,34 +178,6 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> PayloadBuilderAtt
             min_base_fee: attributes.min_base_fee,
         })
     }
-
-    fn payload_id(&self) -> PayloadId {
-        self.payload_attributes.id
-    }
-
-    fn parent(&self) -> B256 {
-        self.payload_attributes.parent
-    }
-
-    fn timestamp(&self) -> u64 {
-        self.payload_attributes.timestamp
-    }
-
-    fn parent_beacon_block_root(&self) -> Option<B256> {
-        self.payload_attributes.parent_beacon_block_root
-    }
-
-    fn suggested_fee_recipient(&self) -> Address {
-        self.payload_attributes.suggested_fee_recipient
-    }
-
-    fn prev_randao(&self) -> B256 {
-        self.payload_attributes.prev_randao
-    }
-
-    fn withdrawals(&self) -> &Withdrawals {
-        &self.payload_attributes.withdrawals
-    }
 }
 
 impl<BaseTransactionSigned> From<EthPayloadBuilderAttributes>
@@ -168,17 +188,85 @@ impl<BaseTransactionSigned> From<EthPayloadBuilderAttributes>
     }
 }
 
+impl<BaseTransactionSigned> From<EthPayloadAttributes>
+    for BasePayloadBuilderAttributes<BaseTransactionSigned>
+{
+    fn from(value: EthPayloadAttributes) -> Self {
+        Self {
+            payload_attributes: EthPayloadBuilderAttributes {
+                id: Default::default(),
+                parent: B256::ZERO,
+                timestamp: value.timestamp,
+                suggested_fee_recipient: value.suggested_fee_recipient,
+                prev_randao: value.prev_randao,
+                has_withdrawals: value.withdrawals.is_some(),
+                withdrawals: value.withdrawals.unwrap_or_default().into(),
+                parent_beacon_block_root: value.parent_beacon_block_root,
+                slot_number: value.slot_number,
+            },
+            ..Default::default()
+        }
+    }
+}
+
+impl<T> serde::Serialize for BasePayloadBuilderAttributes<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.as_rpc_payload_attributes().serialize(serializer)
+    }
+}
+
+impl<'de, T> serde::Deserialize<'de> for BasePayloadBuilderAttributes<T>
+where
+    T: Decodable2718 + Send + Sync + Debug + Unpin + 'static,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let attrs = BasePayloadAttributes::deserialize(deserializer)?;
+        Self::try_new(B256::ZERO, attrs, 3).map_err(serde::de::Error::custom)
+    }
+}
+
+impl<T> reth_payload_primitives::PayloadAttributes for BasePayloadBuilderAttributes<T>
+where
+    T: Clone + Decodable2718 + Send + Sync + Debug + Unpin + 'static,
+{
+    fn payload_id(&self, parent_hash: &B256) -> PayloadId {
+        payload_id(parent_hash, &self.as_rpc_payload_attributes(), 3)
+    }
+
+    fn timestamp(&self) -> u64 {
+        self.payload_attributes.timestamp
+    }
+
+    fn withdrawals(&self) -> Option<&Vec<alloy_eips::eip4895::Withdrawal>> {
+        self.payload_attributes.has_withdrawals.then_some(&self.payload_attributes.withdrawals)
+    }
+
+    fn parent_beacon_block_root(&self) -> Option<B256> {
+        self.payload_attributes.parent_beacon_block_root
+    }
+
+    fn slot_number(&self) -> Option<u64> {
+        self.payload_attributes.slot_number
+    }
+}
+
 /// Contains the built payload.
 #[derive(Debug, Clone)]
 pub struct BaseBuiltPayload<N: NodePrimitives = BasePrimitives> {
     /// Identifier of the payload
-    pub id: PayloadId,
+    pub(crate) id: PayloadId,
     /// Sealed block
-    pub block: Arc<SealedBlock<N::Block>>,
+    pub(crate) block: Arc<SealedBlock<N::Block>>,
     /// Block execution data for the payload, if any.
-    pub executed_block: Option<BuiltPayloadExecutedBlock<N>>,
+    pub(crate) executed_block: Option<BuiltPayloadExecutedBlock<N>>,
     /// The fees of the block
-    pub fees: U256,
+    pub(crate) fees: U256,
 }
 
 // === impl BuiltPayload ===
@@ -449,28 +537,33 @@ where
         parent: &SealedHeader<H>,
         chain_spec: &ChainSpec,
     ) -> Result<Self, PayloadBuilderError> {
-        let extra_data = if chain_spec.is_jovian_active_at_timestamp(attributes.timestamp()) {
-            attributes
-                .get_jovian_extra_data(
-                    chain_spec.base_fee_params_at_timestamp(attributes.timestamp()),
-                )
-                .map_err(PayloadBuilderError::other)?
-        } else if chain_spec.is_holocene_active_at_timestamp(attributes.timestamp()) {
-            attributes
-                .get_holocene_extra_data(
-                    chain_spec.base_fee_params_at_timestamp(attributes.timestamp()),
-                )
-                .map_err(PayloadBuilderError::other)?
-        } else {
-            Default::default()
-        };
+        let extra_data =
+            if chain_spec.is_jovian_active_at_timestamp(attributes.payload_attributes.timestamp) {
+                attributes
+                    .get_jovian_extra_data(
+                        chain_spec
+                            .base_fee_params_at_timestamp(attributes.payload_attributes.timestamp),
+                    )
+                    .map_err(PayloadBuilderError::other)?
+            } else if chain_spec
+                .is_holocene_active_at_timestamp(attributes.payload_attributes.timestamp)
+            {
+                attributes
+                    .get_holocene_extra_data(
+                        chain_spec
+                            .base_fee_params_at_timestamp(attributes.payload_attributes.timestamp),
+                    )
+                    .map_err(PayloadBuilderError::other)?
+            } else {
+                Default::default()
+            };
 
         Ok(Self {
-            timestamp: attributes.timestamp(),
-            suggested_fee_recipient: attributes.suggested_fee_recipient(),
-            prev_randao: attributes.prev_randao(),
+            timestamp: attributes.payload_attributes.timestamp,
+            suggested_fee_recipient: attributes.payload_attributes.suggested_fee_recipient,
+            prev_randao: attributes.payload_attributes.prev_randao,
             gas_limit: attributes.gas_limit.unwrap_or_else(|| parent.gas_limit()),
-            parent_beacon_block_root: attributes.parent_beacon_block_root(),
+            parent_beacon_block_root: attributes.payload_attributes.parent_beacon_block_root,
             extra_data,
         })
     }
@@ -483,11 +576,9 @@ mod tests {
     use alloy_primitives::{FixedBytes, address, b256, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_consensus::BaseTransactionSigned;
-    use base_common_rpc_types_engine::BasePayloadAttributes;
     use reth_payload_primitives::EngineApiMessageVersion;
 
     use super::*;
-
     #[test]
     fn test_payload_id_parity_op_geth() {
         // INFO rollup_boost::server:received fork_choice_updated_v3 from builder and l2_client
@@ -501,6 +592,7 @@ mod tests {
                 suggested_fee_recipient: address!("0x4200000000000000000000000000000000000011"),
                 withdrawals: Some([].into()),
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
+                slot_number: None,
             },
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
@@ -532,6 +624,7 @@ mod tests {
                 suggested_fee_recipient: address!("0x4200000000000000000000000000000000000011"),
                 withdrawals: Some([].into()),
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
+                slot_number: None,
             },
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,

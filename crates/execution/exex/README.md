@@ -27,7 +27,7 @@ tip latency.
 
 ## Architecture
 
-```
+```text
 base-reth-node
 ├── Standard reth pipeline (sync, EVM, state)
 ├── proofs-history ExEx (ingests committed blocks → versioned trie store)
@@ -63,7 +63,7 @@ are processed.
 
 After the node starts, query the sync status of the proofs store:
 
-```
+```text
 debug_proofsSyncStatus → { "earliest": <block>, "latest": <block> }
 ```
 

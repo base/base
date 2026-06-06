@@ -297,6 +297,7 @@ mod tests {
             ),
             block_hash: None,
             block_number: Some(1),
+            block_timestamp: None,
             effective_gas_price: Some(1),
             transaction_index: Some(0),
         };

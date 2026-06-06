@@ -28,9 +28,9 @@ pub const PROVER_FILE_DESCRIPTOR_SET: &[u8] =
     tonic::include_file_descriptor_set!("prover_descriptor");
 
 pub use proto::{
-    GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofSummary,
-    ProofType, ProveBlockRequest, ProveBlockResponse, ReceiptType, get_proof_response,
-    get_proof_response::Status as ProofJobStatus, prover_service_client,
+    ExecutionStats, GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
+    ProofSummary, ProofType, ProveBlockRequest, ProveBlockResponse, ReceiptType,
+    get_proof_response, get_proof_response::Status as ProofJobStatus, prover_service_client,
 };
 
 mod client;

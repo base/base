@@ -38,7 +38,7 @@ use reth_node_core::{
 // This allows us to manually enable node metrics features, required for proper jemalloc metric
 // reporting
 use reth_node_metrics as _;
-use reth_rpc_server_types::{DefaultRpcModuleValidator, RpcModuleValidator};
+use reth_rpc_server_types::{LenientRpcModuleValidator, RpcModuleValidator};
 pub use standard_node::{RpcStandardNodeArgs, StandardBaseRethNode, StandardNodeArgs};
 
 /// The main base-reth cli interface.
@@ -48,7 +48,7 @@ pub use standard_node::{RpcStandardNodeArgs, StandardBaseRethNode, StandardNodeA
 #[command(author, name = version_metadata().name_client.as_ref(), version = version_metadata().short_version.as_ref(), long_version = version_metadata().long_version.as_ref(), about = "Reth", long_about = None)]
 pub struct Cli<
     Ext: clap::Args + fmt::Debug = RollupArgs,
-    Rpc: RpcModuleValidator = DefaultRpcModuleValidator,
+    Rpc: RpcModuleValidator = LenientRpcModuleValidator,
 > {
     /// The command to run
     #[command(subcommand)]

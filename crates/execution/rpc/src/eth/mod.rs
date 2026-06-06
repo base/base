@@ -27,14 +27,14 @@ use reth_rpc_eth_api::{
     EthApiTypes, FromEvmError, FullEthApiServer, RpcConvert, RpcConverter, RpcNodeCore,
     RpcNodeCoreExt, RpcTypes,
     helpers::{
-        EthApiSpec, EthFees, EthState, LoadFee, LoadPendingBlock, LoadState, SpawnBlocking, Trace,
-        pending_block::BuildPendingEnv,
+        EthApiSpec, EthFees, EthState, GetBlockAccessList, LoadFee, LoadPendingBlock, LoadState,
+        SpawnBlocking, Trace, pending_block::BuildPendingEnv,
     },
 };
 use reth_rpc_eth_types::{EthStateCache, FeeHistoryCache, GasPriceOracle};
 use reth_storage_api::ProviderHeader;
 use reth_tasks::{
-    TaskSpawner,
+    Runtime,
     pool::{BlockingTaskGuard, BlockingTaskPool},
 };
 
@@ -168,7 +168,7 @@ where
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
     #[inline]
-    fn io_task_spawner(&self) -> impl TaskSpawner {
+    fn io_task_spawner(&self) -> &Runtime {
         self.inner.eth_api.task_spawner()
     }
 
@@ -243,6 +243,14 @@ where
 }
 
 impl<N, Rpc> Trace for BaseEthApi<N, Rpc>
+where
+    N: RpcNodeCore,
+    BaseEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = N::Evm>,
+{
+}
+
+impl<N, Rpc> GetBlockAccessList for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<N::Evm>,

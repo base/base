@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Instant};
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use derive_more::Constructor;
 use reth_evm::{ConfigureEvm, execute::Executor};
-use reth_primitives_traits::{AlloyBlockHeader, BlockTy, RecoveredBlock};
+use reth_primitives_traits::{AlloyBlockHeader, BlockTy, NodePrimitives, RecoveredBlock};
 use reth_provider::{
     DatabaseProviderFactory, HashedPostStateProvider, StateProviderFactory, StateReader,
     StateRootProvider,
@@ -16,7 +16,8 @@ use tracing::{info, warn};
 
 use crate::{
     BaseProofsStorage, BaseProofsStorageError, BaseProofsStore, BlockStateDiff,
-    api::{OperationDurations, WriteCounts},
+    api::{BaseProofsBatchSession, BaseProofsBatchStore, OperationDurations, WriteCounts},
+    batch_provider::BaseProofsBatchStateProviderRef,
     metrics::BlockMetrics,
     provider::BaseProofsStateProviderRef,
 };
@@ -238,5 +239,164 @@ where
     /// the specified block (inclusive).
     pub fn unwind_history(&self, to: BlockWithParent) -> Result<(), BaseProofsStorageError> {
         self.storage.unwind_history(to)
+    }
+}
+
+/// One block to process inside a batch session: either pre-computed cached trie data (fast
+/// path) or a fully recovered block that needs full execution against the session's
+/// transaction-local state (cold catch-up path).
+#[derive(Debug)]
+pub enum BatchBlock<P: NodePrimitives> {
+    /// Pre-computed cached trie data; only writes happen.
+    Cached {
+        /// Block reference being written.
+        block_with_parent: BlockWithParent,
+        /// Pre-computed trie updates from cached notification data.
+        sorted_trie_updates: Arc<TrieUpdatesSorted>,
+        /// Pre-computed hashed post-state from cached notification data.
+        sorted_post_state: Arc<HashedPostStateSorted>,
+    },
+    /// Full block requiring execution against session-local state.
+    Execute(Box<RecoveredBlock<BlockTy<P>>>),
+}
+
+impl<'tx, Evm, Provider, Store> LiveTrieCollector<'tx, Evm, Provider, Store>
+where
+    Evm: ConfigureEvm,
+    Provider: StateReader + DatabaseProviderFactory + StateProviderFactory,
+    Store: 'tx + BaseProofsBatchStore + Clone + 'static,
+{
+    /// Execute and write a batch of blocks inside a single underlying transaction.
+    /// Reads during execution of block N observe writes from blocks earlier in the batch,
+    /// enabling cold catch-up where parent state is staged but not yet committed. The
+    /// entire batch commits atomically on success and aborts on the first error.
+    pub fn execute_and_store_batch(
+        &self,
+        blocks: Vec<BatchBlock<Evm::Primitives>>,
+    ) -> Result<(), BaseProofsStorageError> {
+        if blocks.is_empty() {
+            return Ok(());
+        }
+
+        let start = Instant::now();
+        let mut total_writes = WriteCounts::default();
+        let mut block_count: u64 = 0;
+        let mut last_block_number: u64 = 0;
+
+        self.storage.with_batch_session(|session| {
+            let (Some((earliest, _)), Some((_, _))) =
+                (session.get_earliest_block_number()?, session.get_latest_block_number()?)
+            else {
+                return Err(BaseProofsStorageError::NoBlocksFound);
+            };
+
+            for entry in blocks {
+                match entry {
+                    BatchBlock::Cached {
+                        block_with_parent,
+                        sorted_trie_updates,
+                        sorted_post_state,
+                    } => {
+                        let counts = session.store_trie_updates(
+                            block_with_parent,
+                            BlockStateDiff {
+                                sorted_trie_updates: (*sorted_trie_updates).clone(),
+                                sorted_post_state: (*sorted_post_state).clone(),
+                            },
+                        )?;
+                        total_writes += counts;
+                        block_count += 1;
+                        last_block_number = block_with_parent.block.number;
+                    }
+                    BatchBlock::Execute(block) => {
+                        let counts = self.execute_one_in_session(session, &block, earliest)?;
+                        total_writes += counts;
+                        block_count += 1;
+                        last_block_number = block.number();
+                    }
+                }
+            }
+
+            Ok(())
+        })?;
+
+        let total = start.elapsed();
+        BlockMetrics::record_operation_durations(&OperationDurations {
+            total_duration_seconds: total,
+            ..Default::default()
+        });
+        BlockMetrics::increment_write_counts(&total_writes);
+        BlockMetrics::latest_number().set(last_block_number as f64);
+
+        info!(
+            block_count,
+            last_block_number,
+            ?total_writes,
+            duration = ?total,
+            "Batch executed and committed",
+        );
+
+        Ok(())
+    }
+
+    fn execute_one_in_session<S>(
+        &self,
+        session: &mut S,
+        block: &RecoveredBlock<BlockTy<Evm::Primitives>>,
+        earliest: u64,
+    ) -> Result<WriteCounts, BaseProofsStorageError>
+    where
+        S: BaseProofsBatchSession,
+    {
+        let latest_in_session =
+            session.get_latest_block_number()?.ok_or(BaseProofsStorageError::NoBlocksFound)?.0;
+
+        let parent_block_number = block.number() - 1;
+        if parent_block_number < earliest {
+            return Err(BaseProofsStorageError::UnknownParent);
+        }
+        if parent_block_number > latest_in_session {
+            return Err(BaseProofsStorageError::MissingParentBlock {
+                block_number: block.number(),
+                parent_block_number,
+                latest_block_number: latest_in_session,
+            });
+        }
+
+        let block_ref =
+            BlockWithParent::new(block.parent_hash(), NumHash::new(block.number(), block.hash()));
+
+        let state_provider = BaseProofsBatchStateProviderRef::new(
+            self.provider.state_by_block_hash(block.parent_hash())?,
+            session,
+            parent_block_number,
+        );
+
+        let db = StateProviderDatabase::new(&state_provider);
+        let block_executor = self.evm_config.batch_executor(db);
+
+        let execution_result = block_executor.execute(&(*block).clone())?;
+
+        let hashed_state = state_provider.hashed_post_state(&execution_result.state);
+        let (state_root, trie_updates) =
+            state_provider.state_root_with_updates(hashed_state.clone())?;
+
+        if state_root != block.state_root() {
+            return Err(BaseProofsStorageError::StateRootMismatch {
+                block_number: block.number(),
+                current_state_hash: state_root,
+                expected_state_hash: block.state_root(),
+            });
+        }
+
+        drop(state_provider);
+
+        session.store_trie_updates(
+            block_ref,
+            BlockStateDiff {
+                sorted_trie_updates: trie_updates.into_sorted(),
+                sorted_post_state: hashed_state.into_sorted(),
+            },
+        )
     }
 }

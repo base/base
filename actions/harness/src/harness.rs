@@ -8,7 +8,7 @@ use base_common_genesis::RollupConfig;
 use base_consensus_derive::{
     DataAvailabilityProvider, EthereumDataSource, PipelineBuilder, StatefulAttributesBuilder,
 };
-use base_consensus_node::{GossipTransport, L1OriginSelector};
+use base_consensus_node::GossipTransport;
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
@@ -273,31 +273,21 @@ impl ActionTestHarness {
 
         let genesis_head = self.l2_genesis();
 
-        let l1_provider = ActionL1ChainProvider::new(l1_chain.clone());
         let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
-
-        let attrs_builder = StatefulAttributesBuilder::new(
-            Arc::clone(&rollup_config),
-            Arc::clone(&l1_chain_config),
-            l2_provider.clone(),
-            l1_provider,
-        );
-
-        let origin_selector = L1OriginSelector::new(Arc::clone(&rollup_config), l1_chain.clone());
 
         let engine_client = Arc::new(ActionEngineClient::new(
             Arc::clone(&rollup_config),
             genesis_head,
             crate::SharedBlockHashRegistry::new(),
-            l1_chain,
+            l1_chain.clone(),
         ));
 
         L2Sequencer::new(
             genesis_head,
-            origin_selector,
-            attrs_builder,
             engine_client,
             rollup_config,
+            l1_chain_config,
+            l1_chain,
             l2_provider,
         )
     }

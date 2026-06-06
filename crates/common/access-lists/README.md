@@ -2,7 +2,7 @@
 
 A library to build and process Flashblock-level Access Lists (FBALs).
 
-See the [spec](../../../docs/specs/pages/protocol/access-lists.md) for more details.
+See the [Flashblocks API overview](https://docs.base.org/base-chain/flashblocks/api-reference) for the stream payloads these access lists are derived from.
 
 ## Overview
 

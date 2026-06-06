@@ -15,7 +15,7 @@ workspace = true
 alloy-signer.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
-alloy-signer-local.workspace = true
+boundless-market.workspace = true
 
 # AWS
 aws-sdk-ec2.workspace = true
@@ -49,7 +49,7 @@ base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 futures.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
-tokio = { workspace = true, features = ["net", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "sync", "net", "time", "macros"] }
 
 # Error
 thiserror.workspace = true
@@ -68,9 +68,11 @@ hex.workspace = true
 [dev-dependencies]
 sha2.workspace = true
 rstest.workspace = true
+metrics.workspace = true
 hex-literal.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
+metrics-exporter-prometheus.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 
 [features]

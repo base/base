@@ -1,5 +1,7 @@
 //! Standard Base execution-node arguments and runner wiring.
 
+use std::time::Duration;
+
 use base_bundle_extension::BundleExtension;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
@@ -136,6 +138,16 @@ pub struct RpcStandardNodeArgs {
     #[arg(long = "flashblocks.cached-execution", requires = "flashblocks_url")]
     pub flashblocks_cached_execution: bool,
 
+    /// Interval between flashblocks upstream websocket ping frames.
+    #[arg(
+        long = "flashblocks.ping-interval",
+        value_name = "FLASHBLOCKS_PING_INTERVAL",
+        default_value = "30s",
+        value_parser = humantime::parse_duration,
+        requires = "flashblocks_url"
+    )]
+    pub flashblocks_ping_interval: Duration,
+
     /// Enable transaction tracing for mempool-to-block timing analysis
     #[arg(long = "enable-transaction-tracing", value_name = "ENABLE_TRANSACTION_TRACING")]
     pub enable_transaction_tracing: bool,
@@ -171,7 +183,8 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
 impl From<&StandardNodeArgs> for Option<FlashblocksConfig> {
     fn from(args: &StandardNodeArgs) -> Self {
         args.rpc.flashblocks_url.clone().map(|url| {
-            let mut config = FlashblocksConfig::new(url, args.rpc.max_pending_blocks_depth);
+            let mut config = FlashblocksConfig::new(url, args.rpc.max_pending_blocks_depth)
+                .with_subscriber_ping_interval(args.rpc.flashblocks_ping_interval);
             config.cached_execution = args.rpc.flashblocks_cached_execution;
             config
         })
@@ -269,5 +282,72 @@ impl StandardBaseRethNode {
         args: StandardNodeArgs,
     ) -> eyre::Result<LaunchedBaseNode> {
         Self::runner_with_version_metrics(args)?.launch(builder).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use clap::{Args, Parser};
+
+    use super::*;
+
+    #[derive(Debug, Parser)]
+    struct CommandParser<T: Args> {
+        #[command(flatten)]
+        args: T,
+    }
+
+    #[test]
+    fn test_flashblocks_ping_interval_defaults_to_30_seconds() {
+        let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
+            "reth",
+            "--flashblocks-url",
+            "wss://example.com/ws",
+        ])
+        .args;
+
+        assert_eq!(args.flashblocks_ping_interval, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_flashblocks_ping_interval_defaults_without_flashblocks_url() {
+        let args = CommandParser::<RpcStandardNodeArgs>::try_parse_from(["reth"])
+            .expect("default args should parse without flashblocks enabled")
+            .args;
+
+        assert_eq!(args.flashblocks_url, None);
+        assert_eq!(args.flashblocks_ping_interval, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_flashblocks_ping_interval_requires_flashblocks_url() {
+        let error = CommandParser::<RpcStandardNodeArgs>::try_parse_from([
+            "reth",
+            "--flashblocks.ping-interval",
+            "45s",
+        ])
+        .expect_err("ping interval should require flashblocks url");
+
+        assert!(error.to_string().contains("--flashblocks-url"));
+    }
+
+    #[test]
+    fn test_flashblocks_ping_interval_flows_into_config() {
+        let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
+            "reth",
+            "--flashblocks-url",
+            "wss://example.com/ws",
+            "--flashblocks.ping-interval",
+            "45s",
+        ])
+        .args;
+
+        let standard_args = StandardNodeArgs::from(args);
+        let config: FlashblocksConfig = Option::<FlashblocksConfig>::from(&standard_args)
+            .expect("flashblocks config should exist");
+
+        assert_eq!(config.subscriber_ping_interval, Duration::from_secs(45));
     }
 }

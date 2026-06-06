@@ -8,7 +8,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::BaseBlock;
 use base_common_flashblocks::Flashblock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
-use reth_primitives::RecoveredBlock;
+use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{BlockReaderIdExt, StateProviderFactory};
 use tokio::sync::{
     Mutex,

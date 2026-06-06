@@ -29,7 +29,7 @@ use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_execution_types::ChangedAccount;
 use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
-use reth_payload_primitives::PayloadBuilderAttributes;
+use reth_payload_primitives::PayloadAttributes;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
@@ -170,8 +170,8 @@ where
 
         let block_env_attributes = BaseNextBlockEnvAttributes {
             timestamp,
-            suggested_fee_recipient: config.attributes.suggested_fee_recipient(),
-            prev_randao: config.attributes.prev_randao(),
+            suggested_fee_recipient: config.attributes.payload_attributes.suggested_fee_recipient,
+            prev_randao: config.attributes.payload_attributes.prev_randao,
             gas_limit: config.attributes.gas_limit.unwrap_or(config.parent_header.gas_limit),
             parent_beacon_block_root: config.attributes.payload_attributes.parent_beacon_block_root,
             extra_data,
@@ -219,8 +219,9 @@ where
         } = args;
 
         // We log only every Nth block based on sampling ratio to reduce usage
+        let block_number = config.parent_header.number + 1;
         let span = if config.parent_header.number.is_multiple_of(self.config.sampling_ratio) {
-            span!(Level::INFO, "build_payload")
+            span!(Level::INFO, "build_payload", block_number)
         } else {
             tracing::Span::none()
         };
@@ -417,6 +418,7 @@ where
 
         // Process flashblocks in a blocking loop
         loop {
+            let flashblock_index = ctx.flashblock_index();
             let fb_span = if span.is_none() {
                 tracing::Span::none()
             } else {
@@ -424,6 +426,7 @@ where
                     parent: &span,
                     Level::INFO,
                     "build_flashblock",
+                    flashblock_index,
                 )
             };
             let _entered = fb_span.enter();
@@ -980,6 +983,14 @@ where
     let mut hashed_state = HashedPostState::default();
 
     if calculate_state_root {
+        let state_root_span = span!(
+            Level::INFO,
+            "calculate_state_root",
+            block_number = ctx.block_number(),
+            parent_hash = %ctx.parent().hash(),
+        );
+        let _state_root_span_guard = state_root_span.enter();
+
         let state_provider = state.database.as_ref();
         hashed_state = state_provider.hashed_post_state(&state.bundle_state);
         (state_root, trie_output) =
@@ -1041,6 +1052,8 @@ where
         blob_gas_used,
         excess_blob_gas,
         requests_hash,
+        block_access_list_hash: None,
+        slot_number: ctx.attributes().payload_attributes.slot_number,
     };
 
     // seal the block
@@ -1140,7 +1153,7 @@ where
                     )
                 })?,
             parent_hash: ctx.parent().hash(),
-            fee_recipient: ctx.attributes().suggested_fee_recipient(),
+            fee_recipient: ctx.attributes().payload_attributes.suggested_fee_recipient,
             prev_randao: ctx.attributes().payload_attributes.prev_randao,
             block_number: ctx.parent().number + 1,
             gas_limit: ctx.block_gas_limit(),
@@ -1206,7 +1219,7 @@ mod tests {
         let inner =
             ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
 
-        Arc::new(BaseChainSpec { inner })
+        Arc::new(BaseChainSpec::from(inner))
     }
 
     /// Builds a sealed genesis header consistent with [`minimal_chain_spec`].

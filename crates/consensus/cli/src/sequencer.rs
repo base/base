@@ -52,6 +52,16 @@ pub struct SequencerArgs {
         value_parser = |arg: &str| -> Result<Duration, ParseIntError> {Ok(Duration::from_secs(arg.parse()?))}
     )]
     pub conductor_rpc_timeout: Duration,
+
+    /// Use the conductor's SSZ-binary commit-unsafe-payload endpoint instead of JSON-RPC.
+    /// Avoids JSON encode/decode (~6-11x faster on the leader RPC handler for typical
+    /// mainnet payloads). Requires conductor with binary endpoint support.
+    #[arg(
+        long = "conductor.binary-commit",
+        default_value = "false",
+        env = "BASE_NODE_CONDUCTOR_BINARY_COMMIT"
+    )]
+    pub conductor_binary_commit: bool,
 }
 
 impl Default for SequencerArgs {
@@ -69,6 +79,8 @@ impl SequencerArgs {
             sequencer_stopped: self.stopped,
             sequencer_recovery_mode: self.recover,
             conductor_rpc_url: self.conductor_rpc.clone(),
+            conductor_binary_commit: self.conductor_binary_commit,
+            conductor_rpc_timeout: self.conductor_rpc_timeout,
             l1_conf_delay: self.l1_confs,
         }
     }

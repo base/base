@@ -99,7 +99,8 @@ where
 
             let gas_used = builder
                 .execute_transaction(recovered_tx)
-                .map_err(|e| eyre!("Transaction {} execution failed: {}", tx_hash, e))?;
+                .map_err(|e| eyre!("Transaction {} execution failed: {}", tx_hash, e))?
+                .tx_gas_used();
 
             let execution_time = tx_start.elapsed().as_micros();
 

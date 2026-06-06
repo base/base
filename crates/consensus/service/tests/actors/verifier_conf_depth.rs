@@ -15,19 +15,22 @@ use std::{
     },
 };
 
+use alloy_consensus::Header;
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_primitives::B256;
-use alloy_rpc_types_eth::{Block, Filter, Log};
+use alloy_primitives::{B256, Bloom, U256};
+use alloy_rpc_types_eth::{Block, Filter, Header as RpcHeader, Log};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{ChainProvider, PipelineErrorKind};
 use base_consensus_node::{
-    DerivationClientResult, L1BlockFetcher, L1WatcherActor, L1WatcherDerivationClient, NodeActor,
+    DerivationClientResult, L1BlockFetcher, L1WatcherActor, L1WatcherDerivationClient,
+    L1WatcherQueryExecutor, NodeActor,
 };
 use base_consensus_providers::{AlloyChainProviderError, ConfDepthProvider, L1HeadNumber};
+use base_consensus_rpc::L1WatcherQueries;
 use base_protocol::BlockInfo;
 use futures::Stream;
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 // ---------------------------------------------------------------------------
@@ -45,6 +48,27 @@ impl MockL1Fetcher {
     fn with_blocks(blocks: impl IntoIterator<Item = BlockInfo>) -> Self {
         Self { blocks: blocks.into_iter().map(|b| (b.number, b)).collect() }
     }
+
+    fn block_info_for_id(&self, id: BlockId) -> Option<BlockInfo> {
+        match id {
+            BlockId::Number(BlockNumberOrTag::Number(number)) => self.blocks.get(&number).copied(),
+            BlockId::Number(BlockNumberOrTag::Latest) => {
+                self.blocks.values().max_by_key(|block| block.number).copied()
+            }
+            _ => None,
+        }
+    }
+
+    fn block(block_info: BlockInfo) -> Block {
+        Block::empty(RpcHeader::new(Header {
+            parent_hash: block_info.parent_hash,
+            number: block_info.number,
+            timestamp: block_info.timestamp,
+            logs_bloom: Bloom::ZERO,
+            difficulty: U256::ZERO,
+            ..Default::default()
+        }))
+    }
 }
 
 #[async_trait]
@@ -56,16 +80,7 @@ impl L1BlockFetcher for MockL1Fetcher {
     }
 
     async fn get_block(&self, id: BlockId) -> Result<Option<Block>, Self::Error> {
-        match id {
-            BlockId::Number(BlockNumberOrTag::Number(number)) => {
-                if self.blocks.contains_key(&number) {
-                    Ok(Some(Block::default()))
-                } else {
-                    Ok(None)
-                }
-            }
-            _ => Ok(None),
-        }
+        Ok(self.block_info_for_id(id).map(Self::block))
     }
 }
 
@@ -240,6 +255,61 @@ async fn l1_head_atomic_holds_real_head_not_delayed() {
     // Meanwhile, derivation should have received delayed heads.
     let heads = derivation_client.heads.lock().unwrap().clone();
     assert_eq!(heads.len(), 3, "all three heads should have been forwarded to derivation");
-    // Each head is fetched as Block::default() which maps to block number 0.
-    // The important thing is that derivation received delayed blocks, not the real heads.
+    assert_eq!(
+        heads.iter().map(|head| head.number).collect::<Vec<_>>(),
+        vec![10, 20, 40],
+        "derivation should receive heads delayed by verifier_l1_confs"
+    );
+}
+
+#[tokio::test]
+async fn sync_status_reports_derivation_origin_separately_from_live_head_with_verifier_confs() {
+    let conf_depth: u64 = 4;
+    let l1_head_number: L1HeadNumber = Arc::new(AtomicU64::new(0));
+    let blocks: Vec<BlockInfo> = (90..=100).map(block_at).collect();
+    let fetcher = MockL1Fetcher::with_blocks(blocks.clone());
+
+    let derivation_client = RecordingDerivationClient::default();
+    let (l1_head_tx, _l1_head_rx) = watch::channel(None);
+    let cancel = CancellationToken::new();
+    let head_stream: BoxedBlockStream = Box::pin(futures::stream::iter(vec![block_at(100)]));
+    let finalized_stream: BoxedBlockStream = Box::pin(futures::stream::pending());
+
+    let actor = L1WatcherActor::new(
+        Arc::new(RollupConfig::default()),
+        fetcher,
+        l1_head_tx,
+        derivation_client.clone(),
+        None,
+        cancel,
+        head_stream,
+        finalized_stream,
+        conf_depth,
+        Arc::clone(&l1_head_number),
+    );
+    let _ = actor.start(()).await;
+
+    assert_eq!(l1_head_number.load(Ordering::Relaxed), 100);
+    let heads = derivation_client.heads.lock().unwrap().clone();
+    let derivation_origin = heads.last().copied().expect("derivation should receive a head");
+    assert_eq!(derivation_origin.number, 96);
+
+    let (_derivation_origin_tx, derivation_origin_rx) = watch::channel(Some(derivation_origin));
+    let executor = L1WatcherQueryExecutor::new(
+        Arc::new(RollupConfig::default()),
+        Arc::new(MockL1Fetcher::with_blocks(blocks)),
+        derivation_origin_rx,
+    );
+    let (sender, receiver) = oneshot::channel();
+
+    executor.execute(L1WatcherQueries::L1State(sender)).await;
+
+    let state = receiver.await.expect("state query should return a response");
+    assert_eq!(state.current_l1.map(|block| block.number), Some(96));
+    assert_eq!(state.head_l1.map(|block| block.number), Some(100));
+    assert_ne!(
+        state.current_l1.map(|block| block.number),
+        state.head_l1.map(|block| block.number),
+        "verifier_l1_confs should make sync status expose derivation origin separately from live head"
+    );
 }

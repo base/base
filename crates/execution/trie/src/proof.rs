@@ -15,8 +15,9 @@ use reth_trie::{
     witness::TrieWitness,
 };
 use reth_trie_common::{
-    AccountProof, HashedPostState, HashedPostStateSorted, HashedStorage, MultiProof,
-    MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
+    AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
+    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
+    updates::TrieUpdates,
 };
 
 use crate::{
@@ -348,6 +349,7 @@ pub trait DatabaseTrieWitness<'tx, S: BaseProofsStore + 'tx + Clone> {
         block_number: u64,
         input: TrieInput,
         target: HashedPostState,
+        mode: ExecutionWitnessMode,
     ) -> Result<B256Map<Bytes>, TrieWitnessError>;
 }
 
@@ -364,6 +366,7 @@ where
         block_number: u64,
         input: TrieInput,
         target: HashedPostState,
+        mode: ExecutionWitnessMode,
     ) -> Result<B256Map<Bytes>, TrieWitnessError> {
         let nodes_sorted = input.nodes.into_sorted();
         let state_sorted = input.state.into_sorted();
@@ -380,6 +383,7 @@ where
             ))
             .with_prefix_sets_mut(input.prefix_sets)
             .always_include_root_node()
+            .with_execution_witness_mode(mode)
             .compute(target)
     }
 }

@@ -4,9 +4,10 @@
 mod backends;
 pub use backends::{
     ArtifactClientWrapper, ArtifactStorageConfig, BackendConfig, BackendRegistry, BackendType,
-    L1HeadCalculator, OpSuccinctClusterBackend, OpSuccinctMockBackend, OpSuccinctNetworkBackend,
-    OpSuccinctProvider, OpSuccinctWitnessParams, ProofProcessingResult, ProveResult,
-    ProvingBackend, SessionStatus,
+    L1HeadCalculator, OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY,
+    OpSuccinctClusterBackend, OpSuccinctDryRunBackend, OpSuccinctMockBackend,
+    OpSuccinctNetworkBackend, OpSuccinctProvider, OpSuccinctStoredExecutionStats,
+    OpSuccinctWitnessParams, ProofProcessingResult, ProveResult, ProvingBackend, SessionStatus,
 };
 
 pub mod metrics;

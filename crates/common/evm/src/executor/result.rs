@@ -2,7 +2,7 @@
 
 use alloy_evm::{block::TxResult as TxResultTrait, eth::EthTxResult};
 use alloy_primitives::Address;
-use revm::context::result::ResultAndState;
+use revm::{context::result::ResultAndState, state::AccountInfo};
 
 /// The result of executing a Base transaction.
 #[derive(Debug)]
@@ -13,12 +13,18 @@ pub struct BaseTxResult<H, T> {
     pub is_deposit: bool,
     /// The sender of the transaction.
     pub sender: Address,
+    /// The depositor account info, fetched during execution for post-Regolith deposit nonce.
+    pub depositor: Option<AccountInfo>,
 }
 
-impl<H, T> TxResultTrait for BaseTxResult<H, T> {
+impl<H: Send + 'static, T: Send + 'static> TxResultTrait for BaseTxResult<H, T> {
     type HaltReason = H;
 
     fn result(&self) -> &ResultAndState<Self::HaltReason> {
         &self.inner.result
+    }
+
+    fn into_result(self) -> ResultAndState<Self::HaltReason> {
+        self.inner.result
     }
 }

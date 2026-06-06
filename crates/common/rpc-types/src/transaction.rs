@@ -51,6 +51,7 @@ impl Transaction {
                 inner: tx,
                 block_hash: tx_info.inner.block_hash,
                 block_number: tx_info.inner.block_number,
+                block_timestamp: tx_info.inner.block_timestamp,
                 transaction_index: tx_info.inner.index,
                 effective_gas_price: Some(effective_gas_price),
             },
@@ -247,6 +248,12 @@ mod tx_serde {
             skip_serializing_if = "Option::is_none",
             with = "alloy_serde::quantity::opt"
         )]
+        block_timestamp: Option<u64>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::quantity::opt"
+        )]
         deposit_receipt_version: Option<u64>,
 
         #[serde(flatten)]
@@ -261,6 +268,7 @@ mod tx_serde {
                         inner,
                         block_hash,
                         block_number,
+                        block_timestamp,
                         transaction_index,
                         effective_gas_price,
                     },
@@ -279,6 +287,7 @@ mod tx_serde {
                 block_hash,
                 block_number,
                 transaction_index,
+                block_timestamp,
                 deposit_receipt_version,
                 other: OptionalFields { from, effective_gas_price, deposit_nonce },
             }
@@ -294,6 +303,7 @@ mod tx_serde {
                 block_hash,
                 block_number,
                 transaction_index,
+                block_timestamp,
                 deposit_receipt_version,
                 other,
             } = value;
@@ -319,6 +329,7 @@ mod tx_serde {
                     inner: Recovered::new_unchecked(inner, from),
                     block_hash,
                     block_number,
+                    block_timestamp,
                     transaction_index,
                     effective_gas_price,
                 },
@@ -331,6 +342,12 @@ mod tx_serde {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
+    use alloy_consensus::transaction::SignerRecoverable;
+    use alloy_primitives::Bytes;
+    use base_common_consensus::{Eip8130Signed, TxEip8130};
+
     use super::*;
 
     #[test]
@@ -351,5 +368,70 @@ mod tests {
         let deserialized = serde_json::to_value(&tx).unwrap();
         let expected = serde_json::from_str::<serde_json::Value>(rpc_tx).unwrap();
         similar_asserts::assert_eq!(deserialized, expected);
+    }
+
+    #[test]
+    fn can_serialize_eip8130() {
+        let tx_body = TxEip8130 {
+            chain_id: 8453,
+            sender: Some(Address::with_last_byte(0x11)),
+            nonce_key: U256::from(0u64),
+            nonce_sequence: 7,
+            expiry: 0,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 5_000_000_000,
+            gas_limit: 1_000_000,
+            account_changes: vec![],
+            calls: vec![],
+            payer: None,
+        };
+        let sender_auth = Bytes::from_static(&[0xAB; 32]);
+        let payer_auth = Bytes::new();
+        let signed = Eip8130Signed::new(tx_body, sender_auth, payer_auth);
+        let envelope = BaseTxEnvelope::Eip8130(signed);
+
+        let recovered = envelope.try_into_recovered().expect("recover eip-8130 explicit sender");
+        let tx_info = BaseTransactionInfo {
+            inner: alloy_rpc_types_eth::TransactionInfo {
+                hash: Some(B256::repeat_byte(0x42)),
+                block_hash: Some(B256::repeat_byte(0x01)),
+                block_number: Some(100),
+                block_timestamp: Some(1_700_000_000),
+                index: Some(0),
+                base_fee: Some(1_000_000_000),
+            },
+            deposit_meta: Default::default(),
+        };
+        let rpc_tx = Transaction::from_transaction(recovered, tx_info);
+
+        assert_eq!(rpc_tx.ty(), 0x7D);
+        assert_eq!(rpc_tx.deposit_nonce, None);
+        assert_eq!(rpc_tx.deposit_receipt_version, None);
+        assert_eq!(rpc_tx.inner.inner.signer(), Address::with_last_byte(0x11));
+
+        let serialized = serde_json::to_string(&rpc_tx).expect("serialize eip-8130 rpc tx");
+        let value: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(value["type"], "0x7d", "tx type byte exposed in RPC response");
+        assert_eq!(value["from"], "0x0000000000000000000000000000000000000011");
+        assert_eq!(value["blockNumber"], "0x64");
+        assert_eq!(value["transactionIndex"], "0x0");
+
+        let tx_payload = &value["tx"];
+        assert!(tx_payload.is_object(), "EIP-8130 inner tx payload present");
+        assert_eq!(tx_payload["chainId"], 8453);
+        assert_eq!(tx_payload["nonceKey"], "0x0");
+        assert_eq!(tx_payload["nonceSequence"], 7);
+        assert_eq!(tx_payload["gasLimit"], 1_000_000);
+        assert!(tx_payload["accountChanges"].is_array());
+        assert!(tx_payload["calls"].is_array());
+        assert_eq!(tx_payload["sender"], "0x0000000000000000000000000000000000000011");
+
+        assert_eq!(value["senderAuth"], format!("0x{}", "ab".repeat(32)));
+        assert_eq!(value["payerAuth"], "0x");
+
+        assert!(value.get("sourceHash").is_none(), "no deposit-only fields leak");
+        assert!(value.get("depositReceiptVersion").is_none());
+        assert!(value.get("mint").is_none());
     }
 }
