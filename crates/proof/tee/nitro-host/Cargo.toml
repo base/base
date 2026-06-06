@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 # base
-base-retry.workspace = true
 base-health.workspace = true
 base-proof-host.workspace = true
 base-proof-preimage.workspace = true
@@ -29,7 +28,6 @@ alloy-primitives.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 
 # async
-backon.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "io-util", "net"] }

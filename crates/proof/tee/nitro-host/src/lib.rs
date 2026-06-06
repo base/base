@@ -26,7 +26,6 @@ mod proof_generator;
 pub use proof_generator::{
     DEFAULT_PROOF_GENERATOR_HEARTBEAT_INTERVAL,
     DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS,
-    DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES,
     MIN_PROOF_GENERATOR_HEARTBEAT_INTERVAL, ProofGenerator, ProofGeneratorError,
     ProofGeneratorHeartbeatConfig, ProofGeneratorRequest, ProofGeneratorTask,
 };

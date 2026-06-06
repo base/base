@@ -193,7 +193,6 @@ where
                 Err(error) => {
                     warn!(
                         worker_id = %self.config.worker_id,
-                        retryable = error.is_retryable(),
                         error = %error,
                         "nitro job discovery failed"
                     );
