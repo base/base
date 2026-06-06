@@ -17,10 +17,10 @@ use std::time::Duration;
 
 use base_prover_service_db::{
     ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
-    CreateProofRequestOutcome, CreateProofSession, FailExpiredProofJobs, FailUnclaimedProofJobs,
-    HeartbeatOutcome, HeartbeatProofJob, ProofJobStatus, ProofRequestPage, ProofRequestRepo,
-    ProofStatus, ProofType, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
-    UpdateProofSession, UpdateReceipt, ZkVmKind,
+    CreateProofRequestOutcome, CreateProofSession, FailExpiredProofJobs, HeartbeatOutcome,
+    HeartbeatProofJob, ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType,
+    RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession,
+    UpdateReceipt, ZkVmKind,
 };
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
@@ -1705,58 +1705,4 @@ async fn test_fail_expired_proof_jobs_honors_batch_size() {
         .await
         .unwrap();
     assert!(final_batch.is_empty());
-}
-
-#[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_fail_unclaimed_proof_jobs_targets_only_orphaned_created_jobs() {
-    let pool = test_pool().await;
-    let repo = test_repo(pool.clone());
-
-    drain_claimable_compressed_jobs(&repo).await;
-
-    let orphan_id = repo.create(compressed_request()).await.unwrap();
-
-    let claimed_id = repo.create(compressed_request()).await.unwrap();
-    let claimed = repo
-        .claim_next_proof_job(compressed_claim("unclaimed-reaper-worker", 5))
-        .await
-        .unwrap()
-        .expect("freshly created job should be claimable");
-    assert_eq!(claimed.id, claimed_id);
-
-    let (running_id, _) = setup_running_request(&repo).await;
-
-    let failed = repo
-        .fail_unclaimed_proof_jobs(FailUnclaimedProofJobs {
-            unclaimed_timeout_seconds: 0,
-            batch_size: 100,
-            error_message: "worker job unclaimed past timeout".to_owned(),
-        })
-        .await
-        .unwrap();
-
-    let failed_ids: Vec<Uuid> = failed.iter().map(|job| job.id).collect();
-    assert!(failed_ids.contains(&orphan_id), "the never-claimed job should be reaped");
-    assert!(!failed_ids.contains(&claimed_id), "a claimed job must not be reaped as unclaimed");
-    assert!(!failed_ids.contains(&running_id), "a legacy in-flight request must not be reaped");
-
-    let reaped = failed.iter().find(|job| job.id == orphan_id).expect("orphan in failed batch");
-    assert_eq!(reaped.job_status, ProofJobStatus::Failed);
-    assert!(reaped.completed_at.is_some());
-    assert_eq!(reaped.error_message.as_deref(), Some("worker job unclaimed past timeout"));
-
-    let orphan_request = repo.get(orphan_id).await.unwrap().unwrap();
-    assert_eq!(orphan_request.status, ProofStatus::Failed);
-    assert_eq!(orphan_request.error_message.as_deref(), Some("worker job unclaimed past timeout"));
-
-    let second_pass = repo
-        .fail_unclaimed_proof_jobs(FailUnclaimedProofJobs {
-            unclaimed_timeout_seconds: 0,
-            batch_size: 100,
-            error_message: "worker job unclaimed past timeout".to_owned(),
-        })
-        .await
-        .unwrap();
-    assert!(second_pass.iter().all(|job| job.id != orphan_id), "reaped job is not re-failed");
 }
