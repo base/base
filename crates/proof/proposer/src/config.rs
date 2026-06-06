@@ -101,18 +101,6 @@ impl ProposerConfig {
         validate_url(&proposer.l2_eth_rpc, "l2-eth-rpc")?;
         validate_url(&proposer.rollup_rpc, "rollup-rpc")?;
 
-        // The `--max-parallel-proofs` CLI flag is retained for backward
-        // compatibility with deployments that still pass it. The proposer no
-        // longer caps in-flight proofs locally, so any non-default value is
-        // ignored with a warning.
-        if proposer.max_parallel_proofs != 1 {
-            tracing::warn!(
-                value = proposer.max_parallel_proofs,
-                "--max-parallel-proofs is deprecated and has no effect; the prover service queues \
-                 sessions itself and collection is bounded by the L2 safe head"
-            );
-        }
-
         if proposer.recovery_scan_concurrency == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "recovery-scan-concurrency",
@@ -273,7 +261,6 @@ mod tests {
                     signer_endpoint: None,
                     signer_address: None,
                 },
-                max_parallel_proofs: 1,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
                 tx_manager: TxManagerCli::default(),
@@ -453,21 +440,6 @@ mod tests {
         assert_eq!(config.retry.max_attempts, Some(5));
         assert_eq!(config.retry.initial_delay, Duration::from_millis(100));
         assert_eq!(config.retry.max_delay, Duration::from_secs(10));
-    }
-
-    #[test]
-    fn test_max_parallel_proofs_is_accepted_but_ignored() {
-        // Backward compatibility: deployments may still pass any positive value.
-        // The flag is deprecated, so it must not surface as a config error or
-        // propagate into [`ProposerConfig`] (the field has been removed).
-        let mut cli = minimal_cli();
-        cli.proposer.max_parallel_proofs = 8;
-        ProposerConfig::from_cli(cli).expect("deprecated --max-parallel-proofs should be ignored");
-
-        let mut cli = minimal_cli();
-        cli.proposer.max_parallel_proofs = 0;
-        ProposerConfig::from_cli(cli)
-            .expect("a zero --max-parallel-proofs is also accepted as deprecated input");
     }
 
     #[test]
