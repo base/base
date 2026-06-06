@@ -4,7 +4,10 @@ use std::{sync::Arc, time::Duration};
 
 use base_common_flashblocks::Flashblock;
 use futures::{SinkExt as _, StreamExt};
-use tokio::{sync::mpsc, time::interval};
+use tokio::{
+    sync::mpsc,
+    time::{Instant, interval_at},
+};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use url::Url;
 
@@ -60,7 +63,8 @@ where
                         backoff = Duration::from_secs(1);
                         info!(message = "WebSocket connection established");
 
-                        let mut ping_interval = interval(ping_period);
+                        let mut ping_interval =
+                            interval_at(Instant::now() + ping_period, ping_period);
                         let mut awaiting_pong_resp = false;
 
                         let (mut write, mut read) = ws_stream.split();
