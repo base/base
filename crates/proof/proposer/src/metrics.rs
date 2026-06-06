@@ -13,15 +13,9 @@ base_metrics::define_metrics! {
     #[no_zero]
     last_proposed_block: gauge,
 
-    #[describe("Most recently collected (proved) L2 block number awaiting submission")]
+    #[describe("Highest L2 block number for which a proof has been polled Ready and submitted inline")]
     #[no_zero]
     last_collected_block: gauge,
-
-    #[describe("Proof tasks currently in flight")]
-    inflight_proofs: gauge,
-
-    #[describe("Proved results awaiting sequential submission")]
-    proved_queue_depth: gauge,
 
     #[describe("Total pending retries across all target blocks")]
     pipeline_retries: gauge,

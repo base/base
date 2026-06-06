@@ -28,6 +28,7 @@ use base_prover_service_protocol::{
     ProofRequestKind as ApiProofRequestKind, ProofResult as ApiProofResult, ProofStatus,
     ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
 };
+use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
 use crate::{error::ProposerError, output_proposer::OutputProposer};
 
@@ -430,9 +431,19 @@ impl ProofRequesterProvider for MockProofRequester {
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ProverServiceClientError> {
         let requests = self.requests.lock().unwrap();
-        let request = requests
-            .get(&request.session_id)
-            .ok_or_else(|| ProverServiceClientError::MissingResult("unknown session".to_owned()))?;
+        let request = requests.get(&request.session_id).ok_or_else(|| {
+            // Mirror the production prover-service: an unknown session_id surfaces
+            // as a JSON-RPC NotFound error. The proposer self-driving loop relies
+            // on this to distinguish "no session yet, dispatch needed" from other
+            // transient or terminal errors.
+            ProverServiceClientError::RpcTransport(JsonRpcClientError::Call(
+                ErrorObjectOwned::owned(
+                    ProverServiceClientError::ERROR_NOT_FOUND,
+                    "Proof request not found",
+                    None::<()>,
+                ),
+            ))
+        })?;
         let ApiProofRequestKind::Tee(tee_request) = &request.proof.request else {
             return Err(ProverServiceClientError::UnexpectedResultPayload(
                 "expected TEE request".to_owned(),

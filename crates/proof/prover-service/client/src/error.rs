@@ -38,6 +38,9 @@ pub enum ProverServiceClientError {
 }
 
 impl ProverServiceClientError {
+    /// JSON-RPC code used by the prover service when the requested session does not exist.
+    pub const ERROR_NOT_FOUND: i32 = -32004;
+
     /// JSON-RPC code used by the prover service when a dependency is unavailable.
     pub const ERROR_UNAVAILABLE: i32 = -32014;
 
@@ -58,6 +61,16 @@ impl ProverServiceClientError {
             | Self::MissingResult(_)
             | Self::UnexpectedResultPayload(_) => false,
         }
+    }
+
+    /// Returns `true` when the prover service responded that the session does not exist.
+    ///
+    /// The proposer's self-driving loop uses this to distinguish "no session yet,
+    /// dispatch needed" from other transient or terminal errors.
+    #[must_use]
+    pub fn is_not_found(&self) -> bool {
+        let Self::RpcTransport(JsonRpcClientError::Call(call)) = self else { return false };
+        call.code() == Self::ERROR_NOT_FOUND
     }
 
     /// Returns `true` when the JSON-RPC error is classified as transient.
@@ -146,5 +159,21 @@ mod tests {
         #[case] expected_retryable: bool,
     ) {
         assert_eq!(error.is_retryable(), expected_retryable);
+    }
+
+    #[test]
+    fn is_not_found_matches_only_call_with_not_found_code() {
+        let not_found = rpc_call_error(ProverServiceClientError::ERROR_NOT_FOUND, "missing");
+        assert!(not_found.is_not_found());
+
+        let other_call = rpc_call_error(ProverServiceClientError::ERROR_UNAVAILABLE, "down");
+        assert!(!other_call.is_not_found());
+
+        let transport: ProverServiceClientError =
+            JsonRpcClientError::Transport(io::Error::other("connection refused").into()).into();
+        assert!(!transport.is_not_found());
+
+        let timeout = ProverServiceClientError::Timeout("not ready".into());
+        assert!(!timeout.is_not_found());
     }
 }

@@ -6,6 +6,11 @@ use std::time::Duration;
 /// transaction to be included on-chain.
 pub const PROPOSAL_TIMEOUT: Duration = Duration::from_mins(10);
 
+/// Default maximum time for a single inline submit attempt
+/// (validation + L1 transaction). Allows [`PROPOSAL_TIMEOUT`] for the
+/// transaction itself plus a 2-minute slack for JIT validation RPCs.
+pub const SUBMIT_TIMEOUT: Duration = Duration::from_mins(12);
+
 /// Default maximum number of concurrent RPC calls during the recovery scan.
 pub const RECOVERY_SCAN_CONCURRENCY: usize = 8;
 
