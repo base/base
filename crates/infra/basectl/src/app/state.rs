@@ -337,16 +337,17 @@ impl DaTracker {
     pub fn update_block_info(&mut self, block_number: u64, accurate_da_bytes: u64, timestamp: u64) {
         for contrib in &mut self.block_contributions {
             if contrib.block_number == block_number {
-                let diff = accurate_da_bytes as i64 - contrib.da_bytes as i64;
+                let old_bytes = contrib.da_bytes;
                 contrib.da_bytes = accurate_da_bytes;
                 contrib.timestamp = timestamp;
 
                 if block_number > self.safe_l2_block {
-                    if diff > 0 {
-                        self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(diff as u64);
+                    if accurate_da_bytes >= old_bytes {
+                        self.da_backlog_bytes =
+                            self.da_backlog_bytes.saturating_add(accurate_da_bytes - old_bytes);
                     } else {
                         self.da_backlog_bytes =
-                            self.da_backlog_bytes.saturating_sub((-diff) as u64);
+                            self.da_backlog_bytes.saturating_sub(old_bytes - accurate_da_bytes);
                     }
                 }
                 return;
