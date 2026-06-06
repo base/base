@@ -407,13 +407,8 @@ mod tests {
         // "Restart": build a fresh collector with no in-memory dispatch state.
         // It must rederive the session id from the canonical chain root and
         // recover the in-flight session.
-        let collector = ProofCollector::aws_nitro(
-            Arc::clone(&proof_requester),
-            rollup_client,
-            target_block,
-            4,
-            4,
-        );
+        let collector =
+            ProofCollector::aws_nitro(Arc::clone(&proof_requester), rollup_client, 100, 4, 4);
         let outcomes = collector.collect(&[target_block]).await;
 
         assert_eq!(outcomes.len(), 1);
