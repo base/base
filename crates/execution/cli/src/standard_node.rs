@@ -293,7 +293,7 @@ mod tests {
 
     use super::*;
 
-    #[derive(Parser)]
+    #[derive(Debug, Parser)]
     struct CommandParser<T: Args> {
         #[command(flatten)]
         args: T,
