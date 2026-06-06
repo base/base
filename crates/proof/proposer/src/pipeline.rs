@@ -61,8 +61,6 @@ use crate::{
 /// Configuration for the parallel proving pipeline.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
-    /// Maximum number of concurrent proof tasks.
-    pub max_parallel_proofs: usize,
     /// Maximum retries for a single proof range before dropping that target
     /// and the cached recovery; other in-flight and proved entries are
     /// preserved.
@@ -254,7 +252,6 @@ where
             Arc::clone(&proof_requester),
             Arc::clone(&rollup_client),
             config.driver.block_interval,
-            config.max_parallel_proofs,
             config.recovery_scan_concurrency,
         );
         let proof_submitter = ProofSubmitter::new(
@@ -303,7 +300,6 @@ where
     /// collect proof completions and refill proof slots immediately.
     pub async fn run(&self) -> Result<()> {
         info!(
-            max_parallel_proofs = self.config.max_parallel_proofs,
             block_interval = self.config.driver.block_interval,
             "Starting parallel proving pipeline"
         );
@@ -473,9 +469,11 @@ where
         let mut plans = Vec::new();
         let mut output_blocks = BTreeSet::new();
 
-        while cursor <= safe_head
-            && state.inflight.len() + plans.len() < self.config.max_parallel_proofs
-        {
+        // Plan every eligible target up to the safe head. There is no per-tick
+        // parallel cap: dispatch is fire-and-forget against the prover service
+        // (which queues sessions itself) and collection is naturally bounded
+        // by the safe head's distance from the recovered tip.
+        while cursor <= safe_head {
             let mut last_skipped = None;
             while cursor <= safe_head
                 && (state.inflight.contains(&cursor)
@@ -490,10 +488,6 @@ where
             }
 
             if cursor > safe_head {
-                break;
-            }
-
-            if state.inflight.len() + plans.len() >= self.config.max_parallel_proofs {
                 break;
             }
 
@@ -1677,7 +1671,6 @@ mod tests {
 
         ProvingPipeline::new(
             PipelineConfig {
-                max_parallel_proofs: 1,
                 max_retries: 1,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -1707,7 +1700,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let pipeline = test_pipeline(
             PipelineConfig {
-                max_parallel_proofs: 2,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -1734,7 +1726,6 @@ mod tests {
         let cancel = CancellationToken::new();
         let pipeline = test_pipeline(
             PipelineConfig {
-                max_parallel_proofs: 2,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -1939,7 +1930,6 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                max_parallel_proofs: 4,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -2060,7 +2050,6 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                max_parallel_proofs: 1,
                 max_retries: 1,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -2319,11 +2308,11 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_dispatch_skips_inflight_and_proved_blocks() {
-        // Scenario: 4 proof slots, blocks 512–2048 were dispatched on the
-        // first tick.  Proof for 512 completed (now in `proved`), proofs
-        // for 1024/1536/2048 are still in-flight.  The next tick calls
+        // Scenario: blocks 512–2048 were dispatched on the first tick.
+        // Proof for 512 completed (now in `proved`); proofs for
+        // 1024/1536/2048 are still in-flight.  The next tick calls
         // dispatch_proofs which must skip past all four handled blocks and
-        // dispatch block 2560 to refill the freed slot.
+        // dispatch every remaining eligible block up to the safe head.
         let cancel = CancellationToken::new();
         let safe_head = TEST_BLOCK_INTERVAL * 6;
 
@@ -2342,7 +2331,6 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                max_parallel_proofs: 4,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -2380,12 +2368,24 @@ mod tests {
 
         pipeline.dispatch_proofs(&recovered, safe_head, &mut state).await.unwrap();
 
+        // safe_head = TEST_BLOCK_INTERVAL * 6 yields candidates 1..=6.
+        // Already handled: 1 (proved), 2/3/4 (inflight). Dispatch should add
+        // 5 and 6 — every remaining eligible target up to the safe head.
         assert!(
             state.inflight.contains(&(TEST_BLOCK_INTERVAL * 5)),
-            "block {} should have been dispatched to fill the freed slot",
+            "block {} should have been dispatched",
             TEST_BLOCK_INTERVAL * 5
         );
-        assert_eq!(state.inflight.len(), 4, "should be back to max_parallel_proofs");
+        assert!(
+            state.inflight.contains(&(TEST_BLOCK_INTERVAL * 6)),
+            "block {} should have been dispatched",
+            TEST_BLOCK_INTERVAL * 6
+        );
+        assert_eq!(
+            state.inflight.len(),
+            5,
+            "all eligible targets up to safe_head should be inflight"
+        );
         assert!(
             state.proved.contains_key(&TEST_BLOCK_INTERVAL),
             "proved entries must not be removed by dispatch"
@@ -2412,7 +2412,6 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                max_parallel_proofs: 2,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
@@ -2467,7 +2466,6 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                max_parallel_proofs: 4,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,

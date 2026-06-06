@@ -84,9 +84,6 @@ pub struct ProposerConfig {
     /// Transaction manager configuration.
     /// `None` when running in dry-run mode.
     pub tx_manager: Option<base_tx_manager::TxManagerConfig>,
-    /// Maximum number of concurrent proof tasks.
-    /// When > 1, uses the parallel proving pipeline instead of the sequential driver.
-    pub max_parallel_proofs: usize,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
     /// Optional address of the `TEEProverRegistry` contract on L1.
@@ -103,14 +100,6 @@ impl ProposerConfig {
         validate_url(&proposer.l1_eth_rpc, "l1-eth-rpc")?;
         validate_url(&proposer.l2_eth_rpc, "l2-eth-rpc")?;
         validate_url(&proposer.rollup_rpc, "rollup-rpc")?;
-
-        if proposer.max_parallel_proofs == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "max-parallel-proofs",
-                constraint: "at least 1",
-                value: "0",
-            });
-        }
 
         if proposer.recovery_scan_concurrency == 0 {
             return Err(ConfigError::OutOfRange {
@@ -204,7 +193,6 @@ impl ProposerConfig {
             retry,
             signing,
             tx_manager,
-            max_parallel_proofs: proposer.max_parallel_proofs,
             recovery_scan_concurrency: proposer.recovery_scan_concurrency,
             tee_prover_registry_address: proposer.tee_prover_registry_address,
         })
@@ -273,7 +261,6 @@ mod tests {
                     signer_endpoint: None,
                     signer_address: None,
                 },
-                max_parallel_proofs: 1,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
                 tx_manager: TxManagerCli::default(),
@@ -305,7 +292,6 @@ mod tests {
         assert_eq!(config.prover_timeout, Duration::from_secs(70 * 60));
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.rpc_timeout, Duration::from_secs(30));
-        assert_eq!(config.max_parallel_proofs, 1);
         assert_eq!(config.tx_manager.as_ref().unwrap().tx_send_timeout, PROPOSAL_TIMEOUT);
     }
 
@@ -454,25 +440,6 @@ mod tests {
         assert_eq!(config.retry.max_attempts, Some(5));
         assert_eq!(config.retry.initial_delay, Duration::from_millis(100));
         assert_eq!(config.retry.max_delay, Duration::from_secs(10));
-    }
-
-    #[test]
-    fn test_max_parallel_proofs_zero_rejected() {
-        let mut cli = minimal_cli();
-        cli.proposer.max_parallel_proofs = 0;
-        let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "max-parallel-proofs", .. })
-        ));
-    }
-
-    #[test]
-    fn test_max_parallel_proofs_custom() {
-        let mut cli = minimal_cli();
-        cli.proposer.max_parallel_proofs = 8;
-        let config = ProposerConfig::from_cli(cli).unwrap();
-        assert_eq!(config.max_parallel_proofs, 8);
     }
 
     #[test]

@@ -277,7 +277,6 @@ mod tests {
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
-                max_parallel_proofs: 2,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,

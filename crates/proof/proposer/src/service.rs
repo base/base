@@ -57,7 +57,6 @@ impl ProposerService {
             prover_timeout = ?config.prover_timeout,
             poll_interval = ?config.poll_interval,
             rpc_timeout = ?config.rpc_timeout,
-            max_parallel_proofs = config.max_parallel_proofs,
             health_addr = %config.health_addr,
             admin_addr = ?config.admin_addr,
             tee_prover_registry = ?config.tee_prover_registry_address,
@@ -203,7 +202,6 @@ impl ProposerService {
         info!("Output proposer initialized");
 
         let pipeline_config = PipelineConfig {
-            max_parallel_proofs: config.max_parallel_proofs,
             max_retries: MAX_PROOF_RETRIES,
             recovery_scan_concurrency: config.recovery_scan_concurrency,
             tee_prover_registry_address: config.tee_prover_registry_address,
@@ -230,7 +228,7 @@ impl ProposerService {
             output_proposer,
             cancel.child_token(),
         );
-        info!(max_parallel_proofs = config.max_parallel_proofs, "Proving pipeline initialized");
+        info!("Proving pipeline initialized");
         let driver_handle: Arc<dyn ProposerDriverControl> =
             Arc::new(PipelineHandle::new(pipeline, cancel.clone()));
 
