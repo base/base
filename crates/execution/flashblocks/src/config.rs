@@ -37,6 +37,7 @@ impl FlashblocksConfig {
         mut self,
         subscriber_ping_interval: Duration,
     ) -> Self {
+        assert!(!subscriber_ping_interval.is_zero(), "ping interval must be positive");
         self.subscriber_ping_interval = subscriber_ping_interval;
         self
     }
