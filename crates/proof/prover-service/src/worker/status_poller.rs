@@ -199,7 +199,7 @@ impl StatusPoller {
     /// Emit terminal-failure metrics for a batch of reaped jobs.
     fn record_reaped_jobs(reason: &str, jobs: &[ProofJob]) {
         for job in jobs {
-            let proof_type = job.api_proof_type.as_str();
+            let proof_type = metrics::api_proof_type_label(job.api_proof_type);
             metrics::inc_worker_jobs_failed(reason, proof_type);
             metrics::inc_proof_requests_completed("failed", proof_type);
         }

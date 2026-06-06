@@ -737,7 +737,7 @@ impl ProofRequestRepo {
 
         let rows = sqlx::query(&sql)
             .bind(i64::from(req.max_attempts))
-            .bind(&req.error_message)
+            .bind(req.error_message)
             .bind(i64::from(req.batch_size))
             .fetch_all(&self.pool)
             .await?;
