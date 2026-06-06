@@ -413,7 +413,12 @@ where
     ) -> Result<Vec<B256>, ProposerError> {
         let mut roots = Vec::with_capacity(blocks.len());
         for &target_block in blocks {
-            let idx = target_block.checked_sub(starting_block_number + 1).ok_or_else(|| {
+            let base = starting_block_number.checked_add(1).ok_or_else(|| {
+                ProposerError::Internal(
+                    "overflow computing proposal index base".into(),
+                )
+            })?;
+            let idx = target_block.checked_sub(base).ok_or_else(|| {
                 ProposerError::Internal(format!(
                     "underflow computing proposal index for block {target_block}"
                 ))
