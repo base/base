@@ -231,7 +231,7 @@ impl RateTracker {
         let (count, total, earliest) = self.samples.iter().filter(|(t, _)| *t >= cutoff).fold(
             (0usize, 0u64, None::<Instant>),
             |(count, total, earliest), (t, b)| {
-                (count + 1, total + b, Some(earliest.map_or(*t, |e: Instant| e.min(*t))))
+                (count + 1, total.saturating_add(*b), Some(earliest.map_or(*t, |e: Instant| e.min(*t))))
             },
         );
 
