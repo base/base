@@ -232,16 +232,17 @@ Until an activation timestamp is confirmed, leave `base: None` and the chain arr
 
 ### 7. Update the default rollup config
 
-**File:** [`crates/common/chains/src/test_utils.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/test_utils.rs)
+**File:** [`crates/common/chains/src/config.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/config.rs)
 
-The `default_rollup_config()` function sets all upgrades active at genesis for dev use. Add the new upgrade:
+The `DEVNET` constant sets all upgrades active at genesis (`timestamp: 0`) for dev use. Add the new upgrade field:
 
 ```rust
-hardforks: HardForkConfig {
+const DEVNET: ChainConfig = ChainConfig {
     // ... existing fields ...
-    jovian_time: Some(0),
-    base: Some(BaseHardforkConfig { azul: Some(0) }),
-},
+    jovian_timestamp: 0,
+    azul_timestamp: Some(0),
+    new_upgrade_timestamp: Some(0),  // <-- add here
+};
 ```
 
 ---
@@ -359,8 +360,8 @@ forks.push((BaseUpgrade::Azul.boxed(), self[BaseUpgrade::Azul]));  // <-- add
 - [ ] `is_X_active` + `is_first_X_block` added to `RollupConfig`; `upgrade_activation` arm added; previous terminal upgrade cascades to new one (unless standalone)
 - [ ] `is_X_active_at_timestamp` added to `BaseUpgrades` trait
 - [ ] Timestamp constants added to chain config modules and re-exported from `lib.rs`
-- [ ] Registry fixtures (`test_utils/mod.rs`) updated
-- [ ] Default rollup config updated (`defaults.rs`)
+- [ ] Registry fixtures (`crates/common/chains/src/test_utils.rs`) updated
+- [ ] `DEVNET` constant updated (`crates/common/chains/src/config.rs`)
 - [ ] Upgrade consistency tests pass
 
 ### Required when EVM execution changes
