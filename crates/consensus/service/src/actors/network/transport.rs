@@ -29,6 +29,9 @@ pub trait GossipTransport: Send + 'static {
     /// Updates the unsafe block signer address used to validate inbound gossip.
     fn set_block_signer(&mut self, address: Address);
 
+    /// Aborts pending outbound P2P connection attempts and returns how many were cleared.
+    fn clear_pending_connections(&mut self) -> usize;
+
     /// Dispatches a P2P RPC request to the underlying transport.
     ///
     /// Implementations that do not support P2P RPC (e.g. test transports) may ignore this.

@@ -16,7 +16,8 @@ use base_common_genesis::RollupConfig;
 use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
 use base_consensus_gossip::{
-    ConnectionLimitsConfig, DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS, GaterConfig,
+    ConnectionLimitsConfig, DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
+    DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS, GaterConfig,
 };
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
@@ -114,6 +115,13 @@ pub struct P2PNetworkArgs {
     /// number.
     #[arg(long = "p2p.peers.hi", default_value = "30", env = "BASE_NODE_P2P_PEERS_HI")]
     pub peers_hi: u32,
+    /// Maximum number of outbound libp2p connections that may be pending at once.
+    #[arg(
+        long = "p2p.max-pending-outgoing",
+        default_value_t = DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS,
+        env = "BASE_NODE_P2P_MAX_PENDING_OUTGOING"
+    )]
+    pub max_pending_outgoing: u32,
     /// Maximum number of peers to retain identify metadata for.
     #[arg(
         long = "p2p.identify.peerstore.size",
@@ -602,7 +610,10 @@ impl P2PArgs {
                 peer_redialing: self.peer_redial,
                 dial_period: Duration::from_secs(60 * self.redial_period),
             },
-            connection_limits_config: ConnectionLimitsConfig::new(self.peers_hi),
+            connection_limits_config: ConnectionLimitsConfig {
+                max_pending_outgoing: self.max_pending_outgoing,
+                ..ConnectionLimitsConfig::new(self.peers_hi)
+            },
             max_identify_peerstore_peers: self.identify_peerstore_size,
             bootnodes,
             rollup_config: config.clone(),
@@ -947,6 +958,19 @@ mod tests {
         assert_eq!(config.connection_limits_config.max_established_incoming, 42);
         assert_eq!(config.connection_limits_config.max_established_outgoing, 42);
         assert_eq!(config.connection_limits_config.max_established, 42);
+    }
+
+    #[tokio::test]
+    async fn test_p2p_config_wires_max_pending_outgoing_to_connection_limits() {
+        let args = MockCommand::parse_from(["test", "--p2p.max-pending-outgoing", "64"]);
+
+        let config = args
+            .p2p
+            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .await
+            .unwrap();
+
+        assert_eq!(config.connection_limits_config.max_pending_outgoing, 64);
     }
 
     #[tokio::test]

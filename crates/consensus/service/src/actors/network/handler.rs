@@ -173,6 +173,10 @@ impl GossipTransport for NetworkHandler {
         }
     }
 
+    fn clear_pending_connections(&mut self) -> usize {
+        self.gossip.clear_pending_connections()
+    }
+
     fn handle_p2p_rpc(&mut self, request: P2pRpcRequest) {
         request.handle(&mut self.gossip, &self.discovery);
     }

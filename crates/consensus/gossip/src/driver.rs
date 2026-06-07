@@ -17,7 +17,10 @@ use futures::{AsyncWriteExt, stream::StreamExt};
 use libp2p::{
     Multiaddr, PeerId, Swarm, TransportError,
     gossipsub::{IdentTopic, MessageId},
-    swarm::SwarmEvent,
+    swarm::{
+        SwarmEvent,
+        dial_opts::{DialOpts, PeerCondition},
+    },
 };
 use libp2p_identity::Keypair;
 use libp2p_stream::IncomingStreams;
@@ -277,8 +280,12 @@ where
         // Note: libp2p-dns will automatically resolve DNS multiaddrs at the transport layer.
         self.connection_gate.dialing(&addr);
 
-        // Dial
-        match self.swarm.dial(addr.clone()) {
+        let dial_opts = DialOpts::peer_id(peer_id)
+            .addresses(vec![addr.clone()])
+            .condition(PeerCondition::DisconnectedAndNotDialing)
+            .build();
+
+        match self.swarm.dial(dial_opts) {
             Ok(_) => {
                 trace!(target: "gossip", peer=?addr, "Dialed peer");
                 self.connection_gate.dialed(&addr);
@@ -290,6 +297,27 @@ where
                 Metrics::dial_peer_error("connection_error").increment(1.0);
             }
         }
+    }
+
+    /// Aborts every outbound connection attempt currently tracked as pending.
+    pub fn clear_pending_connections(&mut self) -> usize {
+        let pending_dials = self.connection_gate.pending_dials();
+        let count = pending_dials.len();
+
+        for peer_id in pending_dials {
+            let _ = self.swarm.disconnect_peer_id(peer_id);
+            self.connection_gate.remove_dial(&peer_id);
+        }
+
+        if count > 0 {
+            info!(
+                target: "gossip",
+                count,
+                "Cleared pending outgoing connections"
+            );
+        }
+
+        count
     }
 
     fn handle_gossip_event(&mut self, event: Event) -> Option<NetworkPayloadEnvelope> {
@@ -509,7 +537,72 @@ fn peerstore_eviction_candidate<T>(
 
 #[cfg(test)]
 mod tests {
+    use alloy_chains::Chain;
+
     use super::*;
+
+    fn test_driver() -> GossipDriver<ConnectionGater> {
+        let rollup_config = RollupConfig {
+            l2_chain_id: Chain::base_mainnet(),
+            block_time: 2,
+            ..Default::default()
+        };
+
+        let (driver, _signer) = GossipDriver::<ConnectionGater>::builder(
+            rollup_config,
+            Address::repeat_byte(0x11),
+            "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+            Keypair::generate_secp256k1(),
+        )
+        .build()
+        .unwrap();
+
+        driver
+    }
+
+    #[tokio::test]
+    async fn clear_pending_connections_aborts_known_peer_dials() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accept_task = tokio::spawn(async move {
+            if let Ok((_socket, _addr)) = listener.accept().await {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+
+        let peer_id = PeerId::random();
+        let addr = format!("/ip4/127.0.0.1/tcp/{port}/p2p/{peer_id}").parse().unwrap();
+        let mut driver = test_driver();
+
+        driver.dial_multiaddr(addr);
+        assert!(driver.connection_gate.current_dials.contains(&peer_id));
+
+        assert_eq!(driver.clear_pending_connections(), 1);
+        assert!(!driver.connection_gate.current_dials.contains(&peer_id));
+
+        let event = tokio::time::timeout(Duration::from_secs(1), driver.next())
+            .await
+            .expect("clearing a known-peer dial should emit an event")
+            .expect("swarm should emit the aborted dial event");
+
+        match event {
+            SwarmEvent::OutgoingConnectionError {
+                peer_id: Some(aborted_peer),
+                error: libp2p::swarm::DialError::Aborted,
+                ..
+            } => assert_eq!(aborted_peer, peer_id),
+            event => panic!("expected aborted outgoing connection event, got {event:?}"),
+        }
+
+        accept_task.abort();
+    }
+
+    #[test]
+    fn clear_pending_connections_returns_zero_when_empty() {
+        let mut driver = test_driver();
+
+        assert_eq!(driver.clear_pending_connections(), 0);
+    }
 
     #[test]
     fn test_peerstore_eviction_candidate_prefers_disconnected_peer() {

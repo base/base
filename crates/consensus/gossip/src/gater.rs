@@ -383,6 +383,10 @@ impl ConnectionGate for ConnectionGater {
         self.current_dials.remove(peer_id);
     }
 
+    fn pending_dials(&self) -> Vec<PeerId> {
+        self.current_dials.iter().copied().collect()
+    }
+
     fn can_disconnect(&self, addr: &Multiaddr) -> bool {
         let Some(peer_id) = Self::peer_id_from_addr(addr) else {
             warn!(target: "p2p", peer=?addr, "Failed to extract PeerId from Multiaddr when checking disconnect");

@@ -45,6 +45,9 @@ impl CliMetrics {
     /// The high-tide peer count.
     pub const P2P_PEERS_HI: &'static str = "base_node_peers_hi";
 
+    /// The maximum number of outbound libp2p connections that may be pending at once.
+    pub const P2P_MAX_PENDING_OUTGOING: &'static str = "base_node_max_pending_outgoing";
+
     /// The identify peerstore size.
     pub const P2P_IDENTIFY_PEERSTORE_SIZE: &'static str = "base_node_identify_peerstore_size";
 
@@ -98,6 +101,7 @@ impl CliMetrics {
                 ),
                 (Self::P2P_PEERS_LO, p2p.peers_lo.to_string()),
                 (Self::P2P_PEERS_HI, p2p.peers_hi.to_string()),
+                (Self::P2P_MAX_PENDING_OUTGOING, p2p.max_pending_outgoing.to_string()),
                 (Self::P2P_IDENTIFY_PEERSTORE_SIZE, p2p.identify_peerstore_size.to_string()),
                 (Self::P2P_GOSSIP_MESH_D, p2p.gossip_mesh_d.to_string()),
                 (Self::P2P_GOSSIP_MESH_D_LO, p2p.gossip_mesh_dlo.to_string()),

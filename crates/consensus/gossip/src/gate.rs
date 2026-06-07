@@ -34,6 +34,9 @@ pub trait ConnectionGate {
     /// Removes a peer id from the current dials set.
     fn remove_dial(&mut self, peer: &PeerId);
 
+    /// Lists peer ids with outbound dials currently in progress.
+    fn pending_dials(&self) -> Vec<PeerId>;
+
     /// Checks if a peer can be removed from the gossip swarm.
     ///
     /// Since peers can be protected from disconnection, this method
