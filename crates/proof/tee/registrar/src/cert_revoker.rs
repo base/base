@@ -35,6 +35,13 @@ where
     /// Submits a `revokeCert` transaction and records the transaction outcome.
     pub async fn revoke_cert(&self, cert_hash: FixedBytes<32>) {
         let candidate = self.candidate(cert_hash);
+        info!(
+            verifier = %self.verifier_address,
+            cert_hash = %cert_hash,
+            calldata_len = candidate.tx_data.len(),
+            "sending revokeCert transaction"
+        );
+
         match self.tx_manager.send(candidate).await {
             Ok(receipt) => {
                 if !receipt.inner.status() {
