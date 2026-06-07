@@ -1819,29 +1819,10 @@ where
                 "submitting revokeCert transaction"
             );
 
-            self.submit_revoke_cert(&cert_revoker, verifier_address, revoked.path_digest).await;
+            cert_revoker.revoke_cert(revoked.path_digest).await;
         }
 
         Ok(true)
-    }
-
-    /// Submits a `revokeCert` transaction to the `NitroEnclaveVerifier`.
-    ///
-    /// Errors are logged but not propagated — a failed revocation should not
-    /// block the registration cycle.
-    async fn submit_revoke_cert(
-        &self,
-        cert_revoker: &CertRevoker<'_, T>,
-        verifier_address: Address,
-        cert_hash: FixedBytes<32>,
-    ) {
-        info!(
-            verifier = %verifier_address,
-            cert_hash = %cert_hash,
-            "Revoking certificate"
-        );
-
-        cert_revoker.revoke_cert(cert_hash).await;
     }
 
     /// Submits a `deregisterSigner` transaction and returns whether it succeeded.
