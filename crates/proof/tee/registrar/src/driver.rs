@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{Address, Bytes, FixedBytes, hex};
+use alloy_primitives::{Address, Bytes, hex};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::ITEEProverRegistry;
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
@@ -2024,7 +2024,7 @@ mod tests {
     };
 
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{Address, B256, Bloom, Bytes, address};
+    use alloy_primitives::{Address, B256, Bloom, Bytes, FixedBytes, address};
     use alloy_rpc_types_eth::TransactionReceipt;
     use alloy_sol_types::SolCall;
     use async_trait::async_trait;
