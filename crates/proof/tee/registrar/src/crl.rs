@@ -6,19 +6,20 @@
 //! certificate has been revoked.
 //!
 //! The check is **fail-open**: if a CRL cannot be fetched or parsed, the
-//! registration proceeds with a warning. The on-chain expiry tracking
+//! registration proceeds with a warning. The onchain expiry tracking
 //! (Step 2) provides a backstop for expired certs.
 //!
 //! **TOCTOU note**: there is an inherent race between the CRL check and the
-//! on-chain registration transaction. A certificate could be added to the
+//! onchain registration transaction. A certificate could be added to the
 //! CRL after the check passes but before the registration lands. This is
-//! acceptable because the on-chain expiry backstop and periodic re-checks
+//! acceptable because the onchain expiry backstop and periodic re-checks
 //! bound the exposure window.
 
 use std::time::Duration;
 
 use alloy_primitives::B256;
 use base_proof_tee_nitro_verifier::compute_path_digests;
+use futures::stream::{self, StreamExt};
 use tracing::{debug, warn};
 use x509_parser::{
     certificate::X509Certificate,
@@ -62,7 +63,7 @@ pub struct CertCrlInfo {
     pub serial_number: Vec<u8>,
     /// CRL distribution point URL, if present in the certificate.
     pub crl_url: Option<String>,
-    /// Accumulated path digest for this certificate position (for on-chain
+    /// Accumulated path digest for this certificate position (for onchain
     /// `revokeCert` calls).
     pub path_digest: B256,
 }
@@ -72,7 +73,7 @@ impl CertCrlInfo {
     /// DER-encoded chain.
     ///
     /// The certificates must be in chain order: root → intermediates → leaf.
-    /// Path digests are computed identically to the on-chain
+    /// Path digests are computed identically to the onchain
     /// `NitroEnclaveVerifier` accumulation.
     ///
     /// # Errors
@@ -117,7 +118,7 @@ impl CertCrlInfo {
     /// skipping the root (index 0) and the leaf (last index).
     ///
     /// Roots manage their own trust and leaves are short-lived
-    /// (~3 hours), so neither participates in the on-chain
+    /// (~3 hours), so neither participates in the onchain
     /// `_cacheNewCert` rewrite that the durable revocation sentinel
     /// guards against; the AWS CRL layer applies the same scope.
     /// Chains shorter than three certificates yield an empty iterator.
@@ -131,7 +132,7 @@ impl CertCrlInfo {
 pub struct RevokedCertInfo {
     /// Label of the revoked certificate (e.g. "intermediate 1").
     pub label: String,
-    /// Path digest for on-chain `revokeCert()`.
+    /// Path digest for onchain `revokeCert()`.
     pub path_digest: B256,
 }
 
@@ -188,7 +189,7 @@ fn is_allowed_crl_host(url: &str) -> bool {
 /// # Arguments
 ///
 /// * `cert_infos` - Pre-parsed cert chain info, typically produced once per
-///   cycle by [`CertCrlInfo::from_chain`] and shared with the on-chain
+///   cycle by [`CertCrlInfo::from_chain`] and shared with the onchain
 ///   revocation pre-check so the DER parse only happens once.
 /// * `http_client` - HTTP client for fetching CRLs
 pub async fn check_chain_against_crls(
@@ -197,40 +198,52 @@ pub async fn check_chain_against_crls(
 ) -> Vec<RevokedCertInfo> {
     let mut revoked = Vec::new();
 
-    for info in CertCrlInfo::intermediates(cert_infos) {
-        let Some(ref crl_url) = info.crl_url else {
-            debug!(cert = %info.label, "no CRL distribution point, skipping");
-            continue;
-        };
+    let intermediates: Vec<_> = CertCrlInfo::intermediates(cert_infos).cloned().collect();
+    let concurrency = intermediates.len().max(1);
+    let mut checks = stream::iter(intermediates)
+        .map(|info| async move {
+            let Some(ref crl_url) = info.crl_url else {
+                debug!(cert = %info.label, "no CRL distribution point, skipping");
+                return None;
+            };
 
-        debug!(cert = %info.label, url = %crl_url, "fetching CRL");
+            debug!(cert = %info.label, url = %crl_url, "fetching CRL");
 
-        match fetch_and_check_crl(http_client, crl_url, &info.serial_number).await {
-            Ok(true) => {
-                warn!(
-                    cert = %info.label,
-                    url = %crl_url,
-                    serial = %hex::encode(&info.serial_number),
-                    path_digest = %info.path_digest,
-                    "certificate found on CRL — REVOKED"
-                );
-                revoked.push(RevokedCertInfo {
-                    label: info.label.clone(),
-                    path_digest: info.path_digest,
-                });
+            match fetch_and_check_crl(http_client, crl_url, &info.serial_number).await {
+                Ok(true) => {
+                    warn!(
+                        cert = %info.label,
+                        url = %crl_url,
+                        serial = %hex::encode(&info.serial_number),
+                        path_digest = %info.path_digest,
+                        "certificate found on CRL — REVOKED"
+                    );
+                    Some(RevokedCertInfo {
+                        label: info.label.clone(),
+                        path_digest: info.path_digest,
+                    })
+                }
+                Ok(false) => {
+                    debug!(cert = %info.label, "certificate not on CRL");
+                    None
+                }
+                Err(e) => {
+                    // Fail-open: log warning but continue.
+                    warn!(
+                        cert = %info.label,
+                        url = %crl_url,
+                        error = %e,
+                        "CRL check failed (fail-open, proceeding)"
+                    );
+                    None
+                }
             }
-            Ok(false) => {
-                debug!(cert = %info.label, "certificate not on CRL");
-            }
-            Err(e) => {
-                // Fail-open: log warning but continue.
-                warn!(
-                    cert = %info.label,
-                    url = %crl_url,
-                    error = %e,
-                    "CRL check failed (fail-open, proceeding)"
-                );
-            }
+        })
+        .buffer_unordered(concurrency);
+
+    while let Some(result) = checks.next().await {
+        if let Some(revoked_cert) = result {
+            revoked.push(revoked_cert);
         }
     }
 

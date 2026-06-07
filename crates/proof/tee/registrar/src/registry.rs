@@ -14,10 +14,10 @@ use url::Url;
 
 use crate::{RegistrarError, Result};
 
-/// Reads registration state from the on-chain `TEEProverRegistry`.
+/// Reads registration state from the onchain `TEEProverRegistry`.
 #[async_trait]
 pub trait RegistryClient: Send + Sync {
-    /// Returns `true` if `signer` is currently registered on-chain.
+    /// Returns `true` if `signer` is currently registered onchain.
     async fn is_registered(&self, signer: Address) -> Result<bool>;
 
     /// Fetches the complete set of registered signer addresses in a single view call.

@@ -28,7 +28,7 @@ pub const DEFAULT_MAX_RECOVERY_ATTEMPTS: u32 = 5;
 /// Default maximum age (in seconds) of a recovered proof's attestation
 /// timestamp before it is considered stale and skipped.
 ///
-/// Set to 3300 s (55 minutes), slightly under the on-chain `MAX_AGE` of
+/// Set to 3300 s (55 minutes), slightly under the onchain `MAX_AGE` of
 /// 60 minutes, to account for clock skew and processing delays.
 pub const DEFAULT_MAX_ATTESTATION_AGE_SECS: u64 = 3300;
 
@@ -53,7 +53,7 @@ pub struct BoundlessConfig {
     pub max_recovery_attempts: u32,
     /// Maximum age of a recovered proof's attestation timestamp before it
     /// is considered stale and skipped. Should be set slightly below the
-    /// on-chain `MAX_AGE` to account for clock skew.
+    /// onchain `MAX_AGE` to account for clock skew.
     pub max_attestation_age: Duration,
     /// Optional minimum Boundless offer price for each submitted proof request.
     pub offer_min_price: Option<Amount>,
@@ -123,7 +123,7 @@ pub struct CrlConfig {
     /// `revokeCert` transactions are attempted. Defaults to `false`.
     pub enabled: bool,
     /// `NitroEnclaveVerifier` contract address on L1. Required when
-    /// `enabled` is `true`; consulted both for the durable on-chain
+    /// `enabled` is `true`; consulted both for the durable onchain
     /// `revokedCerts` pre-check and as the destination for outgoing
     /// `revokeCert` transactions.
     pub nitro_verifier_address: Option<Address>,

@@ -1,6 +1,6 @@
 //! `NitroEnclaveVerifier` client adapter for the registrar.
 //!
-//! Provides the durable on-chain revocation check (CHAIN-4194 / Immunefi
+//! Provides the durable onchain revocation check (CHAIN-4194 / Immunefi
 //! #75608) that the driver consults before submitting a registration: even
 //! if the AWS CRL is silent, a previously-revoked intermediate must continue
 //! to fail registration until an operator explicitly re-trusts it via
@@ -13,16 +13,16 @@ use url::Url;
 
 use crate::{RegistrarError, Result};
 
-/// Reads the durable revocation sentinel from the on-chain
+/// Reads the durable revocation sentinel from the onchain
 /// `NitroEnclaveVerifier`.
 #[async_trait]
 pub trait NitroVerifierClient: Send + Sync {
-    /// Returns the on-chain address of the verifier this client is bound to.
+    /// Returns the onchain address of the verifier this client is bound to.
     /// Used by the driver as the destination for `revokeCert` transactions.
     fn address(&self) -> Address;
 
     /// Returns `true` if the given accumulated-path-digest hash is currently
-    /// marked as revoked on-chain.
+    /// marked as revoked onchain.
     async fn is_revoked(&self, cert_hash: FixedBytes<32>) -> Result<bool>;
 }
 
