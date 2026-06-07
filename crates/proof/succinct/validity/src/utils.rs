@@ -85,7 +85,10 @@ pub fn get_ranges_to_prove_by_gas(
             })?;
 
             // Validate block number consistency
-            if block_info.block_number as i64 != block_num {
+            let block_number_i64 = i64::try_from(block_info.block_number).map_err(|_| {
+                anyhow!("block_number {} exceeds i64::MAX", block_info.block_number)
+            })?;
+            if block_number_i64 != block_num {
                 return Err(anyhow!(
                     "BlockInfo has inconsistent block number: expected {}, got {}",
                     block_num,
