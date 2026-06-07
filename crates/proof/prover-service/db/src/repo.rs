@@ -63,18 +63,7 @@ impl ProofRequestRepo {
         Ok(prepared.id)
     }
 
-    /// Atomically create a proof request for the worker API queue.
-    ///
-    /// New requests are inserted into `proof_requests` with `job_status = 'PENDING'`
-    /// by the schema default. External workers claim these rows via
-    /// [`Self::claim_next_proof_job`].
-    ///
-    /// On `session_id` conflict, lock the row `FOR UPDATE` and branch on state:
-    /// parameter mismatch -> [`CreateProofRequestError::IdCollision`];
-    /// `CREATED` / `PENDING` / `RUNNING` / `SUCCEEDED` -> [`CreateProofRequestOutcome::Replayed`];
-    /// `FAILED` with room under `max_retries` -> reset, bump `retry_count`,
-    /// and make the job claimable again ([`CreateProofRequestOutcome::Requeued`]);
-    /// `FAILED` at cap -> [`CreateProofRequestOutcome::RetryExhausted`].
+    /// Atomically create or replay a proof request for the worker API queue.
     pub async fn create_for_worker_queue(
         &self,
         req: CreateProofRequest,
@@ -519,17 +508,8 @@ impl ProofRequestRepo {
 
     /// Atomically claim the next eligible worker proof job (`getNextProof`).
     ///
-    /// Selects the lowest-start-block job whose `api_proof_type` matches the
-    /// worker and whose capability discriminator (`tee_kind` for TEE, `zk_vm` for
-    /// ZK) is in the worker's advertised set. A job is claimable when it is
-    /// `PENDING`, or when it is `CLAIMED` with an expired lock and still under the
-    /// reclaim budget (`attempt < max_attempts`). The row is locked with
-    /// `FOR UPDATE SKIP LOCKED` so concurrent workers never claim the same job.
-    ///
-    /// On success the job transitions to `job_status = 'CLAIMED'` and requester
-    /// `status = 'RUNNING'`, with a freshly rotated `lock_id`, incremented
-    /// `attempt`, and an extended `lock_expires_at`. Returns `None` when no job is
-    /// eligible (including when the worker advertises no matching capabilities).
+    /// Expired claims are reclaimable while `attempt < max_attempts`. Rows are
+    /// locked with `FOR UPDATE SKIP LOCKED` so concurrent workers do not double-claim.
     pub async fn claim_next_proof_job(&self, req: ClaimProofJob) -> Result<Option<ProofJob>> {
         let lock_id = Uuid::new_v4();
         let sql = claim_query(req.api_proof_type);
@@ -574,11 +554,6 @@ impl ProofRequestRepo {
     }
 
     /// Extend the lock for the currently owned worker proof job (`heartbeat`).
-    ///
-    /// The update is guarded by `session_id`, `job_status = 'CLAIMED'`, `lock_id`,
-    /// `worker_id`, and an unexpired `lock_expires_at`. A stale worker cannot
-    /// revive an expired or reclaimed job because the update only succeeds for the
-    /// current fencing token.
     pub async fn heartbeat_proof_job(&self, req: HeartbeatProofJob) -> Result<HeartbeatOutcome> {
         let session_id = canonical_session_id(&req.session_id)
             .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
@@ -630,11 +605,6 @@ impl ProofRequestRepo {
     }
 
     /// Complete the currently owned worker proof job (`submitProof`).
-    ///
-    /// The ownership guard matches [`Self::heartbeat_proof_job`]. On success the
-    /// worker job and requester proof both transition to `SUCCEEDED`,
-    /// `result_payload` stores the protocol result, and ZK results are mirrored
-    /// into legacy receipt columns for compatibility.
     pub async fn complete_claimed_proof_job(
         &self,
         req: CompleteClaimedProofJob,
@@ -702,13 +672,7 @@ impl ProofRequestRepo {
         Ok(SubmitProofOutcome::Unknown(job))
     }
 
-    /// Terminally fail expired worker jobs that have exhausted their claim attempts.
-    ///
-    /// Worker execution failure is represented by lock expiry. Jobs remain
-    /// reclaimable while `attempt < max_attempts`; once an expired claim reaches
-    /// the budget, this reaper transition marks both the worker job and requester
-    /// proof `FAILED` and stores `error_message`. The update is batched and uses
-    /// `FOR UPDATE SKIP LOCKED` to avoid locking the full expired backlog.
+    /// Terminally fail expired worker jobs with `attempt >= max_attempts`.
     pub async fn fail_expired_proof_jobs(
         &self,
         req: FailExpiredProofJobs<'_>,

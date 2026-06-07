@@ -59,11 +59,7 @@ impl TryFrom<&str> for ProofStatus {
     }
 }
 
-/// Worker-owned job lifecycle status, distinct from the requester [`ProofStatus`].
-///
-/// The worker API (`getNextProof` / `heartbeat` / `submitProof`) drives this field
-/// on the same `proof_requests` row, while `status` continues to model the
-/// requester-facing proof lifecycle.
+/// Worker-owned job lifecycle status, distinct from requester [`ProofStatus`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ProofJobStatus {
@@ -940,7 +936,7 @@ pub struct ClaimProofJob {
     pub zk_vms: Vec<ZkVmKind>,
     /// Lock duration in seconds. Callers must resolve the server default first.
     pub lock_duration_seconds: u32,
-    /// Reclaim budget: expired claims are only reclaimable while `attempt < max_attempts`.
+    /// Reclaim budget for expired claims.
     pub max_attempts: u32,
 }
 
@@ -960,15 +956,15 @@ pub struct HeartbeatProofJob {
 /// Outcome of attempting to heartbeat a worker proof job.
 #[derive(Debug, Clone)]
 pub enum HeartbeatOutcome {
-    /// The heartbeat succeeded and the returned job has the updated lock expiry.
+    /// Heartbeat succeeded.
     Updated(ProofJob),
     /// No proof job exists for the supplied `session_id`.
     NotFound,
     /// The job exists but is not currently claimed.
     NotClaimed(ProofJob),
-    /// The supplied `worker_id` or `lock_id` no longer owns the job.
+    /// The supplied worker or lock no longer owns the job.
     StaleLock(ProofJob),
-    /// The supplied lock matched the job, but it had already expired.
+    /// The lock matched the job but had expired.
     Expired(ProofJob),
     /// The job is already terminal.
     Terminal(ProofJob),
@@ -992,15 +988,15 @@ pub struct CompleteClaimedProofJob {
 /// Outcome of attempting to complete a worker proof job.
 #[derive(Debug, Clone)]
 pub enum SubmitProofOutcome {
-    /// The submit succeeded and the returned job is terminal `SUCCEEDED`.
+    /// Submit succeeded.
     Completed(ProofJob),
     /// No proof job exists for the supplied `session_id`.
     NotFound,
     /// The job exists but is not currently claimed.
     NotClaimed(ProofJob),
-    /// The supplied `worker_id` or `lock_id` no longer owns the job.
+    /// The supplied worker or lock no longer owns the job.
     StaleLock(ProofJob),
-    /// The supplied lock matched the job, but it had already expired.
+    /// The lock matched the job but had expired.
     Expired(ProofJob),
     /// The job is already terminal.
     Terminal(ProofJob),
