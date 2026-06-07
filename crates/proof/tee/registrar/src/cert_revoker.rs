@@ -4,7 +4,6 @@ use alloy_primitives::{Address, Bytes, FixedBytes};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::INitroEnclaveVerifier;
 use base_tx_manager::{TxCandidate, TxManager};
-use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::RegistrarMetrics;
@@ -18,22 +17,11 @@ pub struct CertRevoker<T> {
 
 impl<T> CertRevoker<T>
 where
-    T: TxManager + 'static,
+    T: TxManager,
 {
     /// Creates a revoker bound to a `NitroEnclaveVerifier` address.
     pub const fn new(verifier_address: Address, tx_manager: T) -> Self {
         Self { verifier_address, tx_manager }
-    }
-
-    /// Spawns a task that submits a `revokeCert` transaction and relies on the
-    /// tx manager to deliver a confirmed receipt.
-    ///
-    /// Dropping the returned handle detaches the task; awaiting it lets callers
-    /// observe task panics or coordinate shutdown.
-    pub fn revoke_cert(self, cert_hash: FixedBytes<32>) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            self.submit_revoke_cert(cert_hash).await;
-        })
     }
 
     /// Builds the transaction candidate for `NitroEnclaveVerifier.revokeCert`.
@@ -44,7 +32,8 @@ where
         TxCandidate { tx_data: calldata, to: Some(self.verifier_address), ..Default::default() }
     }
 
-    async fn submit_revoke_cert(self, cert_hash: FixedBytes<32>) {
+    /// Submits a `revokeCert` transaction and records the transaction outcome.
+    pub async fn revoke_cert(self, cert_hash: FixedBytes<32>) {
         let candidate = self.candidate(cert_hash);
         match self.tx_manager.send(candidate).await {
             Ok(receipt) => {
@@ -108,11 +97,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_revoke_cert_sends_candidate() {
+    async fn revoke_cert_submits_candidate() {
         let tx_manager = MockTxManager::default();
         let revoker = CertRevoker::new(VERIFIER_ADDRESS, tx_manager.clone());
 
-        revoker.submit_revoke_cert(CERT_HASH).await;
+        revoker.revoke_cert(CERT_HASH).await;
 
         assert_eq!(
             tx_manager.take_candidate().tx_data,
@@ -121,13 +110,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn revoke_cert_returns_join_handle_for_spawned_submission() {
+    async fn revoke_cert_sends_candidate() {
         let tx_manager = MockTxManager::default();
         let revoker = CertRevoker::new(VERIFIER_ADDRESS, tx_manager.clone());
 
-        let handle = revoker.revoke_cert(CERT_HASH);
-
-        handle.await.unwrap();
+        revoker.revoke_cert(CERT_HASH).await;
         assert_eq!(
             tx_manager.take_candidate().tx_data,
             Bytes::from(INitroEnclaveVerifier::revokeCertCall { certHash: CERT_HASH }.abi_encode())
@@ -151,7 +138,7 @@ mod tests {
                     let tx_manager = MockTxManager::with_receipt_status(false);
                     let revoker = CertRevoker::new(VERIFIER_ADDRESS, tx_manager);
 
-                    revoker.submit_revoke_cert(CERT_HASH).await;
+                    revoker.revoke_cert(CERT_HASH).await;
                 });
             });
 

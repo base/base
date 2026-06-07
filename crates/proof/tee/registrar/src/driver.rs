@@ -635,7 +635,6 @@ where
             match self.check_and_revoke_crls(&all_attestations[0], instance).await {
                 Ok(true) => {
                     // Confirmed revocation — block registration for this instance.
-                    // The revokeCert task was already spawned above.
                     warn!(
                         instance = %instance.instance_id,
                         "certificate revoked, skipping registration for this instance"
@@ -1084,9 +1083,9 @@ where
     ///
     /// **Cancellation contract.** This future checks
     /// `self.config.cancel.is_cancelled()` before starting new side effects.
-    /// `check_and_revoke_crls` enqueues any `revokeCert` transactions in
-    /// detached tasks, so the resolution future does not await revocation
-    /// delivery.
+    /// `check_and_revoke_crls` awaits any `revokeCert` transaction
+    /// submissions it triggers, so revocation outcomes are logged before
+    /// the resolution future returns.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<ResolveOutcome> {
         if self.config.cancel.is_cancelled() {
             return Ok(ResolveOutcome {
@@ -1162,8 +1161,8 @@ where
         }
 
         if self.config.crl.enabled {
-            // Skip the CRL check (and its potential `revokeCert` task spawn)
-            // on shutdown so we do not start new onchain work.
+            // Skip the CRL check and any `revokeCert` submission on shutdown
+            // so we do not start new onchain work.
             //
             // Return `attestations: None` so the safety invariant —
             // `Some(..)` ↔ "passed every eligibility + security gate,
@@ -1819,7 +1818,7 @@ where
                 "submitting revokeCert transaction"
             );
 
-            self.submit_revoke_cert(verifier_address, revoked.path_digest);
+            self.submit_revoke_cert(verifier_address, revoked.path_digest).await;
         }
 
         Ok(true)
@@ -1829,14 +1828,14 @@ where
     ///
     /// Errors are logged but not propagated — a failed revocation should not
     /// block the registration cycle.
-    fn submit_revoke_cert(&self, verifier_address: Address, cert_hash: FixedBytes<32>) {
+    async fn submit_revoke_cert(&self, verifier_address: Address, cert_hash: FixedBytes<32>) {
         info!(
             verifier = %verifier_address,
             cert_hash = %cert_hash,
             "Revoking certificate"
         );
 
-        drop(CertRevoker::new(verifier_address, self.tx_manager.clone()).revoke_cert(cert_hash));
+        CertRevoker::new(verifier_address, self.tx_manager.clone()).revoke_cert(cert_hash).await;
     }
 
     /// Submits a `deregisterSigner` transaction and returns whether it succeeded.
