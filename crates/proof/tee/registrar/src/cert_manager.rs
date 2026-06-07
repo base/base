@@ -39,15 +39,7 @@ impl CertManager {
                 "failed to build CRL HTTP client (Layer 2 / AWS CRL fetch): {e}"
             ))
         })?;
-        Ok(Self::from_parts(http_client, nitro_verifier))
-    }
-
-    /// Creates a certificate manager from pre-built dependencies.
-    pub fn from_parts(
-        http_client: reqwest::Client,
-        nitro_verifier: Arc<dyn NitroVerifierClient>,
-    ) -> Self {
-        Self { http_client, nitro_verifier }
+        Ok(Self { http_client, nitro_verifier })
     }
 
     /// Checks an attestation's intermediate certificates and submits revocations.
@@ -81,13 +73,7 @@ impl CertManager {
         };
 
         RegistrarMetrics::onchain_revocation_checks_total().increment(1);
-        match OnchainRevocationCheck::run(
-            self.nitro_verifier.as_ref(),
-            &cert_infos,
-            &instance.instance_id,
-        )
-        .await
-        {
+        match self.has_onchain_revoked_intermediate(&cert_infos, &instance.instance_id).await {
             Ok(true) => return Ok(true),
             Ok(false) => {}
             Err(e) => {
@@ -112,6 +98,38 @@ impl CertManager {
         self.submit_revocations_for_revoked_certs(&revoked_certs, instance, tx_manager).await;
 
         Ok(true)
+    }
+
+    /// Checks whether any intermediate certificate has already been revoked onchain.
+    ///
+    /// Root and leaf certificates are skipped because only intermediate
+    /// accumulated path digests participate in the durable `revokedCerts`
+    /// sentinel used by registrar CRL handling.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying RPC error verbatim; the caller decides whether
+    /// to fail-open or propagate.
+    pub async fn has_onchain_revoked_intermediate(
+        &self,
+        cert_infos: &[crl::CertCrlInfo],
+        instance_id: &str,
+    ) -> Result<bool> {
+        for info in crl::CertCrlInfo::intermediates(cert_infos) {
+            if self.nitro_verifier.is_revoked(info.path_digest).await? {
+                warn!(
+                    cert = %info.label,
+                    path_digest = %info.path_digest,
+                    instance = %instance_id,
+                    "intermediate is revoked onchain (durable sentinel set), skipping registration"
+                );
+                RegistrarMetrics::onchain_revocations_detected().increment(1);
+                return Ok(true);
+            }
+        }
+
+        debug!(instance = %instance_id, "onchain revocation pre-check passed");
+        Ok(false)
     }
 
     /// Checks each CRL-hit against the onchain sentinel and submits needed revocations.
@@ -159,45 +177,6 @@ impl CertManager {
             );
             cert_revoker.revoke_cert(revoked.path_digest).await;
         }
-    }
-}
-
-/// Onchain durable revocation check.
-///
-/// Consults the `revokedCerts` mapping for every intermediate in a pre-parsed
-/// Nitro cert chain. Root and leaf certificates are skipped.
-#[derive(Debug)]
-pub struct OnchainRevocationCheck;
-
-impl OnchainRevocationCheck {
-    /// Returns `Ok(true)` as soon as any intermediate's accumulated path
-    /// digest is found revoked onchain, `Ok(false)` if every intermediate
-    /// is clean.
-    ///
-    /// # Errors
-    ///
-    /// Returns the underlying RPC error verbatim; the caller decides whether
-    /// to fail-open or propagate.
-    pub async fn run(
-        verifier: &dyn NitroVerifierClient,
-        cert_infos: &[crl::CertCrlInfo],
-        instance_id: &str,
-    ) -> Result<bool> {
-        for info in crl::CertCrlInfo::intermediates(cert_infos) {
-            if verifier.is_revoked(info.path_digest).await? {
-                warn!(
-                    cert = %info.label,
-                    path_digest = %info.path_digest,
-                    instance = %instance_id,
-                    "intermediate is revoked onchain (durable sentinel set), skipping registration"
-                );
-                RegistrarMetrics::onchain_revocations_detected().increment(1);
-                return Ok(true);
-            }
-        }
-
-        debug!(instance = %instance_id, "onchain revocation pre-check passed");
-        Ok(false)
     }
 }
 
@@ -294,17 +273,24 @@ mod tests {
         u32::try_from(full_chain_der().len().saturating_sub(2)).unwrap()
     }
 
-    async fn run_pre_check(verifier: &MockNitroVerifier) -> (Result<bool>, u32) {
+    fn test_cert_manager(verifier: Arc<MockNitroVerifier>) -> CertManager {
+        CertManager { http_client: reqwest::Client::new(), nitro_verifier: verifier }
+    }
+
+    async fn run_pre_check(verifier: MockNitroVerifier) -> (Result<bool>, u32) {
+        let verifier = Arc::new(verifier);
+        let cert_manager = test_cert_manager(verifier.clone());
         let cert_infos = full_chain_cert_infos();
-        let result =
-            OnchainRevocationCheck::run(verifier, &cert_infos, ONCHAIN_TEST_INSTANCE_ID).await;
+        let result = cert_manager
+            .has_onchain_revoked_intermediate(&cert_infos, ONCHAIN_TEST_INSTANCE_ID)
+            .await;
         (result, verifier.call_count.load(Ordering::SeqCst))
     }
 
     #[tokio::test]
     async fn onchain_revocation_check_returns_false_when_no_intermediates_revoked() {
         let verifier = MockNitroVerifier::default();
-        let (result, calls) = run_pre_check(&verifier).await;
+        let (result, calls) = run_pre_check(verifier).await;
 
         assert!(
             !result.expect("clean chain must succeed"),
@@ -326,7 +312,7 @@ mod tests {
         #[case] expected_calls_at_short_circuit: u32,
     ) {
         let verifier = MockNitroVerifier::revoking([path_digest_for(revoked_index)]);
-        let (result, calls) = run_pre_check(&verifier).await;
+        let (result, calls) = run_pre_check(verifier).await;
 
         assert!(
             result.expect("revoked-intermediate query must succeed"),
@@ -344,7 +330,7 @@ mod tests {
             path_digest_for(INTER1_INDEX),
             path_digest_for(INTER2_INDEX),
         ]);
-        let (result, calls) = run_pre_check(&verifier).await;
+        let (result, calls) = run_pre_check(verifier).await;
 
         assert!(result.expect("query must succeed"), "any revoked intermediate must block");
         assert_eq!(calls, 1, "first intermediate triggers short-circuit");
@@ -354,7 +340,7 @@ mod tests {
     async fn onchain_revocation_check_skips_root_and_leaf() {
         let verifier =
             MockNitroVerifier::revoking([path_digest_for(ROOT_INDEX), path_digest_for(LEAF_INDEX)]);
-        let (result, calls) = run_pre_check(&verifier).await;
+        let (result, calls) = run_pre_check(verifier).await;
 
         assert!(
             !result.expect("query must succeed"),
@@ -373,7 +359,7 @@ mod tests {
             context: "revokedCerts(0xdeadbeef)".into(),
             source: "boom".into(),
         });
-        let (result, _calls) = run_pre_check(&verifier).await;
+        let (result, _calls) = run_pre_check(verifier).await;
 
         let err = result.expect_err("RPC errors must surface to the caller");
         assert!(
@@ -394,10 +380,12 @@ mod tests {
         let owned = chain_subset(indices);
         let refs: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
         let cert_infos = crl::CertCrlInfo::from_chain(&refs).expect("static fixtures parse");
-        let verifier = MockNitroVerifier::default();
+        let verifier = Arc::new(MockNitroVerifier::default());
+        let cert_manager = test_cert_manager(verifier.clone());
 
-        let result =
-            OnchainRevocationCheck::run(&verifier, &cert_infos, ONCHAIN_TEST_INSTANCE_ID).await;
+        let result = cert_manager
+            .has_onchain_revoked_intermediate(&cert_infos, ONCHAIN_TEST_INSTANCE_ID)
+            .await;
 
         assert!(!result.expect("query must succeed"), "clean chain not revoked");
         assert_eq!(
