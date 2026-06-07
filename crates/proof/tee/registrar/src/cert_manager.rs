@@ -279,7 +279,7 @@ mod tests {
 
     async fn run_pre_check(verifier: MockNitroVerifier) -> (Result<bool>, u32) {
         let verifier = Arc::new(verifier);
-        let cert_manager = test_cert_manager(verifier.clone());
+        let cert_manager = test_cert_manager(Arc::clone(&verifier));
         let cert_infos = full_chain_cert_infos();
         let result = cert_manager
             .has_onchain_revoked_intermediate(&cert_infos, ONCHAIN_TEST_INSTANCE_ID)
@@ -381,7 +381,7 @@ mod tests {
         let refs: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
         let cert_infos = crl::CertCrlInfo::from_chain(&refs).expect("static fixtures parse");
         let verifier = Arc::new(MockNitroVerifier::default());
-        let cert_manager = test_cert_manager(verifier.clone());
+        let cert_manager = test_cert_manager(Arc::clone(&verifier));
 
         let result = cert_manager
             .has_onchain_revoked_intermediate(&cert_infos, ONCHAIN_TEST_INSTANCE_ID)
