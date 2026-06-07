@@ -8,7 +8,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Ident, Type};
 
-use crate::{FieldInfo, FieldKind};
+use crate::{FieldInfo, FieldKind, utils::extract_mapping_types};
 
 /// Helper for generating packing constant identifiers
 pub(crate) struct PackingConstants(String);
