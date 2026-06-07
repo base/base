@@ -190,8 +190,13 @@ mod tests {
         },
     };
 
-    use alloy_primitives::{Address, FixedBytes};
+    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use alloy_primitives::{Address, B256, Bloom, Bytes, FixedBytes};
+    use alloy_rpc_types_eth::TransactionReceipt;
+    use alloy_sol_types::SolCall;
     use async_trait::async_trait;
+    use base_proof_contracts::INitroEnclaveVerifier;
+    use base_tx_manager::TxCandidate;
     use rstest::rstest;
 
     use super::*;
@@ -245,6 +250,39 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default, Clone)]
+    struct MockTxManager {
+        sent_candidates: Arc<Mutex<Vec<TxCandidate>>>,
+    }
+
+    impl MockTxManager {
+        fn take_candidates(&self) -> Vec<TxCandidate> {
+            std::mem::take(&mut *self.sent_candidates.lock().unwrap())
+        }
+    }
+
+    impl TxManager for MockTxManager {
+        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
+            self.sent_candidates.lock().unwrap().push(candidate);
+            Ok(stub_receipt())
+        }
+
+        async fn send_async(&self, _candidate: TxCandidate) -> base_tx_manager::SendHandle {
+            unreachable!("submit_revocations_for_revoked_certs only uses send")
+        }
+
+        fn sender_address(&self) -> Address {
+            Address::ZERO
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum OnchainCheckOutcome {
+        AlreadyRevoked,
+        NotRevoked,
+        RpcError,
+    }
+
     fn full_chain_der() -> Vec<Vec<u8>> {
         CertFixtures::decode_chain(&[ROOT_HEX, INTER1_HEX, INTER2_HEX, LEAF_HEX])
     }
@@ -275,6 +313,48 @@ mod tests {
 
     fn test_cert_manager(verifier: Arc<MockNitroVerifier>) -> CertManager {
         CertManager { http_client: reqwest::Client::new(), nitro_verifier: verifier }
+    }
+
+    fn test_instance() -> ProverInstance {
+        ProverInstance {
+            instance_id: ONCHAIN_TEST_INSTANCE_ID.to_string(),
+            endpoint: "http://127.0.0.1:8000/".parse().unwrap(),
+            health_status: crate::InstanceHealthStatus::Healthy,
+            launch_time: None,
+        }
+    }
+
+    fn revoked_cert(path_digest: B256) -> crl::RevokedCertInfo {
+        crl::RevokedCertInfo { label: "intermediate 1".to_string(), path_digest }
+    }
+
+    fn revoke_cert_calldata(path_digest: B256) -> Bytes {
+        Bytes::from(INitroEnclaveVerifier::revokeCertCall { certHash: path_digest }.abi_encode())
+    }
+
+    fn stub_receipt() -> TransactionReceipt {
+        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
+            receipt: Receipt {
+                status: Eip658Value::success(),
+                cumulative_gas_used: 21_000,
+                logs: vec![],
+            },
+            logs_bloom: Bloom::ZERO,
+        });
+        TransactionReceipt {
+            inner,
+            transaction_hash: B256::ZERO,
+            transaction_index: Some(0),
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            gas_used: 21_000,
+            effective_gas_price: 1_000_000_000,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: Some(Address::ZERO),
+            contract_address: None,
+        }
     }
 
     async fn run_pre_check(verifier: MockNitroVerifier) -> (Result<bool>, u32) {
@@ -393,5 +473,56 @@ mod tests {
             expected_calls,
             "only intermediates (root and leaf skipped) should produce RPC calls",
         );
+    }
+
+    #[rstest]
+    #[case::already_revoked(OnchainCheckOutcome::AlreadyRevoked, false)]
+    #[case::not_revoked(OnchainCheckOutcome::NotRevoked, true)]
+    #[case::rpc_error(OnchainCheckOutcome::RpcError, true)]
+    #[tokio::test]
+    async fn submit_revocations_checks_onchain_before_deciding_whether_to_submit(
+        #[case] onchain_check: OnchainCheckOutcome,
+        #[case] expect_revoke_cert: bool,
+    ) {
+        let path_digest = path_digest_for(INTER1_INDEX);
+        let verifier = match onchain_check {
+            OnchainCheckOutcome::AlreadyRevoked => {
+                Arc::new(MockNitroVerifier::revoking([path_digest]))
+            }
+            OnchainCheckOutcome::NotRevoked => Arc::new(MockNitroVerifier::default()),
+            OnchainCheckOutcome::RpcError => {
+                Arc::new(MockNitroVerifier::failing(RegistrarError::NitroVerifierCall {
+                    context: "revokedCerts(0xdeadbeef)".into(),
+                    source: "boom".into(),
+                }))
+            }
+        };
+        let cert_manager = test_cert_manager(Arc::clone(&verifier));
+        let tx_manager = MockTxManager::default();
+        let instance = test_instance();
+
+        cert_manager
+            .submit_revocations_for_revoked_certs(
+                &[revoked_cert(path_digest)],
+                &instance,
+                &tx_manager,
+            )
+            .await;
+
+        assert_eq!(
+            verifier.call_count.load(Ordering::SeqCst),
+            1,
+            "CRL-hit cert should be checked onchain before deciding whether to submit revokeCert",
+        );
+        let candidates = tx_manager.take_candidates();
+        assert_eq!(
+            candidates.len(),
+            usize::from(expect_revoke_cert),
+            "revokeCert submission expectation did not match onchain check outcome",
+        );
+        if expect_revoke_cert {
+            assert_eq!(candidates[0].to, Some(TEST_VERIFIER_ADDRESS));
+            assert_eq!(candidates[0].tx_data, revoke_cert_calldata(path_digest));
+        }
     }
 }
