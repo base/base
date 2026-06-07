@@ -199,7 +199,13 @@ pub async fn check_chain_against_crls(
     let mut revoked = Vec::new();
 
     let intermediates: Vec<_> = CertCrlInfo::intermediates(cert_infos).cloned().collect();
-    let concurrency = intermediates.len().max(1);
+    if intermediates.is_empty() {
+        return revoked;
+    }
+
+    // Nitro attestation chains have a small number of intermediates, so fan
+    // out one CRL fetch per intermediate instead of adding another limiter.
+    let concurrency = intermediates.len();
     let mut checks = stream::iter(intermediates)
         .map(|info| async move {
             let Some(ref crl_url) = info.crl_url else {
