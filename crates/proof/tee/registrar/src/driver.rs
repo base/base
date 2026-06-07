@@ -320,7 +320,7 @@ where
     D: InstanceDiscovery + 'static,
     P: AttestationProofProvider + 'static,
     R: RegistryClient + 'static,
-    T: TxManager + Clone + 'static,
+    T: TxManager + 'static,
     S: SignerClient + 'static,
 {
     /// Creates a new registration driver.
@@ -1810,6 +1810,7 @@ where
 
         RegistrarMetrics::crl_revocations_detected().increment(revoked_certs.len() as u64);
 
+        let cert_revoker = CertRevoker::new(verifier_address, &self.tx_manager);
         for revoked in &revoked_certs {
             warn!(
                 cert = %revoked.label,
@@ -1818,7 +1819,7 @@ where
                 "submitting revokeCert transaction"
             );
 
-            self.submit_revoke_cert(verifier_address, revoked.path_digest).await;
+            self.submit_revoke_cert(&cert_revoker, verifier_address, revoked.path_digest).await;
         }
 
         Ok(true)
@@ -1828,14 +1829,19 @@ where
     ///
     /// Errors are logged but not propagated — a failed revocation should not
     /// block the registration cycle.
-    async fn submit_revoke_cert(&self, verifier_address: Address, cert_hash: FixedBytes<32>) {
+    async fn submit_revoke_cert(
+        &self,
+        cert_revoker: &CertRevoker<'_, T>,
+        verifier_address: Address,
+        cert_hash: FixedBytes<32>,
+    ) {
         info!(
             verifier = %verifier_address,
             cert_hash = %cert_hash,
             "Revoking certificate"
         );
 
-        CertRevoker::new(verifier_address, self.tx_manager.clone()).revoke_cert(cert_hash).await;
+        cert_revoker.revoke_cert(cert_hash).await;
     }
 
     /// Submits a `deregisterSigner` transaction and returns whether it succeeded.

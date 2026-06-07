@@ -10,17 +10,17 @@ use crate::RegistrarMetrics;
 
 /// Sends `NitroEnclaveVerifier.revokeCert` transactions through a tx manager.
 #[derive(Debug)]
-pub struct CertRevoker<T> {
+pub struct CertRevoker<'a, T> {
     verifier_address: Address,
-    tx_manager: T,
+    tx_manager: &'a T,
 }
 
-impl<T> CertRevoker<T>
+impl<'a, T> CertRevoker<'a, T>
 where
     T: TxManager,
 {
     /// Creates a revoker bound to a `NitroEnclaveVerifier` address.
-    pub const fn new(verifier_address: Address, tx_manager: T) -> Self {
+    pub const fn new(verifier_address: Address, tx_manager: &'a T) -> Self {
         Self { verifier_address, tx_manager }
     }
 
@@ -33,7 +33,7 @@ where
     }
 
     /// Submits a `revokeCert` transaction and records the transaction outcome.
-    pub async fn revoke_cert(self, cert_hash: FixedBytes<32>) {
+    pub async fn revoke_cert(&self, cert_hash: FixedBytes<32>) {
         let candidate = self.candidate(cert_hash);
         match self.tx_manager.send(candidate).await {
             Ok(receipt) => {
@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn candidate_targets_verifier_with_revoke_cert_calldata() {
         let tx_manager = MockTxManager::default();
-        let revoker = CertRevoker::new(VERIFIER_ADDRESS, tx_manager);
+        let revoker = CertRevoker::new(VERIFIER_ADDRESS, &tx_manager);
         let candidate = revoker.candidate(CERT_HASH);
 
         assert_eq!(candidate.to, Some(VERIFIER_ADDRESS));
@@ -99,22 +99,10 @@ mod tests {
     #[tokio::test]
     async fn revoke_cert_submits_candidate() {
         let tx_manager = MockTxManager::default();
-        let revoker = CertRevoker::new(VERIFIER_ADDRESS, tx_manager.clone());
+        let revoker = CertRevoker::new(VERIFIER_ADDRESS, &tx_manager);
 
         revoker.revoke_cert(CERT_HASH).await;
 
-        assert_eq!(
-            tx_manager.take_candidate().tx_data,
-            Bytes::from(INitroEnclaveVerifier::revokeCertCall { certHash: CERT_HASH }.abi_encode())
-        );
-    }
-
-    #[tokio::test]
-    async fn revoke_cert_sends_candidate() {
-        let tx_manager = MockTxManager::default();
-        let revoker = CertRevoker::new(VERIFIER_ADDRESS, tx_manager.clone());
-
-        revoker.revoke_cert(CERT_HASH).await;
         assert_eq!(
             tx_manager.take_candidate().tx_data,
             Bytes::from(INitroEnclaveVerifier::revokeCertCall { certHash: CERT_HASH }.abi_encode())
@@ -136,7 +124,7 @@ mod tests {
             metrics::with_local_recorder(&recorder, || {
                 rt.block_on(async {
                     let tx_manager = MockTxManager::with_receipt_status(false);
-                    let revoker = CertRevoker::new(VERIFIER_ADDRESS, tx_manager);
+                    let revoker = CertRevoker::new(VERIFIER_ADDRESS, &tx_manager);
 
                     revoker.revoke_cert(CERT_HASH).await;
                 });
