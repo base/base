@@ -448,6 +448,8 @@ where
                 return self.handle_gossip_event(behavior_event);
             }
             SwarmEvent::ConnectionEstablished { peer_id, connection_id, endpoint, .. } => {
+                self.connection_gate.remove_dial(&peer_id);
+
                 if endpoint.is_listener() {
                     let addr = endpoint.get_remote_address();
                     if let Err(error) = self.connection_gate.can_connect_inbound(&peer_id, addr) {
@@ -602,6 +604,39 @@ mod tests {
         let mut driver = test_driver();
 
         assert_eq!(driver.clear_pending_connections(), 0);
+    }
+
+    #[tokio::test]
+    async fn established_connections_are_removed_from_pending_dials() {
+        let mut dialer = test_driver();
+        let mut listener = test_driver();
+        let listener_peer_id = *listener.local_peer_id();
+        let mut listener_addr = listener.start().await.unwrap();
+        listener_addr.push(libp2p::multiaddr::Protocol::P2p(listener_peer_id));
+
+        dialer.dial_multiaddr(listener_addr);
+        assert!(dialer.connection_gate.current_dials.contains(&listener_peer_id));
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        while tokio::time::Instant::now() < deadline
+            && dialer.connection_gate.current_dials.contains(&listener_peer_id)
+        {
+            tokio::select! {
+                event = dialer.next() => {
+                    if let Some(event) = event {
+                        dialer.handle_event(event);
+                    }
+                }
+                event = listener.next() => {
+                    if let Some(event) = event {
+                        listener.handle_event(event);
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => break,
+            }
+        }
+
+        assert!(!dialer.connection_gate.current_dials.contains(&listener_peer_id));
     }
 
     #[test]
