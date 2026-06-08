@@ -8,7 +8,7 @@ use alloy_hardforks::Hardfork;
 use alloy_primitives::{Address, B256, U256};
 use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
-use base_common_genesis::{HardForkActivation, RuntimeHardForkRegistry};
+use base_common_genesis::{HardForkActivation, HardForkConfig, RuntimeHardForkRegistry};
 use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
     BaseFeeParams, BaseFeeParamsKind, ChainSpec, DepositContract, DisplayHardforks, EthChainSpec,
@@ -501,11 +501,7 @@ impl BaseChainSpec {
 
     /// Normalizes a contract hardfork ID for matching.
     pub fn normalized_hardfork_id(hardfork_id: &str) -> String {
-        hardfork_id
-            .bytes()
-            .filter(|b| !matches!(b, b'_' | b'-' | b' '))
-            .map(|b| b.to_ascii_lowercase() as char)
-            .collect()
+        HardForkConfig::normalized_hardfork_id(hardfork_id)
     }
 }
 
