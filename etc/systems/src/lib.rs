@@ -62,6 +62,7 @@ mod setup;
 pub use setup::{
     BUILDER_ENODE_ID, CL_BOOTNODE_ENR_PATH, CL_BOOTNODE_P2P_KEY, EL_BOOTNODE_ENODE,
     EL_BOOTNODE_ENODE_ID, EL_BOOTNODE_P2P_KEY, L1GenesisOutput, L2DeploymentOutput, SetupContainer,
+    SetupImage,
 };
 
 mod smoke;

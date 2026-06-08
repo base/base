@@ -19,10 +19,13 @@ use crate::{
     network::{ensure_network_exists, network_name},
 };
 
-const SETUP_IMAGE_TAG: &str = "devnet-setup:local";
-const SETUP_IMAGE_BUILD_LOCK_DIR: &str = "base-devnet-setup-image-build.lock";
+const SETUP_IMAGE_NAME: &str = "system-test-setup";
+const SETUP_IMAGE_TAG: &str = "local";
+const SETUP_IMAGE_REFERENCE: &str = "system-test-setup:local";
+const SETUP_IMAGE_BUILD_LOCK_DIR: &str = "base-system-test-setup-image-build.lock";
 const SETUP_IMAGE_BUILD_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const SETUP_IMAGE_BUILD_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const SETUP_DOCKERFILE_PATH: &str = "etc/docker/Dockerfile.devnet";
 const DEPLOY_TIMEOUT_SECS: u64 = 300;
 
 /// Builder enode ID
@@ -40,8 +43,103 @@ pub const CL_BOOTNODE_P2P_KEY: &str =
 /// Consensus-layer bootnode ENR output path in the shared bootnode volume.
 pub const CL_BOOTNODE_ENR_PATH: &str = "/bootnodes/cl-bootnode.enr";
 
-#[derive(Debug, Clone)]
+/// Docker image used to generate system test genesis and deployment artifacts.
+#[derive(Debug, Clone, Copy)]
+pub struct SetupImage;
+
+impl SetupImage {
+    /// Returns a testcontainers image request for the setup image.
+    pub fn request() -> GenericImage {
+        GenericImage::new(SETUP_IMAGE_NAME, SETUP_IMAGE_TAG)
+    }
+
+    /// Returns whether the setup image is available locally.
+    pub fn exists() -> bool {
+        Command::new("docker")
+            .args(["image", "inspect", SETUP_IMAGE_REFERENCE])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Builds the setup image if it is not available locally.
+    pub fn ensure_built() -> Result<()> {
+        if Self::exists() {
+            return Ok(());
+        }
+
+        let lock_dir = std::env::temp_dir().join(SETUP_IMAGE_BUILD_LOCK_DIR);
+        let lock_started = Instant::now();
+        loop {
+            match fs::create_dir(&lock_dir) {
+                Ok(()) => break,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    if Self::exists() {
+                        return Ok(());
+                    }
+                    ensure!(
+                        lock_started.elapsed() < SETUP_IMAGE_BUILD_LOCK_TIMEOUT,
+                        "timed out waiting for setup image build lock at {}",
+                        lock_dir.display(),
+                    );
+                    thread::sleep(SETUP_IMAGE_BUILD_LOCK_POLL_INTERVAL);
+                }
+                Err(error) => {
+                    return Err(error).wrap_err("Failed to acquire setup image build lock");
+                }
+            }
+        }
+
+        let build_result = (|| {
+            if Self::exists() {
+                return Ok(());
+            }
+
+            let repo_root = Self::find_repo_root()?;
+            let dockerfile_path = repo_root.join(SETUP_DOCKERFILE_PATH);
+
+            ensure!(dockerfile_path.exists(), "{SETUP_DOCKERFILE_PATH} not found");
+
+            let status = Command::new("docker")
+                .args(["build", "-t", SETUP_IMAGE_REFERENCE, "-f", SETUP_DOCKERFILE_PATH, "."])
+                .current_dir(&repo_root)
+                .status()
+                .wrap_err("Failed to run docker build")?;
+
+            ensure!(status.success(), "docker build failed");
+
+            Ok(())
+        })();
+
+        let cleanup_result =
+            fs::remove_dir(&lock_dir).wrap_err("Failed to release setup image build lock");
+
+        match build_result {
+            Ok(()) => cleanup_result,
+            Err(error) => {
+                let _ = cleanup_result;
+                Err(error)
+            }
+        }
+    }
+
+    /// Finds the repository root that contains the setup Dockerfile.
+    pub fn find_repo_root() -> Result<PathBuf> {
+        let mut path = std::env::current_dir()?;
+        loop {
+            if path.join("Cargo.toml").exists() && path.join(SETUP_DOCKERFILE_PATH).exists() {
+                return Ok(path);
+            }
+            if !path.pop() {
+                break;
+            }
+        }
+        Err(eyre::eyre!("Could not find repository root with {SETUP_DOCKERFILE_PATH}"))
+    }
+}
+
 /// Output of the L1 genesis generation.
+#[derive(Debug, Clone)]
 pub struct L1GenesisOutput {
     output_dir: PathBuf,
 }
@@ -88,8 +186,8 @@ impl L1GenesisOutput {
     }
 }
 
-#[derive(Debug, Clone)]
 /// Output of the L2 contract deployment.
+#[derive(Debug, Clone)]
 pub struct L2DeploymentOutput {
     output_dir: PathBuf,
 }
@@ -121,8 +219,8 @@ impl L2DeploymentOutput {
     }
 }
 
-#[derive(Debug, Clone)]
 /// A container for running stack setup scripts.
+#[derive(Debug, Clone)]
 pub struct SetupContainer {
     output_dir: PathBuf,
     chain_id: u64,
@@ -189,7 +287,7 @@ impl SetupContainer {
         let shared_dir = self.output_dir.join("shared");
         std::fs::create_dir_all(&shared_dir).wrap_err("Failed to create shared dir")?;
 
-        self.ensure_setup_image_built()?;
+        SetupImage::ensure_built()?;
 
         let output_dir =
             self.output_dir.canonicalize().wrap_err("Failed to canonicalize output dir path")?;
@@ -199,7 +297,7 @@ impl SetupContainer {
         let output_mount = output_dir.to_string_lossy().to_string();
         let shared_mount = shared_dir.to_string_lossy().to_string();
 
-        let _container = GenericImage::new("devnet-setup", "local")
+        let _container = SetupImage::request()
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)))
             .with_env_var("OUTPUT_DIR", "/output")
             .with_env_var("SHARED_DIR", "/shared")
@@ -219,7 +317,7 @@ impl SetupContainer {
 
     /// Deploys L2 contracts.
     pub fn deploy_l2_contracts(&self, l1_internal_rpc_url: &str) -> Result<L2DeploymentOutput> {
-        self.ensure_setup_image_built()?;
+        SetupImage::ensure_built()?;
 
         let net = self.network_name.as_deref().unwrap_or_else(|| network_name());
         if self.network_name.is_some() {
@@ -236,7 +334,7 @@ impl SetupContainer {
 
         let deployer_key = format!("0x{}", hex::encode(DEPLOYER.private_key.as_slice()));
 
-        let image = GenericImage::new("devnet-setup", "local")
+        let image = SetupImage::request()
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)));
 
         let mut container = image
@@ -283,88 +381,5 @@ impl SetupContainer {
         );
 
         Ok(L2DeploymentOutput { output_dir: self.output_dir.clone() })
-    }
-
-    fn ensure_setup_image_built(&self) -> Result<()> {
-        let setup_image_exists = || {
-            Command::new("docker")
-                .args(["image", "inspect", SETUP_IMAGE_TAG])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        };
-
-        if setup_image_exists() {
-            return Ok(());
-        }
-
-        let lock_dir = std::env::temp_dir().join(SETUP_IMAGE_BUILD_LOCK_DIR);
-        let lock_started = Instant::now();
-        loop {
-            match fs::create_dir(&lock_dir) {
-                Ok(()) => break,
-                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                    if setup_image_exists() {
-                        return Ok(());
-                    }
-                    ensure!(
-                        lock_started.elapsed() < SETUP_IMAGE_BUILD_LOCK_TIMEOUT,
-                        "timed out waiting for setup image build lock at {}",
-                        lock_dir.display(),
-                    );
-                    thread::sleep(SETUP_IMAGE_BUILD_LOCK_POLL_INTERVAL);
-                }
-                Err(error) => {
-                    return Err(error).wrap_err("Failed to acquire setup image build lock");
-                }
-            }
-        }
-
-        let build_result = (|| {
-            if setup_image_exists() {
-                return Ok(());
-            }
-
-            let repo_root = self.find_repo_root()?;
-            let dockerfile_path = repo_root.join("etc/docker/Dockerfile.devnet");
-
-            ensure!(dockerfile_path.exists(), "etc/docker/Dockerfile.devnet not found");
-
-            let status = Command::new("docker")
-                .args(["build", "-t", SETUP_IMAGE_TAG, "-f", "etc/docker/Dockerfile.devnet", "."])
-                .current_dir(&repo_root)
-                .status()
-                .wrap_err("Failed to run docker build")?;
-
-            ensure!(status.success(), "docker build failed");
-
-            Ok(())
-        })();
-
-        let cleanup_result =
-            fs::remove_dir(&lock_dir).wrap_err("Failed to release setup image build lock");
-
-        match build_result {
-            Ok(()) => cleanup_result,
-            Err(error) => {
-                let _ = cleanup_result;
-                Err(error)
-            }
-        }
-    }
-
-    fn find_repo_root(&self) -> Result<PathBuf> {
-        let mut path = std::env::current_dir()?;
-        loop {
-            if path.join("Cargo.toml").exists()
-                && path.join("etc/docker/Dockerfile.devnet").exists()
-            {
-                return Ok(path);
-            }
-            if !path.pop() {
-                break;
-            }
-        }
-        Err(eyre::eyre!("Could not find repository root with etc/docker/Dockerfile.devnet"))
     }
 }
