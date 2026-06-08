@@ -119,6 +119,8 @@ pub enum TransactionEventType {
     Overflowed,
     #[serde(rename = "INCLUDED")]
     Included,
+    #[serde(rename = "FLASHBLOCK_INCLUDED")]
+    FlashblockIncluded,
     #[serde(rename = "FORWARD_ATTEMPT")]
     ForwardAttempt,
     #[serde(rename = "FORWARD_ACK")]
@@ -160,6 +162,7 @@ impl fmt::Display for TransactionEventType {
             Self::Replaced => "REPLACED",
             Self::Overflowed => "OVERFLOWED",
             Self::Included => "INCLUDED",
+            Self::FlashblockIncluded => "FLASHBLOCK_INCLUDED",
             Self::ForwardAttempt => "FORWARD_ATTEMPT",
             Self::ForwardAck => "FORWARD_ACK",
             Self::ForwardNack => "FORWARD_NACK",

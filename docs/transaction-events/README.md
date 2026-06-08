@@ -148,6 +148,7 @@ Mempool/node:
 - `REPLACED`
 - `OVERFLOWED`
 - `INCLUDED`
+- `FLASHBLOCK_INCLUDED`
 
 Forwarding:
 

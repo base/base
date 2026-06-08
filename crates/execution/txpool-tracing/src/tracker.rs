@@ -176,6 +176,16 @@ impl Tracker {
             && let Some((tx_hash, event_log)) = self.txs.peek_lru()
         {
             self.log(tx_hash, event_log, "Transaction inserted");
+            self.emit_transaction_event(
+                *tx_hash,
+                TxEvent::Overflowed,
+                event_log.events.len(),
+                TxpoolEventData {
+                    overflow_reason: Some("tracker_lru_eviction"),
+                    time_in_mempool: Some(event_log.mempool_time.elapsed()),
+                    ..Default::default()
+                },
+            );
         }
 
         self.txs.put(tx_hash, EventLog::new(Local::now(), event));
@@ -312,6 +322,8 @@ impl Tracker {
     /// recorded once per transaction, even when [`PendingBlocks`] contains
     /// transactions from earlier flashblocks that have already been measured.
     pub fn transaction_fb_included(&mut self, tx_hash: TxHash, received_at: Instant) {
+        let mut event_to_emit = None;
+
         // Only track if we have seen this transaction before and it hasn't
         // already been recorded as included in a flashblock.
         if let Some(event_log) = self.txs.get_mut(&tx_hash) {
@@ -336,9 +348,27 @@ impl Tracker {
                     duration_ms = time_pending_to_fb_inclusion.as_millis(),
                     "Transaction included in flashblock"
                 );
+                event_to_emit = Some((
+                    event_log.events.len(),
+                    TxpoolEventData {
+                        time_pending_to_flashblock_inclusion: Some(time_pending_to_fb_inclusion),
+                        inclusion_signal: Some("flashblock_pending_block"),
+                        canonicality: Some("not_observed_by_txpool_tracing"),
+                        ..Default::default()
+                    },
+                ));
             }
 
             event_log.fb_included = true;
+        }
+
+        if let Some((event_index, event_data)) = event_to_emit {
+            self.emit_transaction_event(
+                tx_hash,
+                TxEvent::FlashblockInclusion,
+                event_index,
+                event_data,
+            );
         }
     }
 
@@ -475,6 +505,21 @@ impl Tracker {
         if let Some(duration) = event_data.time_pending_to_inclusion {
             data.insert("time_pending_to_inclusion_ms".to_string(), duration_ms_json(duration));
         }
+        if let Some(duration) = event_data.time_pending_to_flashblock_inclusion {
+            data.insert(
+                "time_pending_to_flashblock_inclusion_ms".to_string(),
+                duration_ms_json(duration),
+            );
+        }
+        if let Some(inclusion_signal) = event_data.inclusion_signal {
+            data.insert("inclusion_signal".to_string(), json!(inclusion_signal));
+        }
+        if let Some(canonicality) = event_data.canonicality {
+            data.insert("canonicality".to_string(), json!(canonicality));
+        }
+        if let Some(overflow_reason) = event_data.overflow_reason {
+            data.insert("overflow_reason".to_string(), json!(overflow_reason));
+        }
         if let Some(inclusion) = event_data.inclusion {
             data.insert("block_hash".to_string(), json!(format!("{:#x}", inclusion.block_hash)));
             data.insert("block_number".to_string(), json!(inclusion.block_number));
@@ -520,7 +565,11 @@ struct TxpoolEventData {
     replacement_hash: Option<TxHash>,
     time_in_mempool: Option<Duration>,
     time_pending_to_inclusion: Option<Duration>,
+    time_pending_to_flashblock_inclusion: Option<Duration>,
     inclusion: Option<BlockInclusion>,
+    inclusion_signal: Option<&'static str>,
+    canonicality: Option<&'static str>,
+    overflow_reason: Option<&'static str>,
 }
 
 impl Pool {
@@ -539,6 +588,7 @@ fn transaction_event_type(event: TxEvent) -> TransactionEventType {
         TxEvent::Dropped => TransactionEventType::Dropped,
         TxEvent::Replaced => TransactionEventType::Replaced,
         TxEvent::BlockInclusion => TransactionEventType::Included,
+        TxEvent::FlashblockInclusion => TransactionEventType::FlashblockIncluded,
         TxEvent::PendingToQueued => TransactionEventType::PendingToQueued,
         TxEvent::QueuedToPending => TransactionEventType::QueuedToPending,
         TxEvent::Overflowed => TransactionEventType::Overflowed,
@@ -604,6 +654,10 @@ mod tests {
         assert_eq!(transaction_event_type(TxEvent::Dropped), TransactionEventType::Dropped);
         assert_eq!(transaction_event_type(TxEvent::Replaced), TransactionEventType::Replaced);
         assert_eq!(transaction_event_type(TxEvent::BlockInclusion), TransactionEventType::Included);
+        assert_eq!(
+            transaction_event_type(TxEvent::FlashblockInclusion),
+            TransactionEventType::FlashblockIncluded
+        );
         assert_eq!(
             transaction_event_type(TxEvent::PendingToQueued),
             TransactionEventType::PendingToQueued
