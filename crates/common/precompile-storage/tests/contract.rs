@@ -66,6 +66,28 @@ fn test_contract_macro_basic_roundtrip() {
     });
 }
 
+mod mapping_only_storable_layout {
+    use alloy_primitives::{Address, U256};
+    use base_precompile_macros::Storable;
+    use base_precompile_storage::{Mapping, StorableType};
+
+    #[derive(Debug, Clone, Storable)]
+    struct MappingOnlyStorage {
+        balances: Mapping<Address, U256>,
+        allowances: Mapping<Address, Mapping<Address, U256>>,
+    }
+
+    #[test]
+    fn mapping_only_storable_struct_uses_static_layout() {
+        assert!(!<MappingOnlyStorage as StorableType>::IS_DYNAMIC);
+        assert_eq!(<MappingOnlyStorage as StorableType>::SLOTS, 2);
+
+        let value =
+            MappingOnlyStorage { balances: Mapping::default(), allowances: Mapping::default() };
+        let _ = (value.balances, value.allowances);
+    }
+}
+
 #[test]
 fn test_contract_slots_are_deterministic() {
     // Verify that the generated slot constants are stable across runs.
