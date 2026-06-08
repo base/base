@@ -181,19 +181,30 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         if self.gas.remaining() <= self.gas_params.call_stipend() {
             return Err(BasePrecompileError::OutOfGas);
         }
-        let s = self
-            .internals
-            .sstore(address, key, value)
-            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+        let checkpoint = self.internals.checkpoint();
+        let result = (|| {
+            let s = self
+                .internals
+                .sstore(address, key, value)
+                .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
 
-        // EIP-2929: static warm base cost
-        self.deduct_gas(self.gas_params.sstore_static_gas())?;
-        // EIP-2929 + EIP-2200: dynamic cost (cold penalty + net-metering)
-        self.deduct_gas(self.gas_params.sstore_dynamic_gas(true, &s.data, s.is_cold))?;
-        // EIP-3529: net-metering refund
-        self.refund_gas(self.gas_params.sstore_refund(true, &s.data));
+            // EIP-2929: static warm base cost
+            self.deduct_gas(self.gas_params.sstore_static_gas())?;
+            // EIP-2929 + EIP-2200: dynamic cost (cold penalty + net-metering)
+            self.deduct_gas(self.gas_params.sstore_dynamic_gas(true, &s.data, s.is_cold))?;
+            // EIP-3529: net-metering refund
+            self.refund_gas(self.gas_params.sstore_refund(true, &s.data));
 
-        Ok(())
+            Ok(())
+        })();
+
+        if result.is_ok() {
+            self.internals.checkpoint_commit();
+        } else {
+            self.internals.checkpoint_revert(checkpoint);
+        }
+
+        result
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
@@ -299,10 +310,17 @@ impl From<alloy_evm::EvmInternalsError> for BasePrecompileError {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Address;
-    use revm::{context_interface::cfg::GasParams, primitives::hardfork::SpecId, state::Bytecode};
+    use alloy_evm::{EvmInternals, eth::EthEvmContext, precompiles::PrecompileInput};
+    use alloy_primitives::{Address, U256};
+    use revm::{
+        context_interface::cfg::GasParams, database::EmptyDB, primitives::hardfork::SpecId,
+        state::Bytecode,
+    };
 
-    use crate::{hashmap::HashMapStorageProvider, provider::PrecompileStorageProvider};
+    use crate::{
+        error::BasePrecompileError, hashmap::HashMapStorageProvider,
+        provider::PrecompileStorageProvider,
+    };
 
     fn amsterdam_provider() -> HashMapStorageProvider {
         let mut provider = HashMapStorageProvider::new(1);
@@ -326,6 +344,60 @@ mod tests {
             2300,
             "call_stipend must equal 2300 as required by EIP-2200"
         );
+    }
+
+    #[test]
+    fn sstore_oog_reverts_local_journal_mutation() {
+        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let address = Address::repeat_byte(0x42);
+        let key = U256::from(7);
+        let value = U256::from(99);
+
+        {
+            let input = PrecompileInput {
+                data: &[],
+                gas: gas_params
+                    .call_stipend()
+                    .saturating_add(gas_params.sstore_static_gas())
+                    .saturating_add(1),
+                reservoir: 0,
+                caller: Address::ZERO,
+                value: U256::ZERO,
+                target_address: address,
+                is_static: false,
+                bytecode_address: address,
+                internals: EvmInternals::from_context(&mut ctx),
+            };
+            let mut provider = super::EvmPrecompileStorageProvider::new(input, gas_params.clone());
+
+            let err = provider.sstore(address, key, value).unwrap_err();
+
+            assert_eq!(err, BasePrecompileError::OutOfGas);
+        }
+
+        {
+            let input = PrecompileInput {
+                data: &[],
+                gas: u64::MAX,
+                reservoir: 0,
+                caller: Address::ZERO,
+                value: U256::ZERO,
+                target_address: address,
+                is_static: false,
+                bytecode_address: address,
+                internals: EvmInternals::from_context(&mut ctx),
+            };
+            let mut provider = super::EvmPrecompileStorageProvider::new(input, gas_params.clone());
+
+            assert_eq!(provider.sload(address, key).unwrap(), U256::ZERO);
+            assert_eq!(
+                provider.gas_used(),
+                gas_params
+                    .warm_storage_read_cost()
+                    .saturating_add(gas_params.cold_storage_additional_cost())
+            );
+        }
     }
 
     /// `set_code` on a brand-new account must charge both `create_state_gas` and
