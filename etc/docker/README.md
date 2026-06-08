@@ -33,6 +33,19 @@ just devnet logs   # Stream logs from all containers
 just devnet status # Check block numbers and sync status
 ```
 
+To test contract-driven Azul activation, run:
+
+```bash
+just devnet upgrade-signal-test
+```
+
+That flow starts L1, generates L2 configs without static hardfork activation timestamps, deploys
+the mock upgrade signal with prior hardforks active at genesis and Azul initially scheduled four
+minutes after the L2 genesis timestamp, starts L2 with the upgrade-signal override, checks behavior
+before Azul, moves the contract timestamp forward one minute 10 seconds before the original
+activation, restarts the L2 services that consume the schedule, then checks behavior at the original
+and delayed activation timestamps.
+
 To build a specific Rust service image directly:
 
 ```bash
