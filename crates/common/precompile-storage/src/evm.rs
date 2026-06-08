@@ -299,10 +299,17 @@ impl From<alloy_evm::EvmInternalsError> for BasePrecompileError {
 
 #[cfg(test)]
 mod tests {
+    use alloy_evm::{EvmInternals, eth::EthEvmContext, precompiles::PrecompileInput};
     use alloy_primitives::Address;
-    use revm::{context_interface::cfg::GasParams, primitives::hardfork::SpecId, state::Bytecode};
+    use revm::{
+        context_interface::cfg::GasParams, database::EmptyDB, primitives::hardfork::SpecId,
+        state::Bytecode,
+    };
 
-    use crate::{hashmap::HashMapStorageProvider, provider::PrecompileStorageProvider};
+    use crate::{
+        error::BasePrecompileError, hashmap::HashMapStorageProvider,
+        provider::PrecompileStorageProvider,
+    };
 
     fn amsterdam_provider() -> HashMapStorageProvider {
         let mut provider = HashMapStorageProvider::new(1);
@@ -310,22 +317,95 @@ mod tests {
         provider
     }
 
-    /// The EIP-2200 stipend guard in [`super::EvmPrecompileStorageProvider::sstore`] compares
-    /// `gas.remaining()` against `gas_params.call_stipend()`. This test verifies that the
-    /// call stipend constant returned by `GasParams` is exactly 2300, as required by EIP-2200.
-    ///
-    /// Unit tests cannot directly instantiate [`super::EvmPrecompileStorageProvider`] because
-    /// it requires a live EVM journal via `PrecompileInput`. The guard logic itself (boundary
-    /// at `remaining <= 2300`, below-boundary, above-boundary, and priority over the static
-    /// guard) is covered by `HashMapStorageProvider` tests in `hashmap.rs`, which mirror the
-    /// same `<=` comparison against `gas_params.call_stipend()`.
+    fn make_evm_provider<'a>(
+        ctx: &'a mut EthEvmContext<EmptyDB>,
+        gas: u64,
+        is_static: bool,
+    ) -> super::EvmPrecompileStorageProvider<'a> {
+        let gas_params = GasParams::default();
+        let input = PrecompileInput {
+            data: &[],
+            gas,
+            reservoir: 0,
+            caller: Address::ZERO,
+            value: alloy_primitives::U256::ZERO,
+            target_address: Address::ZERO,
+            is_static,
+            bytecode_address: Address::ZERO,
+            internals: EvmInternals::from_context(ctx),
+        };
+        super::EvmPrecompileStorageProvider::new(input, gas_params)
+    }
+
+    /// EIP-2200 stipend boundary: `remaining == call_stipend` (2300) must block.
     #[test]
-    fn eip_2200_stipend_guard_constant_is_2300() {
-        let gas_params = GasParams::new_spec(SpecId::AMSTERDAM);
+    fn sstore_oog_at_call_stipend_boundary() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider = make_evm_provider(&mut ctx, gas_params.call_stipend(), false);
+
         assert_eq!(
-            gas_params.call_stipend(),
-            2300,
-            "call_stipend must equal 2300 as required by EIP-2200"
+            provider.sstore(
+                Address::ZERO,
+                alloy_primitives::U256::ZERO,
+                alloy_primitives::U256::from(1u64)
+            ),
+            Err(BasePrecompileError::OutOfGas),
+        );
+    }
+
+    /// Below the stipend (2299): also blocked.
+    #[test]
+    fn sstore_oog_below_call_stipend() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider = make_evm_provider(&mut ctx, gas_params.call_stipend() - 1, false);
+
+        assert_eq!(
+            provider.sstore(
+                Address::ZERO,
+                alloy_primitives::U256::ZERO,
+                alloy_primitives::U256::from(1u64)
+            ),
+            Err(BasePrecompileError::OutOfGas),
+        );
+    }
+
+    /// Strictly above the stipend: guard passes, sstore completes.
+    #[test]
+    fn sstore_allowed_above_call_stipend() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        // Provide enough gas to pass the stipend guard and cover all sstore costs.
+        let gas = gas_params.call_stipend() + 1_000_000;
+        let mut provider = make_evm_provider(&mut ctx, gas, false);
+
+        assert!(
+            provider
+                .sstore(
+                    Address::ZERO,
+                    alloy_primitives::U256::ZERO,
+                    alloy_primitives::U256::from(1u64)
+                )
+                .is_ok(),
+        );
+    }
+
+    /// Static-call violation is checked before the stipend guard.
+    #[test]
+    fn sstore_static_violation_checked_before_stipend_guard() {
+        let gas_params = GasParams::default();
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        // Gas at stipend boundary — both guards would fire, static takes priority.
+        let mut provider = make_evm_provider(&mut ctx, gas_params.call_stipend(), true);
+
+        assert_eq!(
+            provider.sstore(
+                Address::ZERO,
+                alloy_primitives::U256::ZERO,
+                alloy_primitives::U256::from(1u64)
+            ),
+            Err(BasePrecompileError::StaticCallViolation),
         );
     }
 
