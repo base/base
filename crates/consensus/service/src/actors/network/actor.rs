@@ -204,7 +204,7 @@ where
                     match query {
                         NetworkAdminQuery::PostUnsafePayload { payload } => {
                             debug!(target: "node::p2p", "Forwarding unsafe payload from admin api to engine");
-                            if self.engine_client.send_unsafe_block(payload).await.is_err() {
+                            if self.engine_client.send_unsafe_block(*payload).await.is_err() {
                                 warn!(target: "node::p2p", "Failed to forward admin api unsafe block to engine");
                             }
                         }

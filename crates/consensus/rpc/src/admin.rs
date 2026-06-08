@@ -20,7 +20,7 @@ pub enum NetworkAdminQuery {
     /// An admin rpc request to post an unsafe payload.
     PostUnsafePayload {
         /// The payload to post.
-        payload: BaseExecutionPayloadEnvelope,
+        payload: Box<BaseExecutionPayloadEnvelope>,
     },
     /// An admin rpc request to clear pending outbound P2P connections.
     ClearPendingP2pConnections {
@@ -81,7 +81,7 @@ where
         // operation that is valid on both sequencer and validator nodes.
         Metrics::rpc_calls("admin_postUnsafePayload").increment(1.0);
         self.network_sender
-            .send(NetworkAdminQuery::PostUnsafePayload { payload })
+            .send(NetworkAdminQuery::PostUnsafePayload { payload: Box::new(payload) })
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
     }
