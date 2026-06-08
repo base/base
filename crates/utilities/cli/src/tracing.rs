@@ -12,7 +12,7 @@ use tracing_subscriber::{
         time::{FormatTime, SystemTime},
     },
     layer::SubscriberExt,
-    registry::LookupSpan,
+    registry::{LookupSpan, Registry},
     util::SubscriberInitExt,
 };
 
@@ -84,6 +84,32 @@ impl LogConfig {
     ///
     /// This sets the global default subscriber. Should only be called once.
     pub fn init_tracing_subscriber_with_directives(&self, directives: &[&str]) -> eyre::Result<()> {
+        self.init_tracing_subscriber_with_filter(self.build_filter_from_directives(directives))
+    }
+
+    /// Initialize the tracing subscriber with additional application-specific directives and an
+    /// optional extra layer.
+    ///
+    /// The extra layer can be used to attach additional subscribers such as OTLP exporting.
+    pub fn init_tracing_subscriber_with_directives_and_extra_layer(
+        &self,
+        directives: &[&str],
+        extra_layer: Option<Box<dyn Layer<Registry> + Send + Sync>>,
+    ) -> eyre::Result<()> {
+        self.init_tracing_subscriber_with_filter_and_extra_layer(
+            self.build_filter_from_directives(directives),
+            extra_layer,
+        )
+    }
+
+    /// Initialize the tracing subscriber with a custom filter.
+    ///
+    /// This sets the global default subscriber. Should only be called once.
+    pub fn init_tracing_subscriber_with_filter(&self, filter: EnvFilter) -> eyre::Result<()> {
+        self.init_tracing_subscriber_with_filter_and_extra_layer(filter, None)
+    }
+
+    fn build_filter_from_directives(&self, directives: &[&str]) -> EnvFilter {
         let mut filter = EnvFilter::builder()
             .with_default_directive(self.global_level.into())
             .from_env_lossy()
@@ -94,14 +120,15 @@ impl LogConfig {
             filter = filter.add_directive(directive.parse().expect("valid directive"));
         }
 
-        self.init_tracing_subscriber_with_filter(filter)
+        filter
     }
 
-    /// Initialize the tracing subscriber with a custom filter.
-    ///
-    /// This sets the global default subscriber. Should only be called once.
-    pub fn init_tracing_subscriber_with_filter(&self, filter: EnvFilter) -> eyre::Result<()> {
-        let registry = tracing_subscriber::registry().with(filter);
+    fn init_tracing_subscriber_with_filter_and_extra_layer(
+        &self,
+        filter: EnvFilter,
+        extra_layer: Option<Box<dyn Layer<Registry> + Send + Sync>>,
+    ) -> eyre::Result<()> {
+        let registry = tracing_subscriber::registry().with(extra_layer).with(filter);
 
         // Build stdout layer
         let stdout_layer = self.stdout_logs.as_ref().map(build_stdout_layer);
