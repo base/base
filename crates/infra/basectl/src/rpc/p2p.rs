@@ -16,7 +16,7 @@ use base_consensus_peers::{BootNode, NodeRecord};
 use base_consensus_rpc::BaseP2PApiClient;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use serde::Serialize;
-use tracing::warn;
+use tracing::{debug, warn};
 use url::Url;
 
 /// Advertised discovery endpoint information for a node.
@@ -47,10 +47,12 @@ pub struct NodeEndpoint {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeInfoReport {
-    /// Execution-layer advertised endpoint.
+    /// Execution-layer advertised endpoint. `None` when the EL RPC does not
+    /// expose `admin_nodeInfo` or its enode/ENR could not be parsed.
     pub el: Option<NodeEndpoint>,
-    /// Consensus-layer advertised endpoint.
-    pub cl: NodeEndpoint,
+    /// Consensus-layer advertised endpoint. `None` when the `opp2p_self` ENR
+    /// was missing or could not be parsed.
+    pub cl: Option<NodeEndpoint>,
 }
 
 /// Combined EL + CL peer-count summary.
@@ -171,7 +173,14 @@ pub async fn fetch_info(rpc: &Url, cl_rpc: &Url) -> Result<(NodeInfoReport, Peer
         },
     )?;
 
-    let node_info = NodeInfoReport { el, cl: parse_cl_node_endpoint(&cl_info)? };
+    let cl = match parse_cl_node_endpoint(&cl_info) {
+        Ok(endpoint) => Some(endpoint),
+        Err(err) => {
+            warn!(error = %err, "failed to parse CL node endpoint from opp2p_self; reporting CL as unavailable");
+            None
+        }
+    };
+    let node_info = NodeInfoReport { el, cl };
     let el_count = u32::try_from(el_count)
         .context("EL `net_peerCount` exceeded `u32::MAX`; unexpected RPC value")?;
     let peer_stats = PeerStatsReport { el_count, cl: cl_stats };
@@ -351,7 +360,11 @@ fn parse_el_node_endpoint(
 ) -> Result<NodeEndpoint> {
     let record =
         NodeRecord::from_str(enode).with_context(|| format!("parsing EL enode `{enode}`"))?;
-    let parsed_enr = parse_enr_fields(enr).ok();
+    let parsed_enr = parse_enr_fields(enr)
+        .inspect_err(|err| {
+            debug!(error = %err, enr = %enr, "failed to parse EL ENR; falling back to enode/admin_nodeInfo values")
+        })
+        .ok();
 
     let advertised_ip = parsed_enr.and_then(|fields| fields.ip).unwrap_or(fallback_ip);
     let tcp_port = parsed_enr
@@ -381,18 +394,26 @@ fn parse_cl_node_endpoint(peer: &base_consensus_gossip::PeerInfo) -> Result<Node
         anyhow!("`opp2p_self` did not return an ENR; cannot determine advertised CL endpoint")
     })?;
     let fields = parse_enr_fields(enr).with_context(|| format!("parsing CL ENR `{enr}`"))?;
-    let advertised_ip =
-        fields.ip.ok_or_else(|| anyhow!("CL ENR did not contain an advertised IP address"))?;
-    let tcp_port =
-        fields.tcp_port.ok_or_else(|| anyhow!("CL ENR did not contain an advertised TCP port"))?;
-    let udp_port =
-        fields.udp_port.ok_or_else(|| anyhow!("CL ENR did not contain an advertised UDP port"))?;
 
-    Ok(NodeEndpoint {
-        advertised_ip,
-        tcp_port,
-        discovery: DiscoveryInfo { udp_port, v4_enabled: false, v5_enabled: udp_port != 0 },
-    })
+    let mut missing = Vec::new();
+    if fields.ip.is_none() {
+        missing.push("IP address");
+    }
+    if fields.tcp_port.is_none() {
+        missing.push("TCP port");
+    }
+    if fields.udp_port.is_none() {
+        missing.push("UDP port");
+    }
+
+    match (fields.ip, fields.tcp_port, fields.udp_port) {
+        (Some(advertised_ip), Some(tcp_port), Some(udp_port)) => Ok(NodeEndpoint {
+            advertised_ip,
+            tcp_port,
+            discovery: DiscoveryInfo { udp_port, v4_enabled: false, v5_enabled: udp_port != 0 },
+        }),
+        _ => Err(anyhow!("CL ENR is missing required field(s): {}", missing.join(", "))),
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -113,7 +113,7 @@ impl InfoJson {
         Self {
             network: network.to_string(),
             el: LayerInfoJson::from_endpoint(report.el, peer_stats.el_count),
-            cl: LayerInfoJson::from_endpoint(Some(report.cl), peer_stats.cl.connected),
+            cl: LayerInfoJson::from_endpoint(report.cl, peer_stats.cl.connected),
         }
     }
 }
@@ -139,6 +139,10 @@ fn print_info_pretty(
 ) -> Result<()> {
     let mut table = KeyValueTable::new();
     let el_discovery = report.el.map(|endpoint| {
+        format_discovery_flags(endpoint.discovery.v4_enabled, endpoint.discovery.v5_enabled)
+            .to_string()
+    });
+    let cl_discovery = report.cl.map(|endpoint| {
         format_discovery_flags(endpoint.discovery.v4_enabled, endpoint.discovery.v5_enabled)
             .to_string()
     });
@@ -170,13 +174,28 @@ fn print_info_pretty(
             el_discovery.unwrap_or_else(|| unavailable_admin_method("admin_nodeInfo")),
         )
         .row("el_peer_count", peer_stats.el_count.to_string())
-        .row("cl_advertised_ip", report.cl.advertised_ip.to_string())
-        .row("cl_p2p_port", report.cl.tcp_port.to_string())
-        .row("cl_discovery_port", report.cl.discovery.udp_port.to_string())
         .row(
-            "cl_discovery",
-            format_discovery_flags(report.cl.discovery.v4_enabled, report.cl.discovery.v5_enabled),
+            "cl_advertised_ip",
+            report
+                .cl
+                .map(|endpoint| endpoint.advertised_ip.to_string())
+                .unwrap_or_else(unavailable_cl_endpoint),
         )
+        .row(
+            "cl_p2p_port",
+            report
+                .cl
+                .map(|endpoint| endpoint.tcp_port.to_string())
+                .unwrap_or_else(unavailable_cl_endpoint),
+        )
+        .row(
+            "cl_discovery_port",
+            report
+                .cl
+                .map(|endpoint| endpoint.discovery.udp_port.to_string())
+                .unwrap_or_else(unavailable_cl_endpoint),
+        )
+        .row("cl_discovery", cl_discovery.unwrap_or_else(unavailable_cl_endpoint))
         .row("cl_peer_count", peer_stats.cl.connected.to_string());
     table.print()?;
     Ok(())
@@ -231,6 +250,10 @@ const fn format_discovery_flags(v4_enabled: bool, v5_enabled: bool) -> &'static 
 
 fn unavailable_admin_method(method: &str) -> String {
     format!("unavailable (`{method}` not exposed by this RPC)")
+}
+
+fn unavailable_cl_endpoint() -> String {
+    "unavailable (could not parse advertised endpoint from `opp2p_self`)".to_string()
 }
 
 #[cfg(test)]
