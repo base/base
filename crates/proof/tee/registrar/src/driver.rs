@@ -28,8 +28,8 @@ use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient,
-    ProofHandler, ProofHandlerConfig, ProverClient, ProverInstance, RegistrarError,
-    RegistrarMetrics, RegistryClient, Result, SignerClient,
+    ProofHandlerConfig, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics,
+    RegistrationManager, RegistryClient, Result, SignerClient,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -676,7 +676,7 @@ where
         attestation_bytes: &[u8],
         signer_cancel: &CancellationToken,
     ) -> Result<()> {
-        ProofHandler::new(
+        RegistrationManager::new(
             &self.proof_provider,
             &self.registry,
             &self.tx_manager,
