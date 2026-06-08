@@ -3,6 +3,7 @@
 use core::time::Duration;
 
 use alloy_primitives::{Address, U256};
+use base_common_genesis::HardForkConfig;
 use url::Url;
 
 use crate::{
@@ -20,20 +21,48 @@ pub const DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL: Duration = Duration::from_secs(1
 pub const DEFAULT_UPGRADE_SIGNAL_NODE_PROTOCOL_VERSION: u64 = 7;
 
 /// Default hardfork IDs read from the L1 upgrade signal contract.
-pub const DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS: &[&str] = &[
-    "regolith",
-    "canyon",
-    "delta",
-    "ecotone",
-    "fjord",
-    "granite",
-    "holocene",
-    "pectra_blob_schedule",
-    "isthmus",
-    "jovian",
-    "azul",
-    "beryl",
-];
+pub const DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS: &[&str] = HardForkConfig::CONTRACT_HARDFORK_IDS;
+
+/// Controls which local schedule mutation paths are enabled for the L1 upgrade signal.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum UpgradeSignalMode {
+    /// Read the L1 signal and record metrics without mutating local fork schedules.
+    #[default]
+    MetricsOnly,
+    /// Apply the L1 signal once before startup; live polling remains metrics-only.
+    StartupApply,
+    /// Apply the L1 signal before startup and expose manual runtime admin refresh.
+    RuntimeAdmin,
+}
+
+impl UpgradeSignalMode {
+    /// Returns true if this mode applies the schedule before node startup.
+    pub const fn applies_at_startup(self) -> bool {
+        matches!(self, Self::StartupApply | Self::RuntimeAdmin)
+    }
+
+    /// Returns true if this mode allows manual runtime schedule refresh.
+    pub const fn allows_runtime_admin(self) -> bool {
+        matches!(self, Self::RuntimeAdmin)
+    }
+}
+
+/// Controls whether a service should perform its own startup signal read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum UpgradeSignalStartupMode {
+    /// Read and apply the configured signal according to [`UpgradeSignalMode`].
+    #[default]
+    ReadAndApply,
+    /// The caller has already applied the startup signal.
+    AlreadyApplied,
+}
+
+impl UpgradeSignalStartupMode {
+    /// Returns true if the service should perform its own startup signal read.
+    pub const fn reads_and_applies(self) -> bool {
+        matches!(self, Self::ReadAndApply)
+    }
+}
 
 /// Error returned when CLI arguments cannot form an upgrade signal configuration.
 #[derive(Debug, thiserror::Error)]
@@ -63,23 +92,47 @@ pub struct UpgradeSignalArgs {
         value_delimiter = ','
     )]
     pub hardfork_ids: Vec<String>,
+
+    /// Hardfork IDs that are allowed to mutate the local schedule.
+    ///
+    /// If omitted, every read hardfork ID is eligible for application when the selected mode
+    /// permits schedule mutation.
+    #[arg(
+        long = "upgrade-signal.apply-hardfork-id",
+        env = "BASE_NODE_UPGRADE_SIGNAL_APPLY_HARDFORK_ID",
+        value_delimiter = ','
+    )]
+    pub apply_hardfork_ids: Vec<String>,
+
+    /// Upgrade signal application mode.
+    #[arg(
+        long = "upgrade-signal.mode",
+        env = "BASE_NODE_UPGRADE_SIGNAL_MODE",
+        value_enum,
+        default_value_t = UpgradeSignalMode::MetricsOnly
+    )]
+    pub mode: UpgradeSignalMode,
 }
 
 impl UpgradeSignalArgs {
     /// Builds a schedule read configuration if the upgrade signal is enabled.
     pub fn config(&self) -> Result<Option<UpgradeSignalConfig>, UpgradeSignalConfigError> {
         let Some(contract_address) = self.contract_address else {
-            if !self.hardfork_ids.is_empty() {
+            if !self.hardfork_ids.is_empty() || !self.apply_hardfork_ids.is_empty() {
                 return Err(UpgradeSignalConfigError::MissingContractAddress);
             }
             return Ok(None);
         };
 
         let hardfork_ids = Self::configured_hardfork_ids(&self.hardfork_ids)?;
+        let apply_hardfork_ids =
+            Self::configured_apply_hardfork_ids(&hardfork_ids, &self.apply_hardfork_ids)?;
 
         Ok(Some(UpgradeSignalConfig {
             contract_address,
             hardfork_ids,
+            apply_hardfork_ids,
+            mode: self.mode,
             node_protocol_version: U256::from(DEFAULT_UPGRADE_SIGNAL_NODE_PROTOCOL_VERSION),
         }))
     }
@@ -106,6 +159,18 @@ impl UpgradeSignalArgs {
 
         Ok(ids)
     }
+
+    /// Returns the configured apply hardfork IDs, or the read hardfork IDs when omitted.
+    pub fn configured_apply_hardfork_ids(
+        hardfork_ids: &[String],
+        apply_hardfork_ids: &[String],
+    ) -> Result<Vec<String>, UpgradeSignalConfigError> {
+        if apply_hardfork_ids.is_empty() {
+            return Ok(hardfork_ids.to_vec());
+        }
+
+        Self::configured_hardfork_ids(apply_hardfork_ids)
+    }
 }
 
 /// Configuration for reading hardfork IDs from an L1 upgrade signal contract.
@@ -115,6 +180,10 @@ pub struct UpgradeSignalConfig {
     pub contract_address: Address,
     /// Hardfork IDs to pass to the contract.
     pub hardfork_ids: Vec<String>,
+    /// Hardfork IDs allowed to mutate local fork schedules.
+    pub apply_hardfork_ids: Vec<String>,
+    /// Local schedule mutation mode.
+    pub mode: UpgradeSignalMode,
     /// Node protocol version supported by this binary.
     pub node_protocol_version: U256,
 }
@@ -122,11 +191,19 @@ pub struct UpgradeSignalConfig {
 impl UpgradeSignalConfig {
     /// Creates a new schedule read configuration for one hardfork ID.
     pub fn new(contract_address: Address, hardfork_id: impl Into<String>) -> Self {
+        let hardfork_id = hardfork_id.into();
         Self {
             contract_address,
-            hardfork_ids: vec![hardfork_id.into()],
+            hardfork_ids: vec![hardfork_id.clone()],
+            apply_hardfork_ids: vec![hardfork_id],
+            mode: UpgradeSignalMode::MetricsOnly,
             node_protocol_version: U256::from(DEFAULT_UPGRADE_SIGNAL_NODE_PROTOCOL_VERSION),
         }
+    }
+
+    /// Returns a copy of `schedule` filtered to the hardfork IDs that may be applied locally.
+    pub fn application_schedule(&self, schedule: &UpgradeSignalSchedule) -> UpgradeSignalSchedule {
+        schedule.filtered_to_hardfork_ids(&self.apply_hardfork_ids)
     }
 
     /// Returns true if this node supports the minimum protocol version attached to `signal`.
@@ -198,6 +275,8 @@ mod tests {
         let config = args.config().unwrap().unwrap();
 
         assert_eq!(config.hardfork_ids, DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS);
+        assert_eq!(config.apply_hardfork_ids, DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS);
+        assert_eq!(config.mode, UpgradeSignalMode::MetricsOnly);
     }
 
     #[test]
@@ -217,16 +296,36 @@ mod tests {
         let args = UpgradeSignalArgs {
             contract_address: Some(contract),
             hardfork_ids: vec!["azul".to_string()],
+            mode: UpgradeSignalMode::StartupApply,
+            ..Default::default()
         };
 
         let config = args.config().unwrap().unwrap();
 
         assert_eq!(config.contract_address, contract);
         assert_eq!(config.hardfork_ids, ["azul"]);
+        assert_eq!(config.apply_hardfork_ids, ["azul"]);
+        assert_eq!(config.mode, UpgradeSignalMode::StartupApply);
         assert_eq!(
             config.node_protocol_version,
             U256::from(DEFAULT_UPGRADE_SIGNAL_NODE_PROTOCOL_VERSION)
         );
+    }
+
+    #[test]
+    fn uses_explicit_apply_ids() {
+        let args = UpgradeSignalArgs {
+            contract_address: Some(address!("0000000000000000000000000000000000000001")),
+            hardfork_ids: vec!["azul".to_string(), "beryl".to_string()],
+            apply_hardfork_ids: vec!["beryl".to_string()],
+            mode: UpgradeSignalMode::RuntimeAdmin,
+        };
+
+        let config = args.config().unwrap().unwrap();
+
+        assert_eq!(config.hardfork_ids, ["azul", "beryl"]);
+        assert_eq!(config.apply_hardfork_ids, ["beryl"]);
+        assert_eq!(config.mode, UpgradeSignalMode::RuntimeAdmin);
     }
 
     fn signal(protocol_version: U256) -> UpgradeSignal {

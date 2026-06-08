@@ -147,8 +147,10 @@ impl UpgradeSignalRefresher {
         Self { config, reader, chain_id }
     }
 
-    /// Reads, validates, metrics-records, logs, and applies the current L1 schedule.
-    pub async fn refresh(&self) -> Result<UpgradeSignalApplySummary, UpgradeSignalError> {
+    /// Reads, metrics-records, logs, and validates the current L1 schedule.
+    pub async fn read_validated_schedule(
+        &self,
+    ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
         let schedule = match self.reader.read_schedule(&self.config.hardfork_ids).await {
             Ok(schedule) => schedule,
             Err(error) => {
@@ -170,9 +172,18 @@ impl UpgradeSignalRefresher {
                 "read dynamic upgrade signal for runtime refresh"
             );
         }
-        self.config.validate_schedule_protocol_versions(&schedule)?;
+        let application_schedule = self.config.application_schedule(&schedule);
+        self.config.validate_schedule_protocol_versions(&application_schedule)?;
 
-        let summary = UpgradeSignalRuntimeApplier::apply_schedule(self.chain_id, &schedule);
+        Ok(schedule)
+    }
+
+    /// Reads, validates, metrics-records, logs, and applies the current L1 schedule.
+    pub async fn refresh(&self) -> Result<UpgradeSignalApplySummary, UpgradeSignalError> {
+        let schedule = self.read_validated_schedule().await?;
+        let application_schedule = self.config.application_schedule(&schedule);
+        let summary =
+            UpgradeSignalRuntimeApplier::apply_schedule(self.chain_id, &application_schedule);
         info!(
             target: "upgrade_signal",
             chain_id = summary.chain_id,
@@ -237,9 +248,10 @@ mod tests {
     }
 
     #[test]
-    fn contract_hardfork_ids_include_runtime_defaults() {
-        for hardfork_id in HardForkConfig::CONTRACT_HARDFORK_IDS {
-            assert!(HardForkConfig::canonical_hardfork_id(hardfork_id).is_some());
-        }
+    fn default_hardfork_ids_match_canonical_contract_ids() {
+        assert_eq!(
+            crate::DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS,
+            HardForkConfig::CONTRACT_HARDFORK_IDS
+        );
     }
 }

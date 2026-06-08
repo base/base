@@ -15,6 +15,7 @@ use base_tx_forwarding::{
 };
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
+use base_upgrade_signal::UpgradeSignalStartupMode;
 use url::Url;
 
 use crate::upgrade_signal::{
@@ -212,12 +213,29 @@ impl StandardBaseRethNode {
 
     /// Applies a configured L1 upgrade signal from rollup args before startup.
     pub async fn apply_initial_upgrade_signal_from_rollup_args(
+        builder: BaseNodeBuilder,
+        rollup_args: &RollupArgs,
+    ) -> eyre::Result<BaseNodeBuilder> {
+        Self::apply_initial_upgrade_signal_from_rollup_args_with_startup_mode(
+            builder,
+            rollup_args,
+            UpgradeSignalStartupMode::ReadAndApply,
+        )
+        .await
+    }
+
+    /// Applies a configured L1 upgrade signal from rollup args with explicit startup behavior.
+    pub async fn apply_initial_upgrade_signal_from_rollup_args_with_startup_mode(
         mut builder: BaseNodeBuilder,
         rollup_args: &RollupArgs,
+        startup_mode: UpgradeSignalStartupMode,
     ) -> eyre::Result<BaseNodeBuilder> {
         let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
             return Ok(builder);
         };
+        if !startup_mode.reads_and_applies() || !config.signal_config.mode.applies_at_startup() {
+            return Ok(builder);
+        }
 
         let chain_spec = Arc::make_mut(&mut builder.config_mut().chain);
         ExecutionUpgradeSignal::apply_initial_signal_to_chain_spec(&config, chain_spec).await?;
@@ -330,7 +348,26 @@ impl StandardBaseRethNode {
         builder: BaseNodeBuilder,
         args: StandardNodeArgs,
     ) -> eyre::Result<LaunchedBaseNode> {
-        let builder = Self::apply_initial_upgrade_signal(builder, &args).await?;
+        Self::launch_with_upgrade_signal_startup(
+            builder,
+            args,
+            UpgradeSignalStartupMode::ReadAndApply,
+        )
+        .await
+    }
+
+    /// Launches the node with explicit upgrade-signal startup behavior.
+    pub async fn launch_with_upgrade_signal_startup(
+        builder: BaseNodeBuilder,
+        args: StandardNodeArgs,
+        startup_mode: UpgradeSignalStartupMode,
+    ) -> eyre::Result<LaunchedBaseNode> {
+        let builder = Self::apply_initial_upgrade_signal_from_rollup_args_with_startup_mode(
+            builder,
+            &args.rpc.rollup_args,
+            startup_mode,
+        )
+        .await?;
 
         Self::runner_with_version_metrics(args)?.launch(builder).await
     }

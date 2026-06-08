@@ -2,15 +2,23 @@
 
 use std::{path::Path, sync::Arc};
 
+use alloy_provider::RootProvider;
+use base_common_genesis::RollupConfig;
 use base_consensus_cli::{
     ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
     EmbeddedConsensusNodeConfigArgs,
 };
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
+use base_execution_cli::{
+    ExecutionNodeArgs, ExecutionUpgradeSignal, chainspec::chain_value_parser,
+};
+use base_upgrade_signal::{
+    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalMetrics, UpgradeSignalStartupMode,
+};
 use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 use url::Url;
 
 use crate::config::ResolvedChainConfig;
@@ -40,7 +48,7 @@ impl RpcCommand {
     /// Runs the `rpc` flavor.
     pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
         let Self { execution_chain, execution, consensus } = self;
-        let execution_chain = match execution_chain {
+        let mut execution_chain = match execution_chain {
             Some(chain) => chain,
             None => resolved_chain.execution_chain_spec()?,
         };
@@ -50,12 +58,27 @@ impl RpcCommand {
         Self::derive_execution_upgrade_signal_l1_rpc(&mut execution, &consensus_config);
         consensus_config.upgrade_signal = execution.standard.rollup_args.upgrade_signal.clone();
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
-        let rollup_config = consensus_args.load_rollup_config()?;
-
-        let execution = execution.into_launch_config(execution_chain).with_auth_ipc();
-        let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
+        let mut rollup_config = consensus_args.load_rollup_config()?;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
+            if let Some(signal_config) = execution.standard.rollup_args.upgrade_signal.config()?
+                && signal_config.mode.applies_at_startup()
+            {
+                Self::apply_shared_startup_upgrade_signal(
+                    &mut execution_chain,
+                    &mut rollup_config,
+                    &signal_config,
+                    consensus_args.config.l1_rpc_args.l1_eth_rpc.clone(),
+                )
+                .await?;
+            }
+
+            let execution = execution
+                .into_launch_config(execution_chain)
+                .with_auth_ipc()
+                .with_upgrade_signal_startup_already_applied();
+            let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
+
             let task_executor = ctx.task_executor.clone();
             let launched = execution.launch_default(ctx).await?;
             let handle = launched.handle;
@@ -69,11 +92,13 @@ impl RpcCommand {
             };
 
             let consensus_cancellation = CancellationToken::new();
-            let consensus_exit = consensus_args.start_with_overrides_and_cancellation(
-                rollup_config,
-                overrides,
-                consensus_cancellation.clone(),
-            );
+            let consensus_exit = consensus_args
+                .start_with_overrides_and_cancellation_and_upgrade_signal_startup(
+                    rollup_config,
+                    overrides,
+                    consensus_cancellation.clone(),
+                    UpgradeSignalStartupMode::AlreadyApplied,
+                );
             tokio::pin!(execution_exit);
             tokio::pin!(consensus_exit);
 
@@ -100,6 +125,48 @@ impl RpcCommand {
             drop(execution_node);
             result
         })
+    }
+
+    async fn apply_shared_startup_upgrade_signal(
+        execution_chain: &mut Arc<BaseChainSpec>,
+        rollup_config: &mut RollupConfig,
+        signal_config: &UpgradeSignalConfig,
+        l1_rpc: Url,
+    ) -> eyre::Result<()> {
+        let reader = AlloyUpgradeSignalReader::new(
+            RootProvider::new_http(l1_rpc),
+            signal_config.contract_address,
+        );
+        let schedule = match reader.read_schedule(&signal_config.hardfork_ids).await {
+            Ok(schedule) => schedule,
+            Err(error) => {
+                UpgradeSignalMetrics::record_l1_read_errors(&signal_config.hardfork_ids);
+                return Err(error.into());
+            }
+        };
+
+        UpgradeSignalMetrics::record_schedule(&schedule);
+        for signal in &schedule.signals {
+            info!(
+                target: "upgrade_signal",
+                hardfork_id = %signal.hardfork_id,
+                activation_timestamp = signal.activation_timestamp,
+                minimum_protocol_version = %signal.protocol_version,
+                node_protocol_version = %signal_config.node_protocol_version,
+                l1_block_number = signal.l1_block_number,
+                "read dynamic upgrade signal for integrated startup"
+            );
+        }
+
+        let application_schedule = signal_config.application_schedule(&schedule);
+        signal_config.validate_schedule_protocol_versions(&application_schedule)?;
+        ExecutionUpgradeSignal::apply_schedule_to_chain_spec(
+            Arc::make_mut(execution_chain),
+            &application_schedule,
+        )?;
+        ConsensusNodeArgs::apply_schedule_to_rollup_config(rollup_config, &application_schedule);
+
+        Ok(())
     }
 
     fn derive_execution_upgrade_signal_l1_rpc(

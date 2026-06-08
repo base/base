@@ -541,13 +541,16 @@ impl RollupNode {
                     cancellation.clone(),
                 )
             });
-        let upgrade_signal_refresher = self.upgrade_signal_metrics_config.clone().map(|config| {
-            UpgradeSignalRefresher::new(
-                config,
-                self.l1_config.engine_provider.clone(),
-                self.config.l2_chain_id.id(),
-            )
-        });
+        let upgrade_signal_refresher =
+            self.upgrade_signal_metrics_config.clone().and_then(|config| {
+                config.mode.allows_runtime_admin().then(|| {
+                    UpgradeSignalRefresher::new(
+                        config,
+                        self.l1_config.engine_provider.clone(),
+                        self.config.l2_chain_id.id(),
+                    )
+                })
+            });
         // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if self.mode().is_sequencer() {
             let sequencer_engine_client = QueuedSequencerEngineClient {

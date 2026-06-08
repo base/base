@@ -11,7 +11,7 @@ use base_common_genesis::RollupConfig;
 use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder};
 use base_upgrade_signal::{
     AlloyUpgradeSignalReader, UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalMetrics,
-    UpgradeSignalSchedule,
+    UpgradeSignalSchedule, UpgradeSignalStartupMode,
 };
 use clap::Args;
 use eyre::Context;
@@ -242,12 +242,30 @@ impl ConsensusNodeArgs {
     /// Builds a rollup node with caller-supplied endpoint overrides.
     pub async fn build_rollup_node_with_overrides(
         &self,
+        cfg: RollupConfig,
+        overrides: ConsensusNodeOverrides,
+    ) -> eyre::Result<RollupNode> {
+        self.build_rollup_node_with_overrides_and_upgrade_signal_startup(
+            cfg,
+            overrides,
+            UpgradeSignalStartupMode::ReadAndApply,
+        )
+        .await
+    }
+
+    /// Builds a rollup node with caller-supplied endpoint overrides and upgrade-signal startup behavior.
+    pub async fn build_rollup_node_with_overrides_and_upgrade_signal_startup(
+        &self,
         mut cfg: RollupConfig,
         overrides: ConsensusNodeOverrides,
+        startup_mode: UpgradeSignalStartupMode,
     ) -> eyre::Result<RollupNode> {
         self.validate_sequencer_key()?;
         let upgrade_signal_config = self.config.upgrade_signal.config()?;
-        if let Some(signal_config) = &upgrade_signal_config {
+        if let Some(signal_config) = &upgrade_signal_config
+            && startup_mode.reads_and_applies()
+            && signal_config.mode.applies_at_startup()
+        {
             self.apply_initial_upgrade_signal(&mut cfg, signal_config).await?;
         }
 
@@ -354,9 +372,10 @@ impl ConsensusNodeArgs {
                 "read dynamic upgrade signal for consensus startup"
             );
         }
-        signal_config.validate_schedule_protocol_versions(&schedule)?;
+        let application_schedule = signal_config.application_schedule(&schedule);
+        signal_config.validate_schedule_protocol_versions(&application_schedule)?;
 
-        Self::apply_schedule_to_rollup_config(cfg, &schedule);
+        Self::apply_schedule_to_rollup_config(cfg, &application_schedule);
 
         Ok(())
     }
@@ -437,14 +456,35 @@ impl ConsensusNodeArgs {
         overrides: ConsensusNodeOverrides,
         cancellation: CancellationToken,
     ) -> eyre::Result<()> {
-        self.build_rollup_node_with_overrides(cfg, overrides)
-            .await?
-            .start_with_cancellation(cancellation)
-            .await
-            .map_err(|e| {
-                error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
-                eyre::eyre!(e)
-            })
+        self.start_with_overrides_and_cancellation_and_upgrade_signal_startup(
+            cfg,
+            overrides,
+            cancellation,
+            UpgradeSignalStartupMode::ReadAndApply,
+        )
+        .await
+    }
+
+    /// Starts a rollup node with explicit upgrade-signal startup behavior.
+    pub async fn start_with_overrides_and_cancellation_and_upgrade_signal_startup(
+        &self,
+        cfg: RollupConfig,
+        overrides: ConsensusNodeOverrides,
+        cancellation: CancellationToken,
+        startup_mode: UpgradeSignalStartupMode,
+    ) -> eyre::Result<()> {
+        self.build_rollup_node_with_overrides_and_upgrade_signal_startup(
+            cfg,
+            overrides,
+            startup_mode,
+        )
+        .await?
+        .start_with_cancellation(cancellation)
+        .await
+        .map_err(|e| {
+            error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
+            eyre::eyre!(e)
+        })
     }
 
     /// Returns the configured genesis signer address for the selected L2 chain.

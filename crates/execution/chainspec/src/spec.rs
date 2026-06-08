@@ -306,6 +306,61 @@ impl BaseChainSpec {
         })
     }
 
+    /// Returns hardforks with runtime overrides materialized into the schedule.
+    pub fn runtime_hardforks(&self) -> ChainHardforks {
+        let mut hardforks = self.inner.hardforks.clone();
+        if let Some(overrides) = RuntimeHardForkRegistry::overrides(self.chain().id()) {
+            for (hardfork_id, activation) in overrides.activations {
+                let condition = match activation {
+                    HardForkActivation::Never => ForkCondition::Never,
+                    HardForkActivation::Timestamp(timestamp) => ForkCondition::Timestamp(timestamp),
+                };
+                Self::set_hardfork_activation_condition_for(
+                    &mut hardforks,
+                    &hardfork_id,
+                    condition,
+                );
+            }
+        }
+
+        hardforks
+    }
+
+    /// Returns the inner chain spec with runtime hardfork overrides materialized.
+    pub fn runtime_chain_spec(&self) -> ChainSpec {
+        let mut inner = self.inner.clone();
+        inner.hardforks = self.runtime_hardforks();
+        inner
+    }
+
+    /// Get an iterator of all hardforks with runtime-aware activation conditions.
+    pub fn forks_iter(&self) -> impl Iterator<Item = (&dyn Hardfork, ForkCondition)> {
+        self.inner.forks_iter().map(|(fork, condition)| {
+            let condition = self.runtime_fork_condition(fork).unwrap_or(condition);
+            (fork, condition)
+        })
+    }
+
+    /// Returns the runtime-aware fork ID for the given head.
+    pub fn fork_id(&self, head: &Head) -> ForkId {
+        self.runtime_chain_spec().fork_id(head)
+    }
+
+    /// Returns the runtime-aware fork ID for the latest fork.
+    pub fn latest_fork_id(&self) -> ForkId {
+        self.runtime_chain_spec().latest_fork_id()
+    }
+
+    /// Creates a runtime-aware fork filter for the block described by `head`.
+    pub fn fork_filter(&self, head: Head) -> ForkFilter {
+        self.runtime_chain_spec().fork_filter(head)
+    }
+
+    /// Returns the runtime-aware fork ID for the given hardfork.
+    pub fn hardfork_fork_id<HF: Hardfork + Clone>(&self, fork: HF) -> Option<ForkId> {
+        self.runtime_chain_spec().hardfork_fork_id(fork)
+    }
+
     /// Recomputes the sealed genesis header from the current genesis and hardfork schedule.
     pub fn refresh_genesis_header(&mut self) {
         self.inner.genesis_header = SealedHeader::seal_slow(Self::make_genesis_header(
@@ -535,7 +590,8 @@ impl EthChainSpec for BaseChainSpec {
     }
 
     fn display_hardforks(&self) -> Box<dyn core::fmt::Display> {
-        let base_forks = self.inner.hardforks.forks_iter().filter(|(fork, _)| {
+        let hardforks = self.runtime_hardforks();
+        let base_forks = hardforks.forks_iter().filter(|(fork, _)| {
             !EthereumHardfork::VARIANTS.iter().any(|h| h.name() == (*fork).name())
         });
 
@@ -579,19 +635,19 @@ impl Hardforks for BaseChainSpec {
     }
 
     fn forks_iter(&self) -> impl Iterator<Item = (&dyn Hardfork, ForkCondition)> {
-        self.inner.forks_iter()
+        BaseChainSpec::forks_iter(self)
     }
 
     fn fork_id(&self, head: &Head) -> ForkId {
-        self.inner.fork_id(head)
+        self.runtime_chain_spec().fork_id(head)
     }
 
     fn latest_fork_id(&self) -> ForkId {
-        self.inner.latest_fork_id()
+        self.runtime_chain_spec().latest_fork_id()
     }
 
     fn fork_filter(&self, head: Head) -> ForkFilter {
-        self.inner.fork_filter(head)
+        self.runtime_chain_spec().fork_filter(head)
     }
 }
 
@@ -845,6 +901,24 @@ mod tests {
 
         assert_eq!(spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
         assert_eq!(spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
+
+        RuntimeHardForkRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn runtime_registry_overrides_execution_fork_ids() {
+        let chain_id = 9_100_004;
+        RuntimeHardForkRegistry::clear_chain(chain_id);
+        let spec = BaseChainSpecBuilder::default()
+            .chain(Chain::from_id(chain_id))
+            .genesis(Genesis::default())
+            .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
+            .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
+            .build();
+
+        RuntimeHardForkRegistry::set_activation_timestamp(chain_id, "azul", 42);
+
+        assert_eq!(spec.fork_id(&Head { number: 0, timestamp: 41, ..Default::default() }).next, 42);
 
         RuntimeHardForkRegistry::clear_chain(chain_id);
     }

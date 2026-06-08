@@ -3,21 +3,26 @@ services:
     environment:
       BASE_NODE_UPGRADE_SIGNAL_CONTRACT: ${UPGRADE_SIGNAL_CONTRACT:?run etc/scripts/devnet/setup-upgrade-signal.sh first}
       BASE_NODE_UPGRADE_SIGNAL_L1_RPC: ${UPGRADE_SIGNAL_L1_RPC:-http://l1-el:4545}
+      BASE_NODE_UPGRADE_SIGNAL_MODE: runtime-admin
 
   base-builder-cl:
     environment:
       BASE_NODE_UPGRADE_SIGNAL_CONTRACT: ${UPGRADE_SIGNAL_CONTRACT:?run etc/scripts/devnet/setup-upgrade-signal.sh first}
+      BASE_NODE_UPGRADE_SIGNAL_MODE: runtime-admin
 
   base-client:
     environment:
       BASE_NODE_UPGRADE_SIGNAL_CONTRACT: ${UPGRADE_SIGNAL_CONTRACT:?run etc/scripts/devnet/setup-upgrade-signal.sh first}
       BASE_NODE_UPGRADE_SIGNAL_L1_RPC: ${UPGRADE_SIGNAL_L1_RPC:-http://l1-el:4545}
+      BASE_NODE_UPGRADE_SIGNAL_MODE: runtime-admin
 
   base-client-cl:
     environment:
       BASE_NODE_UPGRADE_SIGNAL_CONTRACT: ${UPGRADE_SIGNAL_CONTRACT:?run etc/scripts/devnet/setup-upgrade-signal.sh first}
+      BASE_NODE_UPGRADE_SIGNAL_MODE: runtime-admin
       BASE_NODE_RPC_ENABLE_ADMIN: "true"
 
   base-rpc:
     environment:
       BASE_NODE_UPGRADE_SIGNAL_CONTRACT: ${UPGRADE_SIGNAL_CONTRACT:?run etc/scripts/devnet/setup-upgrade-signal.sh first}
+      BASE_NODE_UPGRADE_SIGNAL_MODE: runtime-admin

@@ -4,13 +4,13 @@ The L1 upgrade signal feature lets Base nodes read hardfork activation timestamp
 contract instead of baking every activation timestamp into the node binary. It is designed for a
 conservative rollout model:
 
-1. The node reads a configured L1 contract at startup.
-2. The startup result is applied to the local execution chain spec and consensus rollup config.
-3. While the node is live, it keeps polling the same contract for metrics only.
-4. Live polling never mutates the already-started node schedule.
+1. The node can read a configured L1 contract for metrics only.
+2. Operators can explicitly enable startup schedule application after the signal has been observed.
+3. Operators can separately enable manual runtime admin refresh when live mutation is intended.
+4. Automatic live polling remains metrics-only in every mode.
 
-This means operators can observe whether the L1 signal changes during a rollout, but a running node
-does not silently change its fork schedule after startup.
+This means operators can observe whether the L1 signal changes during a rollout before allowing it
+to mutate a local fork schedule.
 
 ## Contract Interface
 
@@ -41,6 +41,8 @@ The shared CLI arguments are defined in
 | --- | --- | --- |
 | `--upgrade-signal.contract` | `BASE_NODE_UPGRADE_SIGNAL_CONTRACT` | L1 contract or proxy address. Enables the feature when present. |
 | `--upgrade-signal.hardfork-id` | `BASE_NODE_UPGRADE_SIGNAL_HARDFORK_ID` | Optional comma-delimited hardfork IDs to read. Defaults to all timestamp-based Base hardfork IDs. |
+| `--upgrade-signal.apply-hardfork-id` | `BASE_NODE_UPGRADE_SIGNAL_APPLY_HARDFORK_ID` | Optional comma-delimited hardfork IDs that may mutate the local schedule. Defaults to the read hardfork IDs. |
+| `--upgrade-signal.mode` | `BASE_NODE_UPGRADE_SIGNAL_MODE` | `metrics-only`, `startup-apply`, or `runtime-admin`. Defaults to `metrics-only`. |
 | `--upgrade-signal.l1-rpc` | `BASE_NODE_UPGRADE_SIGNAL_L1_RPC` | L1 execution RPC URL used by standalone execution nodes. |
 
 Standalone execution nodes require both `--upgrade-signal.contract` and
@@ -51,6 +53,11 @@ upgrade-signal L1 RPC from consensus `--l1-eth-rpc`, then copies the shared upgr
 arguments into the embedded consensus config. This keeps clap argument IDs unique and avoids a
 second `--upgrade-signal.l1-rpc` knob in the integrated command. The integrated command wiring is in
 [`bin/base/src/commands/rpc.rs`](../../bin/base/src/commands/rpc.rs).
+
+When `base rpc` runs in an applying mode, the parent command reads one pinned startup schedule and
+applies that same filtered schedule to both the execution chain spec and consensus rollup config.
+The embedded services then start with their individual startup reads disabled, while their live
+metrics and optional runtime admin wiring remain configured.
 
 ## Read Semantics
 
@@ -65,9 +72,20 @@ This avoids uncertainty from reading one hardfork at L1 block `N` and another at
 Every `UpgradeSignal` still carries the block number so metrics and logs can show exactly which L1
 block supplied the schedule.
 
-## Startup Application
+## Application Modes
 
-Startup application is the only path that mutates node configuration.
+`metrics-only` records logs and metrics without mutating the execution chain spec, consensus rollup
+config, or runtime hardfork registry. This is the default and is intended for observation-only
+rollouts.
+
+`startup-apply` applies the configured `apply-hardfork-id` subset once before startup. Live polling
+continues to record metrics only.
+
+`runtime-admin` applies the configured subset before startup and also exposes
+`admin_refreshUpgradeSignal` on admin RPC. Calling that method reads the current L1 schedule and
+applies the configured subset to the process-local runtime hardfork registry.
+
+## Startup Application
 
 ### Execution
 
@@ -81,9 +99,10 @@ That function:
 1. Reads the pinned schedule from L1.
 2. Records startup schedule metrics and logs the timestamp, L1 block, and minimum protocol
    version for each signal.
-3. Validates that every signal's minimum protocol version is supported by this binary.
-4. Applies supported hardfork timestamps to `BaseChainSpec`.
-5. Refreshes the genesis header after changing fork conditions.
+3. Filters the schedule to `apply-hardfork-id`.
+4. Validates that every applied signal's minimum protocol version is supported by this binary.
+5. Applies supported hardfork timestamps to `BaseChainSpec`.
+6. Refreshes the genesis header after changing fork conditions.
 
 Unsupported hardfork IDs are ignored with a debug log. A zero timestamp clears the supported
 hardfork schedule. Positive timestamps go through the chain spec setters, so existing invariants
@@ -100,18 +119,19 @@ That function:
 1. Reads the pinned schedule from L1 using consensus `--l1-eth-rpc`.
 2. Records startup schedule metrics and logs the timestamp, L1 block, and minimum protocol
    version for each signal.
-3. Validates that every signal's minimum protocol version is supported by this binary.
-4. Applies supported hardfork timestamps to `RollupConfig`.
+3. Filters the schedule to `apply-hardfork-id`.
+4. Validates that every applied signal's minimum protocol version is supported by this binary.
+5. Applies supported hardfork timestamps to `RollupConfig`.
 
 Just like execution, unsupported hardfork IDs are ignored and a zero timestamp clears the supported
 hardfork schedule.
 
-## Live Metrics Only
+## Live Metrics
 
 After startup, the feature keeps observing the contract so rollout dashboards can see whether the L1
-signal changes while nodes are running. This live path is intentionally metrics-only. It does not
-call execution chain-spec setters, consensus rollup-config setters, or any other schedule mutation
-API.
+signal changes while nodes are running. Automatic live polling is always metrics-only. It does not
+call execution chain-spec setters, consensus rollup-config setters, or runtime registry mutation
+APIs.
 
 ### Execution Live Observer
 
@@ -132,6 +152,15 @@ builder carries `upgrade_signal_metrics_config` into `RollupNode`, and `RollupNo
 the actor when the feature is configured.
 
 The actor uses the same 12-second polling interval and the same metrics state model as execution.
+
+## Runtime Admin Refresh
+
+`runtime-admin` mode registers `admin_refreshUpgradeSignal` on admin RPC. The method reads and logs
+the full configured L1 schedule, records metrics, filters to `apply-hardfork-id`, validates protocol
+versions for the filtered schedule, and applies it to the runtime hardfork registry.
+
+Execution runtime refresh also keeps the Beryl activation-admin invariant: a positive Beryl
+timestamp is rejected when the execution chain spec has no activation admin address.
 
 ## Live Update Detection
 
@@ -200,10 +229,10 @@ curl -s http://localhost:8300/metrics | grep upgrade_signal
 Keep these invariants intact when changing this feature:
 
 - All hardfork reads for one schedule must use the same concrete L1 block.
-- Startup is the only path that mutates execution or consensus fork schedules.
-- Startup schedule application must reject positive activation timestamps that are missing a
+- Automatic live polling must remain metrics-only.
+- Startup and manual runtime admin refresh are the only schedule mutation paths.
+- Schedule application must reject positive activation timestamps that are missing a
   minimum protocol version or require a version newer than the node software.
-- Live polling is metrics-only and must not apply schedule changes to a running node.
 - The first live poll establishes a baseline and must not count as a live update.
 - L1 block movement alone must not count as a live signal update.
 - Startup schedule application must continue to use existing chain spec and rollup config setters,

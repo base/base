@@ -1,12 +1,13 @@
 //! Execution-node upgrade signal schedule application.
 
 use alloy_provider::RootProvider;
+use base_common_genesis::HardForkConfig;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
     AlloyUpgradeSignalReader, DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalApplySummary,
     UpgradeSignalConfig, UpgradeSignalMetrics, UpgradeSignalMonitor, UpgradeSignalRefresher,
-    UpgradeSignalSchedule, UpgradeSignalStateUpdate,
+    UpgradeSignalRuntimeApplier, UpgradeSignalSchedule, UpgradeSignalStateUpdate,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
 use reth_chainspec::EthChainSpec;
@@ -33,6 +34,15 @@ impl ExecutionUpgradeSignal {
         config: &ExecutionUpgradeSignalConfig,
         chain_spec: &mut BaseChainSpec,
     ) -> eyre::Result<()> {
+        if !config.signal_config.mode.applies_at_startup() {
+            info!(
+                target: "upgrade_signal",
+                mode = ?config.signal_config.mode,
+                "observing execution upgrade signal without startup schedule application"
+            );
+            return Ok(());
+        }
+
         let reader = AlloyUpgradeSignalReader::new(
             RootProvider::new_http(config.l1_rpc.clone()),
             config.signal_config.contract_address,
@@ -56,9 +66,10 @@ impl ExecutionUpgradeSignal {
                 "read dynamic upgrade signal for execution startup"
             );
         }
-        config.signal_config.validate_schedule_protocol_versions(&schedule)?;
+        let application_schedule = config.signal_config.application_schedule(&schedule);
+        config.signal_config.validate_schedule_protocol_versions(&application_schedule)?;
 
-        Self::apply_schedule_to_chain_spec(chain_spec, &schedule)?;
+        Self::apply_schedule_to_chain_spec(chain_spec, &application_schedule)?;
 
         Ok(())
     }
@@ -118,12 +129,53 @@ impl ExecutionUpgradeSignal {
         Ok(applied)
     }
 
+    /// Validates that a runtime schedule can be applied to this execution chain spec.
+    pub fn validate_runtime_schedule_for_chain_spec(
+        chain_spec: &BaseChainSpec,
+        schedule: &UpgradeSignalSchedule,
+    ) -> eyre::Result<()> {
+        if chain_spec.activation_admin_address.is_none()
+            && schedule.signals.iter().any(|signal| {
+                signal.positive_activation_timestamp().is_some()
+                    && HardForkConfig::canonical_hardfork_id(&signal.hardfork_id) == Some("beryl")
+            })
+        {
+            eyre::bail!(
+                "missing activation admin address for Beryl-enabled chain ID: {}",
+                chain_spec.chain().id()
+            );
+        }
+
+        Ok(())
+    }
+
     /// Refreshes the runtime upgrade signal schedule for a running execution node.
     pub async fn refresh_runtime_upgrade_signal(
-        refresher: &UpgradeSignalRefresher,
+        refresher: &ExecutionUpgradeSignalRuntimeRefresher,
     ) -> RpcResult<UpgradeSignalApplySummary> {
-        match refresher.refresh().await {
-            Ok(summary) => {
+        match refresher.refresher.read_validated_schedule().await {
+            Ok(schedule) => {
+                let application_schedule =
+                    refresher.refresher.config.application_schedule(&schedule);
+                if let Err(error) = Self::validate_runtime_schedule_for_chain_spec(
+                    &refresher.chain_spec,
+                    &application_schedule,
+                ) {
+                    warn!(
+                        target: "upgrade_signal",
+                        error = %error,
+                        "failed to validate execution runtime upgrade signal"
+                    );
+                    return Err(ErrorObject::owned(
+                        -32003,
+                        "failed to refresh upgrade signal",
+                        Some(error.to_string()),
+                    ));
+                }
+                let summary = UpgradeSignalRuntimeApplier::apply_schedule(
+                    refresher.refresher.chain_id,
+                    &application_schedule,
+                );
                 info!(
                     target: "upgrade_signal",
                     chain_id = summary.chain_id,
@@ -156,11 +208,18 @@ impl ExecutionUpgradeSignal {
         ctx: &mut BaseRpcContext<'_>,
         config: ExecutionUpgradeSignalConfig,
     ) -> eyre::Result<()> {
+        if !config.signal_config.mode.allows_runtime_admin() {
+            return Ok(());
+        }
+
         let chain_id = ctx.config().chain.chain().id();
-        let refresher = UpgradeSignalRefresher::new(
-            config.signal_config,
-            RootProvider::new_http(config.l1_rpc),
-            chain_id,
+        let refresher = ExecutionUpgradeSignalRuntimeRefresher::new(
+            UpgradeSignalRefresher::new(
+                config.signal_config,
+                RootProvider::new_http(config.l1_rpc),
+                chain_id,
+            ),
+            ctx.config().chain.as_ref().clone(),
         );
         let mut module = RpcModule::new(refresher);
         module
@@ -171,6 +230,22 @@ impl ExecutionUpgradeSignal {
         ctx.modules.merge_if_module_configured(RethRpcModule::Admin, module)?;
 
         Ok(())
+    }
+}
+
+/// Execution runtime upgrade signal refresher with execution-specific validation context.
+#[derive(Debug, Clone)]
+pub struct ExecutionUpgradeSignalRuntimeRefresher {
+    /// Shared runtime refresher.
+    pub refresher: UpgradeSignalRefresher,
+    /// Execution chain spec used for runtime schedule validation.
+    pub chain_spec: BaseChainSpec,
+}
+
+impl ExecutionUpgradeSignalRuntimeRefresher {
+    /// Creates an execution runtime upgrade signal refresher.
+    pub const fn new(refresher: UpgradeSignalRefresher, chain_spec: BaseChainSpec) -> Self {
+        Self { refresher, chain_spec }
     }
 }
 
@@ -224,11 +299,15 @@ impl ExecutionUpgradeSignalMetricsExtension {
 impl BaseNodeExtension for ExecutionUpgradeSignalMetricsExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         let config = self.config;
-        let rpc_config = config.clone();
 
-        let hooks = hooks.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
-            ExecutionUpgradeSignal::register_runtime_refresh_rpc(ctx, rpc_config)
-        });
+        let hooks = if config.signal_config.mode.allows_runtime_admin() {
+            let rpc_config = config.clone();
+            hooks.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
+                ExecutionUpgradeSignal::register_runtime_refresh_rpc(ctx, rpc_config)
+            })
+        } else {
+            hooks
+        };
 
         hooks.add_node_started_hook(move |ctx| {
             let reader = AlloyUpgradeSignalReader::new(

@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
+use base_common_genesis::HardForkConfig;
 
 use crate::UpgradeSignalMetrics;
 
@@ -44,6 +45,33 @@ impl UpgradeSignalSchedule {
     /// Creates a new upgrade signal schedule.
     pub fn new(signals: Vec<UpgradeSignal>) -> Self {
         Self { signals }
+    }
+
+    /// Returns a copy of this schedule containing only the requested hardfork IDs.
+    pub fn filtered_to_hardfork_ids(&self, hardfork_ids: &[String]) -> Self {
+        let signals = self
+            .signals
+            .iter()
+            .filter(|signal| {
+                hardfork_ids
+                    .iter()
+                    .any(|hardfork_id| Self::hardfork_ids_match(&signal.hardfork_id, hardfork_id))
+            })
+            .cloned()
+            .collect();
+
+        Self { signals }
+    }
+
+    /// Returns true if two hardfork ID spellings refer to the same contract hardfork.
+    pub fn hardfork_ids_match(left: &str, right: &str) -> bool {
+        match (
+            HardForkConfig::canonical_hardfork_id(left),
+            HardForkConfig::canonical_hardfork_id(right),
+        ) {
+            (Some(left), Some(right)) => left == right,
+            _ => left.trim().eq_ignore_ascii_case(right.trim()),
+        }
     }
 }
 
@@ -178,5 +206,23 @@ mod tests {
         updated_signal.l1_block_number = 2;
 
         assert_eq!(state.update_signal(updated_signal), UpgradeSignalStateUpdate::Unchanged);
+    }
+
+    #[test]
+    fn filters_schedule_by_canonical_hardfork_id() {
+        let schedule = UpgradeSignalSchedule::new(vec![
+            signal(42),
+            UpgradeSignal {
+                hardfork_id: "beryl".to_string(),
+                activation_timestamp: 43,
+                protocol_version: U256::from(7),
+                l1_block_number: 1,
+            },
+        ]);
+
+        let filtered = schedule.filtered_to_hardfork_ids(&["base_azul".to_string()]);
+
+        assert_eq!(filtered.signals.len(), 1);
+        assert_eq!(filtered.signals[0].hardfork_id, "azul");
     }
 }

@@ -3112,11 +3112,14 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "alloy-provider 2.0.5",
  "base-cli-utils",
  "base-common-chains",
+ "base-common-genesis",
  "base-consensus-cli",
  "base-execution-chainspec",
  "base-execution-cli",
+ "base-upgrade-signal",
  "clap",
  "eyre",
  "figment",
@@ -4374,6 +4377,7 @@ dependencies = [
  "base-cli-utils",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-genesis",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",

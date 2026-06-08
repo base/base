@@ -11,7 +11,7 @@ mod config;
 pub use config::{
     DEFAULT_UPGRADE_SIGNAL_HARDFORK_IDS, DEFAULT_UPGRADE_SIGNAL_NODE_PROTOCOL_VERSION,
     DEFAULT_UPGRADE_SIGNAL_POLL_INTERVAL, UpgradeSignalArgs, UpgradeSignalConfig,
-    UpgradeSignalConfigError, UpgradeSignalL1RpcArgs,
+    UpgradeSignalConfigError, UpgradeSignalL1RpcArgs, UpgradeSignalMode, UpgradeSignalStartupMode,
 };
 
 mod contract;
