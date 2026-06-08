@@ -32,7 +32,7 @@ use crate::transaction::eip8130::{
 ///
 /// - [`Self::sender`]: `None` selects the EOA path (recovered from
 ///   `sender_auth` as a 65-byte ECDSA signature); `Some` selects the
-///   configured-owner path with an explicit account address.
+///   configured-actor path with an explicit account address.
 /// - [`Self::payer`]: `None` selects self-pay (the resolved sender pays);
 ///   `Some` selects sponsored pay (the payer address pays).
 ///

@@ -47,19 +47,19 @@ impl Eip8130Constants {
     /// and replay protection relies on `expiry` (which must be non-zero).
     pub const NONCE_KEY_MAX: U256 = U256::MAX;
 
-    /// Owner scope bit: ERC-1271 `verifySignature()` context.
+    /// Actor scope bit: ERC-1271 `verifySignature()` context.
     pub const SCOPE_SIGNATURE: u8 = 0x01;
 
-    /// Owner scope bit: `sender_auth` validation context.
+    /// Actor scope bit: `sender_auth` validation context.
     pub const SCOPE_SENDER: u8 = 0x02;
 
-    /// Owner scope bit: `payer_auth` validation context.
+    /// Actor scope bit: `payer_auth` validation context.
     pub const SCOPE_PAYER: u8 = 0x04;
 
-    /// Owner scope bit: config change `auth` context.
+    /// Actor scope bit: config change `auth` context.
     pub const SCOPE_CONFIG: u8 = 0x08;
 
-    /// Unrestricted scope value (owner is valid in all contexts).
+    /// Unrestricted scope value (actor is valid in all contexts).
     pub const SCOPE_UNRESTRICTED: u8 = 0x00;
 
     /// [EIP-7702]-style delegation indicator code prefix.
@@ -79,23 +79,23 @@ impl Eip8130Constants {
     /// `account_changes` entry type byte: account creation.
     pub const ACCOUNT_CHANGE_TYPE_CREATE: u8 = 0x00;
 
-    /// `account_changes` entry type byte: owner config change.
+    /// `account_changes` entry type byte: actor config change.
     pub const ACCOUNT_CHANGE_TYPE_CONFIG: u8 = 0x01;
 
     /// `account_changes` entry type byte: code delegation.
     pub const ACCOUNT_CHANGE_TYPE_DELEGATION: u8 = 0x02;
 
-    /// `owner_change` operation byte: authorize a new owner.
-    pub const OWNER_CHANGE_AUTHORIZE: u8 = 0x01;
+    /// `actor_change` operation byte: authorize a new actor.
+    pub const ACTOR_CHANGE_AUTHORIZE: u8 = 0x01;
 
-    /// `owner_change` operation byte: revoke an existing owner.
-    pub const OWNER_CHANGE_REVOKE: u8 = 0x02;
+    /// `actor_change` operation byte: revoke an existing actor.
+    pub const ACTOR_CHANGE_REVOKE: u8 = 0x02;
 
     /// Lower-bound verifier address. The `ECRECOVER_VERIFIER` native is fixed at
     /// `address(1)`; verifier addresses smaller than this are reserved.
     pub const ECRECOVER_VERIFIER: Address = address!("0x0000000000000000000000000000000000000001");
 
-    /// Sentinel verifier address indicating an owner slot has been revoked
+    /// Sentinel verifier address indicating an actor slot has been revoked
     /// (`type(uint160).max`). Submitting authentication data prefixed with this
     /// verifier MUST be rejected.
     pub const REVOKED_VERIFIER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
@@ -113,14 +113,14 @@ impl Eip8130Constants {
     /// a tight window bounds the replay surface in the absence of nonce state.
     pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 10;
 
-    /// Maximum number of owner entries the mempool accepts in a single
-    /// `Create.initial_owners` or `ConfigChange.owner_changes` slice. Bounds
-    /// per-transaction memory and CPU spent on duplicate-owner_id detection
+    /// Maximum number of actor entries the mempool accepts in a single
+    /// `Create.initial_actors` or `ConfigChange.actor_changes` slice. Bounds
+    /// per-transaction memory and CPU spent on duplicate-actor_id detection
     /// at admission time. Combined with [`Self::MAX_CONFIG_CHANGES_PER_TX`]
-    /// this caps total owner work per tx at
-    /// `MAX_CONFIG_CHANGES_PER_TX * MAX_OWNERS_PER_ENTRY + MAX_OWNERS_PER_ENTRY`
-    /// (config-change `owner_changes` + one `Create.initial_owners`).
-    pub const MAX_OWNERS_PER_ENTRY: usize = 32;
+    /// this caps total actor work per tx at
+    /// `MAX_CONFIG_CHANGES_PER_TX * MAX_ACTORS_PER_ENTRY + MAX_ACTORS_PER_ENTRY`
+    /// (config-change `actor_changes` + one `Create.initial_actors`).
+    pub const MAX_ACTORS_PER_ENTRY: usize = 32;
 }
 
 #[cfg(test)]

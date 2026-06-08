@@ -39,7 +39,7 @@ pub struct Eip8130Signed {
     ///
     /// On the EOA path (`tx.sender == None`) this is a 65-byte ECDSA signature
     /// (`r || s || v`) over [`TxEip8130::sender_signature_hash`].
-    /// On the configured-owner path (`tx.sender == Some(_)`) this is
+    /// On the configured-actor path (`tx.sender == Some(_)`) this is
     /// `verifier(20) || verifier_data`.
     sender_auth: Bytes,
     /// Payer authentication payload, or empty for self-pay.
@@ -187,7 +187,7 @@ impl Eip8130Signed {
     }
 
     /// Returns the sender address if it is explicitly provided by the
-    /// transaction body (configured-owner path).
+    /// transaction body (configured-actor path).
     pub const fn explicit_sender(&self) -> Option<Address> {
         self.tx.sender
     }
@@ -197,7 +197,7 @@ impl Eip8130Signed {
     /// EIP-2).
     ///
     /// Returns `Ok(None)` when [`Self::explicit_sender`] is `Some(_)` — the
-    /// configured-owner path does not require ecrecover because the sender
+    /// configured-actor path does not require ecrecover because the sender
     /// address is already in the transaction body.
     ///
     /// Returns `Ok(Some(addr))` when [`TxEip8130::sender`] is `None`: parses
@@ -229,7 +229,7 @@ impl Eip8130Signed {
     }
 
     /// Recovers the sender of this signed transaction by short-circuiting to
-    /// [`Self::explicit_sender`] for the configured-owner path and otherwise
+    /// [`Self::explicit_sender`] for the configured-actor path and otherwise
     /// running checked EOA ecrecover. Flattens the [`Self::recover_eoa_sender`]
     /// `Option` so call sites in the pooled and envelope `SignerRecoverable`
     /// implementations stay one-liners and cannot drift.
@@ -576,7 +576,7 @@ mod tests {
 
     #[cfg(feature = "k256")]
     #[test]
-    fn recover_eoa_sender_returns_none_for_configured_owner() {
+    fn recover_eoa_sender_returns_none_for_configured_actor() {
         let signed = sample_signed(false);
         assert!(signed.explicit_sender().is_some());
         assert_eq!(signed.recover_eoa_sender().unwrap(), None);
@@ -650,7 +650,7 @@ mod tests {
 
     #[cfg(feature = "k256")]
     #[test]
-    fn recover_eoa_sender_unchecked_returns_none_for_configured_owner() {
+    fn recover_eoa_sender_unchecked_returns_none_for_configured_actor() {
         let signed = sample_signed(false);
         assert!(signed.explicit_sender().is_some());
         assert_eq!(signed.recover_eoa_sender_unchecked().unwrap(), None);
