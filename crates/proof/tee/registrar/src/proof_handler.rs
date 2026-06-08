@@ -6,6 +6,7 @@
 
 use std::{
     collections::HashSet,
+    fmt,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -21,20 +22,9 @@ use tracing::{debug, info, warn};
 
 use crate::{ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient, Result};
 
-/// Runtime settings used by [`ProofHandler`] when registering a signer.
-#[derive(Debug, Clone, Copy)]
-pub struct ProofHandlerConfig {
-    /// `TEEProverRegistry` contract address on L1.
-    pub registry_address: Address,
-    /// Maximum number of transaction submission retries for transient errors.
-    pub max_tx_retries: u32,
-    /// Delay between transaction submission retries.
-    pub tx_retry_delay: Duration,
-}
-
-/// Shared dependencies used by [`ProofHandler`] for one registration attempt.
-#[derive(Debug)]
-pub struct ProofHandlerContext<'a, P: ?Sized, R: ?Sized, T: ?Sized> {
+/// Component responsible for turning attestation proof results into durable
+/// onchain signer registrations.
+pub struct ProofHandler<'a, P: ?Sized, R: ?Sized, T: ?Sized> {
     /// Proof provider used to poll or generate the attestation proof result.
     pub proof_provider: &'a P,
     /// Registry client used for side-effect-free registration state checks.
@@ -45,29 +35,23 @@ pub struct ProofHandlerContext<'a, P: ?Sized, R: ?Sized, T: ?Sized> {
     pub proof_semaphore: &'a Semaphore,
     /// Process-local signer set used to deduplicate concurrent attempts.
     pub in_flight_registrations: &'a Arc<Mutex<HashSet<Address>>>,
-    /// Runtime settings for this attempt.
-    pub config: &'a ProofHandlerConfig,
+    /// `TEEProverRegistry` contract address on L1.
+    pub registry_address: Address,
+    /// Maximum number of transaction submission retries for transient errors.
+    pub max_tx_retries: u32,
+    /// Delay between transaction submission retries.
+    pub tx_retry_delay: Duration,
 }
 
-/// Input data for one signer registration attempt.
-#[derive(Debug, Clone, Copy)]
-pub struct ProofHandlerRequest<'a> {
-    /// Prover instance that supplied the signer and attestation.
-    pub instance: &'a ProverInstance,
-    /// Signer address to register.
-    pub signer_address: Address,
-    /// Zero-based enclave index on the source instance.
-    pub enclave_index: usize,
-    /// Raw Nitro attestation bytes used as proof input.
-    pub attestation_bytes: &'a [u8],
-    /// Task-scoped cancellation token.
-    pub signer_cancel: &'a CancellationToken,
+impl<P: ?Sized, R: ?Sized, T: ?Sized> fmt::Debug for ProofHandler<'_, P, R, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProofHandler")
+            .field("registry_address", &self.registry_address)
+            .field("max_tx_retries", &self.max_tx_retries)
+            .field("tx_retry_delay", &self.tx_retry_delay)
+            .finish_non_exhaustive()
+    }
 }
-
-/// Component responsible for turning attestation proof results into durable
-/// onchain signer registrations.
-#[derive(Debug)]
-pub struct ProofHandler;
 
 /// RAII guard that removes a signer address from the in-flight set when
 /// dropped.
@@ -81,6 +65,14 @@ pub struct InFlightRegistrationGuard {
     signer: Address,
 }
 
+impl InFlightRegistrationGuard {
+    /// Reserves `signer` in `in_flight` until the returned guard is dropped.
+    pub fn try_acquire(in_flight: &Arc<Mutex<HashSet<Address>>>, signer: Address) -> Option<Self> {
+        let mut set = in_flight.lock().unwrap_or_else(|e| e.into_inner());
+        set.insert(signer).then(|| Self { in_flight: Arc::clone(in_flight), signer })
+    }
+}
+
 impl Drop for InFlightRegistrationGuard {
     fn drop(&mut self) {
         // The critical section is a single `HashSet::remove` and cannot
@@ -92,7 +84,12 @@ impl Drop for InFlightRegistrationGuard {
     }
 }
 
-impl ProofHandler {
+impl<'a, P, R, T> ProofHandler<'a, P, R, T>
+where
+    P: AttestationProofProvider + ?Sized,
+    R: RegistryClient + ?Sized,
+    T: TxManager + ?Sized,
+{
     /// Attempts to register a signer onchain if it is not already registered.
     ///
     /// This is the expensive path: checks onchain status, polls or generates a
@@ -106,30 +103,24 @@ impl ProofHandler {
     /// `TEEVerifier` gates proof acceptance on `TEE_IMAGE_HASH` at submission
     /// time, so pre-registered enclaves cannot produce accepted proposals
     /// until the hardfork activates.
-    pub async fn register_signer<P, R, T>(
-        context: ProofHandlerContext<'_, P, R, T>,
-        request: ProofHandlerRequest<'_>,
-    ) -> Result<()>
-    where
-        P: AttestationProofProvider + ?Sized,
-        R: RegistryClient + ?Sized,
-        T: TxManager + ?Sized,
-    {
-        let ProofHandlerContext {
+    pub async fn register_signer(
+        &self,
+        instance: &ProverInstance,
+        signer_address: Address,
+        enclave_index: usize,
+        attestation_bytes: &[u8],
+        signer_cancel: &CancellationToken,
+    ) -> Result<()> {
+        let Self {
             proof_provider,
             registry,
             tx_manager,
             proof_semaphore,
             in_flight_registrations,
-            config,
-        } = context;
-        let ProofHandlerRequest {
-            instance,
-            signer_address,
-            enclave_index,
-            attestation_bytes,
-            signer_cancel,
-        } = request;
+            registry_address,
+            max_tx_retries,
+            tx_retry_delay,
+        } = *self;
 
         // Check cancellation BEFORE any other work: a task that was
         // already cancelled should not acquire the in-flight mutex or do
@@ -145,21 +136,16 @@ impl ProofHandler {
         // precheck. If another concurrent task already owns it, short-circuit
         // so we do not race past the precheck, regenerate the proof, and
         // submit a duplicate registration transaction.
-        let _in_flight = {
-            let mut set = in_flight_registrations.lock().unwrap_or_else(|e| e.into_inner());
-            if !set.insert(signer_address) {
-                debug!(
-                    signer = %signer_address,
-                    enclave_index,
-                    instance = %instance.instance_id,
-                    "registration already in flight for this signer, skipping duplicate",
-                );
-                return Ok(());
-            }
-            InFlightRegistrationGuard {
-                in_flight: Arc::clone(in_flight_registrations),
-                signer: signer_address,
-            }
+        let Some(_in_flight) =
+            InFlightRegistrationGuard::try_acquire(in_flight_registrations, signer_address)
+        else {
+            debug!(
+                signer = %signer_address,
+                enclave_index,
+                instance = %instance.instance_id,
+                "registration already in flight for this signer, skipping duplicate",
+            );
+            return Ok(());
         };
 
         // Cancel-aware: `is_registered` is a side-effect-free read, so
@@ -273,16 +259,13 @@ impl ProofHandler {
         info!(
             signer = %signer_address,
             instance = %instance.instance_id,
-            registry = %config.registry_address,
+            registry = %registry_address,
             calldata_len = calldata.len(),
             "Registering signer"
         );
 
-        let candidate = TxCandidate {
-            tx_data: calldata,
-            to: Some(config.registry_address),
-            ..Default::default()
-        };
+        let candidate =
+            TxCandidate { tx_data: calldata, to: Some(registry_address), ..Default::default() };
 
         info!(
             tx = ?candidate,
@@ -291,8 +274,6 @@ impl ProofHandler {
 
         // Retry tx submission on transient errors to avoid discarding an
         // expensive proof on a nonce race or brief network blip.
-        let max_tx_retries = config.max_tx_retries;
-        let tx_retry_delay = config.tx_retry_delay;
         let mut tx_retries = 0;
 
         let receipt = loop {

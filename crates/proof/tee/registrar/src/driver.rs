@@ -28,8 +28,8 @@ use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     CertManager, CrlConfig, InstanceDiscovery, InstanceHealthStatus, NitroVerifierClient,
-    ProofHandler, ProofHandlerConfig, ProofHandlerContext, ProofHandlerRequest, ProverClient,
-    ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient, Result, SignerClient,
+    ProofHandler, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient,
+    Result, SignerClient,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -676,29 +676,17 @@ where
         attestation_bytes: &[u8],
         signer_cancel: &CancellationToken,
     ) -> Result<()> {
-        let handler_config = ProofHandlerConfig {
+        ProofHandler {
+            proof_provider: &self.proof_provider,
+            registry: &self.registry,
+            tx_manager: &self.tx_manager,
+            proof_semaphore: self.proof_semaphore.as_ref(),
+            in_flight_registrations: &self.in_flight_registrations,
             registry_address: self.config.registry_address,
             max_tx_retries: self.config.max_tx_retries,
             tx_retry_delay: self.config.tx_retry_delay,
-        };
-
-        ProofHandler::register_signer(
-            ProofHandlerContext {
-                proof_provider: &self.proof_provider,
-                registry: &self.registry,
-                tx_manager: &self.tx_manager,
-                proof_semaphore: self.proof_semaphore.as_ref(),
-                in_flight_registrations: &self.in_flight_registrations,
-                config: &handler_config,
-            },
-            ProofHandlerRequest {
-                instance,
-                signer_address,
-                enclave_index,
-                attestation_bytes,
-                signer_cancel,
-            },
-        )
+        }
+        .register_signer(instance, signer_address, enclave_index, attestation_bytes, signer_cancel)
         .await
     }
 
