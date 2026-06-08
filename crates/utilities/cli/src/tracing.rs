@@ -133,7 +133,13 @@ impl LogConfig {
                     trace_args.protocol,
                     trace_args.sample_ratio,
                 )?;
-                let layer = reth_tracing_otlp::span_layer(config)?
+                // The gRPC (tonic) exporter requires a Tokio runtime context at construction
+                // time. We may be called before the main runtime starts, so build a temporary
+                // single-threaded runtime for the exporter init only.
+                let layer = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?
+                    .block_on(async { reth_tracing_otlp::span_layer(config) })?
                     .with_filter(trace_args.otlp_filter.clone());
                 Some(Box::new(layer))
             } else {
