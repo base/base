@@ -28,8 +28,8 @@ pub use l1::{L1BlockInfo, L1ConnectionMode, fetch_full_system_config, run_l1_blo
 mod p2p;
 pub use p2p::{
     DiscoveryInfo, NodeEndpoint, NodeInfoReport, PeerListReport, PeerStatsReport, PeerSummary,
-    RawInfoReport, RawPeerCounts, RawPeersReport, fetch_connected_peers, fetch_node_info,
-    fetch_peer_stats, fetch_raw_info, fetch_raw_peers,
+    RawInfoReport, RawPeerCounts, RawPeersReport, fetch_connected_peers, fetch_info,
+    fetch_raw_info, fetch_raw_peers,
 };
 
 mod pods;

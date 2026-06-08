@@ -118,11 +118,15 @@ pub struct RawPeersReport {
     pub cl: serde_json::Value,
 }
 
-/// Fetches the advertised EL + CL endpoints used by the node.
-pub async fn fetch_node_info(rpc: &Url, cl_rpc: &Url) -> Result<NodeInfoReport> {
+/// Fetches the advertised endpoints and connected peer-count summary for
+/// `basectl p2p info`.
+///
+/// All four RPC calls (EL `admin_nodeInfo` + `net_peerCount`, CL `opp2p_self` +
+/// `opp2p_peerStats`) run concurrently over a single connection per layer.
+pub async fn fetch_info(rpc: &Url, cl_rpc: &Url) -> Result<(NodeInfoReport, PeerStatsReport)> {
     let (cl_client, el_provider) = connect_layers(rpc, cl_rpc).await?;
 
-    let (el, cl_info) = tokio::try_join!(
+    let (el, cl_info, el_count, cl_stats) = tokio::try_join!(
         async {
             match el_provider.node_info().await {
                 Ok(info) => Ok(Some(parse_el_node_endpoint(
@@ -141,16 +145,6 @@ pub async fn fetch_node_info(rpc: &Url, cl_rpc: &Url) -> Result<NodeInfoReport> 
                 .await
                 .with_context(|| format!("fetching opp2p_self from {cl_rpc}"))
         },
-    )?;
-
-    Ok(NodeInfoReport { el, cl: parse_cl_node_endpoint(&cl_info)? })
-}
-
-/// Fetches the connected EL + CL peer counts used by doctor and `p2p info`.
-pub async fn fetch_peer_stats(rpc: &Url, cl_rpc: &Url) -> Result<PeerStatsReport> {
-    let (cl_client, el_provider) = connect_layers(rpc, cl_rpc).await?;
-
-    let (el_count, cl) = tokio::try_join!(
         async {
             el_provider
                 .net_peer_count()
@@ -164,9 +158,11 @@ pub async fn fetch_peer_stats(rpc: &Url, cl_rpc: &Url) -> Result<PeerStatsReport
         },
     )?;
 
+    let node_info = NodeInfoReport { el, cl: parse_cl_node_endpoint(&cl_info)? };
     let el_count = u32::try_from(el_count)
         .context("EL `net_peerCount` exceeded `u32::MAX`; unexpected RPC value")?;
-    Ok(PeerStatsReport { el_count, cl })
+    let peer_stats = PeerStatsReport { el_count, cl: cl_stats };
+    Ok((node_info, peer_stats))
 }
 
 /// Fetches connected EL + CL peer lists for `basectl p2p peers`.
@@ -224,7 +220,13 @@ pub async fn fetch_raw_info(rpc: &Url, cl_rpc: &Url) -> Result<RawInfoReport> {
     let (el, cl_info, el_count, cl_stats) = tokio::try_join!(
         async {
             match el_provider.node_info().await {
-                Ok(info) => Ok((Some(serde_json::to_value(&info)?), None)),
+                Ok(info) => Ok((
+                    Some(
+                        serde_json::to_value(&info)
+                            .context("serializing admin_nodeInfo to JSON value")?,
+                    ),
+                    None,
+                )),
                 Err(err) if is_method_not_found(&err) => {
                     Ok((None, Some("EL `admin_nodeInfo` not exposed by this RPC".to_string())))
                 }
@@ -252,8 +254,12 @@ pub async fn fetch_raw_info(rpc: &Url, cl_rpc: &Url) -> Result<RawInfoReport> {
     Ok(RawInfoReport {
         el: el.0,
         el_error: el.1,
-        cl: serde_json::to_value(&cl_info)?,
-        peer_counts: RawPeerCounts { el: el_count, cl: serde_json::to_value(cl_stats)? },
+        cl: serde_json::to_value(&cl_info).context("serializing opp2p_self to JSON value")?,
+        peer_counts: RawPeerCounts {
+            el: el_count,
+            cl: serde_json::to_value(cl_stats)
+                .context("serializing opp2p_peerStats to JSON value")?,
+        },
     })
 }
 
@@ -264,7 +270,13 @@ pub async fn fetch_raw_peers(rpc: &Url, cl_rpc: &Url) -> Result<RawPeersReport> 
     let (el, cl_peers) = tokio::try_join!(
         async {
             match el_provider.peers().await {
-                Ok(peers) => Ok((Some(serde_json::to_value(&peers)?), None)),
+                Ok(peers) => Ok((
+                    Some(
+                        serde_json::to_value(&peers)
+                            .context("serializing admin_peers to JSON value")?,
+                    ),
+                    None,
+                )),
                 Err(err) if is_method_not_found(&err) => {
                     Ok((None, Some("EL `admin_peers` not exposed by this RPC".to_string())))
                 }
@@ -278,7 +290,11 @@ pub async fn fetch_raw_peers(rpc: &Url, cl_rpc: &Url) -> Result<RawPeersReport> 
         },
     )?;
 
-    Ok(RawPeersReport { el: el.0, el_error: el.1, cl: serde_json::to_value(&cl_peers)? })
+    Ok(RawPeersReport {
+        el: el.0,
+        el_error: el.1,
+        cl: serde_json::to_value(&cl_peers).context("serializing opp2p_peers to JSON value")?,
+    })
 }
 
 /// Connects to the EL provider and CL RPC client used by every p2p fetch.

@@ -5,8 +5,7 @@ use std::io::{self, Write};
 use anyhow::{Result, anyhow};
 use basectl_cli::{
     JsonOutput, KeyValueTable, MonitoringConfig, NodeEndpoint, PeerListReport, PeerStatsReport,
-    PeerSummary, fetch_connected_peers, fetch_node_info, fetch_peer_stats, fetch_raw_info,
-    fetch_raw_peers,
+    PeerSummary, fetch_connected_peers, fetch_info, fetch_raw_info, fetch_raw_peers,
 };
 use serde::Serialize;
 use url::Url;
@@ -63,17 +62,11 @@ async fn run_info(
     match (json, raw) {
         (true, true) => JsonOutput::print(&fetch_raw_info(&el_rpc, &cl_rpc).await?)?,
         (true, false) => {
-            let (node_info, peer_stats) = tokio::try_join!(
-                fetch_node_info(&el_rpc, &cl_rpc),
-                fetch_peer_stats(&el_rpc, &cl_rpc)
-            )?;
+            let (node_info, peer_stats) = fetch_info(&el_rpc, &cl_rpc).await?;
             JsonOutput::print(&InfoJson::from_report(&config.name, &node_info, &peer_stats))?;
         }
         (false, _) => {
-            let (node_info, peer_stats) = tokio::try_join!(
-                fetch_node_info(&el_rpc, &cl_rpc),
-                fetch_peer_stats(&el_rpc, &cl_rpc)
-            )?;
+            let (node_info, peer_stats) = fetch_info(&el_rpc, &cl_rpc).await?;
             print_info_pretty(&config.name, &node_info, &peer_stats)?;
         }
     }
@@ -110,12 +103,10 @@ struct LayerInfoJson {
 
 impl LayerInfoJson {
     fn from_endpoint(endpoint: Option<NodeEndpoint>, peer_count: u32) -> Self {
-        Self {
-            advertised_ip: endpoint.map(|endpoint| endpoint.advertised_ip.to_string()),
-            tcp_port: endpoint.map(|endpoint| endpoint.tcp_port),
-            discovery: endpoint.map(|endpoint| endpoint.discovery),
-            peer_count,
-        }
+        let (advertised_ip, tcp_port, discovery) = endpoint.map_or((None, None, None), |ep| {
+            (Some(ep.advertised_ip.to_string()), Some(ep.tcp_port), Some(ep.discovery))
+        });
+        Self { advertised_ip, tcp_port, discovery, peer_count }
     }
 }
 
