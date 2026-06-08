@@ -49,8 +49,7 @@ impl UpgradeSignalMetrics {
         Self::activation_timestamp(hardfork_id.clone()).set(signal.activation_timestamp as f64);
         Self::expected_protocol_version(hardfork_id.clone())
             .set(Self::protocol_version_to_f64(signal.protocol_version));
-        Self::last_l1_read_block(hardfork_id.clone()).set(signal.l1_block_number as f64);
-        Self::activation_observed(hardfork_id).set(0.0);
+        Self::last_l1_read_block(hardfork_id).set(signal.l1_block_number as f64);
     }
 
     /// Records a failed L1 read for one hardfork ID.
