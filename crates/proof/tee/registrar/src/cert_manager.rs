@@ -117,8 +117,9 @@ impl CertManager {
     ) -> Result<bool> {
         for info in crl::CertCrlInfo::intermediates(cert_infos) {
             if self.nitro_verifier.is_revoked(info.path_digest).await? {
+                let cert = info.intermediate_label();
                 warn!(
-                    cert = %format!("intermediate {}", info.index),
+                    cert = %cert,
                     path_digest = %info.path_digest,
                     instance = %instance_id,
                     "intermediate is revoked onchain (durable sentinel set), skipping registration"
@@ -145,7 +146,7 @@ impl CertManager {
         let cert_revoker = CertRevoker::new(verifier_address, tx_manager);
 
         for revoked in revoked_certs {
-            let cert = format!("intermediate {}", revoked.index);
+            let cert = revoked.intermediate_label();
             match self.nitro_verifier.is_revoked(revoked.path_digest).await {
                 Ok(true) => {
                     warn!(

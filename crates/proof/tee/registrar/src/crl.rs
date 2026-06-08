@@ -80,6 +80,11 @@ impl CertCrlInfo {
     pub fn intermediates(infos: &[Self]) -> impl Iterator<Item = &Self> {
         infos.iter().skip(1).take(infos.len().saturating_sub(2))
     }
+
+    /// Returns the label used when logging this intermediate certificate.
+    pub fn intermediate_label(&self) -> String {
+        intermediate_cert_label(self.index)
+    }
 }
 
 /// Information about a revoked certificate.
@@ -91,13 +96,10 @@ pub struct RevokedCertInfo {
     pub path_digest: B256,
 }
 
-fn cert_label(index: usize, chain_len: usize) -> String {
-    if index == 0 {
-        "root".to_string()
-    } else if index == chain_len.saturating_sub(1) {
-        "leaf".to_string()
-    } else {
-        intermediate_cert_label(index)
+impl RevokedCertInfo {
+    /// Returns the label used when logging this revoked intermediate certificate.
+    pub fn intermediate_label(&self) -> String {
+        intermediate_cert_label(self.index)
     }
 }
 
@@ -150,7 +152,7 @@ pub async fn check_chain_against_crls(
     let mut revoked = Vec::new();
 
     for info in CertCrlInfo::intermediates(cert_infos) {
-        let cert = cert_label(info.index, cert_infos.len());
+        let cert = info.intermediate_label();
         let Some(ref crl_url) = info.crl_url else {
             debug!(cert = %cert, "no CRL distribution point, skipping");
             continue;
