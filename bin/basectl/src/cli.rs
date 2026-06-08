@@ -1,7 +1,7 @@
 //! Contains the CLI arguments for the basectl binary.
 
 use basectl_cli::ViewId;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use url::Url;
 
 /// Base infrastructure control CLI.
@@ -103,53 +103,34 @@ pub(crate) enum Commands {
 #[derive(Debug, Subcommand)]
 pub(crate) enum P2pCommands {
     /// List connected peers per layer.
-    Peers {
-        /// Override the execution-layer RPC URL.
-        ///
-        /// Defaults to the chain config's `rpc` field, which on the
-        /// `mainnet` and `sepolia` presets resolves to the public proxyd
-        /// fleet. Pass this flag to query a single node directly.
-        #[arg(long = "el-rpc", value_name = "URL")]
-        el_rpc: Option<Url>,
-        /// Override the consensus-node RPC URL.
-        ///
-        /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
-        /// so non-devnet users must pass this flag (or set the field in
-        /// their YAML config).
-        #[arg(long = "cl-rpc", value_name = "URL")]
-        cl_rpc: Option<Url>,
-        /// Emit JSON instead of the pretty peer tables.
-        #[arg(long)]
-        json: bool,
-        /// With `--json`, emit raw RPC wire shapes instead of the humanized
-        /// peer summary.
-        #[arg(long, requires = "json")]
-        raw: bool,
-    },
+    Peers(P2pArgs),
     /// Show advertised endpoints and peer-count summary per layer.
-    Info {
-        /// Override the execution-layer RPC URL.
-        ///
-        /// Defaults to the chain config's `rpc` field, which on the
-        /// `mainnet` and `sepolia` presets resolves to the public proxyd
-        /// fleet. Pass this flag to query a single node directly.
-        #[arg(long = "el-rpc", value_name = "URL")]
-        el_rpc: Option<Url>,
-        /// Override the consensus-node RPC URL.
-        ///
-        /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
-        /// so non-devnet users must pass this flag (or set the field in
-        /// their YAML config).
-        #[arg(long = "cl-rpc", value_name = "URL")]
-        cl_rpc: Option<Url>,
-        /// Emit JSON instead of the pretty key-value table.
-        #[arg(long)]
-        json: bool,
-        /// With `--json`, emit raw RPC wire shapes instead of the humanized
-        /// endpoint summary.
-        #[arg(long, requires = "json")]
-        raw: bool,
-    },
+    Info(P2pArgs),
+}
+
+/// Shared flags for the read-only `basectl p2p` subcommands.
+#[derive(Debug, Args)]
+pub(crate) struct P2pArgs {
+    /// Override the execution-layer RPC URL.
+    ///
+    /// Defaults to the chain config's `rpc` field, which on the
+    /// `mainnet` and `sepolia` presets resolves to the public proxyd
+    /// fleet. Pass this flag to query a single node directly.
+    #[arg(long = "el-rpc", value_name = "URL")]
+    pub(crate) el_rpc: Option<Url>,
+    /// Override the consensus-node RPC URL.
+    ///
+    /// The mainnet and sepolia presets ship `consensus_node_rpc` unset,
+    /// so non-devnet users must pass this flag (or set the field in
+    /// their YAML config).
+    #[arg(long = "cl-rpc", value_name = "URL")]
+    pub(crate) cl_rpc: Option<Url>,
+    /// Emit JSON instead of the pretty table output.
+    #[arg(long)]
+    pub(crate) json: bool,
+    /// With `--json`, emit raw RPC wire shapes instead of the humanized summary.
+    #[arg(long, requires = "json")]
+    pub(crate) raw: bool,
 }
 
 /// TUI monitor views.

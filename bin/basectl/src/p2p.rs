@@ -10,27 +10,18 @@ use basectl_cli::{
 use serde::Serialize;
 use url::Url;
 
-use crate::cli::P2pCommands;
+use crate::cli::{P2pArgs, P2pCommands};
 
 /// Runs the `basectl p2p` command group.
 pub(crate) async fn run(config: MonitoringConfig, command: P2pCommands) -> Result<()> {
     match command {
-        P2pCommands::Peers { el_rpc, cl_rpc, json, raw } => {
-            run_peers(config, el_rpc, cl_rpc, json, raw).await
-        }
-        P2pCommands::Info { el_rpc, cl_rpc, json, raw } => {
-            run_info(config, el_rpc, cl_rpc, json, raw).await
-        }
+        P2pCommands::Peers(args) => run_peers(config, args).await,
+        P2pCommands::Info(args) => run_info(config, args).await,
     }
 }
 
-async fn run_peers(
-    config: MonitoringConfig,
-    el_rpc_override: Option<Url>,
-    cl_rpc_override: Option<Url>,
-    json: bool,
-    raw: bool,
-) -> Result<()> {
+async fn run_peers(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
+    let P2pArgs { el_rpc: el_rpc_override, cl_rpc: cl_rpc_override, json, raw } = args;
     let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
     let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p peers")?;
 
@@ -49,13 +40,8 @@ async fn run_peers(
     Ok(())
 }
 
-async fn run_info(
-    config: MonitoringConfig,
-    el_rpc_override: Option<Url>,
-    cl_rpc_override: Option<Url>,
-    json: bool,
-    raw: bool,
-) -> Result<()> {
+async fn run_info(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
+    let P2pArgs { el_rpc: el_rpc_override, cl_rpc: cl_rpc_override, json, raw } = args;
     let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
     let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p info")?;
 
@@ -254,14 +240,13 @@ mod tests {
 
     use super::resolve_cl_rpc;
 
-    #[test]
-    fn resolve_cl_rpc_prefers_flag() {
-        let config = basectl_cli::MonitoringConfig {
+    fn test_config(consensus_node_rpc: Option<Url>) -> basectl_cli::MonitoringConfig {
+        basectl_cli::MonitoringConfig {
             name: "devnet".to_string(),
             rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
             flashblocks_ws: Url::parse("ws://127.0.0.1:7111").unwrap(),
             l1_rpc: Url::parse("http://127.0.0.1:9545").unwrap(),
-            consensus_node_rpc: None,
+            consensus_node_rpc,
             hardforks: None,
             system_config: Address::ZERO,
             batcher_address: None,
@@ -271,11 +256,33 @@ mod tests {
             validators: None,
             proofs: None,
             pods: None,
-        };
+        }
+    }
 
+    #[test]
+    fn resolve_cl_rpc_prefers_flag() {
+        let config = test_config(None);
         let override_url = Url::parse("http://127.0.0.1:9545").unwrap();
+
         let resolved = resolve_cl_rpc(&config, Some(&override_url), "p2p info").unwrap();
 
         assert_eq!(resolved, override_url);
+    }
+
+    #[test]
+    fn resolve_cl_rpc_falls_back_to_config() {
+        let cl_url = Url::parse("http://127.0.0.1:7545").unwrap();
+        let config = test_config(Some(cl_url.clone()));
+
+        let resolved = resolve_cl_rpc(&config, None, "p2p info").unwrap();
+
+        assert_eq!(resolved, cl_url);
+    }
+
+    #[test]
+    fn resolve_cl_rpc_errors_without_config() {
+        let config = test_config(None);
+
+        assert!(resolve_cl_rpc(&config, None, "p2p info").is_err());
     }
 }

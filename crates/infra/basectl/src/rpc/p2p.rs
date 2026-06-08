@@ -54,7 +54,10 @@ pub struct NodeInfoReport {
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PeerStatsReport {
-    /// Connected EL peer count from `net_peerCount`.
+    /// Connected EL peer count from `net_peerCount`, narrowed from its native
+    /// `u64` to `u32` so the humanized output reports a uniform peer-count type
+    /// across both layers (CL's `PeerStats::connected` is `u32`). The raw path
+    /// [`RawPeerCounts::el`] preserves the native `u64`.
     pub el_count: u32,
     /// Connected CL peer statistics from `opp2p_peerStats`.
     pub cl: PeerStats,
@@ -100,7 +103,8 @@ pub struct RawInfoReport {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawPeerCounts {
-    /// EL peer count from `net_peerCount`.
+    /// EL peer count from `net_peerCount`, in its native `u64` wire type. The
+    /// humanized path [`PeerStatsReport::el_count`] narrows this to `u32`.
     pub el: u64,
     /// Raw `opp2p_peerStats` result.
     pub cl: serde_json::Value,
