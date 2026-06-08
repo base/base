@@ -473,7 +473,7 @@ mod tests {
         );
     }
 
-    /// Default (no gas_remaining set): guard is inactive, sstore always proceeds.
+    /// Default (no `gas_remaining` set): guard is inactive, `sstore` always proceeds.
     #[test]
     fn sstore_always_allowed_without_gas_remaining_set() {
         let mut p = HashMapStorageProvider::new(1);
@@ -483,8 +483,8 @@ mod tests {
     }
 
     /// Static-call violation takes priority over the stipend guard.
-    /// gas_remaining == 2300 means the stipend guard would also fire if checked first;
-    /// setting static=true proves StaticCallViolation is returned rather than OutOfGas.
+    /// `gas_remaining == 2300` means the stipend guard would also fire if checked first;
+    /// setting `static=true` proves `StaticCallViolation` is returned rather than `OutOfGas`.
     #[test]
     fn sstore_static_violation_checked_before_stipend_guard() {
         let mut p = HashMapStorageProvider::new(1);
