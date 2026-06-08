@@ -118,7 +118,7 @@ impl CertManager {
         for info in crl::CertCrlInfo::intermediates(cert_infos) {
             if self.nitro_verifier.is_revoked(info.path_digest).await? {
                 warn!(
-                    cert = %info.label,
+                    cert = %format!("intermediate {}", info.index),
                     path_digest = %info.path_digest,
                     instance = %instance_id,
                     "intermediate is revoked onchain (durable sentinel set), skipping registration"
@@ -145,10 +145,11 @@ impl CertManager {
         let cert_revoker = CertRevoker::new(verifier_address, tx_manager);
 
         for revoked in revoked_certs {
+            let cert = format!("intermediate {}", revoked.index);
             match self.nitro_verifier.is_revoked(revoked.path_digest).await {
                 Ok(true) => {
                     warn!(
-                        cert = %revoked.label,
+                        cert = %cert,
                         path_digest = %revoked.path_digest,
                         instance = %instance.instance_id,
                         "certificate already revoked onchain, skipping revokeCert"
@@ -160,7 +161,7 @@ impl CertManager {
                 Err(e) => {
                     warn!(
                         error = %e,
-                        cert = %revoked.label,
+                        cert = %cert,
                         path_digest = %revoked.path_digest,
                         instance = %instance.instance_id,
                         "onchain revocation check failed for CRL hit; submitting revokeCert"
@@ -170,7 +171,7 @@ impl CertManager {
             }
 
             warn!(
-                cert = %revoked.label,
+                cert = %cert,
                 path_digest = %revoked.path_digest,
                 instance = %instance.instance_id,
                 "submitting revokeCert transaction"
@@ -325,7 +326,7 @@ mod tests {
     }
 
     fn revoked_cert(path_digest: B256) -> crl::RevokedCertInfo {
-        crl::RevokedCertInfo { label: "intermediate 1".to_string(), path_digest }
+        crl::RevokedCertInfo { index: INTER1_INDEX, path_digest }
     }
 
     fn revoke_cert_calldata(path_digest: B256) -> Bytes {
