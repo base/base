@@ -300,7 +300,7 @@ impl PendingBlocksBuilder {
         let latest_block_base = self
             .latest_block_base
             .clone()
-            .or_else(|| self.flashblocks.iter().find_map(|flashblock| flashblock.base.clone()))
+            .or_else(|| self.flashblocks.iter().rev().find_map(|flashblock| flashblock.base.clone()))
             .ok_or(BuildError::MissingHeaders)?;
         let latest_block_l1_block_info =
             self.latest_block_l1_block_info.clone().unwrap_or_default();
@@ -315,6 +315,7 @@ impl PendingBlocksBuilder {
             self.latest_block_cumulative_gas_used.unwrap_or_else(|| {
                 self.transactions
                     .iter()
+                    .filter(|tx| tx.block_number.unwrap_or_default() == latest_header.number)
                     .filter_map(|tx| self.transaction_receipts.get(&tx.tx_hash()))
                     .last()
                     .map(|receipt| receipt.inner.inner.cumulative_gas_used())
@@ -323,6 +324,7 @@ impl PendingBlocksBuilder {
         let latest_block_next_log_index = self.latest_block_next_log_index.unwrap_or_else(|| {
             self.transactions
                 .iter()
+                .filter(|tx| tx.block_number.unwrap_or_default() == latest_header.number)
                 .filter_map(|tx| self.transaction_receipts.get(&tx.tx_hash()))
                 .map(|receipt| receipt.inner.logs().len())
                 .sum()
@@ -860,6 +862,10 @@ mod tests {
     }
 
     fn test_flashblock() -> Flashblock {
+        test_flashblock_for_block(1)
+    }
+
+    fn test_flashblock_for_block(block_number: u64) -> Flashblock {
         Flashblock {
             payload_id: PayloadId::default(),
             index: 0,
@@ -868,7 +874,7 @@ mod tests {
                 parent_hash: B256::ZERO,
                 fee_recipient: Address::ZERO,
                 prev_randao: B256::ZERO,
-                block_number: 1,
+                block_number,
                 gas_limit: 30_000_000,
                 timestamp: 1_700_000_000,
                 extra_data: Bytes::default(),
@@ -885,7 +891,7 @@ mod tests {
                 withdrawals_root: B256::ZERO,
                 blob_gas_used: None,
             },
-            metadata: Metadata { block_number: 1 },
+            metadata: Metadata { block_number },
         }
     }
 
@@ -913,6 +919,10 @@ mod tests {
 
     /// Creates a [`Transaction`] whose `tx_hash()` equals `hash`.
     fn test_transaction_with_hash(hash: B256) -> Transaction {
+        test_transaction_with_hash_in_block(hash, 1)
+    }
+
+    fn test_transaction_with_hash_in_block(hash: B256, block_number: u64) -> Transaction {
         let legacy = alloy_consensus::TxLegacy {
             chain_id: Some(1),
             nonce: 0,
@@ -932,7 +942,7 @@ mod tests {
             inner: alloy_rpc_types_eth::Transaction {
                 inner: recovered,
                 block_hash: Some(B256::ZERO),
-                block_number: Some(1),
+                block_number: Some(block_number),
                 block_timestamp: None,
                 transaction_index: Some(0),
                 effective_gas_price: Some(1_000_000_000),
@@ -999,34 +1009,46 @@ mod tests {
 
     /// Creates an [`BaseTransactionReceipt`] with a single log emitted from `log_address`.
     fn test_receipt_with_log(tx_hash: B256, log_address: Address) -> BaseTransactionReceipt {
-        let log = Log {
-            inner: PrimitiveLog {
-                address: log_address,
-                data: LogData::new_unchecked(vec![], Bytes::new()),
-            },
-            block_hash: Some(B256::ZERO),
-            block_number: Some(1),
-            block_timestamp: None,
-            transaction_hash: Some(tx_hash),
-            transaction_index: Some(0),
-            log_index: Some(0),
-            removed: false,
-        };
+        test_receipt_for_block_with_log_count(tx_hash, 1, log_address, 1, 21_000)
+    }
+
+    fn test_receipt_for_block_with_log_count(
+        tx_hash: B256,
+        block_number: u64,
+        log_address: Address,
+        log_count: usize,
+        cumulative_gas_used: u64,
+    ) -> BaseTransactionReceipt {
+        let logs = (0..log_count)
+            .map(|log_index| Log {
+                inner: PrimitiveLog {
+                    address: log_address,
+                    data: LogData::new_unchecked(vec![], Bytes::new()),
+                },
+                block_hash: Some(B256::ZERO),
+                block_number: Some(block_number),
+                block_timestamp: None,
+                transaction_hash: Some(tx_hash),
+                transaction_index: Some(0),
+                log_index: Some(log_index as u64),
+                removed: false,
+            })
+            .collect();
 
         BaseTransactionReceipt {
             inner: alloy_rpc_types_eth::TransactionReceipt {
                 inner: ReceiptWithBloom {
                     receipt: BaseReceipt::Legacy(Receipt {
                         status: alloy_consensus::Eip658Value::Eip658(true),
-                        cumulative_gas_used: 21_000,
-                        logs: vec![log],
+                        cumulative_gas_used,
+                        logs,
                     }),
                     logs_bloom: Bloom::default(),
                 },
                 transaction_hash: tx_hash,
                 transaction_index: Some(0),
                 block_hash: Some(B256::ZERO),
-                block_number: Some(1),
+                block_number: Some(block_number),
                 gas_used: 21_000,
                 effective_gas_price: 1_000_000_000,
                 blob_gas_used: None,
@@ -1221,6 +1243,40 @@ mod tests {
 
         let err = builder.build().expect_err("build should fail on duplicate tx");
         assert_eq!(err, StateProcessorError::Build(BuildError::DuplicateTransaction { tx_hash }));
+    }
+
+    #[test]
+    fn build_fallbacks_use_latest_block_values_only() {
+        let tx_hash_1 = B256::with_last_byte(0xA1);
+        let tx_hash_2 = B256::with_last_byte(0xB2);
+
+        let mut builder = PendingBlocksBuilder::default();
+        builder.with_flashblocks([test_flashblock_for_block(1), test_flashblock_for_block(2)]);
+        builder.with_header(Sealed::new_unchecked(
+            Header { number: 1, ..Default::default() },
+            B256::ZERO,
+        ));
+        builder.with_header(Sealed::new_unchecked(
+            Header { number: 2, ..Default::default() },
+            B256::ZERO,
+        ));
+        builder.with_transaction(test_transaction_with_hash_in_block(tx_hash_1, 1));
+        builder.with_receipt(
+            tx_hash_1,
+            test_receipt_for_block_with_log_count(tx_hash_1, 1, test_sender(), 2, 21_000),
+        );
+        builder.with_transaction(test_transaction_with_hash_in_block(tx_hash_2, 2));
+        builder.with_receipt(
+            tx_hash_2,
+            test_receipt_for_block_with_log_count(tx_hash_2, 2, test_sender(), 1, 42_000),
+        );
+
+        let pending_blocks = builder.build().expect("build should succeed without latest context");
+
+        assert_eq!(pending_blocks.latest_block_base().block_number, 2);
+        assert_eq!(pending_blocks.latest_block_transaction_count(), 1);
+        assert_eq!(pending_blocks.latest_block_cumulative_gas_used(), 42_000);
+        assert_eq!(pending_blocks.latest_block_next_log_index(), 1);
     }
 
     #[test]
