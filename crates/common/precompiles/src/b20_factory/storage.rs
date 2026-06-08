@@ -360,7 +360,7 @@ mod tests {
             name: name.to_string(),
             symbol: symbol.to_string(),
             initialAdmin: Address::repeat_byte(0xAB),
-            decimals: 6,
+            decimals: B20AssetStorage::MIN_DECIMALS,
         }
     }
 
@@ -496,7 +496,7 @@ mod tests {
 
             assert_eq!(token.b20.name.read().unwrap(), "My Token");
             assert_eq!(token.b20.symbol.read().unwrap(), "MYT");
-            assert_eq!(AssetAccounting::decimals(&token).unwrap(), 6);
+            assert_eq!(AssetAccounting::decimals(&token).unwrap(), B20AssetStorage::MIN_DECIMALS);
             assert_eq!(token.supply_cap().unwrap(), B20FactoryStorage::DEFAULT_SUPPLY_CAP);
         });
     }

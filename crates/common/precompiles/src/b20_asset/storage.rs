@@ -75,7 +75,8 @@ impl B20AssetStorage<'_> {
     /// WAD precision for multiplier arithmetic: 1e18.
     pub const WAD: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
-    /// Returns the configured asset decimals, defaulting an unset storage slot to `6`.
+    /// Returns the configured asset decimals, defaulting an unset storage slot to
+    /// [`Self::MIN_DECIMALS`].
     pub fn decimals(&self) -> Result<u8> {
         let decimals = self.asset.decimals()?;
         Ok(if decimals == 0 { Self::MIN_DECIMALS } else { decimals })
@@ -234,12 +235,13 @@ mod tests {
     }
 
     #[test]
-    fn decimals_uninitialized_slot_falls_back_to_six() {
+    fn decimals_uninitialized_slot_falls_back_to_min_decimals() {
         let (mut storage, _) = setup_storage();
 
         StorageCtx::enter(&mut storage, |ctx| {
             let token = B20AssetStorage::from_address(TOKEN, ctx);
             assert_eq!(token.asset.decimals.read().unwrap(), 0);
+            assert_eq!(token.decimals().unwrap(), B20AssetStorage::MIN_DECIMALS);
             assert_eq!(AssetAccounting::decimals(&token).unwrap(), B20AssetStorage::MIN_DECIMALS);
         });
     }

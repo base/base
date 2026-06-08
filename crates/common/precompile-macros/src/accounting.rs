@@ -372,7 +372,7 @@ fn expand_asset(input: DeriveInput) -> syn::Result<TokenStream> {
 
             fn decimals(&self) -> ::base_precompile_storage::Result<u8> {
                 let stored = self.asset.decimals()?;
-                Ok(if stored == 0 { 6 } else { stored })
+                Ok(if stored == 0 { Self::MIN_DECIMALS } else { stored })
             }
         }
     })
