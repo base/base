@@ -1,39 +1,27 @@
-//! Self-driving proving pipeline for the proposer.
+//! Proving pipeline for the proposer.
 //!
-//! The [`ProvingPipeline`] runs a single sequential loop: each iteration
-//! recovers the latest on-chain tip, derives the next target block, polls the
-//! prover service for its deterministic session, and either submits inline,
-//! dispatches a fresh request, waits, or treats the result as a transient
-//! failure.
+//! The [`ProvingPipeline`] runs two cooperative tasks per session: a
+//! dispatcher loop that walks forward from the latest on-chain game and sends
+//! proof requests up to the safe head, and a collector loop that polls and
+//! submits completed proofs in order. Submit failures restart both tasks from
+//! chain-derived state.
 //!
 //! # Iteration
 //!
 //! ```text
-//! ┌──────────┐     ┌──────────────────┐     ┌────────────────────────┐
-//! │ RECOVER  │ ──▶ │ POLL(target)     │ ──▶ │ Ready    → submit      │
-//! │ (cached) │     │ (deterministic)  │     │ NotFound → dispatch    │
-//! └──────────┘     └──────────────────┘     │ Pending  → wait        │
-//!                                           │ Failed   → retry/drop  │
-//!                                           │ Unknown  → wait        │
-//!                                           └────────────────────────┘
+//! ┌──────────┐     ┌──────────────────┐
+//! │ RECOVER  │ ──▶ │ DISPATCH LOOP    │ ──▶ prover service
+//! │ (cached) │     └──────────────────┘
+//! │          │     ┌──────────────────┐
+//! │          │ ──▶ │ COLLECT LOOP     │ ──▶ L1 submitter
+//! └──────────┘     └──────────────────┘
 //! ```
 //!
-//! There is no in-memory queue of dispatched-but-not-yet-collected sessions:
-//! the prover service is the source of truth and the collector rederives
-//! sessions from canonical output roots. State that survives across
-//! iterations is limited to the recovery cache and a per-target retry
-//! counter, both passed by reference into [`ProvingPipeline::step`].
-//!
-//! On success the loop advances by exactly one `block_interval` per iteration;
-//! on `Pending` / `Unknown` it sleeps for `poll_interval` and retries. Submit
-//! is wrapped in [`tokio::time::timeout`] so a stuck L1 RPC never blocks
-//! progress beyond `submit_timeout`.
+//! Normal sessions remain root-derived so a restarted proposer can rediscover
+//! work. Discard retries use retry-specific sessions because the prover service
+//! intentionally replays `Succeeded` sessions for the root-derived id.
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::{
@@ -44,6 +32,7 @@ use base_proof_rpc::{L1Provider, L2Provider, RollupProvider, RpcError};
 use base_prover_service_client::ProofRequesterProvider;
 use eyre::Result;
 use futures::{StreamExt, stream};
+use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -52,12 +41,12 @@ use crate::{
     driver::{DriverConfig, RecoveredState},
     error::ProposerError,
     output_proposer::OutputProposer,
-    proof_adapter::ProofRequesterDispatcher,
+    proof_adapter::{ProofRequesterDispatcher, ProposerProofAdapter},
     proof_collector::{ProofCollector, TargetPoll},
     proof_submitter::{ProofSubmitter, ProofSubmitterConfig, SubmitAction},
 };
 
-/// Configuration for the self-driving proving pipeline.
+/// Configuration for the proving pipeline.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
     /// Maximum retries for a single target block before dropping the cached
@@ -100,13 +89,35 @@ struct CachedRecovery {
     state: RecoveredState,
 }
 
-/// The self-driving proving pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PipelineSessionExit {
+    Cancelled,
+    Restart,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DispatchOutcome {
+    Accepted,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubmitEffect {
+    Submitted,
+    Restart,
+    Redispatch { claimed_l2_output_root: B256 },
+}
+
+struct DiscardRetryState<'a> {
+    counts: &'a mut HashMap<u64, u32>,
+    sessions: &'a mut HashMap<u64, String>,
+}
+
+/// The proving pipeline.
 ///
-/// Runs a single sequential loop per [`Self::run`] call. Each iteration is
-/// independent and re-derives all required state from on-chain reads plus
-/// deterministic prover-service session lookups; the only state that
-/// survives across iterations is the recovery cache and per-target retry
-/// counts, both passed by reference into [`Self::step`].
+/// Runs concurrent dispatcher and collector tasks per [`Self::run`] session.
+/// Submit failures restart both tasks from on-chain state; cancellation stops
+/// them cleanly.
 pub struct ProvingPipeline<L1, L2, R, ASR, F>
 where
     L1: L1Provider,
@@ -178,7 +189,7 @@ where
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
-    /// Creates a new self-driving proving pipeline.
+    /// Creates a new proving pipeline.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: PipelineConfig,
@@ -233,62 +244,113 @@ where
         self.cancel = cancel;
     }
 
-    /// Runs the self-driving proving pipeline until cancelled.
+    /// Runs the proving pipeline until cancelled.
     ///
-    /// Each iteration recovers the on-chain tip, derives the next target,
-    /// polls the prover service, and acts on the [`TargetPoll`] outcome by
-    /// submitting inline, dispatching a fresh request, waiting, or applying
-    /// the retry policy. Sleeps for `poll_interval` between iterations.
-    /// Cancellation is honored at every `await`.
+    /// Each session starts a dispatcher task and a collector task. The
+    /// dispatcher can run ahead up to the safe head, while the collector
+    /// submits proofs in order. Submit failures restart both tasks from a
+    /// fresh recovery walk.
     pub async fn run(&self) -> Result<()> {
         info!(
             block_interval = self.config.driver.block_interval,
             poll_interval_secs = self.config.driver.poll_interval.as_secs(),
             submit_timeout_secs = self.config.submit_timeout.as_secs(),
-            "Starting self-driving proving pipeline"
+            "Starting proving pipeline"
         );
 
+        loop {
+            match self.run_session().await? {
+                PipelineSessionExit::Cancelled => break,
+                PipelineSessionExit::Restart => {
+                    info!("Restarting proving pipeline after submit failure");
+                }
+            }
+        }
+
+        info!("Proving pipeline stopped");
+        Ok(())
+    }
+
+    async fn run_session(&self) -> Result<PipelineSessionExit> {
+        let session_cancel = self.cancel.child_token();
+        let (restart_tx, mut restart_rx) = mpsc::channel(1);
+
+        let mut dispatcher =
+            spawn_loop(self.clone(), session_cancel.clone(), |pipeline, cancel| async move {
+                pipeline.dispatcher_loop(cancel).await
+            });
+        let mut collector =
+            spawn_loop(self.clone(), session_cancel.clone(), |pipeline, cancel| async move {
+                pipeline.collector_loop(cancel, restart_tx).await
+            });
+        let mut dispatcher_done = false;
+        let mut collector_done = false;
+
+        let exit = tokio::select! {
+            biased;
+            () = self.cancel.cancelled() => PipelineSessionExit::Cancelled,
+            reason = restart_rx.recv() => {
+                let reason = reason.unwrap_or_else(|| "collector restart channel closed".to_owned());
+                warn!(reason = %reason, "Restarting pipeline session");
+                PipelineSessionExit::Restart
+            }
+            result = &mut dispatcher => {
+                dispatcher_done = true;
+                result??;
+                warn!("Dispatcher loop exited unexpectedly, restarting pipeline session");
+                PipelineSessionExit::Restart
+            }
+            result = &mut collector => {
+                collector_done = true;
+                result??;
+                warn!("Collector loop exited unexpectedly, restarting pipeline session");
+                PipelineSessionExit::Restart
+            }
+        };
+
+        session_cancel.cancel();
+        if !dispatcher_done {
+            await_loop(dispatcher).await?;
+        }
+        if !collector_done {
+            await_loop(collector).await?;
+        }
+        Ok(exit)
+    }
+
+    /// Runs the proof dispatcher loop.
+    ///
+    /// The dispatcher recovers the latest on-chain game, then dispatches every
+    /// missing block interval up to the safe head. Its cursor is intentionally
+    /// independent from the collector cursor: it tracks how far proof requests
+    /// have been sent, not how far proofs have landed on-chain.
+    #[instrument(skip_all)]
+    async fn dispatcher_loop(&self, cancel: CancellationToken) -> Result<()> {
         let mut cache: Option<CachedRecovery> = None;
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
-        // Targets the submitter has irrecoverably discarded (e.g.
-        // `L1OriginTooOld`, `InvalidSigner`). The prover-service session for
-        // a discarded target is `Succeeded` with a deterministic id, so a
-        // naive next-iteration poll would re-deliver the same `Ready` proof
-        // and re-discard it indefinitely. Tracking discarded targets in
-        // memory lets us short-circuit polling until the chain advances past
-        // them; the set is cleared on restart, matching the implicit
-        // skip-via-dropped-`proved`-map behavior of the previous parallel
-        // pipeline.
-        let mut discarded_targets: HashSet<u64> = HashSet::new();
+        let mut cursor: Option<RecoveredState> = None;
 
         loop {
             tokio::select! {
                 biased;
-                () = self.cancel.cancelled() => break,
-                () = self.step(&mut cache, &mut retry_counts, &mut discarded_targets) => {}
+                () = cancel.cancelled() => break,
+                () = self.dispatcher_tick(&mut cache, &mut retry_counts, &mut cursor) => {}
             }
 
-            tokio::select! {
-                biased;
-                () = self.cancel.cancelled() => break,
-                () = tokio::time::sleep(self.config.driver.poll_interval) => {}
+            sleep_or_cancel(self.config.driver.poll_interval, &cancel).await;
+            if cancel.is_cancelled() {
+                break;
             }
         }
 
-        info!("Self-driving proving pipeline stopped");
         Ok(())
     }
 
-    /// Executes a single iteration of the self-driving loop.
-    ///
-    /// Recovers the on-chain tip, derives the next target block, polls the
-    /// prover service, and acts on the [`TargetPoll`] outcome.
-    #[instrument(skip_all)]
-    async fn step(
+    async fn dispatcher_tick(
         &self,
         cache: &mut Option<CachedRecovery>,
         retry_counts: &mut HashMap<u64, u32>,
-        discarded_targets: &mut HashSet<u64>,
+        cursor: &mut Option<RecoveredState>,
     ) {
         let _tick_timer = base_metrics::timed!(Metrics::tick_duration_seconds());
 
@@ -301,56 +363,143 @@ where
         };
 
         Metrics::safe_head().set(safe_head as f64);
-        // Reflect the on-chain proposer tip on every iteration. Without this,
-        // dashboards that alert on proposer lag would see the gauge stuck at
-        // its last submit value (or unset on cold start) until the next
-        // successful inline submit, even if other proposers or a previous
-        // run had advanced the chain.
         Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
-        // Drop retry counters and discarded markers for targets the chain
-        // has already passed.
         retry_counts.retain(|&target, _| target > recovered.l2_block_number);
-        discarded_targets.retain(|&target| target > recovered.l2_block_number);
 
-        let target_block =
-            match recovered.l2_block_number.checked_add(self.config.driver.block_interval) {
-                Some(t) => t,
-                None => {
-                    error!(
-                        recovered_block = recovered.l2_block_number,
-                        block_interval = self.config.driver.block_interval,
-                        "Overflow computing next target block, halting iteration"
-                    );
-                    return;
-                }
+        if cursor.is_none_or(|c| c.l2_block_number < recovered.l2_block_number) {
+            *cursor = Some(recovered);
+        }
+
+        let mut current = cursor.unwrap_or(recovered);
+        loop {
+            let target_block = match self.next_target_block(current.l2_block_number) {
+                Some(block) => block,
+                None => return,
             };
+            if target_block > safe_head {
+                debug!(
+                    current_block = current.l2_block_number,
+                    target_block,
+                    safe_head,
+                    "Safe head below dispatch target, waiting for L2 head to advance"
+                );
+                break;
+            }
+
+            let claimed_l2_output_root = match self.canonical_output_root(target_block).await {
+                Some(root) => root,
+                None => break,
+            };
+
+            if self
+                .dispatch_for(target_block, &current, claimed_l2_output_root, retry_counts, cache)
+                .await
+                == DispatchOutcome::Accepted
+            {
+                current.l2_block_number = target_block;
+                current.output_root = claimed_l2_output_root;
+                *cursor = Some(current);
+            } else {
+                break;
+            }
+        }
+
+        Metrics::pipeline_retries().set(retry_counts.values().sum::<u32>() as f64);
+    }
+
+    /// Runs the proof collector loop.
+    ///
+    /// The collector submits proofs in order. Any non-success submit outcome
+    /// that invalidates the current submit attempt asks the driver to restart
+    /// both loops from a fresh forward walk.
+    #[instrument(skip_all)]
+    async fn collector_loop(
+        &self,
+        cancel: CancellationToken,
+        restart_tx: mpsc::Sender<String>,
+    ) -> Result<()> {
+        let mut cache: Option<CachedRecovery> = None;
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut cursor: Option<RecoveredState> = None;
+        let mut discard_retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut retry_sessions: HashMap<u64, String> = HashMap::new();
+
+        loop {
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => break,
+                () = self.collector_tick(
+                    &mut cache,
+                    &mut retry_counts,
+                    &mut cursor,
+                    &mut discard_retry_counts,
+                    &mut retry_sessions,
+                    &restart_tx,
+                ) => {}
+            }
+
+            sleep_or_cancel(self.config.driver.poll_interval, &cancel).await;
+            if cancel.is_cancelled() {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn collector_tick(
+        &self,
+        cache: &mut Option<CachedRecovery>,
+        retry_counts: &mut HashMap<u64, u32>,
+        cursor: &mut Option<RecoveredState>,
+        discard_retry_counts: &mut HashMap<u64, u32>,
+        retry_sessions: &mut HashMap<u64, String>,
+        restart_tx: &mpsc::Sender<String>,
+    ) {
+        let (recovered, safe_head) = match self.try_recover_and_plan(cache).await {
+            Some(pair) => pair,
+            None => {
+                Metrics::pipeline_retries().set(retry_counts.values().sum::<u32>() as f64);
+                return;
+            }
+        };
+
+        Metrics::safe_head().set(safe_head as f64);
+        Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
+
+        retry_counts.retain(|&target, _| target > recovered.l2_block_number);
+        discard_retry_counts.retain(|&target, _| target > recovered.l2_block_number);
+        retry_sessions.retain(|&target, _| target > recovered.l2_block_number);
+
+        if cursor.is_none_or(|c| c.l2_block_number < recovered.l2_block_number) {
+            *cursor = Some(recovered);
+        }
+        let Some(current) = *cursor else { return };
+
+        let target_block = match self.next_target_block(current.l2_block_number) {
+            Some(block) => block,
+            None => return,
+        };
 
         if target_block > safe_head {
             debug!(
-                recovered_block = recovered.l2_block_number,
+                current_block = current.l2_block_number,
                 target_block,
                 safe_head,
-                "Safe head below next target, waiting for L2 head to advance"
+                "Safe head below collection target, waiting for L2 head to advance"
             );
             Metrics::pipeline_retries().set(retry_counts.values().sum::<u32>() as f64);
             return;
         }
 
-        // Skip targets the submitter has already discarded. The
-        // prover-service session for a discarded target is deterministic
-        // and sticky in `Succeeded`, so polling again would re-deliver the
-        // same `Ready` proof and re-discard it. The discarded marker is
-        // cleared above once the on-chain tip advances past `target_block`.
-        if discarded_targets.contains(&target_block) {
-            debug!(
-                target_block,
-                "Target previously discarded by submitter, waiting for chain to advance"
-            );
-            return;
-        }
+        let poll = if let Some(session_id) = retry_sessions.get(&target_block).cloned() {
+            self.proof_collector.poll_session(target_block, session_id).await
+        } else {
+            self.proof_collector.poll(target_block).await
+        };
 
-        match self.proof_collector.poll(target_block).await {
+        match poll {
             TargetPoll::Ready { session_id, proof } => {
                 info!(
                     target_block,
@@ -358,15 +507,32 @@ where
                     "Proof ready, submitting inline"
                 );
                 Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
-                self.submit_inline(
-                    target_block,
-                    &recovered,
-                    proof,
-                    retry_counts,
-                    cache,
-                    discarded_targets,
-                )
-                .await;
+                match self.submit_inline(target_block, &current, proof, retry_counts, cache).await {
+                    SubmitEffect::Submitted => {
+                        retry_sessions.remove(&target_block);
+                        discard_retry_counts.remove(&target_block);
+                        if let Some(cached) = cache.as_ref() {
+                            *cursor = Some(cached.state);
+                        }
+                    }
+                    SubmitEffect::Restart => {
+                        request_restart(restart_tx, "submit failure").await;
+                    }
+                    SubmitEffect::Redispatch { claimed_l2_output_root } => {
+                        self.dispatch_discard_retry(
+                            target_block,
+                            &current,
+                            claimed_l2_output_root,
+                            retry_counts,
+                            cache,
+                            DiscardRetryState {
+                                counts: discard_retry_counts,
+                                sessions: retry_sessions,
+                            },
+                        )
+                        .await;
+                    }
+                }
             }
             TargetPoll::Pending { session_id, status } => {
                 debug!(
@@ -377,29 +543,46 @@ where
                 );
             }
             TargetPoll::NotFound { session_id, claimed_l2_output_root } => {
-                info!(
+                debug!(
                     target_block,
                     session_id = %session_id,
-                    "No prover-service session for target, dispatching"
+                    claimed_l2_output_root = %claimed_l2_output_root,
+                    "No prover-service session for target, waiting for dispatcher"
                 );
-                self.dispatch_for(
-                    target_block,
-                    &recovered,
-                    claimed_l2_output_root,
-                    retry_counts,
-                    cache,
-                )
-                .await;
             }
-            TargetPoll::Failed { session_id, error } => {
+            TargetPoll::Failed { session_id, claimed_l2_output_root, error } => {
                 warn!(
                     target_block,
                     session_id = %session_id,
                     error = %error,
-                    "Prover service reported failed session"
+                    "Prover service reported failed session, re-dispatching"
                 );
                 Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED).increment(1);
-                self.handle_proof_failure(target_block, error, retry_counts, cache);
+                if self.handle_proof_failure(target_block, error, retry_counts, cache) {
+                    if retry_sessions.get(&target_block).is_some_and(|id| id == &session_id) {
+                        self.dispatch_discard_retry(
+                            target_block,
+                            &current,
+                            claimed_l2_output_root,
+                            retry_counts,
+                            cache,
+                            DiscardRetryState {
+                                counts: discard_retry_counts,
+                                sessions: retry_sessions,
+                            },
+                        )
+                        .await;
+                    } else {
+                        self.dispatch_for(
+                            target_block,
+                            &current,
+                            claimed_l2_output_root,
+                            retry_counts,
+                            cache,
+                        )
+                        .await;
+                    }
+                }
             }
             TargetPoll::Unknown { session_id, error } => {
                 debug!(
@@ -430,8 +613,14 @@ where
         proof: ProofResult,
         retry_counts: &mut HashMap<u64, u32>,
         cache: &mut Option<CachedRecovery>,
-        discarded_targets: &mut HashSet<u64>,
-    ) {
+    ) -> SubmitEffect {
+        let claimed_l2_output_root = match &proof {
+            ProofResult::Tee { aggregate_proposal, .. } => aggregate_proposal.output_root,
+            ProofResult::Zk { .. } => {
+                warn!(target_block, "Unexpected ZK proof result in TEE proposer path");
+                return SubmitEffect::Restart;
+            }
+        };
         let parent_address = recovered.parent_address;
         info!(target_block, parent_address = %parent_address, "Submitting proof inline");
 
@@ -448,8 +637,9 @@ where
                 warn!(
                     target_block,
                     timeout_secs = self.config.submit_timeout.as_secs(),
-                    "Inline submit timed out, will retry next iteration"
+                    "Inline submit timed out, restarting pipeline session"
                 );
+                SubmitEffect::Restart
             }
             Ok(Ok(())) => {
                 drop(submit_timer);
@@ -460,12 +650,14 @@ where
                 if let Err(e) = self.recover_latest_state(cache).await {
                     warn!(error = %e, "Failed to recover state after submission");
                 }
+                SubmitEffect::Submitted
             }
             Ok(Err(SubmitAction::RootMismatch)) => {
                 submit_timer.disarm();
-                warn!(target_block, "Output root mismatch at submit time, dropping recovery cache");
+                warn!(target_block, "Output root mismatch at submit time, restarting pipeline");
                 Metrics::root_mismatch_total().increment(1);
                 *cache = None;
+                SubmitEffect::Restart
             }
             Ok(Err(SubmitAction::GameAlreadyExists)) => {
                 submit_timer.disarm();
@@ -485,6 +677,7 @@ where
                 if let Err(e) = self.recover_latest_state(cache).await {
                     warn!(error = %e, "Failed to recover state after GameAlreadyExists");
                 }
+                SubmitEffect::Submitted
             }
             Ok(Err(SubmitAction::Failed(error))) => {
                 submit_timer.disarm();
@@ -493,32 +686,27 @@ where
                     warn!(
                         target_block,
                         error = %error,
-                        "Submission rejected: parent game invalid, dropping recovery cache"
+                        "Submission rejected: parent game invalid, restarting pipeline"
                     );
                     *cache = None;
                 } else {
                     warn!(
                         target_block,
                         error = %error,
-                        "Submission failed, will retry next iteration"
+                        "Submission failed, restarting pipeline"
                     );
                 }
+                SubmitEffect::Restart
             }
             Ok(Err(SubmitAction::Discard(error))) => {
                 submit_timer.disarm();
                 Metrics::errors_total(error.metric_label()).increment(1);
-                Metrics::discarded_targets_total().increment(1);
-                // The prover-service session for this target is keyed
-                // deterministically on the canonical output root, so the
-                // next poll would return the same `Ready` proof and
-                // re-discard it. Mark the target as discarded so subsequent
-                // iterations skip polling until the chain advances past it.
-                discarded_targets.insert(target_block);
                 warn!(
                     target_block,
                     error = %error,
-                    "Proof discarded by submitter, skipping until chain advances past target"
+                    "Proof discarded by submitter, dispatching fresh retry proof"
                 );
+                SubmitEffect::Redispatch { claimed_l2_output_root }
             }
         }
     }
@@ -539,7 +727,7 @@ where
         claimed_l2_output_root: B256,
         retry_counts: &mut HashMap<u64, u32>,
         cache: &mut Option<CachedRecovery>,
-    ) {
+    ) -> DispatchOutcome {
         let request = match self
             .build_proof_request_for(target_block, recovered, claimed_l2_output_root)
             .await
@@ -552,7 +740,7 @@ where
                     "Failed to build proof request, will retry next iteration"
                 );
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
-                return;
+                return DispatchOutcome::Skipped;
             }
         };
 
@@ -565,6 +753,60 @@ where
                     "Proof request accepted by prover service"
                 );
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
+                DispatchOutcome::Accepted
+            }
+            Err(error) => {
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
+                self.handle_proof_failure(target_block, error, retry_counts, cache);
+                DispatchOutcome::Skipped
+            }
+        }
+    }
+
+    async fn dispatch_discard_retry(
+        &self,
+        target_block: u64,
+        recovered: &RecoveredState,
+        claimed_l2_output_root: B256,
+        retry_counts: &mut HashMap<u64, u32>,
+        cache: &mut Option<CachedRecovery>,
+        discard_retry: DiscardRetryState<'_>,
+    ) {
+        let request = match self
+            .build_proof_request_for(target_block, recovered, claimed_l2_output_root)
+            .await
+        {
+            Ok(req) => req,
+            Err(e) => {
+                warn!(
+                    target_block,
+                    error = %e,
+                    "Failed to build discard retry proof request"
+                );
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
+                return;
+            }
+        };
+
+        let attempt = discard_retry.counts.entry(target_block).or_insert(0);
+        *attempt += 1;
+        let session_id = ProposerProofAdapter::tee_discard_retry_session_id(
+            &request,
+            self.proof_collector.tee_kind(),
+            *attempt,
+        );
+
+        match self.proof_dispatcher.dispatch_tee_with_session_id(request, session_id.clone()).await
+        {
+            Ok(dispatched) => {
+                info!(
+                    target_block,
+                    session_id = %dispatched.session_id,
+                    attempt = *attempt,
+                    "Discard retry proof request accepted by prover service"
+                );
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
+                discard_retry.sessions.insert(target_block, dispatched.session_id);
             }
             Err(error) => {
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
@@ -584,7 +826,7 @@ where
         error: ProposerError,
         retry_counts: &mut HashMap<u64, u32>,
         cache: &mut Option<CachedRecovery>,
-    ) {
+    ) -> bool {
         Metrics::errors_total(error.metric_label()).increment(1);
         Metrics::proof_retries_total().increment(1);
 
@@ -599,13 +841,15 @@ where
             );
             retry_counts.remove(&target);
             *cache = None;
+            false
         } else {
             warn!(
                 target_block = target,
                 attempt = *count,
                 error = %error,
-                "Proof failed, will retry next iteration"
+                "Proof failed, re-dispatching"
             );
+            true
         }
     }
 
@@ -946,6 +1190,34 @@ where
         }
     }
 
+    fn next_target_block(&self, current_block: u64) -> Option<u64> {
+        current_block.checked_add(self.config.driver.block_interval).map_or_else(
+            || {
+                error!(
+                    current_block,
+                    block_interval = self.config.driver.block_interval,
+                    "Overflow computing next target block"
+                );
+                None
+            },
+            Some,
+        )
+    }
+
+    async fn canonical_output_root(&self, target_block: u64) -> Option<B256> {
+        match self.rollup_client.output_at_block(target_block).await {
+            Ok(output) => Some(output.output_root),
+            Err(e) => {
+                warn!(
+                    target_block,
+                    error = %e,
+                    "Failed to fetch canonical output root for dispatch target"
+                );
+                None
+            }
+        }
+    }
+
     /// Concurrently fetches canonical output roots for the given block numbers.
     async fn fetch_canonical_roots(
         &self,
@@ -1045,13 +1317,44 @@ where
     }
 }
 
+fn spawn_loop<L1, L2, R, ASR, F, Fut>(
+    pipeline: ProvingPipeline<L1, L2, R, ASR, F>,
+    cancel: CancellationToken,
+    f: impl FnOnce(ProvingPipeline<L1, L2, R, ASR, F>, CancellationToken) -> Fut,
+) -> JoinHandle<Result<()>>
+where
+    L1: L1Provider + 'static,
+    L2: L2Provider + 'static,
+    R: RollupProvider + 'static,
+    ASR: AnchorStateRegistryClient + 'static,
+    F: DisputeGameFactoryClient + 'static,
+    Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+{
+    tokio::spawn(f(pipeline, cancel))
+}
+
+async fn await_loop(handle: JoinHandle<Result<()>>) -> Result<()> {
+    handle.await??;
+    Ok(())
+}
+
+async fn sleep_or_cancel(duration: Duration, cancel: &CancellationToken) {
+    tokio::select! {
+        biased;
+        () = cancel.cancelled() => {}
+        () = tokio::time::sleep(duration) => {}
+    }
+}
+
+async fn request_restart(restart_tx: &mpsc::Sender<String>, reason: &str) {
+    if restart_tx.send(reason.to_owned()).await.is_err() {
+        warn!(reason, "Failed to send pipeline restart request");
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{HashMap, HashSet},
-        sync::Arc,
-        time::Duration,
-    };
+    use std::{collections::HashMap, sync::Arc, time::Duration};
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
@@ -1908,9 +2211,9 @@ mod tests {
         );
     }
 
-    // ---- Self-driving loop: step / submit_inline / handle_proof_failure ----
+    // ---- Pipeline loops: dispatch / collect / submit / retry ----
 
-    /// Builds a pipeline tailored for `step()` / `submit_inline()` tests.
+    /// Builds a pipeline tailored for dispatcher / collector / submit tests.
     ///
     /// Uses `SUBMIT_BLOCK_INTERVAL` for short cycles and exposes the
     /// underlying [`MockProofRequester`] so tests can pre-seed the
@@ -2085,17 +2388,17 @@ mod tests {
         assert!(result.is_ok(), "run should return Ok when cancelled");
     }
 
-    /// When `safe_head < target_block`, `step()` returns without dispatching
-    /// or submitting and leaves retry counters untouched.
+    /// When `safe_head < target_block`, the dispatcher returns without
+    /// dispatching and leaves retry counters untouched.
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_step_skips_when_safe_head_below_next_target() {
+    async fn test_dispatcher_tick_skips_when_safe_head_below_next_target() {
         // safe_head=0, target = 0 + SUBMIT_BLOCK_INTERVAL = 4 > 0 → skip.
         let (pipeline, proof_requester, _cancel) = step_pipeline_default(0);
 
         let mut cache: Option<CachedRecovery> = None;
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
-        let mut discarded_targets: HashSet<u64> = HashSet::new();
-        pipeline.step(&mut cache, &mut retry_counts, &mut discarded_targets).await;
+        let mut cursor: Option<RecoveredState> = None;
+        pipeline.dispatcher_tick(&mut cache, &mut retry_counts, &mut cursor).await;
 
         assert!(
             proof_requester.requests.lock().unwrap().is_empty(),
@@ -2104,24 +2407,125 @@ mod tests {
         assert!(retry_counts.is_empty(), "retry counters should be untouched");
     }
 
-    /// When the prover service has no session for the next target,
-    /// `step()` dispatches a fresh request via `dispatch_for`.
+    /// The dispatcher sends proof requests up to the safe head instead of
+    /// limiting itself to one in-flight proof.
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_step_dispatches_when_no_session_exists() {
-        let (pipeline, proof_requester, _cancel) = step_pipeline_default(SUBMIT_BLOCK_INTERVAL);
+    async fn test_dispatcher_tick_dispatches_all_targets_up_to_safe_head() {
+        let safe_head = SUBMIT_BLOCK_INTERVAL * 3;
+        let (pipeline, proof_requester, _cancel) = step_pipeline_default(safe_head);
 
         let mut cache: Option<CachedRecovery> = None;
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
-        let mut discarded_targets: HashSet<u64> = HashSet::new();
-        pipeline.step(&mut cache, &mut retry_counts, &mut discarded_targets).await;
+        let mut cursor: Option<RecoveredState> = None;
+        pipeline.dispatcher_tick(&mut cache, &mut retry_counts, &mut cursor).await;
 
         let requests = proof_requester.requests.lock().unwrap();
-        assert_eq!(
-            requests.len(),
-            1,
-            "exactly one prove_block_range request should have been dispatched"
-        );
+        assert_eq!(requests.len(), 3, "dispatcher should dispatch every interval up to safe head");
         assert!(retry_counts.is_empty(), "successful dispatch should not bump the retry counter");
+    }
+
+    /// A terminal prover-service `Failed` status is sticky until the proposer
+    /// calls `prove_block_range` again for the same session id. The collector
+    /// must therefore re-dispatch immediately instead of only incrementing a
+    /// local retry counter and polling the same failed row again.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_collector_tick_redispatches_failed_session() {
+        let (pipeline, proof_requester, _cancel) = step_pipeline_default(SUBMIT_BLOCK_INTERVAL);
+        let mut dispatch_cache: Option<CachedRecovery> = None;
+        let mut dispatch_retries: HashMap<u64, u32> = HashMap::new();
+        let mut dispatch_cursor: Option<RecoveredState> = None;
+        pipeline
+            .dispatcher_tick(&mut dispatch_cache, &mut dispatch_retries, &mut dispatch_cursor)
+            .await;
+
+        let session_id = ProposerProofAdapter::tee_session_id_for_root(
+            B256::repeat_byte(SUBMIT_BLOCK_INTERVAL as u8),
+            pipeline.proof_collector.tee_kind(),
+        );
+        proof_requester
+            .failed_sessions
+            .lock()
+            .unwrap()
+            .insert(session_id, "simulated prover failure".to_owned());
+        let prove_count_before =
+            proof_requester.prove_count.load(std::sync::atomic::Ordering::SeqCst);
+
+        let mut collect_cache: Option<CachedRecovery> = None;
+        let mut collect_retries: HashMap<u64, u32> = HashMap::new();
+        let mut collect_cursor: Option<RecoveredState> = None;
+        let mut discard_retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut retry_sessions: HashMap<u64, String> = HashMap::new();
+        let (restart_tx, _restart_rx) = mpsc::channel(1);
+
+        pipeline
+            .collector_tick(
+                &mut collect_cache,
+                &mut collect_retries,
+                &mut collect_cursor,
+                &mut discard_retry_counts,
+                &mut retry_sessions,
+                &restart_tx,
+            )
+            .await;
+
+        assert!(
+            proof_requester.prove_count.load(std::sync::atomic::Ordering::SeqCst)
+                > prove_count_before,
+            "collector should re-dispatch failed prover-service sessions"
+        );
+        assert_eq!(
+            collect_retries.get(&SUBMIT_BLOCK_INTERVAL).copied(),
+            Some(1),
+            "failed session should consume one retry attempt"
+        );
+    }
+
+    /// Submit failures ask the driver to restart both dispatcher and collector
+    /// tasks from chain-derived state.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_collector_tick_requests_restart_on_submit_failure() {
+        let (pipeline, proof_requester, _cancel) = step_pipeline_full(
+            HashMap::new(),
+            SUBMIT_BLOCK_INTERVAL,
+            3,
+            Duration::from_secs(60),
+            Arc::new(TransientFailOutputProposer),
+        );
+        let mut dispatch_cache: Option<CachedRecovery> = None;
+        let mut dispatch_retries: HashMap<u64, u32> = HashMap::new();
+        let mut dispatch_cursor: Option<RecoveredState> = None;
+        pipeline
+            .dispatcher_tick(&mut dispatch_cache, &mut dispatch_retries, &mut dispatch_cursor)
+            .await;
+
+        assert_eq!(
+            proof_requester.requests.lock().unwrap().len(),
+            1,
+            "test setup should dispatch one ready proof"
+        );
+
+        let mut collect_cache: Option<CachedRecovery> = None;
+        let mut collect_retries: HashMap<u64, u32> = HashMap::new();
+        let mut collect_cursor: Option<RecoveredState> = None;
+        let mut discard_retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut retry_sessions: HashMap<u64, String> = HashMap::new();
+        let (restart_tx, mut restart_rx) = mpsc::channel(1);
+
+        pipeline
+            .collector_tick(
+                &mut collect_cache,
+                &mut collect_retries,
+                &mut collect_cursor,
+                &mut discard_retry_counts,
+                &mut retry_sessions,
+                &restart_tx,
+            )
+            .await;
+
+        assert_eq!(
+            restart_rx.try_recv().expect("collector should request restart"),
+            "submit failure"
+        );
     }
 
     /// `submit_inline` with a `RootMismatch` outcome drops the cached
@@ -2144,20 +2548,13 @@ mod tests {
         let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
         let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
         let mut retry_counts: HashMap<u64, u32> = HashMap::from([(SUBMIT_BLOCK_INTERVAL, 1)]);
-        let mut discarded_targets: HashSet<u64> = HashSet::new();
 
-        pipeline
-            .submit_inline(
-                SUBMIT_BLOCK_INTERVAL,
-                &recovered,
-                proof,
-                &mut retry_counts,
-                &mut cache,
-                &mut discarded_targets,
-            )
+        let effect = pipeline
+            .submit_inline(SUBMIT_BLOCK_INTERVAL, &recovered, proof, &mut retry_counts, &mut cache)
             .await;
 
         assert!(cache.is_none(), "RootMismatch should drop the recovery cache");
+        assert_eq!(effect, SubmitEffect::Restart, "RootMismatch should restart the session");
         assert_eq!(
             retry_counts.get(&SUBMIT_BLOCK_INTERVAL).copied(),
             Some(1),
@@ -2182,25 +2579,18 @@ mod tests {
         let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
         let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
-        let mut discarded_targets: HashSet<u64> = HashSet::new();
 
-        pipeline
-            .submit_inline(
-                SUBMIT_BLOCK_INTERVAL,
-                &recovered,
-                proof,
-                &mut retry_counts,
-                &mut cache,
-                &mut discarded_targets,
-            )
+        let effect = pipeline
+            .submit_inline(SUBMIT_BLOCK_INTERVAL, &recovered, proof, &mut retry_counts, &mut cache)
             .await;
 
         assert!(cache.is_none(), "InvalidParentGame should drop the recovery cache");
+        assert_eq!(effect, SubmitEffect::Restart, "InvalidParentGame should restart the session");
         assert!(retry_counts.is_empty(), "submit failures should not bump retry counters");
     }
 
     /// Other transient submit failures preserve both the cache and retry
-    /// counters — the next loop iteration re-collects and retries.
+    /// counters, but restart both loops from a fresh recovery walk.
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_submit_inline_transient_failure_preserves_cache() {
         let (pipeline, _proof_requester, _cancel) = step_pipeline_full(
@@ -2215,20 +2605,13 @@ mod tests {
         let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
         let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
-        let mut discarded_targets: HashSet<u64> = HashSet::new();
 
-        pipeline
-            .submit_inline(
-                SUBMIT_BLOCK_INTERVAL,
-                &recovered,
-                proof,
-                &mut retry_counts,
-                &mut cache,
-                &mut discarded_targets,
-            )
+        let effect = pipeline
+            .submit_inline(SUBMIT_BLOCK_INTERVAL, &recovered, proof, &mut retry_counts, &mut cache)
             .await;
 
         assert!(cache.is_some(), "transient submit failures should preserve the recovery cache");
+        assert_eq!(effect, SubmitEffect::Restart, "transient submit failures should restart");
         assert!(
             retry_counts.is_empty(),
             "transient submit failures should not bump retry counters"
@@ -2236,7 +2619,7 @@ mod tests {
     }
 
     /// When `submit_inline` exceeds `submit_timeout`, neither the cache
-    /// nor retry counters are mutated.
+    /// nor retry counters are mutated, but the pipeline session restarts.
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_submit_inline_timeout_does_not_count_against_retries() {
         let submit_timeout = Duration::from_millis(50);
@@ -2252,21 +2635,14 @@ mod tests {
         let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
         let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
-        let mut discarded_targets: HashSet<u64> = HashSet::new();
 
-        pipeline
-            .submit_inline(
-                SUBMIT_BLOCK_INTERVAL,
-                &recovered,
-                proof,
-                &mut retry_counts,
-                &mut cache,
-                &mut discarded_targets,
-            )
+        let effect = pipeline
+            .submit_inline(SUBMIT_BLOCK_INTERVAL, &recovered, proof, &mut retry_counts, &mut cache)
             .await;
 
         assert!(cache.is_some(), "submit timeout should preserve the recovery cache");
         assert!(retry_counts.is_empty(), "submit timeout should not bump retry counters");
+        assert_eq!(effect, SubmitEffect::Restart, "submit timeout should restart the session");
     }
 
     /// On a successful submission `submit_inline` advances both
@@ -2288,7 +2664,6 @@ mod tests {
                 let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
                 let mut cache: Option<CachedRecovery> = None;
                 let mut retry_counts: HashMap<u64, u32> = HashMap::new();
-                let mut discarded_targets: HashSet<u64> = HashSet::new();
                 pipeline
                     .submit_inline(
                         SUBMIT_BLOCK_INTERVAL,
@@ -2296,7 +2671,6 @@ mod tests {
                         proof,
                         &mut retry_counts,
                         &mut cache,
-                        &mut discarded_targets,
                     )
                     .await;
             });
@@ -2339,7 +2713,6 @@ mod tests {
                 let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
                 let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
                 let mut retry_counts: HashMap<u64, u32> = HashMap::new();
-                let mut discarded_targets: HashSet<u64> = HashSet::new();
                 pipeline
                     .submit_inline(
                         SUBMIT_BLOCK_INTERVAL,
@@ -2347,7 +2720,6 @@ mod tests {
                         proof,
                         &mut retry_counts,
                         &mut cache,
-                        &mut discarded_targets,
                     )
                     .await;
             });
@@ -2378,17 +2750,9 @@ mod tests {
         let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
         let mut cache: Option<CachedRecovery> = None;
         let mut retry_counts: HashMap<u64, u32> = HashMap::from([(SUBMIT_BLOCK_INTERVAL, 2)]);
-        let mut discarded_targets: HashSet<u64> = HashSet::new();
 
-        pipeline
-            .submit_inline(
-                SUBMIT_BLOCK_INTERVAL,
-                &recovered,
-                proof,
-                &mut retry_counts,
-                &mut cache,
-                &mut discarded_targets,
-            )
+        let effect = pipeline
+            .submit_inline(SUBMIT_BLOCK_INTERVAL, &recovered, proof, &mut retry_counts, &mut cache)
             .await;
 
         assert!(
@@ -2396,6 +2760,7 @@ mod tests {
             "successful submit should clear the per-target retry counter"
         );
         assert!(cache.is_some(), "successful submit should refresh the cache");
+        assert_eq!(effect, SubmitEffect::Submitted, "successful submit should be Submitted");
     }
 
     /// L1 mock whose `header_by_number` always errors. Used to drive
@@ -2500,7 +2865,7 @@ mod tests {
         let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
 
-        pipeline
+        let outcome = pipeline
             .dispatch_for(
                 SUBMIT_BLOCK_INTERVAL,
                 &recovered,
@@ -2516,39 +2881,13 @@ mod tests {
         );
         assert!(retry_counts.is_empty(), "build failures must not bump per-target retry counters");
         assert!(cache.is_some(), "build failures must not drop the recovery cache");
-    }
-
-    /// `step()` short-circuits polling when the target block has already
-    /// been marked as discarded. The submitter's `Discard` outcomes (e.g.
-    /// `L1OriginTooOld`, `InvalidSigner`) leave the prover-service session
-    /// in `Succeeded` with a deterministic id, so re-polling would loop on
-    /// the same `Ready` proof indefinitely.
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_step_skips_polling_for_discarded_targets() {
-        let (pipeline, proof_requester, _cancel) = step_pipeline_default(SUBMIT_BLOCK_INTERVAL);
-
-        let mut cache: Option<CachedRecovery> = None;
-        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
-        let mut discarded_targets: HashSet<u64> = HashSet::from([SUBMIT_BLOCK_INTERVAL]);
-
-        pipeline.step(&mut cache, &mut retry_counts, &mut discarded_targets).await;
-
-        assert!(
-            proof_requester.requests.lock().unwrap().is_empty(),
-            "discarded targets must not trigger a fresh prover-service dispatch"
-        );
-        assert!(
-            discarded_targets.contains(&SUBMIT_BLOCK_INTERVAL),
-            "discard marker should persist while target is ahead of the chain tip"
-        );
+        assert_eq!(outcome, DispatchOutcome::Skipped, "build failure should skip dispatch");
     }
 
     /// `submit_inline` with a `Discard` outcome (e.g. `L1OriginTooOld`)
-    /// records the target in `discarded_targets` so subsequent iterations
-    /// short-circuit polling instead of re-delivering and re-discarding the
-    /// same proof indefinitely.
+    /// returns a re-dispatch effect instead of marking the target skipped.
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_submit_inline_discard_marks_target() {
+    async fn test_submit_inline_discard_requests_redispatch() {
         let (pipeline, _proof_requester, _cancel) = step_pipeline_full(
             HashMap::new(),
             SUBMIT_BLOCK_INTERVAL,
@@ -2561,24 +2900,60 @@ mod tests {
         let proof = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
         let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
         let mut retry_counts: HashMap<u64, u32> = HashMap::new();
-        let mut discarded_targets: HashSet<u64> = HashSet::new();
 
-        pipeline
-            .submit_inline(
-                SUBMIT_BLOCK_INTERVAL,
-                &recovered,
-                proof,
-                &mut retry_counts,
-                &mut cache,
-                &mut discarded_targets,
-            )
+        let effect = pipeline
+            .submit_inline(SUBMIT_BLOCK_INTERVAL, &recovered, proof, &mut retry_counts, &mut cache)
             .await;
 
-        assert!(
-            discarded_targets.contains(&SUBMIT_BLOCK_INTERVAL),
-            "Discard outcome should mark the target so subsequent polls skip it"
+        assert_eq!(
+            effect,
+            SubmitEffect::Redispatch {
+                claimed_l2_output_root: B256::repeat_byte(SUBMIT_BLOCK_INTERVAL as u8),
+            },
+            "Discard outcome should request a fresh proof dispatch"
         );
         assert!(retry_counts.is_empty(), "Discard must not bump per-target retry counters");
         assert!(cache.is_some(), "Discard must not drop the recovery cache");
+    }
+
+    /// Discard retries use retry-specific session ids so a previously
+    /// `Succeeded` root-derived session does not force the collector to reuse
+    /// the same discarded proof forever.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_dispatch_discard_retry_uses_retry_session() {
+        let (pipeline, proof_requester, _cancel) = step_pipeline_default(SUBMIT_BLOCK_INTERVAL);
+        let recovered = anchor_recovered_state();
+        let mut cache = Some(CachedRecovery { game_count: 0, state: recovered });
+        let mut retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut discard_retry_counts: HashMap<u64, u32> = HashMap::new();
+        let mut retry_sessions: HashMap<u64, String> = HashMap::new();
+
+        pipeline
+            .dispatch_discard_retry(
+                SUBMIT_BLOCK_INTERVAL,
+                &recovered,
+                B256::repeat_byte(SUBMIT_BLOCK_INTERVAL as u8),
+                &mut retry_counts,
+                &mut cache,
+                DiscardRetryState {
+                    counts: &mut discard_retry_counts,
+                    sessions: &mut retry_sessions,
+                },
+            )
+            .await;
+
+        let requests = proof_requester.requests.lock().unwrap();
+        let retry_session = retry_sessions
+            .get(&SUBMIT_BLOCK_INTERVAL)
+            .expect("discard retry should store retry session id");
+        assert!(requests.contains_key(retry_session), "retry session should be dispatched");
+        assert_ne!(
+            retry_session,
+            &ProposerProofAdapter::tee_session_id_for_root(
+                B256::repeat_byte(SUBMIT_BLOCK_INTERVAL as u8),
+                pipeline.proof_collector.tee_kind(),
+            ),
+            "discard retries must not reuse root-derived session id"
+        );
     }
 }

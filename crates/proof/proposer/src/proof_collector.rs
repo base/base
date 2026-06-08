@@ -20,7 +20,7 @@ use alloy_primitives::B256;
 use base_proof_primitives::ProofResult;
 use base_proof_rpc::RollupProvider;
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
-use base_prover_service_protocol::{GetProofRequest, ProofStatus, TeeKind};
+use base_prover_service_protocol::{GetProofRequest, GetProofResponse, ProofStatus, TeeKind};
 use tracing::debug;
 
 use crate::{error::ProposerError, metrics::Metrics, proof_adapter::ProposerProofAdapter};
@@ -28,7 +28,7 @@ use crate::{error::ProposerError, metrics::Metrics, proof_adapter::ProposerProof
 /// Outcome of polling the prover service for a single target block.
 ///
 /// Returned by [`ProofCollector::poll`] and consumed by the proposer's
-/// self-driving loop to choose the next action: submit, dispatch, wait, or
+/// proposer pipeline to choose the next action: submit, dispatch, wait, or
 /// retry.
 #[derive(Debug)]
 pub enum TargetPoll {
@@ -44,6 +44,8 @@ pub enum TargetPoll {
     Failed {
         /// Deterministic prover-service session identifier.
         session_id: String,
+        /// Canonical L2 output root at the target block.
+        claimed_l2_output_root: B256,
         /// Underlying error returned by the prover service or the decoder.
         error: ProposerError,
     },
@@ -153,12 +155,7 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
         let session_id =
             ProposerProofAdapter::tee_session_id_for_root(output.output_root, self.tee_kind);
 
-        // 2. Ask the prover service for the proof status.
-        let response = match self
-            .proof_requester
-            .get_proof(GetProofRequest { session_id: session_id.clone() })
-            .await
-        {
+        let response = match self.get_proof(session_id.clone()).await {
             Ok(response) => response,
             Err(e) if e.is_not_found() => {
                 debug!(
@@ -185,7 +182,56 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
             }
         };
 
-        // 3. Translate the prover-service response into a TargetPoll variant.
+        self.response_to_poll(target_block, session_id, output.output_root, response)
+    }
+
+    /// Polls a specific prover-service session for `target_block`.
+    ///
+    /// Used after a discard retry is dispatched under a retry-specific session
+    /// id. The canonical root is still fetched so a terminal failed session can
+    /// be re-dispatched with a complete proof request.
+    pub async fn poll_session(&self, target_block: u64, session_id: String) -> TargetPoll {
+        let output = match self.rollup_client.output_at_block(target_block).await {
+            Ok(out) => out,
+            Err(e) => {
+                debug!(
+                    target_block,
+                    session_id = %session_id,
+                    error = %e,
+                    "Failed to fetch canonical output root for retry session",
+                );
+                return TargetPoll::Unknown {
+                    session_id: Some(session_id),
+                    error: ProposerError::Rpc(e),
+                };
+            }
+        };
+
+        match self.get_proof(session_id.clone()).await {
+            Ok(response) => {
+                self.response_to_poll(target_block, session_id, output.output_root, response)
+            }
+            Err(e) => TargetPoll::Unknown {
+                session_id: Some(session_id),
+                error: Self::error_from_client(e),
+            },
+        }
+    }
+
+    async fn get_proof(
+        &self,
+        session_id: String,
+    ) -> Result<GetProofResponse, ProverServiceClientError> {
+        self.proof_requester.get_proof(GetProofRequest { session_id }).await
+    }
+
+    fn response_to_poll(
+        &self,
+        target_block: u64,
+        session_id: String,
+        claimed_l2_output_root: B256,
+        response: GetProofResponse,
+    ) -> TargetPoll {
         Metrics::proof_status_received_total(Self::status_label(response.status)).increment(1);
         match response.status {
             ProofStatus::Queued | ProofStatus::Running => {
@@ -201,7 +247,11 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
                 let message = response.error_message.unwrap_or_else(|| {
                     format!("proof session {session_id} failed without an error message")
                 });
-                TargetPoll::Failed { session_id, error: ProposerError::Prover(message) }
+                TargetPoll::Failed {
+                    session_id,
+                    claimed_l2_output_root,
+                    error: ProposerError::Prover(message),
+                }
             }
             ProofStatus::Succeeded => {
                 let result = match response.result {
@@ -210,12 +260,12 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
                         let error = ProposerError::Prover(format!(
                             "proof session {session_id} succeeded without a result"
                         ));
-                        return TargetPoll::Failed { session_id, error };
+                        return TargetPoll::Failed { session_id, claimed_l2_output_root, error };
                     }
                 };
                 match ProposerProofAdapter::tee_proof_result(result, self.tee_kind) {
                     Ok(proof) => TargetPoll::Ready { session_id, proof },
-                    Err(error) => TargetPoll::Failed { session_id, error },
+                    Err(error) => TargetPoll::Failed { session_id, claimed_l2_output_root, error },
                 }
             }
         }

@@ -24,9 +24,6 @@ base_metrics::define_metrics! {
     #[label(name = "outcome", default = ["accepted", "failed", "build_failed"])]
     proof_dispatch_total: counter,
 
-    #[describe("Total target blocks discarded by the submitter and skipped by subsequent polls")]
-    discarded_targets_total: counter,
-
     #[describe("Total proof collection outcomes returned by the proof collector")]
     #[label(name = "outcome", default = ["ready", "failed"])]
     proof_collection_total: counter,
