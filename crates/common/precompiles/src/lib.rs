@@ -78,7 +78,7 @@ pub use policy::{
 };
 
 mod tx_context;
-pub use tx_context::{ITxContext, TxContext, TxContextStorage};
+pub use tx_context::{ITransactionContext, TxContext, TxContextStorage};
 
 mod nonce;
-pub use nonce::{INonce, NonceManager, NonceManagerStorage};
+pub use nonce::{INonceManager, NonceManager, NonceManagerStorage};

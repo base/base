@@ -6,7 +6,7 @@ use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    INonce::{self, INonceCalls as C},
+    INonceManager::{self, INonceManagerCalls as C},
     macros::{decode_precompile_call, deduct_calldata_cost},
     nonce::storage::NonceManagerStorage,
 };
@@ -27,8 +27,8 @@ impl NonceManagerStorage<'_> {
     }
 
     fn inner(&self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
-        match decode_precompile_call!(calldata, INonce::INonceCalls) {
-            C::getNonce(call) => Ok(INonce::getNonceCall::abi_encode_returns(
+        match decode_precompile_call!(calldata, INonceManager::INonceManagerCalls) {
+            C::getNonce(call) => Ok(INonceManager::getNonceCall::abi_encode_returns(
                 &self.get_nonce(call.account, call.nonceKey)?,
             )
             .into()),
@@ -42,7 +42,7 @@ mod tests {
     use alloy_sol_types::SolCall;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use crate::{INonce, NonceManagerStorage};
+    use crate::{INonceManager, NonceManagerStorage};
 
     const ACCOUNT: Address = address!("0x1111111111111111111111111111111111111111");
 
@@ -64,17 +64,19 @@ mod tests {
             mgr.increment_nonce(ACCOUNT, nonce_key).unwrap();
         });
 
-        let calldata = INonce::getNonceCall { account: ACCOUNT, nonceKey: nonce_key }.abi_encode();
+        let calldata =
+            INonceManager::getNonceCall { account: ACCOUNT, nonceKey: nonce_key }.abi_encode();
         let output = dispatch(&mut storage, &calldata);
 
         assert!(!output.is_revert());
-        assert_eq!(INonce::getNonceCall::abi_decode_returns(&output.bytes).unwrap(), 2);
+        assert_eq!(INonceManager::getNonceCall::abi_decode_returns(&output.bytes).unwrap(), 2);
     }
 
     #[test]
     fn dispatch_get_nonce_reverts_for_protocol_nonce() {
         let mut storage = HashMapStorageProvider::new(1);
-        let calldata = INonce::getNonceCall { account: ACCOUNT, nonceKey: U256::ZERO }.abi_encode();
+        let calldata =
+            INonceManager::getNonceCall { account: ACCOUNT, nonceKey: U256::ZERO }.abi_encode();
         let output = dispatch(&mut storage, &calldata);
 
         assert!(output.is_revert());

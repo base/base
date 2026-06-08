@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, U256, address};
 use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
 
-use crate::INonce;
+use crate::INonceManager;
 
 /// Persistent 2D nonce manager for EIP-8130 account-abstraction transactions.
 ///
@@ -68,35 +68,35 @@ impl NonceManagerStorage<'_> {
     /// Returns the current 2D nonce for `account` at `nonce_key`.
     ///
     /// # Errors
-    /// - [`INonce::ProtocolNonceNotSupported`] — `nonce_key` is `0`, the protocol
-    ///   nonce, which is stored in account state and must be read from there.
+    /// - [`INonceManager::ProtocolNonceNotSupported`] — `nonce_key` is `0`, the
+    ///   protocol nonce, which is stored in account state and must be read from there.
     pub fn get_nonce(&self, account: Address, nonce_key: U256) -> Result<u64> {
         if nonce_key == Self::PROTOCOL_NONCE_KEY {
-            return Err(BasePrecompileError::revert(INonce::ProtocolNonceNotSupported {}));
+            return Err(BasePrecompileError::revert(INonceManager::ProtocolNonceNotSupported {}));
         }
         self.nonces.at(&account).at(&nonce_key).read()
     }
 
     /// Increments the 2D nonce for `account` at `nonce_key`, returning the new
-    /// value and emitting [`INonce::NonceIncremented`].
+    /// value and emitting [`INonceManager::NonceIncremented`].
     ///
     /// Intended for the EIP-8130 execution layer; not reachable through ABI
     /// dispatch.
     ///
     /// # Errors
-    /// - [`INonce::InvalidNonceKey`] — `nonce_key` is `0` (the protocol nonce).
-    /// - [`INonce::NonceOverflow`] — the channel nonce is already `u64::MAX`.
+    /// - [`INonceManager::InvalidNonceKey`] — `nonce_key` is `0` (the protocol nonce).
+    /// - [`INonceManager::NonceOverflow`] — the channel nonce is already `u64::MAX`.
     pub fn increment_nonce(&mut self, account: Address, nonce_key: U256) -> Result<u64> {
         if nonce_key == Self::PROTOCOL_NONCE_KEY {
-            return Err(BasePrecompileError::revert(INonce::InvalidNonceKey {}));
+            return Err(BasePrecompileError::revert(INonceManager::InvalidNonceKey {}));
         }
         self.__initialize()?;
         let current = self.nonces.at(&account).at(&nonce_key).read()?;
         let new_nonce = current
             .checked_add(1)
-            .ok_or_else(|| BasePrecompileError::revert(INonce::NonceOverflow {}))?;
+            .ok_or_else(|| BasePrecompileError::revert(INonceManager::NonceOverflow {}))?;
         self.nonces.at_mut(&account).at_mut(&nonce_key).write(new_nonce)?;
-        self.emit_event(INonce::NonceIncremented {
+        self.emit_event(INonceManager::NonceIncremented {
             account,
             nonceKey: nonce_key,
             newNonce: new_nonce,
@@ -124,10 +124,10 @@ impl NonceManagerStorage<'_> {
     /// dispatch.
     ///
     /// # Errors
-    /// - [`INonce::InvalidExpiringNonceExpiry`] — `valid_before` is not in
+    /// - [`INonceManager::InvalidExpiringNonceExpiry`] — `valid_before` is not in
     ///   `(now, now + EXPIRING_NONCE_MAX_EXPIRY_SECS]`.
-    /// - [`INonce::ExpiringNonceReplay`] — the hash is already recorded and unexpired.
-    /// - [`INonce::ExpiringNonceSetFull`] — the ring slot holds an unexpired entry
+    /// - [`INonceManager::ExpiringNonceReplay`] — the hash is already recorded and unexpired.
+    /// - [`INonceManager::ExpiringNonceSetFull`] — the ring slot holds an unexpired entry
     ///   that cannot be reclaimed.
     pub fn check_and_mark_expiring_nonce(
         &mut self,
@@ -140,13 +140,13 @@ impl NonceManagerStorage<'_> {
         if valid_before <= now
             || valid_before > now.saturating_add(Self::EXPIRING_NONCE_MAX_EXPIRY_SECS)
         {
-            return Err(BasePrecompileError::revert(INonce::InvalidExpiringNonceExpiry {}));
+            return Err(BasePrecompileError::revert(INonceManager::InvalidExpiringNonceExpiry {}));
         }
 
         // 2. Replay check: reject if the hash is already seen and not yet expired.
         let seen_expiry = self.expiring_nonce_seen.at(&expiring_nonce_hash).read()?;
         if seen_expiry != 0 && seen_expiry > now {
-            return Err(BasePrecompileError::revert(INonce::ExpiringNonceReplay {}));
+            return Err(BasePrecompileError::revert(INonceManager::ExpiringNonceReplay {}));
         }
 
         self.__initialize()?;
@@ -161,7 +161,7 @@ impl NonceManagerStorage<'_> {
         if old_hash != B256::ZERO {
             let old_expiry = self.expiring_nonce_seen.at(&old_hash).read()?;
             if old_expiry != 0 && old_expiry > now {
-                return Err(BasePrecompileError::revert(INonce::ExpiringNonceSetFull {}));
+                return Err(BasePrecompileError::revert(INonceManager::ExpiringNonceSetFull {}));
             }
             self.expiring_nonce_seen.at_mut(&old_hash).write(0)?;
         }
@@ -185,7 +185,7 @@ mod tests {
         BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx,
     };
 
-    use crate::{INonce, nonce::storage::NonceManagerStorage};
+    use crate::{INonceManager, nonce::storage::NonceManagerStorage};
 
     const ACCOUNT_A: Address = address!("0x1111111111111111111111111111111111111111");
     const ACCOUNT_B: Address = address!("0x2222222222222222222222222222222222222222");
@@ -204,7 +204,10 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
             let err = NonceManagerStorage::new(ctx).get_nonce(ACCOUNT_A, U256::ZERO).unwrap_err();
-            assert_eq!(err, BasePrecompileError::revert(INonce::ProtocolNonceNotSupported {}));
+            assert_eq!(
+                err,
+                BasePrecompileError::revert(INonceManager::ProtocolNonceNotSupported {})
+            );
         });
     }
 
@@ -229,7 +232,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let err =
                 NonceManagerStorage::new(ctx).increment_nonce(ACCOUNT_A, U256::ZERO).unwrap_err();
-            assert_eq!(err, BasePrecompileError::revert(INonce::InvalidNonceKey {}));
+            assert_eq!(err, BasePrecompileError::revert(INonceManager::InvalidNonceKey {}));
         });
     }
 
@@ -263,7 +266,7 @@ mod tests {
             let hash = B256::repeat_byte(0x11);
             mgr.check_and_mark_expiring_nonce(hash, now + 20).unwrap();
             let err = mgr.check_and_mark_expiring_nonce(hash, now + 20).unwrap_err();
-            assert_eq!(err, BasePrecompileError::revert(INonce::ExpiringNonceReplay {}));
+            assert_eq!(err, BasePrecompileError::revert(INonceManager::ExpiringNonceReplay {}));
         });
     }
 
@@ -275,7 +278,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
             let hash = B256::repeat_byte(0x22);
-            let invalid = BasePrecompileError::revert(INonce::InvalidExpiringNonceExpiry {});
+            let invalid = BasePrecompileError::revert(INonceManager::InvalidExpiringNonceExpiry {});
 
             // In the past, exactly now, and beyond the max window all fail.
             assert_eq!(mgr.check_and_mark_expiring_nonce(hash, now - 1).unwrap_err(), invalid);

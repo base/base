@@ -5,7 +5,7 @@ use base_precompile_storage::{Result, StorageCtx};
 
 /// Transient-storage-backed view of the in-flight EIP-8130 transaction context.
 ///
-/// The resolved sender, payer, and sender owner id are written to transient
+/// The resolved sender, payer, and sender actor id are written to transient
 /// storage at [`Self::ADDRESS`] by the EIP-8130 execution layer at the start of
 /// transaction processing and cleared automatically at transaction end. The
 /// precompile only reads them back, so for any non-EIP-8130 transaction (where
@@ -27,8 +27,8 @@ impl<'a> TxContextStorage<'a> {
     const SENDER_SLOT: U256 = U256::ZERO;
     /// Transient slot holding the resolved payer address.
     const PAYER_SLOT: U256 = U256::from_limbs([1, 0, 0, 0]);
-    /// Transient slot holding the sender owner id.
-    const SENDER_OWNER_ID_SLOT: U256 = U256::from_limbs([2, 0, 0, 0]);
+    /// Transient slot holding the sender actor id.
+    const SENDER_ACTOR_ID_SLOT: U256 = U256::from_limbs([2, 0, 0, 0]);
 
     /// Creates a transaction context view over the active storage scope.
     pub const fn new(storage: StorageCtx<'a>) -> Self {
@@ -47,9 +47,9 @@ impl<'a> TxContextStorage<'a> {
         Ok(Address::from_word(B256::from(raw.to_be_bytes::<32>())))
     }
 
-    /// Returns the sender owner id, or [`B256::ZERO`] when unset.
-    pub fn sender_owner_id(&self) -> Result<B256> {
-        let raw = self.storage.tload(Self::ADDRESS, Self::SENDER_OWNER_ID_SLOT)?;
+    /// Returns the sender actor id, or [`B256::ZERO`] when unset.
+    pub fn sender_actor_id(&self) -> Result<B256> {
+        let raw = self.storage.tload(Self::ADDRESS, Self::SENDER_ACTOR_ID_SLOT)?;
         Ok(B256::from(raw.to_be_bytes::<32>()))
     }
 
@@ -62,7 +62,7 @@ impl<'a> TxContextStorage<'a> {
         &mut self,
         sender: Address,
         payer: Address,
-        sender_owner_id: B256,
+        sender_actor_id: B256,
     ) -> Result<()> {
         self.storage.tstore(
             Self::ADDRESS,
@@ -76,8 +76,8 @@ impl<'a> TxContextStorage<'a> {
         )?;
         self.storage.tstore(
             Self::ADDRESS,
-            Self::SENDER_OWNER_ID_SLOT,
-            U256::from_be_bytes(sender_owner_id.0),
+            Self::SENDER_ACTOR_ID_SLOT,
+            U256::from_be_bytes(sender_actor_id.0),
         )?;
         Ok(())
     }
@@ -92,7 +92,7 @@ mod tests {
 
     const SENDER: Address = address!("0x1111111111111111111111111111111111111111");
     const PAYER: Address = address!("0x2222222222222222222222222222222222222222");
-    const SENDER_OWNER_ID: B256 =
+    const SENDER_ACTOR_ID: B256 =
         b256!("0x3333333333333333333333333333333333333333333333333333333333333333");
 
     #[test]
@@ -103,7 +103,7 @@ mod tests {
             let view = TxContextStorage::new(ctx);
             assert_eq!(view.sender().unwrap(), Address::ZERO);
             assert_eq!(view.payer().unwrap(), Address::ZERO);
-            assert_eq!(view.sender_owner_id().unwrap(), B256::ZERO);
+            assert_eq!(view.sender_actor_id().unwrap(), B256::ZERO);
         });
     }
 
@@ -113,11 +113,11 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut view = TxContextStorage::new(ctx);
-            view.set_context(SENDER, PAYER, SENDER_OWNER_ID).unwrap();
+            view.set_context(SENDER, PAYER, SENDER_ACTOR_ID).unwrap();
 
             assert_eq!(view.sender().unwrap(), SENDER);
             assert_eq!(view.payer().unwrap(), PAYER);
-            assert_eq!(view.sender_owner_id().unwrap(), SENDER_OWNER_ID);
+            assert_eq!(view.sender_actor_id().unwrap(), SENDER_ACTOR_ID);
         });
     }
 
@@ -126,13 +126,13 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
 
         StorageCtx::enter(&mut storage, |ctx| {
-            TxContextStorage::new(ctx).set_context(SENDER, PAYER, SENDER_OWNER_ID).unwrap();
+            TxContextStorage::new(ctx).set_context(SENDER, PAYER, SENDER_ACTOR_ID).unwrap();
             ctx.clear_transient();
 
             let view = TxContextStorage::new(ctx);
             assert_eq!(view.sender().unwrap(), Address::ZERO);
             assert_eq!(view.payer().unwrap(), Address::ZERO);
-            assert_eq!(view.sender_owner_id().unwrap(), B256::ZERO);
+            assert_eq!(view.sender_actor_id().unwrap(), B256::ZERO);
         });
     }
 }

@@ -1,7 +1,7 @@
 //! EIP-8130 2D nonce manager native precompile.
 
 mod abi;
-pub use abi::INonce;
+pub use abi::INonceManager;
 
 mod storage;
 pub use storage::NonceManagerStorage;

@@ -6,7 +6,7 @@ use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    ITxContext::{self, ITxContextCalls as C},
+    ITransactionContext::{self, ITransactionContextCalls as C},
     macros::{decode_precompile_call, deduct_calldata_cost},
     tx_context::storage::TxContextStorage,
 };
@@ -23,16 +23,20 @@ impl TxContextStorage<'_> {
     }
 
     fn inner(&self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
-        match decode_precompile_call!(calldata, ITxContext::ITxContextCalls) {
-            C::getSender(_) => {
-                Ok(ITxContext::getSenderCall::abi_encode_returns(&self.sender()?).into())
-            }
-            C::getPayer(_) => {
-                Ok(ITxContext::getPayerCall::abi_encode_returns(&self.payer()?).into())
-            }
-            C::getSenderOwnerId(_) => {
-                Ok(ITxContext::getSenderOwnerIdCall::abi_encode_returns(&self.sender_owner_id()?)
+        match decode_precompile_call!(calldata, ITransactionContext::ITransactionContextCalls) {
+            C::getTransactionSender(_) => Ok(
+                ITransactionContext::getTransactionSenderCall::abi_encode_returns(&self.sender()?)
+                    .into(),
+            ),
+            C::getTransactionPayer(_) => {
+                Ok(ITransactionContext::getTransactionPayerCall::abi_encode_returns(&self.payer()?)
                     .into())
+            }
+            C::getTransactionSenderActorId(_) => {
+                Ok(ITransactionContext::getTransactionSenderActorIdCall::abi_encode_returns(
+                    &self.sender_actor_id()?,
+                )
+                .into())
             }
         }
     }
@@ -44,11 +48,11 @@ mod tests {
     use alloy_sol_types::SolCall;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use crate::{ITxContext, TxContextStorage};
+    use crate::{ITransactionContext, TxContextStorage};
 
     const SENDER: Address = address!("0x1111111111111111111111111111111111111111");
     const PAYER: Address = address!("0x2222222222222222222222222222222222222222");
-    const SENDER_OWNER_ID: B256 =
+    const SENDER_ACTOR_ID: B256 =
         b256!("0x3333333333333333333333333333333333333333333333333333333333333333");
 
     fn dispatch(storage: &mut HashMapStorageProvider, calldata: &[u8]) -> Vec<u8> {
@@ -65,19 +69,31 @@ mod tests {
     fn dispatch_returns_resolved_context() {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
-            TxContextStorage::new(ctx).set_context(SENDER, PAYER, SENDER_OWNER_ID).unwrap();
+            TxContextStorage::new(ctx).set_context(SENDER, PAYER, SENDER_ACTOR_ID).unwrap();
         });
 
-        let sender = dispatch(&mut storage, &ITxContext::getSenderCall {}.abi_encode());
-        assert_eq!(ITxContext::getSenderCall::abi_decode_returns(&sender).unwrap(), SENDER);
-
-        let payer = dispatch(&mut storage, &ITxContext::getPayerCall {}.abi_encode());
-        assert_eq!(ITxContext::getPayerCall::abi_decode_returns(&payer).unwrap(), PAYER);
-
-        let owner_id = dispatch(&mut storage, &ITxContext::getSenderOwnerIdCall {}.abi_encode());
+        let sender =
+            dispatch(&mut storage, &ITransactionContext::getTransactionSenderCall {}.abi_encode());
         assert_eq!(
-            ITxContext::getSenderOwnerIdCall::abi_decode_returns(&owner_id).unwrap(),
-            SENDER_OWNER_ID
+            ITransactionContext::getTransactionSenderCall::abi_decode_returns(&sender).unwrap(),
+            SENDER
+        );
+
+        let payer =
+            dispatch(&mut storage, &ITransactionContext::getTransactionPayerCall {}.abi_encode());
+        assert_eq!(
+            ITransactionContext::getTransactionPayerCall::abi_decode_returns(&payer).unwrap(),
+            PAYER
+        );
+
+        let actor_id = dispatch(
+            &mut storage,
+            &ITransactionContext::getTransactionSenderActorIdCall {}.abi_encode(),
+        );
+        assert_eq!(
+            ITransactionContext::getTransactionSenderActorIdCall::abi_decode_returns(&actor_id)
+                .unwrap(),
+            SENDER_ACTOR_ID
         );
     }
 
@@ -85,8 +101,12 @@ mod tests {
     fn dispatch_returns_zero_when_unset() {
         let mut storage = HashMapStorageProvider::new(1);
 
-        let sender = dispatch(&mut storage, &ITxContext::getSenderCall {}.abi_encode());
-        assert_eq!(ITxContext::getSenderCall::abi_decode_returns(&sender).unwrap(), Address::ZERO);
+        let sender =
+            dispatch(&mut storage, &ITransactionContext::getTransactionSenderCall {}.abi_encode());
+        assert_eq!(
+            ITransactionContext::getTransactionSenderCall::abi_decode_returns(&sender).unwrap(),
+            Address::ZERO
+        );
     }
 
     #[test]
