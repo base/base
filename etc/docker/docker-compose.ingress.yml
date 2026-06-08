@@ -181,6 +181,11 @@ services:
         condition: service_started
     ports:
       - "${TRANSACTION_EVENTS_VECTOR_METRICS_PORT}:8686"
+    environment:
+      TRANSACTION_EVENTS_CONFIG_NAME: local-devnet-ingress
+      TRANSACTION_EVENTS_ENVIRONMENT_NAME: devnet
+      TRANSACTION_EVENTS_PROJECT_NAME: base
+      TRANSACTION_EVENTS_COLLECTOR_CONTAINER_NAME: transaction-events-vector
     volumes:
       - ../../etc/docker/transaction-events-vector.yaml:/etc/vector/vector.yaml:ro
       - ../../.devnet/transaction-events:/var/log/transaction-events:ro

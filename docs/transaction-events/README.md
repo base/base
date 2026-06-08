@@ -76,6 +76,11 @@ Producer-specific fields belong in `data`. Do not write raw transaction bytes,
 calldata, full request bodies, API keys, secrets, authorization headers, raw
 forwarding headers, or raw client IP forwarding chains.
 
+Collector sidecars may add deployment-specific source metadata under
+`data.observability_source` before shipping events to `audit-archiver`.
+`audit-archiver` stores this object with the rest of `data`, but the shared
+contract does not validate its shape.
+
 The Rust `TransactionEvent::validate` helper rejects the wrong schema version,
 empty `event_id`, and known unsafe `data` keys such as `raw_tx`, `calldata`,
 `authorization`, `api_key`, `headers`, and `x-forwarded-for`.
@@ -132,11 +137,9 @@ Ingress/audit:
 - `SIMULATION_STARTED`
 - `SIMULATION_ACCEPTED`
 - `SIMULATION_REJECTED`
-- `WAL_DURABLE`
 
 Mempool/node:
 
-- `NODE_RECEIVED`
 - `PENDING`
 - `QUEUED`
 - `PENDING_TO_QUEUED`
@@ -151,15 +154,12 @@ Forwarding:
 - `FORWARD_ATTEMPT`
 - `FORWARD_ACK`
 - `FORWARD_NACK`
-- `REPLAY_WAL`
-- `EXPIRED_OR_EVICTED`
 
 Builder:
 
 - `BUILDER_CONSIDERED`
 - `BUILDER_ACCEPTED`
 - `BUILDER_REJECTED`
-- `BUILDER_REPLACED`
 - `BUILDER_INCLUDED`
 
 Builder caveat: `BUILDER_CONSIDERED`, `BUILDER_ACCEPTED`, and
@@ -170,10 +170,9 @@ transaction can therefore produce multiple decision events across flashblocks.
 serve via `engine_getPayload`; the builder does not independently observe later
 canonical chain inclusion, so these events include
 `data.inclusion_signal = "builder_finalized_payload"` and
-`data.canonicality = "not_observed_by_builder"`. `BUILDER_REPLACED` is reserved
-for a producer path that can identify a concrete replacement transaction; the
-payload loop currently emits nonce and validation skips as `BUILDER_REJECTED`
-instead of inventing replacement relationships.
+`data.canonicality = "not_observed_by_builder"`. The payload loop emits nonce
+and validation skips as `BUILDER_REJECTED` rather than inventing replacement
+relationships.
 
 ## Event ID Guidance
 

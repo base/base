@@ -19,6 +19,7 @@ use chrono::Utc;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
+    types::ErrorObjectOwned,
 };
 use moka::future::Cache;
 use reth_rpc_eth_types::EthApiError;
@@ -237,14 +238,15 @@ impl IngressApiServer for IngressService {
                         tx_hash,
                         *bundle_hash,
                         simulation_start.elapsed(),
-                        e.to_string(),
+                        e.error.to_string(),
+                        e.metering.as_ref(),
                     );
                     warn!(
                         bundle_hash = %bundle_hash,
-                        error = %e,
+                        error = %e.error,
                         "Metering failed for raw transaction"
                     );
-                    None
+                    e.metering
                 }
             };
 
@@ -351,7 +353,7 @@ impl IngressService {
         &self,
         bundle: &Bundle,
         bundle_hash: &B256,
-    ) -> RpcResult<MeterBundleResponse> {
+    ) -> Result<MeterBundleResponse, MeterBundleFailure> {
         let start = Instant::now();
         let timeout_duration = Duration::from_millis(self.meter_bundle_timeout_ms);
 
@@ -367,9 +369,15 @@ impl IngressService {
         .await
         .map_err(|_| {
             warn!(message = "Timed out on requesting metering", bundle_hash = %bundle_hash);
-            EthApiError::InvalidParams("Timeout on requesting metering".into()).into_rpc_err()
+            MeterBundleFailure::without_response(
+                EthApiError::InvalidParams("Timeout on requesting metering".into()).into_rpc_err(),
+            )
         })?
-        .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
+        .map_err(|e| {
+            MeterBundleFailure::without_response(
+                EthApiError::InvalidParams(e.to_string()).into_rpc_err(),
+            )
+        })?;
 
         Metrics::rpc_latency("base_meterBundle").record(start.elapsed().as_secs_f64());
 
@@ -378,9 +386,10 @@ impl IngressService {
         let total_execution_time = (res.total_execution_time_us / 1_000) as u64;
         if total_execution_time > self.block_time_milliseconds {
             Metrics::bundles_exceeded_metering_time().increment(1);
-            return Err(
-                EthApiError::InvalidParams("Bundle simulation took too long".into()).into_rpc_err()
-            );
+            return Err(MeterBundleFailure::with_response(
+                EthApiError::InvalidParams("Bundle simulation took too long".into()).into_rpc_err(),
+                res,
+            ));
         }
         Ok(res)
     }
@@ -463,9 +472,17 @@ impl IngressService {
         bundle_hash: B256,
         duration: Duration,
         reason: String,
+        metering: Option<&MeterBundleResponse>,
     ) {
-        let mut data = serde_json::Map::from_iter([
-            ("bundle_hash".to_string(), serde_json::json!(bundle_hash.to_string())),
+        let mut data = if let Some(metering) = metering {
+            metering_summary_data(bundle_hash, None, metering)
+        } else {
+            serde_json::Map::from_iter([(
+                "bundle_hash".to_string(),
+                serde_json::json!(bundle_hash.to_string()),
+            )])
+        };
+        data.extend([
             (
                 "simulation_duration_ms".to_string(),
                 serde_json::json!(duration.as_secs_f64() * 1000.0),
@@ -549,58 +566,33 @@ fn metering_summary_data(
     bundle_id: Option<Uuid>,
     metering: &MeterBundleResponse,
 ) -> serde_json::Map<String, serde_json::Value> {
-    let mut data = serde_json::Map::from_iter([
-        ("bundle_hash".to_string(), serde_json::json!(bundle_hash.to_string())),
-        ("state_block_number".to_string(), serde_json::json!(metering.state_block_number)),
-        ("state_flashblock_index".to_string(), serde_json::json!(metering.state_flashblock_index)),
-        ("total_gas_used".to_string(), serde_json::json!(metering.total_gas_used)),
-        (
-            "total_execution_time_us".to_string(),
-            serde_json::json!(metering.total_execution_time_us.to_string()),
-        ),
-        (
-            "state_root_time_us".to_string(),
-            serde_json::json!(metering.state_root_time_us.to_string()),
-        ),
-        (
-            "state_root_account_leaf_count".to_string(),
-            serde_json::json!(metering.state_root_account_leaf_count),
-        ),
-        (
-            "state_root_account_branch_count".to_string(),
-            serde_json::json!(metering.state_root_account_branch_count),
-        ),
-        (
-            "state_root_storage_leaf_count".to_string(),
-            serde_json::json!(metering.state_root_storage_leaf_count),
-        ),
-        (
-            "state_root_storage_branch_count".to_string(),
-            serde_json::json!(metering.state_root_storage_branch_count),
-        ),
-    ]);
+    let mut data = serde_json::Map::from_iter([(
+        "bundle_hash".to_string(),
+        serde_json::json!(bundle_hash.to_string()),
+    )]);
     if let Some(bundle_id) = bundle_id {
         data.insert("bundle_id".to_string(), serde_json::json!(bundle_id.to_string()));
     }
-    data.insert(
-        "results".to_string(),
-        serde_json::json!(
-            metering
-                .results
-                .iter()
-                .map(|result| {
-                    serde_json::json!({
-                        "txHash": result.tx_hash.to_string(),
-                        "fromAddress": result.from_address.to_string(),
-                        "toAddress": result.to_address.map(|address| address.to_string()),
-                        "gasUsed": result.gas_used,
-                        "executionTimeUs": result.execution_time_us.to_string(),
-                    })
-                })
-                .collect::<Vec<_>>()
-        ),
-    );
+    if let Ok(metering_response) = serde_json::to_value(metering) {
+        data.insert("meter_bundle_response".to_string(), metering_response);
+    }
     data
+}
+
+#[derive(Debug)]
+struct MeterBundleFailure {
+    error: ErrorObjectOwned,
+    metering: Option<MeterBundleResponse>,
+}
+
+impl MeterBundleFailure {
+    fn without_response(error: ErrorObjectOwned) -> Self {
+        Self { error, metering: None }
+    }
+
+    fn with_response(error: ErrorObjectOwned, metering: MeterBundleResponse) -> Self {
+        Self { error, metering: Some(metering) }
+    }
 }
 
 #[cfg(test)]
@@ -647,6 +639,19 @@ mod tests {
             transaction_events_required: false,
             transaction_events_network: "base-mainnet".to_string(),
         }
+    }
+
+    #[test]
+    fn metering_summary_data_includes_full_meter_bundle_response() {
+        let metering = create_test_meter_bundle_response();
+        let data = metering_summary_data(metering.bundle_hash, None, &metering);
+
+        assert_eq!(data["bundle_hash"], serde_json::json!(metering.bundle_hash.to_string()));
+        assert_eq!(data["meter_bundle_response"], serde_json::to_value(&metering).unwrap());
+        assert!(!data.contains_key("results"));
+        assert!(!data.contains_key("state_block_number"));
+        assert!(!data.contains_key("total_gas_used"));
+        assert!(!data.contains_key("total_execution_time_us"));
     }
 
     #[tokio::test]

@@ -368,35 +368,8 @@ async fn persist_rejected_transaction_event(
     let mut data = serde_json::Map::from_iter([
         ("reason".to_string(), serde_json::to_value(&tx.reason)?),
         ("bundle_hash".to_string(), serde_json::json!(tx.metering.bundle_hash.to_string())),
-        ("state_block_number".to_string(), serde_json::json!(tx.metering.state_block_number)),
-        ("total_gas_used".to_string(), serde_json::json!(tx.metering.total_gas_used)),
-        (
-            "total_execution_time_us".to_string(),
-            serde_json::json!(tx.metering.total_execution_time_us.to_string()),
-        ),
-        (
-            "state_root_time_us".to_string(),
-            serde_json::json!(tx.metering.state_root_time_us.to_string()),
-        ),
     ]);
-    data.insert(
-        "results".to_string(),
-        serde_json::json!(
-            tx.metering
-                .results
-                .iter()
-                .map(|result| {
-                    serde_json::json!({
-                        "txHash": result.tx_hash.to_string(),
-                        "fromAddress": result.from_address.to_string(),
-                        "toAddress": result.to_address.map(|address| address.to_string()),
-                        "gasUsed": result.gas_used,
-                        "executionTimeUs": result.execution_time_us.to_string(),
-                    })
-                })
-                .collect::<Vec<_>>()
-        ),
-    );
+    data.insert("meter_bundle_response".to_string(), serde_json::to_value(&tx.metering)?);
 
     let event = TransactionEvent::new(
         event_id,

@@ -103,10 +103,6 @@ pub enum TransactionEventType {
     SimulationAccepted,
     #[serde(rename = "SIMULATION_REJECTED")]
     SimulationRejected,
-    #[serde(rename = "WAL_DURABLE")]
-    WalDurable,
-    #[serde(rename = "NODE_RECEIVED")]
-    NodeReceived,
     #[serde(rename = "PENDING")]
     Pending,
     #[serde(rename = "QUEUED")]
@@ -129,18 +125,12 @@ pub enum TransactionEventType {
     ForwardAck,
     #[serde(rename = "FORWARD_NACK")]
     ForwardNack,
-    #[serde(rename = "REPLAY_WAL")]
-    ReplayWal,
-    #[serde(rename = "EXPIRED_OR_EVICTED")]
-    ExpiredOrEvicted,
     #[serde(rename = "BUILDER_CONSIDERED")]
     BuilderConsidered,
     #[serde(rename = "BUILDER_ACCEPTED")]
     BuilderAccepted,
     #[serde(rename = "BUILDER_REJECTED")]
     BuilderRejected,
-    #[serde(rename = "BUILDER_REPLACED")]
-    BuilderReplaced,
     #[serde(rename = "BUILDER_INCLUDED")]
     BuilderIncluded,
 }
@@ -162,8 +152,6 @@ impl fmt::Display for TransactionEventType {
             Self::SimulationStarted => "SIMULATION_STARTED",
             Self::SimulationAccepted => "SIMULATION_ACCEPTED",
             Self::SimulationRejected => "SIMULATION_REJECTED",
-            Self::WalDurable => "WAL_DURABLE",
-            Self::NodeReceived => "NODE_RECEIVED",
             Self::Pending => "PENDING",
             Self::Queued => "QUEUED",
             Self::PendingToQueued => "PENDING_TO_QUEUED",
@@ -175,12 +163,9 @@ impl fmt::Display for TransactionEventType {
             Self::ForwardAttempt => "FORWARD_ATTEMPT",
             Self::ForwardAck => "FORWARD_ACK",
             Self::ForwardNack => "FORWARD_NACK",
-            Self::ReplayWal => "REPLAY_WAL",
-            Self::ExpiredOrEvicted => "EXPIRED_OR_EVICTED",
             Self::BuilderConsidered => "BUILDER_CONSIDERED",
             Self::BuilderAccepted => "BUILDER_ACCEPTED",
             Self::BuilderRejected => "BUILDER_REJECTED",
-            Self::BuilderReplaced => "BUILDER_REPLACED",
             Self::BuilderIncluded => "BUILDER_INCLUDED",
         };
         f.write_str(value)

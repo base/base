@@ -18,7 +18,31 @@ transforms:
     drop_on_error: true
     reroute_dropped: true
     source: |-
-      . = parse_json!(string!(.message))
+      source_file = to_string(.file) ?? ""
+      source_match = parse_regex(source_file, r'/var/log/transaction-events/(?P<container_name>[^/]+)/events\.jsonl') ?? {}
+      source_container = to_string(source_match.container_name)
+      if source_container == "" {
+        source_container = "unknown"
+      }
+
+      parsed = parse_json!(string!(.message))
+      . = parsed
+      if !exists(.data) || !is_object(.data) {
+        .data = {}
+      }
+      .data.observability_source = {
+        "deployment": {
+          "config_name": get_env_var("TRANSACTION_EVENTS_CONFIG_NAME") ?? "local-devnet",
+          "environment_name": get_env_var("TRANSACTION_EVENTS_ENVIRONMENT_NAME") ?? "devnet",
+          "project_name": get_env_var("TRANSACTION_EVENTS_PROJECT_NAME") ?? "base"
+        },
+        "runtime": {
+          "type": "docker-compose",
+          "container_name": source_container,
+          "collector_container_name": get_env_var("TRANSACTION_EVENTS_COLLECTOR_CONTAINER_NAME") ?? "transaction-events-vector"
+        },
+        "event_source_file": source_file
+      }
 
 sinks:
   audit_archiver:
