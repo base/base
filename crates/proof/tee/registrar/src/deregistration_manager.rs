@@ -221,13 +221,18 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        future,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_primitives::{B256, Bloom};
     use alloy_rpc_types_eth::TransactionReceipt;
     use async_trait::async_trait;
     use base_tx_manager::SendHandle;
+    use tokio::sync::Notify;
 
     use super::*;
 
@@ -281,16 +286,16 @@ mod tests {
 
     #[tokio::test]
     async fn deregister_orphans_skips_ghost_entries() {
-        let registry = MockRegistry::with_true_signers(vec![SIGNER_B]);
+        let registry = MockRegistry::with_enumerated_and_true_signers(
+            vec![SIGNER_A, SIGNER_B],
+            vec![SIGNER_B],
+        );
         let tx_manager = MockTxManager::default();
         let history = Arc::new(Mutex::new(HashMap::new()));
         let manager =
             DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history);
 
-        manager
-            .deregister_orphans(&HashSet::new(), &[SIGNER_A, SIGNER_B], &CancellationToken::new())
-            .await
-            .unwrap();
+        manager.run_orphan_dereg(&HashSet::new(), &CancellationToken::new()).await.unwrap();
 
         let sent = tx_manager.take_candidates();
         assert_eq!(sent.len(), 1);
@@ -315,20 +320,72 @@ mod tests {
         assert!(tx_manager.take_candidates().is_empty());
     }
 
+    #[tokio::test]
+    async fn run_orphan_dereg_respects_cancellation_while_loading_signers() {
+        let registry = MockRegistry::stalling_get_registered_signers();
+        let get_registered_signers_started = registry.get_registered_signers_started();
+        let tx_manager = MockTxManager::default();
+        let history = Arc::new(Mutex::new(HashMap::new()));
+        let manager =
+            DeregistrationManager::new(REGISTRY_ADDRESS, &registry, &tx_manager, &history);
+        let cancel = CancellationToken::new();
+        let protected_signers = HashSet::new();
+
+        let run = manager.run_orphan_dereg(&protected_signers, &cancel);
+        tokio::pin!(run);
+
+        let notified = get_registered_signers_started.notified();
+        tokio::pin!(notified);
+        tokio::select! {
+            () = &mut notified => {}
+            result = &mut run => panic!("run_orphan_dereg completed before cancellation: {result:?}"),
+        }
+
+        cancel.cancel();
+
+        tokio::time::timeout(Duration::from_secs(1), run)
+            .await
+            .expect("run_orphan_dereg should stop promptly after cancellation")
+            .unwrap();
+        assert!(tx_manager.take_candidates().is_empty());
+    }
+
     #[derive(Debug)]
     struct MockRegistry {
         signers: Vec<Address>,
         true_signers: HashSet<Address>,
+        get_registered_signers_started: Arc<Notify>,
+        stall_get_registered_signers: bool,
     }
 
     impl MockRegistry {
         fn with_signers(signers: Vec<Address>) -> Self {
-            let true_signers = signers.iter().copied().collect();
-            Self { signers, true_signers }
+            Self::with_enumerated_and_true_signers(signers.clone(), signers)
         }
 
-        fn with_true_signers(true_signers: Vec<Address>) -> Self {
-            Self { signers: true_signers.clone(), true_signers: true_signers.into_iter().collect() }
+        fn with_enumerated_and_true_signers(
+            enumerated_signers: Vec<Address>,
+            true_signers: Vec<Address>,
+        ) -> Self {
+            Self {
+                signers: enumerated_signers,
+                true_signers: true_signers.into_iter().collect(),
+                get_registered_signers_started: Arc::new(Notify::new()),
+                stall_get_registered_signers: false,
+            }
+        }
+
+        fn stalling_get_registered_signers() -> Self {
+            Self {
+                signers: vec![],
+                true_signers: HashSet::new(),
+                get_registered_signers_started: Arc::new(Notify::new()),
+                stall_get_registered_signers: true,
+            }
+        }
+
+        fn get_registered_signers_started(&self) -> Arc<Notify> {
+            Arc::clone(&self.get_registered_signers_started)
         }
     }
 
@@ -339,6 +396,10 @@ mod tests {
         }
 
         async fn get_registered_signers(&self) -> Result<Vec<Address>> {
+            self.get_registered_signers_started.notify_waiters();
+            if self.stall_get_registered_signers {
+                future::pending::<()>().await;
+            }
             Ok(self.signers.clone())
         }
     }
