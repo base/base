@@ -300,7 +300,9 @@ impl PendingBlocksBuilder {
         let latest_block_base = self
             .latest_block_base
             .clone()
-            .or_else(|| self.flashblocks.iter().rev().find_map(|flashblock| flashblock.base.clone()))
+            .or_else(|| {
+                self.flashblocks.iter().rev().find_map(|flashblock| flashblock.base.clone())
+            })
             .ok_or(BuildError::MissingHeaders)?;
         let latest_block_l1_block_info =
             self.latest_block_l1_block_info.clone().unwrap_or_default();
