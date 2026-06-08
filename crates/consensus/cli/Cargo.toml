@@ -73,5 +73,9 @@ rstest.workspace = true
 tempfile.workspace = true
 
 [features]
-default = ["otlp"]
-otlp = ["dep:reth-tracing-otlp", "reth-node-core/otlp", "reth-tracing-otlp/otlp"]
+default = [ "otlp" ]
+otlp = [
+	"dep:reth-tracing-otlp",
+	"reth-node-core/otlp",
+	"reth-tracing-otlp/otlp",
+]
