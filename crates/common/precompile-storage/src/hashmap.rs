@@ -419,6 +419,7 @@ mod tests {
         GasParams::new_spec(SpecId::AMSTERDAM)
     }
 
+    /// Positive refunds accumulate in the counter.
     #[test]
     fn set_code_static_violation_before_state_gas_charge() {
         let mut p = HashMapStorageProvider::new(1);
@@ -438,6 +439,7 @@ mod tests {
         assert_eq!(p.gas_refunded(), 1_500);
     }
 
+    /// Negative refunds (EIP-3529 cancellations) reduce the counter.
     #[test]
     fn refund_gas_accumulates_negative() {
         let mut p = HashMapStorageProvider::new(1);
@@ -446,12 +448,14 @@ mod tests {
         assert_eq!(p.gas_refunded(), 0);
     }
 
+    /// Gas refund counter starts at zero on a fresh provider.
     #[test]
     fn refund_gas_starts_at_zero() {
         let p = HashMapStorageProvider::new(1);
         assert_eq!(p.gas_refunded(), 0);
     }
 
+    /// Clearing a previously set slot (nonzero to zero) earns an EIP-3529 refund.
     #[test]
     fn sstore_clearing_slot_generates_refund() {
         let mut p = HashMapStorageProvider::new(1);
@@ -463,6 +467,7 @@ mod tests {
         assert!(p.gas_refunded() > 0, "clearing a non-zero slot must earn a refund");
     }
 
+    /// Overwriting a nonzero slot with another nonzero value earns no refund.
     #[test]
     fn sstore_nonzero_to_nonzero_earns_no_refund() {
         let mut p = HashMapStorageProvider::new(1);
@@ -471,6 +476,7 @@ mod tests {
         assert_eq!(p.gas_refunded(), 0);
     }
 
+    /// Writing to a zero slot (first write) earns no refund.
     #[test]
     fn sstore_zero_to_nonzero_earns_no_refund() {
         let mut p = HashMapStorageProvider::new(1);
