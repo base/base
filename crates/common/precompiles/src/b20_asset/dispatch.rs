@@ -405,7 +405,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
 
     /// Posts an announcement and atomically executes `internal_calls` via self-dispatch.
     ///
-    /// The `in_announcement` flag and selector check prevent recursive invocation.
+    /// The selector check in the inner loop prevents recursive invocation.
     fn announce<O>(
         &mut self,
         ctx: StorageCtx<'_>,
@@ -426,9 +426,6 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             internal_call_bytes,
         );
         self.ensure_operator_role(caller, privileged)?;
-        if self.is_announcement_active() {
-            return Err(BasePrecompileError::revert(IB20Asset::AnnouncementInProgress {}));
-        }
 
         let id = call.id;
         if self.accounting().is_announcement_id_used(id.as_str())? {
@@ -445,8 +442,6 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             }
             .encode_log_data(),
         )?;
-
-        self.begin_announcement();
 
         // Each internal call is dispatched via `inner_with_privilege`, a direct Rust function
         // call. Unlike the base-std Solidity reference which routes each `internalCalls` entry
