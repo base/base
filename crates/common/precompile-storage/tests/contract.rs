@@ -79,7 +79,7 @@ mod mapping_only_storable_layout {
 
     #[test]
     fn mapping_only_storable_struct_uses_static_layout() {
-        assert!(!<MappingOnlyStorage as StorableType>::IS_DYNAMIC);
+        const { assert!(!<MappingOnlyStorage as StorableType>::IS_DYNAMIC) };
         assert_eq!(<MappingOnlyStorage as StorableType>::SLOTS, 2);
 
         let value =
