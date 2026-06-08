@@ -132,10 +132,8 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         }
         // EIP-2200 stipend guard — mirrors EvmPrecompileStorageProvider::sstore.
         // Only enforced when gas_remaining is explicitly set (opt-in for tests).
-        if let Some(remaining) = self.gas_remaining {
-            if remaining <= self.gas_params.call_stipend() {
-                return Err(BasePrecompileError::OutOfGas);
-            }
+        if self.gas_remaining.is_some_and(|r| r <= self.gas_params.call_stipend()) {
+            return Err(BasePrecompileError::OutOfGas);
         }
         let old = self.internals.get(&(address, key)).copied().unwrap_or(U256::ZERO);
         self.counter_sstore += 1;
@@ -350,7 +348,7 @@ impl HashMapStorageProvider {
     /// Sets the simulated remaining gas, enabling the EIP-2200 stipend guard in `sstore`
     /// (test-utils only). Use this to exercise the guard at specific gas levels without
     /// a live EVM journal.
-    pub fn set_gas_remaining(&mut self, remaining: u64) {
+    pub const fn set_gas_remaining(&mut self, remaining: u64) {
         self.gas_remaining = Some(remaining);
     }
 }
