@@ -1,0 +1,5 @@
+error: `#[namespace]` must be placed below `#[contract]` on contract storage layouts
+  --> tests/ui/08_namespace_above_contract.rs:10:12
+   |
+10 | pub struct Foo {
+   |            ^^^
