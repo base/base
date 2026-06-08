@@ -658,7 +658,7 @@ fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
         prev_slot_ref.map_or_else(
             || quote! {{
                 if <#ty as ::base_precompile_storage::StorableType>::IS_PACKABLE {
-                    // Always SLOAD first (Category 3: is_t4() optimization removed — correct but slightly less efficient)
+                    // Load the existing slot before packing so neighboring packed values are preserved.
                     pending_val = storage.load(#slot_addr)?;
                     pending_offset = Some(#packing::#loc_const.offset_slots);
                     let mut packed = ::base_precompile_storage::PackedSlot(pending_val);
@@ -685,7 +685,7 @@ fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
                     if let Some(offset) = pending_offset {
                         storage.store(base_slot + ::alloy_primitives::U256::from(offset), pending_val)?;
                     }
-                    // Always SLOAD first (Category 3: is_t4() optimization removed — correct but slightly less efficient)
+                    // Load the existing slot before packing so neighboring packed values are preserved.
                     pending_val = storage.load(#slot_addr)?;
                     pending_offset = Some(curr_offset);
                     let mut packed = ::base_precompile_storage::PackedSlot(pending_val);
