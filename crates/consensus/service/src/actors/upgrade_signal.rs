@@ -6,6 +6,7 @@ use base_upgrade_signal::{
     UpgradeSignalError, UpgradeSignalMetrics, UpgradeSignalMonitor, UpgradeSignalStateUpdate,
 };
 use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 
 use crate::NodeActor;
 
