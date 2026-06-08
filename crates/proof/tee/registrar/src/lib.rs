@@ -39,7 +39,7 @@ mod prover;
 pub use prover::ProverClient;
 
 mod proof_handler;
-pub use proof_handler::{InFlightRegistrationGuard, ProofHandler};
+pub use proof_handler::{InFlightRegistrationGuard, ProofHandler, ProofHandlerConfig};
 
 mod registry;
 pub use registry::{RegistryClient, RegistryContractClient};

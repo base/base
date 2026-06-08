@@ -22,19 +22,9 @@ use tracing::{debug, info, warn};
 
 use crate::{ProverInstance, RegistrarError, RegistrarMetrics, RegistryClient, Result};
 
-/// Component responsible for turning attestation proof results into durable
-/// onchain signer registrations.
-pub struct ProofHandler<'a, P: ?Sized, R: ?Sized, T: ?Sized> {
-    /// Proof provider used to poll or generate the attestation proof result.
-    pub proof_provider: &'a P,
-    /// Registry client used for side-effect-free registration state checks.
-    pub registry: &'a R,
-    /// Transaction manager used to deliver `registerSigner`.
-    pub tx_manager: &'a T,
-    /// Semaphore bounding concurrent proof work.
-    pub proof_semaphore: &'a Semaphore,
-    /// Process-local signer set used to deduplicate concurrent attempts.
-    pub in_flight_registrations: &'a Arc<Mutex<HashSet<Address>>>,
+/// Runtime parameters for proof-result handling.
+#[derive(Debug, Clone, Copy)]
+pub struct ProofHandlerConfig {
     /// `TEEProverRegistry` contract address on L1.
     pub registry_address: Address,
     /// Maximum number of transaction submission retries for transient errors.
@@ -43,13 +33,51 @@ pub struct ProofHandler<'a, P: ?Sized, R: ?Sized, T: ?Sized> {
     pub tx_retry_delay: Duration,
 }
 
+/// Component responsible for turning attestation proof results into durable
+/// onchain signer registrations.
+pub struct ProofHandler<'a, P: ?Sized, R: ?Sized, T: ?Sized> {
+    /// Proof provider used to poll or generate the attestation proof result.
+    proof_provider: &'a P,
+    /// Registry client used for side-effect-free registration state checks.
+    registry: &'a R,
+    /// Transaction manager used to deliver `registerSigner`.
+    tx_manager: &'a T,
+    /// Semaphore bounding concurrent proof work.
+    proof_semaphore: &'a Semaphore,
+    /// Process-local signer set used to deduplicate concurrent attempts.
+    in_flight_registrations: &'a Arc<Mutex<HashSet<Address>>>,
+    /// Runtime settings for registration transaction handling.
+    config: ProofHandlerConfig,
+}
+
 impl<P: ?Sized, R: ?Sized, T: ?Sized> fmt::Debug for ProofHandler<'_, P, R, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ProofHandler")
-            .field("registry_address", &self.registry_address)
-            .field("max_tx_retries", &self.max_tx_retries)
-            .field("tx_retry_delay", &self.tx_retry_delay)
+            .field("registry_address", &self.config.registry_address)
+            .field("max_tx_retries", &self.config.max_tx_retries)
+            .field("tx_retry_delay", &self.config.tx_retry_delay)
             .finish_non_exhaustive()
+    }
+}
+
+impl<'a, P: ?Sized, R: ?Sized, T: ?Sized> ProofHandler<'a, P, R, T> {
+    /// Creates a proof handler from the registration pipeline dependencies.
+    pub const fn new(
+        proof_provider: &'a P,
+        registry: &'a R,
+        tx_manager: &'a T,
+        proof_semaphore: &'a Semaphore,
+        in_flight_registrations: &'a Arc<Mutex<HashSet<Address>>>,
+        config: ProofHandlerConfig,
+    ) -> Self {
+        Self {
+            proof_provider,
+            registry,
+            tx_manager,
+            proof_semaphore,
+            in_flight_registrations,
+            config,
+        }
     }
 }
 
@@ -290,14 +318,14 @@ where
         info!(
             signer = %signer_address,
             instance = %instance.instance_id,
-            registry = %self.registry_address,
+            registry = %self.config.registry_address,
             calldata_len = calldata.len(),
             "Registering signer"
         );
 
         let candidate = TxCandidate {
             tx_data: calldata,
-            to: Some(self.registry_address),
+            to: Some(self.config.registry_address),
             ..Default::default()
         };
 
@@ -385,7 +413,7 @@ where
                     }
 
                     tx_retries += 1;
-                    if tx_retries > self.max_tx_retries {
+                    if tx_retries > self.config.max_tx_retries {
                         return Err(RegistrarError::from(e));
                     }
 
@@ -393,7 +421,7 @@ where
                         error = %e,
                         signer = %signer_address,
                         retry = tx_retries,
-                        max_retries = self.max_tx_retries,
+                        max_retries = self.config.max_tx_retries,
                         "tx submission failed, retrying with same proof"
                     );
 
@@ -407,7 +435,7 @@ where
                             );
                             return Ok(());
                         }
-                        () = tokio::time::sleep(self.tx_retry_delay) => {}
+                        () = tokio::time::sleep(self.config.tx_retry_delay) => {}
                     }
                 }
             }
@@ -522,16 +550,18 @@ mod tests {
         }
 
         fn handler(&self) -> ProofHandler<'_, P, R, T> {
-            ProofHandler {
-                proof_provider: &self.proof_provider,
-                registry: &self.registry,
-                tx_manager: &self.tx_manager,
-                proof_semaphore: &self.proof_semaphore,
-                in_flight_registrations: &self.in_flight_registrations,
-                registry_address: TEST_REGISTRY_ADDRESS,
-                max_tx_retries: MAX_TX_RETRIES,
-                tx_retry_delay: TX_RETRY_DELAY,
-            }
+            ProofHandler::new(
+                &self.proof_provider,
+                &self.registry,
+                &self.tx_manager,
+                &self.proof_semaphore,
+                &self.in_flight_registrations,
+                ProofHandlerConfig {
+                    registry_address: TEST_REGISTRY_ADDRESS,
+                    max_tx_retries: MAX_TX_RETRIES,
+                    tx_retry_delay: TX_RETRY_DELAY,
+                },
+            )
         }
     }
 
