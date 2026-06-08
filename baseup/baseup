@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.7"
+BASEUP_INSTALLER_VERSION="0.1.8"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -23,6 +23,7 @@ DEFAULT_BINS=("base" "base-reth-node" "base-consensus" "basectl")
 SUPPORTED_TARGETS=("x86_64-unknown-linux-gnu" "aarch64-unknown-linux-gnu" "aarch64-apple-darwin")
 SELECTED_BINS=()
 SELECTED_TARGETS=()
+RELEASE_ASSETS=()
 COMMAND="install"
 VERSION=""
 VERSION_EXPLICIT=0
@@ -181,6 +182,27 @@ fetch_text() {
         curl -fsSL "$url"
     elif command -v wget >/dev/null 2>&1; then
         wget -qO- "$url"
+    else
+        error "Neither curl nor wget found. Please install one of them."
+    fi
+}
+
+fetch_github_api() {
+    local api_url="$1"
+
+    if command -v curl >/dev/null 2>&1; then
+        local auth_header=()
+        if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+            auth_header=(-H "Authorization: Bearer $GITHUB_TOKEN")
+        fi
+
+        curl -fsSL "${auth_header[@]}" "$api_url"
+    elif command -v wget >/dev/null 2>&1; then
+        if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+            wget -qO- --header="Authorization: Bearer $GITHUB_TOKEN" "$api_url"
+        else
+            wget -qO- "$api_url"
+        fi
     else
         error "Neither curl nor wget found. Please install one of them."
     fi
@@ -690,23 +712,8 @@ get_latest_version() {
     local api_url="https://api.github.com/repos/${BASEUP_REPO}/releases/latest"
     local response
     local version
-    local auth_header=()
 
-    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-        auth_header=(-H "Authorization: Bearer $GITHUB_TOKEN")
-    fi
-
-    if command -v curl >/dev/null 2>&1; then
-        response="$(curl -fsSL "${auth_header[@]}" "$api_url" 2>/dev/null || true)"
-    elif command -v wget >/dev/null 2>&1; then
-        if [[ ${#auth_header[@]} -gt 0 ]]; then
-            response="$(wget -qO- --header="Authorization: Bearer $GITHUB_TOKEN" "$api_url" 2>/dev/null || true)"
-        else
-            response="$(wget -qO- "$api_url" 2>/dev/null || true)"
-        fi
-    else
-        error "Neither curl nor wget found. Please install one of them."
-    fi
+    response="$(fetch_github_api "$api_url" 2>/dev/null || true)"
 
     if [[ -z "$response" ]]; then
         error "Failed to fetch the latest release from GitHub. Try --install <tag>."
@@ -723,6 +730,62 @@ get_latest_version() {
     fi
 
     echo "$version"
+}
+
+list_release_asset_names() {
+    local tag="$1"
+    local release_url="https://api.github.com/repos/${BASEUP_REPO}/releases/tags/${tag}"
+    local release_response
+    local assets_url
+    local assets_response
+
+    release_response="$(fetch_github_api "$release_url" 2>/dev/null || true)"
+    if [[ -z "$release_response" ]]; then
+        error "Failed to fetch release $tag from GitHub."
+    fi
+
+    if command -v jq >/dev/null 2>&1; then
+        assets_url="$(printf '%s\n' "$release_response" | jq -r '.assets_url // empty')"
+    else
+        assets_url="$(printf '%s\n' "$release_response" | grep '"assets_url":' | head -n 1 | sed 's/.*"assets_url": *"\([^"]*\)".*/\1/')"
+    fi
+
+    assets_url="${assets_url%%\{*}"
+    if [[ -z "$assets_url" ]]; then
+        error "Failed to determine release asset URL for $tag."
+    fi
+
+    assets_response="$(fetch_github_api "${assets_url}?per_page=100" 2>/dev/null || true)"
+    if [[ -z "$assets_response" ]]; then
+        error "Failed to fetch release assets for $tag from GitHub."
+    fi
+
+    if command -v jq >/dev/null 2>&1; then
+        printf '%s\n' "$assets_response" | jq -r '.[].name // empty'
+    else
+        printf '%s\n' "$assets_response" | grep '"name":' | sed 's/.*"name": *"\([^"]*\)".*/\1/'
+    fi
+}
+
+load_release_assets() {
+    local tag="$1"
+    local asset_name
+
+    RELEASE_ASSETS=()
+    while IFS= read -r asset_name; do
+        [[ -n "$asset_name" ]] || continue
+        RELEASE_ASSETS+=("$asset_name")
+    done <<< "$(list_release_asset_names "$tag")"
+
+    if [[ ${#RELEASE_ASSETS[@]} -eq 0 ]]; then
+        error "Release $tag has no published assets to verify."
+    fi
+}
+
+release_asset_exists() {
+    local name="$1"
+
+    array_contains "$name" "${RELEASE_ASSETS[@]}"
 }
 
 install_binary() {
@@ -776,6 +839,43 @@ verify_release_artifact() {
     verify_attestation "$archive_name" "$archive_path"
 }
 
+verify_published_release_artifacts() {
+    local version="$1"
+    local verified_count=0
+    local binary_name
+    local selected_target
+
+    load_release_assets "$version"
+
+    for selected_target in "${SELECTED_TARGETS[@]}"; do
+        for binary_name in "${SELECTED_BINS[@]}"; do
+            local archive_name
+
+            archive_name="${binary_name}-${version}-${selected_target}.tar.gz"
+            if ! release_asset_exists "$archive_name"; then
+                continue
+            fi
+
+            if ! release_asset_exists "${archive_name}.sha256"; then
+                error "Release $version published $archive_name without ${archive_name}.sha256"
+            fi
+
+            if [[ "$UNSAFE_SKIP_VERIFY" -eq 0 ]] && ! release_asset_exists "${archive_name}.asc"; then
+                error "Release $version published $archive_name without ${archive_name}.asc"
+            fi
+
+            verify_release_artifact "$binary_name" "$version" "$selected_target"
+            verified_count=$((verified_count + 1))
+        done
+    done
+
+    if [[ "$verified_count" -eq 0 ]]; then
+        error "Release $version has no published artifacts matching the selected binaries and targets."
+    fi
+
+    info "Verified $verified_count published release archives"
+}
+
 usage() {
     cat <<'EOF'
 Usage:
@@ -786,7 +886,7 @@ Options:
   -v, --version         Print the baseup installer version
   -i, --install <VER>   Install a specific release tag (for example: v0.6.0)
   -b, --bin <NAME>      Install only one binary (base, base-reth-node, base-consensus, basectl, all)
-  -t, --target <TRIPLE> Verify a release target triple (verify-release only; repeatable; default: all)
+  -t, --target <TRIPLE> Verify a release target triple (verify-release only; repeatable; default: all published targets)
   -U, --update          Update baseup itself
       --unsafe-skip-verify
                          Skip GPG signature and SLSA attestation verification
@@ -905,36 +1005,36 @@ main() {
 
     MAIN_TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t baseup)"
 
-    local binary_name
-    local selected_target
-    for selected_target in "${SELECTED_TARGETS[@]}"; do
-        for binary_name in "${SELECTED_BINS[@]}"; do
-            local archive_name
-            local archive_path
-            local extract_dir
-            local binary_path
+    if [[ "$COMMAND" == "verify-release" ]]; then
+        verify_published_release_artifacts "$VERSION"
+    else
+        local binary_name
+        local selected_target
+        for selected_target in "${SELECTED_TARGETS[@]}"; do
+            for binary_name in "${SELECTED_BINS[@]}"; do
+                local archive_name
+                local archive_path
+                local extract_dir
+                local binary_path
 
-            verify_release_artifact "$binary_name" "$VERSION" "$selected_target"
+                verify_release_artifact "$binary_name" "$VERSION" "$selected_target"
 
-            if [[ "$COMMAND" == "verify-release" ]]; then
-                continue
-            fi
+                archive_name="${binary_name}-${VERSION}-${selected_target}.tar.gz"
+                archive_path="$MAIN_TMP_DIR/$archive_name"
+                extract_dir="$MAIN_TMP_DIR/${binary_name}-extract"
 
-            archive_name="${binary_name}-${VERSION}-${selected_target}.tar.gz"
-            archive_path="$MAIN_TMP_DIR/$archive_name"
-            extract_dir="$MAIN_TMP_DIR/${binary_name}-extract"
+                mkdir -p "$extract_dir"
+                extract_archive "$archive_path" "$extract_dir"
+                binary_path="$(find "$extract_dir" -name "$binary_name" -type f -not -type l | head -n 1)"
 
-            mkdir -p "$extract_dir"
-            extract_archive "$archive_path" "$extract_dir"
-            binary_path="$(find "$extract_dir" -name "$binary_name" -type f -not -type l | head -n 1)"
+                if [[ -z "$binary_path" ]]; then
+                    error "Could not find $binary_name in $archive_name"
+                fi
 
-            if [[ -z "$binary_path" ]]; then
-                error "Could not find $binary_name in $archive_name"
-            fi
-
-            install_binary "$binary_path" "$binary_name"
+                install_binary "$binary_path" "$binary_name"
+            done
         done
-    done
+    fi
 
     if [[ "$COMMAND" == "verify-release" ]]; then
         echo ""

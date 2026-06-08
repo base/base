@@ -20,8 +20,8 @@ baseup --bin base-reth-node           # Install only the node binary
 baseup --bin base-consensus           # Install only the consensus binary
 baseup --bin basectl                  # Install only basectl
 baseup --bin all                      # Install all published binaries
-baseup verify-release                 # Verify all latest release artifact signatures without installing
-baseup verify-release -i v1.0.0       # Verify all artifact signatures for a specific release tag
+baseup verify-release                 # Verify latest published release archive signatures without installing
+baseup verify-release -i v1.0.0       # Verify published archive signatures for a specific release tag
 baseup -v                             # Print the baseup installer version
 baseup --update                       # Update baseup itself
 baseup --help                         # Show help
@@ -54,7 +54,7 @@ To validate release artifacts without installing binaries, run:
 baseup verify-release
 ```
 
-By default, `verify-release` checks every binary and every published target that `baseup` supports. Use `--bin` or `--target` to narrow the check.
+By default, `verify-release` fetches the GitHub release asset list and checks every published archive matching the binaries and targets that `baseup` supports. Missing binary/target archives are skipped. If an archive is published, its `.sha256` and `.asc` sidecars are required and must verify. Use `--bin` or `--target` to narrow the check; the command fails if the filters match no published archives.
 
 ## Supported Targets
 
