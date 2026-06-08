@@ -942,7 +942,7 @@ where
         // Build `in_flight` from only the still-live entries so a signer
         // that was cancelled in a previous cycle and has now reappeared
         // in `registerable` can spawn a fresh task immediately rather
-        // than waiting two cycles (one to reap, one to respawn). The
+        // than waiting two cycles (one to reap, one to respawn).
         // The registration-manager in-flight mutex catches any brief
         // overlap between the winding-down old task and the new task.
         // Updated as we spawn so a signer that appears in two registerable
