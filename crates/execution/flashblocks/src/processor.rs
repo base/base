@@ -348,6 +348,10 @@ where
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblocks: &[Flashblock],
     ) -> Result<Option<Arc<PendingBlocks>>> {
+        if flashblocks.is_empty() {
+            return Ok(None);
+        }
+
         // BTreeMap guarantees ascending order of keys while iterating
         let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<Flashblock>>::new();
         for flashblock in flashblocks {
@@ -357,7 +361,8 @@ where
                 .push(flashblock.clone());
         }
 
-        let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
+        let earliest_block_number =
+            flashblocks_per_block.keys().min().expect("flashblocks_per_block is non-empty");
         let canonical_block = earliest_block_number - 1;
         let mut last_block_header = self
             .client
