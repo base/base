@@ -161,7 +161,7 @@ pub struct RegistrarConfig {
     pub prover_timeout: Duration,
     /// Maximum number of instances to process concurrently within a single
     /// registration cycle. Each instance may trigger a ~20-minute proof
-    /// generation, so this limits concurrent proof work and nonce acquisition.
+    /// generation, so this limits concurrent proof work.
     pub max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
     pub max_tx_retries: u32,

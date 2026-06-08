@@ -36,8 +36,8 @@ use crate::{
 ///
 /// Each instance may trigger a ~20-minute Boundless proof generation, so
 /// limiting concurrency prevents overwhelming the proof service and keeps
-/// nonce management tractable. The default allows moderate parallelism
-/// while keeping resource usage bounded.
+/// resource usage bounded. The transaction manager handles nonce
+/// serialization separately.
 pub const DEFAULT_MAX_CONCURRENCY: usize = 4;
 
 /// Default maximum number of transaction submission retries for transient
@@ -70,8 +70,8 @@ pub struct DriverConfig {
     /// Cancellation token for graceful shutdown.
     pub cancel: CancellationToken,
     /// Maximum number of instances to process concurrently. Each instance
-    /// may trigger proof generation, so this bounds concurrent proof work
-    /// and nonce acquisition. Defaults to [`DEFAULT_MAX_CONCURRENCY`].
+    /// may trigger proof generation, so this bounds concurrent proof work.
+    /// Defaults to [`DEFAULT_MAX_CONCURRENCY`].
     pub max_concurrency: usize,
     /// Maximum number of transaction submission retries for transient errors.
     /// Defaults to [`DEFAULT_MAX_TX_RETRIES`].
