@@ -9,10 +9,6 @@ use std::{
 };
 
 use base_bundles::RejectedTransaction;
-use base_observability_events::{
-    EventIdBuilder, TransactionEvent, TransactionEventProducer, TransactionEventType,
-};
-use chrono::{TimeZone, Utc};
 use futures::stream::{self, StreamExt};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc, types::error::ErrorObjectOwned};
 use jsonrpsee_types::error::ErrorCode;
@@ -22,8 +18,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT, PgTransactionEventSink, RejectedTransactionEventQuery,
-    TransactionEventRecord, TransactionEventSink, metrics::Metrics, reader::Event,
-    storage::S3EventReaderWriter, types::BundleEvent,
+    TransactionEventRecord, metrics::Metrics, reader::Event, storage::S3EventReaderWriter,
+    types::BundleEvent,
 };
 
 const MAX_BATCH_SIZE: usize = 500;
@@ -215,23 +211,11 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
         let storage = Arc::clone(&self.storage);
 
         // Peform the S3 operations in parallel on the batch. Up to 5 concurrent operations at a time.
-        let transaction_event_store = self.transaction_events.clone();
         let persisted = stream::iter(batch)
             .map(move |tx| {
                 let storage = Arc::clone(&storage);
-                let transaction_event_store = transaction_event_store.clone();
                 async move {
                     let result = storage.store_rejected_transaction(&tx).await;
-                    if result.is_ok()
-                        && let Some(store) = transaction_event_store.as_ref()
-                        && let Err(err) = persist_rejected_transaction_event(store, &tx).await
-                    {
-                        error!(
-                            error = %err,
-                            tx_hash = %tx.tx_hash,
-                            "Failed to persist rejected transaction event"
-                        );
-                    }
                     (tx, result)
                 }
             })
@@ -350,39 +334,6 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
 
 fn internal_rpc_error(error: anyhow::Error) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(ErrorCode::InternalError.code(), error.to_string(), None::<()>)
-}
-
-async fn persist_rejected_transaction_event(
-    store: &PgTransactionEventSink,
-    tx: &RejectedTransaction,
-) -> anyhow::Result<()> {
-    let event_time = Utc.timestamp_opt(tx.timestamp as i64, 0).single().unwrap_or_else(Utc::now);
-    let event_id = EventIdBuilder::new()
-        .part("producer", TransactionEventProducer::BaseBuilder)
-        .part("event_type", TransactionEventType::BuilderRejected)
-        .part("tx_hash", tx.tx_hash)
-        .part("block_number", tx.block_number)
-        .part("timestamp", tx.timestamp)
-        .finish();
-
-    let mut data = serde_json::Map::from_iter([
-        ("reason".to_string(), serde_json::to_value(&tx.reason)?),
-        ("bundle_hash".to_string(), serde_json::json!(tx.metering.bundle_hash.to_string())),
-    ]);
-    data.insert("meter_bundle_response".to_string(), serde_json::to_value(&tx.metering)?);
-
-    let event = TransactionEvent::new(
-        event_id,
-        event_time,
-        TransactionEventProducer::BaseBuilder,
-        TransactionEventType::BuilderRejected,
-    )
-    .with_tx_hash(tx.tx_hash)
-    .with_block_number(tx.block_number)
-    .with_data(data);
-
-    store.insert_events(&[event]).await?;
-    Ok(())
 }
 
 #[cfg(test)]
