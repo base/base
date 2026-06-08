@@ -43,7 +43,7 @@ pub struct ConsensusNodeCommand {
     #[command(flatten)]
     pub metrics: MetricsArgs,
 
-    /// OpenTelemetry tracing configuration.
+    /// `OpenTelemetry` tracing export configuration.
     #[command(flatten)]
     pub traces: TraceArgs,
 
