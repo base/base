@@ -49,7 +49,6 @@ base-common-rpc-types-engine = { workspace = true, features = ["serde", "reth"] 
 # misc
 sha2.workspace = true
 serde.workspace = true
-either.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 derive_more.workspace = true

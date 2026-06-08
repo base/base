@@ -443,9 +443,9 @@ where
         let mut state_overrides_builder =
             StateOverridesBuilder::new(pending_overrides.state.unwrap_or_default());
         state_overrides_builder = state_overrides_builder.extend(overrides.unwrap_or_default());
-        let final_overrides = state_overrides_builder.build();
+        pending_overrides.state = Some(state_overrides_builder.build());
 
-        EthCall::estimate_gas_at(&self.eth_api, transaction, block_id, Some(final_overrides))
+        EthCall::estimate_gas_at(&self.eth_api, transaction, block_id, pending_overrides)
             .await
             .map_err(Into::into)
     }

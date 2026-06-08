@@ -1,6 +1,6 @@
 //! Contains the block executor for base.
 
-use alloc::{borrow::Cow, boxed::Box, vec::Vec};
+use alloc::{boxed::Box, vec::Vec};
 
 use alloy_consensus::{Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt};
 use alloy_eips::{Encodable2718, Typed2718};
@@ -8,9 +8,8 @@ use alloy_evm::{
     Database, Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
-        ExecutableTx, GasOutput, OnStateHook, StateChangePostBlockSource, StateChangeSource,
-        StateDB, SystemCaller,
-        state_changes::{balance_increment_state, post_block_balance_increments},
+        ExecutableTx, GasOutput, StateDB, SystemCaller,
+        state_changes::post_block_balance_increments,
     },
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
 };
@@ -41,8 +40,12 @@ pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
     pub evm: Evm,
     /// Receipts of executed transactions.
     pub receipts: Vec<R::Receipt>,
-    /// Total gas used by executed transactions.
-    pub gas_used: u64,
+    /// Cumulative gas used by executed transactions after refunds.
+    pub cumulative_tx_gas_used: u64,
+    /// Regular gas used by executed transactions.
+    pub block_regular_gas_used: u64,
+    /// State gas used by executed transactions.
+    pub block_state_gas_used: u64,
     /// DA footprint.
     ///
     /// This is only set for blocks post-Jovian activation.
@@ -70,7 +73,9 @@ where
             spec,
             receipt_builder,
             receipts: Vec::new(),
-            gas_used: 0,
+            cumulative_tx_gas_used: 0,
+            block_regular_gas_used: 0,
+            block_state_gas_used: 0,
             da_footprint_used: 0,
             ctx,
         }
@@ -86,6 +91,10 @@ where
     R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
     Spec: Upgrades,
 {
+    fn max_block_gas_used(&self) -> u64 {
+        self.block_regular_gas_used.max(self.block_state_gas_used)
+    }
+
     fn jovian_da_footprint_estimation(
         &mut self,
         tx_env: &E::Tx,
@@ -157,7 +166,12 @@ where
 
         // The sum of the transaction's gas limit, Tg, and the gas utilized in this block prior,
         // must be no greater than the block's gasLimit.
-        let block_available_gas = self.evm.block().gas_limit().saturating_sub(self.gas_used);
+        let block_gas_used = if self.evm.cfg_env().enable_amsterdam_eip8037 {
+            self.block_regular_gas_used
+        } else {
+            self.cumulative_tx_gas_used
+        };
+        let block_available_gas = self.evm.block().gas_limit().saturating_sub(block_gas_used);
         if tx.tx().gas_limit() > block_available_gas && (self.is_regolith || !is_deposit) {
             return Err(BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
                 transaction_gas_limit: tx.tx().gas_limit(),
@@ -223,12 +237,13 @@ where
             depositor,
         } = output;
 
-        self.system_caller.on_state(StateChangeSource::Transaction(self.receipts.len()), &state);
-
         let tx_gas_used = result.tx_gas_used();
+        let regular_gas_used = result.gas().block_regular_gas_used();
         let state_gas_used = result.gas().block_state_gas_used();
 
-        self.gas_used += tx_gas_used;
+        self.cumulative_tx_gas_used += tx_gas_used;
+        self.block_regular_gas_used += regular_gas_used;
+        self.block_state_gas_used += state_gas_used;
 
         if self.spec.is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
             && !is_deposit
@@ -240,7 +255,7 @@ where
             match self.receipt_builder.build_receipt(ReceiptBuilderCtx {
                 tx_type,
                 result,
-                cumulative_gas_used: self.gas_used,
+                cumulative_gas_used: self.cumulative_tx_gas_used,
                 evm: &self.evm,
                 state: &state,
             }) {
@@ -273,6 +288,7 @@ where
     fn finish(
         mut self,
     ) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {
+        let requests = self.system_caller.apply_post_execution_changes(&mut self.evm)?;
         let balance_increments =
             post_block_balance_increments::<Header>(&self.spec, self.evm.block(), &[], None);
         // increment balances
@@ -280,32 +296,24 @@ where
             .db_mut()
             .increment_balances(balance_increments.clone())
             .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
-        // call state hook with changes due to balance increments.
-        self.system_caller.try_on_state_with(|| {
-            balance_increment_state(&balance_increments, self.evm.db_mut()).map(|state| {
-                (
-                    StateChangeSource::PostBlock(StateChangePostBlockSource::BalanceIncrements),
-                    Cow::Owned(state),
-                )
-            })
-        })?;
 
         let legacy_gas_used =
             self.receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or_default();
+        let gas_used = if self.evm.cfg_env().enable_amsterdam_eip8037 {
+            self.max_block_gas_used()
+        } else {
+            legacy_gas_used
+        };
 
         Ok((
             self.evm,
             BlockExecutionResult {
                 receipts: self.receipts,
-                requests: Default::default(),
-                gas_used: legacy_gas_used,
+                requests,
+                gas_used,
                 blob_gas_used: self.da_footprint_used,
             },
         ))
-    }
-
-    fn set_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
-        self.system_caller.with_state_hook(hook);
     }
 
     fn evm_mut(&mut self) -> &mut Self::Evm {

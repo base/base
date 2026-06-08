@@ -34,7 +34,11 @@ pub struct BaseEngineTypes<T: PayloadTypes = BasePayloadTypes> {
     _marker: PhantomData<T>,
 }
 
-impl<T: PayloadTypes<ExecutionData = ExecutionData>> PayloadTypes for BaseEngineTypes<T> {
+impl<T> PayloadTypes for BaseEngineTypes<T>
+where
+    T: PayloadTypes<ExecutionData = ExecutionData>,
+    T::BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = BaseBlock>>,
+{
     type ExecutionData = T::ExecutionData;
     type BuiltPayload = T::BuiltPayload;
     type PayloadAttributes = T::PayloadAttributes;
@@ -43,6 +47,7 @@ impl<T: PayloadTypes<ExecutionData = ExecutionData>> PayloadTypes for BaseEngine
         block: SealedBlock<
             <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
         >,
+        _bal: Option<alloy_primitives::Bytes>,
     ) -> <T as PayloadTypes>::ExecutionData {
         ExecutionData::from_block_unchecked(block.hash(), &block.into_block().into_ethereum_block())
     }

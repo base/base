@@ -1,4 +1,4 @@
-use base_common_consensus::BasePrimitives;
+use base_common_consensus::{BaseBlock, BasePrimitives};
 use base_common_rpc_types_engine::ExecutionData;
 use reth_payload_primitives::{BuiltPayload, PayloadTypes};
 use reth_primitives_traits::{Block, NodePrimitives, SealedBlock};
@@ -10,9 +10,9 @@ use crate::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 #[non_exhaustive]
 pub struct BasePayloadTypes<N: NodePrimitives = BasePrimitives>(core::marker::PhantomData<N>);
 
-impl<N: NodePrimitives> PayloadTypes for BasePayloadTypes<N>
+impl<N: NodePrimitives<Block = BaseBlock>> PayloadTypes for BasePayloadTypes<N>
 where
-    BaseBuiltPayload<N>: BuiltPayload,
+    BaseBuiltPayload<N>: BuiltPayload<Primitives = N>,
 {
     type ExecutionData = ExecutionData;
     type BuiltPayload = BaseBuiltPayload<N>;
@@ -22,6 +22,7 @@ where
         block: SealedBlock<
             <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
         >,
+        _bal: Option<alloy_primitives::Bytes>,
     ) -> Self::ExecutionData {
         ExecutionData::from_block_unchecked(block.hash(), &block.into_block().into_ethereum_block())
     }

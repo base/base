@@ -24,7 +24,7 @@ use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::BaseEthApiBuilder,
     miner::{BaseMinerExtApi, MinerApiExtServer},
-    witness::BaseDebugWitnessApi,
+    witness::{BaseDebugWitnessApi, DebugExecutionWitnessApiServer},
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
@@ -59,7 +59,7 @@ use reth_node_builder::{
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::{SealedHeader, header::HeaderMut};
 use reth_provider::providers::ProviderFactoryBuilder;
-use reth_rpc_api::{DebugApiServer, DebugExecutionWitnessApiServer, eth::RpcTypes};
+use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{
@@ -1207,9 +1207,12 @@ impl BaseDiscoveryConfig {
         });
 
         reth_discv5::discv5::ListenConfig::from_two_sockets(
-            discv5_addr_ipv4.map(|addr| SocketAddrV4::new(addr, args.discovery.discv5_port)),
+            discv5_addr_ipv4
+                .zip(args.discovery.discv5_port)
+                .map(|(addr, port)| SocketAddrV4::new(addr, port)),
             discv5_addr_ipv6
-                .map(|addr| SocketAddrV6::new(addr, args.discovery.discv5_port_ipv6, 0, 0)),
+                .zip(args.discovery.discv5_port_ipv6)
+                .map(|(addr, port)| SocketAddrV6::new(addr, port, 0, 0)),
         )
     }
 

@@ -35,6 +35,7 @@ alloy-serde = { workspace = true, optional = true }
 
 # reth
 reth-payload-primitives = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true }
 
 # misc
 thiserror.workspace = true
@@ -88,4 +89,4 @@ arbitrary = [
 	"dep:arbitrary",
 	"std",
 ]
-reth = [ "dep:reth-payload-primitives", "serde", "std" ]
+reth = [ "dep:reth-payload-primitives", "dep:reth-primitives-traits", "serde", "std" ]

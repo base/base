@@ -1,7 +1,7 @@
-use alloc::{boxed::Box, string::String};
+use alloc::string::String;
 
 use alloy_evm::precompiles::PrecompilesMap;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, map::AddressSet};
 use base_common_chains::BaseUpgrade;
 use revm::{
     context::Cfg,
@@ -218,7 +218,7 @@ where
     }
 
     #[inline]
-    fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
+    fn warm_addresses(&self) -> &AddressSet {
         self.inner.warm_addresses()
     }
 

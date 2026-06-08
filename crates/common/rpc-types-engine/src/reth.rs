@@ -5,7 +5,10 @@ use alloc::vec::Vec;
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::PayloadId;
-use reth_payload_primitives::{ExecutionPayload, PayloadAttributes};
+use base_common_consensus::BaseBlock;
+use reth_payload_primitives::{BuiltPayload, ExecutionPayload, PayloadAttributes};
+use reth_primitives_traits::block::Block as _;
+use reth_primitives_traits::NodePrimitives;
 
 use crate::{BasePayloadAttributes, ExecutionData};
 
@@ -74,5 +77,16 @@ impl ExecutionPayload for ExecutionData {
 
     fn transaction_count(&self) -> usize {
         self.payload.as_v1().transactions.len()
+    }
+}
+
+impl<T> From<T> for ExecutionData
+where
+    T: BuiltPayload,
+    T::Primitives: NodePrimitives<Block = BaseBlock>,
+{
+    fn from(value: T) -> Self {
+        let block = value.block().clone().into_block().into_ethereum_block();
+        Self::from_block_unchecked(block.header.hash_slow(), &block)
     }
 }
