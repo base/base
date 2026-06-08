@@ -265,8 +265,9 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     /// Last-known EC2 instance ID for every signer address the registrar
     /// has ever observed advertising itself in a discovery cycle.
     /// Updated in `discover_and_resolve`, consulted by
-    /// `submit_deregistration` so the "Deregistering signer" log line
-    /// can attribute the orphan to the EC2 instance it last lived on.
+    /// [`DeregistrationManager::submit_deregistration`] so the "Deregistering
+    /// signer" log line can attribute the orphan to the EC2 instance it last
+    /// lived on.
     /// `None` on dereg is the strongest single diagnostic that another
     /// registrar (or a prior deployment) wrote the signer.
     /// Entries are never evicted — bounded by historic fleet size.
@@ -733,8 +734,8 @@ where
                     }
                     // Record signer -> instance attribution before the
                     // `instance` is moved into `RegisterableSigner` below.
-                    // Consumed by `submit_deregistration` to annotate the
-                    // dereg log with the last-known instance.
+                    // Consumed by `DeregistrationManager::submit_deregistration`
+                    // to annotate the dereg log with the last-known instance.
                     {
                         let mut history =
                             self.signer_history.lock().unwrap_or_else(|e| e.into_inner());
@@ -1187,32 +1188,7 @@ where
         RegistrarMetrics::proof_tasks_pending().set(0.0);
     }
 
-    /// Deregisters any onchain signer that is not in the `protected_signers` set.
-    ///
-    /// These orphans arise when a prover instance is terminated (e.g. ASG
-    /// scale-down) without first deregistering its signer onchain. The
-    /// `protected_signers` set is built by [`Self::protected_signers`] as
-    /// the union of resolved-this-cycle signers and signers with an
-    /// in-flight proof task, so transiently-unresolved instances and
-    /// mid-flight registrations are both shielded from the sweep.
-    ///
-    /// # Defense in depth
-    ///
-    /// Before submitting a deregistration transaction, each orphan candidate is
-    /// verified via [`RegistryClient::is_registered`] (backed by the
-    /// `isRegisteredSigner` mapping). This guards against ghost entries in the
-    /// onchain `EnumerableSetLib.AddressSet` that can appear after certain
-    /// add/remove sequences due to a bug in Solady v0.0.245. Without this
-    /// check, ghost addresses would be deregistered every cycle in an infinite
-    /// loop, burning gas without effect.
-    ///
-    /// # Assumptions
-    ///
-    /// - **Single registrar**: This method queries *all* onchain signers and
-    ///   treats any signer not in `protected_signers` as an orphan. If multiple
-    ///   registrar instances manage disjoint prover fleets, one registrar would
-    ///   incorrectly deregister another's signers. The current deployment model
-    ///   assumes a single registrar per registry contract.
+    /// Test helper that delegates to [`DeregistrationManager::deregister_orphans`].
     #[cfg(test)]
     async fn deregister_orphans(
         &self,
