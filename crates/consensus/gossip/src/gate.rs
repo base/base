@@ -1,6 +1,6 @@
 //! Connection Gate for the libp2p Gossip Swarm.
 
-use std::net::IpAddr;
+use std::{net::IpAddr, time::Duration};
 
 use ipnet::IpNet;
 use libp2p::{Multiaddr, PeerId};
@@ -36,6 +36,13 @@ pub trait ConnectionGate {
 
     /// Lists peer ids with outbound dials currently in progress.
     fn pending_dials(&self) -> Vec<PeerId>;
+
+    /// Returns pending outbound dials that exceeded their configured timeout.
+    ///
+    /// The returned duration is how long the dial has been pending.
+    fn expired_pending_dials(&self) -> Vec<(PeerId, Duration)> {
+        Vec::new()
+    }
 
     /// Checks if a peer can be removed from the gossip swarm.
     ///

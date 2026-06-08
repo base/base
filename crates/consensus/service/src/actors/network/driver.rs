@@ -4,6 +4,7 @@ use alloy_primitives::Address;
 use base_consensus_disc::Discv5Driver;
 use base_consensus_gossip::{
     ConnectionGater, GATER_PRUNE_INTERVAL, GossipDriver, PEER_SCORE_INSPECT_FREQUENCY,
+    PENDING_DIAL_PRUNE_INTERVAL,
 };
 use base_consensus_sources::{BlockSigner, BlockSignerStartError};
 use discv5::multiaddr::Protocol;
@@ -86,6 +87,9 @@ impl NetworkDriver {
         let mut gater_pruner = tokio::time::interval(GATER_PRUNE_INTERVAL);
         gater_pruner.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+        let mut pending_dial_pruner = tokio::time::interval(PENDING_DIAL_PRUNE_INTERVAL);
+        pending_dial_pruner.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         // Start the block signer if it is configured.
         let signer =
             OptionFuture::from(self.signer.map(async |s| s.start().await)).await.transpose()?;
@@ -97,6 +101,7 @@ impl NetworkDriver {
             unsafe_block_signer_sender: self.unsafe_block_signer_sender,
             peer_score_inspector,
             gater_pruner,
+            pending_dial_pruner,
             signer,
         })
     }

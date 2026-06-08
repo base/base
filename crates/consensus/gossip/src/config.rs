@@ -83,6 +83,12 @@ pub const PEER_SCORE_INSPECT_FREQUENCY: Duration = Duration::from_secs(15);
 /// How often the network actor calls [`ConnectionGate::prune`] to drop expired bookkeeping.
 pub const GATER_PRUNE_INTERVAL: Duration = Duration::from_secs(60);
 
+/// The default timeout for outbound dials to remain pending before they are aborted.
+pub const DEFAULT_PENDING_DIAL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How often the network actor aborts outbound dials that exceeded their pending timeout.
+pub const PENDING_DIAL_PRUNE_INTERVAL: Duration = Duration::from_secs(5);
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Config Building
 ////////////////////////////////////////////////////////////////////////////////////////////////
